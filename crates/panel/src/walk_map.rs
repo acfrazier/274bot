@@ -98,6 +98,7 @@ struct TerrainSlot {
     key: TileKey,
     identity: ImageIdentity,
     last_visible: Option<u64>,
+    no_art: bool,
     gpu: Option<GpuTex>,
 }
 
@@ -130,9 +131,12 @@ pub struct WalkMapRenderer {
     pending_upload: Option<(u64, ImageIdentity, TileKey, Vec<u8>)>,
     decode: WalkMapDecodeController,
     tex_pool: Vec<GpuTex>,
+    pending_unregister: Vec<TextureId>,
     visible_clock: u64,
     #[cfg(test)]
     test_sync_decode: bool,
+    #[cfg(test)]
+    tile_read_count: usize,
     pub show_basemap: bool,
     pub show_grid: bool,
     pub show_reach: bool,
@@ -201,9 +205,12 @@ impl WalkMapRenderer {
             pending_upload: None,
             decode: WalkMapDecodeController::new(),
             tex_pool: Vec::new(),
+            pending_unregister: Vec::new(),
             visible_clock: 0,
             #[cfg(test)]
             test_sync_decode: true,
+            #[cfg(test)]
+            tile_read_count: 0,
             show_basemap: true,
             show_grid: false,
             show_reach: false,
@@ -256,7 +263,11 @@ impl WalkMapRenderer {
             .is_none_or(|ready| ready.manifest().identity != identity);
         self.ready = Some(images);
         if changed {
-            self.slots.clear();
+            for slot in self.slots.drain(..) {
+                if let Some(texture) = slot.gpu {
+                    self.pending_unregister.push(texture.tex_id);
+                }
+            }
             self.pending_upload = None;
             self.decode.invalidate();
         }
@@ -326,9 +337,14 @@ impl WalkMapRenderer {
         self.generation = self.generation.wrapping_add(1);
         self.pending_upload = None;
         self.decode.invalidate();
-        drop_pool(&mut self.tex_pool, &mut gpu);
-        drop_slots(&mut self.slots, &mut gpu);
-        drop_overlay(&mut self.overlay_gpu, &mut gpu);
+        flush_pending_unregister(&mut self.pending_unregister, &mut gpu);
+        drop_pool(&mut self.tex_pool, &mut gpu, &mut self.pending_unregister);
+        drop_slots(&mut self.slots, &mut gpu, &mut self.pending_unregister);
+        drop_overlay(
+            &mut self.overlay_gpu,
+            &mut gpu,
+            &mut self.pending_unregister,
+        );
         self.overlay_cpu = None;
         self.overlay_size = (0, 0);
         self.overlay_key = None;
@@ -353,7 +369,8 @@ impl WalkMapRenderer {
             generation: self.generation,
             phase: self.phase,
             terrain_slots: self.slots.len(),
-            terrain_gpu_bytes: self.slots.len() * TILE_RGBA_BYTES,
+            terrain_gpu_bytes: self.slots.iter().filter(|slot| slot.gpu.is_some()).count()
+                * TILE_RGBA_BYTES,
             terrain_cpu_bytes: self.pending_upload.as_ref().map(|p| p.3.len()).unwrap_or(0),
             overlay_cpu_bytes: self.overlay_cpu.as_ref().map(Vec::len).unwrap_or(0),
             overlay_gpu_bytes,
@@ -443,6 +460,9 @@ impl WalkMapRenderer {
         .build();
         if self.show_basemap && self.has_terrain() {
             for slot in &self.slots {
+                if slot.no_art {
+                    continue;
+                }
                 let Some(gpu_tex) = slot.gpu.as_ref() else {
                     continue;
                 };
@@ -494,6 +514,24 @@ impl WalkMapRenderer {
                 return;
             }
         }
+        let vis = select_visible(view);
+        let identity = self.identity();
+        let vis_n = vis.map(|tiles| tiles.len()).unwrap_or(0);
+        let visible_slots = vis
+            .map(|tiles| {
+                self.slots
+                    .iter()
+                    .filter(|slot| slot.identity == identity && vis_contains(tiles, slot.key))
+                    .count()
+            })
+            .unwrap_or(0);
+        let visible_resolved = vis.is_none_or(|tiles| {
+            tiles.keys().all(|key| {
+                self.slots
+                    .iter()
+                    .any(|slot| slot.identity == identity && slot.key == key)
+            })
+        });
         let mut parts = Vec::new();
         if !self.has_terrain() {
             self.phase = MapPhase::Ready;
@@ -501,16 +539,13 @@ impl WalkMapRenderer {
         } else if !self.show_basemap {
             self.phase = MapPhase::Ready;
             parts.push(String::from("basemap off"));
-        } else if !self.slots.is_empty() && !self.decode.is_busy() && self.pending_upload.is_none()
-        {
+        } else if visible_resolved && !self.decode.is_busy() && self.pending_upload.is_none() {
             self.phase = MapPhase::Ready;
-            parts.push(format!("ready · {} tiles", self.slots.len()));
+            parts.push(format!("ready · {visible_slots} tiles"));
         } else {
-            let vis_n = select_visible(view).map(|v| v.len()).unwrap_or(0);
             self.phase = MapPhase::Pending;
             parts.push(format!(
-                "grid first — loading tiles {}/{vis_n}",
-                self.slots.len()
+                "grid first — loading tiles {visible_slots}/{vis_n}"
             ));
         }
         if layers.reach && reach.is_none() {
@@ -543,14 +578,14 @@ impl WalkMapRenderer {
                 }
                 OverlayFit::ZoomIn => {
                     *overlay_zoom_in = true;
-                    drop_overlay(&mut self.overlay_gpu, gpu);
+                    drop_overlay(&mut self.overlay_gpu, gpu, &mut self.pending_unregister);
                     self.overlay_cpu = None;
                     self.overlay_size = (0, 0);
                     self.overlay_key = None;
                 }
             }
         } else {
-            drop_overlay(&mut self.overlay_gpu, gpu);
+            drop_overlay(&mut self.overlay_gpu, gpu, &mut self.pending_unregister);
             self.overlay_cpu = None;
             self.overlay_size = (0, 0);
             self.overlay_key = None;
@@ -735,6 +770,7 @@ impl WalkMapRenderer {
     }
 
     fn sync_terrain(&mut self, view: View, gpu: &mut Option<&mut dyn FrameGpu>) {
+        flush_pending_unregister(&mut self.pending_unregister, gpu);
         let vis = select_visible(view);
         if vis != self.last_vis && self.phase == MapPhase::Error {
             self.phase = MapPhase::Pending;
@@ -776,10 +812,10 @@ impl WalkMapRenderer {
                 self.pending_upload = None;
             }
         }
-        self.request_missing(vis);
+        self.request_missing(vis, gpu);
     }
 
-    fn request_missing(&mut self, vis: VisibleTiles) {
+    fn request_missing(&mut self, vis: VisibleTiles, gpu: &mut Option<&mut dyn FrameGpu>) {
         let generation = self.generation;
         let identity = self.identity();
         let active = self.decode.active_request();
@@ -812,6 +848,27 @@ impl WalkMapRenderer {
                 return;
             }
         }
+        if let Some((gen, image, key)) = self.decode.pending_request() {
+            if gen == generation && image == identity && vis_contains(vis, key) {
+                if let Err(error) = self.decode.retry_pending() {
+                    self.phase = MapPhase::Error;
+                    self.status = format!("tile decode failed: {error}");
+                }
+                return;
+            }
+        }
+        if self
+            .decode
+            .active_request()
+            .is_some_and(|(gen, image, key)| {
+                self.decode.is_requested(gen, image, key)
+                    && gen == generation
+                    && image == identity
+                    && vis_contains(vis, key)
+            })
+        {
+            return;
+        }
 
         for key in vis.keys() {
             if self
@@ -821,14 +878,6 @@ impl WalkMapRenderer {
             {
                 continue;
             }
-            let png = if let Some(ready) = self.ready.as_deref() {
-                ready.read_tile_arc(key).ok().flatten()
-            } else {
-                self.fixtures.get_arc(key)
-            };
-            let Some(png) = png else {
-                continue;
-            };
             if self.decode.is_requested(generation, identity, key) {
                 if self.decode.pending_request() == Some((generation, identity, key)) {
                     if let Err(error) = self.decode.retry_pending() {
@@ -838,6 +887,14 @@ impl WalkMapRenderer {
                 }
                 return;
             }
+            let png = match self.read_tile_png(key) {
+                Ok(Some(png)) => png,
+                Ok(None) => {
+                    self.remember_no_art(identity, key, true, vis, gpu);
+                    continue;
+                }
+                Err(_) => continue,
+            };
             #[cfg(test)]
             if self.test_sync_decode {
                 match decode_checked(&png) {
@@ -853,32 +910,6 @@ impl WalkMapRenderer {
                 self.phase = MapPhase::Error;
                 self.status = format!("tile decode failed: {error}");
             }
-            return;
-        }
-
-        if self
-            .decode
-            .pending_request()
-            .is_some_and(|(gen, image, key)| {
-                gen == generation && image == identity && vis_contains(vis, key)
-            })
-        {
-            if let Err(error) = self.decode.retry_pending() {
-                self.phase = MapPhase::Error;
-                self.status = format!("tile decode failed: {error}");
-            }
-            return;
-        }
-        if self
-            .decode
-            .active_request()
-            .is_some_and(|(gen, image, key)| {
-                self.decode.is_requested(gen, image, key)
-                    && gen == generation
-                    && image == identity
-                    && vis_contains(vis, key)
-            })
-        {
             return;
         }
 
@@ -927,13 +958,16 @@ impl WalkMapRenderer {
                 {
                     continue;
                 }
-                let png = if let Some(ready) = self.ready.as_deref() {
-                    ready.read_tile_arc(key).ok().flatten()
-                } else {
-                    self.fixtures.get_arc(key)
-                };
-                let Some(png) = png else {
-                    continue;
+                if self.slots.len() >= TEXTURE_CAP {
+                    return;
+                }
+                let png = match self.read_tile_png(key) {
+                    Ok(Some(png)) => png,
+                    Ok(None) => {
+                        self.remember_no_art(identity, key, false, vis, gpu);
+                        continue;
+                    }
+                    Err(_) => continue,
                 };
                 #[cfg(test)]
                 if self.test_sync_decode {
@@ -953,6 +987,42 @@ impl WalkMapRenderer {
                 return;
             }
         }
+    }
+    fn read_tile_png(
+        &mut self,
+        key: TileKey,
+    ) -> Result<Option<Arc<[u8]>>, host_play::map_cache::MapCacheError> {
+        #[cfg(test)]
+        {
+            self.tile_read_count += 1;
+        }
+        if let Some(ready) = self.ready.as_deref() {
+            ready.read_tile_arc(key)
+        } else {
+            Ok(self.fixtures.get_arc(key))
+        }
+    }
+
+    fn remember_no_art(
+        &mut self,
+        identity: ImageIdentity,
+        key: TileKey,
+        visible: bool,
+        vis: VisibleTiles,
+        gpu: &mut Option<&mut dyn FrameGpu>,
+    ) {
+        if self.slots.len() >= TEXTURE_CAP
+            && (!visible || !make_room_for_visible(&mut self.slots, vis, &mut self.tex_pool, gpu))
+        {
+            return;
+        }
+        self.slots.push(TerrainSlot {
+            key,
+            identity,
+            last_visible: visible.then_some(self.visible_clock),
+            no_art: true,
+            gpu: None,
+        });
     }
 
     fn pump_decode(&mut self) {
@@ -1028,6 +1098,7 @@ impl WalkMapRenderer {
                             key,
                             identity,
                             last_visible,
+                            no_art: false,
                             gpu: Some(gpu_tex),
                         });
                         uploaded += 1;
@@ -1038,6 +1109,7 @@ impl WalkMapRenderer {
                         key,
                         identity,
                         last_visible,
+                        no_art: false,
                         gpu: None,
                     });
                     uploaded += 1;
@@ -1084,7 +1156,7 @@ impl WalkMapRenderer {
             return;
         }
         if w == 0 || h == 0 || w > overlay::OVERLAY_MAX_W || h > overlay::OVERLAY_MAX_H {
-            drop_overlay(&mut self.overlay_gpu, gpu);
+            drop_overlay(&mut self.overlay_gpu, gpu, &mut self.pending_unregister);
             self.overlay_cpu = None;
             self.overlay_size = (0, 0);
             self.overlay_key = None;
@@ -1198,6 +1270,14 @@ fn has_missing_visible(slots: &[TerrainSlot], vis: VisibleTiles) -> bool {
         .any(|key| !slots.iter().any(|slot| slot.key == key))
 }
 
+fn flush_pending_unregister(pending: &mut Vec<TextureId>, gpu: &mut Option<&mut dyn FrameGpu>) {
+    if let Some(gpu) = gpu.as_mut() {
+        for texture in pending.drain(..) {
+            gpu.unregister_texture(texture);
+        }
+    }
+}
+
 fn recycle_texture(texture: GpuTex, pool: &mut Vec<GpuTex>, gpu: &mut Option<&mut dyn FrameGpu>) {
     if pool.len() < TEXTURE_CAP {
         pool.push(texture);
@@ -1215,7 +1295,7 @@ fn retain_context(
 ) {
     slots.retain_mut(|slot| {
         if slot.identity == identity
-            && context.is_none_or(|(plane, lod)| slot.key.plane == plane && slot.key.lod == lod)
+            && context.is_some_and(|(plane, lod)| slot.key.plane == plane && slot.key.lod == lod)
         {
             return true;
         }
@@ -1385,33 +1465,47 @@ fn upload_overlay(
     );
 }
 
-fn drop_slots(slots: &mut Vec<TerrainSlot>, gpu: &mut Option<&mut dyn FrameGpu>) {
-    if let Some(gpu) = gpu {
-        for slot in slots.drain(..) {
-            if let Some(tex) = slot.gpu {
-                gpu.unregister_texture(tex.tex_id);
-            }
-        }
+fn unregister_or_queue(
+    texture: TextureId,
+    gpu: &mut Option<&mut dyn FrameGpu>,
+    pending: &mut Vec<TextureId>,
+) {
+    if let Some(gpu) = gpu.as_mut() {
+        gpu.unregister_texture(texture);
     } else {
-        slots.clear();
+        pending.push(texture);
     }
 }
 
-fn drop_overlay(overlay: &mut Option<OverlayGpu>, gpu: &mut Option<&mut dyn FrameGpu>) {
+fn drop_slots(
+    slots: &mut Vec<TerrainSlot>,
+    gpu: &mut Option<&mut dyn FrameGpu>,
+    pending: &mut Vec<TextureId>,
+) {
+    for slot in slots.drain(..) {
+        if let Some(texture) = slot.gpu {
+            unregister_or_queue(texture.tex_id, gpu, pending);
+        }
+    }
+}
+
+fn drop_overlay(
+    overlay: &mut Option<OverlayGpu>,
+    gpu: &mut Option<&mut dyn FrameGpu>,
+    pending: &mut Vec<TextureId>,
+) {
     if let Some(old) = overlay.take() {
-        if let Some(gpu) = gpu {
-            gpu.unregister_texture(old.tex_id);
-        }
+        unregister_or_queue(old.tex_id, gpu, pending);
     }
 }
 
-fn drop_pool(pool: &mut Vec<GpuTex>, gpu: &mut Option<&mut dyn FrameGpu>) {
-    if let Some(gpu) = gpu {
-        for tex in pool.drain(..) {
-            gpu.unregister_texture(tex.tex_id);
-        }
-    } else {
-        pool.clear();
+fn drop_pool(
+    pool: &mut Vec<GpuTex>,
+    gpu: &mut Option<&mut dyn FrameGpu>,
+    pending: &mut Vec<TextureId>,
+) {
+    for texture in pool.drain(..) {
+        unregister_or_queue(texture.tex_id, gpu, pending);
     }
 }
 
