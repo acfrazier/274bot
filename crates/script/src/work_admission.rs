@@ -723,14 +723,25 @@ struct ServiceNotifier {
     epoch: AtomicU64,
     gate: Mutex<()>,
     changed: Condvar,
+    #[cfg(test)]
+    wait_hook: Mutex<Option<std::sync::mpsc::Sender<()>>>,
 }
 
 impl ServiceNotifier {
     fn wait_for_change(&self, observed: u64, timeout: Duration) {
         let mut gate = self.gate.lock();
         if self.epoch.load(Ordering::Acquire) == observed {
+            #[cfg(test)]
+            if let Some(wait_hook) = self.wait_hook.lock().take() {
+                let _ = wait_hook.send(());
+            }
             self.changed.wait_for(&mut gate, timeout);
         }
+    }
+
+    #[cfg(test)]
+    fn hook_next_wait(&self, hook: std::sync::mpsc::Sender<()>) {
+        *self.wait_hook.lock() = Some(hook);
     }
 
     fn signal_change(&self) {
@@ -1213,6 +1224,8 @@ fn process_step(
         let count = shared.slice_overruns.fetch_add(1, Ordering::AcqRel) + 1;
         // Exponential reporting bounds log work if a busy host has many
         // delayed steps, while the exact count remains observable.
+        // The slow-step warning already reports this step's delay. Suppress
+        // the overrun warning to avoid two warnings for the same step.
         if count.is_power_of_two() && !slow_step {
             api::host_log!(
                 api::hostlog::Category::Lifecycle,
