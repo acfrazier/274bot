@@ -2,7 +2,9 @@
 //! newest value, wait facts fold into an exact summary, and the ordered
 //! channel/inspect lane refuses only `ChannelPost` rows (round 5). Resume
 //! hands the folded batch to the seat in pages that one take carries
-//! whole, so `GameplaySeat::take` clears none of its rows (round 6).
+//! whole, so `GameplaySeat::take` clears none of its rows (round 6). The
+//! releases go to the seat whatever the room, and a second hold keeps the
+//! controls of a fold whose pages still wait (round 7).
 
 use super::*;
 use api::run_policy::{RunEnergyMin, RunPolicyOverride};
@@ -1106,5 +1108,217 @@ fn held_resume_pages_around_queued_rows_and_later_batches_queue_behind() {
         expected,
         "the retained rows follow, and the later batch queues behind them"
     );
+    assert_eq!(after, before, "resume drops nothing");
+}
+
+fn queued_interact(req: InteractReq) -> SeatEffect {
+    SeatEffect::Interact(crate::load::QueuedInteract {
+        req,
+        observed_walk_outcome_seq: 0,
+    })
+}
+
+fn walk(request_id: u64) -> InteractReq {
+    InteractReq::Walk {
+        x: 3200,
+        z: 3200,
+        level: 0,
+        allow_teleports: false,
+        allow_wilderness: false,
+        allow_bank_fetch: false,
+        request_id,
+        avoid: Vec::new(),
+        cross: Vec::new(),
+    }
+}
+
+/// Queue one walk row that needs the release slot of `request_id`.
+fn push_seat_walk(slot: &mut SlotScript, req: InteractReq, request_id: u64) {
+    slot.seat
+        .as_mut()
+        .unwrap()
+        .push_walk(queued_interact(req), EmissionSource::Root, id(request_id))
+        .unwrap();
+}
+
+/// Arm all sixteen walk release slots, ids 1 to 16, and clear what the
+/// host received.
+fn arm_every_walk_slot(slot: &mut SlotScript) {
+    for request_id in 1..=16 {
+        push_seat_walk(slot, walk(request_id), request_id);
+    }
+    slot.dispatch_seat_rows();
+    slot.seat_interact_delivery.clear();
+    assert_eq!(
+        slot.seat.as_ref().unwrap().reserved_releases(),
+        api::script_contract::MAX_WALK_RELEASES
+    );
+}
+
+/// Drain up to `frames` host frames. Every frame while retained rows
+/// remain must deliver at least one retained row. Returns the retained rows
+/// delivered, in order, and the number of frames used.
+fn drain_retained_with_progress(
+    slot: &mut SlotScript,
+    retained: &[InteractReq],
+    frames: usize,
+) -> (Vec<InteractReq>, usize) {
+    let mut delivered = Vec::new();
+    for frame in 0..frames {
+        if held_rows(slot).is_empty() {
+            return (delivered, frame);
+        }
+        let (_, reqs, _) = slot.drain_host_interacts();
+        let before = delivered.len();
+        delivered.extend(
+            requests(reqs)
+                .into_iter()
+                .filter(|req| retained.contains(req)),
+        );
+        assert!(
+            delivered.len() > before,
+            "frame {frame} delivered no retained row; {} rows still retained",
+            held_rows(slot).len()
+        );
+    }
+    (delivered, frames)
+}
+
+// R7 B1 (Codex `solr6_`): all sixteen walk release slots are armed, and
+// 141 queued walk rows for id 17 fill the seat. Room is 0, and `take`
+// stops at the first walk, which cannot reserve a slot. The retained
+// `AbortWalk(1)` frees that slot, so the pager must push it whatever the
+// room. Every drain makes progress, and every retained row arrives with
+// `dropped` unchanged.
+#[test]
+fn held_resume_pushes_the_release_that_unblocks_a_full_walk_queue() {
+    let mut slot = with_seat(886);
+    arm_every_walk_slot(&mut slot);
+    slot.seat_guardian_hold(true);
+    held_frame(&mut slot, vec![InteractReq::AbortWalk { request_id: 1 }]);
+    for channel_id in 1..=142 {
+        held_frame(&mut slot, vec![lane_open(channel_id)]);
+    }
+    slot.seat_guardian_hold(false);
+    for _ in 0..api::script_contract::MAX_ENCODED_GAMEPLAY {
+        push_seat_walk(
+            &mut slot,
+            InteractReq::WalkTo {
+                x: 30,
+                z: 40,
+                level: 0,
+            },
+            17,
+        );
+    }
+    assert_eq!(slot.seat.as_ref().unwrap().take_room(), 0);
+    let mut retained = vec![InteractReq::AbortWalk { request_id: 1 }];
+    retained.extend((1..=142).map(lane_open));
+    assert_eq!(held_rows(&slot), retained, "the fold under test");
+    let before = dropped(&slot);
+    let (delivered, frames) = drain_retained_with_progress(&mut slot, &retained, 3);
+    let left = held_rows(&slot);
+    let after = dropped(&slot);
+    slot.stop();
+    assert!(left.is_empty(), "rows still retained after {frames} frames");
+    assert_eq!(delivered, retained, "every retained row, in order");
+    assert_eq!(after, before, "resume drops nothing");
+}
+
+// R7 B1 / R6-L1 (Grok `probe_walk_blocked_full_queue_stalls_the_unpaged_
+// release`): the same blocked queue as a walk for id 17 and 140 lifecycle
+// rows, with a retained fold of `AbortWalk(1)` and 30 opens.
+#[test]
+fn held_resume_frees_the_walk_slot_that_a_blocked_full_queue_waits_for() {
+    let mut slot = with_seat(887);
+    arm_every_walk_slot(&mut slot);
+    push_seat_walk(&mut slot, walk(17), 17);
+    for yaw in 1..=140 {
+        slot.seat
+            .as_mut()
+            .unwrap()
+            .push(
+                queued_interact(InteractReq::SetCameraYaw { yaw }),
+                api::script_contract::EmissionClass::Lifecycle,
+                EmissionSource::Root,
+                None,
+            )
+            .unwrap();
+    }
+    assert_eq!(slot.seat.as_ref().unwrap().take_room(), 0);
+    let mut retained = vec![InteractReq::AbortWalk { request_id: 1 }];
+    retained.extend((1..=30).map(lane_open));
+    let mut fold = page(&slot, retained.clone());
+    fold.held_fold = true;
+    slot.load.as_ref().unwrap().restore_seat_batches(vec![fold]);
+    let before = dropped(&slot);
+    let (delivered, frames) = drain_retained_with_progress(&mut slot, &retained, 4);
+    let left = held_rows(&slot);
+    let after = dropped(&slot);
+    slot.stop();
+    assert!(left.is_empty(), "rows still retained after {frames} frames");
+    assert_eq!(delivered, retained, "every retained row, in order");
+    assert_eq!(after, before, "resume drops nothing");
+}
+
+// R7 R6-L2 (Grok `probe_second_hold_while_pages_wait_drops_unapplied_
+// controls`): a retained fold that carries a cancel waits for room. A
+// second hold folds a new batch over it. The waiting fold's cancel must
+// still apply after the last page, and the entry must not stay live.
+#[test]
+fn held_second_hold_keeps_the_controls_of_a_waiting_fold() {
+    let mut slot = with_seat(888);
+    let mut admit = page(&slot, Vec::new());
+    admit.batch.starts = vec![start_input(&slot, 1, NativeKind::Hunt)];
+    slot.load
+        .as_ref()
+        .unwrap()
+        .restore_seat_batches(vec![admit]);
+    let _ = slot.drain_host_interacts();
+    let live = |slot: &SlotScript| {
+        slot.seat
+            .as_ref()
+            .unwrap()
+            .live()
+            .iter()
+            .any(|entry| entry.id == id(1))
+    };
+    assert!(live(&slot), "the start is admitted");
+    slot.seat_guardian_hold(true);
+    let mut fold = page(&slot, (1..=20).map(lane_open).collect());
+    fold.held_fold = true;
+    fold.batch.cancels = vec![crate::isolate_fb::SeatCancelDecoded {
+        of: id(1),
+        reason: api::script_contract::CallbackCancelReason::ParentAborted,
+    }];
+    slot.load.as_ref().unwrap().restore_seat_batches(vec![fold]);
+    slot.seat_guardian_hold(false);
+    for yaw in 1..=141 {
+        slot.seat
+            .as_mut()
+            .unwrap()
+            .push(
+                queued_interact(InteractReq::SetCameraYaw { yaw }),
+                api::script_contract::EmissionClass::Lifecycle,
+                EmissionSource::Root,
+                None,
+            )
+            .unwrap();
+    }
+    let (_, first, _) = slot.drain_host_interacts();
+    assert_eq!(first.len(), 141, "the waiting rows take the first frame");
+    assert!(live(&slot), "the cancel waits with the retained fold");
+    slot.seat_guardian_hold(true);
+    held_frame(&mut slot, vec![lane_open(50)]);
+    slot.seat_guardian_hold(false);
+    let before = dropped(&slot);
+    let (_, resumed, _) = slot.drain_host_interacts();
+    let still_live = live(&slot);
+    let after = dropped(&slot);
+    slot.stop();
+    let mut expected: Vec<_> = (1..=20).map(lane_open).collect();
+    expected.push(lane_open(50));
+    assert_eq!(requests(resumed), expected, "every retained row, in order");
+    assert!(!still_live, "the waiting fold's cancel applies");
     assert_eq!(after, before, "resume drops nothing");
 }
