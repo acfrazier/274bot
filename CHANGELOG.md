@@ -5,6 +5,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ## Unreleased
 
+### Toolchain
+
+- Pinned the host and client toolchains and CI to Rust 1.98.1, including the
+  trait-object vtable fix.
+
 ### Scripts
 
 - Reload and catalog refresh prepare source, siblings and settings off the UI
