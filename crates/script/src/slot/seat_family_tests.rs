@@ -820,3 +820,169 @@ fn fixture_24_four_walk_abort_releases_reach_host_in_order() {
     assert_eq!(slot.seat.as_ref().unwrap().reserved_releases(), 0);
     slot.stop();
 }
+
+/// A guardian transition must discard gameplay already dispatched by the seat
+/// but not yet drained by the host.
+#[test]
+fn guardian_hold_discards_undrained_seat_delivery() {
+    let mut slot = with_seat(819);
+    let gameplay = InteractReq::Held {
+        name: "Logs".into(),
+        action: "Drop".into(),
+        slot: Some(0),
+        target_item_id: None,
+    };
+    slot.consume_seat_batch(
+        decoded(
+            Vec::new(),
+            vec![SeatInteractDecoded {
+                lineage: None,
+                mirror_owner: None,
+                request: gameplay,
+            }],
+        ),
+        0,
+        &[],
+    );
+    assert_eq!(slot.seat_interact_delivery.len(), 1);
+    let before = slot.slot_metrics().dropped;
+    slot.seat_guardian_hold(true);
+    assert!(slot.seat_interact_delivery.is_empty());
+    assert_eq!(slot.slot_metrics().dropped, before + 1);
+    slot.seat_guardian_hold(false);
+    assert!(slot.drain_host_interacts().1.is_empty());
+    slot.stop();
+}
+
+/// Native Walk machine terminals enter through SlotScript's seat batch
+/// consumer; a later non-walk gameplay row must still reach the host.
+#[test]
+fn sequential_native_walk_terminals_leave_room_for_gameplay() {
+    let mut slot = with_seat(820);
+    for raw in 1..=(api::script_contract::MAX_WALK_RELEASES as u64 + 1) {
+        let terminal = [crate::machine::MachineEvent {
+            id: id(raw),
+            kind: crate::machine::MachineEventKind::Done,
+            admitted: true,
+        }];
+        slot.consume_seat_batch(
+            decoded(vec![start_input(&slot, raw, NativeKind::Walk)], Vec::new()),
+            0,
+            &terminal,
+        );
+
+        let seat = slot.seat.as_ref().unwrap();
+        assert_eq!(seat.live().len(), 0, "walk {raw} normally terminated");
+        assert_eq!(seat.results().len(), raw as usize);
+        assert_eq!(
+            seat.results().last().map(|result| result.outcome),
+            Some(SeatTerminal::Done)
+        );
+        assert_eq!(seat.reserved_releases(), 0, "walk {raw} freed its slot");
+    }
+
+    let gameplay = InteractReq::Held {
+        name: "Logs".into(),
+        action: "Drop".into(),
+        slot: Some(0),
+        target_item_id: None,
+    };
+    slot.consume_seat_batch(
+        decoded(
+            Vec::new(),
+            vec![SeatInteractDecoded {
+                lineage: None,
+                mirror_owner: None,
+                request: gameplay.clone(),
+            }],
+        ),
+        0,
+        &[],
+    );
+    let (_, dispatched, _) = slot.drain_host_interacts();
+    assert_eq!(
+        dispatched
+            .into_iter()
+            .map(|row| row.req)
+            .collect::<Vec<_>>(),
+        [gameplay]
+    );
+    slot.stop();
+}
+
+/// Native and Load walks may use the same physical id, but the seat reserves
+/// different handles. Each physical terminal frees only its own handle.
+#[test]
+fn physical_walk_terminals_resolve_the_producer_namespace() {
+    let mut slot = with_seat(821);
+    let effect = || {
+        SeatEffect::Interact(crate::load::QueuedInteract {
+            req: InteractReq::Held {
+                name: "Logs".into(),
+                action: "Drop".into(),
+                slot: Some(0),
+                target_item_id: None,
+            },
+            observed_walk_outcome_seq: 0,
+        })
+    };
+    let raw = id(17);
+    let native = native_walk_id(raw.get()).unwrap();
+    let seat = slot.seat.as_mut().unwrap();
+    seat.push_walk(effect(), EmissionSource::Root, raw).unwrap();
+    seat.push_walk(effect(), EmissionSource::Root, native)
+        .unwrap();
+    slot.dispatch_seat_rows();
+    assert_eq!(slot.seat.as_ref().unwrap().reserved_releases(), 2);
+
+    slot.observe_walk_outcome(1, Some(SeatWalkTerminal::Native(raw)));
+    assert_eq!(slot.seat.as_ref().unwrap().reserved_releases(), 1);
+    slot.observe_walk_outcome(2, Some(SeatWalkTerminal::Load(raw)));
+    assert_eq!(slot.seat.as_ref().unwrap().reserved_releases(), 0);
+    slot.stop();
+}
+
+#[test]
+fn held_batch_compaction_retains_earlier_release_and_newest_controls() {
+    let mut slot = with_seat(821);
+    let release = InteractReq::AbortWalk { request_id: 821 };
+    let stop = InteractReq::GatherStop { request_id: 822 };
+    let row = |request| SeatInteractDecoded {
+        lineage: None,
+        mirror_owner: None,
+        request,
+    };
+    let older = crate::load::QueuedSeatBatch {
+        generation: 1,
+        observed_walk_outcome_seq: 7,
+        batch: decoded(Vec::new(), vec![row(release.clone())]),
+        machine_events: Vec::new(),
+    };
+    let mut newer_batch = decoded(
+        vec![start_input(&slot, 822, NativeKind::Gather)],
+        vec![row(stop.clone())],
+    );
+    newer_batch.consumed_terminal_seq = 9;
+    let newer = crate::load::QueuedSeatBatch {
+        generation: 1,
+        observed_walk_outcome_seq: 8,
+        batch: newer_batch,
+        machine_events: Vec::new(),
+    };
+    let mut compacted = slot.compact_held_seat_batches(vec![older, newer]);
+    assert_eq!(compacted.len(), 1);
+    let batch = compacted.pop().unwrap();
+    assert_eq!(batch.observed_walk_outcome_seq, 8);
+    assert_eq!(batch.batch.consumed_terminal_seq, 9);
+    assert_eq!(batch.batch.starts.len(), 1);
+    assert_eq!(
+        batch
+            .batch
+            .reqs
+            .into_iter()
+            .map(|row| row.request)
+            .collect::<Vec<_>>(),
+        [release, stop]
+    );
+    slot.stop();
+}

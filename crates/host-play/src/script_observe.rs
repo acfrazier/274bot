@@ -13,6 +13,7 @@ use client::config::Cache;
 use host::{ScriptRunPolicy, SlotInput};
 use nav::world::NavWorld;
 use nav::WorldState;
+use script::slot::SeatWalkTerminal;
 use script::{ScriptCtx, SlotScript};
 
 use super::{
@@ -477,9 +478,31 @@ pub(crate) fn script_observe_cached_with_channels(
         if let Some(bot) = navs.lock().unwrap().get_mut(name) {
             let bank_selection = bot.bank_pick.poll(std::time::Instant::now());
             host_results_dirty |= host_completion_changed(&slot, bot, bank_selection);
+            let native_terminal =
+                bot.native_end.as_ref().is_some_and(|(owner, _)| {
+                    owner.request_id().get() == bot.walk_outcome_request_id
+                }) || bot.native_walk.as_ref().is_some_and(|owner| {
+                    owner.live() && owner.request_id().get() == bot.walk_outcome_request_id
+                });
             deliver_native_walk_end(&mut slot, bot, tick);
             host_results_dirty |= deliver_native_advice(&mut slot, bot);
-            host_results_dirty |= slot.observe_walk_outcome_seq(bot.walk_outcome_seq);
+            // A newly armed walk may already have replaced the completed
+            // route. Its predecessor still owns a release slot. Only when
+            // the same request id remains armed must the route generation
+            // match, so a stale outcome cannot free the new arm.
+            let terminal_request = api::identity::RequestId::from_raw(bot.walk_outcome_request_id)
+                .filter(|request| {
+                    request.get() != bot.walk_request_id
+                        || bot.walk_outcome_generation == bot.route_generation
+                })
+                .map(|request| {
+                    if native_terminal {
+                        SeatWalkTerminal::Native(request)
+                    } else {
+                        SeatWalkTerminal::Load(request)
+                    }
+                });
+            host_results_dirty |= slot.observe_walk_outcome(bot.walk_outcome_seq, terminal_request);
         }
         slot_work_epoch = Some(slot.work_epoch());
         channel_generation = slot.runtime_generation();
@@ -938,9 +961,12 @@ pub(crate) fn script_observe_cached_with_channels(
             bot.compat_v1 = slot.api_family() == Some(script::ApiFamily::V1);
         }
         emit_script_debug_logs(&mut slot, name);
-        // Fold forwarded shim requests on running frames. Pause leaves the
-        // isolate queue untouched so Resume can dispatch it; guardian hold
-        // retains the existing drain/drop policy below.
+        if slot.load_active() && slot.state() != script::RunState::Running {
+            slot.retain_held_seat_batches();
+        }
+        // Ordinary Pause leaves the isolate queue untouched. Guardian hold
+        // has already discarded gameplay and bounded repeated control pages.
+        // Running frames drain those controls through the seat below.
         if slot.load_active() || slot.native_run().is_some() {
             let mut lifecycle = Vec::new();
             if slot.state() == script::RunState::Running {
@@ -1076,8 +1102,6 @@ pub(crate) fn script_observe_cached_with_channels(
                 let (update, reqs, owned) = drain_observed_host_interacts(&mut slot);
                 if slot.watchdog().holds_script_actions() || owned {
                     if owned {
-                        // This host route predates the Session's foreground.
-                        // The seat, not this branch, decides each script row.
                         let _ = take_carried_walk(navs, name, slot.runtime_generation());
                         interact.extend(take_script_interacts(reqs, slot_input));
                     }
@@ -1085,16 +1109,14 @@ pub(crate) fn script_observe_cached_with_channels(
                         run_policy_update = Some(update);
                     }
                 } else {
-                    let mut queued = Vec::new();
                     let mut carried = None;
                     if up && !hold && here.is_some() && snapshot.is_some() {
                         carried = take_carried_walk(navs, name, slot.runtime_generation());
-                        queued.extend(slot.take_held_host_walks());
                     }
                     if let Some(update) = update {
                         run_policy_update = Some(update);
                     }
-                    queued.extend(take_script_interacts(reqs, slot_input));
+                    let queued = take_script_interacts(reqs, slot_input);
                     let resumed =
                         resumed_walk(carried, queued.iter().map(|q| &q.req), |dest, radius| {
                             let (Some((x, z, level)), Some(snapshot)) = (here, snapshot) else {

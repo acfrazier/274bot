@@ -25,7 +25,15 @@ struct CarrierState {
     hooks: RefCell<Vec<Handle>>,
     captured_lineages: RefCell<Vec<CapturedLineage>>,
     interact_gate_enabled: bool,
+    interact_gameplay_count: Cell<usize>,
+    interact_walk_release_ids: RefCell<Vec<v8::Global<v8::Value>>>,
+    interact_push_active: Cell<bool>,
     interact_overflow_dropped: Cell<usize>,
+    interact_op_key: v8::Global<v8::String>,
+    interact_request_id_key: v8::Global<v8::String>,
+    interact_descriptor_value_key: v8::Global<v8::String>,
+    interact_abort_walk: v8::Global<v8::String>,
+    interact_length_key: v8::Global<v8::String>,
     active_entries: Cell<usize>,
     foreign_reported: Cell<bool>,
     foreign_pending: Cell<bool>,
@@ -75,13 +83,35 @@ pub(crate) fn install(runtime: &mut Runtime, interact_gate_enabled: bool) -> Res
     let state = {
         let mut scope = runtime.deno_runtime().handle_scope();
         let key = v8::Symbol::new(&mut scope, None);
+        let op_key = v8::String::new(&mut scope, "op")
+            .ok_or_else(|| "lineage interact op key".to_string())?;
+        let request_id_key = v8::String::new(&mut scope, "request_id")
+            .ok_or_else(|| "lineage interact request id key".to_string())?;
+        let descriptor_value_key = v8::String::new(&mut scope, "value")
+            .ok_or_else(|| "lineage interact descriptor key".to_string())?;
+        let abort_walk = v8::String::new(&mut scope, "abort-walk")
+            .ok_or_else(|| "lineage interact abort-walk op".to_string())?;
+        let length_key = v8::String::new(&mut scope, "length")
+            .ok_or_else(|| "lineage interact length key".to_string())?;
         Rc::new(CarrierState {
             key: v8::Global::new(&mut scope, key),
             hooks: RefCell::new(Vec::new()),
             captured_lineages: RefCell::new(Vec::with_capacity(capacity)),
             interact_gate_enabled,
+            interact_gameplay_count: Cell::new(0),
+            interact_walk_release_ids: RefCell::new(Vec::with_capacity(if interact_gate_enabled {
+                api::script_contract::MAX_WALK_RELEASES
+            } else {
+                0
+            })),
+            interact_push_active: Cell::new(false),
             interact_overflow_dropped: Cell::new(0),
+            interact_op_key: v8::Global::new(&mut scope, op_key),
+            interact_request_id_key: v8::Global::new(&mut scope, request_id_key),
+            interact_descriptor_value_key: v8::Global::new(&mut scope, descriptor_value_key),
+            interact_abort_walk: v8::Global::new(&mut scope, abort_walk),
             active_entries: Cell::new(0),
+            interact_length_key: v8::Global::new(&mut scope, length_key),
             foreign_reported: Cell::new(false),
             foreign_pending: Cell::new(false),
         })
@@ -174,22 +204,6 @@ pub(crate) fn assert_guarded(scope: &v8::HandleScope) {
     debug_assert!(state_for_scope(scope).is_some_and(|state| state.active_entries.get() != 0));
 }
 
-fn capture_count<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    value: v8::Local<'s, v8::Value>,
-    max: usize,
-    invalid: &'static str,
-) -> Result<usize, Throw<'s>> {
-    let Ok(number) = v8::Local::<v8::Number>::try_from(value) else {
-        return Err(callback_v8::type_error(scope, invalid));
-    };
-    let count = number.value();
-    if !count.is_finite() || count.fract() != 0.0 || count < 0.0 || count > max as f64 {
-        return Err(callback_v8::type_error(scope, invalid));
-    }
-    Ok(count as usize)
-}
-
 fn capture_interact_lineage<'s>(
     scope: &mut v8::HandleScope<'s>,
     count: usize,
@@ -254,8 +268,76 @@ fn capture_interact_lineage<'s>(
     Ok(())
 }
 
-fn interact_gate_config<'s>(
+struct InteractPushGuard<'a>(&'a Cell<bool>);
+
+impl<'a> InteractPushGuard<'a> {
+    fn enter(active: &'a Cell<bool>) -> Option<Self> {
+        if active.replace(true) {
+            None
+        } else {
+            Some(Self(active))
+        }
+    }
+}
+
+impl Drop for InteractPushGuard<'_> {
+    fn drop(&mut self) {
+        self.0.set(false);
+    }
+}
+
+fn interaction_data_field<'s>(
     scope: &mut v8::HandleScope<'s>,
+    value: v8::Local<'s, v8::Value>,
+    key: &v8::Global<v8::String>,
+    descriptor_value_key: &v8::Global<v8::String>,
+) -> Result<v8::Local<'s, v8::Value>, Throw<'s>> {
+    if !value.is_object() && !value.is_function() {
+        return Ok(v8::undefined(scope).into());
+    }
+    let Some(object) = value.to_object(scope) else {
+        return Ok(v8::undefined(scope).into());
+    };
+    let key = v8::Local::new(scope, key);
+    let descriptor_value_key = v8::Local::new(scope, descriptor_value_key);
+    let undefined = v8::undefined(scope);
+    let descriptor_value = callback_v8::catching(scope, |scope| {
+        let descriptor = object.get_own_property_descriptor(scope, key.into())?;
+        if descriptor.is_undefined() {
+            return Some(undefined.into());
+        }
+        let descriptor = descriptor.to_object(scope)?;
+        if !descriptor.has(scope, descriptor_value_key.into())? {
+            return Some(undefined.into());
+        }
+        descriptor.get(scope, descriptor_value_key.into())
+    });
+    match descriptor_value {
+        Ok(value) => Ok(value),
+        Err(Throw::Value(_)) => Ok(undefined.into()),
+        Err(Throw::Terminated) => Err(Throw::Terminated),
+    }
+}
+
+fn rollback_interact_capture(state: &CarrierState, captured: usize, dropped: usize) {
+    state.captured_lineages.borrow_mut().truncate(captured);
+    state.interact_overflow_dropped.set(dropped);
+}
+
+fn rollback_interact_rows<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    state: &CarrierState,
+    rows: v8::Local<'s, v8::Array>,
+    original_len: u32,
+) {
+    let length_key = v8::Local::new(scope, &state.interact_length_key);
+    let length = v8::Number::new(scope, f64::from(original_len));
+    let _ = rows.set(scope, length_key.into(), length.into());
+}
+
+fn push_interact_rows<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
 ) -> Result<v8::Local<'s, v8::Value>, Throw<'s>> {
     let Some(state) = state_for_scope(scope) else {
         return Err(callback_v8::type_error(
@@ -263,139 +345,189 @@ fn interact_gate_config<'s>(
             "lineage carrier is not installed",
         ));
     };
-    let config = v8::Array::new(scope, 2);
-    let gameplay = if state.interact_gate_enabled {
-        api::script_contract::MAX_INTERACT_REQS
-    } else {
-        0
+    if state.active_entries.get() == 0 {
+        return Err(callback_v8::type_error(
+            scope,
+            "interact push outside guarded JS entry",
+        ));
+    }
+    let Some(_guard) = InteractPushGuard::enter(&state.interact_push_active) else {
+        return Err(callback_v8::type_error(
+            scope,
+            "interact queue append is not reentrant",
+        ));
     };
-    let gameplay = v8::Number::new(scope, gameplay as f64);
-    let walk_releases = v8::Number::new(scope, api::script_contract::MAX_WALK_RELEASES as f64);
-    if !config.set_index(scope, 0, gameplay.into()).unwrap_or(false)
-        || !config
-            .set_index(scope, 1, walk_releases.into())
-            .unwrap_or(false)
+    let Ok(rows) = v8::Local::<v8::Array>::try_from(args.get(0)) else {
+        return Err(callback_v8::type_error(scope, "invalid interact queue"));
+    };
+    let Ok(items) = v8::Local::<v8::Array>::try_from(args.get(1)) else {
+        return Err(callback_v8::type_error(
+            scope,
+            "invalid interact append items",
+        ));
+    };
+    let item_count = items.length();
+    let captured_count = state.captured_lineages.borrow().len();
+    if !state.interact_gate_enabled
+        && captured_count
+            .checked_add(item_count as usize)
+            .is_none_or(|count| count > api::script_contract::MAX_INTERACT_REQS)
     {
         return Err(callback_v8::type_error(
             scope,
-            "interact gate configuration failed",
+            "interact lineage capacity exceeded",
         ));
     }
-    Ok(config.into())
-}
 
-fn capture_interact_lineage_callback<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    args: v8::FunctionCallbackArguments<'s>,
-    rv: v8::ReturnValue,
-) {
-    let result = if args.length() == 0 {
-        interact_gate_config(scope)
-    } else {
-        let Some(state) = state_for_scope(scope) else {
-            let error = callback_v8::type_error(scope, "lineage carrier is not installed");
-            callback_v8::finish(scope, rv, Err(error));
-            return;
-        };
-        let capacity = if state.interact_gate_enabled {
-            MAX_CAPTURED_INTERACT_ROWS
-        } else {
-            api::script_contract::MAX_INTERACT_REQS
-        };
-        capture_count(
-            scope,
-            args.get(0),
-            capacity,
-            "invalid interact lineage count",
-        )
-        .and_then(|count| {
-            capture_count(
+    let mut accepted_indices = [0_u32; MAX_CAPTURED_INTERACT_ROWS];
+    let mut accepted_count = 0;
+    let mut dropped = 0;
+    let mut gameplay_after = state.interact_gameplay_count.get();
+    let existing_release_ids = state.interact_walk_release_ids.borrow();
+    let mut new_release_ids: [Option<v8::Global<v8::Value>>;
+        api::script_contract::MAX_WALK_RELEASES] = std::array::from_fn(|_| None);
+    let mut new_release_count = 0;
+    let op_abort_walk = v8::Local::new(scope, &state.interact_abort_walk);
+
+    for index in 0..item_count {
+        let Some(item) = items.get_index(scope, index) else {
+            return Err(callback_v8::type_error(
                 scope,
-                args.get(1),
-                u32::MAX as usize,
-                "invalid interact overflow count",
-            )
-            .and_then(|dropped| {
-                capture_interact_lineage(scope, count, dropped)
-                    .map(|()| v8::undefined(scope).into())
-            })
-        })
+                "interact append item read failed",
+            ));
+        };
+        let is_release = if state.interact_gate_enabled {
+            let op = interaction_data_field(
+                scope,
+                item,
+                &state.interact_op_key,
+                &state.interact_descriptor_value_key,
+            )?;
+            op.strict_equals(op_abort_walk.into())
+        } else {
+            false
+        };
+        let keep = if is_release {
+            let id = interaction_data_field(
+                scope,
+                item,
+                &state.interact_request_id_key,
+                &state.interact_descriptor_value_key,
+            )?;
+            let duplicate = existing_release_ids
+                .iter()
+                .any(|existing| v8::Local::new(scope, existing).strict_equals(id))
+                || new_release_ids[..new_release_count]
+                    .iter()
+                    .flatten()
+                    .any(|existing| v8::Local::new(scope, existing).strict_equals(id));
+            if duplicate {
+                true
+            } else if existing_release_ids.len() + new_release_count
+                < api::script_contract::MAX_WALK_RELEASES
+            {
+                new_release_ids[new_release_count] = Some(v8::Global::new(scope, id));
+                new_release_count += 1;
+                true
+            } else {
+                false
+            }
+        } else if !state.interact_gate_enabled
+            || gameplay_after < api::script_contract::MAX_INTERACT_REQS
+        {
+            if state.interact_gate_enabled {
+                gameplay_after += 1;
+            }
+            true
+        } else {
+            false
+        };
+        if keep {
+            if accepted_count == accepted_indices.len() {
+                return Err(callback_v8::type_error(
+                    scope,
+                    "interact lineage capacity exceeded",
+                ));
+            }
+            accepted_indices[accepted_count] = index;
+            accepted_count += 1;
+        } else {
+            dropped += 1;
+        }
+    }
+    drop(existing_release_ids);
+
+    let original_len = rows.length();
+    let Ok(accepted_count_u32) = u32::try_from(accepted_count) else {
+        return Err(callback_v8::type_error(
+            scope,
+            "interact queue capacity exceeded",
+        ));
     };
-    callback_v8::finish(scope, rv, result);
+    let Some(new_len) = original_len.checked_add(accepted_count_u32) else {
+        return Err(callback_v8::type_error(
+            scope,
+            "interact queue capacity exceeded",
+        ));
+    };
+    let overflow_before = state.interact_overflow_dropped.get();
+    capture_interact_lineage(scope, accepted_count, dropped)?;
+
+    let append_result = callback_v8::catching(scope, |scope| {
+        for (offset, source_index) in accepted_indices[..accepted_count].iter().enumerate() {
+            let item = items.get_index(scope, *source_index)?;
+            if !rows.set_index(scope, original_len + offset as u32, item)? {
+                return Some(false);
+            }
+        }
+        Some(true)
+    });
+    match append_result {
+        Ok(true) => {}
+        Ok(false) => {
+            rollback_interact_rows(scope, &state, rows, original_len);
+            rollback_interact_capture(&state, captured_count, overflow_before);
+            return Err(callback_v8::type_error(
+                scope,
+                "interact queue append failed",
+            ));
+        }
+        Err(error) => {
+            rollback_interact_rows(scope, &state, rows, original_len);
+            rollback_interact_capture(&state, captured_count, overflow_before);
+            return Err(error);
+        }
+    }
+
+    state.interact_gameplay_count.set(gameplay_after);
+    let mut release_ids = state.interact_walk_release_ids.borrow_mut();
+    for id in new_release_ids[..new_release_count].iter_mut() {
+        release_ids.push(id.take().expect("staged walk release id"));
+    }
+    Ok(v8::Number::new(scope, f64::from(new_len)).into())
 }
 
-fn discard_interact_lineage_callback<'s>(
+fn push_interact_rows_callback<'s>(
     scope: &mut v8::HandleScope<'s>,
     args: v8::FunctionCallbackArguments<'s>,
     rv: v8::ReturnValue,
 ) {
-    let result = (|| {
-        let Some(state) = state_for_scope(scope) else {
-            return Err(callback_v8::type_error(
-                scope,
-                "lineage carrier is not installed",
-            ));
-        };
-        if state.active_entries.get() == 0 {
-            return Err(callback_v8::type_error(
-                scope,
-                "interact rollback outside guarded JS entry",
-            ));
-        }
-        let capacity = if state.interact_gate_enabled {
-            MAX_CAPTURED_INTERACT_ROWS
-        } else {
-            api::script_contract::MAX_INTERACT_REQS
-        };
-        let count = capture_count(
-            scope,
-            args.get(0),
-            capacity,
-            "invalid interact lineage count",
-        )?;
-        let dropped = capture_count(
-            scope,
-            args.get(1),
-            u32::MAX as usize,
-            "invalid interact overflow count",
-        )?;
-        let mut captured = state.captured_lineages.borrow_mut();
-        if count > captured.len() {
-            return Err(callback_v8::type_error(
-                scope,
-                "interact lineage rollback mismatch",
-            ));
-        }
-        let kept = captured.len() - count;
-        captured.truncate(kept);
-        drop(captured);
-        let pending_dropped = state.interact_overflow_dropped.get();
-        if dropped > pending_dropped {
-            return Err(callback_v8::type_error(
-                scope,
-                "interact overflow rollback mismatch",
-            ));
-        }
-        state
-            .interact_overflow_dropped
-            .set(pending_dropped - dropped);
-        Ok(v8::undefined(scope).into())
-    })();
+    let result = push_interact_rows(scope, args);
     callback_v8::finish(scope, rv, result);
 }
 
-/// Install the private callbacks used by the host's append-only interact queue.
+/// Install the private native append used by the host's bounded interact queue.
 pub(crate) fn install_interact_capture(runtime: &mut Runtime) -> Result<(), String> {
     callback_v8::install(
         runtime,
-        "__rs2b0t_capture_interact_lineage",
-        capture_interact_lineage_callback,
-    )?;
-    callback_v8::install(
-        runtime,
-        "__rs2b0t_discard_interact_lineage",
-        discard_interact_lineage_callback,
+        "__rs2b0t_push_interact_rows",
+        push_interact_rows_callback,
     )
+}
+
+fn reset_interact_admission(state: &CarrierState) {
+    state.interact_gameplay_count.set(0);
+    state.interact_walk_release_ids.borrow_mut().clear();
 }
 
 /// Move the bounded push-time metadata out with the corresponding batch bytes.
@@ -413,6 +545,7 @@ pub(crate) fn take_interact_lineages(
         &mut *state.captured_lineages.borrow_mut(),
         Vec::with_capacity(capacity),
     );
+    reset_interact_admission(&state);
     Ok(captured)
 }
 
@@ -428,6 +561,7 @@ pub(crate) fn clear_interact_lineages(runtime: &mut Runtime) {
     if let Some(state) = state_for_runtime(runtime) {
         state.captured_lineages.borrow_mut().clear();
         state.interact_overflow_dropped.set(0);
+        reset_interact_admission(&state);
     }
 }
 
@@ -546,4 +680,98 @@ pub(crate) fn load_modules(
     enter_root(runtime, |runtime| {
         runtime.load_modules(main, side).map(|_| ())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustyscript::RuntimeOptions;
+
+    fn gated_runtime() -> Runtime {
+        crate::load::platform::bootstrap_test_v8_platform();
+        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+        install(&mut runtime, true).unwrap();
+        enter_root(&mut runtime, install_interact_capture).unwrap();
+        runtime
+    }
+
+    // `rust-interact-gate-bypass` removes the native caps; this direct callback
+    // test must fail even though it does not install the JavaScript queue shim.
+    #[test]
+    fn rust_interact_gate_blocks_shim_bypass_mutant() {
+        let mut runtime = gated_runtime();
+        let script = format!(
+            r#"(() => {{
+                const rows = [];
+                const items = [];
+                for (let i = 0; i < {gameplay}; i++) items.push({{ op: 'walk-to', request_id: i }});
+                for (let i = 0; i < {releases}; i++) items.push({{ op: 'abort-walk', request_id: i }});
+                const length = globalThis.__rs2b0t_push_interact_rows(rows, items);
+                return {{
+                    length,
+                    gameplay: rows.filter(row => row.op !== 'abort-walk').length,
+                    releases: rows.filter(row => row.op === 'abort-walk').length,
+                }};
+            }})()"#,
+            gameplay = api::script_contract::MAX_INTERACT_REQS + 8,
+            releases = api::script_contract::MAX_WALK_RELEASES + 4,
+        );
+        let result: serde_json::Value = eval(&mut runtime, script).unwrap();
+        assert_eq!(
+            result["length"],
+            api::script_contract::MAX_INTERACT_REQS + api::script_contract::MAX_WALK_RELEASES
+        );
+        assert_eq!(result["gameplay"], api::script_contract::MAX_INTERACT_REQS);
+        assert_eq!(result["releases"], api::script_contract::MAX_WALK_RELEASES);
+        assert_eq!(
+            take_interact_lineages(&mut runtime).unwrap().len(),
+            api::script_contract::MAX_INTERACT_REQS + api::script_contract::MAX_WALK_RELEASES
+        );
+        assert_eq!(
+            take_interact_overflow(&mut runtime).unwrap(),
+            12,
+            "rows above both Rust-owned caps are counted as dropped"
+        );
+    }
+
+    #[test]
+    fn repeated_abort_walk_ids_do_not_consume_release_capacity() {
+        let mut runtime = gated_runtime();
+        let script = format!(
+            r#"(() => {{
+                const rows = [];
+                const items = [{{ op: 'abort-walk', request_id: 1 }}, {{ op: 'abort-walk', request_id: 1 }}];
+                for (let id = 2; id <= {last_allowed}; id++) items.push({{ op: 'abort-walk', request_id: id }});
+                const firstLength = globalThis.__rs2b0t_push_interact_rows(rows, items);
+                const nextLength = globalThis.__rs2b0t_push_interact_rows(
+                    rows,
+                    [{{ op: 'abort-walk', request_id: {over_cap} }}],
+                );
+                return {{
+                    firstLength,
+                    nextLength,
+                    repeated: rows.filter(row => row.request_id === 1).length,
+                    unique: new Set(rows.map(row => row.request_id)).size,
+                }};
+            }})()"#,
+            last_allowed = api::script_contract::MAX_WALK_RELEASES,
+            over_cap = api::script_contract::MAX_WALK_RELEASES + 1,
+        );
+        let result: serde_json::Value = eval(&mut runtime, script).unwrap();
+        assert_eq!(
+            result["firstLength"],
+            api::script_contract::MAX_WALK_RELEASES + 1
+        );
+        assert_eq!(
+            result["nextLength"],
+            api::script_contract::MAX_WALK_RELEASES + 1
+        );
+        assert_eq!(result["repeated"], 2);
+        assert_eq!(result["unique"], api::script_contract::MAX_WALK_RELEASES);
+        assert_eq!(
+            take_interact_lineages(&mut runtime).unwrap().len(),
+            api::script_contract::MAX_WALK_RELEASES + 1
+        );
+        assert_eq!(take_interact_overflow(&mut runtime).unwrap(), 1);
+    }
 }

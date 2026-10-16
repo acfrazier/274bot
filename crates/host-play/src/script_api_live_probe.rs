@@ -25,4 +25,14 @@ impl Play {
         slot.probe("globalThis.__script_api_read_again = true")?;
         Ok(())
     }
+
+    /// Queue one game row in the real isolate while the guardian owns the frame.
+    /// The seat must count and discard it before it can reach the host.
+    #[doc(hidden)]
+    pub fn script_api_live_queue_held_gameplay(&self, name: &str) -> Result<(), String> {
+        let cell = script_slot(&self.scripts, name).ok_or("script slot missing")?;
+        let slot = cell.lock().map_err(|_| "script slot lock poisoned")?;
+        slot.probe("__rs2b0t_seat_host().interact.push({op:'walk-to',x:0,z:0,level:0}); true")?;
+        Ok(())
+    }
 }

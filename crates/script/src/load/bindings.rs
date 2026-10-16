@@ -841,112 +841,20 @@ return Promise.resolve(r).then(() => null, (e) => String((e && e.message) || e))
 /// Bind one bounded append-only host queue before any user module runs.
 /// Compat V1 direct pushes and V2 API requests share the same CPED capture.
 const INTERACT_CAPTURE_SCRIPT: &str = r#"
-const captureInteractLineage = globalThis.__rs2b0t_capture_interact_lineage;
-const discardInteractLineage = globalThis.__rs2b0t_discard_interact_lineage;
-const interactGate = captureInteractLineage();
-delete globalThis.__rs2b0t_capture_interact_lineage;
-delete globalThis.__rs2b0t_discard_interact_lineage;
-const maxGameplayRows = interactGate[0];
-const maxWalkReleases = interactGate[1];
-const interactPush = Array.prototype.push;
-const interactApply = Reflect.apply;
+const pushInteractRows = globalThis.__rs2b0t_push_interact_rows;
+delete globalThis.__rs2b0t_push_interact_rows;
 const interactGet = Reflect.get;
-const interactGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const interactSetPrototypeOf = Reflect.setPrototypeOf;
 const interactIsArray = Array.isArray;
 const interactArrayPrototype = Array.prototype;
 const InteractProxy = Proxy;
 const interactTargets = new WeakMap();
-function interactionDataField(value, key) {
-  if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
-    return undefined;
-  }
-  try {
-    const descriptor = interactGetOwnPropertyDescriptor(value, key);
-    return descriptor && 'value' in descriptor ? descriptor.value : undefined;
-  } catch (_) {
-    return undefined;
-  }
-}
-function includesValue(values, value) {
-  for (let i = 0; i < values.length; i++) {
-    if (values[i] === value) return true;
-  }
-  return false;
-}
 function instrumentInteractQueue(rows) {
   if (!interactIsArray(rows)) return rows;
   if (interactTargets.has(rows)) return rows;
   if (!interactSetPrototypeOf(rows, null)) throw new TypeError('interact queue setup failed');
-  let pushActive = false;
-  let admittedGameplay = 0;
-  let walkReleaseCount = 0;
-  let walkReleaseIds = [];
   const append = function(...items) {
-    if (items.length === 0) return interactApply(interactPush, rows, items);
-    if (pushActive) throw new TypeError('interact queue append is not reentrant');
-    pushActive = true;
-    let accepted = items;
-    let dropped = 0;
-    let gameplayAfter = admittedGameplay;
-    let releasesAfter = walkReleaseCount;
-    let newReleaseIds = null;
-    if (maxGameplayRows > 0) {
-      let filtered = null;
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        let keep = true;
-        if (interactionDataField(item, 'op') === 'abort-walk') {
-          const id = interactionDataField(item, 'request_id');
-          const duplicate = includesValue(walkReleaseIds, id)
-            || (newReleaseIds !== null && includesValue(newReleaseIds, id));
-          if (!duplicate) {
-            if (releasesAfter < maxWalkReleases) {
-              releasesAfter += 1;
-              if (newReleaseIds === null) newReleaseIds = [];
-              newReleaseIds[newReleaseIds.length] = id;
-            } else {
-              keep = false;
-            }
-          }
-        } else if (gameplayAfter < maxGameplayRows) {
-          gameplayAfter += 1;
-        } else {
-          keep = false;
-        }
-        if (!keep) {
-          dropped += 1;
-          if (filtered === null) {
-            filtered = [];
-            for (let j = 0; j < i; j++) filtered[filtered.length] = items[j];
-          }
-        } else if (filtered !== null) {
-          filtered[filtered.length] = item;
-        }
-      }
-      if (filtered !== null) accepted = filtered;
-    }
-    let captured = false;
-    try {
-      captureInteractLineage(accepted.length, dropped);
-      captured = true;
-      const result = accepted.length === 0
-        ? rows.length
-        : interactApply(interactPush, rows, accepted);
-      admittedGameplay = gameplayAfter;
-      walkReleaseCount = releasesAfter;
-      if (newReleaseIds !== null) {
-        for (let i = 0; i < newReleaseIds.length; i++) {
-          walkReleaseIds[walkReleaseIds.length] = newReleaseIds[i];
-        }
-      }
-      return result;
-    } catch (error) {
-      if (captured) discardInteractLineage(accepted.length, dropped);
-      throw error;
-    } finally {
-      pushActive = false;
-    }
+    return pushInteractRows(rows, items);
   };
   const proxy = new InteractProxy(rows, {
     get(target, property, receiver) {

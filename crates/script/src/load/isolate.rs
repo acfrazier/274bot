@@ -353,20 +353,19 @@ pub struct LoadIsolate {
     /// Interact requests forwarded by the tick thread (the shim
     /// `Bank`/`Banking` queue), drained by the host like logs.
     interacts: Mutex<Vec<QueuedInteract>>,
+    /// Watchdog lifecycle facts are separate from gameplay interactions.
+    lifecycle: Mutex<Vec<crate::shim::InteractReq>>,
     /// Ordered typed seat batches, each retaining its source generation and
     /// one push-time walk outcome stamp for the physical wire batch.
     seat_batches: Mutex<VecDeque<QueuedSeatBatch>>,
-    lifecycle: Mutex<Vec<crate::shim::InteractReq>>,
-    /// Script walk requests (walk, walk-near, abort-walk) a reconnect kept
-    /// from the dropped connection before any host dispatch, oldest first,
-    /// for the relogged session ([`LoadIsolate::take_held_walks`]).
-    held_walks: Mutex<Vec<QueuedInteract>>,
-    /// A reconnect is holding the script's work: walk requests of batches
-    /// from the dropped connection are kept, not discarded.
-    holding_walks: AtomicBool,
-    /// The work generation of a reconnect reset the isolate thread has not
-    /// processed yet: a tick of the dropped connection may still be running
-    /// and emit a walk, so the held walks are not handed out before then.
+    /// AbortWalk release rows from the dropped connection, held until the
+    /// isolate has processed the reconnect reset and then drained normally.
+    held_releases: Mutex<Vec<QueuedInteract>>,
+    /// A reconnect holds release rows from stale generation batches until
+    /// the reset fence is processed; gameplay rows are discarded.
+    holding_releases: AtomicBool,
+    /// The generation of a reconnect reset the isolate thread has not
+    /// processed yet, so stale release rows are not exposed before then.
     held_fence: Mutex<Option<u64>>,
     /// The latest paint frame the tick thread forwarded (the
     /// [`crate::shim::ScriptPaint`] the recorder built after each tick),
@@ -614,8 +613,8 @@ impl LoadIsolate {
             interacts: Mutex::new(Vec::new()),
             seat_batches: Mutex::new(VecDeque::new()),
             lifecycle: Mutex::new(Vec::new()),
-            held_walks: Mutex::new(Vec::new()),
-            holding_walks: AtomicBool::new(false),
+            held_releases: Mutex::new(Vec::new()),
+            holding_releases: AtomicBool::new(false),
             held_fence: Mutex::new(None),
             paint: Mutex::new(None),
             ignored_randoms: Mutex::new(Vec::new()),
@@ -952,12 +951,10 @@ impl LoadIsolate {
         self.arm_active_execution_deadline(teardown::ExecutionInterrupt::Pause);
         self.send(IsolateCmd::Pause);
     }
-    /// Active walking family/composer ownership, excluding reconnect carry.
+    /// Active walking family/composer ownership. Reconnects do not carry
+    /// gameplay requests from the previous session.
     pub fn live_walking_operation(&self) -> bool {
-        !self
-            .holding_walks
-            .load(std::sync::atomic::Ordering::Acquire)
-            && self.walking_ownership.live()
+        self.walking_ownership.live()
     }
 
     /// Latch manual movement before a queued Pause can resume parked machine rows.
@@ -1148,11 +1145,19 @@ impl LoadIsolate {
         self.teardown.lock().unwrap().test_hook_timeout = Some(timeout);
     }
 
-    /// Drain rows with the `walk_outcome_seq` visible when the isolate enqueued them.
-    /// Production dispatch must use this API; the raw drain is for tests and diagnostics.
+    /// Drain current-generation interactions and any AbortWalk releases
+    /// retained across a kept reconnect. Prior-session gameplay is discarded.
     pub fn drain_interacts_stamped(&self) -> Vec<QueuedInteract> {
         self.pump_logs();
-        std::mem::take(&mut *self.interacts.lock().unwrap())
+        let mut interacts = std::mem::take(&mut *self.interacts.lock().unwrap());
+        if self.held_fence.lock().unwrap().is_none() {
+            self.holding_releases
+                .store(false, std::sync::atomic::Ordering::Release);
+            let mut releases = std::mem::take(&mut *self.held_releases.lock().unwrap());
+            releases.append(&mut interacts);
+            interacts = releases;
+        }
+        interacts
     }
 
     /// Current private session-work generation. It is independent of the
@@ -1169,6 +1174,12 @@ impl LoadIsolate {
         self.seat_batches.lock().unwrap().drain(..).collect()
     }
 
+    #[cfg(feature = "test-hooks")]
+    pub fn seat_batch_backlog(&self) -> usize {
+        self.pump_logs();
+        self.seat_batches.lock().unwrap().len()
+    }
+
     /// Restore an unconsumed batch prefix ahead of anything that arrived
     /// afterward. Generation and per-batch walk stamps are never rewritten.
     pub(crate) fn restore_seat_batches(&self, mut drained: Vec<QueuedSeatBatch>) {
@@ -1182,35 +1193,6 @@ impl LoadIsolate {
     /// be used for production walking dispatch.
     pub fn drain_interacts(&self) -> Vec<crate::shim::InteractReq> {
         self.drain_interacts_stamped()
-            .into_iter()
-            .map(|queued| queued.req)
-            .collect()
-    }
-
-    /// The script walk requests a reconnect kept from the dropped
-    /// connection (never dispatched there), once, oldest first: the relogged
-    /// session dispatches them ahead of the script's new requests, so a walk
-    /// the script emitted just before the drop still goes out and its held
-    /// wait settles on it (frozen resumes the walker itself,
-    /// `AutoRelogin.ts:159-163`).
-    ///
-    /// Empty (and still holding) until the isolate thread has processed the
-    /// reconnect's reset: a tick of the dropped connection that was running
-    /// then finishes first, and its walk requests join the held ones.
-    pub fn take_held_walks_stamped(&self) -> Vec<QueuedInteract> {
-        self.pump_logs();
-        if self.held_fence.lock().unwrap().is_some() {
-            return Vec::new();
-        }
-        self.holding_walks
-            .store(false, std::sync::atomic::Ordering::Release);
-        std::mem::take(&mut *self.held_walks.lock().unwrap())
-    }
-
-    /// Diagnostics/tests only: this drops each held row's enqueue stamp. Production
-    /// reconnect dispatch MUST use `take_held_walks_stamped`.
-    pub fn take_held_walks(&self) -> Vec<crate::shim::InteractReq> {
-        self.take_held_walks_stamped()
             .into_iter()
             .map(|queued| queued.req)
             .collect()
@@ -1268,13 +1250,11 @@ impl LoadIsolate {
         self.reset_session(false, execution)
     }
 
-    /// The connection dropped unexpectedly: discard the connection's work
-    /// like [`LoadIsolate::reset_session_work`], but hold the script's own —
-    /// every parked await, machine row and task runtime, their clocks and the
-    /// Execution wait clock stopped — until the next logged-in session's
-    /// first tick. Frozen AutoRelogin pauses the whole script across a
-    /// disconnect and resumes it on the new session's scene 2
-    /// (`AutoRelogin.ts:180-190`, `159-163`; `ScriptContext.ts:92-117`).
+    /// The connection dropped unexpectedly: discard the connection's gameplay
+    /// work like [`LoadIsolate::reset_session_work`], but hold the script's
+    /// parked awaits, machine rows, task runtimes and clocks until the next
+    /// logged-in session's first tick. AbortWalk releases remain deliverable;
+    /// gameplay requests from the dropped session are never replayed.
     pub fn reconnect_session_work(&self, execution: Option<api::identity::ExecutionId>) -> u64 {
         self.reset_session(true, execution)
     }
@@ -1309,8 +1289,8 @@ impl LoadIsolate {
         // No game ticks arrive while disconnected, so preserve the active
         // execution's existing runaway horizon before clearing `in_flight`.
         self.arm_active_execution_deadline(teardown::ExecutionInterrupt::SessionReset);
-        // Fold what the tick thread already sent under the ended generation,
-        // so a reconnect can keep its undispatched walk requests.
+        // Fold output sent under the ended generation: a kept reconnect
+        // retains AbortWalk releases only; gameplay rows are discarded.
         self.pump_logs();
         let had_active_error = self.tick_outcome_error_generation.lock().unwrap().is_some();
         let generation = {
@@ -1325,12 +1305,12 @@ impl LoadIsolate {
                 std::sync::atomic::Ordering::Release,
             );
             {
-                let mut held = self.held_walks.lock().unwrap();
+                let mut held = self.held_releases.lock().unwrap();
                 if keep_work {
-                    hold_walk_requests(&mut held, interacts.drain(..));
+                    hold_walk_releases(&mut held, interacts.drain(..));
                     for batch in seat_batches.drain(..) {
                         let observed_walk_outcome_seq = batch.observed_walk_outcome_seq;
-                        hold_walk_requests(
+                        hold_walk_releases(
                             &mut held,
                             batch.batch.reqs.into_iter().map(move |row| QueuedInteract {
                                 req: row.request,
@@ -1343,7 +1323,7 @@ impl LoadIsolate {
                     seat_batches.clear();
                 }
             }
-            self.holding_walks
+            self.holding_releases
                 .store(keep_work, std::sync::atomic::Ordering::Release);
             *self.held_fence.lock().unwrap() = keep_work.then_some(generation);
             interacts.clear();
@@ -1623,15 +1603,15 @@ impl LoadIsolate {
                             .work_generation
                             .load(std::sync::atomic::Ordering::Acquire)
                     {
-                        // A tick that ran across a reconnect's reset: its
-                        // walk requests never reached the host.
+                        // Prior-generation gameplay never reaches the host;
+                        // only an AbortWalk release is retained for the relog.
                         if self
-                            .holding_walks
+                            .holding_releases
                             .load(std::sync::atomic::Ordering::Acquire)
                         {
                             if let Ok(reqs) = crate::isolate_fb::decode_interact_batch(&bytes) {
-                                hold_walk_requests(
-                                    &mut lock_after_isolate_failure(&self.held_walks),
+                                hold_walk_releases(
+                                    &mut lock_after_isolate_failure(&self.held_releases),
                                     reqs.into_iter().map(|req| QueuedInteract {
                                         req,
                                         observed_walk_outcome_seq,
@@ -1672,13 +1652,13 @@ impl LoadIsolate {
                             .load(std::sync::atomic::Ordering::Acquire)
                     {
                         if self
-                            .holding_walks
+                            .holding_releases
                             .load(std::sync::atomic::Ordering::Acquire)
                         {
                             if let Ok(batch) = crate::isolate_fb::decode_seat_interact_batch(&bytes)
                             {
-                                hold_walk_requests(
-                                    &mut lock_after_isolate_failure(&self.held_walks),
+                                hold_walk_releases(
+                                    &mut lock_after_isolate_failure(&self.held_releases),
                                     batch.reqs.into_iter().map(|row| QueuedInteract {
                                         req: row.request,
                                         observed_walk_outcome_seq,
@@ -1822,32 +1802,66 @@ impl Drop for LoadIsolate {
     }
 }
 
-/// Walk requests a reconnect keeps; `held` never grows past this.
-const HELD_WALKS: usize = 8;
+/// AbortWalk releases a kept reconnect must drain to the host. Gameplay
+/// requests from the prior generation are never carried into the new session.
+const HELD_RELEASES: usize = api::script_contract::MAX_WALK_RELEASES;
 
-/// Keep the walk-control requests of `reqs` (walk, walk-near, abort-walk)
-/// in order, only the newest [`HELD_WALKS`]: the oldest row goes before a
-/// row is pushed at the cap.
-fn hold_walk_requests(
+fn hold_walk_releases(
     held: &mut Vec<QueuedInteract>,
     reqs: impl IntoIterator<Item = QueuedInteract>,
 ) {
     for queued in reqs {
-        if !matches!(
-            &queued.req,
-            crate::shim::InteractReq::Walk { .. }
-                | crate::shim::InteractReq::WalkNear { .. }
-                | crate::shim::InteractReq::AbortWalk { .. }
-        ) {
+        let crate::shim::InteractReq::AbortWalk { request_id } = &queued.req else {
+            continue;
+        };
+        if held.iter().any(|held| {
+            matches!(
+                &held.req,
+                crate::shim::InteractReq::AbortWalk { request_id: held_id }
+                    if held_id == request_id
+            )
+        }) {
             continue;
         }
-        if held.len() == HELD_WALKS {
-            held.remove(0);
+        if held.len() < HELD_RELEASES {
+            held.push(queued);
         }
-        held.push(queued);
     }
 }
 
 #[cfg(test)]
 #[path = "isolate_tests.rs"]
 mod tests;
+#[cfg(test)]
+mod kept_reconnect_release_tests {
+    use super::*;
+    use crate::shim::InteractReq;
+
+    #[test]
+    fn stale_gameplay_cannot_evict_a_kept_abort_walk_release() {
+        let release = QueuedInteract {
+            req: InteractReq::AbortWalk { request_id: 42 },
+            observed_walk_outcome_seq: 7,
+        };
+        let mut held = Vec::new();
+        hold_walk_releases(&mut held, [release.clone()]);
+        let stale_gameplay = (0..HELD_RELEASES * 2).map(|id| QueuedInteract {
+            req: InteractReq::Walk {
+                x: id as i32,
+                z: id as i32,
+                level: 0,
+                allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
+                request_id: id as u64 + 1,
+                avoid: Vec::new(),
+                cross: Vec::new(),
+            },
+            observed_walk_outcome_seq: 3,
+        });
+
+        hold_walk_releases(&mut held, stale_gameplay);
+
+        assert_eq!(held, vec![release]);
+    }
+}

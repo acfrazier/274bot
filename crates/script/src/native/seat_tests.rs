@@ -236,7 +236,7 @@ fn seat_completion_preserves_pinned_rows_but_late_push_becomes_root() {
 }
 
 #[test]
-fn seat_root_gameplay_queued_during_foreground_stays_blocked_after_terminal() {
+fn seat_root_gameplay_queued_during_foreground_uses_dispatch_time() {
     let mut seat = GameplaySeat::<u32>::new(run());
     start(&mut seat, 1, None, NativeKind::Gather);
     seat.push(10, EmissionClass::Gameplay, EmissionSource::Root, None)
@@ -252,14 +252,18 @@ fn seat_root_gameplay_queued_during_foreground_stays_blocked_after_terminal() {
     seat.take();
     let mut delivered = Vec::new();
     seat.dispatch_into(&mut delivered);
-    assert_eq!(delivered, [11], "the accepted owner lease survives Done");
-    assert_eq!(seat.dropped(), 1, "the old root cannot leak after Done");
+    assert_eq!(
+        delivered,
+        [10, 11],
+        "dispatch sees no foreground after Done"
+    );
+    assert_eq!(seat.dropped(), 0);
 
     seat.push(12, EmissionClass::Gameplay, EmissionSource::Root, None)
         .unwrap();
     seat.take();
     seat.dispatch_into(&mut delivered);
-    assert_eq!(delivered, [11, 12], "a new root is unowned after Done");
+    assert_eq!(delivered, [10, 11, 12], "later roots remain unowned");
 }
 
 #[test]
@@ -485,10 +489,20 @@ fn seat_stop_is_silent_reset_clears_generation_and_host_actions_skip_seat() {
 fn seat_walk_drive_waits_for_earlier_reserved_release() {
     use api::script_contract::Release;
     let mut seat = GameplaySeat::<u32>::new(run());
+    let mut delivered = Vec::new();
     for value in 1..=MAX_WALK_RELEASES as u64 {
-        start(&mut seat, value, None, NativeKind::Walk);
-        seat.complete(id(value), false).unwrap();
+        assert!(seat.reserve_walk(id(value)));
+        seat.push_walk(value as u32, EmissionSource::Root, id(value))
+            .unwrap();
+        seat.take();
+        seat.dispatch_into(&mut delivered);
     }
+    assert_eq!(delivered.len(), MAX_WALK_RELEASES);
+    assert_eq!(
+        seat.reserved_releases(),
+        MAX_WALK_RELEASES,
+        "armed walks without terminals retain every release slot"
+    );
     assert_eq!(
         seat.start(stamp(17, None), NativeKind::Walk, false)
             .unwrap(),
@@ -509,9 +523,10 @@ fn seat_walk_drive_waits_for_earlier_reserved_release() {
     )
     .unwrap();
     seat.take();
-    let mut delivered = Vec::new();
     seat.dispatch_into(&mut delivered);
-    assert_eq!(delivered, [1]);
+    assert_eq!(delivered.len(), MAX_WALK_RELEASES + 1);
+    assert_eq!(delivered.last(), Some(&1), "duplicate AbortWalk coalesces");
+    assert_eq!(seat.reserved_releases(), MAX_WALK_RELEASES - 1);
     assert_eq!(
         seat.start(stamp(17, None), NativeKind::Walk, false)
             .unwrap(),
@@ -585,6 +600,45 @@ fn seat_wire_walk_row_waits_for_release_without_losing_its_payload() {
     seat.take();
     seat.dispatch_into(&mut delivered);
     assert_eq!(delivered, [1, 17]);
+}
+
+#[test]
+fn abandoned_native_walks_free_armed_slots_without_displacing_queued_releases() {
+    use api::script_contract::Release;
+    let mut seat = GameplaySeat::<u32>::new(run());
+    let native = |raw| RequestId::from_raw(RequestId::HOST_FIRST + raw).unwrap();
+    let mut delivered = Vec::new();
+    for raw in 1..=MAX_WALK_RELEASES as u64 + 1 {
+        seat.push_walk(raw as u32, EmissionSource::Root, native(raw))
+            .unwrap();
+        seat.take();
+        seat.dispatch_into(&mut delivered);
+        assert_eq!(delivered.last(), Some(&(raw as u32)));
+        seat.retire_inactive_native_walks(None);
+        assert_eq!(seat.reserved_releases(), 0);
+    }
+
+    seat.push_walk(99, EmissionSource::Root, native(99))
+        .unwrap();
+    seat.take();
+    seat.dispatch_into(&mut delivered);
+    seat.push(
+        100,
+        EmissionClass::Release,
+        EmissionSource::Root,
+        Some(Release::AbortWalk(native(99))),
+    )
+    .unwrap();
+    seat.retire_inactive_native_walks(None);
+    assert_eq!(
+        seat.reserved_releases(),
+        1,
+        "queued release retains custody"
+    );
+    seat.take();
+    seat.dispatch_into(&mut delivered);
+    assert_eq!(delivered.last(), Some(&100));
+    assert_eq!(seat.reserved_releases(), 0);
 }
 
 #[test]

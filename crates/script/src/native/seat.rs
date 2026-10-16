@@ -134,9 +134,6 @@ struct SeatRow<R> {
     pending_owner: Option<RequestId>,
     proof: EmissionProof,
     boundary: AuthorityBoundary,
-    /// Push-time gameplay foreground; a root row cannot gain authority
-    /// merely because that foreground ends before Take/Dispatch.
-    foreground_at_push: Option<RequestId>,
     release: Option<api::script_contract::Release>,
     reserved_policy: bool,
     walk: Option<RequestId>,
@@ -334,6 +331,34 @@ impl<R> GameplaySeat<R> {
             None => true,
             Some(armed) => armed.id == id,
         })
+    }
+
+    /// Retire an armed physical walk after its matching host terminal. A
+    /// queued AbortWalk keeps custody until that release is delivered.
+    pub fn walk_terminal(&mut self, id: RequestId) {
+        if let Some(slot) = self.walk_releases.iter_mut().find(|slot| {
+            slot.is_some_and(|reserved| {
+                reserved.id == id && reserved.state == WalkReleaseState::Armed
+            })
+        }) {
+            *slot = None;
+        }
+    }
+
+    /// A native action may settle by its own arrival observation before the
+    /// nav follower publishes a terminal. Once its owner no longer grants
+    /// that walk, no release is owed. A queued AbortWalk remains untouched.
+    pub(crate) fn retire_inactive_native_walks(&mut self, active: Option<RequestId>) {
+        for slot in &mut self.walk_releases {
+            if slot.is_some_and(|reserved| {
+                reserved.state == WalkReleaseState::Armed
+                    && reserved.id.get() > RequestId::HOST_FIRST
+                    && reserved.id.get() < (1 << 63)
+                    && Some(reserved.id) != active
+            }) {
+                *slot = None;
+            }
+        }
     }
 
     pub fn foreground(&self) -> Option<RequestId> {
@@ -674,6 +699,7 @@ impl<R> GameplaySeat<R> {
             return Ok(());
         };
         let parent = self.live[at].parent;
+        let kind = self.live[at].kind;
         let session = self.captured_session(id);
         if revoke {
             self.revoke_leases(id);
@@ -697,7 +723,9 @@ impl<R> GameplaySeat<R> {
                 }
             }
         }
-        self.publish_live(id, outcome, parent, session, revoke)
+        self.publish_live(id, outcome, parent, session, revoke)?;
+        self.retire_walk_terminal(id, kind);
+        Ok(())
     }
 
     fn subtree_leaf_first(
@@ -728,6 +756,7 @@ impl<R> GameplaySeat<R> {
                 .position(|entry| entry.id == child)
                 .expect("descendant still live");
             let session = self.captured_session(child);
+            let kind = self.live[at].kind;
             let parent = self.live.remove(at).parent;
             self.clear_request_state(child);
             self.revoke_leases(child);
@@ -742,6 +771,7 @@ impl<R> GameplaySeat<R> {
                 session,
                 true,
             )?;
+            self.retire_walk_terminal(child, kind);
         }
         Ok(())
     }
@@ -774,6 +804,7 @@ impl<R> GameplaySeat<R> {
                 .iter()
                 .position(|entry| entry.id == child)
                 .expect("walk descendant live");
+            let kind = self.live[at].kind;
             let session = self.captured_session(child);
             let parent = self.live.remove(at).parent;
             self.clear_request_state(child);
@@ -785,6 +816,7 @@ impl<R> GameplaySeat<R> {
                 session,
                 true,
             )?;
+            self.retire_walk_terminal(child, kind);
         }
         self.complete_entry(id, SeatTerminal::Done, true)
     }
@@ -924,6 +956,19 @@ impl<R> GameplaySeat<R> {
             .iter_mut()
             .find(|slot| slot.is_some_and(|(owner, _)| owner == id))
         {
+            *slot = None;
+        }
+    }
+
+    fn retire_walk_terminal(&mut self, id: RequestId, kind: NativeKind) {
+        if kind != NativeKind::Walk {
+            return;
+        }
+        if let Some(slot) = self.walk_releases.iter_mut().find(|slot| {
+            slot.is_some_and(|reserved| {
+                reserved.id == id && reserved.state != WalkReleaseState::Queued
+            })
+        }) {
             *slot = None;
         }
     }
@@ -1376,11 +1421,6 @@ impl<R> GameplaySeat<R> {
                 self.dropped += 1;
             }
         }
-        let foreground_at_push = if class == EmissionClass::Gameplay {
-            self.foreground()
-        } else {
-            None
-        };
         self.queued.push_back(SeatRow {
             payload,
             class,
@@ -1393,7 +1433,6 @@ impl<R> GameplaySeat<R> {
             },
             proof,
             boundary,
-            foreground_at_push,
             release,
             reserved_policy,
             walk,
@@ -1471,17 +1510,7 @@ impl<R> GameplaySeat<R> {
         let mut moved = 0;
         while moved < MAX_ENCODED_GAMEPLAY && !self.queued.is_empty() {
             if let Some(id) = self.queued[0].walk {
-                let row = &self.queued[0];
-                let decision = dispatch_disposition(
-                    row.class,
-                    row.authority.as_ref().and_then(CapturedAuthority::session),
-                    self.foreground().or(row.foreground_at_push),
-                    row.witness,
-                    row.proof,
-                    row.boundary,
-                    false,
-                );
-                if decision == DispatchDisposition::Dispatch && !self.reserve_walk(id) {
+                if !self.reserve_walk(id) {
                     break;
                 }
             }
@@ -1509,7 +1538,7 @@ impl<R> GameplaySeat<R> {
             let decision = dispatch_disposition(
                 row.class,
                 row.authority.as_ref().and_then(CapturedAuthority::session),
-                foreground.or(row.foreground_at_push),
+                foreground,
                 row.witness,
                 row.proof,
                 row.boundary,

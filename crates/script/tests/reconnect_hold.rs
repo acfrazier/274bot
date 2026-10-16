@@ -1,12 +1,7 @@
-//! A reconnect the host relogs through holds the whole script. Frozen
-//! AutoRelogin pauses the script on the disconnect and resumes it on the new
-//! session's scene 2 (`AutoRelogin.ts:180-190`, `159-163`), with every parked
-//! waiter shifted by the paused span (`ScriptContext.ts:101-117`): the chain
-//! the script had in flight carries on as one, and nothing else starts.
-//!
-//! The host re-arms the script walk it was following under the same request
-//! id (host-play `hold_script_nav`); here the isolate side is driven alone,
-//! so arrival settles the held walk.
+//! A kept reconnect holds the script and its parked waits, but it discards
+//! gameplay requests from the previous session. The next session's own ticks
+//! may produce fresh interactions; stale walks are never replayed outside
+//! the seat.
 
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -94,7 +89,7 @@ export default class T extends LoopingBot {
     );
     assert!(
         walks(&iso.drain_interacts()).is_empty(),
-        "the held walk issues no second walk (the host re-arms the first)"
+        "the old-session walk is not emitted again"
     );
 
     snap.tick = next;
@@ -408,45 +403,74 @@ export default class T extends LoopingBot {
 }
 "#;
 
-/// The reviewer's probe: the tick emits the walk and the connection drops
-/// before the host drains it. The walk never reached the old session; the
-/// reconnect keeps it for the relogged one, once, and the held wait
-/// settles on it.
+/// The tick emits a walk and the connection drops before the host drains it.
+/// The prior-session gameplay request is discarded on the relog.
 #[test]
-fn a_walk_emitted_but_not_drained_before_the_drop_is_kept_for_the_relog() {
+fn an_undrained_walk_is_discarded_on_kept_reconnect() {
     let iso = LoadIsolate::spawn(HELD_WALK.into(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = ingame_snapshot();
     snap.here = Some(tile(3222, 3222));
     tick(&iso, &snap);
     iso.reconnect_session_work(None);
-    let next = relog(&iso, &mut snap, 2, tile(3240, 3240));
-    assert!(walks(&iso.drain_interacts()).is_empty(), "no second walk");
-    let held = iso.take_held_walks();
+    let _next = relog(&iso, &mut snap, 2, tile(3240, 3240));
+    let after_relog = iso.drain_interacts();
     assert!(
-        matches!(
-            walks(&held).as_slice(),
-            [InteractReq::WalkNear { x: 3300, z: 3300, request_id, .. }] if *request_id != 0
-        ),
-        "the undispatched walk is held: {held:?}"
-    );
-    assert!(iso.take_held_walks().is_empty(), "once");
-
-    snap.tick = next;
-    snap.here = Some(tile(3300, 3301));
-    tick(&iso, &snap);
-    assert_eq!(
-        value(&iso, "globalThis.__ok"),
-        true,
-        "the held walk arrives"
+        walks(&after_relog).is_empty(),
+        "the undrained old-session walk is discarded: {after_relog:?}"
     );
     iso.join();
 }
 
-/// The reset races the tick that walks: whether that tick finished before
-/// the reset, ran across it (its batch reaches the host stale) or never
-/// ran, exactly one walk goes out after the relog.
+/// A stale gameplay walk is discarded, but its AbortWalk release is folded
+/// into the ordinary interaction drain so the host can stop its old follow.
 #[test]
-fn a_walk_racing_the_drop_goes_out_exactly_once_after_the_relog() {
+fn kept_reconnect_discards_stale_walk_and_drains_its_abort_release() {
+    let src = r#"
+import { EventSignal } from '../../api/execution/EventSignal.js';
+import { Traversal } from '../../api/walking/Traversal.js';
+export default class T extends LoopingBot {
+    constructor() {
+        super();
+        globalThis.__ticks = 0;
+        this.on('tick', () => { globalThis.__ticks += 1; });
+        EventSignal.setInterrupt(() => globalThis.__ticks >= 2);
+    }
+    async loop() {
+        if (globalThis.__ran) return;
+        globalThis.__ran = true;
+        globalThis.__result = await Traversal.walkTo(
+            { x: 3300, z: 3300, level: 0 },
+            { radius: 1, timeoutMs: 300000 },
+        );
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = ingame_snapshot();
+    snap.here = Some(tile(3222, 3222));
+    tick(&iso, &snap);
+    snap.tick = 2;
+    tick(&iso, &snap);
+    assert_eq!(value(&iso, "globalThis.__result"), false);
+
+    iso.reconnect_session_work(None);
+    relog(&iso, &mut snap, 3, tile(3240, 3240));
+    let after_relog = iso.drain_interacts();
+    assert!(
+        matches!(
+            after_relog.as_slice(),
+            [InteractReq::AbortWalk { request_id }] if *request_id != 0
+        ),
+        "the prior-session walk is gone but its release reaches the normal host drain: \
+         {after_relog:?}"
+    );
+    iso.join();
+}
+
+/// The first session's tick is still queued when a new session begins. The
+/// bot's next tick is a fresh request and remains eligible for dispatch.
+#[test]
+fn a_fresh_walk_emitted_after_relog_is_admitted() {
     for _ in 0..8 {
         let iso = LoadIsolate::spawn(HELD_WALK.into(), LoadShape::CompatClass, vec![]).unwrap();
         let mut snap = ingame_snapshot();
@@ -455,9 +479,15 @@ fn a_walk_racing_the_drop_goes_out_exactly_once_after_the_relog() {
         iso.on_game_tick(1);
         iso.reconnect_session_work(None);
         relog(&iso, &mut snap, 2, tile(3240, 3240));
-        let mut out = iso.take_held_walks();
-        out.extend(iso.drain_interacts());
-        assert_eq!(walks(&out).len(), 1, "one walk: {out:?}");
+        let after_relog = iso.drain_interacts();
+        assert!(
+            matches!(
+                walks(&after_relog).as_slice(),
+                [InteractReq::WalkNear { x: 3300, z: 3300, request_id, .. }]
+                    if *request_id != 0
+            ),
+            "a current-session walk remains admitted: {after_relog:?}"
+        );
         iso.join();
     }
 }
@@ -506,13 +536,10 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-/// The reviewer's ordering: the connection drops while a tick of the old
-/// connection is still in JS, and the relogged session's first dispatch
-/// asks for the held walks before that tick has emitted its walk. The
-/// handover waits for the isolate to finish the old tick, so the walk it
-/// emits late still goes out, once.
+/// A tick that emits a walk after the reset has advanced the work generation
+/// is stale too: its walk is discarded rather than replayed on the new session.
 #[test]
-fn a_walk_emitted_late_by_a_tick_crossing_the_drop_still_goes_out_once() {
+fn a_walk_emitted_late_by_a_tick_crossing_the_drop_is_discarded() {
     let src = r#"
 import { Traversal } from '../../api/walking/Traversal.js';
 export default class T extends LoopingBot {
@@ -540,24 +567,17 @@ export default class T extends LoopingBot {
     iso.on_game_tick(2);
     wait_for_execution(&iso, "old-session tick never entered execution");
     iso.reconnect_session_work(None);
-    // The relog dispatch wins the race against the old tick.
-    let mut out = iso.take_held_walks();
-    assert!(walks(&out).is_empty(), "the old tick has not walked yet");
-
-    let next = relog(&iso, &mut snap, 3, tile(3240, 3240));
-    out.extend(iso.take_held_walks());
-    out.extend(iso.drain_interacts());
+    let before_tick_finishes = iso.drain_interacts();
     assert!(
-        matches!(
-            walks(&out).as_slice(),
-            [InteractReq::WalkNear { x: 3300, z: 3300, request_id, .. }] if *request_id != 0
-        ),
-        "the late walk goes out once: {out:?}"
+        walks(&before_tick_finishes).is_empty(),
+        "the release fence does not expose old gameplay: {before_tick_finishes:?}"
     );
 
-    snap.tick = next;
-    snap.here = Some(tile(3300, 3301));
-    tick(&iso, &snap);
-    assert_eq!(value(&iso, "globalThis.__ok"), true, "and its wait settles");
+    let _next = relog(&iso, &mut snap, 3, tile(3240, 3240));
+    let after_relog = iso.drain_interacts();
+    assert!(
+        walks(&after_relog).is_empty(),
+        "the late old-generation walk is discarded: {after_relog:?}"
+    );
     iso.join();
 }

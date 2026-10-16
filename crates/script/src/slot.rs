@@ -68,6 +68,14 @@ pub struct SeatProbe {
     pub reserved_releases: usize,
     pub mirror_revokes_consumed: u64,
 }
+
+/// The host outcome id uses the producer's namespace. Native ledger walks
+/// reserve a distinct seat id from Load walks with the same numeric id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeatWalkTerminal {
+    Native(RequestId),
+    Load(RequestId),
+}
 /// Native ledger request tokens start at one and are scoped to the current
 /// run. Keep their seat release handles in the lower half of the host range;
 /// the slot's compiled owner minter starts in the upper half.
@@ -296,6 +304,12 @@ pub struct SlotScript {
     seat_native_delivery: VecDeque<crate::native::HostAction>,
     #[cfg(feature = "load")]
     seat_interact_delivery: Vec<crate::load::QueuedInteract>,
+    /// Guardian hold is separate from the shared seat-held state.
+    guardian_held: bool,
+    /// A missing host session also freezes the shared seat.
+    seat_session_held: bool,
+    /// Physical Walk terminal deferred until guardian hold lifts.
+    held_walk_terminal: Option<RequestId>,
     /// Watchdog facts already filtered and dispatched by the owner seat,
     /// consumed by the host's lifecycle drain rather than the game driver.
     #[cfg(feature = "load")]
@@ -441,6 +455,9 @@ impl SlotScript {
             seat_native_delivery: VecDeque::new(),
             #[cfg(feature = "load")]
             seat_interact_delivery: Vec::new(),
+            guardian_held: false,
+            seat_session_held: false,
+            held_walk_terminal: None,
             #[cfg(feature = "load")]
             seat_lifecycle: Vec::new(),
             #[cfg(feature = "load")]
@@ -537,6 +554,7 @@ impl SlotScript {
     pub fn align_seat_session(&mut self, ready: Option<api::identity::SessionKey>) {
         let Some(session) = ready.filter(|key| key.slot().incarnation().get() == self.incarnation)
         else {
+            self.seat_session_held = true;
             if let Some(seat) = &mut self.seat {
                 seat.hold(true);
             }
@@ -574,9 +592,11 @@ impl SlotScript {
                 self.admit_compiled_owner(key, card);
             }
         }
+        self.seat_session_held = false;
         if let Some(seat) = &mut self.seat {
-            seat.hold(false);
+            seat.hold(self.guardian_held);
         }
+        self.flush_held_walk_terminal();
         if let Some(run) = self.seat.as_ref().map(|seat| seat.run()) {
             self.seat_fence.arm(ExecutionId::first(run));
         }
@@ -585,12 +605,26 @@ impl SlotScript {
     /// Guardian authority precedes every request foreground. Called even
     /// when the host suppresses the compiled tick itself.
     pub fn seat_guardian_hold(&mut self, held: bool) {
-        let Some(seat) = &mut self.seat else {
-            return;
-        };
-        seat.hold(held);
+        self.guardian_held = held;
+        if let Some(seat) = &mut self.seat {
+            seat.hold(held || self.seat_session_held);
+        }
         if held {
             self.discard_seat_gameplay_delivery();
+        } else {
+            self.flush_held_walk_terminal();
+        }
+    }
+
+    fn flush_held_walk_terminal(&mut self) {
+        if self.guardian_held || self.seat_session_held {
+            return;
+        }
+        let Some(id) = self.held_walk_terminal.take() else {
+            return;
+        };
+        if let Some(seat) = &mut self.seat {
+            seat.walk_terminal(id);
         }
     }
 
@@ -700,7 +734,10 @@ impl SlotScript {
 
     fn arm_seat(&mut self, run: api::selected::RunKey) {
         self.seat_fence.arm(ExecutionId::first(run));
-        self.seat = Some(Box::new(GameplaySeat::new(run)));
+        let mut seat = GameplaySeat::new(run);
+        seat.hold(self.guardian_held || self.seat_session_held);
+        self.seat = Some(Box::new(seat));
+        self.held_walk_terminal = None;
         self.seat_compiled_owner = None;
         self.seat_delivery.clear();
         self.seat_native_delivery.clear();
@@ -1353,6 +1390,7 @@ impl SlotScript {
         self.preparing = None;
         self.pending_compiled_start = None;
         self.pending_compiled_restart = false;
+        self.held_walk_terminal = None;
         if let Some(mut seat) = self.seat.take() {
             seat.stop();
         }
@@ -2109,10 +2147,25 @@ impl SlotScript {
         }
     }
 
-    /// Only observations update this; queued work keeps its original stamp.
-    pub fn observe_walk_outcome_seq(&mut self, seq: u64) -> bool {
+    /// Only observations update the walk stamp. A matching physical terminal
+    /// retires its seat walk-release slot once; guardian hold defers that edge.
+    pub fn observe_walk_outcome(&mut self, seq: u64, terminal: Option<SeatWalkTerminal>) -> bool {
         let changed = self.native_runtime.observed_walk_outcome_seq != seq;
         self.native_runtime.observed_walk_outcome_seq = seq;
+        if changed {
+            let id = match terminal {
+                Some(SeatWalkTerminal::Native(raw)) => native_walk_id(raw.get()),
+                Some(SeatWalkTerminal::Load(id)) => Some(id),
+                None => None,
+            };
+            if let Some(id) = id {
+                if self.guardian_held {
+                    self.held_walk_terminal = Some(id);
+                } else if let Some(seat) = &mut self.seat {
+                    seat.walk_terminal(id);
+                }
+            }
+        }
         changed
     }
 
@@ -2120,6 +2173,14 @@ impl SlotScript {
         let Some(seat) = self.seat.as_mut() else {
             return;
         };
+        let active_native_walk = self
+            .native_runtime
+            .ledger
+            .as_ref()
+            .and_then(|ledger| ledger.owner.as_ref())
+            .and_then(|owner| owner.active_walk())
+            .and_then(|request| native_walk_id(request.get()));
+        seat.retire_inactive_native_walks(active_native_walk);
         let owner = self.seat_compiled_owner.or_else(|| seat.session());
         let source = owner.map_or(EmissionSource::Root, EmissionSource::Owner);
         let Some(ledger) = self.native_runtime.ledger.as_mut() else {
@@ -2311,7 +2372,19 @@ impl SlotScript {
         if ledger.owner.as_ref().is_some_and(|owner| {
             owner.run == authority.run() && owner.id == authority.action_id() && owner.live()
         }) {
+            let request_id = receipt.request_id;
             ledger.walk = Some(receipt);
+            // The native ledger uses a separate seat id from a Load walk
+            // with the same request number. Its accepted terminal is the
+            // authority for freeing that reservation, even when the host has
+            // already armed a newer route.
+            if let Some(id) = native_walk_id(request_id) {
+                if self.guardian_held {
+                    self.held_walk_terminal = Some(id);
+                } else if let Some(seat) = &mut self.seat {
+                    seat.walk_terminal(id);
+                }
+            }
         }
     }
 
@@ -2664,6 +2737,111 @@ impl SlotScript {
         self.settle_api_seat_terminals();
     }
 
+    #[cfg(feature = "load")]
+    fn compact_held_seat_batches(
+        &mut self,
+        mut batches: Vec<crate::load::QueuedSeatBatch>,
+    ) -> Vec<crate::load::QueuedSeatBatch> {
+        let Some(mut latest) = batches.pop() else {
+            return batches;
+        };
+        // The isolate repeats unacknowledged starts, cancels, mirror revokes,
+        // machine events and terminal watermarks. Its newest batch therefore
+        // supersedes the older control pages. Interaction releases are the
+        // exception: a later producer tick need not repeat a queued AbortWalk.
+        let mut releases = Vec::with_capacity(api::script_contract::MAX_WALK_RELEASES);
+        let mut stop_gather = None;
+        let mut stop_combat = None;
+        let mut policy = None;
+        let mut dropped = 0;
+        for batch in batches.iter_mut().chain(std::iter::once(&mut latest)) {
+            for row in batch.batch.reqs.drain(..) {
+                match &row.request {
+                    crate::shim::InteractReq::AbortWalk { request_id } => {
+                        if releases.iter().any(|existing: &crate::isolate_fb::SeatInteractDecoded| {
+                            matches!(&existing.request, crate::shim::InteractReq::AbortWalk { request_id: id } if id == request_id)
+                        }) {
+                            continue;
+                        }
+                        if releases.len() == api::script_contract::MAX_WALK_RELEASES {
+                            dropped += 1;
+                        } else {
+                            releases.push(row);
+                        }
+                    }
+                    crate::shim::InteractReq::GatherStop { .. } => stop_gather = Some(row),
+                    crate::shim::InteractReq::CombatStop { .. } => stop_combat = Some(row),
+                    crate::shim::InteractReq::RunPolicyOverride { .. } => policy = Some(row),
+                    _ => {}
+                }
+            }
+        }
+        if let Some(seat) = &mut self.seat {
+            seat.count_dropped(dropped);
+        }
+        releases.extend(stop_gather);
+        releases.extend(stop_combat);
+        releases.extend(policy);
+        latest.batch.reqs = releases;
+        vec![latest]
+    }
+
+    /// A Paused guardian frame still receives isolate batches. Fold their
+    /// repeated control pages before the host resumes ordinary dispatch.
+    #[cfg(feature = "load")]
+    pub fn retain_held_seat_batches(&mut self) {
+        if !self.seat.as_ref().is_some_and(|seat| seat.held()) {
+            return;
+        }
+        let Some(isolate) = &self.load else {
+            return;
+        };
+        let generation = isolate.generation();
+        let batches = isolate.drain_seat_batches();
+        if batches.is_empty() {
+            return;
+        }
+        let run = self.seat.as_ref().expect("held seat").run();
+        let mut carried = Vec::new();
+        for mut queued in batches {
+            if queued.generation != generation
+                || queued
+                    .batch
+                    .starts
+                    .iter()
+                    .any(|start| start.run != run.run || start.session != run.session)
+            {
+                self.seat
+                    .as_mut()
+                    .expect("held seat")
+                    .count_dropped(queued.batch.reqs.len());
+                continue;
+            }
+            let before = queued.batch.reqs.len();
+            queued.batch.reqs.retain(|row| {
+                seat_interact_class(&row.request, row.lineage.or(row.mirror_owner)).0
+                    != api::script_contract::EmissionClass::Gameplay
+            });
+            self.seat
+                .as_mut()
+                .expect("held seat")
+                .count_dropped(before - queued.batch.reqs.len());
+            carried.push(queued);
+        }
+        let carried = self.compact_held_seat_batches(carried);
+        self.load
+            .as_ref()
+            .expect("batch producer")
+            .restore_seat_batches(carried);
+    }
+
+    #[cfg(all(feature = "load", feature = "test-hooks"))]
+    pub fn seat_batch_backlog(&self) -> usize {
+        self.load
+            .as_ref()
+            .map_or(0, LoadIsolate::seat_batch_backlog)
+    }
+
     /// Drain one host frame's decoded isolate messages, separating the latest
     /// run-policy replacement from game/lifecycle interacts. The outer option
     /// is "an update was sent"; the inner option is replace versus clear.
@@ -2739,6 +2917,11 @@ impl SlotScript {
             );
         }
         if !carried.is_empty() {
+            let carried = if self.seat.as_ref().is_some_and(|seat| seat.held()) {
+                self.compact_held_seat_batches(carried)
+            } else {
+                carried
+            };
             self.load
                 .as_ref()
                 .expect("batch producer")
@@ -2817,23 +3000,6 @@ impl SlotScript {
                 self.compiled_interacts = reqs;
                 self.compiled_interact_outcome_seqs = stamps;
             }
-        }
-    }
-
-    #[cfg(feature = "load")]
-    pub fn take_held_host_walks(&self) -> Vec<crate::load::QueuedInteract> {
-        self.load
-            .as_ref()
-            .map_or_else(Vec::new, |isolate| isolate.take_held_walks_stamped())
-    }
-
-    /// Diagnostic/test reconnect drain that discards stamps. Production replay
-    /// uses [`Self::take_held_host_walks`] to retain the original decision fence.
-    #[cfg(feature = "load")]
-    pub fn take_held_walks(&self) -> Vec<crate::shim::InteractReq> {
-        match &self.load {
-            Some(isolate) => isolate.take_held_walks(),
-            None => Vec::new(),
         }
     }
 
