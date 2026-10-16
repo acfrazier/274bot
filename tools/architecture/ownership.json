@@ -5515,6 +5515,22 @@
       "owner": "T1"
     },
     {
+      "path": "tools/nightly/cellar-pull-windows.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/cellar-pull.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/mirror-pull.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/run_nightly.py",
+      "owner": "T1"
+    },
+    {
       "path": "tools/release/package.py",
       "owner": "T1"
     },
