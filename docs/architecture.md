@@ -52,16 +52,25 @@ a bare Git cache defaulting to
 The runner checks the rust-analyzer executable on `PATH`: SHA-256
 `fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49`,
 `rust-analyzer 0.3.3081-standalone`. The checker reads
-workspace and member `Cargo.toml` files, including `[dependencies]`,
-`[dev-dependencies]`, `[build-dependencies]`, `[target.*.dependencies]`,
-`optional`, `workspace = true` aliases, `path`, and `package` renames. It
-does not parse `.rs` with regex and does not compile.
+workspace, member, and protected path-package `Cargo.toml` files. It scans
+`[dependencies]`, `[dev-dependencies]` / `[dev_dependencies]`, and
+`[build-dependencies]` / `[build_dependencies]`, including target tables.
+It resolves `optional`, `workspace = true` aliases, `path`, and `package`
+renames, plus path `[patch]` and `[replace]` entries. It does not compile
+candidate code or parse `.rs` with regex.
 
 Membership is the explicit `workspace.members` path list plus a root
 `[package]` when present (Cargo's implicit root member). Globs, `exclude`,
-and other unsupported workspace shapes fail closed. A path dependency on a
-crate that is not a listed member still appears in the scan and must be a
-policy member or external.
+and other unsupported workspace shapes fail closed. Every non-member path
+package must have a canonical manifest binding in protected
+`policy.toml` `[workspace.path_packages]`. Unlisted path packages and symlink
+substitutions are refused. Every listed manifest is scanned, even when unused.
+Edges from listed packages need ordinary protected allowances.
+
+The checker refuses `.cargo/config` and `.cargo/config.toml` anywhere in the
+candidate tree, including vendored trees. These files can override the graph.
+Default-feature and dev-dependency activation is checked for every protected
+member and listed path package, even when no named configuration reaches it.
 
 GitHub Actions pins Python **3.14.8** and runs the operator-owned check
 inline in one `architecture` job on pushes and pull requests: it keeps the
@@ -787,13 +796,16 @@ nav, rendering, or the isolate.
 
 An operator commit in protected `274bot-arch` is required for a new crate
 edge (including a new target cfg or cross-crate feature request), an edge kind,
-a migration, an optional-dependency activation, a vendored path package, or a checker change. The operator edits
-`policy.toml` where the rule change needs it and regenerates the graph
-provenance baseline in the same arch commit:
+a migration, an optional-dependency activation, a vendored path package, or a checker change.
+The operator edits `policy.toml` where the rule change needs it.
+First merge current `dev` into the branch being merged.
+Regenerate the baseline from that merged branch tree in the same arch commit:
 
 ```bash
-python3 -B check.py --emit-provenance-baseline /path/to/candidate > graph-provenance.json
+python3 -B check.py --emit-provenance-baseline /path/to/merged-branch > graph-provenance.json
 ```
+
+Review removed records. Retain records that other active branches still need.
 
 The operator publishes first; the product change lands after. Only the
 operator can push `274bot-arch`; agents cannot. Propose the policy edit as
