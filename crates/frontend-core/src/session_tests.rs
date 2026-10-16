@@ -300,7 +300,7 @@ fn load_follows_saved_auto_login_while_login_arms_an_explicit_handshake() {
 
     let login = s.login("manual", &mut surface);
     assert!(arm(&s, "manual").wants_login());
-    assert!(!arm(&s, "manual").auto_login.load(Ordering::Relaxed));
+    assert!(!arm(&s, "manual").auto_login());
     assert_eq!(
         s.operation(login).unwrap().outcome("manual"),
         Some(&Outcome::Pending),
@@ -1255,7 +1255,7 @@ fn a_profile_write_is_queued_and_the_arm_follows_only_once_it_is_durable() {
         "the edit is staged in memory at once"
     );
     assert!(
-        !alice.auto_login.load(Ordering::Relaxed),
+        !alice.auto_login(),
         "the running slot changes only after the write is durable"
     );
     assert_eq!(
@@ -1267,7 +1267,7 @@ fn a_profile_write_is_queued_and_the_arm_follows_only_once_it_is_durable() {
         s.operation(op).unwrap().outcome("alice"),
         Some(&Outcome::Completed)
     );
-    assert!(alice.auto_login.load(Ordering::Relaxed));
+    assert!(alice.auto_login());
     let disk = Vault::unlock(&vault_path("write-queued"), "test-passphrase-01").unwrap();
     assert!(disk.get("alice").unwrap().settings.auto_login);
 }
@@ -1438,7 +1438,7 @@ fn a_write_replaced_in_the_same_commit_is_cancelled_and_its_mirror_never_runs() 
         Some(&Outcome::Completed)
     );
     assert!(
-        !alice.auto_login.load(Ordering::Relaxed),
+        !alice.auto_login(),
         "the slot never observes the superseded value"
     );
     let disk = Vault::unlock(&vault_path("write-coalesce"), "test-passphrase-01").unwrap();
@@ -1451,7 +1451,7 @@ fn coalesced_edits_of_different_settings_all_reach_the_running_slot() {
     let mut surface = Recorder::default();
     s.load("alice", &mut surface);
     let alice = arm(&s, "alice");
-    assert!(alice.auto_login.load(Ordering::Relaxed));
+    assert!(alice.auto_login());
     assert!(alice.random_events.load(Ordering::Relaxed));
     let gate = s.write_gate();
     let held = gate.lock().unwrap();
@@ -1471,7 +1471,7 @@ fn coalesced_edits_of_different_settings_all_reach_the_running_slot() {
     assert!(!saved.random_events && !saved.lamp_auto);
     assert_eq!(saved.lamp_skill, "Prayer");
     assert!(
-        !alice.auto_login.load(Ordering::Relaxed),
+        !alice.auto_login(),
         "the auto-login edit saved in the same commit reaches the slot"
     );
     assert!(!alice.random_events.load(Ordering::Relaxed));
@@ -2301,7 +2301,7 @@ fn memory_status_is_none_without_a_recorded_login() {
 }
 
 #[test]
-fn memory_relog_parks_then_logs_back_in_through_the_fifo_path() {
+fn memory_relog_posts_one_atomic_intent_and_waits_for_owner_session() {
     let mut s = session("mem-relog", &[("alice", 1, true)]);
     let mut surface = Recorder::default();
     s.load("alice", &mut surface);
@@ -2325,27 +2325,34 @@ fn memory_relog_parks_then_logs_back_in_through_the_fifo_path() {
         s.operation(relog).unwrap().outcome("alice"),
         Some(&Outcome::Pending)
     );
-    assert!(arm(&s, "alice").login_latched(), "logout latches first");
-    assert!(arm(&s, "alice").wants_logout());
+    assert!(
+        !arm(&s, "alice").login_latched(),
+        "RelogNow must not latch Logout"
+    );
+    assert!(
+        !arm(&s, "alice").wants_logout(),
+        "no owner session to log out"
+    );
+    assert!(
+        arm(&s, "alice").wants_login(),
+        "RelogNow arms the login half"
+    );
     assert!(
         s.memory_status("alice").unwrap().relog_pending,
         "the poll must see the armed relog"
     );
 
-    // The worker parks on the title after its clean logout.
+    // An offline status alone does not mint an owner session.
     {
         let mut rows = s.play().unwrap().statuses.lock().unwrap();
         rows[0].connected = false;
         rows[0].ingame = false;
-        rows[0].login_latched = true;
+        rows[0].login_latched = false;
     }
     s.poll();
 
     let alice = arm(&s, "alice");
-    assert!(
-        alice.wants_login(),
-        "the poll re-arms the login once parked"
-    );
+    assert!(alice.wants_login(), "the owner retained login through exit");
     assert!(!alice.login_latched());
     assert!(
         s.memory_status("alice").unwrap().relog_pending,
@@ -2353,25 +2360,31 @@ fn memory_relog_parks_then_logs_back_in_through_the_fifo_path() {
     );
     assert!(
         s.memory_status("alice").unwrap().differs(),
-        "re-arming cannot claim the login succeeded"
+        "an offline status cannot claim the login succeeded"
     );
     publish_alice_login(&mut s, false);
     assert!(
-        !s.memory_status("alice").unwrap().relog_pending,
-        "the successful login handshake settles the relog"
+        s.memory_status("alice").unwrap().relog_pending,
+        "a status row without a new owner SessionKey cannot settle the relog"
     );
     assert!(
         !s.memory_status("alice").unwrap().differs(),
-        "the worker-published successful handshake settles the notice"
+        "the reported handshake memory mode is still reflected"
     );
-    let last = s
-        .fleet_view()
-        .row("alice")
-        .expect("member row")
-        .last_op()
-        .expect("a reported operation");
-    assert_eq!(last.action(), ActionKind::Login);
-    assert_eq!(last.outcome(), &Outcome::Completed);
+}
+
+#[test]
+fn completed_relog_clears_the_pending_notice_after_new_owner_session() {
+    let (mut s, mut surface) = memory_ingame_toggled("mem-relog-complete");
+    let alice = arm(&s, "alice");
+    alice.complete_login_for_test();
+    let previous = alice.session_key().unwrap();
+    s.request_memory_relog("alice", &mut surface);
+    assert!(s.memory_status("alice").unwrap().relog_pending);
+    alice.complete_login_for_test();
+    assert!(alice.session_key().unwrap().epoch() > previous.epoch());
+    publish_alice_login(&mut s, false);
+    assert!(!s.memory_status("alice").unwrap().relog_pending);
 }
 
 #[test]

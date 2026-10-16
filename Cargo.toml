@@ -5,6 +5,23 @@ members = ["crates/host", "crates/vault", "crates/api", "crates/host-play", "cra
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "warn"
 unwrap_used = "warn"
+# Suppression hygiene: `allow_attributes` forces `#[expect]` (an expectation
+# that stops firing is an error), and `allow_attributes_without_reason`
+# requires every suppression to justify itself. The six approved lints below
+# are the current ratchet set. Only `vault` opts in (`[lints] workspace = true`
+# in its manifest); a crate opts in when a refactor reaches it.
+# These denies apply to test code too: clippy 1.98 offers no per-lint
+# `allow-*-in-tests` knob for any of them (only `unwrap_used` is scoped to
+# non-test code, via `allow-unwrap-in-tests` in clippy.toml), so opted-in
+# crates keep their tests clean as well.
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+redundant_clone = "deny"
+significant_drop_in_scrutinee = "deny"
+unchecked_time_subtraction = "deny"
+needless_collect = "deny"
+large_types_passed_by_value = "deny"
+assigning_clones = "deny"
 
 [workspace.package]
 version = "0.2.3"

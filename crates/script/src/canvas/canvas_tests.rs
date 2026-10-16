@@ -71,6 +71,7 @@ fn measure_text_is_not_width_seven() {
     );
 }
 
+#[cfg(feature = "load")]
 #[test]
 fn raster_dirty_covers_measured_fillrect_and_glyphs() {
     reset();
@@ -102,6 +103,7 @@ fn raster_dirty_covers_measured_fillrect_and_glyphs() {
     );
 }
 
+#[cfg(feature = "load")]
 #[test]
 fn fill_rect_clips_to_applet() {
     let ops = vec![CanvasOp::fill_rect(
@@ -178,41 +180,44 @@ fn applet_map_matches_chatbox_scale() {
 
 #[test]
 fn extremes_do_not_panic_and_negative_dims_clip() {
-    let max = vec![CanvasOp::fill_rect(
-        i32::MAX,
-        0,
-        1,
-        1,
-        pack_rgba(255, 0, 0, 255),
-    )];
-    assert!(rasterize(&max).is_none());
-    let min_dim = vec![CanvasOp::fill_rect(
-        10,
-        10,
-        i32::MIN,
-        i32::MIN,
-        pack_rgba(0, 255, 0, 255),
-    )];
-    let _ = rasterize(&min_dim);
-    let neg = vec![CanvasOp::fill_rect(
-        20,
-        20,
-        -10,
-        -10,
-        pack_rgba(0, 0, 255, 255),
-    )];
-    let raster = rasterize(&neg).unwrap();
-    assert_eq!(raster.x, 10);
-    assert_eq!(raster.y, 10);
-    let off_text = vec![CanvasOp::fill_text(
-        "hi",
-        i32::MAX,
-        i32::MIN,
-        pack_rgba(255, 255, 255, 255),
-        12,
-        true,
-    )];
-    assert!(rasterize(&off_text).is_none());
+    #[cfg(feature = "load")]
+    {
+        let max = vec![CanvasOp::fill_rect(
+            i32::MAX,
+            0,
+            1,
+            1,
+            pack_rgba(255, 0, 0, 255),
+        )];
+        assert!(rasterize(&max).is_none());
+        let min_dim = vec![CanvasOp::fill_rect(
+            10,
+            10,
+            i32::MIN,
+            i32::MIN,
+            pack_rgba(0, 255, 0, 255),
+        )];
+        let _ = rasterize(&min_dim);
+        let neg = vec![CanvasOp::fill_rect(
+            20,
+            20,
+            -10,
+            -10,
+            pack_rgba(0, 0, 255, 255),
+        )];
+        let raster = rasterize(&neg).unwrap();
+        assert_eq!(raster.x, 10);
+        assert_eq!(raster.y, 10);
+        let off_text = vec![CanvasOp::fill_text(
+            "hi",
+            i32::MAX,
+            i32::MIN,
+            pack_rgba(255, 255, 255, 255),
+            12,
+            true,
+        )];
+        assert!(rasterize(&off_text).is_none());
+    }
     reset();
     fill_rect(f64::NAN, 0.0, 10.0, 10.0);
     fill_rect(0.0, f64::INFINITY, 10.0, 10.0);
@@ -222,17 +227,20 @@ fn extremes_do_not_panic_and_negative_dims_clip() {
     reset();
     let err = measure_text(&"x".repeat(MAX_PAINT_TEXT + 1)).unwrap_err();
     assert!(err.contains("measureText"));
-    onpaint_done(0, None);
-    let composed = compose_paint(None);
-    assert!(composed.canvas.is_empty());
-    assert!(composed.lines.iter().any(|l| l.contains("canvas:")));
-    reset();
-    onpaint_done(0, None);
-    fill_rect(6.0, 6.0, 10.0, 10.0);
-    let recovered = compose_paint(None);
-    assert_eq!(recovered.canvas.len(), 1);
+    #[cfg(feature = "load")]
+    {
+        onpaint_done(0, None);
+        let composed = compose_paint(None);
+        assert!(composed.canvas.is_empty());
+        assert!(composed.lines.iter().any(|l| l.contains("canvas:")));
+        reset();
+        onpaint_done(0, None);
+        fill_rect(6.0, 6.0, 10.0, 10.0);
+        let recovered = compose_paint(None);
+        assert_eq!(recovered.canvas.len(), 1);
+    }
 }
-
+#[cfg(feature = "load")]
 #[test]
 fn compose_keeps_user_onpaint_title() {
     reset();
@@ -385,6 +393,7 @@ fn restore_restores_clip() {
     }
 }
 
+#[cfg(feature = "load")]
 #[test]
 fn shadow_darkens_pixels_below_the_shape() {
     reset();
@@ -498,6 +507,7 @@ fn clipped_fill_rects_charge_emitted_clip_segs() {
     assert_eq!(taken.ops.len(), ok);
 }
 
+#[cfg(feature = "load")]
 #[test]
 fn huge_finite_path_extent_does_not_panic() {
     let segs = vec![

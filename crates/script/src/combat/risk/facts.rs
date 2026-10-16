@@ -4,7 +4,7 @@
 //! helpers. Unsupported or incomplete facts retain an explicit class instead
 //! of acquiring a guessed zero-risk interpretation.
 
-#[cfg(test)]
+#[cfg(all(test, feature = "load"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use api::game_data::{NpcAttackKind, NpcNameRow};
@@ -291,10 +291,10 @@ pub struct RiskTables {
     pub poison_unknown_v: u8,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "load"))]
 static RISK_TABLE_BUILD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-#[cfg(test)]
+#[cfg(all(test, feature = "load"))]
 pub(super) fn build_count_for_test() -> usize {
     RISK_TABLE_BUILD_COUNT.load(Ordering::Relaxed)
 }
@@ -302,7 +302,7 @@ pub(super) fn build_count_for_test() -> usize {
 impl RiskTables {
     /// Build once from the full selected NPC extract.
     pub fn build(combat: &CombatTables) -> Self {
-        #[cfg(test)]
+        #[cfg(all(test, feature = "load"))]
         RISK_TABLE_BUILD_COUNT.fetch_add(1, Ordering::Relaxed);
 
         let npcs = combat
