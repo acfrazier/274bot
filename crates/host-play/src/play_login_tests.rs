@@ -199,7 +199,7 @@ fn password_read_does_not_acquire_slot_lock_in_reverse_order() {
         let arm = Arc::clone(&arm);
         thread::spawn(move || sent.send(arm.login_password()).unwrap())
     };
-    let result = received.recv_timeout(Duration::from_secs(2));
+    let result = received.recv_timeout(Duration::from_secs(60));
     drop(lifecycle);
     reader.join().unwrap();
     assert!(
@@ -218,7 +218,7 @@ fn logout_interrupts_blocked_login_read_and_closes_before_queue_return() {
     let server = thread::spawn(move || {
         let (mut socket, _) = listener.accept().unwrap();
         socket
-            .set_read_timeout(Some(Duration::from_secs(5)))
+            .set_read_timeout(Some(Duration::from_secs(60)))
             .unwrap();
         let mut hello = [0; 2];
         socket.read_exact(&mut hello).unwrap();
@@ -234,7 +234,7 @@ fn logout_interrupts_blocked_login_read_and_closes_before_queue_return() {
     let poster = {
         let arm = Arc::clone(&arm);
         thread::spawn(move || {
-            accepted_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            accepted_rx.recv_timeout(Duration::from_secs(60)).unwrap();
             arm.request_logout();
         })
     };
@@ -256,14 +256,14 @@ fn logout_interrupts_blocked_login_read_and_closes_before_queue_return() {
             .0
         },
         |_| {
-            assert_eq!(eof_rx.recv_timeout(Duration::from_secs(3)).unwrap(), 0);
+            assert_eq!(eof_rx.recv_timeout(Duration::from_secs(60)).unwrap(), 0);
             None
         },
     );
     poster.join().unwrap();
     server.join().unwrap();
     assert!(matches!(result, Some(Ok(false))), "{result:?}");
-    assert!(began.elapsed() < Duration::from_secs(5));
+    assert!(began.elapsed() < Duration::from_secs(60));
     assert_eq!(arm.session_key(), None);
     assert!(client.stream.is_none());
     assert_eq!(

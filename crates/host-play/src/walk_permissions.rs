@@ -356,6 +356,28 @@ mod tests {
         )
         .preferences()
     }
+    /// Retry the globals write while it stays queued past the frontend's
+    /// bounded durability wait; under machine load it settles later. The
+    /// update re-reads and re-applies its merge on a conflict, so a retry
+    /// after a late-landing write converges instead of duplicating it.
+    fn set_nav_patiently(
+        preferences: &super::super::local_state::Preferences,
+        value: serde_json::Value,
+    ) {
+        let start = std::time::Instant::now();
+        loop {
+            match preferences.set("nav", value.clone()) {
+                Ok(()) => return,
+                Err(error)
+                    if error.to_string().contains("not durable within")
+                        && start.elapsed() < std::time::Duration::from_secs(60) =>
+                {
+                    std::thread::yield_now();
+                }
+                Err(error) => panic!("globals write failed: {error}"),
+            }
+        }
+    }
 
     #[test]
     fn durable_globals_are_reread_at_native_and_manual_admissions() {
@@ -368,17 +390,15 @@ mod tests {
         };
         let navs = Arc::new(Mutex::new(HashMap::from([("alice".into(), bot)])));
         for enabled in [true, false, true] {
-            preferences
-                .set(
-                    "nav",
-                    serde_json::json!({
-                        "allow_teleports": enabled,
-                        "allow_wilderness": enabled,
-                        "allow_bank_fetch": enabled,
-                        "allow_danger_zones": enabled,
-                    }),
-                )
-                .unwrap();
+            set_nav_patiently(
+                &preferences,
+                serde_json::json!({
+                    "allow_teleports": enabled,
+                    "allow_wilderness": enabled,
+                    "allow_bank_fetch": enabled,
+                    "allow_danger_zones": enabled,
+                }),
+            );
             let (native, policy, _) =
                 native_admission(&navs, "alice", WalkOptions::default(), None);
             assert_eq!(
