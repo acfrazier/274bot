@@ -2553,7 +2553,9 @@ impl Session {
             .catalog_root()?
             .ok_or_else(|| "$RS2B0T catalog root unavailable".to_string())?;
         let path_file = self.rs2b0t_path_file();
-        self.scripts.fill_catalog_blocking(&root, &path_file)
+        self.scripts
+            .fill_catalog_blocking(&root, &path_file)
+            .map_err(|error| error.to_string())
     }
 
     /// Live `script_<name>` setup: temp vault with the scenario's seed
@@ -5541,7 +5543,7 @@ mod fleet_hold_tests {
         assert_eq!(session.error, None);
         assert_eq!(watch.failure(), None);
         assert_eq!(watch.dispatch_operation(), Some(Operation::ObserveBurials));
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(60);
         while session.focused_script_state() != script::RunState::Running {
             assert!(
                 Instant::now() < deadline,

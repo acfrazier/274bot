@@ -4,7 +4,10 @@
 //! so the default `cargo test` (and even `-- --ignored` without the env
 //! var) stays green with no engine running. With `LIVE=1` against the local
 //! engine a failure prints `FAIL: ...` and exits 1 (rs2b0t e2e style).
-#![allow(dead_code)] // each test binary uses a subset of the helpers
+#![allow(
+    dead_code,
+    reason = "shared across live test binaries; each binary uses a subset, so expect would misfire"
+)]
 
 use std::path::PathBuf;
 use std::sync::Mutex;

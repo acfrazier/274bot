@@ -1,0 +1,13 @@
+# Archive host: pull the Windows host hourly at :15 (before the review mirror at :25);
+# a run is pulled once it has its DONE marker.
+# Install: /etc/systemd/system/274bot-nightly-pull-windows.timer
+[Unit]
+Description=Hourly pull of finished 274bot Windows nightly runs
+
+[Timer]
+OnCalendar=*-*-* *:15:00
+Persistent=true
+Unit=274bot-nightly-pull-windows.service
+
+[Install]
+WantedBy=timers.target

@@ -41,6 +41,7 @@ const SLASH_ORDER: [&str; 6] = [
 
 /// Caller's pick: Attack level (a JS number, so NaN wields nothing), stab
 /// preference, and names a wield already refused (exact match).
+#[cfg(any(feature = "load", test))]
 pub struct WeaponPick<'a> {
     pub attack: f64,
     pub prefer_stab: bool,
@@ -157,6 +158,7 @@ pub(crate) fn best_melee_weapon_by_where<'a>(
 
 /// The highest-tier weapon among `available` (case-insensitive) the pick can
 /// wield, stab or slash order breaking ties, then family order.
+#[cfg(any(feature = "load", test))]
 pub fn best_melee_weapon(
     family: &[EquipmentNameEntry],
     available: &[String],
@@ -193,6 +195,7 @@ pub(crate) fn best_melee_weapon_by<'a>(
 }
 
 /// The first family weapon (family order) named in `names`, case-insensitive.
+#[cfg(any(feature = "load", test))]
 pub fn known_melee_weapon(family: &[EquipmentNameEntry], names: &[String]) -> Option<String> {
     weapon_names(family)
         .find(|name| names.iter().any(|have| have.eq_ignore_ascii_case(name)))

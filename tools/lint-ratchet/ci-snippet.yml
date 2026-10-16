@@ -1,0 +1,9 @@
+# CI snippet: lint-suppression ratchet.
+# Main folds this into the single `architecture`/lint job in
+# `.github/workflows/ci.yml` (agents never edit that tree directly).
+# Insert after checkout (and the client-submodule fetch on push lanes);
+# it needs only python3 stdlib, no Rust toolchain.
+- name: Lint suppression ratchet
+  run: python3 -B tools/lint-ratchet/lint_ratchet.py
+- name: Lint suppression ratchet self-test
+  run: python3 -B tools/lint-ratchet/lint_ratchet.py --self-test

@@ -43,7 +43,7 @@ use crate::operations::OperationId;
 use crate::session::{ArmMirror, OperatorSession, ScriptStart, StartSettled};
 use crate::views::QueuePlace;
 
-pub use reload::{PendingReload, PendingReloadKind, ReloadOutcome, ReloadWarning};
+pub use reload::{CatalogError, PendingReload, PendingReloadKind, ReloadOutcome, ReloadWarning};
 pub use sync::{RestartPrompt, SyncReport, SyncScope};
 
 /// A card's parameters bound to the run they were edited for.

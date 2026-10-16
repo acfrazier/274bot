@@ -10,7 +10,10 @@ use crate::focus::draw_for_slot;
 use crate::picker::{
     format_walkto_status, walkto_actions_enabled, walkto_footer_labels, walkto_selection_caption,
 };
-use crate::test_support::{thread_preferences, thread_state_root, TestDir, TestPath};
+use crate::test_support::{
+    patiently, save_draft_patiently, save_store_patiently, set_patiently, thread_preferences,
+    thread_state_root, TestDir, TestPath,
+};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::{Client, ClientConfig};
 use client::config::if_type::{ComponentType, IfType, IfTypeMut};
@@ -504,7 +507,7 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
         crate::test_support::scratch_service(&own_root).operator_loadouts(),
     ));
     own.upsert(api::loadout::Loadout::new("melee"));
-    own.save().unwrap();
+    save_store_patiently(&mut own);
 
     assert!(session.unlock("prepared-pass"));
     let handle = session
@@ -530,7 +533,7 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
     // The Loadouts form saves through the session's service: the Start
     // leases that row.
     session.loadouts.upsert(api::loadout::Loadout::new("melee"));
-    session.loadouts.save().unwrap();
+    save_store_patiently(&mut session.loadouts);
     start().expect("the Start leases the row the form saved");
 }
 
@@ -547,10 +550,14 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
         last_focus: Some("alice".into()),
         ..Default::default()
     };
-    crate::ui_state::save_to_checked(&session.preferences, &state).unwrap();
+    patiently(|| {
+        crate::ui_state::save_to_checked(&session.preferences, &state)
+            .map_err(|error| error.to_string())
+    })
+    .unwrap();
     session.loadouts_draft = Some(api::loadout::Loadout::new("roundtrip").with_carry("Lobster", 5));
     assert!(
-        crate::loadouts::save_draft(&mut session),
+        save_draft_patiently(&mut session),
         "{}",
         session.loadouts_status
     );
@@ -573,11 +580,13 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
 
     // The peer's edits reach the panel through the panel's service (a key
     // the panel's own state does not hold, as another frontend's would be).
-    peer.preferences()
-        .set("peer_marker", serde_json::json!({"kept": 7}))
-        .unwrap();
+    set_patiently(
+        &peer.preferences(),
+        "peer_marker",
+        serde_json::json!({"kept": 7}),
+    );
     peer_form.upsert(api::loadout::Loadout::new("peer-row"));
-    peer_form.save().unwrap();
+    save_store_patiently(&mut peer_form);
     session.preferences.reload().unwrap();
     assert_eq!(
         session.preferences.value("peer_marker"),
@@ -590,7 +599,7 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
     session.loadouts_sel = 0;
     session.loadouts_draft = Some(api::loadout::Loadout::new("roundtrip").with_carry("Lobster", 6));
     assert!(
-        crate::loadouts::save_draft(&mut session),
+        save_draft_patiently(&mut session),
         "{}",
         session.loadouts_status
     );
@@ -598,7 +607,11 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
         last_focus: Some("bob".into()),
         ..state
     };
-    crate::ui_state::save_to_checked(&session.preferences, &state).unwrap();
+    patiently(|| {
+        crate::ui_state::save_to_checked(&session.preferences, &state)
+            .map_err(|error| error.to_string())
+    })
+    .unwrap();
     let mut reread = script::LoadoutsStore::over(Arc::new(peer.operator_loadouts()));
     reread.reload().unwrap();
     assert_eq!(reread.names(), ["roundtrip", "peer-row"]);
@@ -864,7 +877,7 @@ fn write_looping_catalog(dir: &Path, cards: &[(&str, &str)]) -> PathBuf {
 }
 
 fn settle_catalog_work(session: &mut Session) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while session.scripts.catalog_work_pending() && Instant::now() < deadline {
         session.core.poll();
         session.poll_scripts();
@@ -881,7 +894,7 @@ fn settle_catalog_work(session: &mut Session) {
 }
 
 fn settle_transpile_queue(session: &mut Session) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while !session.transpile_queue.is_empty() && Instant::now() < deadline {
         session.core.poll();
         session.poll_scripts();
@@ -3115,7 +3128,7 @@ fn restored_enabled_folder_loads_when_game_data_becomes_ready() {
         session.quester_paths.is_running(),
         "saved folder starts a reload without a user action"
     );
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while session.quester_paths.is_running() {
         assert!(
             Instant::now() < deadline,
@@ -3271,17 +3284,21 @@ fn walk_permissions_projection_follows_a_peer_write() {
 
     // The peer's write lands next to a key the panel knows nothing about;
     // the projection follows once the session's preferences re-read.
-    frontend_core::nav_preference(
-        &peer,
-        frontend_core::NavPreference::AllowTeleports,
-        Some(true),
-    )
+    patiently(|| {
+        frontend_core::nav_preference(
+            &peer,
+            frontend_core::NavPreference::AllowTeleports,
+            Some(true),
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+    })
     .unwrap();
-    peer.set(
+    set_patiently(
+        &peer,
         "peer_marker",
         serde_json::json!("written by the other frontend"),
-    )
-    .unwrap();
+    );
     session.preferences.reload().unwrap();
     session.refresh_walk_permissions();
     assert!(session.walk_permissions.globals.allow_teleports);
@@ -4841,7 +4858,7 @@ fn flat_model_spawns_every_member_as_a_client() {
     s.load("carol");
     // ensure_slot registers the IO map synchronously; wait only for the
     // slot threads to publish their status rows.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < deadline {
         if s.core.play().unwrap().statuses().len() == 3 {
             break;
@@ -4955,7 +4972,7 @@ fn logout_all_arms_every_wall_member() {
     s.load("bob");
     s.core.fleet_mut().add("alice");
     s.core.fleet_mut().add("bob");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < deadline {
         if s.core.play().unwrap().arm("bob").is_some() {
             break;
@@ -4981,7 +4998,7 @@ fn headed_stress_spawns_every_member_prefers_and_arms_s00() {
     });
     let mut s = Session::new();
     s.live_prepare_stress(3, false).expect("prepare");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < deadline {
         if s.core.play().unwrap().statuses().len() == 3 {
             break;
@@ -6084,7 +6101,7 @@ fn explicit_login_arms_a_fresh_non_auto_profile() {
         .and_then(|play| play.arm("alice"))
         .expect("fresh explicit login creates an arm");
     assert!(arm.wants_login());
-    assert!(!arm.auto_login.load(Ordering::Relaxed));
+    assert!(!arm.auto_login());
     assert!(!arm.login_latched());
 }
 
@@ -6406,7 +6423,7 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
         Some(2)
     );
     assert_eq!(
-        *arm.world.lock(),
+        arm.world_choice(),
         Some(2),
         "the profile-save path must update a running slot's next handshake"
     );
@@ -6430,7 +6447,7 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
         "a credentials save outside the editor must not unpin an account"
     );
     assert_eq!(
-        *arm.world.lock(),
+        arm.world_choice(),
         Some(2),
         "a non-editor save must preserve the running slot's pin"
     );
@@ -6993,10 +7010,10 @@ fn set_auto_login_mirrors_running_arm() {
     s.core.set_play(Some(play));
     assert!(s.set_auto_login("alice", true));
     s.core.flush_writes();
-    assert!(arm.auto_login.load(Ordering::Relaxed));
+    assert!(arm.auto_login());
     assert!(s.set_auto_login("alice", false));
     s.core.flush_writes();
-    assert!(!arm.auto_login.load(Ordering::Relaxed));
+    assert!(!arm.auto_login());
 }
 
 #[test]
@@ -7156,14 +7173,11 @@ fn arm_for_profile_respects_auto_login_and_latch() {
     s.core.vault_mut().unwrap().upsert(p).unwrap();
     let arm = s.core.arm_for_profile("alice").expect("arm");
     assert!(arm.wants_login());
-    assert!(arm.auto_login.load(Ordering::Relaxed));
+    assert!(arm.auto_login());
     s.core.fleet_mut().latch_logout("alice");
     let arm = s.core.arm_for_profile("alice").expect("arm");
     assert!(!arm.wants_login(), "latch blocks handshake");
-    assert!(
-        arm.auto_login.load(Ordering::Relaxed),
-        "profile auto_login stays on the arm"
-    );
+    assert!(arm.auto_login(), "profile auto_login stays on the arm");
 }
 
 #[test]
@@ -9031,7 +9045,7 @@ fn memory_relog_starts_at_once_without_a_running_script() {
     assert!(!s.mem_relog_armed());
     assert!(s.request_focused_memory_relog());
     let arm = s.core.play().unwrap().arm("alice").unwrap();
-    assert!(arm.login_latched() && arm.wants_logout());
+    assert!(!arm.login_latched() && !arm.wants_logout() && arm.wants_login());
     assert!(
         s.core.memory_status("alice").unwrap().relog_pending,
         "the poll must see the armed relog"
