@@ -29,13 +29,23 @@ counts once wherever it is written. Nested `cfg_attr` is followed to any
 depth (`cfg_attr(pred, cfg_attr(pred, allow(..)))`), and lint paths tolerate
 whitespace around `::` (`clippy :: needless_collect` counts as
 `clippy::needless_collect`), as does a space before the paren
-(`allow (dead_code)`). Suppressions written inside macro bodies, or passed
-as macro arguments (`macro_rules!` arms, `stringify!(#[allow(..)])`), are
-counted: over-counting hides nothing, while ignoring them would, and a
+(`allow (dead_code)`). Before matching, one normalization pass canonicalizes
+the token stream: whitespace/comments between tokens are dropped (even
+between `#`, `!`, `[` and the path), the `r#` raw-identifier prefix is
+stripped (`r#allow` is the same suppression), and Unicode format characters
+(`Cf`, e.g. U+200E/U+200F) are removed; any other non-ASCII inside a path
+stays and fails closed above. Suppressions written inside macro bodies, or
+passed as macro arguments (`macro_rules!` arms, `stringify!(#[allow(..)])`),
+are counted: over-counting hides nothing, while ignoring them would, and a
 macro-emitted suppression is real. A "test" file is one with a
 `tests`/`test` path component or `test` in the file stem
 (`*_tests.rs`, `tests.rs`, `test_support.rs`, ...). Only `crates/` is
 scanned; `tools/` members are out of scope.
+
+Limit: this is a text tool, not the compiler. Exotic spellings beyond the
+normalization above are covered by clippy's `allow_attributes` lint in
+opted-in crates (the compiler sees every real attribute) and by the
+reviewer. No further parser rounds.
 """
 
 from __future__ import annotations
@@ -44,6 +54,7 @@ import argparse
 import json
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -72,6 +83,48 @@ SUPPRESSION_HEAD_RES = {
     keyword: re.compile(re.escape(keyword) + r"(?![A-Za-z0-9_])") for keyword in ("allow", "expect")
 }
 CFG_ATTR_HEAD_RE = re.compile(r"cfg_attr(?![A-Za-z0-9_])")
+
+RAW_IDENT_RE = re.compile(r"\br#(?=[A-Za-z_])")
+
+
+def _is_word(c: str) -> bool:
+    return bool(c) and (c == "_" or c.isalnum())
+
+
+def canonicalize(text: str) -> str:
+    """Collapse token-stream trivia to one canonical form (idempotent).
+
+    One pass, run on the blanked source before attribute matching and on
+    each attribute body before keyword matching:
+    - drop Unicode format characters (`Cf`: U+200E/U+200F, zero-width
+      ones), which rustc ignores even between a keyword and its paren;
+    - strip the raw-identifier prefix (`r#allow` is the same attribute);
+    - drop whitespace between tokens (rustc accepts whitespace/comments
+      between `#`, `!`, `[` and the path). A run between two word
+      characters collapses to one space, so `some thing` still fails
+      closed instead of merging into `something`.
+    Newlines are preserved so offsets still map to the original lines.
+    Any other non-ASCII survives, and the ASCII-only lint matcher below
+    rejects it as an error (fail closed).
+    """
+    text = "".join(c for c in text if unicodedata.category(c) != "Cf")
+    text = RAW_IDENT_RE.sub("", text)
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c.isspace():
+            j = i + 1
+            while j < n and text[j].isspace():
+                j += 1
+            if _is_word(out[-1] if out else "") and _is_word(text[j] if j < n else ""):
+                out.append(" ")
+            out.append("\n" * text.count("\n", i, j))
+            i = j
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
 
 
 def find_workspace_root() -> Path:
@@ -295,7 +348,7 @@ def _lints_in_suppression_call(
 
 def lints_in_attribute(inner: str, problems: list[str], where: str) -> list[str]:
     """Extract suppressed lints from one `[...]` attribute body (comments/strings blanked)."""
-    body = inner.strip()
+    body = canonicalize(inner).strip()
     for keyword in ("allow", "expect"):
         result = _lints_in_suppression_call(body, keyword, problems, where)
         if result is not None:
@@ -349,11 +402,13 @@ def scan_file(root: Path, path: Path, problems: list[str]) -> list[tuple[str, st
     except (OSError, UnicodeDecodeError) as exc:
         problems.append(f"{rel}: cannot read ({exc})")
         return []
-    clean = blank_comments_and_strings(text)
+    clean = canonicalize(blank_comments_and_strings(text))
     occurrences: list[tuple[str, str, str, int]] = []
     # Multi-line attributes are one match: `re.DOTALL` is unnecessary because
     # the bracket matcher walks the raw text; the regex only finds the `#`.
-    for match in re.finditer(r"#(!?)\[", clean):
+    # Canonicalization drops trivia between `#`, `!`, `[`, keeping newlines
+    # for line numbers, so the finder tolerates those here.
+    for match in re.finditer(r"#\s*!?\s*\[", clean):
         open_index = match.end() - 1
         try:
             end = match_balanced(clean, open_index)

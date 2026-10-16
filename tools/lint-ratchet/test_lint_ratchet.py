@@ -351,5 +351,114 @@ class BucketsAndInnerAttributes(unittest.TestCase):
         )
 
 
+# Format characters (`Cf`) the scanner drops; `chr()` keeps invisible
+# characters out of this file's literals.
+LTR = chr(0x200E)  # LEFT-TO-RIGHT MARK
+RTL = chr(0x200F)  # RIGHT-TO-LEFT MARK
+ZWSP = chr(0x200B)  # ZERO WIDTH SPACE
+ZWNBS = chr(0xFEFF)  # ZERO WIDTH NO-BREAK SPACE
+
+
+class NormalizationPass(unittest.TestCase):
+    # Round-3: one canonicalization pass closes the round-2 evasions
+    # (trivia between `#`/`!`/`[`, `r#` heads, format characters). Each
+    # counted case below is a rustc-accepted suppression the pre-pass
+    # scanner missed; see the round-2 review, findings 1-3.
+    # Format-character code points live at module scope above, so no
+    # invisible character ever sits in this file's literals.
+
+    def test_trivia_between_hash_bang_bracket_counts(self):
+        for source in (
+            "# [allow(dead_code)]\nfn a() {}\n",
+            "#/*c*/[allow(dead_code)]\nfn a() {}\n",
+            "# /*c*/ [allow(dead_code)]\nfn a() {}\n",
+            "#! [allow(dead_code)]\nfn a() {}\n",
+            "#!/*c*/[allow(dead_code)]\nfn a() {}\n",
+            "#/*c*/![allow(dead_code)]\nfn a() {}\n",
+        ):
+            hits, problems = scan_hits(source)
+            self.assertEqual(problems, [], source)
+            self.assertEqual(
+                [(lint, line) for _, lint, _, _, line in hits],
+                [("dead_code", 1)],
+                source,
+            )
+
+    def test_raw_identifier_heads_count(self):
+        for inner, expected in (
+            ("r#allow(dead_code)", ["dead_code"]),
+            ("r#expect(dead_code)", ["dead_code"]),
+            ("r#cfg_attr(all(), allow(dead_code))", ["dead_code"]),
+            ("cfg_attr(all(), r#allow(dead_code))", ["dead_code"]),
+            ("cfg_attr(all(), r#expect(unused))", ["unused"]),
+        ):
+            lints, problems = parse(inner)
+            self.assertEqual(lints, expected, inner)
+            self.assertEqual(problems, [], inner)
+        hits, problems = scan_hits("#![r#allow(dead_code)]\nfn a() {}\n")
+        self.assertEqual(problems, [])
+        self.assertEqual(
+            [(lint, line) for _, lint, _, _, line in hits],
+            [("dead_code", 1)],
+        )
+
+    def test_format_characters_removed(self):
+        for inner, expected in (
+            ("allow" + LTR + "(dead_code)", ["dead_code"]),
+            ("allow" + RTL + "(dead_code)", ["dead_code"]),
+            ("cfg_attr" + LTR + "(all(), allow(dead_code))", ["dead_code"]),
+            ("allow" + ZWSP + "(dead_code)", ["dead_code"]),
+            ("allow" + ZWNBS + "(dead_code)", ["dead_code"]),
+            ("expect" + LTR + "(unused)", ["unused"]),
+        ):
+            lints, problems = parse(inner)
+            self.assertEqual(lints, expected, repr(inner))
+            self.assertEqual(problems, [], repr(inner))
+        inner = "allow(clippy" + LTR + "::" + LTR + "needless_collect)"
+        lints, problems = parse(inner)
+        self.assertEqual(lints, ["clippy::needless_collect"])
+        self.assertEqual(problems, [])
+
+    def test_other_non_ascii_in_path_still_errors(self):
+        lints, problems = parse("allow(dead_cöde)")
+        self.assertEqual(lints, [])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("cannot parse suppression item", problems[0])
+
+    def test_r2_slip_tree_counts_every_file(self):
+        # The review's 14 rustc-accepted evasions: each must count (no
+        # silent miss, no parse error), so an empty baseline fails.
+        sources = (
+            "# [allow(dead_code)]\n",
+            "#/*c*/[allow(dead_code)]\n",
+            "# /*c*/ [allow(dead_code)]\n",
+            "#! [allow(dead_code)]\n",
+            "#!/*c*/[allow(dead_code)]\n",
+            "#/*c*/![allow(dead_code)]\n",
+            "#[r#allow(dead_code)]\n",
+            "#[r#expect(dead_code)]\n",
+            "#![r#allow(dead_code)]\n",
+            "#[r#cfg_attr(all(), allow(dead_code))]\n",
+            "#[cfg_attr(all(), r#allow(dead_code))]\n",
+            "#[allow" + LTR + "(dead_code)]\n",
+            "#[allow" + RTL + "(dead_code)]\n",
+            "#[cfg_attr" + LTR + "(all(), allow(dead_code))]\n",
+        )
+        files = {
+            f"crates/probe/src/slip{i}.rs": src + "fn hidden() {}\n"
+            for i, src in enumerate(sources)
+        }
+        exit_code, out, err = run_check(files)
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(err, "")
+        self.assertIn("FAIL (1 problem(s))", out)
+        self.assertIn(
+            "[probe] dead_code [non_test]: new lint not in baseline (14 occurrence(s))",
+            out,
+        )
+        for i in range(len(sources)):
+            self.assertIn(f"crates/probe/src/slip{i}.rs:1", out)
+
+
 if __name__ == "__main__":
     unittest.main()
