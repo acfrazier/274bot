@@ -3364,7 +3364,9 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
             |_| true,
             |_, _| {
                 bob_started_tx.send(()).unwrap();
-                bob_release_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+                bob_release_rx
+                    .recv_timeout(Duration::from_secs(60))
+                    .unwrap();
                 Ok::<(), String>(())
             },
             |_| None,
