@@ -46,9 +46,13 @@ v.upsert(profile)?                              // rewrites the file; error leav
 `ProfileSettings.auto_login` defaults to `false` (serde default), so v1
 blobs that only carried `lowmem` deserialize with the box unchecked; the
 panel's Profiles edit form "Log in automatically" checkbox reads and upserts it.
-`ProfileSettings.random_events` defaults **on** (detect + dialog act);
-off still detects and publishes `RandomStatus`. `lamp_skill` /
-`lamp_auto` persist with the profile.
+`ProfileSettings.random_events` defaults **on** (detect and handle events).
+Off is **detect-only**, not stop-on-event: the Guardian still publishes the
+event's kind and name, but does not act or mark it pending for scripts.
+Held Strange boxes remain untouched when this setting is off. They still
+obey the engine's item rules, including its refusal to bank them. Enable
+random-event handling or solve the boxes manually to remove them.
+`lamp_skill` / `lamp_auto` persist with the profile.
 `ProfileSettings.tutorial_skipped` is `Option<bool>` (serde default
 `None` = unknown). The panel `getvar tutorial`s unknown profiles, then
 caches `Some(true)` once skipped (`>= 1000` or TutSkip); live

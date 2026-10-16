@@ -24,6 +24,8 @@ pub struct RandomStatus {
     /// The detected event; `None` when the snapshot shows nothing.
     pub kind: Option<RandomKind>,
     pub name: Option<String>,
+    /// An owned event pending handling. Detect-only events still publish
+    /// kind/name, but cannot freeze scripts through their pending signal.
     pub ours: bool,
     /// A dialog handle is in flight (the host is talking it through).
     pub handling: bool,
@@ -564,9 +566,10 @@ impl Guardian {
         RandomStatus {
             kind: ev.as_ref().map(|e| e.kind),
             name: ev.as_ref().map(|e| e.name.clone()),
-            // Inert leftover lamp still detects for the status row, but
-            // must not publish ours — EventSignal.pending is hold OR ours.
-            ours: !inert_lamp
+            // Detection alone must not latch pending work: both native
+            // eligibility and EventSignal.pending use hold OR ours.
+            ours: settings.random_events
+                && !inert_lamp
                 && !inert_tool
                 && !inert_trap
                 && ev.as_ref().map(|e| e.ours).unwrap_or(false),

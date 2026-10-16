@@ -84,7 +84,13 @@ pub fn fit_frame_to_work_area(
 /// winit physical pixels (top-left, y down). `main_height` is the height of
 /// the menu-bar screen in points — the same reference winit uses
 /// (`CGMainDisplayID` / `NSScreen.screens[0].frame`).
-#[cfg_attr(not(any(test, target_os = "macos")), allow(dead_code))]
+#[cfg_attr(
+    not(any(test, target_os = "macos")),
+    expect(
+        dead_code,
+        reason = "macOS-only coordinate conversion; tests exercise it elsewhere"
+    )
+)]
 pub fn cocoa_visible_frame_to_physical(
     origin: (f64, f64),
     size: (f64, f64),
@@ -105,7 +111,13 @@ pub fn cocoa_visible_frame_to_physical(
 
 /// Convert a Win32 `RECT` (`rcWork`) into winit physical pixels. Win32
 /// screen coordinates are already top-left physical.
-#[cfg_attr(not(any(test, windows)), allow(dead_code))]
+#[cfg_attr(
+    not(any(test, windows)),
+    expect(
+        dead_code,
+        reason = "Windows-only coordinate conversion; tests exercise it elsewhere"
+    )
+)]
 pub fn win32_work_rect_to_physical(left: i32, top: i32, right: i32, bottom: i32) -> WorkArea {
     WorkArea {
         origin: (f64::from(left), f64::from(top)),

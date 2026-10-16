@@ -65,7 +65,15 @@ pub(crate) enum QualifiedUnit {
 }
 
 /// A worker that remains inside a step this long makes the service unavailable.
-pub const WORKER_STALL_LIMIT: Duration = Duration::from_secs(5);
+/// Healthy disk I/O can stall for seconds (a 6.1 s fsync was measured).
+/// The sticky latch catches a lost worker, not a slow one.
+pub const WORKER_STALL_LIMIT: Duration = Duration::from_secs(60);
+/// Maximum time shutdown waits for the worker to return and be joined.
+const WORKER_SHUTDOWN_LIMIT: Duration = Duration::from_secs(5);
+/// Interval between worker-health checks while waiting for work notifications.
+const WORKER_HEALTH_RECHECK_INTERVAL: Duration = Duration::from_secs(1);
+/// Warn when one active step takes longer than this to return.
+const SLOW_STEP_WARNING_LIMIT: Duration = Duration::from_secs(5);
 /// Maximum simultaneously accepted jobs, including unconsumed terminals.
 const MAX_WORK_JOBS: usize = 64;
 /// Two independently maximal 128 MiB preparations may coexist. Ordinary
@@ -208,7 +216,12 @@ impl WorkService {
                 // The unavailable service keeps its process identity and
                 // typed condition so every later caller receives the frozen
                 // restart-required refusal, never a transient Full/start error.
-                latch_outage(&shared, ConditionCause::StartFailed, shared.clock.now());
+                latch_outage(
+                    &shared,
+                    ConditionCause::StartFailed,
+                    shared.clock.now(),
+                    None,
+                );
                 None
             }
         };
@@ -324,8 +337,14 @@ impl WorkService {
         let now = self.shared.clock.now();
         let active = *self.shared.active.lock();
         if let Some(active) = active.filter(|active| !active.returned) {
-            if now.saturating_duration_since(active.started) >= WORKER_STALL_LIMIT {
-                latch_outage(&self.shared, ConditionCause::ProgressLost, now);
+            let elapsed = now.saturating_duration_since(active.started);
+            if elapsed >= WORKER_STALL_LIMIT {
+                latch_outage(
+                    &self.shared,
+                    ConditionCause::ProgressLost,
+                    now,
+                    Some(elapsed),
+                );
             }
         }
     }
@@ -343,7 +362,7 @@ impl WorkService {
     /// worker handle, and any active-job credit remain retained. Call again
     /// after the active step returns to join the worker.
     pub fn shutdown(shared: &Arc<parking_lot::Mutex<Self>>) -> Result<(), WorkShutdownError> {
-        Self::shutdown_with_timeout(shared, WORKER_STALL_LIMIT)
+        Self::shutdown_with_timeout(shared, WORKER_SHUTDOWN_LIMIT)
     }
 
     fn shutdown_with_timeout(
@@ -483,7 +502,7 @@ impl WorkService {
             };
             // Recheck health periodically, but never confuse a healthy busy
             // queue with a worker that failed to return from its active step.
-            notifier.wait_for_change(epoch, WORKER_STALL_LIMIT);
+            notifier.wait_for_change(epoch, WORKER_HEALTH_RECHECK_INTERVAL);
         }
     }
 
@@ -507,7 +526,7 @@ impl WorkService {
                     service.publication_epoch(),
                 )
             };
-            notifier.wait_for_change(epoch, WORKER_STALL_LIMIT);
+            notifier.wait_for_change(epoch, WORKER_HEALTH_RECHECK_INTERVAL);
         }
     }
 
@@ -704,14 +723,25 @@ struct ServiceNotifier {
     epoch: AtomicU64,
     gate: Mutex<()>,
     changed: Condvar,
+    #[cfg(test)]
+    wait_hook: Mutex<Option<std::sync::mpsc::Sender<()>>>,
 }
 
 impl ServiceNotifier {
     fn wait_for_change(&self, observed: u64, timeout: Duration) {
         let mut gate = self.gate.lock();
         if self.epoch.load(Ordering::Acquire) == observed {
+            #[cfg(test)]
+            if let Some(wait_hook) = self.wait_hook.lock().take() {
+                let _ = wait_hook.send(());
+            }
             self.changed.wait_for(&mut gate, timeout);
         }
+    }
+
+    #[cfg(test)]
+    fn hook_next_wait(&self, hook: std::sync::mpsc::Sender<()>) {
+        *self.wait_hook.lock() = Some(hook);
     }
 
     fn signal_change(&self) {
@@ -740,6 +770,7 @@ struct EntryControl {
 struct JobEntry {
     identity: WorkIdentity,
     spec: TypeId,
+    family: WorkFamily,
     revision: api::work::InputRevision,
     charge: WorkCharge,
     job: Mutex<Option<Box<dyn ErasedJob>>>,
@@ -1037,7 +1068,7 @@ fn worker_thread(shared: Arc<WorkerShared>) {
     let result = catch_unwind(AssertUnwindSafe(|| worker_loop(&shared)));
     if result.is_err() {
         let now = shared.clock.now();
-        latch_outage(&shared, ConditionCause::Panicked, now);
+        latch_outage(&shared, ConditionCause::Panicked, now, None);
         if let Some(active) = *shared.active.lock() {
             if let Some(entry) = shared
                 .registry
@@ -1180,11 +1211,22 @@ fn process_step(
     timing: StepTiming,
 ) {
     let elapsed = timing.returned_at.saturating_duration_since(timing.started);
+    let slow_step = elapsed > SLOW_STEP_WARNING_LIMIT;
+    if slow_step {
+        api::host_log!(
+            api::hostlog::Category::Lifecycle,
+            api::hostlog::Level::Warn,
+            "background work step returned slowly family={:?} elapsed={elapsed:?}",
+            entry.family,
+        );
+    }
     if elapsed >= timing.allowance {
         let count = shared.slice_overruns.fetch_add(1, Ordering::AcqRel) + 1;
         // Exponential reporting bounds log work if a busy host has many
         // delayed steps, while the exact count remains observable.
-        if count.is_power_of_two() {
+        // The slow-step warning already reports this step's delay. Suppress
+        // the overrun warning to avoid two warnings for the same step.
+        if count.is_power_of_two() && !slow_step {
             api::host_log!(
                 api::hostlog::Category::Lifecycle,
                 api::hostlog::Level::Warn,
@@ -1427,14 +1469,19 @@ fn request_cancel(
     outcome
 }
 
-fn latch_outage(shared: &Arc<WorkerShared>, cause: ConditionCause, now: Instant) {
+fn latch_outage(
+    shared: &Arc<WorkerShared>,
+    cause: ConditionCause,
+    now: Instant,
+    stalled_elapsed: Option<Duration>,
+) {
     let condition_id = ConditionId::new(
         shared.incarnation,
         ProcessServiceCode::WorkAdmissionUnavailable,
     );
-    let queued = {
+    let (queued, newly_latched) = {
         let mut queue = shared.queue.lock();
-        {
+        let newly_latched = {
             let mut health = shared.health.lock();
             if health
                 .latched(ProcessServiceCode::WorkAdmissionUnavailable)
@@ -1446,13 +1493,24 @@ fn latch_outage(shared: &Arc<WorkerShared>, cause: ConditionCause, now: Instant)
                     shared.origin.elapsed(now),
                     None,
                 );
-                let _ = health.publish(condition);
+                health.publish(condition).is_ok()
+            } else {
+                false
             }
-        }
+        };
         shared.unavailable.store(true, Ordering::Release);
         queue.stopping = true;
-        queue.jobs.drain(..).collect::<Vec<_>>()
+        (queue.jobs.drain(..).collect::<Vec<_>>(), newly_latched)
     };
+    if newly_latched {
+        if let Some(elapsed) = stalled_elapsed {
+            api::host_log!(
+                api::hostlog::Category::Lifecycle,
+                api::hostlog::Level::Warn,
+                "background work worker stalled after {elapsed:?}. The service is unavailable.",
+            );
+        }
+    }
     let condition = shared
         .health
         .lock()
@@ -1585,6 +1643,7 @@ impl WorkService {
         let entry = Arc::new(JobEntry {
             identity,
             spec: TypeId::of::<F>(),
+            family: F::FAMILY,
             revision,
             charge,
             job: Mutex::new(Some(Box::new(TypedJob::<F, J> {

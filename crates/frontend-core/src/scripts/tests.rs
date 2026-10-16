@@ -6,7 +6,9 @@ use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use super::{parse_parameter_text, Notice, ParameterCommit, ParameterEditKey, Scripts};
+use super::{
+    parse_parameter_text, CatalogError, Notice, ParameterCommit, ParameterEditKey, Scripts,
+};
 use crate::command::{
     CardKind, CommandBook, CommandFailure, Completion, OperatorCommand, Pending, Stage, Subject,
 };
@@ -3375,6 +3377,257 @@ fn failed_catalog_fill_does_not_latch_root_or_block_later_fill() {
             .is_some(),
         "a later valid $RS2B0T root must still register its cards"
     );
+}
+
+#[test]
+fn catalog_request_refusals_name_their_failure_kind() {
+    let mut f = fixture("catalog-typed-errors", &["alice"]);
+    let root = f.dir.join("catalog-root");
+    let other = f.dir.join("other-catalog-root");
+    let path_file = script::default_rs2b0t_path_file();
+    f.scripts
+        .request_catalog_import(&root, &path_file)
+        .expect("first import queues");
+    assert_eq!(
+        f.scripts
+            .request_catalog_import(&root, &path_file)
+            .unwrap_err()
+            .to_string(),
+        "catalog preparation is already pending",
+        "a second import while work is queued must report Busy"
+    );
+    assert_eq!(
+        f.scripts
+            .request_catalog_fill(&other, &path_file)
+            .unwrap_err()
+            .to_string(),
+        "catalog preparation is already pending for another root",
+        "a fill for another root while work is queued must report BusyForAnotherRoot"
+    );
+    f.settle_catalog_work();
+    assert_eq!(
+        f.scripts
+            .request_catalog_fill(&other, &path_file)
+            .unwrap_err()
+            .to_string(),
+        "the previous catalog import result has not been collected",
+        "a fill must report UncollectedImportResult until the import receipt is taken"
+    );
+    assert!(
+        f.scripts.take_catalog_import_result().is_some(),
+        "the settled import receipt stays available as a typed result"
+    );
+}
+
+#[test]
+fn catalog_typed_failures_keep_their_byte_identical_display() {
+    use script::load::{CatalogSnapshotError, CatalogWorkerError};
+
+    let snapshots = [
+        (
+            CatalogSnapshotError::SnapshotTooLarge,
+            "catalog snapshot is too large",
+        ),
+        (
+            CatalogSnapshotError::RegistryIndexSizeOverflow,
+            "catalog registry index size overflow",
+        ),
+        (
+            CatalogSnapshotError::SourceEstimateTooLarge,
+            "catalog source estimate is too large",
+        ),
+        (
+            CatalogSnapshotError::CardMetadataTooLarge,
+            "catalog card metadata is too large",
+        ),
+        (
+            CatalogSnapshotError::CardMetadataExceedsSnapshotBound,
+            "catalog card metadata exceeds the 8 MiB snapshot bound",
+        ),
+        (
+            CatalogSnapshotError::SourceChargeOverflow,
+            "catalog source charge overflow",
+        ),
+        (
+            CatalogSnapshotError::SnapshotExceedsInputBound,
+            "catalog snapshot exceeds the input charge bound",
+        ),
+        (
+            CatalogSnapshotError::InputChargeOverflow,
+            "catalog input charge overflow",
+        ),
+        (
+            CatalogSnapshotError::ScratchChargeOverflow,
+            "catalog scratch charge overflow",
+        ),
+        (
+            CatalogSnapshotError::ResultChargeOverflow,
+            "catalog result charge overflow",
+        ),
+    ];
+    assert_eq!(snapshots.len(), 10, "every snapshot variant is covered");
+    for (error, expected) in snapshots {
+        let wrapped = CatalogError::from(error);
+        assert_eq!(wrapped.to_string(), expected);
+    }
+
+    let workers = [
+        (
+            CatalogWorkerError::Registry {
+                path: "/root/index.ts".into(),
+                reason: "missing /root/index.ts: gone".into(),
+            },
+            "$RS2B0T registry /root/index.ts: missing /root/index.ts: gone",
+        ),
+        (
+            CatalogWorkerError::TooManyRegistrations,
+            "catalog has more than 4096 registrations",
+        ),
+        (
+            CatalogWorkerError::RegistrySizeOverflow,
+            "catalog registry size overflow",
+        ),
+        (
+            CatalogWorkerError::RegistryMetadataExceedsInputBound,
+            "catalog registry metadata exceeds its charged input bound",
+        ),
+        (
+            CatalogWorkerError::InputsExceedInputBound,
+            "catalog inputs exceed the charged input bound",
+        ),
+        (
+            CatalogWorkerError::TooManySourceFiles,
+            "catalog source graph exceeds 8192 files",
+        ),
+        (
+            CatalogWorkerError::SourcesExceedInputBound,
+            "catalog sources exceed the charged input bound",
+        ),
+        (
+            CatalogWorkerError::SourcesExceedBoundedInputLimit,
+            "catalog sources exceed the bounded input limit",
+        ),
+        (
+            CatalogWorkerError::SourceFile {
+                reason: "not a regular file".into(),
+            },
+            "not a regular file",
+        ),
+        (
+            CatalogWorkerError::TooManySiblings {
+                relative: "./src/bot/scripts/Big/Big.ts".into(),
+            },
+            "catalog source ./src/bot/scripts/Big/Big.ts has more than 128 sibling modules",
+        ),
+        (
+            CatalogWorkerError::SiblingIndexSizeOverflow,
+            "catalog sibling index size overflow",
+        ),
+        (
+            CatalogWorkerError::ScratchExceedsBound,
+            "catalog preparation scratch exceeds its charged scratch bound",
+        ),
+        (
+            CatalogWorkerError::TooManySiblingModules,
+            "catalog source graph exceeds 8192 sibling modules",
+        ),
+        (
+            CatalogWorkerError::ParsedRegistrationMissing {
+                name: "GoneBot".into(),
+            },
+            "catalog GoneBot: parsed registration is missing",
+        ),
+        (
+            CatalogWorkerError::ExistingSnapshotMissing {
+                name: "GoneBot".into(),
+            },
+            "catalog GoneBot: existing card snapshot is missing",
+        ),
+        (
+            CatalogWorkerError::CardBounded {
+                name: "GoneBot".into(),
+                reason: "registry entry no longer resolves".into(),
+            },
+            "catalog GoneBot: registry entry no longer resolves",
+        ),
+        (
+            CatalogWorkerError::FailureIndexSizeOverflow,
+            "catalog failure index size overflow",
+        ),
+        (
+            CatalogWorkerError::DiffCompletedMoreThanOnce,
+            "catalog diff work completed more than once",
+        ),
+        (
+            CatalogWorkerError::PreparationCompletedMoreThanOnce,
+            "catalog preparation work completed more than once",
+        ),
+        (
+            CatalogWorkerError::CandidateCountOverflow,
+            "catalog candidate count overflow",
+        ),
+        (
+            CatalogWorkerError::ResultSizeOverflow,
+            "catalog result size overflow",
+        ),
+        (
+            CatalogWorkerError::PreparedResultExceedsBound,
+            "prepared catalog result exceeds its charged result bound",
+        ),
+        (
+            CatalogWorkerError::PreparedCardSizeOverflow,
+            "prepared catalog card size overflow",
+        ),
+        (
+            CatalogWorkerError::FailureSizeOverflow,
+            "catalog failure size overflow",
+        ),
+        (
+            CatalogWorkerError::ResultSizeUnderflow,
+            "catalog result size accounting underflow",
+        ),
+        (
+            CatalogWorkerError::UnchangedCandidateIndexInvalid,
+            "catalog unchanged candidate index is invalid",
+        ),
+        (
+            CatalogWorkerError::ScratchSizeOverflow,
+            "catalog scratch size overflow",
+        ),
+        (
+            CatalogWorkerError::CardTaskAlreadyComplete,
+            "card preparation task is already complete",
+        ),
+        (
+            CatalogWorkerError::DiffSizeOverflow,
+            "catalog diff size overflow",
+        ),
+        (
+            CatalogWorkerError::DiffSizeUnderflow,
+            "catalog diff size accounting underflow",
+        ),
+        (
+            CatalogWorkerError::DiffExceedsResultBound,
+            "catalog diff exceeds its charged result bound",
+        ),
+        (
+            CatalogWorkerError::FingerprintInsertionDisappeared,
+            "catalog fingerprint insertion disappeared",
+        ),
+        (
+            CatalogWorkerError::IncomingInsertionDisappeared,
+            "catalog incoming insertion disappeared",
+        ),
+        (
+            CatalogWorkerError::DiffStateUnavailable,
+            "catalog diff state is unavailable",
+        ),
+    ];
+    assert_eq!(workers.len(), 34, "every worker variant is covered");
+    for (error, expected) in workers {
+        let wrapped = CatalogError::from(error);
+        assert_eq!(wrapped.to_string(), expected);
+    }
 }
 
 #[test]

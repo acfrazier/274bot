@@ -856,9 +856,15 @@ enum LiveCase {
     DeathNoStock,
     DeathReturnRefused,
     // Constructed only by the `live-probe` watchdog cells.
-    #[cfg_attr(not(feature = "live-probe"), allow(dead_code))]
+    #[cfg_attr(
+        not(feature = "live-probe"),
+        expect(dead_code, reason = "constructed only by live-probe watchdog cells")
+    )]
     DeathWatchdogPending,
-    #[cfg_attr(not(feature = "live-probe"), allow(dead_code))]
+    #[cfg_attr(
+        not(feature = "live-probe"),
+        expect(dead_code, reason = "constructed only by live-probe watchdog cells")
+    )]
     DeathWatchdogProving,
     FishNet,
     FishSpotMoves,

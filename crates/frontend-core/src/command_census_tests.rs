@@ -147,6 +147,31 @@ const CORE: &[(&str, Decision)] = &[
         "map_bake.rs::MapBakeGate::note_ready_without_terrain",
         Excluded("adopts the ready demand's result (no terrain) into the prompt: owner result"),
     ),
+    // map_decode.rs: frame-driven image work, not operator commands.
+    (
+        "map_decode.rs::WalkMapDecodeController::request",
+        Excluded("visible-tile PNG demand from the map frame's visible-area scan; not an operator decision"),
+    ),
+    (
+        "map_decode.rs::WalkMapDecodeController::retry_pending",
+        Excluded("bounded retry of the frame's pending PNG after capacity or visibility change; not an operator decision"),
+    ),
+    (
+        "map_decode.rs::WalkMapDecodeController::poll",
+        Excluded("frame pump consumes the visible tile's settled RGBA owner result; not an operator decision"),
+    ),
+    (
+        "map_decode.rs::WalkMapDecodeController::cancel_active",
+        Excluded("view visibility or lifecycle invalidates an accepted tile decode; not an operator decision"),
+    ),
+    (
+        "map_decode.rs::WalkMapDecodeController::discard_pending",
+        Excluded("drops the pending tile made obsolete by visible-area or image change; not an operator decision"),
+    ),
+    (
+        "map_decode.rs::WalkMapDecodeController::invalidate",
+        Excluded("map close or image, revision, or generation lifecycle invalidation; not an operator decision"),
+    ),
     // marked.rs
     ("marked.rs::assign_marked", Row(C::AssignScript)),
     ("marked.rs::assign_and_restart_marked", Row(C::AssignAndRestart)),

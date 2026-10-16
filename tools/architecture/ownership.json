@@ -455,6 +455,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/frontend-core/src/map_decode.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/frontend-core/src/marked.rs",
       "owner": "T3"
     },
@@ -860,6 +864,10 @@
     },
     {
       "path": "crates/host-play/src/gather_bait_live.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/src/gather_held_live.rs",
       "owner": "T1"
     },
     {
@@ -1313,6 +1321,10 @@
     {
       "path": "crates/host-play/tests/m3_render_contention.rs",
       "owner": "T4"
+    },
+    {
+      "path": "crates/host-play/tests/map_decode_alloc.rs",
+      "owner": "T5"
     },
     {
       "path": "crates/host-play/tests/nav_fares_live.rs",
@@ -5520,6 +5532,30 @@
     },
     {
       "path": "tools/harness/write_player_fixture.ts",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/lint-ratchet/lint_ratchet.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/lint-ratchet/test_lint_ratchet.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/cellar-pull-windows.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/cellar-pull.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/mirror-pull.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/run_nightly.py",
       "owner": "T1"
     },
     {
