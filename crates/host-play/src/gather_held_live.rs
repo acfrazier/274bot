@@ -27,11 +27,13 @@ const SHARK: i32 = 383;
 // increment after the shark deposit proves real fishing resumed, without
 // assuming which chance outcome the engine picks.
 const BASS: i32 = 363;
-// A level-99 shark roll succeeds with probability 41/256 (~16%) every 5 ticks
-// (`PlayerOps.ts:591-599`, `fishing.struct:61-65`), so 45 consecutive misses
-// have probability (215/256)^45 ≈ 0.04%. At 600 ms/tick, 45 rolls take 135 s;
-// the measured bank trip takes about 45 s, so allow 180 s overall.
-const BOUND: Duration = Duration::from_secs(180);
+// A level-99 shark roll succeeds with probability 41/256 (~16%)
+// (`PlayerOps.ts:591-599`, `fishing.struct:61-65`). The harpoon op rolls every
+// 6 ticks: it sets `%action_delay` to `map_clock + 5`, rolls on that tick, and
+// re-arms on the next (`memberfish.rs2:72-78`). 45 consecutive misses have
+// probability (215/256)^45 ≈ 0.04%. At 600 ms/tick, 45 rolls take 162 s; the
+// measured bank trip takes at most about 45 s, so allow 210 s overall.
+const BOUND: Duration = Duration::from_secs(210);
 const SEED: &[&str] = &[
     "setstat fishing 99",
     "setstat defence 99",
