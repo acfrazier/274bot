@@ -1103,77 +1103,10 @@
       "symbol": "CatalogError",
       "classification": "owning",
       "owner": "T3",
-      "reason": "Catalog fill/import failure kind; Display preserves prior String wording."
+      "reason": "Opaque catalog fill/import failure kind; Display preserves prior String wording and details stay private behind the newtype like ImportError."
     }
   ],
-  "violations": [
-    {
-      "id": "owning_derived_clone|crates/frontend-core/src/scripts/reload.rs|production|CatalogError|derived_Clone_on_owning_view",
-      "category": "owning_derived_clone",
-      "path": "crates/frontend-core/src/scripts/reload.rs",
-      "symbol": "CatalogError",
-      "cfg_or_target": "production",
-      "owner": "T3",
-      "reason": "Retained as async receipt and returned to caller; Clone is required.",
-      "removal_endpoint": "T3.1",
-      "classification": "derived_Clone_on_owning_view"
-    },
-    {
-      "id": "owning_public_field|crates/frontend-core/src/scripts/reload.rs|production|CatalogError::Charge::0|public_field_of_owning_view",
-      "category": "owning_public_field",
-      "path": "crates/frontend-core/src/scripts/reload.rs",
-      "symbol": "CatalogError::Charge::0",
-      "cfg_or_target": "production",
-      "owner": "T3",
-      "reason": "Typed catalog failure payloads are the public API; callers match variants, not text.",
-      "removal_endpoint": "T3.1",
-      "classification": "public_field_of_owning_view"
-    },
-    {
-      "id": "owning_public_field|crates/frontend-core/src/scripts/reload.rs|production|CatalogError::Preparation::0|public_field_of_owning_view",
-      "category": "owning_public_field",
-      "path": "crates/frontend-core/src/scripts/reload.rs",
-      "symbol": "CatalogError::Preparation::0",
-      "cfg_or_target": "production",
-      "owner": "T3",
-      "reason": "Typed catalog failure payloads are the public API; callers match variants, not text.",
-      "removal_endpoint": "T3.1",
-      "classification": "public_field_of_owning_view"
-    },
-    {
-      "id": "owning_public_field|crates/frontend-core/src/scripts/reload.rs|production|CatalogError::Snapshot::0|public_field_of_owning_view",
-      "category": "owning_public_field",
-      "path": "crates/frontend-core/src/scripts/reload.rs",
-      "symbol": "CatalogError::Snapshot::0",
-      "cfg_or_target": "production",
-      "owner": "T3",
-      "reason": "Typed catalog failure payloads are the public API; callers match variants, not text.",
-      "removal_endpoint": "T3.1",
-      "classification": "public_field_of_owning_view"
-    },
-    {
-      "id": "owning_public_field|crates/frontend-core/src/scripts/reload.rs|production|CatalogError::UnexpectedCatalogCommit::0|public_field_of_owning_view",
-      "category": "owning_public_field",
-      "path": "crates/frontend-core/src/scripts/reload.rs",
-      "symbol": "CatalogError::UnexpectedCatalogCommit::0",
-      "cfg_or_target": "production",
-      "owner": "T3",
-      "reason": "Typed catalog failure payloads are the public API; callers match variants, not text.",
-      "removal_endpoint": "T3.1",
-      "classification": "public_field_of_owning_view"
-    },
-    {
-      "id": "owning_public_field|crates/frontend-core/src/scripts/reload.rs|production|CatalogError::Worker::0|public_field_of_owning_view",
-      "category": "owning_public_field",
-      "path": "crates/frontend-core/src/scripts/reload.rs",
-      "symbol": "CatalogError::Worker::0",
-      "cfg_or_target": "production",
-      "owner": "T3",
-      "reason": "Typed catalog failure payloads are the public API; callers match variants, not text.",
-      "removal_endpoint": "T3.1",
-      "classification": "public_field_of_owning_view"
-    }
-  ],
+  "violations": [],
   "test_exceptions": [
     {
       "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav::router::AvoidRect|exact_test_fixture_oracle_import",

@@ -17,22 +17,78 @@ use crate::session::{OperatorSession, ScriptStart};
 /// Returned at the `frontend-core` crate boundary by
 /// [`Scripts::request_catalog_fill`], [`Scripts::request_catalog_import`],
 /// [`Scripts::take_catalog_import_result`] and
-/// [`Scripts::fill_catalog_blocking`]. The `Display` text of every variant
+/// [`Scripts::fill_catalog_blocking`]. The `Display` text of every failure
 /// is the message those methods returned as `String` before, so
-/// operator-visible wording is unchanged; callers can now tell the
-/// failures apart without matching on text.
+/// operator-visible wording is unchanged.
 ///
-/// The bounded library snapshot and the catalog worker's own failures are
+/// The failure kind stays private behind this opaque newtype, following the
+/// existing `ImportError` newtype in `rs2b0t_import`: state crossing the
+/// frontend-core seam goes through accessors, not public fields. The
+/// bounded library snapshot and the catalog worker's own failures are
 /// modeled in `script` ([`script::load::CatalogSnapshotError`],
-/// [`script::load::CatalogWorkerError`]) and wrapped here through `#[from]`:
+/// [`script::load::CatalogWorkerError`]) and wrapped here through `From`:
 /// they cross from `script` into `frontend-core`, so the crate-boundary
 /// rule needs a `thiserror` kind on each side. WorkAdmission admission and
 /// join failures stay on this side as their `Display` text, so no `script`
-/// preparation type crosses the seam. The busy-state guards belong to this
-/// coordinator. `Clone` is needed: a submission failure is both retained as
-/// the async receipt and returned to the caller.
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum CatalogError {
+/// preparation type crosses the seam, even in a private field. A
+/// submission failure is stored once as the async receipt, and the
+/// requesting method returns it from that receipt, so one owner holds the
+/// error and no `Clone` is needed.
+pub struct CatalogError(CatalogFailure);
+
+impl std::fmt::Debug for CatalogError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl std::fmt::Display for CatalogError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl std::error::Error for CatalogError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.0.source()
+    }
+}
+
+impl CatalogError {
+    fn unexpected_catalog_commit(message: String) -> Self {
+        Self(CatalogFailure::UnexpectedCatalogCommit(message))
+    }
+}
+
+impl From<script::load::CatalogSnapshotError> for CatalogError {
+    fn from(error: script::load::CatalogSnapshotError) -> Self {
+        Self(CatalogFailure::Snapshot(error))
+    }
+}
+
+impl From<api::work::SubmissionRefusal> for CatalogError {
+    fn from(error: api::work::SubmissionRefusal) -> Self {
+        Self(CatalogFailure::Charge(error))
+    }
+}
+
+impl From<script::preparation::PreparationError> for CatalogError {
+    fn from(error: script::preparation::PreparationError) -> Self {
+        Self(CatalogFailure::Preparation(error.to_string()))
+    }
+}
+
+impl From<script::load::CatalogWorkerError> for CatalogError {
+    fn from(error: script::load::CatalogWorkerError) -> Self {
+        Self(CatalogFailure::Worker(error))
+    }
+}
+
+/// Why a catalog fill or import request failed. Kept private behind
+/// [`CatalogError`]; the `Display` text of every variant is the message the
+/// catalog methods returned as `String` before.
+#[derive(Debug, thiserror::Error)]
+enum CatalogFailure {
     /// Another root's catalog work is already queued or running.
     #[error("catalog preparation is already pending for another root")]
     BusyForAnotherRoot,
@@ -44,10 +100,10 @@ pub enum CatalogError {
     UncollectedImportResult,
     /// The bounded pre-submission snapshot of the library did not fit.
     #[error(transparent)]
-    Snapshot(#[from] script::load::CatalogSnapshotError),
+    Snapshot(script::load::CatalogSnapshotError),
     /// The admission charge for the catalog job was refused.
     #[error(transparent)]
-    Charge(#[from] api::work::SubmissionRefusal),
+    Charge(api::work::SubmissionRefusal),
     /// WorkAdmission refused, failed, or lost the catalog job. The payload
     /// is the preparation failure's `Display` text, so no `script` error
     /// type crosses the crate boundary. `Full` never reaches here: it is
@@ -56,19 +112,13 @@ pub enum CatalogError {
     Preparation(String),
     /// The catalog worker reported a failure (registry, source graph, diff).
     #[error(transparent)]
-    Worker(#[from] script::load::CatalogWorkerError),
+    Worker(script::load::CatalogWorkerError),
     /// A prepared catalog card could not be committed. Catalog cards never
     /// persist (`commit_prepared` only persists `ScriptSource::File`), so a
     /// commit failure here is an internal invariant violation, not a
     /// distinct catalog failure kind; the message is preserved for diagnosis.
     #[error("catalog commit invariant violated for a catalog card: {0}")]
     UnexpectedCatalogCommit(String),
-}
-
-impl From<script::preparation::PreparationError> for CatalogError {
-    fn from(error: script::preparation::PreparationError) -> Self {
-        Self::Preparation(error.to_string())
-    }
 }
 
 #[derive(Debug)]
@@ -552,17 +602,13 @@ impl Scripts {
         });
         match active_root {
             Some(active_root) if active_root == root => return Ok(()),
-            Some(_) => return Err(CatalogError::BusyForAnotherRoot),
+            Some(_) => return Err(CatalogError(CatalogFailure::BusyForAnotherRoot)),
             None => {}
         }
         if self.async_work.catalog_import_result.is_some() {
-            return Err(CatalogError::UncollectedImportResult);
+            return Err(CatalogError(CatalogFailure::UncollectedImportResult));
         }
-        let snapshot = Arc::new(
-            self.js
-                .catalog_preparation_snapshot(root)
-                .map_err(CatalogError::Snapshot)?,
-        );
+        let snapshot = Arc::new(self.js.catalog_preparation_snapshot(root)?);
         let generation = self.async_work.next_generation();
         self.async_work.catalog_generation = generation;
         self.async_work.catalog_fill_result = None;
@@ -572,7 +618,8 @@ impl Scripts {
             path_file: path_file.to_path_buf(),
             snapshot,
         });
-        self.submit_catalog_job()
+        self.submit_catalog_job();
+        self.async_work.catalog_fill_result.take().unwrap_or(Ok(()))
     }
 
     /// Queue an explicit catalog import and its bounded preparation. Unlike
@@ -583,16 +630,12 @@ impl Scripts {
         path_file: &Path,
     ) -> Result<(), CatalogError> {
         if self.async_work.catalog.is_some() {
-            return Err(CatalogError::Busy);
+            return Err(CatalogError(CatalogFailure::Busy));
         }
         if self.async_work.catalog_import_result.is_some() {
-            return Err(CatalogError::UncollectedImportResult);
+            return Err(CatalogError(CatalogFailure::UncollectedImportResult));
         }
-        let snapshot = Arc::new(
-            self.js
-                .catalog_preparation_snapshot(root)
-                .map_err(CatalogError::Snapshot)?,
-        );
+        let snapshot = Arc::new(self.js.catalog_preparation_snapshot(root)?);
         let generation = self.async_work.next_generation();
         self.async_work.catalog_generation = generation;
         self.async_work.catalog_fill_result = None;
@@ -602,7 +645,11 @@ impl Scripts {
             path_file: path_file.to_path_buf(),
             snapshot,
         });
-        self.submit_catalog_job()
+        self.submit_catalog_job();
+        match self.async_work.catalog_import_result.take() {
+            Some((_, result)) => result.map(|_| ()),
+            None => Ok(()),
+        }
     }
 
     /// Take the settled import receipt, if any: the root it was taken for
@@ -703,11 +750,14 @@ impl Scripts {
             lookup: lookup.to_string(),
             snapshot,
         });
-        if let Err(error) = self.submit_transpile_job() {
-            self.async_work.transpile_result = None;
-            return Err(error);
+        self.submit_transpile_job();
+        match self.async_work.transpile_result.take() {
+            Some(result) => match result.result {
+                Ok(()) => Ok(true),
+                Err(error) => Err(error),
+            },
+            None => Ok(true),
         }
-        Ok(true)
     }
 
     pub fn transpile_pending(&self) -> bool {
@@ -807,9 +857,12 @@ impl Scripts {
         }
     }
 
-    fn submit_catalog_job(&mut self) -> Result<(), CatalogError> {
+    /// Submit the queued catalog job to WorkAdmission. A submission failure
+    /// is stored once as the async receipt; the requesting method returns it
+    /// from that receipt, so one owner holds the error.
+    fn submit_catalog_job(&mut self) {
         let Some(job) = self.async_work.catalog.take() else {
-            return Ok(());
+            return;
         };
         match job {
             CatalogJob::FillPending {
@@ -826,10 +879,10 @@ impl Scripts {
                 ) {
                     Ok(input) => input,
                     Err(error) => {
-                        let error = CatalogError::Charge(error);
-                        self.async_work.catalog_fill_result = Some(Err(error.clone()));
+                        let error = CatalogError::from(error);
                         self.show(format!("$RS2B0T registry: {error}"));
-                        return Err(error);
+                        self.async_work.catalog_fill_result = Some(Err(error));
+                        return;
                     }
                 };
                 let work = Arc::clone(&snapshot).cooperative_diff();
@@ -846,7 +899,6 @@ impl Scripts {
                             path_file,
                             task,
                         });
-                        Ok(())
                     }
                     Err(script::preparation::PreparationError::Refused(
                         api::work::SubmissionRefusal::Full,
@@ -857,13 +909,11 @@ impl Scripts {
                             path_file,
                             snapshot,
                         });
-                        Ok(())
                     }
                     Err(error) => {
                         let error = CatalogError::from(error);
-                        self.async_work.catalog_fill_result = Some(Err(error.clone()));
                         self.show(format!("$RS2B0T registry: {error}"));
-                        Err(error)
+                        self.async_work.catalog_fill_result = Some(Err(error));
                     }
                 }
             }
@@ -881,10 +931,10 @@ impl Scripts {
                 ) {
                     Ok(input) => input,
                     Err(error) => {
-                        let error = CatalogError::Charge(error);
-                        self.async_work.catalog_import_result = Some((root, Err(error.clone())));
+                        let error = CatalogError::from(error);
                         self.show(format!("Import catalog: {error}"));
-                        return Err(error);
+                        self.async_work.catalog_import_result = Some((root, Err(error)));
+                        return;
                     }
                 };
                 let work = Arc::clone(&snapshot).cooperative_prepare();
@@ -901,7 +951,6 @@ impl Scripts {
                             path_file,
                             task,
                         });
-                        Ok(())
                     }
                     Err(script::preparation::PreparationError::Refused(
                         api::work::SubmissionRefusal::Full,
@@ -912,13 +961,11 @@ impl Scripts {
                             path_file,
                             snapshot,
                         });
-                        Ok(())
                     }
                     Err(error) => {
                         let error = CatalogError::from(error);
-                        self.async_work.catalog_import_result = Some((root, Err(error.clone())));
                         self.show(format!("Import catalog: {error}"));
-                        Err(error)
+                        self.async_work.catalog_import_result = Some((root, Err(error)));
                     }
                 }
             }
@@ -934,7 +981,6 @@ impl Scripts {
                     path_file,
                     task,
                 });
-                Ok(())
             }
             CatalogJob::ImportRunning {
                 generation,
@@ -948,7 +994,6 @@ impl Scripts {
                     path_file,
                     task,
                 });
-                Ok(())
             }
         }
     }
@@ -965,7 +1010,7 @@ impl Scripts {
                 self.async_work.catalog.as_ref(),
                 Some(CatalogJob::FillPending { .. } | CatalogJob::ImportPending { .. })
             ) {
-                let _ = self.submit_catalog_job();
+                self.submit_catalog_job();
             }
             return;
         }
@@ -987,7 +1032,7 @@ impl Scripts {
                     let _ = script::persist_rs2b0t_root_at(&root, &path_file);
                     self.async_work.catalog_fill_result = Some(Ok(()));
                 }
-                Ok(Err(error)) => self.fail_catalog_fill(CatalogError::Worker(error)),
+                Ok(Err(error)) => self.fail_catalog_fill(CatalogError::from(error)),
                 Err(error) => self.fail_catalog_fill(CatalogError::from(error)),
             },
             CatalogJob::ImportRunning {
@@ -1009,7 +1054,7 @@ impl Scripts {
                     }
                 }
                 Ok(Err(error)) => {
-                    let error = CatalogError::Worker(error);
+                    let error = CatalogError::from(error);
                     self.show(format!("Import catalog: {error}"));
                     self.async_work.catalog_import_result = Some((root, Err(error)));
                 }
@@ -1052,7 +1097,7 @@ impl Scripts {
             // an internal invariant violation, not a distinct failure kind.
             self.js
                 .commit_prepared(item)
-                .map_err(CatalogError::UnexpectedCatalogCommit)?;
+                .map_err(CatalogError::unexpected_catalog_commit)?;
         }
         self.js.set_catalog_root(&root);
         self.catalog_root = Some(root.clone());
@@ -1066,9 +1111,12 @@ impl Scripts {
             .count())
     }
 
-    fn submit_transpile_job(&mut self) -> Result<(), String> {
+    /// Submit the queued transpile job to WorkAdmission. A submission
+    /// failure is stored once as the async receipt; the requesting method
+    /// returns it from that receipt, so one owner holds the error.
+    fn submit_transpile_job(&mut self) {
         let Some(job) = self.async_work.transpile.take() else {
-            return Ok(());
+            return;
         };
         let TranspileJob::Pending {
             generation,
@@ -1079,7 +1127,7 @@ impl Scripts {
         } = job
         else {
             self.async_work.transpile = Some(job);
-            return Ok(());
+            return;
         };
         let input = match script::preparation::PreparationInput::new(
             generation,
@@ -1096,7 +1144,7 @@ impl Scripts {
                     lookup,
                     result: Err(error.to_string()),
                 });
-                return Err(error.to_string());
+                return;
             }
         };
         let work = Arc::clone(&snapshot).cooperative_prepare();
@@ -1115,7 +1163,6 @@ impl Scripts {
                     snapshot,
                     task,
                 });
-                Ok(())
             }
             Err(script::preparation::PreparationError::Refused(
                 api::work::SubmissionRefusal::Full,
@@ -1127,18 +1174,15 @@ impl Scripts {
                     lookup,
                     snapshot,
                 });
-                Ok(())
             }
             Err(error) => {
-                let error = error.to_string();
                 self.async_work.transpile_result = Some(TranspileResult {
                     generation,
                     client,
                     source,
                     lookup,
-                    result: Err(error.clone()),
+                    result: Err(error.to_string()),
                 });
-                Err(error)
             }
         }
     }
@@ -1154,8 +1198,9 @@ impl Scripts {
                 self.async_work.transpile.as_ref(),
                 Some(TranspileJob::Pending { .. })
             ) {
-                if let Err(error) = self.submit_transpile_job() {
-                    if let Some(result) = self.async_work.transpile_result.as_ref() {
+                self.submit_transpile_job();
+                if let Some(result) = self.async_work.transpile_result.as_ref() {
+                    if let Err(error) = &result.result {
                         self.show(format!("transpile {}: {error}", result.lookup));
                     }
                 }
