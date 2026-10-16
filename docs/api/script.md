@@ -1124,11 +1124,18 @@ reported. Transfer failures use `bank-deposit-failed` or `bank-withdraw-failed`,
 not a missing-supply or full-inventory label. Gatherer deposits succeed only
 after inventory confirms that no eligible deposit candidates remain.
 
-When unbankable items remain, the deposit must free at least one inventory slot
-and leave the pack below its normal full threshold. Otherwise Gatherer stops
-with `bank-deposit-failed` and the explicit unbankable-item reason. It also
-checks space after supply withdrawals before returning to gather. Quester's
-explicit deposit plans still refuse unbankable items.
+When unbankable items remain, the deposit must leave the pack below its normal
+full threshold. It need not free another slot when a tool-fetch or supply-only
+trip already has space. A pack that remains full stops Gatherer with
+`bank-deposit-failed` and the explicit unbankable-item reason. Supply withdrawals
+that fill the pack instead stop it with `inventory-blocked` before it returns
+to gather. Quester's explicit deposit plans still refuse unbankable items.
+
+Real Strange boxes replicate every 150 ticks until 28 boxes exist. Stacked
+boxes split into freed slots every 16 ticks. The content timers are in
+`content/scripts/macro events/scripts/general/macro_event_strange_box.rs2:25-73,319-321`.
+With event handling disabled, unsolved boxes eventually fill the pack and
+Gatherer stops with the unbankable-item reason.
 
 A bank trip is admitted from the account's bank memory (see Quester queue and
 provisioning). The pack and worn pages decide whether a trip is due; the memory
