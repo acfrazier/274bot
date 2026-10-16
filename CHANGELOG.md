@@ -39,6 +39,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   16 MiB of retained documents. Larger folders or documents report a typed
   validation error and leave the last successful registry available.
 
+### Fixed during development
+
+- A disk write that takes several seconds no longer makes background map and
+  route preparation fail for the rest of the session. On exit, accepted
+  saves that remain outstanding can finish for up to 60 seconds before
+  shutdown cancels them.
+
 ### Gatherer and banking
 
 - A Gatherer that stalls on its return from the bank now replans once from
