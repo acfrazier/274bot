@@ -3288,7 +3288,9 @@ fn spawned_worker_unwinding_after_its_grant_frees_the_next_login() {
 /// real socket: at its lease end the queue shuts that socket before it
 /// grants the next bot, so the server has already read end of stream when
 /// the next handshake may start. The late return reports the cancel and does
-/// not free the next bot's slot.
+/// not free the next bot's slot. The next bot starts its attempt behind a
+/// gate, so its started flight (which never evaporates) holds the slot
+/// while the tail asserts, however long loaded schedulers stall the threads.
 #[test]
 fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
     use client::io::client_stream::ClientStream;
@@ -3339,20 +3341,35 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
     });
     let deadline = deadline_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     let mut alice_socket = server.join().unwrap();
-    let (bob_tx, bob_rx) = mpsc::channel();
+    let (bob_started_tx, bob_started_rx) = mpsc::channel();
+    let (bob_release_tx, bob_release_rx) = mpsc::channel();
+    let (bob_done_tx, bob_done_rx) = mpsc::channel();
     let bob_queue = Arc::clone(&queue);
     let bob_statuses = Arc::clone(&statuses);
     let bob_arm = Arc::clone(&bob);
     let bob_waiter = thread::spawn(move || {
-        bob_tx
-            .send(wait_for_permit(
-                &bob_queue,
-                &bob_statuses,
-                "bob",
-                8,
-                &bob_arm,
-            ))
-            .unwrap();
+        let mut permit = granted(wait_for_permit(
+            &bob_queue,
+            &bob_statuses,
+            "bob",
+            8,
+            &bob_arm,
+        ));
+        // Start the attempt at once, behind a gate: a started flight never
+        // evaporates while unreturned (it retires instead), so bob's slot
+        // stays occupied across the assertions below no matter how long a
+        // loaded scheduler stalls these threads. An unstarted grant expires
+        // hold + slack after its poll and would free the slot instead.
+        let result = permit.attempt(
+            |_| true,
+            |_, _| {
+                bob_started_tx.send(()).unwrap();
+                bob_release_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+                Ok::<(), String>(())
+            },
+            |_| None,
+        );
+        bob_done_tx.send(result).unwrap();
     });
     read_ended_rx
         .recv_timeout(Duration::from_secs(60))
@@ -3365,7 +3382,7 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
         "elapsed time alone cannot grant bob while alice has not returned"
     );
     assert!(matches!(
-        bob_rx.recv_timeout(Duration::from_millis(100)),
+        bob_started_rx.recv_timeout(Duration::from_millis(100)),
         Err(mpsc::RecvTimeoutError::Timeout)
     ));
     alice_socket.set_nonblocking(true).unwrap();
@@ -3382,12 +3399,9 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
         .expect("alice's attempt started")
         .unwrap_err();
     assert_eq!(error.to_string(), "login cancelled by its host");
-    let bob_permit = granted(
-        bob_rx
-            .recv_timeout(Duration::from_secs(60))
-            .expect("bob follows alice's actual return"),
-    );
-    bob_waiter.join().unwrap();
+    bob_started_rx
+        .recv_timeout(Duration::from_secs(60))
+        .expect("bob starts behind alice's actual return");
     let now = Instant::now();
     assert!(matches!(request_shared(&queue, 9, now), Permit::Wait(_)));
     assert_eq!(
@@ -3395,7 +3409,13 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
         Some(host::login_queue::AdmitBlocker::Handshake),
         "alice's late return does not free bob's slot"
     );
-    complete(bob_permit);
+    bob_release_tx.send(()).unwrap();
+    bob_done_rx
+        .recv_timeout(Duration::from_secs(60))
+        .expect("bob returns after release")
+        .expect("bob's attempt started")
+        .unwrap();
+    bob_waiter.join().unwrap();
 }
 
 /// The real worker and client against a server that accepts the login and
