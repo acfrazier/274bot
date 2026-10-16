@@ -15,6 +15,9 @@ the content's 500-tick reward clock); after that, and for the Maze or Mime
 square with random events off, the square is inert and any unheld running
 script (native or Load) standing on it fails with `random-trapped` and takes
 the terminal Blocked Stop described below instead of continuing there.
+With random-event handling off, detected events do not freeze scripts through
+either the Guardian hold or the pending-event ownership flag. This includes
+held Strange boxes. Detection still publishes the event's kind and name.
 Catalog cards come from an external `$RS2B0T` / `--catalog` checkout
 (upstream `rs2b2t/rs2b0t` layout: `src/bot/scripts`), not a copy in this
 tree. `$RS2B0T` wins over the persisted root (`~/.274bot/rs2b0t-path`,
@@ -1089,8 +1092,9 @@ An unchanged page still fails after eight ticks rather than waiting indefinitely
 The compiled Gatherer card schema is version 4.
 `disposition` defaults to `Bank`; `Power` drops selected gathering products,
 while `Bank` returns to the selected bank and deposits every carried item
-except coins, the method's tools and configured supplies. It also makes a trip
-when no inventory slot is free; Power mode can still take a supply-only trip.
+except coins, the method's tools, configured supplies and unbankable items.
+It also makes a trip when no inventory slot is free. Power mode can still
+take a supply-only trip.
 `bank` defaults to `Nearest`. A named bank chosen by the user is required: always use that bank,
 and refuse if it is unavailable or unroutable instead of substituting another.
 `useMageBank` and `useZanarisBank` remain eligibility opt-ins, not ranking
@@ -1104,9 +1108,11 @@ continuation as compatibility scripts; dispatch alone never confirms a transfer.
 Named bank deposits press one content `Deposit All` operation on that exact
 bank-side row (id, slot and component), never a same-named noted or unnoted
 copy, rather than sending an operation for each occupied slot. Every other
-positive carried item, including incidental items, is a deposit target; coins,
-method tools and configured supplies stay untouched. Observed inventory
-changes, not accepted dispatch alone, still settle the transfer.
+positive carried item, including incidental items, is a deposit target unless
+engine content forbids banking it. Gatherer keeps those unbankable items,
+along with coins, method tools and configured supplies. Each kept unbankable
+item type is named once per run in the info log. Observed inventory changes,
+not accepted dispatch alone, still settle the transfer.
 
 Supply targets are upper bounds, not a requirement that the bank contain the
 entire refill. Each withdrawal targets the lesser of the configured count and
@@ -1117,6 +1123,20 @@ withdrawals, including the tool, settle before another unavailable supply is
 reported. Transfer failures use `bank-deposit-failed` or `bank-withdraw-failed`,
 not a missing-supply or full-inventory label. Gatherer deposits succeed only
 after inventory confirms that no eligible deposit candidates remain.
+
+When unbankable items remain, the deposit must leave the pack below its normal
+full threshold. It need not free another slot when a tool-fetch or supply-only
+trip already has space. A pack that remains full stops Gatherer with
+`bank-deposit-failed` and the explicit unbankable-item reason. Supply withdrawals
+that fill the pack instead stop it with `inventory-blocked` before it returns
+to gather. Quester's explicit deposit plans still refuse unbankable items.
+
+Real Strange boxes replicate every 150 ticks until 28 boxes exist. Stacked
+boxes split into freed slots every 16 ticks. The content timers are in
+`content/scripts/macro events/scripts/general/macro_event_strange_box.rs2:25-73,319-321`.
+With event handling disabled, if no supply withdrawals fill the pack first,
+unsolved boxes eventually fill it and Gatherer stops with the unbankable-item
+reason.
 
 A bank trip is admitted from the account's bank memory (see Quester queue and
 provisioning). The pack and worn pages decide whether a trip is due; the memory

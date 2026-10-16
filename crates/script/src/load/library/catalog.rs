@@ -1,3 +1,165 @@
+/// Why a bounded pre-submission snapshot of the library did not fit.
+///
+/// Returned at the `script` crate boundary by
+/// [`JsLibrary::catalog_preparation_snapshot`]. The `Display` text of every
+/// variant is the message that method returned as `String` before, so
+/// operator-visible wording is unchanged. `Clone` is needed: the
+/// `frontend-core` coordinator both retains and returns the failure.
+#[cfg(feature = "load")]
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum CatalogSnapshotError {
+    /// Accumulating the snapshot exceeded its byte budget.
+    #[error("catalog snapshot is too large")]
+    SnapshotTooLarge,
+    /// The registry index file size did not fit `usize`.
+    #[error("catalog registry index size overflow")]
+    RegistryIndexSizeOverflow,
+    /// Estimating retained origins exceeded the source budget.
+    #[error("catalog source estimate is too large")]
+    SourceEstimateTooLarge,
+    /// One card's retained metadata did not fit `usize`.
+    #[error("catalog card metadata is too large")]
+    CardMetadataTooLarge,
+    /// The snapshot passed the 8 MiB metadata bound.
+    #[error("catalog card metadata exceeds the 8 MiB snapshot bound")]
+    CardMetadataExceedsSnapshotBound,
+    /// Scaling the source budget overflowed.
+    #[error("catalog source charge overflow")]
+    SourceChargeOverflow,
+    /// The snapshot left no room for source input.
+    #[error("catalog snapshot exceeds the input charge bound")]
+    SnapshotExceedsInputBound,
+    /// Adding the source limit to the snapshot overflowed.
+    #[error("catalog input charge overflow")]
+    InputChargeOverflow,
+    /// Scaling the scratch budget overflowed.
+    #[error("catalog scratch charge overflow")]
+    ScratchChargeOverflow,
+    /// Scaling the result budget overflowed.
+    #[error("catalog result charge overflow")]
+    ResultChargeOverflow,
+}
+
+/// Why the catalog worker reported a failure.
+///
+/// Returned at the `script` crate boundary as the `Err` output of
+/// [`CatalogPreparationSnapshot::cooperative_diff`] and
+/// [`CatalogPreparationSnapshot::cooperative_prepare`]. The `Display` text of
+/// every variant is the message the worker returned as `String` before, so
+/// operator-visible wording is unchanged. A worker panic is not here: it
+/// surfaces as [`crate::preparation::PreparationError`]. `Clone` is needed:
+/// the `frontend-core` coordinator both retains and returns the failure.
+#[cfg(feature = "load")]
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum CatalogWorkerError {
+    /// The registry index could not be read or parsed.
+    #[error("$RS2B0T registry {path}: {reason}")]
+    Registry { path: String, reason: String },
+    /// The registry holds more than 4096 registrations.
+    #[error("catalog has more than 4096 registrations")]
+    TooManyRegistrations,
+    /// Sizing one registry card overflowed.
+    #[error("catalog registry size overflow")]
+    RegistrySizeOverflow,
+    /// Retained registry metadata passed its charged input bound.
+    #[error("catalog registry metadata exceeds its charged input bound")]
+    RegistryMetadataExceedsInputBound,
+    /// Retained catalog inputs passed their charged input bound.
+    #[error("catalog inputs exceed the charged input bound")]
+    InputsExceedInputBound,
+    /// The source graph holds more than 8192 files.
+    #[error("catalog source graph exceeds 8192 files")]
+    TooManySourceFiles,
+    /// Retained sources passed their charged input bound.
+    #[error("catalog sources exceed the charged input bound")]
+    SourcesExceedInputBound,
+    /// Retained sources passed their bounded input limit.
+    #[error("catalog sources exceed the bounded input limit")]
+    SourcesExceedBoundedInputLimit,
+    /// A file-backed source failure carried by `CatalogSourceError`. The
+    /// bounded-input path only produces `Aggregate`; this preserves the
+    /// message if a file failure ever reaches the worker.
+    #[error("{reason}")]
+    SourceFile { reason: String },
+    /// One source imports more than 128 sibling modules.
+    #[error("catalog source {relative} has more than 128 sibling modules")]
+    TooManySiblings { relative: String },
+    /// Sizing the sibling index overflowed.
+    #[error("catalog sibling index size overflow")]
+    SiblingIndexSizeOverflow,
+    /// Scratch use passed its charged scratch bound.
+    #[error("catalog preparation scratch exceeds its charged scratch bound")]
+    ScratchExceedsBound,
+    /// The sibling graph holds more than 8192 sibling modules.
+    #[error("catalog source graph exceeds 8192 sibling modules")]
+    TooManySiblingModules,
+    /// A parsed registration is missing from the diff.
+    #[error("catalog {name}: parsed registration is missing")]
+    ParsedRegistrationMissing { name: String },
+    /// An existing card snapshot is missing.
+    #[error("catalog {name}: existing card snapshot is missing")]
+    ExistingSnapshotMissing { name: String },
+    /// A bounded card lookup failed.
+    #[error("catalog {name}: {reason}")]
+    CardBounded { name: String, reason: String },
+    /// Sizing the failure index overflowed.
+    #[error("catalog failure index size overflow")]
+    FailureIndexSizeOverflow,
+    /// The diff worker ran past completion.
+    #[error("catalog diff work completed more than once")]
+    DiffCompletedMoreThanOnce,
+    /// The preparation worker ran past completion.
+    #[error("catalog preparation work completed more than once")]
+    PreparationCompletedMoreThanOnce,
+    /// Counting candidates overflowed.
+    #[error("catalog candidate count overflow")]
+    CandidateCountOverflow,
+    /// Sizing the preparation result overflowed.
+    #[error("catalog result size overflow")]
+    ResultSizeOverflow,
+    /// The preparation result passed its charged result bound.
+    #[error("prepared catalog result exceeds its charged result bound")]
+    PreparedResultExceedsBound,
+    /// Sizing a prepared card overflowed.
+    #[error("prepared catalog card size overflow")]
+    PreparedCardSizeOverflow,
+    /// Sizing a load failure overflowed.
+    #[error("catalog failure size overflow")]
+    FailureSizeOverflow,
+    /// Result accounting underflowed.
+    #[error("catalog result size accounting underflow")]
+    ResultSizeUnderflow,
+    /// An unchanged candidate index is invalid.
+    #[error("catalog unchanged candidate index is invalid")]
+    UnchangedCandidateIndexInvalid,
+    /// Sizing scratch use overflowed.
+    #[error("catalog scratch size overflow")]
+    ScratchSizeOverflow,
+    /// A card task ran past completion. `CardPreparationTask::step` reports
+    /// every other failure as a per-card outcome; its only `Err` is this
+    /// already-complete invariant.
+    #[error("card preparation task is already complete")]
+    CardTaskAlreadyComplete,
+    /// Sizing the diff overflowed.
+    #[error("catalog diff size overflow")]
+    DiffSizeOverflow,
+    /// Diff accounting underflowed.
+    #[error("catalog diff size accounting underflow")]
+    DiffSizeUnderflow,
+    /// The diff passed its charged result bound.
+    #[error("catalog diff exceeds its charged result bound")]
+    DiffExceedsResultBound,
+    /// A fingerprint insertion disappeared.
+    #[error("catalog fingerprint insertion disappeared")]
+    FingerprintInsertionDisappeared,
+    /// An incoming insertion disappeared.
+    #[error("catalog incoming insertion disappeared")]
+    IncomingInsertionDisappeared,
+    /// The diff or its usage is unavailable.
+    #[error("catalog diff state is unavailable")]
+    DiffStateUnavailable,
+}
+
 use super::*;
 
 #[cfg(feature = "load")]
@@ -79,18 +241,18 @@ impl JsLibrary {
     pub fn catalog_preparation_snapshot(
         &self,
         root: &Path,
-    ) -> Result<CatalogPreparationSnapshot, String> {
+    ) -> Result<CatalogPreparationSnapshot, CatalogSnapshotError> {
         let mut existing = HashMap::new();
         let mut fingerprints = HashMap::new();
         let mut snapshot_bytes = std::mem::size_of::<CatalogPreparationSnapshot>();
         add_capacity(&mut snapshot_bytes, root.as_os_str().len())
-            .ok_or_else(|| "catalog snapshot is too large".to_string())?;
+            .ok_or(CatalogSnapshotError::SnapshotTooLarge)?;
         add_capacity(&mut snapshot_bytes, self.cache.root().as_os_str().len())
-            .ok_or_else(|| "catalog snapshot is too large".to_string())?;
+            .ok_or(CatalogSnapshotError::SnapshotTooLarge)?;
         let index = crate::rs2b0t_registry::registry_index_path(root);
         let mut measured_source_bytes = match std::fs::metadata(&index) {
             Ok(metadata) if metadata.is_file() => usize::try_from(metadata.len())
-                .map_err(|_| "catalog registry index size overflow".to_string())?
+                .map_err(|_| CatalogSnapshotError::RegistryIndexSizeOverflow)?
                 .min(MAX_CATALOG_INDEX_BYTES),
             _ => 0,
         };
@@ -100,17 +262,17 @@ impl JsLibrary {
             .filter(|card| card.source == ScriptSource::Catalog)
         {
             add_catalog_bytes(&mut measured_source_bytes, card.origin.capacity())
-                .map_err(|_| "catalog source estimate is too large".to_string())?;
+                .map_err(|_| CatalogSnapshotError::SourceEstimateTooLarge)?;
             let template = CardPreparationTemplate::from_card(card);
             add_capacity(
                 &mut snapshot_bytes,
                 template
                     .retained_bytes()
-                    .ok_or_else(|| "catalog card metadata is too large".to_string())?,
+                    .ok_or(CatalogSnapshotError::CardMetadataTooLarge)?,
             )
-            .ok_or_else(|| "catalog snapshot is too large".to_string())?;
+            .ok_or(CatalogSnapshotError::SnapshotTooLarge)?;
             add_capacity(&mut snapshot_bytes, card.name.capacity())
-                .ok_or_else(|| "catalog snapshot is too large".to_string())?;
+                .ok_or(CatalogSnapshotError::SnapshotTooLarge)?;
             let identity_key = card.identity_key();
             if let Some(fingerprint) = self.fingerprints.get(&identity_key) {
                 add_capacity(
@@ -118,9 +280,9 @@ impl JsLibrary {
                     identity_key
                         .capacity()
                         .checked_add(fingerprint.capacity())
-                        .ok_or_else(|| "catalog snapshot is too large".to_string())?,
+                        .ok_or(CatalogSnapshotError::SnapshotTooLarge)?,
                 )
-                .ok_or_else(|| "catalog snapshot is too large".to_string())?;
+                .ok_or(CatalogSnapshotError::SnapshotTooLarge)?;
                 fingerprints.insert(identity_key, fingerprint.clone());
             }
             existing.entry(card.name.clone()).or_insert(template);
@@ -131,25 +293,25 @@ impl JsLibrary {
                 existing.capacity(),
                 std::mem::size_of::<(String, CardPreparationTemplate)>(),
             )
-            .ok_or_else(|| "catalog snapshot is too large".to_string())?,
+            .ok_or(CatalogSnapshotError::SnapshotTooLarge)?,
         )
-        .ok_or_else(|| "catalog snapshot is too large".to_string())?;
+        .ok_or(CatalogSnapshotError::SnapshotTooLarge)?;
         add_capacity(
             &mut snapshot_bytes,
             catalog_map_storage_bytes(
                 fingerprints.capacity(),
                 std::mem::size_of::<(String, String)>(),
             )
-            .ok_or_else(|| "catalog snapshot is too large".to_string())?,
+            .ok_or(CatalogSnapshotError::SnapshotTooLarge)?,
         )
-        .ok_or_else(|| "catalog snapshot is too large".to_string())?;
+        .ok_or(CatalogSnapshotError::SnapshotTooLarge)?;
         if snapshot_bytes > MAX_CATALOG_SNAPSHOT_BYTES {
-            return Err("catalog card metadata exceeds the 8 MiB snapshot bound".into());
+            return Err(CatalogSnapshotError::CardMetadataExceedsSnapshotBound);
         }
         let source_limit_bytes = catalog_source_budget(measured_source_bytes, snapshot_bytes)?;
         let input_bytes = snapshot_bytes
             .checked_add(source_limit_bytes)
-            .ok_or_else(|| "catalog input charge overflow".to_string())?;
+            .ok_or(CatalogSnapshotError::InputChargeOverflow)?;
         let scratch_bytes = catalog_scratch_budget(source_limit_bytes)?;
         let result_bytes = catalog_result_budget(source_limit_bytes)?;
         Ok(CatalogPreparationSnapshot {
@@ -168,34 +330,34 @@ impl JsLibrary {
 #[cfg(feature = "load")]
 // Keep one maximum-size bounded card source plus metadata room for a first
 // fill, then scale with measured index and retained origins.
-fn catalog_source_budget(measured: usize, snapshot: usize) -> Result<usize, String> {
+fn catalog_source_budget(measured: usize, snapshot: usize) -> Result<usize, CatalogSnapshotError> {
     let growth = measured
         .checked_mul(CATALOG_SOURCE_GROWTH_FACTOR)
         .and_then(|bytes| bytes.checked_add(MIN_CATALOG_SOURCE_BUDGET_BYTES))
-        .ok_or_else(|| "catalog source charge overflow".to_string())?;
+        .ok_or(CatalogSnapshotError::SourceChargeOverflow)?;
     let available = MAX_CATALOG_INPUT_BYTES
         .checked_sub(snapshot)
-        .ok_or_else(|| "catalog snapshot exceeds the input charge bound".to_string())?;
+        .ok_or(CatalogSnapshotError::SnapshotExceedsInputBound)?;
     Ok(growth.min(MAX_CATALOG_SOURCE_BYTES).min(available))
 }
 
 #[cfg(feature = "load")]
 // A single card preparation needs the same minimum scratch as its bounded
 // result; larger catalog input scales scratch up to the catalogue hard cap.
-fn catalog_scratch_budget(source_limit: usize) -> Result<usize, String> {
+fn catalog_scratch_budget(source_limit: usize) -> Result<usize, CatalogSnapshotError> {
     let derived = source_limit
         .checked_mul(CATALOG_SCRATCH_GROWTH_FACTOR)
-        .ok_or_else(|| "catalog scratch charge overflow".to_string())?;
+        .ok_or(CatalogSnapshotError::ScratchChargeOverflow)?;
     Ok(derived.clamp(MAX_PREPARATION_RESULT_BYTES, MAX_CATALOG_SCRATCH_BYTES))
 }
 
 #[cfg(feature = "load")]
 // Keep one card result possible for a small catalog and scale room for more
 // output with measured source input, never past the catalog result ceiling.
-fn catalog_result_budget(source_limit: usize) -> Result<usize, String> {
+fn catalog_result_budget(source_limit: usize) -> Result<usize, CatalogSnapshotError> {
     let derived = source_limit
         .checked_mul(CATALOG_RESULT_GROWTH_FACTOR)
-        .ok_or_else(|| "catalog result charge overflow".to_string())?;
+        .ok_or(CatalogSnapshotError::ResultChargeOverflow)?;
     Ok(derived.clamp(MAX_PREPARATION_RESULT_BYTES, MAX_CATALOG_RESULT_BYTES))
 }
 
@@ -223,8 +385,9 @@ impl CatalogPreparationSnapshot {
         self: std::sync::Arc<Self>,
     ) -> impl FnMut(
         &mut api::selected::FamilyPreparation,
-    ) -> crate::preparation::CooperativePreparationStep<Result<CatalogDiff, String>>
-           + Send
+    ) -> crate::preparation::CooperativePreparationStep<
+        Result<CatalogDiff, CatalogWorkerError>,
+    > + Send
            + 'static {
         let mut work = CatalogDiffWork::default();
         move |_| match work.step(&self) {
@@ -251,7 +414,7 @@ impl CatalogPreparationSnapshot {
     ) -> impl FnMut(
         &mut api::selected::FamilyPreparation,
     ) -> crate::preparation::CooperativePreparationStep<
-        Result<CatalogPreparationResult, String>,
+        Result<CatalogPreparationResult, CatalogWorkerError>,
     > + Send
            + 'static {
         let mut work = CatalogPreparationWork::default();
@@ -282,6 +445,16 @@ enum CatalogSourceError {
 
 #[cfg(feature = "load")]
 impl CatalogSourceError {
+    fn into_worker_error(self) -> CatalogWorkerError {
+        match self {
+            Self::Aggregate => CatalogWorkerError::SourcesExceedBoundedInputLimit,
+            Self::File(reason) => CatalogWorkerError::SourceFile { reason },
+        }
+    }
+}
+
+#[cfg(feature = "load")]
+impl CatalogSourceError {
     fn message(self) -> String {
         match self {
             Self::File(error) => error,
@@ -305,7 +478,7 @@ struct CatalogDiffUsage {
 
 #[cfg(feature = "load")]
 impl CatalogDiffUsage {
-    fn new(diff: &CatalogDiff, result_limit: usize) -> Result<Self, String> {
+    fn new(diff: &CatalogDiff, result_limit: usize) -> Result<Self, CatalogWorkerError> {
         let mut usage = Self {
             bytes: std::mem::size_of::<CatalogDiff>(),
             result_limit,
@@ -315,26 +488,25 @@ impl CatalogDiffUsage {
         for failure in &diff.failed {
             usage.add(
                 load_failure_retained_bytes(failure)
-                    .ok_or_else(|| "catalog failure size overflow".to_string())?,
+                    .ok_or(CatalogWorkerError::FailureSizeOverflow)?,
             )?;
         }
         usage.ensure_bound()?;
         Ok(usage)
     }
 
-    fn add(&mut self, bytes: usize) -> Result<(), String> {
-        add_catalog_bytes(&mut self.bytes, bytes)
-            .map_err(|_| "catalog diff size overflow".to_string())
+    fn add(&mut self, bytes: usize) -> Result<(), CatalogWorkerError> {
+        add_catalog_bytes(&mut self.bytes, bytes).map_err(|_| CatalogWorkerError::DiffSizeOverflow)
     }
 
-    fn replace(&mut self, old: usize, new: usize) -> Result<(), String> {
+    fn replace(&mut self, old: usize, new: usize) -> Result<(), CatalogWorkerError> {
         if new >= old {
             self.add(new - old)
         } else {
             self.bytes = self
                 .bytes
                 .checked_sub(old - new)
-                .ok_or_else(|| "catalog diff size accounting underflow".to_string())?;
+                .ok_or(CatalogWorkerError::DiffSizeUnderflow)?;
             Ok(())
         }
     }
@@ -344,13 +516,13 @@ impl CatalogDiffUsage {
         previous: usize,
         current: usize,
         item_bytes: usize,
-    ) -> Result<usize, String> {
+    ) -> Result<usize, CatalogWorkerError> {
         let old_bytes = previous
             .checked_mul(item_bytes)
-            .ok_or_else(|| "catalog diff size overflow".to_string())?;
+            .ok_or(CatalogWorkerError::DiffSizeOverflow)?;
         let new_bytes = current
             .checked_mul(item_bytes)
-            .ok_or_else(|| "catalog diff size overflow".to_string())?;
+            .ok_or(CatalogWorkerError::DiffSizeOverflow)?;
         self.replace(old_bytes, new_bytes)?;
         Ok(current)
     }
@@ -360,16 +532,16 @@ impl CatalogDiffUsage {
         previous: usize,
         current: usize,
         item_bytes: usize,
-    ) -> Result<usize, String> {
+    ) -> Result<usize, CatalogWorkerError> {
         let old_bytes = catalog_map_storage_bytes(previous, item_bytes)
-            .ok_or_else(|| "catalog diff size overflow".to_string())?;
+            .ok_or(CatalogWorkerError::DiffSizeOverflow)?;
         let new_bytes = catalog_map_storage_bytes(current, item_bytes)
-            .ok_or_else(|| "catalog diff size overflow".to_string())?;
+            .ok_or(CatalogWorkerError::DiffSizeOverflow)?;
         self.replace(old_bytes, new_bytes)?;
         Ok(current)
     }
 
-    fn sync_capacities(&mut self, diff: &CatalogDiff) -> Result<(), String> {
+    fn sync_capacities(&mut self, diff: &CatalogDiff) -> Result<(), CatalogWorkerError> {
         self.added_capacity = self.sync_vec_capacity(
             self.added_capacity,
             diff.added.capacity(),
@@ -403,9 +575,9 @@ impl CatalogDiffUsage {
         Ok(())
     }
 
-    fn ensure_bound(&self) -> Result<(), String> {
+    fn ensure_bound(&self) -> Result<(), CatalogWorkerError> {
         if self.bytes > self.result_limit {
-            Err("catalog diff exceeds its charged result bound".into())
+            Err(CatalogWorkerError::DiffExceedsResultBound)
         } else {
             Ok(())
         }
@@ -416,7 +588,7 @@ impl CatalogDiffUsage {
         diff: &mut CatalogDiff,
         list: CatalogNameList,
         name: String,
-    ) -> Result<(), String> {
+    ) -> Result<(), CatalogWorkerError> {
         let item_bytes = name.capacity();
         match list {
             CatalogNameList::Added => diff.added.push(name),
@@ -428,9 +600,13 @@ impl CatalogDiffUsage {
         self.ensure_bound()
     }
 
-    fn push_failure(&mut self, diff: &mut CatalogDiff, failure: LoadFailure) -> Result<(), String> {
-        let bytes = load_failure_retained_bytes(&failure)
-            .ok_or_else(|| "catalog failure size overflow".to_string())?;
+    fn push_failure(
+        &mut self,
+        diff: &mut CatalogDiff,
+        failure: LoadFailure,
+    ) -> Result<(), CatalogWorkerError> {
+        let bytes =
+            load_failure_retained_bytes(&failure).ok_or(CatalogWorkerError::FailureSizeOverflow)?;
         diff.failed.push(failure);
         self.sync_capacities(diff)?;
         self.add(bytes)?;
@@ -442,12 +618,12 @@ impl CatalogDiffUsage {
         diff: &mut CatalogDiff,
         name: &str,
         fingerprint: String,
-    ) -> Result<(), String> {
+    ) -> Result<(), CatalogWorkerError> {
         let old_bytes = match diff.current_fingerprints.get_key_value(name) {
             Some((key, value)) => key
                 .capacity()
                 .checked_add(value.capacity())
-                .ok_or_else(|| "catalog diff size overflow".to_string())?,
+                .ok_or(CatalogWorkerError::DiffSizeOverflow)?,
             None => 0,
         };
         diff.current_fingerprints
@@ -456,7 +632,7 @@ impl CatalogDiffUsage {
             .current_fingerprints
             .get_key_value(name)
             .and_then(|(key, value)| key.capacity().checked_add(value.capacity()))
-            .ok_or_else(|| "catalog fingerprint insertion disappeared".to_string())?;
+            .ok_or(CatalogWorkerError::FingerprintInsertionDisappeared)?;
         self.replace(old_bytes, new_bytes)?;
         self.sync_capacities(diff)?;
         self.ensure_bound()
@@ -467,15 +643,14 @@ impl CatalogDiffUsage {
         diff: &mut CatalogDiff,
         name: &str,
         incoming: CatalogIncoming,
-    ) -> Result<(), String> {
+    ) -> Result<(), CatalogWorkerError> {
         let old_bytes = match diff.incoming.get_key_value(name) {
             Some((key, value)) => key
                 .capacity()
                 .checked_add(
-                    catalog_incoming_bytes(value)
-                        .ok_or_else(|| "catalog diff size overflow".to_string())?,
+                    catalog_incoming_bytes(value).ok_or(CatalogWorkerError::DiffSizeOverflow)?,
                 )
-                .ok_or_else(|| "catalog diff size overflow".to_string())?,
+                .ok_or(CatalogWorkerError::DiffSizeOverflow)?,
             None => 0,
         };
         diff.incoming.insert(name.to_owned(), incoming);
@@ -483,23 +658,26 @@ impl CatalogDiffUsage {
             Some((key, value)) => key
                 .capacity()
                 .checked_add(
-                    catalog_incoming_bytes(value)
-                        .ok_or_else(|| "catalog diff size overflow".to_string())?,
+                    catalog_incoming_bytes(value).ok_or(CatalogWorkerError::DiffSizeOverflow)?,
                 )
-                .ok_or_else(|| "catalog diff size overflow".to_string())?,
-            None => return Err("catalog incoming insertion disappeared".into()),
+                .ok_or(CatalogWorkerError::DiffSizeOverflow)?,
+            None => return Err(CatalogWorkerError::IncomingInsertionDisappeared),
         };
         self.replace(old_bytes, new_bytes)?;
         self.sync_capacities(diff)?;
         self.ensure_bound()
     }
 
-    fn remove_fingerprint(&mut self, diff: &mut CatalogDiff, name: &str) -> Result<(), String> {
+    fn remove_fingerprint(
+        &mut self,
+        diff: &mut CatalogDiff,
+        name: &str,
+    ) -> Result<(), CatalogWorkerError> {
         let bytes = match diff.current_fingerprints.get_key_value(name) {
             Some((key, value)) => key
                 .capacity()
                 .checked_add(value.capacity())
-                .ok_or_else(|| "catalog diff size overflow".to_string())?,
+                .ok_or(CatalogWorkerError::DiffSizeOverflow)?,
             None => 0,
         };
         diff.current_fingerprints.remove(name);
@@ -507,15 +685,18 @@ impl CatalogDiffUsage {
         self.ensure_bound()
     }
 
-    fn remove_incoming(&mut self, diff: &mut CatalogDiff, name: &str) -> Result<(), String> {
+    fn remove_incoming(
+        &mut self,
+        diff: &mut CatalogDiff,
+        name: &str,
+    ) -> Result<(), CatalogWorkerError> {
         let bytes = match diff.incoming.get_key_value(name) {
             Some((key, value)) => key
                 .capacity()
                 .checked_add(
-                    catalog_incoming_bytes(value)
-                        .ok_or_else(|| "catalog diff size overflow".to_string())?,
+                    catalog_incoming_bytes(value).ok_or(CatalogWorkerError::DiffSizeOverflow)?,
                 )
-                .ok_or_else(|| "catalog diff size overflow".to_string())?,
+                .ok_or(CatalogWorkerError::DiffSizeOverflow)?,
             None => 0,
         };
         diff.incoming.remove(name);
@@ -527,12 +708,12 @@ impl CatalogDiffUsage {
         &mut self,
         diff: &mut CatalogDiff,
         unchanged: &[usize],
-    ) -> Result<(), String> {
+    ) -> Result<(), CatalogWorkerError> {
         let mut removed = 0usize;
         for index in unchanged {
             if let Some(name) = diff.changed.get(*index) {
                 add_catalog_bytes(&mut removed, name.capacity())
-                    .map_err(|_| "catalog diff size overflow".to_string())?;
+                    .map_err(|_| CatalogWorkerError::DiffSizeOverflow)?;
             }
         }
         self.replace(removed, 0)?;
@@ -651,7 +832,7 @@ impl CatalogDiffWork {
     fn step(
         &mut self,
         snapshot: &CatalogPreparationSnapshot,
-    ) -> Result<Option<(CatalogDiff, CatalogDiffUsage)>, String> {
+    ) -> Result<Option<(CatalogDiff, CatalogDiffUsage)>, CatalogWorkerError> {
         self.completed = self.completed.saturating_add(1);
         match self.phase {
             CatalogDiffPhase::Registry => self.read_registry(snapshot)?,
@@ -694,36 +875,52 @@ impl CatalogDiffWork {
                 return Ok(Some((diff, usage)));
             }
             CatalogDiffPhase::Complete => {
-                return Err("catalog diff work completed more than once".into());
+                return Err(CatalogWorkerError::DiffCompletedMoreThanOnce);
             }
         }
         Ok(None)
     }
 
-    fn read_registry(&mut self, snapshot: &CatalogPreparationSnapshot) -> Result<(), String> {
+    fn read_registry(
+        &mut self,
+        snapshot: &CatalogPreparationSnapshot,
+    ) -> Result<(), CatalogWorkerError> {
         self.source_limit = snapshot.source_limit();
         let index = crate::rs2b0t_registry::registry_index_path(&snapshot.root);
         let index_limit = self.source_limit.min(MAX_CATALOG_INDEX_BYTES);
-        let index_ts = vault::read_regular_file(&index, index_limit as u64)
-            .map_err(|error| format!("$RS2B0T registry {}: {error}", index.display()))?;
+        let index_ts = vault::read_regular_file(&index, index_limit as u64).map_err(|error| {
+            CatalogWorkerError::Registry {
+                path: index.display().to_string(),
+                reason: error.to_string(),
+            }
+        })?;
         self.used = index_ts.capacity();
-        let registry_index = crate::rs2b0t_registry::RegistryIndex::parse(&index_ts)
-            .map_err(|error| format!("$RS2B0T registry {}: {error}", index.display()))?;
-        let registrations = registry_index
-            .registrations()
-            .map_err(|error| format!("$RS2B0T registry {}: {error}", index.display()))?;
+        let registry_index =
+            crate::rs2b0t_registry::RegistryIndex::parse(&index_ts).map_err(|error| {
+                CatalogWorkerError::Registry {
+                    path: index.display().to_string(),
+                    reason: error.to_string(),
+                }
+            })?;
+        let registrations =
+            registry_index
+                .registrations()
+                .map_err(|error| CatalogWorkerError::Registry {
+                    path: index.display().to_string(),
+                    reason: error.to_string(),
+                })?;
         if registrations.len() > MAX_CATALOG_CARDS {
-            return Err("catalog has more than 4096 registrations".into());
+            return Err(CatalogWorkerError::TooManyRegistrations);
         }
         for card in &registrations {
             add_catalog_bytes(
                 &mut self.used,
-                registry_card_bytes(card).ok_or("catalog registry size overflow")?,
+                registry_card_bytes(card).ok_or(CatalogWorkerError::RegistrySizeOverflow)?,
             )
-            .map_err(|_| "catalog registry metadata exceeds its charged input bound")?;
+            .map_err(|_| CatalogWorkerError::RegistryMetadataExceedsInputBound)?;
         }
         if self.used > self.source_limit {
-            return Err("catalog inputs exceed the charged input bound".into());
+            return Err(CatalogWorkerError::InputsExceedInputBound);
         }
         self.registry_index = Some(registry_index);
         self.registrations = registrations;
@@ -741,7 +938,10 @@ impl CatalogDiffWork {
         Ok(())
     }
 
-    fn read_root_source(&mut self, snapshot: &CatalogPreparationSnapshot) -> Result<(), String> {
+    fn read_root_source(
+        &mut self,
+        snapshot: &CatalogPreparationSnapshot,
+    ) -> Result<(), CatalogWorkerError> {
         if self.registration_index >= self.registrations.len() {
             self.phase = CatalogDiffPhase::SiblingScan;
             self.source_iter = Some(std::mem::take(&mut self.sources).into_iter());
@@ -751,7 +951,7 @@ impl CatalogDiffWork {
         self.registration_index += 1;
         self.source_files = self.source_files.saturating_add(1);
         if self.source_files > MAX_CATALOG_FILES {
-            return Err("catalog source graph exceeds 8192 files".into());
+            return Err(CatalogWorkerError::TooManySourceFiles);
         }
         let Some(path) = script_file_path(&snapshot.root, &registration.rel_path) else {
             let failure = LoadFailure::capture(
@@ -773,10 +973,8 @@ impl CatalogDiffWork {
                 &mut self.used,
                 self.source_limit,
             )
-            .map_err(|error| error.message()),
-            Err(CatalogSourceError::Aggregate) => {
-                Err("catalog sources exceed the charged input bound".into())
-            }
+            .map_err(CatalogSourceError::into_worker_error),
+            Err(CatalogSourceError::Aggregate) => Err(CatalogWorkerError::SourcesExceedInputBound),
             Err(CatalogSourceError::File(error)) => {
                 let failure = LoadFailure::capture(
                     ScriptSource::Catalog,
@@ -791,7 +989,7 @@ impl CatalogDiffWork {
         }
     }
 
-    fn scan_siblings(&mut self, scratch_limit: usize) -> Result<(), String> {
+    fn scan_siblings(&mut self, scratch_limit: usize) -> Result<(), CatalogWorkerError> {
         let next_source = self.source_iter.as_mut().and_then(|iter| iter.next());
         let Some((relative, text)) = next_source else {
             self.source_iter = None;
@@ -801,9 +999,7 @@ impl CatalogDiffWork {
         };
         let siblings = crate::rs2b0t_registry::same_dir_import_rels(&relative, &text);
         if siblings.len() > MAX_PREPARATION_SIBLINGS {
-            return Err(format!(
-                "catalog source {relative} has more than 128 sibling modules"
-            ));
+            return Err(CatalogWorkerError::TooManySiblings { relative });
         }
         for sibling in siblings {
             let capacity = sibling.capacity();
@@ -811,11 +1007,11 @@ impl CatalogDiffWork {
                 continue;
             }
             add_catalog_bytes(&mut self.sibling_values_bytes, capacity)
-                .map_err(|_| "catalog sibling index size overflow")?;
+                .map_err(|_| CatalogWorkerError::SiblingIndexSizeOverflow)?;
             self.sibling_set_capacity = self.sibling_rels.capacity();
             let set_bytes =
                 catalog_map_storage_bytes(self.sibling_set_capacity, std::mem::size_of::<String>())
-                    .ok_or("catalog sibling index size overflow")?;
+                    .ok_or(CatalogWorkerError::SiblingIndexSizeOverflow)?;
             let used_scratch = self
                 .usage
                 .as_ref()
@@ -823,19 +1019,22 @@ impl CatalogDiffWork {
                 .bytes
                 .checked_add(self.sibling_values_bytes)
                 .and_then(|bytes| bytes.checked_add(set_bytes))
-                .ok_or("catalog sibling index size overflow")?;
+                .ok_or(CatalogWorkerError::SiblingIndexSizeOverflow)?;
             if used_scratch > scratch_limit {
-                return Err("catalog preparation scratch exceeds its charged scratch bound".into());
+                return Err(CatalogWorkerError::ScratchExceedsBound);
             }
             if self.sibling_rels.len() > MAX_CATALOG_FILES {
-                return Err("catalog source graph exceeds 8192 sibling modules".into());
+                return Err(CatalogWorkerError::TooManySiblingModules);
             }
         }
         self.sources.insert(relative, text);
         Ok(())
     }
 
-    fn read_sibling_source(&mut self, snapshot: &CatalogPreparationSnapshot) -> Result<(), String> {
+    fn read_sibling_source(
+        &mut self,
+        snapshot: &CatalogPreparationSnapshot,
+    ) -> Result<(), CatalogWorkerError> {
         let Some(sibling) = self.sibling_iter.as_mut().and_then(|iter| iter.next()) else {
             self.sibling_iter = None;
             self.sibling_values_bytes = 0;
@@ -848,7 +1047,7 @@ impl CatalogDiffWork {
         }
         self.source_files = self.source_files.saturating_add(1);
         if self.source_files > MAX_CATALOG_FILES {
-            return Err("catalog source graph exceeds 8192 files".into());
+            return Err(CatalogWorkerError::TooManySourceFiles);
         }
         let Some(path) = script_file_path(&snapshot.root, &sibling) else {
             return Ok(());
@@ -861,15 +1060,16 @@ impl CatalogDiffWork {
                 &mut self.used,
                 self.source_limit,
             )
-            .map_err(|error| error.message()),
-            Err(CatalogSourceError::Aggregate) => {
-                Err("catalog sources exceed the charged input bound".into())
-            }
+            .map_err(CatalogSourceError::into_worker_error),
+            Err(CatalogSourceError::Aggregate) => Err(CatalogWorkerError::SourcesExceedInputBound),
             Err(CatalogSourceError::File(_)) => Ok(()),
         }
     }
 
-    fn read_shop_db(&mut self, snapshot: &CatalogPreparationSnapshot) -> Result<(), String> {
+    fn read_shop_db(
+        &mut self,
+        snapshot: &CatalogPreparationSnapshot,
+    ) -> Result<(), CatalogWorkerError> {
         if self.sources.contains_key("./src/bot/data/shopdb.ts")
             || self.sources.contains_key("./src/bot/data/shopdb.js")
         {
@@ -898,7 +1098,7 @@ impl CatalogDiffWork {
         }
         self.source_files = self.source_files.saturating_add(1);
         if self.source_files > MAX_CATALOG_FILES {
-            return Err("catalog source graph exceeds 8192 files".into());
+            return Err(CatalogWorkerError::TooManySourceFiles);
         }
         match read_catalog_source(&path, &mut self.used, self.source_limit) {
             Ok(text) => {
@@ -909,14 +1109,12 @@ impl CatalogDiffWork {
                     &mut self.used,
                     self.source_limit,
                 )
-                .map_err(|error| error.message())?;
+                .map_err(CatalogSourceError::into_worker_error)?;
                 self.phase = CatalogDiffPhase::Analyze;
                 self.analyze_index = 0;
                 Ok(())
             }
-            Err(CatalogSourceError::Aggregate) => {
-                Err("catalog sources exceed the charged input bound".into())
-            }
+            Err(CatalogSourceError::Aggregate) => Err(CatalogWorkerError::SourcesExceedInputBound),
             Err(CatalogSourceError::File(_)) => Ok(()),
         }
     }
@@ -924,7 +1122,7 @@ impl CatalogDiffWork {
     fn analyze_registration(
         &mut self,
         snapshot: &CatalogPreparationSnapshot,
-    ) -> Result<(), String> {
+    ) -> Result<(), CatalogWorkerError> {
         match self.analyze_phase {
             CatalogAnalyzePhase::Start => {
                 if self.analyze_index >= self.registrations.len() {
@@ -1170,7 +1368,10 @@ impl CatalogDiffWork {
                         &registration.name,
                         MAX_PREPARATION_SOURCE_BYTES,
                     )
-                    .map_err(|error| format!("catalog {}: {error}", registration.name))?;
+                    .map_err(|error| CatalogWorkerError::CardBounded {
+                        name: registration.name.clone(),
+                        reason: error.to_string(),
+                    })?;
                 let incoming = CatalogIncoming {
                     card,
                     path: analysis.path,
@@ -1191,13 +1392,13 @@ impl CatalogDiffWork {
         Ok(())
     }
 
-    fn index_failures(&mut self, scratch_limit: usize) -> Result<(), String> {
+    fn index_failures(&mut self, scratch_limit: usize) -> Result<(), CatalogWorkerError> {
         let diff = self.diff.as_ref().expect("diff exists before removals");
         let required = diff
             .failed
             .len()
             .checked_mul(std::mem::size_of::<usize>())
-            .ok_or("catalog failure index size overflow")?;
+            .ok_or(CatalogWorkerError::FailureIndexSizeOverflow)?;
         if self
             .usage
             .as_ref()
@@ -1217,7 +1418,10 @@ impl CatalogDiffWork {
         Ok(())
     }
 
-    fn add_removed(&mut self, snapshot: &CatalogPreparationSnapshot) -> Result<(), String> {
+    fn add_removed(
+        &mut self,
+        snapshot: &CatalogPreparationSnapshot,
+    ) -> Result<(), CatalogWorkerError> {
         if self.removed_index >= snapshot.existing.len() {
             self.failed_indexes = Vec::new();
             self.failed_index_fallback = false;
@@ -1290,7 +1494,7 @@ impl CatalogPreparationWork {
     fn step(
         &mut self,
         snapshot: &CatalogPreparationSnapshot,
-    ) -> Result<Option<CatalogPreparationResult>, String> {
+    ) -> Result<Option<CatalogPreparationResult>, CatalogWorkerError> {
         self.completed = self.completed.saturating_add(1);
         match self.phase {
             CatalogPreparationPhase::Diff => {
@@ -1344,7 +1548,7 @@ impl CatalogPreparationWork {
                 }));
             }
             CatalogPreparationPhase::Complete => {
-                return Err("catalog preparation work completed more than once".into());
+                return Err(CatalogWorkerError::PreparationCompletedMoreThanOnce);
             }
         }
         Ok(None)
@@ -1378,12 +1582,12 @@ impl CatalogCandidateWork {
         diff: CatalogDiff,
         usage: CatalogDiffUsage,
         scratch_limit: usize,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, CatalogWorkerError> {
         let changed_len = diff.changed.len();
         let added_len = diff.added.len();
         let candidate_count = changed_len
             .checked_add(added_len)
-            .ok_or_else(|| "catalog candidate count overflow".to_string())?;
+            .ok_or(CatalogWorkerError::CandidateCountOverflow)?;
         let prepared = Vec::with_capacity(changed_len);
         let warmed = Vec::with_capacity(added_len);
         let prepare_failed = Vec::with_capacity(candidate_count);
@@ -1393,26 +1597,26 @@ impl CatalogCandidateWork {
             &mut result_bytes,
             std::mem::size_of::<CatalogPreparationResult>()
                 .checked_sub(std::mem::size_of::<CatalogDiff>())
-                .ok_or_else(|| "catalog result size overflow".to_string())?,
+                .ok_or(CatalogWorkerError::ResultSizeOverflow)?,
         )
-        .map_err(|_| "catalog result size overflow")?;
+        .map_err(|_| CatalogWorkerError::ResultSizeOverflow)?;
         for capacity in [prepared.capacity(), warmed.capacity()] {
             add_catalog_bytes(
                 &mut result_bytes,
                 capacity
                     .checked_mul(std::mem::size_of::<PreparedCard>())
-                    .ok_or_else(|| "catalog result size overflow".to_string())?,
+                    .ok_or(CatalogWorkerError::ResultSizeOverflow)?,
             )
-            .map_err(|_| "catalog result size overflow")?;
+            .map_err(|_| CatalogWorkerError::ResultSizeOverflow)?;
         }
         add_catalog_bytes(
             &mut result_bytes,
             prepare_failed
                 .capacity()
                 .checked_mul(std::mem::size_of::<LoadFailure>())
-                .ok_or_else(|| "catalog result size overflow".to_string())?,
+                .ok_or(CatalogWorkerError::ResultSizeOverflow)?,
         )
-        .map_err(|_| "catalog result size overflow")?;
+        .map_err(|_| CatalogWorkerError::ResultSizeOverflow)?;
         let result_limit = usage.result_limit;
         let work = Self {
             diff,
@@ -1437,9 +1641,14 @@ impl CatalogCandidateWork {
         Ok(work)
     }
 
-    fn prepare_next(&mut self, snapshot: &CatalogPreparationSnapshot) -> Result<bool, String> {
+    fn prepare_next(
+        &mut self,
+        snapshot: &CatalogPreparationSnapshot,
+    ) -> Result<bool, CatalogWorkerError> {
         if let Some(card_task) = self.card_task.as_mut() {
-            let outcome = card_task.step()?;
+            let outcome = card_task
+                .step()
+                .map_err(|_| CatalogWorkerError::CardTaskAlreadyComplete)?;
             let Some(outcome) = outcome else {
                 return Ok(true);
             };
@@ -1472,21 +1681,19 @@ impl CatalogCandidateWork {
         } else {
             self.diff.changed[index].clone()
         };
-        let incoming = self
-            .diff
-            .incoming
-            .get(&name)
-            .ok_or_else(|| format!("catalog {name}: parsed registration is missing"))?;
+        let incoming =
+            self.diff.incoming.get(&name).ok_or_else(|| {
+                CatalogWorkerError::ParsedRegistrationMissing { name: name.clone() }
+            })?;
         let path = incoming.path.clone();
-        let template = if is_added {
-            CardPreparationTemplate::from_registry_card(&incoming.card, path.clone())
-        } else {
-            snapshot
-                .existing
-                .get(&name)
-                .cloned()
-                .ok_or_else(|| format!("catalog {name}: existing card snapshot is missing"))?
-        };
+        let template =
+            if is_added {
+                CardPreparationTemplate::from_registry_card(&incoming.card, path.clone())
+            } else {
+                snapshot.existing.get(&name).cloned().ok_or_else(|| {
+                    CatalogWorkerError::ExistingSnapshotMissing { name: name.clone() }
+                })?
+            };
         let identity_key = crate::identity::card_identity_key(ScriptSource::Catalog, &path, &name);
         let card_snapshot = CardPreparationSnapshot {
             template,
@@ -1505,9 +1712,13 @@ impl CatalogCandidateWork {
         Ok(true)
     }
 
-    fn push_prepared(&mut self, card: PreparedCard, is_added: bool) -> Result<(), String> {
+    fn push_prepared(
+        &mut self,
+        card: PreparedCard,
+        is_added: bool,
+    ) -> Result<(), CatalogWorkerError> {
         let retained = prepared_card_retained_bytes(&card)
-            .ok_or_else(|| "prepared catalog card size overflow".to_string())?;
+            .ok_or(CatalogWorkerError::PreparedCardSizeOverflow)?;
         let (capacity, next_capacity) = if is_added {
             let capacity = self.warmed.capacity();
             if self.warmed.len() == capacity {
@@ -1525,10 +1736,10 @@ impl CatalogCandidateWork {
         self.replace_result_bytes(
             capacity
                 .checked_mul(item_size)
-                .ok_or_else(|| "catalog result size overflow".to_string())?,
+                .ok_or(CatalogWorkerError::ResultSizeOverflow)?,
             next_capacity
                 .checked_mul(item_size)
-                .ok_or_else(|| "catalog result size overflow".to_string())?,
+                .ok_or(CatalogWorkerError::ResultSizeOverflow)?,
         )?;
         self.add_result_bytes(retained)?;
         self.ensure_result_bound()?;
@@ -1541,9 +1752,9 @@ impl CatalogCandidateWork {
         Ok(())
     }
 
-    fn push_failure(&mut self, failure: LoadFailure) -> Result<(), String> {
-        let retained = load_failure_retained_bytes(&failure)
-            .ok_or_else(|| "catalog failure size overflow".to_string())?;
+    fn push_failure(&mut self, failure: LoadFailure) -> Result<(), CatalogWorkerError> {
+        let retained =
+            load_failure_retained_bytes(&failure).ok_or(CatalogWorkerError::FailureSizeOverflow)?;
         let capacity = self.prepare_failed.capacity();
         if self.prepare_failed.len() == capacity {
             self.prepare_failed.reserve(1);
@@ -1551,11 +1762,11 @@ impl CatalogCandidateWork {
         self.replace_result_bytes(
             capacity
                 .checked_mul(std::mem::size_of::<LoadFailure>())
-                .ok_or_else(|| "catalog result size overflow".to_string())?,
+                .ok_or(CatalogWorkerError::ResultSizeOverflow)?,
             self.prepare_failed
                 .capacity()
                 .checked_mul(std::mem::size_of::<LoadFailure>())
-                .ok_or_else(|| "catalog result size overflow".to_string())?,
+                .ok_or(CatalogWorkerError::ResultSizeOverflow)?,
         )?;
         self.add_result_bytes(retained)?;
         self.ensure_result_bound()?;
@@ -1564,7 +1775,10 @@ impl CatalogCandidateWork {
         Ok(())
     }
 
-    fn cleanup_next(&mut self, snapshot: &CatalogPreparationSnapshot) -> Result<bool, String> {
+    fn cleanup_next(
+        &mut self,
+        snapshot: &CatalogPreparationSnapshot,
+    ) -> Result<bool, CatalogWorkerError> {
         let Some(index) = self.unchanged_changed.get(self.cleanup_index).copied() else {
             return Ok(false);
         };
@@ -1574,7 +1788,7 @@ impl CatalogCandidateWork {
             .changed
             .get(index)
             .cloned()
-            .ok_or_else(|| "catalog unchanged candidate index is invalid".to_string())?;
+            .ok_or(CatalogWorkerError::UnchangedCandidateIndexInvalid)?;
         let stored = self.diff.incoming.get(&name).map(|incoming| {
             let identity_key =
                 crate::identity::card_identity_key(ScriptSource::Catalog, &incoming.path, &name);
@@ -1596,7 +1810,7 @@ impl CatalogCandidateWork {
         Ok(true)
     }
 
-    fn compact_changed(&mut self) -> Result<(), String> {
+    fn compact_changed(&mut self) -> Result<(), CatalogWorkerError> {
         let before = self.usage.bytes;
         self.usage
             .remove_changed_names(&mut self.diff, &self.unchanged_changed)?;
@@ -1606,48 +1820,48 @@ impl CatalogCandidateWork {
         self.ensure_scratch_bound()
     }
 
-    fn adjust_for_diff_usage(&mut self, before: usize) -> Result<(), String> {
+    fn adjust_for_diff_usage(&mut self, before: usize) -> Result<(), CatalogWorkerError> {
         self.replace_result_bytes(before, self.usage.bytes)?;
         self.ensure_result_bound()
     }
 
-    fn replace_result_bytes(&mut self, old: usize, new: usize) -> Result<(), String> {
+    fn replace_result_bytes(&mut self, old: usize, new: usize) -> Result<(), CatalogWorkerError> {
         if new >= old {
             self.add_result_bytes(new - old)
         } else {
             self.result_bytes = self
                 .result_bytes
                 .checked_sub(old - new)
-                .ok_or_else(|| "catalog result size accounting underflow".to_string())?;
+                .ok_or(CatalogWorkerError::ResultSizeUnderflow)?;
             Ok(())
         }
     }
 
-    fn add_result_bytes(&mut self, bytes: usize) -> Result<(), String> {
+    fn add_result_bytes(&mut self, bytes: usize) -> Result<(), CatalogWorkerError> {
         add_catalog_bytes(&mut self.result_bytes, bytes)
-            .map_err(|_| "catalog result size overflow".to_string())
+            .map_err(|_| CatalogWorkerError::ResultSizeOverflow)
     }
 
-    fn ensure_result_bound(&self) -> Result<(), String> {
+    fn ensure_result_bound(&self) -> Result<(), CatalogWorkerError> {
         if self.result_bytes > self.result_limit {
-            Err("prepared catalog result exceeds its charged result bound".into())
+            Err(CatalogWorkerError::PreparedResultExceedsBound)
         } else {
             Ok(())
         }
     }
 
-    fn ensure_scratch_bound(&self) -> Result<(), String> {
+    fn ensure_scratch_bound(&self) -> Result<(), CatalogWorkerError> {
         let unchanged_bytes = self
             .unchanged_changed
             .capacity()
             .checked_mul(std::mem::size_of::<usize>())
-            .ok_or_else(|| "catalog scratch size overflow".to_string())?;
+            .ok_or(CatalogWorkerError::ScratchSizeOverflow)?;
         let scratch = self
             .result_bytes
             .checked_add(unchanged_bytes)
-            .ok_or_else(|| "catalog scratch size overflow".to_string())?;
+            .ok_or(CatalogWorkerError::ScratchSizeOverflow)?;
         if scratch > self.scratch_limit {
-            Err("catalog preparation scratch exceeds its charged scratch bound".into())
+            Err(CatalogWorkerError::ScratchExceedsBound)
         } else {
             Ok(())
         }
@@ -1658,10 +1872,10 @@ impl CatalogCandidateWork {
 fn catalog_diff_and_usage<'a>(
     diff: &'a mut Option<CatalogDiff>,
     usage: &'a mut Option<CatalogDiffUsage>,
-) -> Result<(&'a mut CatalogDiff, &'a mut CatalogDiffUsage), String> {
+) -> Result<(&'a mut CatalogDiff, &'a mut CatalogDiffUsage), CatalogWorkerError> {
     match (diff.as_mut(), usage.as_mut()) {
         (Some(diff), Some(usage)) => Ok((diff, usage)),
-        _ => Err("catalog diff state is unavailable".into()),
+        _ => Err(CatalogWorkerError::DiffStateUnavailable),
     }
 }
 
@@ -1670,9 +1884,9 @@ fn record_catalog_failure(
     diff: &mut Option<CatalogDiff>,
     usage: &mut Option<CatalogDiffUsage>,
     failure: LoadFailure,
-) -> Result<(), String> {
+) -> Result<(), CatalogWorkerError> {
     let (Some(diff), Some(usage)) = (diff.as_mut(), usage.as_mut()) else {
-        return Err("catalog diff state is unavailable".into());
+        return Err(CatalogWorkerError::DiffStateUnavailable);
     };
     usage.push_failure(diff, failure)
 }
@@ -1691,12 +1905,15 @@ fn catalog_map_storage_bytes(capacity: usize, entry_bytes: usize) -> Option<usiz
 }
 
 #[cfg(feature = "load")]
-fn ensure_catalog_diff_bound(diff: &CatalogDiff, result_limit: usize) -> Result<(), String> {
+fn ensure_catalog_diff_bound(
+    diff: &CatalogDiff,
+    result_limit: usize,
+) -> Result<(), CatalogWorkerError> {
     if diff
         .retained_bytes()
         .is_none_or(|bytes| bytes > result_limit)
     {
-        Err("catalog diff exceeds its charged result bound".into())
+        Err(CatalogWorkerError::DiffExceedsResultBound)
     } else {
         Ok(())
     }
@@ -2392,5 +2609,221 @@ impl CatalogApplyReport {
 
     pub fn named_failure_output(&self) -> String {
         format_load_failures(&self.failed)
+    }
+}
+
+#[cfg(all(test, feature = "load"))]
+mod display_tests {
+    use super::{CatalogSnapshotError, CatalogWorkerError};
+
+    #[test]
+    fn catalog_snapshot_errors_keep_their_byte_identical_display() {
+        let cases = [
+            (
+                CatalogSnapshotError::SnapshotTooLarge,
+                "catalog snapshot is too large",
+            ),
+            (
+                CatalogSnapshotError::RegistryIndexSizeOverflow,
+                "catalog registry index size overflow",
+            ),
+            (
+                CatalogSnapshotError::SourceEstimateTooLarge,
+                "catalog source estimate is too large",
+            ),
+            (
+                CatalogSnapshotError::CardMetadataTooLarge,
+                "catalog card metadata is too large",
+            ),
+            (
+                CatalogSnapshotError::CardMetadataExceedsSnapshotBound,
+                "catalog card metadata exceeds the 8 MiB snapshot bound",
+            ),
+            (
+                CatalogSnapshotError::SourceChargeOverflow,
+                "catalog source charge overflow",
+            ),
+            (
+                CatalogSnapshotError::SnapshotExceedsInputBound,
+                "catalog snapshot exceeds the input charge bound",
+            ),
+            (
+                CatalogSnapshotError::InputChargeOverflow,
+                "catalog input charge overflow",
+            ),
+            (
+                CatalogSnapshotError::ScratchChargeOverflow,
+                "catalog scratch charge overflow",
+            ),
+            (
+                CatalogSnapshotError::ResultChargeOverflow,
+                "catalog result charge overflow",
+            ),
+        ];
+        assert_eq!(cases.len(), 10, "every snapshot variant is covered");
+        for (error, expected) in cases {
+            assert_eq!(error.to_string(), expected, "{error:?}");
+        }
+    }
+
+    #[test]
+    fn catalog_worker_errors_keep_their_byte_identical_display() {
+        let cases = [
+            (
+                CatalogWorkerError::Registry {
+                    path: "/root/index.ts".into(),
+                    reason: "missing /root/index.ts: not found".into(),
+                },
+                "$RS2B0T registry /root/index.ts: missing /root/index.ts: not found".to_string(),
+            ),
+            (
+                CatalogWorkerError::TooManyRegistrations,
+                "catalog has more than 4096 registrations".to_string(),
+            ),
+            (
+                CatalogWorkerError::RegistrySizeOverflow,
+                "catalog registry size overflow".to_string(),
+            ),
+            (
+                CatalogWorkerError::RegistryMetadataExceedsInputBound,
+                "catalog registry metadata exceeds its charged input bound".to_string(),
+            ),
+            (
+                CatalogWorkerError::InputsExceedInputBound,
+                "catalog inputs exceed the charged input bound".to_string(),
+            ),
+            (
+                CatalogWorkerError::TooManySourceFiles,
+                "catalog source graph exceeds 8192 files".to_string(),
+            ),
+            (
+                CatalogWorkerError::SourcesExceedInputBound,
+                "catalog sources exceed the charged input bound".to_string(),
+            ),
+            (
+                CatalogWorkerError::SourcesExceedBoundedInputLimit,
+                "catalog sources exceed the bounded input limit".to_string(),
+            ),
+            (
+                CatalogWorkerError::SourceFile {
+                    reason: "not a regular file".into(),
+                },
+                "not a regular file".to_string(),
+            ),
+            (
+                CatalogWorkerError::TooManySiblings {
+                    relative: "./src/bot/scripts/Big/Big.ts".into(),
+                },
+                "catalog source ./src/bot/scripts/Big/Big.ts has more than 128 sibling modules"
+                    .to_string(),
+            ),
+            (
+                CatalogWorkerError::SiblingIndexSizeOverflow,
+                "catalog sibling index size overflow".to_string(),
+            ),
+            (
+                CatalogWorkerError::ScratchExceedsBound,
+                "catalog preparation scratch exceeds its charged scratch bound".to_string(),
+            ),
+            (
+                CatalogWorkerError::TooManySiblingModules,
+                "catalog source graph exceeds 8192 sibling modules".to_string(),
+            ),
+            (
+                CatalogWorkerError::ParsedRegistrationMissing {
+                    name: "GoneBot".into(),
+                },
+                "catalog GoneBot: parsed registration is missing".to_string(),
+            ),
+            (
+                CatalogWorkerError::ExistingSnapshotMissing {
+                    name: "GoneBot".into(),
+                },
+                "catalog GoneBot: existing card snapshot is missing".to_string(),
+            ),
+            (
+                CatalogWorkerError::CardBounded {
+                    name: "GoneBot".into(),
+                    reason: "registry entry no longer resolves".into(),
+                },
+                "catalog GoneBot: registry entry no longer resolves".to_string(),
+            ),
+            (
+                CatalogWorkerError::FailureIndexSizeOverflow,
+                "catalog failure index size overflow".to_string(),
+            ),
+            (
+                CatalogWorkerError::DiffCompletedMoreThanOnce,
+                "catalog diff work completed more than once".to_string(),
+            ),
+            (
+                CatalogWorkerError::PreparationCompletedMoreThanOnce,
+                "catalog preparation work completed more than once".to_string(),
+            ),
+            (
+                CatalogWorkerError::CandidateCountOverflow,
+                "catalog candidate count overflow".to_string(),
+            ),
+            (
+                CatalogWorkerError::ResultSizeOverflow,
+                "catalog result size overflow".to_string(),
+            ),
+            (
+                CatalogWorkerError::PreparedResultExceedsBound,
+                "prepared catalog result exceeds its charged result bound".to_string(),
+            ),
+            (
+                CatalogWorkerError::PreparedCardSizeOverflow,
+                "prepared catalog card size overflow".to_string(),
+            ),
+            (
+                CatalogWorkerError::FailureSizeOverflow,
+                "catalog failure size overflow".to_string(),
+            ),
+            (
+                CatalogWorkerError::ResultSizeUnderflow,
+                "catalog result size accounting underflow".to_string(),
+            ),
+            (
+                CatalogWorkerError::UnchangedCandidateIndexInvalid,
+                "catalog unchanged candidate index is invalid".to_string(),
+            ),
+            (
+                CatalogWorkerError::ScratchSizeOverflow,
+                "catalog scratch size overflow".to_string(),
+            ),
+            (
+                CatalogWorkerError::CardTaskAlreadyComplete,
+                "card preparation task is already complete".to_string(),
+            ),
+            (
+                CatalogWorkerError::DiffSizeOverflow,
+                "catalog diff size overflow".to_string(),
+            ),
+            (
+                CatalogWorkerError::DiffSizeUnderflow,
+                "catalog diff size accounting underflow".to_string(),
+            ),
+            (
+                CatalogWorkerError::DiffExceedsResultBound,
+                "catalog diff exceeds its charged result bound".to_string(),
+            ),
+            (
+                CatalogWorkerError::FingerprintInsertionDisappeared,
+                "catalog fingerprint insertion disappeared".to_string(),
+            ),
+            (
+                CatalogWorkerError::IncomingInsertionDisappeared,
+                "catalog incoming insertion disappeared".to_string(),
+            ),
+            (
+                CatalogWorkerError::DiffStateUnavailable,
+                "catalog diff state is unavailable".to_string(),
+            ),
+        ];
+        assert_eq!(cases.len(), 34, "every worker variant is covered");
+        for (error, expected) in &cases {
+            assert_eq!(&error.to_string(), expected, "{error:?}");
+        }
     }
 }

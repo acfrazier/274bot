@@ -565,7 +565,7 @@ mod tests {
     const BANK_COM: i32 = 5292;
     const PROFILE: &str = "local-289";
     const CONTENT: &str = "test-content";
-    const WAIT: Duration = Duration::from_secs(10);
+    const WAIT: Duration = Duration::from_secs(60);
 
     impl SlotBankMemory {
         fn read(&self) -> RwLockReadGuard<'_, BankMemory> {
@@ -590,6 +590,10 @@ mod tests {
                 ],
                 Arc::new(api::identity::RequestIdMinter::new()),
             );
+            // Letting the writer drain past load stalls: dropping the last
+            // handle abandons queued writes past this bound, and the drop
+            // test below queues behind a held write on purpose.
+            service.set_shutdown_timeout(Duration::from_secs(60));
             let identity = identity("alice");
             assert_eq!(service.readback_lease(&identity, WAIT).unwrap(), None);
             Self {

@@ -1,0 +1,22 @@
+# Review machine (user unit): give the Windows nightly host its view of Engine B.
+# Reverse-forwards this machine's Engine B tunnel (274bot-engine-tunnel:
+# 127.0.0.1:45594 game, 127.0.0.1:2080 web) to the Windows host's loopback on
+# 47594/3080. These ports are distinct from the 45594/2080 that other agents
+# forward ad hoc, so the two never collide. Only forwards; it never starts,
+# stops or reconfigures the engine. While it is down, the Windows nightly
+# reports its live cells UNAVAILABLE.
+# Install: ~/.config/systemd/user/274bot-nightly-win-engine.service, then
+# systemctl --user daemon-reload && systemctl --user enable --now 274bot-nightly-win-engine.service
+[Unit]
+Description=274bot: Engine B for the Windows nightly (bottest loopback 47594/3080 -> local 45594/2080)
+After=network-online.target 274bot-engine-tunnel.service
+Wants=274bot-engine-tunnel.service
+
+[Service]
+ExecStart=/usr/bin/ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+  -R 127.0.0.1:47594:127.0.0.1:45594 -R 127.0.0.1:3080:127.0.0.1:2080 bottest
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

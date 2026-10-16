@@ -16,7 +16,11 @@ use host_play as map_host;
 // The shared host-play fixture (also loaded by `session_tests`), for a
 // Local server profile: Debug draws only on one.
 #[path = "../../host-play/tests/support/map_fixture.rs"]
-#[allow(dead_code, clippy::duplicate_mod)]
+#[allow(
+    dead_code,
+    clippy::duplicate_mod,
+    reason = "shared host-play map fixture also loaded by session_tests; duplicate_mod for the shared path include"
+)]
 mod map_fixture;
 
 const OPENER_HOST: &str = "Opener harness";

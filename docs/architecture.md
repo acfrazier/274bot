@@ -457,7 +457,7 @@ libtest exception.
 | `nav_identity.rs` | bundled nav identities | build-published table plus checked-in rows |
 | `walk_map.rs`, `walk_map/{actions,catalogue,observations,routes}.rs` | shared WalkTo map model | catalogue, selection, guarded Walk/Teleport, live/script/manual routes |
 | `map_cache.rs`, `map_cache/shipped.rs`, `map_cache/fixture.rs` (`test` / `test-support` fixtures), `map_producer.rs` | WalkTo map cache lifecycle | demand, bake/publication, installing release-shipped terrain that matches the bound image identity; the native producer |
-| `map_bind.rs` | process-wide map demand | manager at first open (shipped terrain under the install root's `map/`), packaging bake |
+| `map_bind.rs` | process-wide map demand | manager at first open (shipped terrain under the install root's `map/`), packaging bake, bounded shared-worker terrain PNG decode (258×258 RGBA8; 512 KiB input plus inline job, Arc refcounts and refcount-alignment padding; `png::Limits` allowance of one additional raw RGBA row, 2 MiB scratch covering the overlapping ≤512 KiB eXIf buffer and metadata copy, ≤128 KiB raster buffer, row scratch and bounded inflater tables; 266,256-byte result; text/ICC metadata is skipped) |
 | `bundled-nav-identities.json`, `known-cache-identities.json` | checked-in identity rows | data, not code |
 | `external_loader.rs` | external loader smoke witness | proof infrastructure, disabled by default |
 | `memory.rs` | opt-in memory harness | `BOT_MEMORY_N` only |
@@ -508,6 +508,7 @@ libtest exception.
 | `selection.rs`, `marked.rs`, `bulk.rs` | marked-bot selection and commands | marks keyed by profile identity; Assign, Assign & restart, log in/out on marked rows; one outcome per marked row |
 | `group_walk.rs` | group walk | one WalkTo destination for every marked bot; panel picker and TUI map both call it |
 | `walk_permissions.rs`, `nav_prefs.rs`, `map_bake.rs` | durable walk and nav preferences; terrain-bake consent | shared by both front ends; read fail closed |
+| `map_decode.rs` | cooperative WalkTo image decode | one accepted shared-work ticket, one replaceable pending demand, and generation/image/key-fenced terminal custody |
 | `operations.rs` | operation results | ids, per-member outcomes, bounded book, outcome journal the poll logs as `op#<id>` lines |
 | `views.rs`, `progress.rs` | fleet and detail projections; run-progress wording | one row per member (phase, queue place, login-error retry wait vs operator hold, script state, walking, retained error, newest operation, narrow label), fleet counts, and the selected slot's detail; rows re-derived only when their facts change; runtime, time since progress and levels gained |
 | `resources.rs` | process resource meter | one probe thread sampling at 1 Hz (never on the UI frame); CPU, current and peak process RSS (peak never below current), summed traffic with per-slot-lifetime baselines; measuring / unavailable / error values, plus one narrow line for a header |
@@ -524,6 +525,11 @@ libtest exception.
 | `scripts/reload.rs` | reload and catalog-refresh transaction | worker validation, warning with exact runs and generations, confirm/cancel, fenced replacement |
 | `scripts/sync.rs` | Apply to all (bulk parameter sync) | frozen same-card scope, per-profile writes, generation-fenced live push, separate persistence/live counts; confirmation holds new Starts, and accepted native copies retain that hold through preparation and the writer's durable completion (JS copies release after staging) |
 | `quester_paths.rs` | durable Quester Path configuration | asynchronous folder reload |
+
+The walk-map decode corpus fixture compares every manifest-listed producer tile
+through the shared controller with the legacy test-only decoder. It compares
+serialized identity, generation, tile key and RGBA bytes, and checks ticket
+release after every result. The legacy decoder is not a production fallback.
 
 Accepted native copies keep their Start hold on the existing preparation and
 profile-write operations, not on a separate completion tracker. Preparation
@@ -550,7 +556,7 @@ has released it.
 | `game_view.rs` | game image texture | mailbox frames to texture |
 | `input_capture.rs` | game input capture | keyboard queue and mouse streaming |
 | `picker.rs` | WalkTo picker chrome | pan/zoom/plane/search; Walk/Teleport/selection via `host_play::walk_map` |
-| `walk_map.rs`, `walk_map/overlay.rs`, `walk_map/labels.rs`, `walk_map/fixtures.rs` | app-owned WalkTo renderer | ≤24 terrain slots, one overlay (768×512 / 1.5 MiB cap, never per-tile quads), label ranking, small PNG/POI fixtures |
+| `walk_map.rs`, `walk_map/overlay.rs`, `walk_map/labels.rs`, `walk_map/fixtures.rs` | app-owned WalkTo renderer | ≤24 terrain slots, one overlay (768×512 / 1.5 MiB cap, never per-tile quads), bounded shared-worker decode demand, label ranking, small PNG/POI fixtures |
 | `nav_paint_cache.rs` | nav-paint cache | per-frame reuse of path paint |
 | `grid.rs` | MultiBox grid layout | cell geometry |
 | `fleet.rs`, `fleet_actions.rs`, `fleet_columns.rs` | Fleet window | identity-keyed marks, action bar over marked rows, toggleable status columns; the panel adapter over the shared marked-bot commands |
@@ -730,6 +736,70 @@ gate on sibling paths.
 `e2e` and ignored live tests in `host-play` are wide orchestration. Linking
 those crates for tests is not a claim that test code is the product owner of
 nav, rendering, or the isolate.
+
+## Lint suppression ratchet
+
+`#[allow]` suppressions accumulate silently: each one turns a lint off
+forever, including after the code that needed it is gone. Two mechanisms
+stop that. Both live outside the crate-graph checker above; this section
+documents them together.
+
+**Workspace lints (per-crate opt-in).** The `[workspace.lints.clippy]` table
+in the root `Cargo.toml` holds the set: `undocumented_unsafe_blocks` and
+`unwrap_used` (warn), plus the suppression-hygiene denies
+`allow_attributes` (suppressions must be `#[expect]`, so one that stops
+firing is an error) and `allow_attributes_without_reason`, plus the six
+approved lints `redundant_clone`, `significant_drop_in_scrutinee`,
+`unchecked_time_subtraction`, `needless_collect`,
+`large_types_passed_by_value` and `assigning_clones` (deny). A crate opts
+in with `[lints] workspace = true` in its manifest when a refactor reaches
+it and stays opted in; `vault` is the first. Only `unwrap_used` is scoped
+to non-test code (via `allow-unwrap-in-tests` in `clippy.toml`): clippy
+1.98 offers no per-lint test exemption for the other lints, so opted-in
+crates keep their tests clean too.
+
+**Suppression-count ratchet.** `tools/lint-ratchet/lint_ratchet.py`
+(Python 3, stdlib only; run as `python3 -B`) counts `#[allow(...)]`,
+`#[expect(...)]`, crate-level `#![...]` and `#[cfg_attr(.., ...)]`
+suppressions in `crates/**/*.rs` per crate × lint, with test files counted
+separately, and compares against the committed
+`tools/lint-ratchet/baseline.json`. Any count above its baseline fails, as
+does a suppression for a lint absent from that crate's baseline entry;
+lowering a count is free. `--update` rewrites the baseline. The parser is
+fail-closed: anything suppression-like it cannot read (an unparseable lint
+path, an unbalanced attribute, a macro metavariable such as `$lint:meta` in
+suppression position) is an error with file:line, and `--update` refuses to
+write a baseline while such errors exist. It handles `reason = "..."`
+strings containing commas and parentheses, multi-line attributes, nested
+`cfg_attr` to any depth, whitespace around `::` and before the paren
+(`clippy :: needless_collect`, `allow (dead_code)`). Before matching, one
+normalization pass canonicalizes the token stream: whitespace/comments
+between tokens are dropped (even between `#`, `!`, `[` and the path, so
+`# [allow(..)]` counts), the `r#` raw-identifier prefix is stripped, and
+Unicode format characters (`Cf`, e.g. U+200E/U+200F) are removed; any other
+non-ASCII inside a path stays and fails closed. Suppressions written
+inside macro bodies or passed as macro arguments count, conservatively: a
+macro-emitted suppression is real, and over-counting hides nothing. The
+FlatBuffers output `crates/script/schema/generated/isolate_generated.rs` is
+explicitly exempt (regenerating it rewrites its own allows). The
+`lint-ratchet` lane in the admissions matrix runs the check plus
+`lint_ratchet.py --self-test` (the permanent parser tests in
+`tools/lint-ratchet/test_lint_ratchet.py`), and
+`tools/lint-ratchet/ci-snippet.yml` is the step to fold into the single
+`architecture`/lint CI job.
+
+Limit: the parser is a text tool, not the compiler. Exotic spellings beyond
+the normalization above are covered by clippy's `allow_attributes` lint in
+opted-in crates (the compiler sees every real attribute) and by the
+reviewer. No further parser rounds.
+
+**Adding a justified suppression.** Write
+`#[expect(lint, reason = "...")]` with a reason that says why the code
+needs it, and bump the baseline in the same diff:
+
+```bash
+python3 -B tools/lint-ratchet/lint_ratchet.py --update
+```
 
 ## Changing a boundary
 

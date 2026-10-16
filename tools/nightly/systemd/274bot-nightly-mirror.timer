@@ -1,0 +1,12 @@
+# Review machine (user unit): mirror hourly, after the archive pull at :10.
+# Install: ~/.config/systemd/user/274bot-nightly-mirror.timer
+[Unit]
+Description=Hourly mirror of 274bot nightly runs
+
+[Timer]
+OnCalendar=*-*-* *:25:00
+Persistent=true
+Unit=274bot-nightly-mirror.service
+
+[Install]
+WantedBy=timers.target

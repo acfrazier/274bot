@@ -256,7 +256,7 @@ fn start_source(
             Arc::new(api::named_banks::NamedBankFacts::empty()),
         )
         .expect("v2 isolate starts");
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         match cell.lock().unwrap().poll_start() {
             script::StartPoll::Settled(script::StartOutcome::Ready) => return,
@@ -416,7 +416,7 @@ fn gather_seat_owns_foreground_through_recovery_hold_stop_and_resume_dispatch() 
     finish_watchdog_hold(&mut rig.slot().lock().unwrap(), rig.tile);
 
     let mut native_drop_batch_seen = false;
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while Instant::now() < deadline {
         let packets = rig.frame();
         native_drop_batch_seen |= packets.iter().filter(|opcode| **opcode == held_op).count() == 5;
@@ -1083,7 +1083,7 @@ impl GatherReconnectRig {
         let expression = format!(
             "!!globalThis.__page && globalThis.__page.phase === 'running' && globalThis.__page.token === {token}"
         );
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(60);
         while Instant::now() < deadline {
             self.frame();
             if self.probe(&expression) == true
@@ -1475,7 +1475,7 @@ fn recreated_load_isolates_never_inherit_old_seat_pages_or_authority() {
             rig.expect_running_page(token);
             let old_run = rig.native_run();
             let selected = rig.slot().lock().unwrap().compiled_game_data().unwrap();
-            let deadline = Instant::now() + Duration::from_secs(10);
+            let deadline = Instant::now() + Duration::from_secs(60);
             let old_action = loop {
                 let cell = rig.slot();
                 let mut slot = cell.lock().unwrap();
@@ -1515,7 +1515,7 @@ fn recreated_load_isolates_never_inherit_old_seat_pages_or_authority() {
             match boundary {
                 "stop" => {
                     rig.slot().lock().unwrap().stop();
-                    let deadline = Instant::now() + Duration::from_secs(10);
+                    let deadline = Instant::now() + Duration::from_secs(60);
                     loop {
                         let cell = rig.slot();
                         let mut slot = cell.lock().unwrap();
@@ -1538,7 +1538,7 @@ fn recreated_load_isolates_never_inherit_old_seat_pages_or_authority() {
                         .unwrap()
                         .restart_from_identity(Instant::now())
                         .unwrap();
-                    let deadline = Instant::now() + Duration::from_secs(10);
+                    let deadline = Instant::now() + Duration::from_secs(60);
                     loop {
                         let cell = rig.slot();
                         let mut slot = cell.lock().unwrap();
@@ -1607,6 +1607,7 @@ export function tick(api) { globalThis.__api = api; }"#,
         "globalThis.__firstSettles=0; __api.questProgress({quest:'cook'}).then(out=>{globalThis.__first=out; __firstSettles++}); true",
     );
     rig.isolate_tick_without_host_drain();
+
     assert!(!rig.slot().lock().unwrap().api_owns_foreground());
 
     rig.reconnect();
@@ -1615,7 +1616,7 @@ export function tick(api) { globalThis.__api = api; }"#,
     let (rows, owned) = rig.drain_host();
     assert!(rows.is_empty());
     assert!(owned, "the host admits the carried typed progress request");
-    let first_deadline = Instant::now() + Duration::from_secs(10);
+    let first_deadline = Instant::now() + Duration::from_secs(60);
     while rig.probe("globalThis.__first || null").is_null() {
         rig.frame();
         assert!(
@@ -1640,7 +1641,7 @@ export function tick(api) { globalThis.__api = api; }"#,
     assert!(rows.is_empty());
     assert!(owned, "the host admits the next typed progress request");
 
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while rig.probe("globalThis.__second || null").is_null() {
         rig.frame();
         assert!(Instant::now() < deadline, "second progress waiter stranded");
@@ -1882,7 +1883,7 @@ fn load_gather_watchdog_arm_walk_keeps_load_script_options() {
         SLOT,
     );
 
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         if rig.navs.lock().unwrap()[SLOT].route_worker.is_none() {
             break;

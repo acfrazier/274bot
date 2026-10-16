@@ -51,7 +51,10 @@
 //! with `QUESTER_LIVE_PASSWORD` (one fixed account instead of a minted one)
 //! and `QUESTER_LIVE_KEEP_HOME=1` (the process `HOME` stays `~/.274bot`, so
 //! what the host saved for the account in an earlier process is found again).
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "shared live runner across quester cells; each cell uses a subset, so expect would misfire"
+)]
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

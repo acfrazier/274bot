@@ -567,8 +567,11 @@ fn catalogue_growth_past_its_measured_input_charge_is_refused() {
     .expect("worker completes")
     .expect_err("source growth beyond the captured charge must be refused");
     assert!(
-        error.contains("charged input bound"),
-        "unexpected over-budget refusal: {error}"
+        matches!(
+            error,
+            script::load::CatalogWorkerError::SourcesExceedInputBound
+        ),
+        "source growth past its charge must report SourcesExceedInputBound: {error}"
     );
 }
 

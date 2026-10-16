@@ -560,7 +560,7 @@ struct Entry {
     kick_on_start: bool,
     begin: fn(Handle, Value, Vec<Hook>, usize) -> Started,
     /// [`Family::SYNC_HOOKS`]. The ABI coverage test reads this field.
-    #[allow(dead_code)]
+    #[cfg(test)]
     sync_hooks: &'static [usize],
 }
 
@@ -570,6 +570,7 @@ const fn entry<F: Family>() -> Entry {
         callbacks: F::CALLBACKS,
         kick_on_start: F::KICK_ON_START,
         begin: begin_row::<F>,
+        #[cfg(test)]
         sync_hooks: F::SYNC_HOOKS,
     }
 }

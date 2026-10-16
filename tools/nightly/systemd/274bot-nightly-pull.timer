@@ -1,0 +1,12 @@
+# Archive host: pull hourly; a run is pulled once it has its DONE marker.
+# Install: /etc/systemd/system/274bot-nightly-pull.timer
+[Unit]
+Description=Hourly pull of finished 274bot nightly runs
+
+[Timer]
+OnCalendar=*-*-* *:10:00
+Persistent=true
+Unit=274bot-nightly-pull.service
+
+[Install]
+WantedBy=timers.target
