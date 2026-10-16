@@ -33,7 +33,7 @@ pub use options::{
 };
 #[path = "profile_binding.rs"]
 mod binding;
-pub use binding::DeferredReach;
+pub use binding::{DeferredReach, TemplatePreparation, TemplateStep, TEMPLATE_STEP_WAIT};
 #[path = "profile_selection.rs"]
 mod selection;
 
