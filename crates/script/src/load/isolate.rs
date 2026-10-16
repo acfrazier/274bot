@@ -216,6 +216,9 @@ pub struct QueuedSeatBatch {
     pub(crate) machine_events: Vec<crate::machine::MachineEvent>,
     /// Wait facts folded out of `batch.reqs` while the seat was held.
     pub held_waits: HeldWaitFacts,
+    /// This is the batch that a guardian hold retained. After the hold, the
+    /// host hands it to the seat in pages that one take carries whole.
+    pub held_fold: bool,
 }
 
 impl QueuedSeatBatch {
@@ -1808,6 +1811,7 @@ impl LoadIsolate {
                                     batch,
                                     machine_events,
                                     held_waits: HeldWaitFacts::default(),
+                                    held_fold: false,
                                 },
                             );
                         }

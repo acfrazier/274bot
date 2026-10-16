@@ -1503,6 +1503,21 @@ impl<R> GameplaySeat<R> {
         }
     }
 
+    /// Non-reserved rows that may join the queue without the next `take`
+    /// clearing any queued row. Zero while held, or while a taken batch has
+    /// not dispatched.
+    pub fn take_room(&self) -> usize {
+        if self.held || !self.in_flight.is_empty() {
+            return 0;
+        }
+        MAX_ENCODED_GAMEPLAY.saturating_sub(
+            self.queued
+                .iter()
+                .filter(|row| row.release.is_none() && !row.reserved_policy)
+                .count(),
+        )
+    }
+
     /// Encoder priority: all reserved releases first, then at most 141 other
     /// rows in original push order. A prior batch must dispatch before Take.
     pub fn take(&mut self) {

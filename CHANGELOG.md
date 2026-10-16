@@ -39,7 +39,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   events in order. BroadcastChannel opens, closes and posts, and route
   inspections, stay in order. When that batch is full, only later
   BroadcastChannel posts are refused: the script's channel gets one
-  `messageerror` with the reason, and each refused post is counted.
+  `messageerror` with the reason, and each refused post is counted. After
+  the hold, the host hands the kept batch to the seat in pages of at most
+  one take (141 rows besides releases and the policy), so no kept open,
+  close, inspection or newest value is lost however long the hold was. The
+  newest values arrive after the ordered rows, and actions that the script
+  makes after the hold wait behind the remaining pages.
 - A saturated script tick keeps its release and control rows ahead of gameplay.
   It dispatches the first 141 other rows in their original order, drops the
   excess, and reports one overflow diagnostic instead of failing the batch.

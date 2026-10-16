@@ -97,11 +97,12 @@ fn seat_walk_id(req: &crate::shim::InteractReq, owner: Option<RequestId>) -> Opt
     }
 }
 
-/// Most non-reserved rows that the one folded guardian-held batch carries:
-/// the gameplay/lifecycle capacity of one seat take (§28.5 line 179). After
-/// resume the seat moves at most this many such rows in one take and drops
-/// the rest (`GameplaySeat::take`). The fold refuses `ChannelPost` rows, and
-/// no other row, to stay within it.
+/// Most lane rows, plus one row for each replacement key, that one guardian
+/// hold carries before the fold refuses a later `ChannelPost`: the
+/// gameplay/lifecycle capacity of one seat take (§28.5 line 179). The fold
+/// refuses no other row. Resume pages the folded batch into the seat
+/// (`SlotScript::consume_held_fold`), so `GameplaySeat::take` drops none of
+/// its rows, however many opens, closes and inspections it carries.
 #[cfg(feature = "load")]
 const HELD_LIFECYCLE_ROWS: usize = api::script_contract::MAX_ENCODED_GAMEPLAY;
 
@@ -176,6 +177,19 @@ fn seat_interact_class(
         _ if req.is_game() => (EmissionClass::Gameplay, None),
         _ => (EmissionClass::Lifecycle, None),
     }
+}
+
+/// Rows that `GameplaySeat::take` moves before its 141 other rows: the
+/// releases and the one run-policy control.
+#[cfg(feature = "load")]
+fn seat_reserved_row(req: &crate::shim::InteractReq) -> bool {
+    matches!(
+        req,
+        crate::shim::InteractReq::AbortWalk { .. }
+            | crate::shim::InteractReq::GatherStop { .. }
+            | crate::shim::InteractReq::CombatStop { .. }
+            | crate::shim::InteractReq::RunPolicyOverride { .. }
+    )
 }
 
 #[cfg(feature = "load")]
@@ -2597,21 +2611,29 @@ impl SlotScript {
     #[cfg(feature = "load")]
     fn consume_seat_batch(
         &mut self,
-        mut batch: DecodedSeatBatch,
+        batch: DecodedSeatBatch,
         observed_walk_outcome_seq: u64,
         machine_events: &[crate::machine::MachineEvent],
     ) {
-        use api::script_contract::{AuthorityStatus, EmissionClass};
+        if self.admit_seat_batch(&batch) {
+            self.apply_seat_batch(batch, observed_walk_outcome_seq, machine_events);
+        }
+    }
+
+    /// Preflight a batch before any of its rows reaches the seat. A
+    /// malformed batch is dropped whole, and its rows are counted.
+    #[cfg(feature = "load")]
+    fn admit_seat_batch(&mut self, batch: &DecodedSeatBatch) -> bool {
         let Some(seat) = self.seat.as_ref() else {
             self.pending_logs
                 .push("seat batch without an armed seat".into());
-            return;
+            return false;
         };
         let run = seat.run();
         let Some(execution) = self.seat_fence.current() else {
             self.pending_logs
                 .push("seat batch without an execution fence".into());
-            return;
+            return false;
         };
         if batch.starts.iter().any(|start| {
             start.run != run.run
@@ -2624,7 +2646,7 @@ impl SlotScript {
                 .as_mut()
                 .expect("armed")
                 .count_dropped(batch.reqs.len());
-            return;
+            return false;
         }
         if let Err(error) = seat
             .validate_mirror_revokes(batch.mirror_revokes.iter().map(|row| (row.owner, row.seq)))
@@ -2638,102 +2660,32 @@ impl SlotScript {
                 .as_mut()
                 .expect("armed")
                 .count_dropped(batch.reqs.len());
-            return;
+            return false;
         }
+        true
+    }
+
+    /// Apply an admitted batch: push its rows, then its controls and
+    /// starts, then take and dispatch.
+    #[cfg(feature = "load")]
+    fn apply_seat_batch(
+        &mut self,
+        mut batch: DecodedSeatBatch,
+        observed_walk_outcome_seq: u64,
+        machine_events: &[crate::machine::MachineEvent],
+    ) {
+        let execution = self
+            .seat_fence
+            .current()
+            .expect("an admitted batch has an execution fence");
         // The isolate emitted these rows before this host batch applied its
         // terminal controls. Pin push-time authority now; watermark, controls
         // and starts then settle or witness the rows before Take/Dispatch.
-        for row in batch.reqs {
-            let source = match (row.lineage, row.mirror_owner) {
-                (None, None) => EmissionSource::Root,
-                (lineage, mirror) => {
-                    let pending = lineage.and_then(|id| {
-                        let seat = self.seat.as_ref().expect("armed");
-                        (!seat.live().iter().any(|entry| entry.id == id)
-                            && !seat.results().iter().any(|result| result.id == id)
-                            && !matches!(
-                                seat.lookup(id),
-                                AuthorityStatus::Revoked | AuthorityStatus::Expired
-                            ))
-                        .then(|| batch.starts.iter().find(|start| start.id == id))
-                        .flatten()
-                    });
-                    match (lineage, mirror, pending) {
-                        (Some(id), None, Some(start)) => EmissionSource::Pending {
-                            owner: id,
-                            parent: start.parent,
-                            kind: start.kind,
-                        },
-                        (Some(id), Some(owner), Some(start)) => EmissionSource::PendingMirror {
-                            owner,
-                            pending: id,
-                            parent: start.parent,
-                            kind: start.kind,
-                        },
-                        (Some(id), _, None)
-                            if !self
-                                .seat
-                                .as_ref()
-                                .expect("armed")
-                                .live()
-                                .iter()
-                                .any(|entry| entry.id == id)
-                                && !self
-                                    .seat
-                                    .as_ref()
-                                    .expect("armed")
-                                    .results()
-                                    .iter()
-                                    .any(|result| result.id == id)
-                                && !matches!(
-                                    self.seat.as_ref().expect("armed").lookup(id),
-                                    AuthorityStatus::Revoked | AuthorityStatus::Expired
-                                ) =>
-                        {
-                            EmissionSource::InvalidExternal(id)
-                        }
-                        (Some(id), None, None) => EmissionSource::Owner(id),
-                        (parent, Some(owner), None) => EmissionSource::Mirror { owner, parent },
-                        (None, Some(_), Some(_)) => {
-                            unreachable!("a pending start requires a lineage id")
-                        }
-                        (None, None, _) => unreachable!("root handled above"),
-                    }
-                }
-            };
-            let (class, release) =
-                seat_interact_class(&row.request, row.lineage.or(row.mirror_owner));
-            let walk = seat_walk_id(&row.request, row.mirror_owner.or(row.lineage));
-            let reserved_policy = matches!(
-                row.request,
-                crate::shim::InteractReq::RunPolicyOverride { .. }
-            );
-            let effect = SeatEffect::Interact(crate::load::QueuedInteract {
-                req: row.request,
-                observed_walk_outcome_seq,
-            });
-            let result = match walk {
-                Some(id) if class == EmissionClass::Gameplay => self
-                    .seat
-                    .as_mut()
-                    .expect("armed")
-                    .push_walk(effect, source, id),
-                _ if reserved_policy => self
-                    .seat
-                    .as_mut()
-                    .expect("armed")
-                    .push_policy(effect, source),
-                _ => self
-                    .seat
-                    .as_mut()
-                    .expect("armed")
-                    .push(effect, class, source, release),
-            };
-            if let Err(error) = result {
-                self.pending_logs
-                    .push(format!("seat isolate emission refused: {error:?}"));
-            }
-        }
+        self.push_seat_rows(
+            batch.reqs.drain(..),
+            &batch.starts,
+            observed_walk_outcome_seq,
+        );
         let seat = self.seat.as_mut().expect("armed");
         seat.watermark(batch.consumed_terminal_seq);
         for cancel in &batch.cancels {
@@ -2845,6 +2797,110 @@ impl SlotScript {
         self.settle_api_seat_terminals();
     }
 
+    /// Pin each row's push-time authority and queue it in the seat. A row
+    /// whose lineage names a start of `starts` that the seat has not
+    /// admitted yet has conditional custody until that start is admitted.
+    #[cfg(feature = "load")]
+    fn push_seat_rows(
+        &mut self,
+        rows: impl Iterator<Item = crate::isolate_fb::SeatInteractDecoded>,
+        starts: &[crate::isolate_fb::SeatStartInput],
+        observed_walk_outcome_seq: u64,
+    ) {
+        use api::script_contract::{AuthorityStatus, EmissionClass};
+        for row in rows {
+            let source = match (row.lineage, row.mirror_owner) {
+                (None, None) => EmissionSource::Root,
+                (lineage, mirror) => {
+                    let pending = lineage.and_then(|id| {
+                        let seat = self.seat.as_ref().expect("armed");
+                        (!seat.live().iter().any(|entry| entry.id == id)
+                            && !seat.results().iter().any(|result| result.id == id)
+                            && !matches!(
+                                seat.lookup(id),
+                                AuthorityStatus::Revoked | AuthorityStatus::Expired
+                            ))
+                        .then(|| starts.iter().find(|start| start.id == id))
+                        .flatten()
+                    });
+                    match (lineage, mirror, pending) {
+                        (Some(id), None, Some(start)) => EmissionSource::Pending {
+                            owner: id,
+                            parent: start.parent,
+                            kind: start.kind,
+                        },
+                        (Some(id), Some(owner), Some(start)) => EmissionSource::PendingMirror {
+                            owner,
+                            pending: id,
+                            parent: start.parent,
+                            kind: start.kind,
+                        },
+                        (Some(id), _, None)
+                            if !self
+                                .seat
+                                .as_ref()
+                                .expect("armed")
+                                .live()
+                                .iter()
+                                .any(|entry| entry.id == id)
+                                && !self
+                                    .seat
+                                    .as_ref()
+                                    .expect("armed")
+                                    .results()
+                                    .iter()
+                                    .any(|result| result.id == id)
+                                && !matches!(
+                                    self.seat.as_ref().expect("armed").lookup(id),
+                                    AuthorityStatus::Revoked | AuthorityStatus::Expired
+                                ) =>
+                        {
+                            EmissionSource::InvalidExternal(id)
+                        }
+                        (Some(id), None, None) => EmissionSource::Owner(id),
+                        (parent, Some(owner), None) => EmissionSource::Mirror { owner, parent },
+                        (None, Some(_), Some(_)) => {
+                            unreachable!("a pending start requires a lineage id")
+                        }
+                        (None, None, _) => unreachable!("root handled above"),
+                    }
+                }
+            };
+            let (class, release) =
+                seat_interact_class(&row.request, row.lineage.or(row.mirror_owner));
+            let walk = seat_walk_id(&row.request, row.mirror_owner.or(row.lineage));
+            let reserved_policy = matches!(
+                row.request,
+                crate::shim::InteractReq::RunPolicyOverride { .. }
+            );
+            let effect = SeatEffect::Interact(crate::load::QueuedInteract {
+                req: row.request,
+                observed_walk_outcome_seq,
+            });
+            let result = match walk {
+                Some(id) if class == EmissionClass::Gameplay => self
+                    .seat
+                    .as_mut()
+                    .expect("armed")
+                    .push_walk(effect, source, id),
+                _ if reserved_policy => self
+                    .seat
+                    .as_mut()
+                    .expect("armed")
+                    .push_policy(effect, source),
+                _ => self
+                    .seat
+                    .as_mut()
+                    .expect("armed")
+                    .push(effect, class, source, release),
+            };
+            if let Err(error) = result {
+                self.pending_logs
+                    .push(format!("seat isolate emission refused: {error:?}"));
+            }
+        }
+    }
+
     #[cfg(feature = "load")]
     fn compact_held_seat_batches(
         &mut self,
@@ -2865,11 +2921,14 @@ impl SlotScript {
         // - Channel and inspect rows stay in one ordered lane. Only a
         //   `ChannelPost` that does not fit one seat take is refused; the
         //   sender gets a channel status and the refusal is counted.
+        // The folded batch is releases, the policy row, the lane, then the
+        // replacements. Resume pages it into the seat
+        // (`consume_held_fold`), so the replacements land after the lane.
         use crate::shim::InteractReq;
         let mut releases: Vec<crate::isolate_fb::SeatInteractDecoded> = Vec::new();
         let mut walk_releases = 0;
-        let mut lifecycle: Vec<crate::isolate_fb::SeatInteractDecoded> = Vec::new();
-        let mut lane_rows = 0;
+        let mut lane: Vec<crate::isolate_fb::SeatInteractDecoded> = Vec::new();
+        let mut replacements: Vec<crate::isolate_fb::SeatInteractDecoded> = Vec::new();
         let mut policy = None;
         let mut waits = crate::load::HeldWaitFacts::default();
         let mut refused_posts: Vec<u64> = Vec::new();
@@ -2878,12 +2937,12 @@ impl SlotScript {
             waits = waits.then(std::mem::take(&mut batch.held_waits));
             for row in batch.batch.reqs.drain(..) {
                 if let Some(key) = HeldReplacement::of(&row.request) {
-                    match lifecycle
+                    match replacements
                         .iter_mut()
                         .find(|kept| HeldReplacement::of(&kept.request) == Some(key))
                     {
                         Some(kept) => *kept = row,
-                        None => lifecycle.push(row),
+                        None => replacements.push(row),
                     }
                     continue;
                 }
@@ -2907,7 +2966,7 @@ impl SlotScript {
                     InteractReq::WaitEnqueued => waits.enqueue(),
                     InteractReq::WaitSettled => waits.settle(),
                     InteractReq::ChannelPost { channel_id, .. }
-                        if lane_rows + HeldReplacement::KEYS >= HELD_LIFECYCLE_ROWS =>
+                        if lane.len() + HeldReplacement::KEYS >= HELD_LIFECYCLE_ROWS =>
                     {
                         dropped += 1;
                         if !refused_posts.contains(channel_id) {
@@ -2917,8 +2976,7 @@ impl SlotScript {
                     _ if seat_interact_class(&row.request, row.lineage.or(row.mirror_owner)).0
                         == api::script_contract::EmissionClass::Lifecycle =>
                     {
-                        lane_rows += 1;
-                        lifecycle.push(row);
+                        lane.push(row);
                     }
                     // Gameplay normally leaves before the fold. A row that
                     // still reaches it is discarded here, and counted.
@@ -2930,11 +2988,74 @@ impl SlotScript {
             seat.count_dropped(dropped);
         }
         self.notify_held_channel_refusals(refused_posts);
-        releases.extend(lifecycle);
         releases.extend(policy);
+        releases.extend(lane);
+        releases.extend(replacements);
         latest.batch.reqs = releases;
         latest.held_waits = waits;
+        latest.held_fold = true;
         vec![latest]
+    }
+
+    /// Hand the retained guardian-hold batch to the seat in pages. A page
+    /// holds no more non-reserved rows than the next `take` moves (§28.5
+    /// line 179), so `take` clears none of them. Releases and the policy
+    /// row lead the folded batch and go with the first page. The
+    /// replacements close it and go with the last page, after the lane.
+    /// The seat takes and dispatches each page before the next is pushed.
+    /// The batch's controls apply with the last page, after all of its
+    /// rows are pushed, as for one batch.
+    ///
+    /// Returns the rest of the batch when the seat has no room for its
+    /// next page in this frame. The caller keeps it, and every later batch
+    /// behind it, for the next frame.
+    #[cfg(feature = "load")]
+    fn consume_held_fold(
+        &mut self,
+        mut queued: crate::load::QueuedSeatBatch,
+    ) -> Option<crate::load::QueuedSeatBatch> {
+        if !self.admit_seat_batch(&queued.batch) {
+            return None;
+        }
+        loop {
+            let room = self.seat.as_ref().map_or(0, |seat| seat.take_room());
+            let rows = &queued.batch.reqs;
+            let unreserved = rows
+                .iter()
+                .filter(|row| !seat_reserved_row(&row.request))
+                .count();
+            if unreserved <= room {
+                self.apply_seat_batch(
+                    queued.batch,
+                    queued.observed_walk_outcome_seq,
+                    &queued.machine_events,
+                );
+                return None;
+            }
+            let replacements = rows
+                .iter()
+                .rev()
+                .take_while(|row| HeldReplacement::of(&row.request).is_some())
+                .count();
+            let page = room.min(unreserved - replacements);
+            if page == 0 {
+                return Some(queued);
+            }
+            let mut cut = 0;
+            let mut paged = 0;
+            while paged < page {
+                if !seat_reserved_row(&rows[cut].request) {
+                    paged += 1;
+                }
+                cut += 1;
+            }
+            self.push_seat_rows(
+                queued.batch.reqs.drain(..cut),
+                &queued.batch.starts,
+                queued.observed_walk_outcome_seq,
+            );
+            self.dispatch_seat_rows();
+        }
     }
 
     /// Tell each script channel whose post the hold refused, once in each
@@ -3044,6 +3165,9 @@ impl SlotScript {
             .as_ref()
             .map_or_else(Vec::new, LoadIsolate::drain_seat_batches);
         let mut carried = Vec::new();
+        // Set when the retained guardian-hold batch still has pages that
+        // the seat cannot take in this frame.
+        let mut paging = false;
         for mut queued in batches {
             let current_generation = self.load.as_ref().expect("batch producer").generation();
             if queued.generation != current_generation {
@@ -3093,11 +3217,20 @@ impl SlotScript {
                 carried.push(queued);
                 continue;
             }
-            if !self.dispatch_open() {
+            if !self.dispatch_open() || paging {
+                // Closed dispatch keeps the batch. So do retained pages that
+                // wait: later batches queue behind them, in order.
                 carried.push(queued);
                 continue;
             }
             self.release_held_fold(&mut queued);
+            if queued.held_fold {
+                if let Some(rest) = self.consume_held_fold(queued) {
+                    paging = true;
+                    carried.push(rest);
+                }
+                continue;
+            }
             self.consume_seat_batch(
                 queued.batch,
                 queued.observed_walk_outcome_seq,
