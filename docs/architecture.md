@@ -766,7 +766,12 @@ suppression position) is an error with file:line, and `--update` refuses to
 write a baseline while such errors exist. It handles `reason = "..."`
 strings containing commas and parentheses, multi-line attributes, nested
 `cfg_attr` to any depth, whitespace around `::` and before the paren
-(`clippy :: needless_collect`, `allow (dead_code)`); suppressions written
+(`clippy :: needless_collect`, `allow (dead_code)`). Before matching, one
+normalization pass canonicalizes the token stream: whitespace/comments
+between tokens are dropped (even between `#`, `!`, `[` and the path, so
+`# [allow(..)]` counts), the `r#` raw-identifier prefix is stripped, and
+Unicode format characters (`Cf`, e.g. U+200E/U+200F) are removed; any other
+non-ASCII inside a path stays and fails closed. Suppressions written
 inside macro bodies or passed as macro arguments count, conservatively: a
 macro-emitted suppression is real, and over-counting hides nothing. The
 FlatBuffers output `crates/script/schema/generated/isolate_generated.rs` is
@@ -776,6 +781,11 @@ explicitly exempt (regenerating it rewrites its own allows). The
 `tools/lint-ratchet/test_lint_ratchet.py`), and
 `tools/lint-ratchet/ci-snippet.yml` is the step to fold into the single
 `architecture`/lint CI job.
+
+Limit: the parser is a text tool, not the compiler. Exotic spellings beyond
+the normalization above are covered by clippy's `allow_attributes` lint in
+opted-in crates (the compiler sees every real attribute) and by the
+reviewer. No further parser rounds.
 
 **Adding a justified suppression.** Write
 `#[expect(lint, reason = "...")]` with a reason that says why the code

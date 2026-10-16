@@ -154,7 +154,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   suppression count rises above its committed baseline. The parser is
   fail-closed (unreadable suppression-like items error instead of warning),
   follows nested `cfg_attr`, tolerates spacing around `::` and before the
-  paren, and counts suppressions inside macro bodies conservatively.
+  paren, and counts suppressions inside macro bodies conservatively. Before
+  matching, one normalization pass drops trivia between tokens (even
+  between `#`, `!`, `[` and the path), strips the `r#` prefix, and removes
+  Unicode format characters; any other non-ASCII in a path still errors.
 
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 
