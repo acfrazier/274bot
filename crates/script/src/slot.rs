@@ -3662,7 +3662,7 @@ fn settings_fp(bag: &serde_json::Map<String, serde_json::Value>) -> String {
     serde_json::to_string(bag).unwrap_or_default()
 }
 
-#[cfg(all(test, feature = "load"))]
+#[cfg(test)]
 #[path = "slot_tests.rs"]
 mod tests;
 

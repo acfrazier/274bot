@@ -1553,14 +1553,14 @@ impl SlotScript {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "load"))]
 #[derive(Default)]
 pub(crate) struct TestOutput {
     pub statuses: Vec<ScriptStatus>,
     pub paints: Vec<Arc<crate::shim::ScriptPaint>>,
     pub logs: Vec<String>,
 }
-#[cfg(test)]
+#[cfg(all(test, feature = "load"))]
 impl NativeOutput for TestOutput {
     fn status(&mut self, status: ScriptStatus) {
         self.statuses.push(status);
@@ -1576,6 +1576,6 @@ impl NativeOutput for TestOutput {
 
 // `pub(crate)`: the process host-log sink installs once, so the slot
 // tests capture their finish line through this module's one sink.
-#[cfg(all(test, feature = "load"))]
+#[cfg(test)]
 #[path = "compiled_tests.rs"]
 pub(crate) mod tests;
