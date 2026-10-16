@@ -1,8 +1,9 @@
 name: CI
 
-# fmt and architecture also run on development pushes (dev, release/**), so
-# formatting and crate-boundary drift shows up before a PR to main. The
-# expensive clippy and test lanes stay on main and PRs.
+# fmt (with the lint-suppression ratchet) and architecture also run on
+# development pushes (dev, release/**), so formatting, suppression-count and
+# crate-boundary drift shows up before a PR to main. The expensive clippy and
+# test lanes stay on main and PRs.
 on:
   push:
     branches: [main, dev, "release/**"]
@@ -41,7 +42,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
@@ -51,6 +52,10 @@ jobs:
         run: |
           cargo fmt --all -- --check
           cargo fmt --all --manifest-path vendor/fr-client-rust/Cargo.toml -- --check
+      - name: Lint suppression ratchet
+        run: |
+          python3 -B tools/lint-ratchet/lint_ratchet.py --self-test
+          python3 -B tools/lint-ratchet/lint_ratchet.py
 
   clippy:
     name: clippy
@@ -60,7 +65,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: clippy
       - name: Native libs (ALSA + window)
@@ -447,7 +452,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: dtolnay/rust-toolchain@1.98.1
       - name: Native libs (ALSA + window)
         run: |
           sudo apt-get update
