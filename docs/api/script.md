@@ -1134,8 +1134,9 @@ to gather. Quester's explicit deposit plans still refuse unbankable items.
 Real Strange boxes replicate every 150 ticks until 28 boxes exist. Stacked
 boxes split into freed slots every 16 ticks. The content timers are in
 `content/scripts/macro events/scripts/general/macro_event_strange_box.rs2:25-73,319-321`.
-With event handling disabled, unsolved boxes eventually fill the pack and
-Gatherer stops with the unbankable-item reason.
+With event handling disabled, if no supply withdrawals fill the pack first,
+unsolved boxes eventually fill it and Gatherer stops with the unbankable-item
+reason.
 
 A bank trip is admitted from the account's bank memory (see Quester queue and
 provisioning). The pack and worn pages decide whether a trip is due; the memory

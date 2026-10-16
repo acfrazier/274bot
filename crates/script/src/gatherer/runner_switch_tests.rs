@@ -1670,6 +1670,7 @@ fn tool_fetch_trip_keeps_unbankable_items_and_continues_to_withdraw_the_tool() {
         28,
     );
     with_tick(&snapshot, &mut ledger, 7, |tick| gatherer.poll_active(tick));
+    assert!(gatherer.scratch.withdrew_supplies);
     assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
     assert_eq!(gatherer.trip, TripStep::Close);
     assert_eq!(crate::bank::ops::count_id(snapshot.inventory(), 303), 1);
@@ -1677,14 +1678,36 @@ fn tool_fetch_trip_keeps_unbankable_items_and_continues_to_withdraw_the_tool() {
 }
 
 #[test]
-fn unbankable_items_cannot_return_to_gathering_after_supplies_fill_the_pack() {
+fn unbankable_items_report_item_reason_when_pack_fills_without_withdrawals() {
     let (mut gatherer, snapshot) = unbankable_bank_fixture(0);
     gatherer.trip = TripStep::Validate;
     gatherer.needs_validate = false;
     gatherer.scratch.kept_unbankable = true;
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.begin_trip(tick));
-    let failure = gatherer.failure.expect("the post-withdrawal pack is full");
+    let failure = gatherer
+        .failure
+        .expect("the full pack has an unbankable item");
+    assert_eq!(failure.code.as_ref(), "bank-deposit-failed");
+    assert_eq!(
+        failure.message.as_ref(),
+        crate::bank::ops::DepositFailure::Unbankable.message()
+    );
+    assert!(matches!(gatherer.active, Active::None));
+}
+
+#[test]
+fn unbankable_items_report_supply_reason_when_withdrawals_fill_the_pack() {
+    let (mut gatherer, snapshot) = unbankable_bank_fixture(0);
+    gatherer.trip = TripStep::Validate;
+    gatherer.needs_validate = false;
+    gatherer.scratch.kept_unbankable = true;
+    gatherer.scratch.withdrew_supplies = true;
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.begin_trip(tick));
+    let failure = gatherer
+        .failure
+        .expect("the supply-filled pack cannot return to gathering");
     assert_eq!(failure.code.as_ref(), "inventory-blocked");
     assert_eq!(
         failure.message.as_ref(),
