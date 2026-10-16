@@ -653,6 +653,7 @@ fn run_hold_cell(random_events: bool, trigger_maze: bool, reconnect: bool) {
     }
 
     let mut held_seat = None;
+    let mut held_state = None;
     let mut maze_status = Value::Null;
     if trigger_maze {
         wait_until(
@@ -681,22 +682,42 @@ fn run_hold_cell(random_events: bool, trigger_maze: bool, reconnect: bool) {
                             "claim": format!("{:?}", status.random.claim),
                             "tile": [status.tile_x, status.tile_z, status.tile_level],
                             "inside_maze": inside_maze,
+                            "client_up": status.is_up(),
+                            "ingame": status.ingame,
+                            "scene_state": status.scene_state,
                             "seat": seat_json(probe),
                         });
                         if inside_maze && probe.held {
                             held_seat = Some(probe);
+                            held_state = Some(live.play.script_state(&live.account));
                         }
                     }
                 }
                 held_seat.is_some()
             },
         );
-        assert_eq!(
-            live.play.script_state(&live.account),
-            script::RunState::Paused,
-            "guardian hold pauses, but does not terminate, the script"
+        // A guardian hold changes seat custody, not the script lifecycle
+        // (`SlotScript::seat_guardian_hold`), and the host ticks a held
+        // Running isolate for paint. The Maze teleport also reloads the
+        // scene: while the client is not up, `SlotScript::on_is_up(false)`
+        // reports Paused, and Running returns when the scene is up. So the
+        // hold allows exactly Running or Paused; it never ends the script.
+        let state = held_state.expect("lifecycle sampled with the held seat");
+        maze_status["run_state"] = json!(format!("{state:?}"));
+        assert!(
+            matches!(state, script::RunState::Running | script::RunState::Paused),
+            "guardian hold keeps the script Running or Paused, not {state:?}"
         );
-        assert!(held_seat.expect("observed held seat").held);
+        let held = held_seat.expect("observed held seat");
+        assert!(held.held, "the guardian holds the seat");
+        assert_eq!(
+            held.live, initial_seat.live,
+            "the held operation keeps its live seat entry"
+        );
+        assert_eq!(
+            held.results, initial_seat.results,
+            "the hold publishes no terminal result"
+        );
         assert_eq!(maze_status["inside_maze"], true);
         live.play
             .script_api_live_queue_held_gameplay(&live.account)

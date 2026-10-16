@@ -1,6 +1,8 @@
-//! Round-5 guardian-hold fold: releases are never dropped, replacements keep
-//! the newest value, wait facts fold into an exact summary, and the ordered
-//! channel/inspect lane refuses only `ChannelPost` rows.
+//! Guardian-hold fold: releases are never dropped, replacements keep the
+//! newest value, wait facts fold into an exact summary, and the ordered
+//! channel/inspect lane refuses only `ChannelPost` rows (round 5). Resume
+//! hands the folded batch to the seat in pages that one take carries
+//! whole, so `GameplaySeat::take` clears none of its rows (round 6).
 
 use super::*;
 use api::run_policy::{RunEnergyMin, RunPolicyOverride};
@@ -20,6 +22,7 @@ fn page(slot: &SlotScript, reqs: Vec<InteractReq>) -> crate::load::QueuedSeatBat
         batch: decoded(Vec::new(), reqs.into_iter().map(row).collect()),
         machine_events: Vec::new(),
         held_waits: crate::load::HeldWaitFacts::default(),
+        held_fold: false,
     }
 }
 
@@ -591,7 +594,8 @@ fn inspect(request_id: u64) -> InteractReq {
 
 // Main ruling 2-3: the channel/inspect lane keeps its order, never drops an
 // open, a close or an inspect, and refuses only later posts. Each refused
-// post is counted, and the whole fold fits one seat take after resume.
+// post is counted. The replacements follow the lane (round-6 ruling), and
+// resume drops nothing more.
 #[test]
 fn held_channel_lane_refuses_only_posts_and_keeps_order() {
     let mut slot = with_seat(861);
@@ -630,21 +634,25 @@ fn held_channel_lane_refuses_only_posts_and_keeps_order() {
         "each refused post is counted"
     );
     assert_eq!(rows[0], open);
-    assert_eq!(rows[1], InteractReq::NoteProgress);
-    assert_eq!(rows[2], channel_post(3, 0));
-    assert_eq!(rows[3], InteractReq::SetCameraYaw { yaw: 199 });
-    assert_eq!(rows[rows.len() - 4], channel_post(3, (posts - 1) as u8));
-    assert_eq!(rows[rows.len() - 3..], [inspect(41), close, inspect(0)]);
+    assert_eq!(rows[1], channel_post(3, 0));
+    assert_eq!(rows[posts], channel_post(3, (posts - 1) as u8));
+    assert_eq!(
+        rows[posts + 1..],
+        [
+            inspect(41),
+            close,
+            inspect(0),
+            InteractReq::NoteProgress,
+            InteractReq::SetCameraYaw { yaw: 199 },
+        ]
+    );
     assert!(rows.len() > HELD_LIFECYCLE_ROWS - HeldReplacement::KEYS);
     slot.seat_guardian_hold(false);
     let (_, reqs, _) = slot.drain_host_interacts();
     let delivered: Vec<_> = reqs.into_iter().map(|queued| queued.req).collect();
     let seat_dropped = slot.seat.as_ref().unwrap().dropped() - dropped_before;
     slot.stop();
-    assert_eq!(
-        seat_dropped, dropped,
-        "the folded batch fits one seat take: resume drops nothing more"
-    );
+    assert_eq!(seat_dropped, dropped, "resume drops nothing more");
     assert_eq!(
         delivered,
         rows.into_iter()
@@ -726,4 +734,377 @@ export default class T extends LoopingBot {
         all_posts - posts as u64,
         "each refused post is counted"
     );
+}
+
+fn lane_open(channel_id: u64) -> InteractReq {
+    InteractReq::ChannelOpen {
+        channel_id,
+        name: "jivekq:a,b".into(),
+    }
+}
+
+fn lane_close(channel_id: u64) -> InteractReq {
+    InteractReq::ChannelClose {
+        channel_id,
+        name: "jivekq:a,b".into(),
+    }
+}
+
+fn requests(reqs: Vec<crate::load::QueuedInteract>) -> Vec<InteractReq> {
+    reqs.into_iter().map(|queued| queued.req).collect()
+}
+
+fn dropped(slot: &SlotScript) -> u64 {
+    slot.seat.as_ref().unwrap().dropped()
+}
+
+/// One row of each `HeldReplacement` key.
+fn every_replacement() -> Vec<InteractReq> {
+    vec![
+        InteractReq::SetCameraYaw { yaw: 500 },
+        InteractReq::RecoveryAnchor {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        },
+        InteractReq::InspectAck {
+            seq: 3,
+            generation: 1,
+        },
+        InteractReq::ChannelMessage {
+            channel_id: 9,
+            sender: "peer".into(),
+            seq: 1,
+            data: vec![1],
+        },
+        InteractReq::ChannelStatus {
+            channel_id: 9,
+            message: "status".into(),
+        },
+        InteractReq::NoteProgress,
+        InteractReq::LoopSettled,
+    ]
+}
+
+/// Rows that `dispatch_seat_rows` hands to the watchdog lane, not to the
+/// host interact delivery.
+fn watchdog_row(req: &InteractReq) -> bool {
+    matches!(
+        req,
+        InteractReq::NoteProgress
+            | InteractReq::LoopSettled
+            | InteractReq::WaitEnqueued
+            | InteractReq::WaitSettled
+            | InteractReq::RecoveryAnchor { .. }
+            | InteractReq::RecoveryAnchorNone
+    )
+}
+
+// R5-B1 (Codex): 141 held previews, then an authorized inspect. Resume must
+// deliver the token after the previews, and drop nothing.
+#[test]
+fn held_resume_delivers_an_authorized_inspect_after_141_previews() {
+    let mut slot = with_seat(880);
+    slot.seat_guardian_hold(true);
+    for _ in 0..141 {
+        held_frame(&mut slot, vec![inspect(0)]);
+    }
+    held_frame(&mut slot, vec![inspect(41)]);
+    let rows = held_rows(&slot);
+    let before = dropped(&slot);
+    slot.seat_guardian_hold(false);
+    let (_, reqs, _) = slot.drain_host_interacts();
+    let after = dropped(&slot);
+    slot.stop();
+    assert_eq!(
+        rows.len(),
+        142,
+        "the hold retains every preview and the token"
+    );
+    assert_eq!(requests(reqs), rows, "every retained row, in order");
+    assert_eq!(after, before, "resume drops nothing");
+}
+
+// R5-B1 (Grok, case 1): 141 held opens, then yaw 500, a policy, two
+// releases, a close, an inspect, an ack and an anchor. Resume must deliver
+// all of them, with the latest replacement values after the lane.
+#[test]
+fn held_resume_delivers_late_replacements_after_141_opens() {
+    let mut slot = with_seat(881);
+    slot.seat_guardian_hold(true);
+    for channel_id in 1..=141 {
+        held_frame(&mut slot, vec![lane_open(channel_id)]);
+    }
+    let ack = InteractReq::InspectAck {
+        seq: 3,
+        generation: 1,
+    };
+    let anchor = InteractReq::RecoveryAnchor {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    held_frame(
+        &mut slot,
+        vec![
+            InteractReq::SetCameraYaw { yaw: 500 },
+            floor(42),
+            InteractReq::GatherStop { request_id: 77 },
+            InteractReq::AbortWalk { request_id: 8 },
+            lane_close(1),
+            inspect(41),
+            ack.clone(),
+            anchor.clone(),
+        ],
+    );
+    let before = dropped(&slot);
+    slot.seat_guardian_hold(false);
+    let (policy, reqs, _) = slot.drain_host_interacts();
+    let watchdog = std::mem::take(&mut slot.seat_lifecycle);
+    let after = dropped(&slot);
+    slot.stop();
+    let mut expected = vec![InteractReq::AbortWalk { request_id: 8 }];
+    expected.extend((1..=141).map(lane_open));
+    expected.extend([
+        lane_close(1),
+        inspect(41),
+        InteractReq::SetCameraYaw { yaw: 500 },
+        ack,
+    ]);
+    assert_eq!(
+        requests(reqs),
+        expected,
+        "the late yaw, close, inspect and ack all reach the host, after the lane"
+    );
+    assert_eq!(watchdog, [anchor], "the anchor reaches the watchdog lane");
+    assert_eq!(
+        policy.unwrap().unwrap().energy_min,
+        Some(RunEnergyMin::Floor(42))
+    );
+    assert_eq!(after, before, "resume drops nothing");
+}
+
+// R5-B1 (Grok, case 2): all seven replacement keys and a full post lane,
+// then a close and an inspect. The hold refuses only the later posts; resume
+// must lose the close and the inspect no more.
+#[test]
+fn held_resume_keeps_close_and_inspect_after_a_full_post_lane_and_every_replacement() {
+    let mut slot = with_seat(882);
+    slot.seat_guardian_hold(true);
+    let start = dropped(&slot);
+    held_frame(&mut slot, every_replacement());
+    held_frame(&mut slot, vec![lane_open(3)]);
+    for n in 0..160u8 {
+        held_frame(&mut slot, vec![channel_post(3, n)]);
+    }
+    held_frame(&mut slot, vec![lane_close(3), inspect(41)]);
+    let rows = held_rows(&slot);
+    let refused = dropped(&slot) - start;
+    slot.seat_guardian_hold(false);
+    let (_, reqs, _) = slot.drain_host_interacts();
+    let after = dropped(&slot) - start;
+    slot.stop();
+    assert_eq!(
+        rows.len(),
+        143,
+        "7 replacements, the open, 133 posts, close, inspect"
+    );
+    assert_eq!(refused, 27, "only the later posts are refused, and counted");
+    let delivered = requests(reqs);
+    assert_eq!(
+        delivered,
+        rows.into_iter()
+            .filter(|req| !watchdog_row(req))
+            .collect::<Vec<_>>(),
+        "every retained row reaches the host, in order"
+    );
+    assert!(delivered.contains(&lane_close(3)));
+    assert!(delivered.contains(&inspect(41)));
+    assert_eq!(after, refused, "resume adds no drop to the refused posts");
+}
+
+// R5-B1 (Codex), real producer: a held `onPaint` opens 141 channels, then
+// closes the first. Resume must deliver the close.
+#[test]
+fn held_onpaint_resume_delivers_the_late_close() {
+    let source = r#"
+globalThis.__paints = 0;
+export default class T extends LoopingBot {
+    loop() {}
+    onPaint() {
+        const n = ++globalThis.__paints;
+        if (n <= 141) {
+            const ch = new BroadcastChannel('jivekq:a,b');
+            if (n === 1) globalThis.__first = ch;
+        } else if (n === 142) {
+            globalThis.__first.close();
+        }
+    }
+}
+"#;
+    let mut slot = paint_slot(source, 883);
+    paint_tick(&mut slot, 1, false);
+    slot.seat_guardian_hold(true);
+    for tick in 2..=142 {
+        paint_tick(&mut slot, tick, true);
+        let _ = slot.drain_host_interacts();
+    }
+    let paints = slot.probe("globalThis.__paints").unwrap();
+    let held = held_rows(&slot);
+    let before = dropped(&slot);
+    slot.seat_guardian_hold(false);
+    let (_, reqs, _) = slot.drain_host_interacts();
+    let after = dropped(&slot);
+    slot.stop();
+    assert_eq!(paints, serde_json::json!(142));
+    let lane = |rows: &[InteractReq]| {
+        rows.iter()
+            .filter(|req| {
+                matches!(
+                    req,
+                    InteractReq::ChannelOpen { .. } | InteractReq::ChannelClose { .. }
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let held_lane = lane(&held);
+    assert_eq!(held_lane.len(), 142, "141 opens and the close are held");
+    assert!(matches!(
+        held_lane.last(),
+        Some(InteractReq::ChannelClose { channel_id: 1, .. })
+    ));
+    assert_eq!(
+        lane(&requests(reqs)),
+        held_lane,
+        "every open and the close reach the host, in order"
+    );
+    assert_eq!(after, before, "resume drops nothing");
+}
+
+// Round-6 ruling: resume delivers every retained row across several takes,
+// in order, with `dropped` unchanged. Releases and the policy go first, the
+// lane follows in order, and the replacements come last.
+#[test]
+fn held_resume_delivers_every_retained_row_across_takes_in_order() {
+    let mut slot = with_seat(884);
+    slot.seat_guardian_hold(true);
+    held_frame(
+        &mut slot,
+        vec![InteractReq::AbortWalk { request_id: 5 }, floor(10)],
+    );
+    for channel_id in 1..=150u64 {
+        held_frame(
+            &mut slot,
+            vec![
+                lane_open(channel_id),
+                InteractReq::SetCameraYaw {
+                    yaw: i32::try_from(channel_id).unwrap(),
+                },
+            ],
+        );
+    }
+    for channel_id in 1..=150 {
+        held_frame(&mut slot, vec![inspect(0), lane_close(channel_id)]);
+    }
+    held_frame(
+        &mut slot,
+        vec![
+            inspect(41),
+            InteractReq::InspectAck {
+                seq: 2,
+                generation: 1,
+            },
+        ],
+    );
+    let rows = held_rows(&slot);
+    let before = dropped(&slot);
+    slot.seat_guardian_hold(false);
+    let (policy, reqs, _) = slot.drain_host_interacts();
+    let after = dropped(&slot);
+    slot.stop();
+    let mut expected = vec![InteractReq::AbortWalk { request_id: 5 }];
+    expected.extend((1..=150).map(lane_open));
+    for channel_id in 1..=150 {
+        expected.extend([inspect(0), lane_close(channel_id)]);
+    }
+    expected.extend([
+        inspect(41),
+        InteractReq::SetCameraYaw { yaw: 150 },
+        InteractReq::InspectAck {
+            seq: 2,
+            generation: 1,
+        },
+    ]);
+    assert!(
+        expected.len() - 1 > 3 * api::script_contract::MAX_ENCODED_GAMEPLAY,
+        "more non-reserved rows than three takes carry"
+    );
+    assert_eq!(after, before, "resume drops nothing");
+    assert_eq!(requests(reqs), expected, "every retained row, in order");
+    assert_eq!(
+        rows.iter()
+            .filter(|req| !matches!(req, InteractReq::RunPolicyOverride { .. }))
+            .cloned()
+            .collect::<Vec<_>>(),
+        expected,
+        "the fold keeps releases, the lane in order, then the replacements"
+    );
+    assert_eq!(
+        policy.unwrap().unwrap().energy_min,
+        Some(RunEnergyMin::Floor(10))
+    );
+}
+
+// Round-6 ruling: a page holds only what the next take carries. Rows that
+// already wait in the seat leave no room, so the retained batch waits for
+// the next frame, and a batch produced after resume queues behind it.
+#[test]
+fn held_resume_pages_around_queued_rows_and_later_batches_queue_behind() {
+    let mut slot = with_seat(885);
+    slot.seat_guardian_hold(true);
+    for channel_id in 1..=200 {
+        held_frame(&mut slot, vec![lane_open(channel_id)]);
+    }
+    let rows = held_rows(&slot);
+    slot.seat_guardian_hold(false);
+    let waiting: Vec<_> = (1..=141)
+        .map(|yaw| InteractReq::SetCameraYaw { yaw })
+        .collect();
+    for req in &waiting {
+        slot.seat
+            .as_mut()
+            .unwrap()
+            .push(
+                SeatEffect::Interact(crate::load::QueuedInteract {
+                    req: req.clone(),
+                    observed_walk_outcome_seq: 0,
+                }),
+                api::script_contract::EmissionClass::Lifecycle,
+                EmissionSource::Root,
+                None,
+            )
+            .unwrap();
+    }
+    let mut pages = slot.load.as_ref().unwrap().drain_seat_batches();
+    pages.push(page(&slot, vec![lane_open(999)]));
+    slot.load.as_ref().unwrap().restore_seat_batches(pages);
+    let before = dropped(&slot);
+    let (_, first, _) = slot.drain_host_interacts();
+    let (_, second, _) = slot.drain_host_interacts();
+    let after = dropped(&slot);
+    slot.stop();
+    assert_eq!(
+        requests(first),
+        waiting,
+        "the waiting rows take the first take"
+    );
+    let mut expected = rows;
+    expected.push(lane_open(999));
+    assert_eq!(
+        requests(second),
+        expected,
+        "the retained rows follow, and the later batch queues behind them"
+    );
+    assert_eq!(after, before, "resume drops nothing");
 }

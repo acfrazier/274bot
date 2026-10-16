@@ -958,6 +958,7 @@ fn held_batch_compaction_retains_earlier_release_and_newest_controls() {
         batch: decoded(Vec::new(), vec![row(release.clone())]),
         machine_events: Vec::new(),
         held_waits: crate::load::HeldWaitFacts::default(),
+        held_fold: false,
     };
     let mut newer_batch = decoded(
         vec![start_input(&slot, 822, NativeKind::Gather)],
@@ -970,6 +971,7 @@ fn held_batch_compaction_retains_earlier_release_and_newest_controls() {
         batch: newer_batch,
         machine_events: Vec::new(),
         held_waits: crate::load::HeldWaitFacts::default(),
+        held_fold: false,
     };
     let mut compacted = slot.compact_held_seat_batches(vec![older, newer]);
     assert_eq!(compacted.len(), 1);
@@ -1007,6 +1009,7 @@ fn review_lifecycle_batch(slot: &SlotScript) -> crate::load::QueuedSeatBatch {
         ),
         machine_events: Vec::new(),
         held_waits: crate::load::HeldWaitFacts::default(),
+        held_fold: false,
     }
 }
 
@@ -1072,6 +1075,7 @@ fn held_lifecycle_pages_stay_row_bounded_and_counted_frame_by_frame() {
         batch: decoded(Vec::new(), reqs.into_iter().map(row).collect()),
         machine_events: Vec::new(),
         held_waits: crate::load::HeldWaitFacts::default(),
+        held_fold: false,
     };
     slot.seat_guardian_hold(true);
     let dropped_before = slot.seat.as_ref().unwrap().dropped();
