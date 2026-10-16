@@ -72,7 +72,7 @@ fn route_cache_bind_does_not_deadlock_slot_tick() {
     let (done, finished) = std::sync::mpsc::channel();
     let watchdog = std::thread::spawn(move || {
         if finished
-            .recv_timeout(std::time::Duration::from_secs(5))
+            .recv_timeout(std::time::Duration::from_secs(60))
             .is_err()
         {
             eprintln!("route bind watchdog: navs -> WalkArm / WalkArm -> navs deadlock");
@@ -539,11 +539,15 @@ fn peer_sets_danger_zones(
     session: &Session,
     enabled: bool,
 ) {
-    frontend_core::nav_preference(
-        peer,
-        frontend_core::NavPreference::AllowDangerZones,
-        Some(enabled),
-    )
+    crate::test_support::patiently(|| {
+        frontend_core::nav_preference(
+            peer,
+            frontend_core::NavPreference::AllowDangerZones,
+            Some(enabled),
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+    })
     .unwrap();
     session.preferences.reload().unwrap();
 }

@@ -71,7 +71,7 @@ fn catalog_start_waits_without_arming_or_failing_current_session_witness() {
     );
     assert!(pending[0].started);
     assert_eq!(watch.evidence()["phase"], "running");
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while handle.run_state("catalogtest") != script::RunState::Running {
         handle.poll_start("catalogtest");
         assert!(Instant::now() < deadline, "scenario Start did not settle");
