@@ -98,7 +98,7 @@ removed. See [README.md](README.md) and [FIRST-START.md](FIRST-START.md).
 
 ## Toolchain
 
-Rust **1.98.0** (`rust-toolchain.toml` in this repo and in
+Rust **1.98.1** (`rust-toolchain.toml` in this repo and in
 `vendor/fr-client-rust`). GitHub Actions uses the same number, not
 `@stable`. Bump both files and both workflows together — do not
 `rustup update` into a new clippy `-D` set mid-tag.
