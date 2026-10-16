@@ -1749,6 +1749,11 @@ impl Gatherer {
             Active::Withdraw(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Withdraw(handle),
                 Poll::Ready(Ok(true)) => {
+                    // Known limit (accepted 2026-10-15): this marks any
+                    // completed withdrawal, not one that filled the pack. If a
+                    // withdrawal leaves one free slot and a Strange box fills it
+                    // during Close, the stop names supplies, not the box. The
+                    // stop itself is still correct: the pack is full.
                     self.scratch.withdrew_supplies = true;
                     self.scratch.withdrawals = None;
                     if let Some(item) = self.supply_missing.take() {
@@ -3035,11 +3040,10 @@ mod tests {
         }
     }
 
-    /// Reviewer probe (GATHERER-HELD-FOREVER-REVIEW-R3): a supply-only bait
-    /// trip with a held Strange box stack and free slots deposits nothing and
-    /// must continue to Withdraw, then withdraw the bait.
+    /// A supply-only bait trip with a held Strange box stack and free slots
+    /// deposits nothing and must continue to Withdraw, then withdraw the bait.
     #[test]
-    fn review_probe_supply_only_trip_with_strange_box_continues() {
+    fn supply_only_trip_with_strange_box_continues_to_withdraw() {
         use crate::quester::families::tests::{def, with_tick};
         use api::snapshot::{ItemActionFamily, ItemContainer};
         let fixture = BaitFixture::new();
