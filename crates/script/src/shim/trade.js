@@ -27,6 +27,10 @@ async function run(kind, name, n, pick) {
     return out.value ?? undefined;
 }
 
+export function parseTradePartnerHeader(header) {
+    return globalThis.__rs2b0t_partner_trade('parseTradePartnerHeader', header);
+}
+
 export const Trade = new Proxy(
     {
         active() {

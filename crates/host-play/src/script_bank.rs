@@ -9,6 +9,7 @@ use nav::router::{
 };
 use nav::world::NavWorld;
 use nav::WorldState;
+use script::bank::ops;
 use script::isolate_fb::BankSelectionInput;
 use script::native::HostAuthority;
 use script::native_bank::{
@@ -997,7 +998,7 @@ pub(super) fn dispatch_observed_bank_op(
                     .and_then(|names| names.name(item.def.id))
                     .is_some_and(|actual| actual.eq_ignore_ascii_case(name))
             })?;
-            let op = all_slot(&item.actions)?;
+            let op = ops::all_op_in(&item.actions)?;
             let before_count = snapshot
                 .bank_side()
                 .iter()
@@ -1025,7 +1026,7 @@ pub(super) fn dispatch_observed_bank_op(
                     .and_then(|names| names.name(item.def.id))
                     .is_some_and(|actual| actual.eq_ignore_ascii_case(name))
             })?;
-            let op = action_slot(&item.actions, action)?;
+            let op = ops::action_op_in(&item.actions, action)?;
             let kind = if open_only_withdraw_x(&item.actions, op) {
                 PendingBankOpKind::WithdrawXAction
             } else {
@@ -1091,7 +1092,7 @@ pub(super) fn dispatch_observed_withdraw_x(
                 .and_then(|names| names.name(item.def.id))
                 .is_some_and(|actual| actual.eq_ignore_ascii_case(name))
     })?;
-    let op = action_slot(&item.actions, action)?;
+    let op = ops::action_op_in(&item.actions, action)?;
     if !matches!(
         Interactions::new(snapshot, driver)
             .interact(OpTarget::Item(item), ActionSpec::Operation(op)),
@@ -1124,7 +1125,7 @@ pub(super) fn dispatch_observed_withdraw_x(
     );
     Some(
         if matches!(*count, 1 | 5 | 10)
-            && action_slot(&item.actions, &format!("Withdraw {count}")) == Some(op)
+            && ops::withdraw_count_op_in(&item.actions, *count) == Some(op)
         {
             pending.waiting_settlement()
         } else {
@@ -1133,22 +1134,13 @@ pub(super) fn dispatch_observed_withdraw_x(
     )
 }
 
-/// Action-label lookup matching rs2b0t's `norm` (lowercase, whitespace and
-/// `-`/`_` separators gone): `Withdraw All`, `Withdraw-All` and
-/// `Withdraw  All` all resolve to the same slot.
-pub(super) fn action_slot(actions: &[Option<String>], wanted: &str) -> Option<i32> {
-    let wanted = norm_action(wanted);
-    actions
-        .iter()
-        .position(|a| a.as_deref().map(norm_action).as_deref() == Some(wanted.as_str()))
-        .map(|i| i as i32 + 1)
-}
-
 /// Whether the resolved bank op is the open-only `Withdraw X` label: it
 /// opens the amount dialog and cannot move inventory on its own, so the
 /// accepted send *is* the result (frozen `Bank.withdraw` returns
 /// `Input.invButton` → `actions.menuAction`). Every other withdraw label
-/// settles on the observed delta.
+/// settles on the observed delta. Label decisions themselves are the
+/// kernel's ([`ops::action_op_in`], [`ops::all_op_in`],
+/// [`ops::fill_click_in`]).
 fn open_only_withdraw_x(actions: &[Option<String>], op: i32) -> bool {
     let index = match usize::try_from(op) {
         Ok(index) if index >= 1 => index - 1,
@@ -1157,41 +1149,7 @@ fn open_only_withdraw_x(actions: &[Option<String>], op: i32) -> bool {
     actions
         .get(index)
         .and_then(|label| label.as_deref())
-        .is_some_and(|label| norm_action(label) == norm_action("Withdraw X"))
-}
-
-/// The bank-side op slot whose label contains "all" (Deposit All / the
-/// deposit window's bulk op), 1-based.
-pub(super) fn all_slot(actions: &[Option<String>]) -> Option<i32> {
-    actions
-        .iter()
-        .position(|a| a.as_deref().is_some_and(|s| norm_action(s).contains("all")))
-        .map(|i| i as i32 + 1)
-}
-
-/// Select one bounded fill operation in compatibility order: an exact
-/// amount, then All only when the requested fill consumes current stock,
-/// then the host-owned X continuation.
-pub(crate) fn fill_withdraw_action(
-    actions: &[Option<String>],
-    count: i32,
-    stock: i32,
-) -> Option<(i32, bool)> {
-    action_slot(actions, &format!("Withdraw {count}"))
-        .map(|op| (op, false))
-        .or_else(|| {
-            (count == stock)
-                .then(|| all_slot(actions).map(|op| (op, false)))
-                .flatten()
-        })
-        .or_else(|| action_slot(actions, "Withdraw X").map(|op| (op, true)))
-}
-
-fn norm_action(s: &str) -> String {
-    s.to_lowercase()
-        .chars()
-        .filter(|c| !c.is_whitespace() && *c != '-' && *c != '_')
-        .collect()
+        .is_some_and(|label| ops::normalized_action_eq(label, "Withdraw X"))
 }
 
 /// Open the bank the player stands at, by the packed stands of the one
@@ -1261,7 +1219,7 @@ pub(crate) fn open_bank_at_here<D: Driver>(
     }
     let mut ix = api::interact::Interactions::new(snapshot, driver);
     for loc in snapshot.locs() {
-        if let Some(op) = action_slot(&loc.actions, "Use-quickly") {
+        if let Some(op) = ops::op_slot(loc, "Use-quickly", ops::LabelMatch::Normalized) {
             return matches!(
                 ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(op)),
                 SendResult::Sent { .. }
@@ -1278,16 +1236,9 @@ fn open_booth_stand<D: Driver>(
 ) -> bool {
     use api::interact::{ActionSpec, OpTarget, SendResult};
     let mut ix = api::interact::Interactions::new(snapshot, driver);
-    snapshot
-        .locs()
-        .iter()
-        .find(|loc| {
-            loc.tile.x == stand.tile.x
-                && loc.tile.z == stand.tile.z
-                && loc.tile.level == stand.tile.level
-        })
+    ops::booth_at(snapshot.locs(), stand.tile, None)
         .and_then(|loc| {
-            action_slot(&loc.actions, "Use-quickly").map(|slot| {
+            ops::op_slot(loc, "Use-quickly", ops::LabelMatch::Normalized).map(|slot| {
                 matches!(
                     ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(slot)),
                     SendResult::Sent { .. }
@@ -1324,51 +1275,11 @@ fn open_npc_bank_at_here<D: Driver>(
             return matches!(ix.continue_dialog(None), SendResult::Sent { .. });
         }
     }
-    let wanted = name.trim();
-    let Some(npc) = snapshot
-        .npcs()
-        .iter()
-        .filter(|npc| {
-            npc.name
-                .as_deref()
-                .is_some_and(|got| got.trim().eq_ignore_ascii_case(wanted))
-        })
-        .filter(|npc| {
-            let d_stand = (npc.tile.x - stand.x)
-                .abs()
-                .max((npc.tile.z - stand.z).abs())
-                + i32::from(npc.tile.level != stand.level) * 10_000;
-            let d_here = here
-                .map(|(hx, hz, hl)| {
-                    (npc.tile.x - hx).abs().max((npc.tile.z - hz).abs())
-                        + i32::from(npc.tile.level != hl) * 10_000
-                })
-                .unwrap_or(i32::MAX);
-            d_stand <= SAME_BANK || d_here <= 10
-        })
-        .min_by_key(|npc| {
-            let d_stand = (npc.tile.x - stand.x)
-                .abs()
-                .max((npc.tile.z - stand.z).abs())
-                + i32::from(npc.tile.level != stand.level) * 10_000;
-            let d_here = here
-                .map(|(hx, hz, hl)| {
-                    (npc.tile.x - hx).abs().max((npc.tile.z - hz).abs())
-                        + i32::from(npc.tile.level != hl) * 10_000
-                })
-                .unwrap_or(i32::MAX);
-            (d_stand, d_here, npc.distance, npc.index)
-        })
-    else {
+    let Some(npc) = teller_pick(snapshot.npcs(), here, stand, name) else {
         return false;
     };
-    let packed = (op >= 1).then_some(op).filter(|&slot| {
-        npc.actions
-            .get((slot as usize).saturating_sub(1))
-            .and_then(|a| a.as_deref())
-            .is_some_and(|label| !label.is_empty())
-    });
-    let slot = packed.or_else(|| action_slot(&npc.actions, "Bank"));
+    let slot =
+        ops::packed_op(npc, op).or_else(|| ops::op_slot(npc, "Bank", ops::LabelMatch::Normalized));
     let Some(slot) = slot else {
         return false;
     };
@@ -1376,6 +1287,42 @@ fn open_npc_bank_at_here<D: Driver>(
         ix.interact(OpTarget::Npc(npc), ActionSpec::Operation(slot)),
         SendResult::Sent { .. }
     )
+}
+
+/// The host teller pick for an already nav-chosen `stand`: named `name`
+/// (trimmed, ASCII-folded), within [`SAME_BANK`] of the stand or 10 of
+/// `here` (Chebyshev, +10_000 per plane mismatch); the smallest
+/// `(d_stand, d_here, distance, index)` key wins. This is BankBudget's
+/// stand policy, not `bank::npc::banker_scan`'s scene-order policy.
+fn teller_pick<'a>(
+    npcs: &'a [api::snapshot::NpcView],
+    here: Option<(i32, i32, i32)>,
+    stand: WorldTile,
+    name: &str,
+) -> Option<&'a api::snapshot::NpcView> {
+    let wanted = name.trim();
+    let chebyshev = |npc: &api::snapshot::NpcView, x: i32, z: i32, level: i32| {
+        (npc.tile.x - x).abs().max((npc.tile.z - z).abs())
+            + i32::from(npc.tile.level != level) * 10_000
+    };
+    let key = |npc: &api::snapshot::NpcView| {
+        let d_stand = chebyshev(npc, stand.x, stand.z, stand.level);
+        let d_here = here
+            .map(|(hx, hz, hl)| chebyshev(npc, hx, hz, hl))
+            .unwrap_or(i32::MAX);
+        (d_stand, d_here, npc.distance, npc.index)
+    };
+    npcs.iter()
+        .filter(|npc| {
+            npc.name
+                .as_deref()
+                .is_some_and(|got| got.trim().eq_ignore_ascii_case(wanted))
+        })
+        .filter(|npc| {
+            let (d_stand, d_here, ..) = key(npc);
+            d_stand <= SAME_BANK || d_here <= 10
+        })
+        .min_by_key(|npc| key(npc))
 }
 
 #[cfg(test)]

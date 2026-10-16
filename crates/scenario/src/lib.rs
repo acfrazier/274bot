@@ -22,6 +22,7 @@ pub mod fixture;
 pub mod proof;
 mod quest_fast;
 pub mod quester;
+pub mod random_episode;
 mod render_betty_views;
 mod runner;
 mod scenarios;
@@ -500,6 +501,15 @@ pub enum StepKind {
     ObserveStallCombat {
         stand: WorldTile,
         guard_ready: Proof,
+    },
+    /// Summon one random event through the engine's own random-event
+    /// machinery and judge the host Guardian's handling of it
+    /// ([`random_episode`]). The runner sends only the cell's trigger (and
+    /// re-sends it on a fresh busy reply); everything else is observed from
+    /// the host hold and the snapshot. A trigger that needs a missing engine
+    /// test patch ends the run as UNAVAILABLE, not FAIL.
+    ObserveRandomEvent {
+        cell: random_episode::RandomEventCell,
     },
     /// Host starts the catalog isolate (`script_start_load`) or compiled
     /// card (`start_compiled`) once when the live pump sees this step.

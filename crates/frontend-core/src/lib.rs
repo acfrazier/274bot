@@ -18,6 +18,7 @@
 
 pub mod bulk;
 pub mod capacity;
+pub mod command;
 pub mod fleet;
 pub mod group_walk;
 pub mod log;
@@ -26,12 +27,14 @@ pub mod map_bake;
 pub mod marked;
 pub mod nav_prefs;
 pub mod operations;
+pub mod process_status;
 pub mod profile_form;
 pub mod profile_saves;
 mod profiles;
 pub mod progress;
 pub mod quester_paths;
 pub mod resources;
+pub mod rs2b0t_import;
 pub mod scripts;
 pub mod selection;
 pub mod session;
@@ -41,23 +44,29 @@ pub mod walk_permissions;
 
 pub use bulk::{BulkOutcome, BulkReport, BulkRow};
 pub use capacity::{CapacityNotice, CapacityWarning, RenderPolicyLabel};
-pub use fleet::Fleet;
+pub use command::{CommandBook, CommandReport, FleetOrder, OperatorCommand};
+pub use fleet::{
+    contains_ci, fill_visible_indices, fill_visible_row_indices, fleet_row_matches, member_row,
+    state_label, Fleet,
+};
 pub use group_walk::{walk_marked, MarkedWalk, WalkInputs};
 pub use map_bake::{
     load_map_bake_choice, persist_map_bake_choice, MapBakeChoice, MapBakeGate, MapBakePrompt,
     MAP_BAKE_TITLE, MAP_BAKE_WARNING,
 };
 pub use marked::{
-    assign_and_restart_marked, assign_marked, login_marked, logout_marked,
-    prepare_apply_settings_marked, restart_scope, run_marked_command, MarkedCommandReport,
-    RestartScope,
+    assign_and_restart_marked, assign_marked, bounded_names, combined_bulk_scope, login_marked,
+    logout_marked, marked_availability, prepare_apply_settings_marked, restart_scope,
+    run_marked_command, BulkScope, MarkedAction, MarkedBlock, MarkedCommandReport, RestartScope,
+    ASSIGN_NO_CARD, ASSIGN_RESTART_NO_CARD, PROMPT_NAMES_SHOWN,
 };
-pub use nav_prefs::{nav_preference_at, NavPreference};
+pub use nav_prefs::{nav_preference, NavPreference};
 pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Outcome};
 pub use profile_form::{
     FailedSave, FormNotice, FormSettled, ProfileFormSave, SavedProfile, NOTHING_SAVED,
 };
 pub use profile_saves::{SaveRecord, SaveResult, SaveSettled, WriteFailure};
+pub use profiles::fresh_uid;
 pub use quester_paths::{
     QuesterPathsController, QuesterPathsView, LOAD_PATHS_LABEL, QUESTER_HEADING,
     QUEST_PATHS_HEADING, RELOAD_PATHS_LABEL,
@@ -65,8 +74,8 @@ pub use quester_paths::{
 pub use resources::{Metric, ResourceView};
 pub use scripts::{Notice, Scripts};
 pub use selection::{
-    start_marked, stop_marked, BulkSkip, MarkedSelection, ProfileIdentity, StopReport,
-    EMPTY_MARKS_HINT,
+    marked_startable, profile_id_at, profile_id_for_name, start_marked, stop_marked, BulkSkip,
+    MarkedSelection, ProfileIdentity, StopReport, EMPTY_MARKS_HINT,
 };
 pub use session::{
     pick_focus, ArmMirror, MemoryNotice, OperatorSession, Removal, ScriptStart, Selection,

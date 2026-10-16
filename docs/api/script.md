@@ -15,6 +15,9 @@ the content's 500-tick reward clock); after that, and for the Maze or Mime
 square with random events off, the square is inert and any unheld running
 script (native or Load) standing on it fails with `random-trapped` and takes
 the terminal Blocked Stop described below instead of continuing there.
+With random-event handling off, detected events do not freeze scripts through
+either the Guardian hold or the pending-event ownership flag. This includes
+held Strange boxes. Detection still publishes the event's kind and name.
 Catalog cards come from an external `$RS2B0T` / `--catalog` checkout
 (upstream `rs2b2t/rs2b0t` layout: `src/bot/scripts`), not a copy in this
 tree. `$RS2B0T` wins over the persisted root (`~/.274bot/rs2b0t-path`,
@@ -28,8 +31,8 @@ inventory count as “all catalog scripts / all options qualified.”
 Members that still stop a script with `not impl` include `Game.castOnNpc`,
 `Shop.buyById`, `ChatDialog.makeOne`, `Quests.journal`, `Traversal.remaining`
 and `requestRepath`, `EntityQuery.inside` and `nearestPreferLocal`, script
-events (`events.on`/`off`, `registerScript`), the `InvItem` class, the
-task-tree classes (`AcquireTask`, `BranchTask`, `LeafTask`) and several
+events (`events.on`/`off`, `registerScript`), the task-tree classes
+(`AcquireTask`, `BranchTask`, `LeafTask`) and several
 gathering, fishing and banking data helpers. The generated
 `crates/script/src/shim/declared_surface.js` and
 `crates/script/compat-js/overlay-not-impl.json` list the unconditional ones. A
@@ -55,6 +58,36 @@ status/paint/log output. Native instances allocate no isolate. Status and paint
 are shared on change; focused detail retains rich status while fleet rows remain
 scalar. A slot that has never attempted a native Start allocates no native
 instance, preparation or retained cell; a rejected Start may retain its cell.
+
+### Frozen refactor seam (F0)
+
+`api::script_contract` defines neutral request stamps, lineage and captured
+authority, outcomes over the shared `Settlement`, prompt/result page values,
+and the bounded seat vocabulary. These are definitions, not an activated seat.
+`script::native::request` keeps typed native argument ownership and family
+pause, takeover and reconnect policy. Native code does not require a JS value.
+
+`native::ScriptServices` borrows the existing `NativeActions` and `ActionContext`.
+It rechecks the shared execution fence and session gate before action admission.
+T1.3 installs this capability in owner-controlled tick contexts. Family cutovers
+bind their real native arguments first. The JS adapter remains optional.
+The `native::abi` member table records current callback path/value behavior.
+`native::custody` defines sticky acknowledgements, prompt/event deduplication,
+and terminal-receipt retirement without retaining a JS Promise itself.
+
+The dev-only `seat-model` oracle checks these definitions. Its chosen rules
+require at most 16 live entries, four future root positions, and 32 shared
+live/retained-result credits. Controls and releases reserve 115 encoder rows.
+Gameplay uses at most 141 rows and cannot displace that reservation.
+Guardian actions remain outside lineage and foreground filtering.
+Gather, Combat and progress own the foreground. Hunt does not.
+
+`native::divergence::DIVERGENCES` records every approved Q5 row and the open
+row 8a. Hunt activation waits for T2/T1 to extend and review its model rule.
+F0 changes neither current dispatch nor the isolate schema. T1.3 and I-family
+activation retain the real lifecycle, promise, encoder and family proof duties.
+The no-default-feature script dependency closure still includes `deno_ast`.
+Removing that dependency is the named early-T2 native-product build ratchet.
 
 A native `ScriptFlow::Blocked` is terminal. So is a published
 `NativePhase::Blocked` carrying a failure, even if the tick returns `Continue`.
@@ -130,12 +163,48 @@ value applies; omission is not proof of no requirement.
 
 | | Compiled (Browse our cards) | Load / catalog (operator file or `$RS2B0T`) |
 | --- | --- | --- |
-| When V8 exists | Never | Start of a **JS/TS** picker card only |
+| When V8 exists | Never | JS/TS Start or isolated catalog validation only |
 | Wake | PLAYER_INFO advances the observed tick; changed evidence can re-poll machines at the same tick | same, with eligible compat rows/condition waits pumped without another JS game tick |
 | House API | Rust `tick(&mut NativeTick) -> Result<ScriptFlow, ScriptFailure>` | `export function tick` **or** `defineBot`; explicit `export const apiVersion = 2` is JS API v2 ([js-api-v2.md](js-api-v2.md)) |
 
 Idle = no isolate. Stop tears down V8. Pause / not `is_up` keeps the
 instance; `want_run` distinguishes operator Pause from offline.
+
+The process root calls `script::bootstrap_v8_platform()` on its main thread
+before creating any V8-using worker. A worker cannot bootstrap the protected
+platform after that point. One Tokio runtime bridges the per-bot isolate
+threads; one supervisor owns execution/hook deadlines and physical retirement.
+Dropping a Load handle does not release its process isolate reservation until
+the V8 thread exits. A bounded quarantine retains over-deadline threads; when
+all four credits are occupied, new JS is refused instead of silently detaching
+another worker. `script::load::isolate_capacity_status()` reports active
+isolate reservations, unjoined retiring gameplay and validation rows, credited
+quarantine (including validators), and uncredited raw-drop rows. Retiring rows
+remain charged to their original admission until joined or credited transfer;
+a quarantined validator retains its validation seat until actual join. The
+retirement log line `JS isolate quarantined after join deadline` means physical
+join did not occur by the setup (10 s when still starting) plus join (2 s)
+allowance, not that the isolate or permit has been freed. It is not a process
+shutdown; at saturation the JS Start/restart/validation refusal remains visible.
+The supervisor processes retirement outside its process registry lock and
+recovers poisoned isolate-local locks during cleanup: a failed isolate cannot
+poison the process registry or stop admissions for unrelated accounts.
+If the independent execution deadline supervisor is stopped or at capacity,
+the current execution is cut immediately and its tick error names the actual
+cause rather than labelling healthy work runaway. Pause normally allows
+already-entered healthy work to finish, except when no independent deadline
+could be registered; an unbounded execution is never allowed to continue.
+Catalog refresh validation uses one serialized process seat with a bounded
+16-job queue (at most 256 cards / 16 MiB per batch). The product entry point
+is `LoadIsolate::validate_prepared_batch`, which returns an owning
+`ValidationBatch` receipt. When that queue is full, the refresh owner retains
+its one pending batch on the receipt and retries non-blockingly on later
+polls (`ValidationBatch::try_recv`) instead of failing Reload; dropping the
+receipt cancels a held pending batch or skips an already-queued one. The
+current generation alone can apply the returned prepared cards.
+The former synchronous `validate_source`/`PreparedCard::validate` one-off
+helpers and their `Single` queue job are removed; tests and product use the
+same bounded batch/receipt path, so no one-off queue-full refusal remains.
 
 A Load slot can also host one API seat: `api.gather.run` prepares and ticks
 the genuine Gatherer card inside the slot with the slot's own ledger, and
@@ -378,10 +447,15 @@ latches. Paths marked `owns_inventory` retain their authored inventory steps.
 Automatic coin funding is not provided.
 
 Needs are planned from the account's bank memory. The host keeps one per
-account: the rows of the bank as last seen open, saved to
-`~/.274bot/bank-hints/<profile>/<account>.json` when the bank closes and loaded
-at login as an advisory hint. After a new login the rows stay but count only as
-that hint until the bank is opened again. A bank never seen costs one scan trip,
+account: the rows of the bank as last seen open, saved through the process
+local-state service to `<state root>/bank-hints/<profile>/<account>.json`
+(the state root is `~/.274bot`, resolved once at launch) when the bank closes
+and loaded at login as an advisory hint. The file records the revision and
+content it was observed under. A hint from other content, or one the host
+can't read, is neither loaded nor overwritten: one log line names the file
+and the reason, and the memory starts unknown. A hint carrying a field this
+build doesn't know is loaded but never rewritten. After a new login the rows stay but
+count only as that hint until the bank is opened again. A bank never seen costs one scan trip,
 and a shortage that only the saved hint predicts costs one verifying trip. A
 shortage in a bank seen open this login is final: a required provisioning item
 blocks in place, and an authored `bank` `withdraw` refuses before any walk with
@@ -1018,8 +1092,9 @@ An unchanged page still fails after eight ticks rather than waiting indefinitely
 The compiled Gatherer card schema is version 4.
 `disposition` defaults to `Bank`; `Power` drops selected gathering products,
 while `Bank` returns to the selected bank and deposits every carried item
-except coins, the method's tools and configured supplies. It also makes a trip
-when no inventory slot is free; Power mode can still take a supply-only trip.
+except coins, the method's tools, configured supplies and unbankable items.
+It also makes a trip when no inventory slot is free. Power mode can still
+take a supply-only trip.
 `bank` defaults to `Nearest`. A named bank chosen by the user is required: always use that bank,
 and refuse if it is unavailable or unroutable instead of substituting another.
 `useMageBank` and `useZanarisBank` remain eligibility opt-ins, not ranking
@@ -1033,9 +1108,11 @@ continuation as compatibility scripts; dispatch alone never confirms a transfer.
 Named bank deposits press one content `Deposit All` operation on that exact
 bank-side row (id, slot and component), never a same-named noted or unnoted
 copy, rather than sending an operation for each occupied slot. Every other
-positive carried item, including incidental items, is a deposit target; coins,
-method tools and configured supplies stay untouched. Observed inventory
-changes, not accepted dispatch alone, still settle the transfer.
+positive carried item, including incidental items, is a deposit target unless
+engine content forbids banking it. Gatherer keeps those unbankable items,
+along with coins, method tools and configured supplies. Each kept unbankable
+item type is named once per run in the info log. Observed inventory changes,
+not accepted dispatch alone, still settle the transfer.
 
 Supply targets are upper bounds, not a requirement that the bank contain the
 entire refill. Each withdrawal targets the lesser of the configured count and
@@ -1046,6 +1123,20 @@ withdrawals, including the tool, settle before another unavailable supply is
 reported. Transfer failures use `bank-deposit-failed` or `bank-withdraw-failed`,
 not a missing-supply or full-inventory label. Gatherer deposits succeed only
 after inventory confirms that no eligible deposit candidates remain.
+
+When unbankable items remain, the deposit must leave the pack below its normal
+full threshold. It need not free another slot when a tool-fetch or supply-only
+trip already has space. A pack that remains full stops Gatherer with
+`bank-deposit-failed` and the explicit unbankable-item reason. Supply withdrawals
+that fill the pack instead stop it with `inventory-blocked` before it returns
+to gather. Quester's explicit deposit plans still refuse unbankable items.
+
+Real Strange boxes replicate every 150 ticks until 28 boxes exist. Stacked
+boxes split into freed slots every 16 ticks. The content timers are in
+`content/scripts/macro events/scripts/general/macro_event_strange_box.rs2:25-73,319-321`.
+With event handling disabled, if no supply withdrawals fill the pack first,
+unsolved boxes eventually fill it and Gatherer stops with the unbankable-item
+reason.
 
 A bank trip is admitted from the account's bank memory (see Quester queue and
 provisioning). The pack and worn pages decide whether a trip is due; the memory
@@ -1403,13 +1494,25 @@ without teleports; the walk to the chosen bank may still use granted teleports.
 Compat v1 uses Proceed through derived danger zones, with assessment logged
 only and no eating/protection/net. Explicit avoids, the frozen catalog,
 automatic jail rule, other route gates and existing banking remain hard.
-All shared preference writers, including the TUI log pane, serialize through
-an in-process mutex and the `panel-ui.json.lock` advisory lock. Both frontends
-refresh a shared durable walk-permission projection for danger controls and
-inherited script rows, and refresh it again at manual admission. An absent
-file or a valid old file without the new key uses the middle-level default;
-an unreadable or malformed file clears every grant. A peer frontend's change
-therefore updates both the warning and the next walk's options.
+All shared preference reads and writes, including the TUI log pane, go
+through the process local-state service's preferences domain: one writer
+thread per process, and the `panel-ui.json.lock` advisory lock held across
+each write so another process takes its turn. Both frontends refresh a
+shared durable walk-permission projection for danger controls and inherited
+script rows (re-read from the file at most once a second), and manual
+admission reads it again. An absent file or a valid old file without the new
+key uses the middle-level default. A file that is not a JSON object clears
+every grant until the next preference save moves it aside, byte for byte,
+to `panel-ui.json.corrupt-<time>` under the lock (with a warning and an
+audit line) and starts fresh preferences. A file refused for itself (owner,
+mode, size) clears every grant and is never rewritten. Otherwise the rule
+is lossless representability, with no version check: a file holding a
+member this build cannot hold as a preference row (a name with a `.`,
+outside `[A-Za-z0-9_-]` or longer than 128 bytes, or a value too long even
+member by member) is read but never rewritten, and a save keeps every
+member it holds, a `schema_version` or any other member this build does
+not know included. A peer frontend's change therefore updates both the
+warning and the next walk's options.
 Danger grants permit a fallback crossing, not a shorter dangerous route:
 the router always tries the filtered safe pass first. Released Cook's
 Assistant mill walks inherit teleport permission, as their frozen callers do.

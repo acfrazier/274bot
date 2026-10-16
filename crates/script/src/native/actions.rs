@@ -883,6 +883,147 @@ mod tests {
     }
 
     #[test]
+    fn script_services_borrow_real_native_actions_and_recheck_owner_authority() {
+        use crate::native::services::{ScriptServices, ServiceAuthority, ServiceError};
+        use api::identity::{ExecutionId, Fence, FenceError};
+        use api::lifecycle::{HoldReason, SessionEventOut, SessionGate};
+        use api::selected::RunKey;
+
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::from_secs(3), |cx| {
+            let owner = install_owner(cx);
+            let execution = ExecutionId::first(cx.run());
+            let session = execution.run().session_key().unwrap();
+            let mut fence = Fence::new();
+            fence.arm(execution);
+            let mut gate = SessionGate::new(session.slot());
+            gate.begin(session).unwrap();
+            gate.observe(session, &SessionEventOut::SceneReady).unwrap();
+            let mut actions = NativeActions { _private: () };
+            {
+                let mut services = ScriptServices::new(
+                    ServiceAuthority::new(execution, &fence, &gate),
+                    &mut actions,
+                    cx,
+                    None,
+                )
+                .unwrap();
+                assert_eq!(services.active_time().as_duration(), Duration::from_secs(3));
+                services
+                    .with_actions(|_, cx| cx.emit(InteractReq::CloseModal))
+                    .unwrap()
+                    .unwrap();
+                assert!(services.state_identity().is_none());
+                assert!(matches!(
+                    services.with_state(|_, _, _| panic!("no state port was injected")),
+                    Err(ServiceError::StateUnavailable)
+                ));
+            }
+            let queued = cx.ledger.as_mut().unwrap().outbox.pop().unwrap();
+            assert!(
+                queued.live(),
+                "the real native queue owns the admitted action"
+            );
+            owner.revoke();
+            assert!(
+                !queued.live(),
+                "existing host authority still fences dispatch"
+            );
+
+            let other_session = session.next().unwrap();
+            let mut other_gate = SessionGate::new(session.slot());
+            other_gate.begin(other_session).unwrap();
+            other_gate
+                .observe(other_session, &SessionEventOut::SceneReady)
+                .unwrap();
+            {
+                let mut services = ScriptServices::new(
+                    ServiceAuthority::new(execution, &fence, &other_gate),
+                    &mut actions,
+                    cx,
+                    None,
+                )
+                .unwrap();
+                assert!(
+                    matches!(
+                        services.with_actions(|_, _| panic!("foreign session admitted an action")),
+                        Err(ServiceError::SessionHeld)
+                    ),
+                    "a ready gate on another session is not this execution's session"
+                );
+            }
+
+            let other_run = ExecutionId::first(RunKey {
+                slot: 1,
+                run: 99,
+                session: 1,
+            });
+            assert!(
+                matches!(
+                    ScriptServices::new(
+                        ServiceAuthority::new(other_run, &fence, &gate),
+                        &mut actions,
+                        cx,
+                        None,
+                    ),
+                    Err(ServiceError::ContextMismatch)
+                ),
+                "an ExecutionId for another run is a context mismatch"
+            );
+
+            let mut stale_fence = Fence::new();
+            stale_fence.arm(execution.next_generation().unwrap());
+            {
+                let mut services = ScriptServices::new(
+                    ServiceAuthority::new(execution, &stale_fence, &gate),
+                    &mut actions,
+                    cx,
+                    None,
+                )
+                .unwrap();
+                assert!(
+                    matches!(
+                        services.with_actions(|_, _| panic!("stale fence admitted an action")),
+                        Err(ServiceError::Fence(FenceError::Stale { .. }))
+                    ),
+                    "a fence armed for a newer execution is stale, not revoked"
+                );
+            }
+
+            gate.observe(
+                session,
+                &SessionEventOut::Held {
+                    why: HoldReason::Guardian,
+                },
+            )
+            .unwrap();
+            let mut services = ScriptServices::new(
+                ServiceAuthority::new(execution, &fence, &gate),
+                &mut actions,
+                cx,
+                None,
+            )
+            .unwrap();
+            assert!(matches!(
+                services.with_actions(|_, _| panic!("held frame admitted an action")),
+                Err(ServiceError::SessionHeld)
+            ));
+            fence.revoke();
+            let mut services = ScriptServices::new(
+                ServiceAuthority::new(execution, &fence, &gate),
+                &mut actions,
+                cx,
+                None,
+            )
+            .unwrap();
+            assert!(matches!(
+                services.with_actions(|_, _| panic!("stale frame admitted an action")),
+                Err(ServiceError::Fence(_))
+            ));
+        });
+    }
+
+    #[test]
     fn shared_action_revoker_fences_already_queued_input_before_slot_cleanup() {
         struct Pending;
         impl NativeMachine for Pending {
@@ -1428,7 +1569,7 @@ mod tests {
                     level: 0,
                 },
                 radius: 0,
-                arrival: nav::arrival::ArrivalKind::Reach,
+                arrival: nav::contract::ArrivalKind::Reach,
                 options: WalkOptions::default(),
                 required_after: cx.evidence(),
                 evidence: None,
@@ -1940,7 +2081,7 @@ mod tests {
                 },
                 loc_id: None,
                 radius: 0,
-                arrival: nav::arrival::ArrivalKind::Reach,
+                arrival: nav::contract::ArrivalKind::Reach,
                 options: WalkOptions::default(),
                 required_after: cx.evidence(),
                 evidence: None,
@@ -2039,7 +2180,7 @@ mod tests {
                             target,
                             loc_id: None,
                             radius,
-                            arrival: nav::arrival::ArrivalKind::Reach,
+                            arrival: nav::contract::ArrivalKind::Reach,
                             options: WalkOptions::default(),
                             required_after: cx.evidence(),
                             evidence: None,
@@ -2099,7 +2240,7 @@ mod tests {
             },
             loc_id: None,
             radius: 0,
-            arrival: nav::arrival::ArrivalKind::Reach,
+            arrival: nav::contract::ArrivalKind::Reach,
             options: WalkOptions::default(),
             required_after: evidence,
             evidence: None,

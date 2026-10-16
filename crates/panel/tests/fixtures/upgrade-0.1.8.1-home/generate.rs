@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use panel::nav_settings::NavSettings;
 use panel::theme::ChromeColors;
 use panel::ui_state::{save_at, PanelUiState};
-use script::{Loadout, LoadoutsStore, ScriptSettingsStore, ScriptSource};
+use script::{ScriptSettingsStore, ScriptSource};
 use serde_json::{json, Map};
 use vault::{Profile, ProfileSettings, RasterMode, ScriptAssignment, Vault};
 
@@ -98,22 +98,54 @@ fn main() {
         .unwrap();
     drop(vault);
 
-    let mut loadouts = LoadoutsStore::at(bot.join("loadouts.json"));
-    loadouts.upsert(
-        Loadout::new("melee-main")
-            .with_slot("hat", "Rune full helm")
-            .with_slot("righthand", "Rune scimitar")
-            .with_slot("body", "Rune platebody")
-            .with_carry("Lobster", 12)
-            .with_carry("Strength potion(4)", 2),
-    );
-    loadouts.upsert(
-        Loadout::new("utility")
-            .with_slot("back", "Cape")
-            .with_slot("legacy-mystery-slot", "Ghostspeak amulet")
-            .with_carry("Coins", 5000),
-    );
-    loadouts.save().unwrap();
+    // The 0.1.8.1 loadouts store wrote this array pretty-printed. `body` is
+    // not a worn slot name and neither is `legacy-mystery-slot`, so the store
+    // kept their items as `unassigned` gear. The wire shape is written
+    // directly: the form store no longer opens an arbitrary path, and the
+    // bytes are the ones the store wrote.
+    #[derive(serde::Serialize)]
+    struct CarryRow {
+        item: &'static str,
+        qty: u32,
+    }
+    #[derive(serde::Serialize)]
+    struct LoadoutRow {
+        name: &'static str,
+        worn: BTreeMap<&'static str, &'static str>,
+        carry: Vec<CarryRow>,
+        unassigned: Vec<&'static str>,
+    }
+    let loadouts = [
+        LoadoutRow {
+            name: "melee-main",
+            worn: BTreeMap::from([("hat", "Rune full helm"), ("righthand", "Rune scimitar")]),
+            carry: vec![
+                CarryRow {
+                    item: "Lobster",
+                    qty: 12,
+                },
+                CarryRow {
+                    item: "Strength potion(4)",
+                    qty: 2,
+                },
+            ],
+            unassigned: vec!["Rune platebody"],
+        },
+        LoadoutRow {
+            name: "utility",
+            worn: BTreeMap::from([("back", "Cape")]),
+            carry: vec![CarryRow {
+                item: "Coins",
+                qty: 5000,
+            }],
+            unassigned: vec!["Ghostspeak amulet"],
+        },
+    ];
+    vault::write_private_file(
+        &bot.join("loadouts.json"),
+        serde_json::to_string_pretty(&loadouts).unwrap().as_bytes(),
+    )
+    .unwrap();
 
     let mut legacy_settings = ScriptSettingsStore::at(bot.join("script-settings.json"));
     legacy_settings.set_bool(ScriptSource::Catalog, "ChickenKiller", "buryBones", false);

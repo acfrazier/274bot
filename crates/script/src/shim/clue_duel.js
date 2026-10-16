@@ -1,4 +1,4 @@
-import { runMachine } from '../../shim/_kernel.js';
+import { notImpl, runMachine } from '../../shim/_kernel.js';
 
 const call = (payload) => globalThis.rustyscript.functions.__rs2b0t_duel(payload);
 const tables = call({ op: 'tables' });
@@ -29,6 +29,16 @@ export class ClueDuelHandshake {
             initiator: this.initiator,
         }, { log: this.log });
         return out.kind === 'done' && out.value === true;
+    }
+}
+
+export class ClueDuelSearch {
+    constructor(log, tried = undefined) {
+        throw notImpl('ClueDuelSearch.constructor');
+    }
+
+    async tick() {
+        throw notImpl('ClueDuelSearch.tick');
     }
 }
 

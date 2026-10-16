@@ -6,8 +6,18 @@ import { host, snap, notImpl, proxy, queue, optionalText, runMachine } from '../
 
 const COM_MODE_VARP = 43;
 const RUN_VARP = 173;
-const RETALIATE_VARP = 172;
+export const RETALIATE_VARP = 172;
 const MAGIC_TAB = 6;
+export const PLAYER_FACE_BASE =
+    globalThis.rustyscript.functions.__rs2b0t_player_face_base();
+
+export function retaliateOnFromVarp(value) {
+    return globalThis.rustyscript.functions.__rs2b0t_retaliate_on_from_varp(value);
+}
+
+export function facingPlayer(faceEntity) {
+    return globalThis.rustyscript.functions.__rs2b0t_facing_player(Number(faceEntity));
+}
 
 /** The posted combat-tab style buttons, or null until the tab has loaded. */
 function offeredCombatModes() {

@@ -269,9 +269,9 @@ impl SelectedTarget {
             loc_id,
             radius: RESOURCE_APPROACH_RADIUS,
             arrival: if observation_approach {
-                nav::arrival::ArrivalKind::Area
+                nav::contract::ArrivalKind::Area
             } else {
-                nav::arrival::ArrivalKind::Reach
+                nav::contract::ArrivalKind::Reach
             },
             options: crate::native::WalkOptions::default(),
             required_after,
@@ -312,7 +312,7 @@ pub struct SelectionObservation<'a> {
     pub fishing: &'a mut FishingSurvey,
     /// Packed collision used to keep Area r=1 observation stands off tiles
     /// with no legal goals. `None` skips the filter (unit fixtures without a pack).
-    pub collision: Option<&'a nav::collision::WorldCollision>,
+    pub collision: Option<nav::contract::CollisionView<'a>>,
 }
 
 pub struct ReturnObservation<'a> {
@@ -322,7 +322,7 @@ pub struct ReturnObservation<'a> {
     pub avoided: &'a [AvoidedTile; MAX_AVOID],
     /// Packed collision used to keep Area r=1 return stands off tiles with
     /// no legal goals. `None` skips the filter (unit fixtures without a pack).
-    pub collision: Option<&'a nav::collision::WorldCollision>,
+    pub collision: Option<nav::contract::CollisionView<'a>>,
 }
 
 /// Bank-return and death-recovery selection. A temporary avoid deadline is
@@ -1079,12 +1079,8 @@ fn fishing_return_stand(
         .unwrap_or(ReturnStand::Collision)
 }
 
-fn has_area_arrival(collision: Option<&nav::collision::WorldCollision>, stand: WorldTile) -> bool {
-    collision.is_none_or(|collision| {
-        nav::arrival::area_has_standable_goal(stand, i32::from(RESOURCE_APPROACH_RADIUS), |tile| {
-            collision.standable(tile)
-        })
-    })
+fn has_area_arrival(collision: Option<nav::contract::CollisionView<'_>>, stand: WorldTile) -> bool {
+    collision.is_none_or(|view| view.area_has_goal(stand, RESOURCE_APPROACH_RADIUS))
 }
 
 /// Preferred observation stand for one cell, then a legal Area-arrival
@@ -1097,7 +1093,7 @@ fn legal_fishing_return_stand(
     origin: WorldTile,
     rank_by: WorldTile,
     area: WorkArea,
-    collision: Option<&nav::collision::WorldCollision>,
+    collision: Option<nav::contract::CollisionView<'_>>,
 ) -> Option<WorldTile> {
     let preferred = observation_stand(cell, origin);
     if has_area_arrival(collision, preferred) {
@@ -1399,27 +1395,124 @@ fn distance(a: WorldTile, b: WorldTile) -> i64 {
 }
 
 #[cfg(test)]
-pub(crate) fn test_real_nav_world() -> &'static nav::world::NavWorld {
-    static WORLD: std::sync::LazyLock<nav::world::NavWorld> = std::sync::LazyLock::new(|| {
-        let pack = std::env::var_os("NAV_PACK")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                std::path::PathBuf::from(
-                    "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+pub(crate) fn test_real_nav_world() -> &'static std::sync::Arc<nav::world::NavWorld> {
+    static WORLD: std::sync::LazyLock<std::sync::Arc<nav::world::NavWorld>> =
+        std::sync::LazyLock::new(|| {
+            let pack = std::env::var_os("NAV_PACK")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| {
+                    std::path::PathBuf::from(
+                        "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+                    )
+                });
+            std::sync::Arc::new(
+                nav::world::NavWorld::load_pack(&pack).unwrap_or_else(|error| {
+                    panic!(
+                    "load real 289 nav pack {} (set NAV_PACK to the reviewed 289 bake): {error}",
+                    pack.display()
                 )
-            });
-        nav::world::NavWorld::load_pack(&pack)
-            .unwrap_or_else(|error| panic!("load real 289 nav pack {}: {error}", pack.display()))
-    });
+                }),
+            )
+        });
     &WORLD
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use api::gather_methods::{GatherTarget, SpotId};
     use api::snapshot::{LocLayer, LocView, NpcView};
     use std::collections::HashMap;
+
+    fn empty_collision_fixture() -> nav::collision::WorldCollision {
+        let (walk, blocked) = nav::collision::pack_walk(&[0; 4]);
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: 1,
+            height: 1,
+            walk,
+            blocked,
+            flags: None,
+        }
+    }
+
+    /// The one script test site that constructs a `NavWorld` (§21 §5.3
+    /// exception scope). Other script tests obtain contract leases through
+    /// it; `configure` edits the world (zones, wilderness) before wrapping.
+    pub(crate) fn test_nav_lease(
+        configure: impl FnOnce(&mut nav::world::NavWorld),
+    ) -> nav::contract::NavLease {
+        test_nav_lease_over(empty_collision_fixture(), configure)
+    }
+
+    pub(crate) fn test_nav_world_over(
+        collision: nav::collision::WorldCollision,
+        configure: impl FnOnce(&mut nav::world::NavWorld),
+    ) -> std::sync::Arc<nav::world::NavWorld> {
+        // The checker registers the type path; the constructor is reached
+        // through it rather than as a second qualified symbol.
+        type NavWorld = nav::world::NavWorld;
+        let mut world = NavWorld::from_parts(collision, Default::default(), Vec::new());
+        configure(&mut world);
+        std::sync::Arc::new(world)
+    }
+
+    /// Same, over a caller-built packed collision.
+    pub(crate) fn test_nav_lease_over(
+        collision: nav::collision::WorldCollision,
+        configure: impl FnOnce(&mut nav::world::NavWorld),
+    ) -> nav::contract::NavLease {
+        nav::contract::NavLease::wrap(
+            test_nav_world_over(collision, configure),
+            nav::contract::PackDigest::of(b"script test fixture"),
+        )
+        .expect("lease ids are not exhausted in tests")
+    }
+
+    /// A lease over a small synthetic collision the test keeps for its raw
+    /// oracle: the grid is copied once (fixture-sized, never a real pack).
+    pub(crate) fn test_nav_lease_for_collision(
+        collision: &nav::collision::WorldCollision,
+    ) -> nav::contract::NavLease {
+        assert!(
+            collision.width * collision.height <= 1 << 16,
+            "copy only fixture grids; the real pack is leased by test_real_nav_lease"
+        );
+        test_nav_lease_over(
+            nav::collision::WorldCollision {
+                origin: collision.origin,
+                width: collision.width,
+                height: collision.height,
+                walk: collision.walk.clone(),
+                blocked: collision.blocked.clone(),
+                flags: collision.flags.clone(),
+            },
+            |_| {},
+        )
+    }
+
+    /// A lease over the shared real 289 pack world, without copying it.
+    pub(crate) fn test_real_nav_lease() -> nav::contract::NavLease {
+        nav::contract::NavLease::wrap(
+            std::sync::Arc::clone(super::test_real_nav_world()),
+            nav::contract::PackDigest::of(b"real 289 pack"),
+        )
+        .expect("lease ids are not exhausted in tests")
+    }
+
+    #[test]
+    fn empty_nav_lease_has_an_open_origin() {
+        let lease = test_nav_lease(|_| {});
+        assert!(lease.collision().standable(WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        }));
+    }
 
     #[test]
     fn loc_arrival_consumers_use_server_position_while_rendering_trails() {
@@ -1727,7 +1820,7 @@ mod tests {
         level: 0,
     };
     fn real_nav_world() -> &'static nav::world::NavWorld {
-        super::test_real_nav_world()
+        super::test_real_nav_world().as_ref()
     }
 
     fn fishing_guild_spot(
@@ -1787,7 +1880,7 @@ mod tests {
         index: usize,
         area: WorkArea,
         here: WorldTile,
-        collision: Option<&nav::collision::WorldCollision>,
+        collision: Option<nav::contract::CollisionView<'_>>,
     ) -> SelectionResult {
         select(
             catalog,
@@ -2452,6 +2545,7 @@ mod tests {
             ),
             radius_one_tiles(water),
         );
+        let lease = test_nav_lease_for_collision(&collision);
         for mode in [AreaMode::Auto, AreaMode::Start, AreaMode::Custom] {
             let area = WorkArea {
                 mode,
@@ -2476,7 +2570,7 @@ mod tests {
                     now: 1,
                     skill_stat: 10,
                     avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
-                    collision: Some(&collision),
+                    collision: Some(lease.collision()),
                 },
             )
             .plan()
@@ -2537,6 +2631,7 @@ mod tests {
             radius: 40,
         };
         let collision = synthetic_collision(fishing_cover(method, area), radius_one_tiles(water));
+        let lease = test_nav_lease_for_collision(&collision);
         let settings = GathererSettings {
             skill: "Fishing".into(),
             fishing_method: method.id.0.to_string(),
@@ -2567,7 +2662,7 @@ mod tests {
                 now: 1,
                 skill_stat: 10,
                 avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
-                collision: Some(&collision),
+                collision: Some(lease.collision()),
             },
         )
         .plan()
@@ -2682,6 +2777,7 @@ mod tests {
                 ]),
                 std::iter::empty::<WorldTile>(),
             );
+            let lease = test_nav_lease_for_collision(&collision);
             let target = resource_return_target(
                 &catalog,
                 &[index],
@@ -2692,7 +2788,7 @@ mod tests {
                     now: 1,
                     skill_stat: 10,
                     avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
-                    collision: Some(&collision),
+                    collision: Some(lease.collision()),
                 },
             )
             .plan()
@@ -2773,6 +2869,7 @@ mod tests {
                 .map(|spot| spot.origin),
             std::iter::empty::<WorldTile>(),
         );
+        let lease = test_nav_lease_for_collision(&collision);
         let target = resource_return_target(
             &catalog,
             &[index],
@@ -2783,7 +2880,7 @@ mod tests {
                 now: 1,
                 skill_stat: 30,
                 avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
-                collision: Some(&collision),
+                collision: Some(lease.collision()),
             },
         )
         .plan()
@@ -3265,6 +3362,13 @@ mod tests {
 
     #[test]
     fn fishing_guild_ardougne_approach_picks_a_legal_stand() {
+        let Some(_pack) = crate::ctx::test_support::local_asset_path(
+            "NAV_PACK",
+            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+            "real 289 nav pack",
+        ) else {
+            return;
+        };
         let catalog = real_catalog();
         let (method, index, spot) = fishing_guild_spot(&catalog);
         let bounds = movement_bounds(spot).expect("guild movement");
@@ -3277,6 +3381,7 @@ mod tests {
             "Ardougne still clamps onto the blocked south-east observation corner"
         );
         let world = real_nav_world();
+        let lease = test_real_nav_lease();
         assert!(
             !area_arrival_ok(&world.collision, clamped),
             "{clamped:?} must stay an empty Area r=1 goal on the reference pack"
@@ -3289,7 +3394,7 @@ mod tests {
             index,
             area,
             ARDOUGNE_START,
-            Some(&world.collision),
+            Some(lease.collision()),
         );
         let target = selected
             .target
@@ -3353,6 +3458,13 @@ mod tests {
 
     #[test]
     fn fishing_approach_keeps_a_legal_clamped_stand() {
+        let Some(_pack) = crate::ctx::test_support::local_asset_path(
+            "NAV_PACK",
+            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+            "real 289 nav pack",
+        ) else {
+            return;
+        };
         let catalog = real_catalog();
         let (method, index, spot) = fishing_guild_spot(&catalog);
         let bounds = movement_bounds(spot).expect("guild movement");
@@ -3360,6 +3472,7 @@ mod tests {
             .next()
             .expect("guild observation cell");
         let world = real_nav_world();
+        let lease = test_real_nav_lease();
         let area = guild_work_area();
         let mut legal_here = None;
         let mid_x = (cell.min_x + cell.max_x) / 2;
@@ -3396,7 +3509,7 @@ mod tests {
             "at least one side of the Fishing Guild observation rectangle must clamp onto a legal stand",
         );
         let selected =
-            select_unloaded_fishing(&catalog, method, index, area, here, Some(&world.collision));
+            select_unloaded_fishing(&catalog, method, index, area, here, Some(lease.collision()));
         let target = selected
             .target
             .expect("a legal clamp must remain an unloaded observation stand");
@@ -3467,6 +3580,7 @@ mod tests {
                 .chain([here, spot.origin]),
             blocked,
         );
+        let lease = test_nav_lease_for_collision(&collision);
         let settings = GathererSettings {
             skill: "Fishing".into(),
             fishing_method: method.id.0.to_string(),
@@ -3483,7 +3597,7 @@ mod tests {
             &[AvoidedTile::EMPTY; MAX_AVOID],
             SelectionObservation {
                 fishing: &mut FishingSurvey::default(),
-                collision: Some(&collision),
+                collision: Some(lease.collision()),
                 world: &scene_around(here),
                 locs: &[],
                 npcs: &[],
@@ -3498,6 +3612,13 @@ mod tests {
 
     #[test]
     fn fishing_stand_search_does_not_repeat_on_waiting_ticks() {
+        let Some(_pack) = crate::ctx::test_support::local_asset_path(
+            "NAV_PACK",
+            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+            "real 289 nav pack",
+        ) else {
+            return;
+        };
         use api::obj_names::ItemDefView;
         use api::quest_progress::EvidenceStamp;
         use api::selected::RunKey;
@@ -3507,7 +3628,7 @@ mod tests {
 
         let catalog = real_catalog();
         let (method, index, _spot) = fishing_guild_spot(&catalog);
-        let world = real_nav_world();
+        let lease = test_real_nav_lease();
         let area = guild_work_area();
         let settings = guild_fishing_settings(method, area);
         let select_now = |fishing: &mut FishingSurvey, now: u64| {
@@ -3519,7 +3640,7 @@ mod tests {
                 &[AvoidedTile::EMPTY; MAX_AVOID],
                 SelectionObservation {
                     fishing,
-                    collision: Some(&world.collision),
+                    collision: Some(lease.collision()),
                     world: &scene_around(ARDOUGNE_START),
                     locs: &[],
                     npcs: &[],
@@ -3639,7 +3760,7 @@ mod tests {
                 area,
                 SelectionObservation {
                     fishing: &mut quest_survey,
-                    collision: Some(&world.collision),
+                    collision: Some(lease.collision()),
                     world: &scene_around(ARDOUGNE_START),
                     locs: &[],
                     npcs: &[],
@@ -3667,8 +3788,16 @@ mod tests {
 
     #[test]
     fn fishing_npc_bounds_have_legal_initial_stands_on_every_side() {
+        let Some(_pack) = crate::ctx::test_support::local_asset_path(
+            "NAV_PACK",
+            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+            "real 289 nav pack",
+        ) else {
+            return;
+        };
         let catalog = real_catalog();
         let world = real_nav_world();
+        let lease = test_real_nav_lease();
         let mut seen = std::collections::HashSet::new();
         let mut previously_blocked = Vec::new();
         let mut checked = 0usize;
@@ -3738,7 +3867,7 @@ mod tests {
                             here,
                             clamped,
                             area,
-                            Some(&world.collision),
+                            Some(lease.collision()),
                         );
                         let stand = legal.unwrap_or(clamped);
                         let new_ok = area_arrival_ok(&world.collision, stand);
@@ -4073,6 +4202,7 @@ mod tests {
                 .chain([bank, area.anchor]),
             std::iter::empty::<WorldTile>(),
         );
+        let lease = test_nav_lease_for_collision(&collision);
         let observation = |now, avoided: &[AvoidedTile; MAX_AVOID]| {
             resource_return_target(
                 &catalog,
@@ -4084,7 +4214,7 @@ mod tests {
                     now,
                     skill_stat: 1,
                     avoided,
-                    collision: Some(&collision),
+                    collision: Some(lease.collision()),
                 },
             )
         };

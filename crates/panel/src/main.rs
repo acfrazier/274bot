@@ -14,8 +14,8 @@ fn parse_args() -> panel::PanelArgs {
     }
 }
 
-fn main() {
-    script::bootstrap_v8_platform();
+fn main() -> std::process::ExitCode {
+    script::bootstrap_v8_platform().expect("protected V8 bootstrap on process main thread");
     #[cfg(feature = "memory-profile")]
     host_play::memory::mark_process_start();
     let args = parse_args();
@@ -23,8 +23,17 @@ fn main() {
     // The session log records the result when it opens.
     host_play::fd_limit::raise_at_startup();
     host_play::passphrase::warn_legacy_env("panel-play");
-    if let Err(e) = panel::run_panel(args) {
-        eprintln!("panel: {e}");
-        std::process::exit(1);
+    let run = panel::run_panel(args);
+    let shutdown = script::work_admission::WorkService::shutdown_if_started();
+    if let Err(error) = &run {
+        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel: {error}");
+    }
+    if let Err(error) = &shutdown {
+        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "background work shutdown: {error}");
+    }
+    if run.is_err() || shutdown.is_err() {
+        std::process::ExitCode::FAILURE
+    } else {
+        std::process::ExitCode::SUCCESS
     }
 }

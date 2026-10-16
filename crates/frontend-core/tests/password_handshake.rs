@@ -7,7 +7,7 @@ use std::net::{SocketAddr, TcpListener};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
-use frontend_core::{ArmMirror, HeadlessSurface, OperatorSession, Outcome};
+use frontend_core::{ArmMirror, HeadlessSurface, OperatorSession};
 use host_play::{InstancePermit, PlayOptions};
 use vault::{Profile, ProfileSettings, Vault};
 
@@ -120,14 +120,14 @@ fn a_parked_worker_logs_in_with_the_password_saved_after_it_spawned() {
     std::fs::rename(&path, &aside).unwrap();
     std::fs::create_dir(&path).unwrap();
     let op = s
-        .save_profile(edited.clone(), ArmMirror::Remember(None), "credentials")
+        .save_profile(edited.clone(), ArmMirror::remember(None), "credentials")
         .unwrap();
     s.flush_writes();
     std::fs::remove_dir(&path).unwrap();
     std::fs::rename(&aside, &path).unwrap();
     assert!(matches!(
         s.operation(op).unwrap().outcome("alice"),
-        Some(Outcome::Failed(_))
+        Some(o) if o.is_failed()
     ));
     let since = Instant::now();
     s.login("alice", &mut surface);
@@ -135,7 +135,7 @@ fn a_parked_worker_logs_in_with_the_password_saved_after_it_spawned() {
     s.logout("alice");
 
     // A successful save reaches the same worker's next handshake.
-    s.save_profile(edited, ArmMirror::Remember(None), "credentials")
+    s.save_profile(edited, ArmMirror::remember(None), "credentials")
         .unwrap();
     s.flush_writes();
     let since = Instant::now();

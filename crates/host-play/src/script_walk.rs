@@ -758,15 +758,18 @@ pub(crate) fn apply_nav_follow_outcome(
 ) {
     match outcome {
         Some(nav::traveller::TravelOutcome::Arrived { .. }) => settle_route_end(bot, false),
-        // Frozen `'blocked'` (`WalkExecutor.ts:1092-1094`): the follow ended
-        // next to a route end the live scene refuses. The armed walk settles
-        // as its route end, flagged blocked, and walkResilient returns true
-        // (`Traversal.ts:171-174`). A bank-fetch stand walk is not the armed
-        // walk's end and fails below.
-        Some(nav::traveller::TravelOutcome::Stalled {
-            why: nav::traveller::HopFailure::EndBlocked,
-            ..
-        }) if bot.bank_fetch.is_none() => settle_route_end(bot, true),
+        // Frozen `walkResilient` treats EndBlocked as a completed route for
+        // compatibility. A native owner also receives the typed Traveller
+        // outcome so it can reject arrival without losing the hop diagnosis.
+        Some(
+            failure @ nav::traveller::TravelOutcome::Stalled {
+                why: nav::traveller::HopFailure::EndBlocked,
+                ..
+            },
+        ) if bot.bank_fetch.is_none() => {
+            settle_route_end(bot, true);
+            bot.note_native_follow_failure(&failure);
+        }
         Some(failure) => {
             let owned = bot.route_request_id == bot.walk_request_id;
             if !owned {
@@ -1608,13 +1611,13 @@ fn step_bank_action<D: Driver>(
 
 /// Whether the open bank's `id` stack gives exactly `count` only through the
 /// Withdraw-X amount dialog: no `Withdraw {count}` op and not the whole
-/// stack ([`super::fill_withdraw_action`]).
+/// stack (the kernel's host fill policy, `ops::fill_click_in`).
 fn withdraw_needs_amount_dialog(snapshot: &GameSnapshot, id: i32, count: i32) -> bool {
     snapshot
         .bank()
         .iter()
         .find(|item| item.def.id == id)
-        .and_then(|item| super::fill_withdraw_action(&item.actions, count, item.count))
+        .and_then(|item| script::bank::ops::fill_click_in(&item.actions, count, item.count))
         .is_some_and(|(_, needs_amount_dialog)| needs_amount_dialog)
 }
 
@@ -1628,7 +1631,7 @@ fn withdraw_fixed_count<D: Driver>(
         return false;
     };
     let Some((op, needs_amount_dialog)) =
-        super::fill_withdraw_action(&item.actions, count, item.count)
+        script::bank::ops::fill_click_in(&item.actions, count, item.count)
     else {
         return false;
     };
@@ -1646,7 +1649,7 @@ fn open_withdraw_x<D: Driver>(driver: &mut D, snapshot: &GameSnapshot, id: i32) 
     let Some(item) = snapshot.bank().iter().find(|item| item.def.id == id) else {
         return false;
     };
-    let Some(op) = super::action_slot(&item.actions, "Withdraw X") else {
+    let Some(op) = script::bank::ops::action_op_in(&item.actions, "Withdraw X") else {
         return false;
     };
     matches!(

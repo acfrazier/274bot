@@ -30,3 +30,15 @@ export const MURDER_TILE = {
     SALESMAN: new Tile(2737, 3491, 0),
     ARHEIN: new Tile(2803, 3430, 0),
 };
+
+import { notImpl, notImplValue } from '../../../../../shim/_kernel.js';
+
+export const ARHEIN = notImplValue('ARHEIN');
+export const GUARD_START = notImplValue('GUARD_START');
+export const GUARD_HANDIN = notImplValue('GUARD_HANDIN');
+export const SALESMAN = notImplValue('SALESMAN');
+export const SUSPECTS = notImplValue('SUSPECTS');
+export function suspectOrder(thread) {
+    throw notImpl('suspectOrder');
+}
+export const MURDER_EVIDENCE = notImplValue('MURDER_EVIDENCE');

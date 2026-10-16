@@ -297,7 +297,7 @@ impl<'a> ParamsPane<'a> {
         let values = if self.state.choice_single {
             options.selectable()
         } else {
-            options.values.as_slice()
+            options.values()
         };
         values
             .iter()
@@ -375,7 +375,7 @@ impl<'a> ParamsPane<'a> {
             self.state.choice_single = false;
             self.state.choice_cursor = 0;
             self.state.choice_search.clear();
-            self.state.choice_searchable = opts.values.len() > 16;
+            self.state.choice_searchable = opts.values().len() > 16;
             self.state.choice_selected = current_string_list(self.bag.get(&def.id));
             self.state.scratch.clear();
             self.state.error = None;
@@ -543,7 +543,7 @@ fn stored_quest_reason<'a>(
     if !matches!(
         def.options_from.as_deref(),
         Some("released-paths" | "released-path-order")
-    ) || options.preserved == 0
+    ) || options.preserved() == 0
     {
         return None;
     }
@@ -618,7 +618,7 @@ impl Widget for ParamsPane<'_> {
             if let Some(def) = rows.get(self.state.cursor) {
                 let opts = self.resolved_options(def);
                 let mut stored_quest = None;
-                if def.options_from.as_deref() == Some("gather:sites") && opts.preserved > 0 {
+                if def.options_from.as_deref() == Some("gather:sites") && opts.preserved() > 0 {
                     unavailable_current = Some(display_value(self.bag, def, &opts));
                     site_reason_detail = true;
                 } else if let Some(stored) = stored_quest_reason(self.bag, def, &opts) {
@@ -650,7 +650,7 @@ impl Widget for ParamsPane<'_> {
                     let values = if self.state.choice_single {
                         opts.selectable()
                     } else {
-                        opts.values.as_slice()
+                        opts.values()
                     };
                     let stored = self
                         .bag
@@ -750,7 +750,7 @@ impl Widget for ParamsPane<'_> {
                     {
                         if def.options_from.as_deref() == Some("loadouts") {
                             "no loadouts available".to_string()
-                        } else if options.preserved > 0 {
+                        } else if options.preserved() > 0 {
                             let current = display_value(self.bag, def, &options);
                             if i == self.state.cursor {
                                 unavailable_current = Some(current);
@@ -775,7 +775,7 @@ impl Widget for ParamsPane<'_> {
                         let current = display_value(self.bag, def, &options);
                         if !self.state.editing
                             && def.options_from.as_deref() == Some("gather:sites")
-                            && options.preserved > 0
+                            && options.preserved() > 0
                         {
                             unavailable_current = Some(current.clone());
                             site_reason_detail = true;
@@ -979,7 +979,7 @@ mod tests {
         let dir = temp_dir("bool");
         let path = dir.join("script-settings.json");
         let mut store = ScriptSettingsStore::at(path);
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let schema = bury_schema();
         let mut bag = store.merged_bag(ScriptSource::Catalog, "ChickenKiller", &schema, None);
         assert_eq!(bag.get("buryBones"), Some(&serde_json::json!(true)));
@@ -1004,7 +1004,7 @@ mod tests {
     fn global_walk_permission_is_inherited_and_script_additive_when_off() {
         let dir = temp_dir("walk-permissions");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let schema = vec![SettingDef {
             group: Some("Quester".into()),
             ..setting(
@@ -1109,10 +1109,10 @@ mod tests {
     #[test]
     fn params_pane_space_cycles_loadout_combo_from_store() {
         let dir = temp_dir("loadout");
-        let mut loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
-        loadouts.upsert(script::Loadout::new("fish"));
-        loadouts.upsert(script::Loadout::new("mine"));
-        loadouts.save().unwrap();
+        let loadouts = LoadoutsStore::detached(vec![
+            api::loadout::Loadout::new("fish"),
+            api::loadout::Loadout::new("mine"),
+        ]);
         let schema = vec![SettingDef {
             options_from: Some("loadouts".into()),
             ..setting("loadout", "string", Some("fish"), Some("Loadout"), &[])
@@ -1141,7 +1141,7 @@ mod tests {
         let dir = temp_dir("alcher-num");
         let path = dir.join("script-settings.json");
         let mut store = ScriptSettingsStore::at(path.clone());
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let schema = alcher_schema();
         let mut bag = store.merged_bag(ScriptSource::Catalog, "Alcher", &schema, None);
         let mut state = ParamsState {
@@ -1185,7 +1185,7 @@ mod tests {
 
     #[test]
     fn text_edits_submit_once_on_commit_and_skip_unchanged_or_invalid_values() {
-        let loadouts = LoadoutsStore::at(temp_dir("commit").join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let schema = vec![setting("count", "number", Some("1"), Some("Count"), &[])];
         let mut bag = script::merge_bag(&schema, &serde_json::Map::new(), None);
         let attempts = AtomicU64::new(0);
@@ -1231,7 +1231,7 @@ mod tests {
         let dir = temp_dir("alcher-items");
         let path = dir.join("script-settings.json");
         let mut store = ScriptSettingsStore::at(path.clone());
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let schema = alcher_schema();
         let mut bag = store.merged_bag(ScriptSource::Catalog, "Alcher", &schema, None);
         assert!(bag.get("items").is_none());
@@ -1270,7 +1270,7 @@ mod tests {
         let dir = temp_dir("choices");
         let path = dir.join("script-settings.json");
         let mut store = ScriptSettingsStore::at(path);
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let schema = vec![setting(
             "items",
             "string[]",
@@ -1316,7 +1316,7 @@ mod tests {
         let dir = temp_dir("coerce");
         let path = dir.join("script-settings.json");
         let mut store = ScriptSettingsStore::at(path);
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let schema = vec![
             setting("spot", "tile", Some("3200,3200,0"), Some("Spot"), &[]),
             setting("drops", "list", Some("bones,shells"), Some("Drops"), &[]),
@@ -1373,8 +1373,7 @@ mod tests {
     /// `n`/Esc and nothing else, and a refused commit keeps the old value.
     #[test]
     fn apply_to_all_keys_and_a_refused_commit() {
-        let dir = temp_dir("sync-keys");
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let schema = alcher_schema();
         let mut bag = serde_json::Map::new();
         bag.insert("alchs".into(), serde_json::json!(27));
@@ -1415,7 +1414,7 @@ mod tests {
     fn overlay_clears_background_and_keeps_cursor_visible_on_long_schema() {
         let dir = temp_dir("draw");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let schema: Vec<SettingDef> = (0..20)
             .map(|i| {
                 setting(
@@ -1483,7 +1482,7 @@ mod tests {
     fn editing_consumes_letters_instead_of_moving_the_row() {
         let dir = temp_dir("letters");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let schema = vec![setting(
             "customItem",
             "string",
@@ -1517,7 +1516,7 @@ mod tests {
     fn item_choices_paint_identity_label_and_persist_key() {
         let dir = temp_dir("item-labels");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         let schema = vec![SettingDef {
             id: "items".into(),
@@ -1618,7 +1617,7 @@ mod tests {
     fn gatherer_dynamic_lists_keep_unknowns_and_allow_radius_edits() {
         let dir = temp_dir("gather-picker");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         let mut resources = setting(
             "woodcuttingResources",
@@ -1701,7 +1700,7 @@ mod tests {
     fn multiselect_picker_searches_lists_larger_than_sixteen() {
         let dir = temp_dir("picker-search");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let mut quests = setting("quests", "string[]", None, Some("Quests"), &[]);
         quests.options = (0..18).map(|index| format!("quest-{index:02}")).collect();
         quests.option_labels = (0..18).map(|index| format!("Quest {index:02}")).collect();
@@ -1766,7 +1765,7 @@ mod tests {
     fn dynamic_picker_without_facts_is_disabled_not_a_text_box() {
         let dir = temp_dir("picker-unavailable");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let mut resources = setting(
             "woodcuttingResources",
             "string[]",
@@ -1822,7 +1821,7 @@ mod tests {
     fn scalar_fishing_cycle_skips_refused_groups_and_wraps() {
         let dir = temp_dir("fishing-cycle");
         let store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let mut fishing = setting("fishingMethod", "string", None, Some("Fishing method"), &[]);
         fishing.options_from = Some("gather:fishing".into());
@@ -1899,7 +1898,7 @@ mod tests {
     fn gather_site_picker_filters_and_accepts_explicit_selection() {
         let dir = temp_dir("site-picker");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let schema = script::gatherer::settings::schema();
         let mut bag = store.merged_bag(ScriptSource::Catalog, "Gatherer", schema, None);
@@ -2034,7 +2033,7 @@ mod tests {
     fn invalid_gather_site_remains_disabled_and_explains_why() {
         let dir = temp_dir("site-disabled");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let schema = script::gatherer::settings::schema();
         let mut bag = store.merged_bag(ScriptSource::Catalog, "Gatherer", schema, None);
@@ -2106,7 +2105,7 @@ mod tests {
     fn incompatible_saved_site_reason_is_visible_with_choices_at_80_columns() {
         let dir = temp_dir("site-reason-with-choices");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let schema = script::gatherer::settings::schema();
         let willow = data
@@ -2138,7 +2137,7 @@ mod tests {
             Some(data.as_ref()),
         );
         assert!(!options.is_empty(), "Willow has alternate named sites");
-        assert_eq!(options.preserved, 1);
+        assert_eq!(options.preserved(), 1);
         let expected = options.label_for(&saved_site_id).to_owned();
         let expected_compact = expected
             .chars()
@@ -2223,7 +2222,7 @@ mod tests {
     fn quester_picker_keeps_unknown_path_visible_and_removable() {
         let dir = temp_dir("quest-unknown");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let mut quests = setting("quests", "string[]", None, Some("Quests"), &[]);
         quests.options = vec!["cook".into(), "sheep".into()];
         quests.option_labels = vec!["Cook's Assistant".into(), "Sheep Shearer".into()];
@@ -2281,7 +2280,7 @@ mod tests {
         };
         let options = pane.resolved_options(&schema[0]);
         pane.state.choice_cursor = options
-            .values
+            .values()
             .iter()
             .position(|value| value == "removed-path")
             .unwrap();
@@ -2295,7 +2294,7 @@ mod tests {
     fn unavailable_quest_is_never_added_by_the_real_picker() {
         let dir = temp_dir("quest-unavailable-add");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let schema = (script::quester::card::CARD.schema)();
         let quests_row = schema
             .iter()
@@ -2319,7 +2318,7 @@ mod tests {
         assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
         let options = pane.resolved_options(&schema[quests_row]);
         pane.state.choice_cursor = options
-            .values
+            .values()
             .iter()
             .position(|value| value == "hauntedmine")
             .unwrap();
@@ -2333,7 +2332,7 @@ mod tests {
     fn stored_unavailable_quest_reason_is_not_clipped_at_80_columns() {
         let dir = temp_dir("quest-unavailable-reason");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let schema = (script::quester::card::CARD.schema)();
         let reason = script::quester::card::unavailable_quest("hauntedmine").unwrap();
         let full = format!("Haunted Mine — {reason}")
@@ -2401,7 +2400,7 @@ mod tests {
     fn empty_loadout_source_shows_a_clear_disabled_state() {
         let dir = temp_dir("empty-loadout-options");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let mut loadout = setting("loadout", "string", None, Some("Loadout"), &[]);
         loadout.options_from = Some("loadouts".into());
         let schema = vec![loadout];
@@ -2469,7 +2468,7 @@ mod tests {
             );
             store.save().unwrap();
 
-            let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+            let loadouts = LoadoutsStore::default();
             let schema = (script::quester::card::CARD.schema)();
             let row = schema
                 .iter()
@@ -2503,7 +2502,7 @@ mod tests {
                 let visible = pane.choice_indices(&options);
                 pane.state.choice_cursor = visible
                     .iter()
-                    .position(|index| options.values[*index] == "hauntedmine")
+                    .position(|index| options.values()[*index] == "hauntedmine")
                     .expect("the saved unavailable priority stays visible");
                 assert_eq!(pane.on_key(KeyCode::Char(' ')), ParamsKey::Toggle);
                 assert!(pane.state.choice_selected.is_empty());
@@ -2530,7 +2529,7 @@ mod tests {
     fn closed_removable_preserved_array_shows_its_value_and_reason() {
         let dir = temp_dir("preserved-priority-closed-row");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let schema = (script::quester::card::CARD.schema)();
         let row = schema
             .iter()
@@ -2590,7 +2589,7 @@ mod tests {
     fn restart_badge_is_visible_at_reference_and_compact_sizes() {
         let dir = temp_dir("restart-badge");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let loadouts = LoadoutsStore::default();
         let schema = vec![setting(
             "skill",
             "string",

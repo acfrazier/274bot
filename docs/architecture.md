@@ -206,6 +206,7 @@ unchanged manifest; compression does not change selected-content identities.
 | module | owns (one reason to change) | notes |
 | --- | --- | --- |
 | `lib.rs` | slot pump and crate facade | one OS thread per slot |
+| `render.rs` | neutral render reservation protocol (D12, §23 §2) | metadata only; no render thread; inactive until T4.2 |
 | `slot.rs` | per-slot drain pump | gens diff, tick synthesis, dirty families |
 | `slot_io.rs` | frame and input channels | mailbox, input, park and wake |
 | `login_queue.rs` | login FIFO and backoff | production rate limits |
@@ -729,6 +730,70 @@ gate on sibling paths.
 `e2e` and ignored live tests in `host-play` are wide orchestration. Linking
 those crates for tests is not a claim that test code is the product owner of
 nav, rendering, or the isolate.
+
+## Lint suppression ratchet
+
+`#[allow]` suppressions accumulate silently: each one turns a lint off
+forever, including after the code that needed it is gone. Two mechanisms
+stop that. Both live outside the crate-graph checker above; this section
+documents them together.
+
+**Workspace lints (per-crate opt-in).** The `[workspace.lints.clippy]` table
+in the root `Cargo.toml` holds the set: `undocumented_unsafe_blocks` and
+`unwrap_used` (warn), plus the suppression-hygiene denies
+`allow_attributes` (suppressions must be `#[expect]`, so one that stops
+firing is an error) and `allow_attributes_without_reason`, plus the six
+approved lints `redundant_clone`, `significant_drop_in_scrutinee`,
+`unchecked_time_subtraction`, `needless_collect`,
+`large_types_passed_by_value` and `assigning_clones` (deny). A crate opts
+in with `[lints] workspace = true` in its manifest when a refactor reaches
+it and stays opted in; `vault` is the first. Only `unwrap_used` is scoped
+to non-test code (via `allow-unwrap-in-tests` in `clippy.toml`): clippy
+1.98 offers no per-lint test exemption for the other lints, so opted-in
+crates keep their tests clean too.
+
+**Suppression-count ratchet.** `tools/lint-ratchet/lint_ratchet.py`
+(Python 3, stdlib only; run as `python3 -B`) counts `#[allow(...)]`,
+`#[expect(...)]`, crate-level `#![...]` and `#[cfg_attr(.., ...)]`
+suppressions in `crates/**/*.rs` per crate × lint, with test files counted
+separately, and compares against the committed
+`tools/lint-ratchet/baseline.json`. Any count above its baseline fails, as
+does a suppression for a lint absent from that crate's baseline entry;
+lowering a count is free. `--update` rewrites the baseline. The parser is
+fail-closed: anything suppression-like it cannot read (an unparseable lint
+path, an unbalanced attribute, a macro metavariable such as `$lint:meta` in
+suppression position) is an error with file:line, and `--update` refuses to
+write a baseline while such errors exist. It handles `reason = "..."`
+strings containing commas and parentheses, multi-line attributes, nested
+`cfg_attr` to any depth, whitespace around `::` and before the paren
+(`clippy :: needless_collect`, `allow (dead_code)`). Before matching, one
+normalization pass canonicalizes the token stream: whitespace/comments
+between tokens are dropped (even between `#`, `!`, `[` and the path, so
+`# [allow(..)]` counts), the `r#` raw-identifier prefix is stripped, and
+Unicode format characters (`Cf`, e.g. U+200E/U+200F) are removed; any other
+non-ASCII inside a path stays and fails closed. Suppressions written
+inside macro bodies or passed as macro arguments count, conservatively: a
+macro-emitted suppression is real, and over-counting hides nothing. The
+FlatBuffers output `crates/script/schema/generated/isolate_generated.rs` is
+explicitly exempt (regenerating it rewrites its own allows). The
+`lint-ratchet` lane in the admissions matrix runs the check plus
+`lint_ratchet.py --self-test` (the permanent parser tests in
+`tools/lint-ratchet/test_lint_ratchet.py`), and
+`tools/lint-ratchet/ci-snippet.yml` is the step to fold into the single
+`architecture`/lint CI job.
+
+Limit: the parser is a text tool, not the compiler. Exotic spellings beyond
+the normalization above are covered by clippy's `allow_attributes` lint in
+opted-in crates (the compiler sees every real attribute) and by the
+reviewer. No further parser rounds.
+
+**Adding a justified suppression.** Write
+`#[expect(lint, reason = "...")]` with a reason that says why the code
+needs it, and bump the baseline in the same diff:
+
+```bash
+python3 -B tools/lint-ratchet/lint_ratchet.py --update
+```
 
 ## Changing a boundary
 

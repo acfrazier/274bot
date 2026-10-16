@@ -22,7 +22,7 @@ pub struct PendingCatalogStart {
     pub bag: Option<Map<String, Value>>,
     pub siblings: Vec<(String, String)>,
     /// Scenario-owned loadouts for harness Start; empty uses operator store.
-    pub loadouts: Vec<script::Loadout>,
+    pub loadouts: Vec<api::loadout::Loadout>,
     /// Compiled registry card; when set, Start uses `start_compiled`.
     pub compiled: Option<script::CompiledId>,
     /// Start was accepted; retain the card so a later Stop/Start can reuse it.
@@ -44,7 +44,7 @@ impl PendingCatalogStart {
         shape: script::LoadShape,
         bag: Option<Map<String, Value>>,
         siblings: Vec<(String, String)>,
-        loadouts: Vec<script::Loadout>,
+        loadouts: Vec<api::loadout::Loadout>,
     ) -> Self {
         Self {
             slot: slot.into(),
@@ -140,10 +140,11 @@ pub fn card_siblings(
 }
 
 /// A live fleet launch, as panel-play and tui-play both stash it: each
-/// member's catalog card transpiled, its harness bag (schema defaults,
-/// `settings` overrides, `inject`) with the member's own settings merged
-/// last, its sibling modules and the scenario's fixture `loadouts`, in the
-/// plan's Start order. The live harness Starts a card past its catalog dim.
+/// member's catalog card has already been prepared on WorkAdmission before
+/// calling this helper. It merges each member's harness bag (schema defaults,
+/// `settings` overrides, `inject`) with the member's own settings last,
+/// plus sibling modules and fixture `loadouts`, in the plan's Start order.
+/// The live harness Starts a card past its catalog dim.
 #[cfg(feature = "live-harness")]
 pub fn fleet_catalog_starts(
     fleet: scenario::FleetStart,
@@ -151,7 +152,7 @@ pub fn fleet_catalog_starts(
     library: &mut script::JsLibrary,
     settings: &script::ScriptSettingsStore,
     inject: Option<&Map<String, Value>>,
-    loadouts: &[script::Loadout],
+    loadouts: &[api::loadout::Loadout],
 ) -> Result<Vec<PendingCatalogStart>, String> {
     let catalog = script::ScriptSource::Catalog;
     fleet
@@ -159,9 +160,9 @@ pub fn fleet_catalog_starts(
         .into_iter()
         .map(|member| {
             let name = member.card;
-            library
-                .ensure_js(catalog, name)
-                .map_err(|e| format!("transpile {name}: {e}"))?;
+            if !library.js_is_ready(catalog, name) {
+                return Err(format!("catalog card {name} is not prepared"));
+            }
             let card = library
                 .get(catalog, name)
                 .cloned()

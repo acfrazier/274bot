@@ -18,6 +18,7 @@ use deno_ast::swc::ast::*;
 use deno_ast::{MediaType, ParseParams, ParsedSource, ProgramRef};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 #[derive(Debug, Clone)]
 pub struct CompatSurface {
@@ -2396,7 +2397,7 @@ pub fn drift_against_shim(authored: &AuthoredSurface, shim: &CompatSurface) -> V
             drifts.push(format!("missing module {key}"));
             continue;
         };
-        compare_module(sm, am, &mut drifts);
+        compare_module(sm, am, preserved_overlay_members(), &mut drifts);
     }
 
     for am in &authored.modules {
@@ -2451,6 +2452,167 @@ fn wildcard_spec(spec: &str) -> String {
         spec.to_string()
     }
 }
+/// Declaration-only members are allowed only where an overlay explicitly
+/// preserves an upstream public class surface.
+fn compat_overlay_entries() -> &'static [serde_json::Value] {
+    static ENTRIES: LazyLock<Vec<serde_json::Value>> = LazyLock::new(|| {
+        [
+            include_str!("../compat-js/overlay.json"),
+            include_str!("../compat-js/overlay-native.json"),
+            include_str!("../compat-js/overlay-not-impl.json"),
+            include_str!("../compat-js/overlay-scene.json"),
+        ]
+        .into_iter()
+        .flat_map(|source| {
+            serde_json::from_str::<Vec<serde_json::Value>>(source)
+                .expect("parse compatibility overlay")
+        })
+        .collect()
+    });
+    ENTRIES.as_slice()
+}
+
+fn preserved_overlay_members() -> &'static [(String, String)] {
+    static MEMBERS: LazyLock<Vec<(String, String)>> = LazyLock::new(|| {
+        compat_overlay_entries()
+            .iter()
+            .filter(|entry| entry["preserveMembers"].as_bool() == Some(true))
+            .map(|entry| {
+                (
+                    format!("*{}", entry["module"].as_str().expect("overlay module")),
+                    entry["selector"]
+                        .as_str()
+                        .expect("overlay selector")
+                        .to_owned(),
+                )
+            })
+            .collect()
+    });
+    MEMBERS.as_slice()
+}
+
+fn preserved_overlay_has_not_impl_member(label: &str, owner: &str, member: &str) -> bool {
+    let module = label.strip_prefix('*').unwrap_or(label);
+    compat_overlay_entries().iter().any(|entry| {
+        entry["operation"] == "not-impl"
+            && entry["module"].as_str() == Some(module)
+            && entry["selector"]
+                .as_str()
+                .and_then(|selector| selector.strip_prefix(owner))
+                .and_then(|suffix| suffix.strip_prefix('.'))
+                == Some(member)
+    })
+}
+
+fn method_body_refuses_not_impl(body: Option<&BlockStmt>) -> bool {
+    let Some(body) = body else {
+        return false;
+    };
+    if body.stmts.len() != 1 {
+        return false;
+    }
+    let Stmt::Throw(throw) = &body.stmts[0] else {
+        return false;
+    };
+    let Expr::Call(call) = throw.arg.as_ref() else {
+        return false;
+    };
+    matches!(
+        &call.callee,
+        Callee::Expr(callee)
+            if matches!(callee.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "notImpl")
+    )
+}
+
+/// PaintFrame's declared class is a public view of the object returned from
+/// `Paint.begin`; retain only methods that exist on its runtime frame object.
+fn paint_frame_runtime_members() -> &'static HashSet<String> {
+    static MEMBERS: LazyLock<HashSet<String>> = LazyLock::new(|| {
+        let Some(parsed) = parse_js(
+            "/paint/Paint.js",
+            include_str!("shim/paint.js"),
+            MediaType::JavaScript,
+        ) else {
+            return HashSet::new();
+        };
+        let ProgramRef::Module(module) = parsed.program_ref() else {
+            return HashSet::new();
+        };
+        for item in &module.body {
+            let ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) = item else {
+                continue;
+            };
+            let Decl::Var(variables) = &export.decl else {
+                continue;
+            };
+            for variable in &variables.decls {
+                let Pat::Ident(name) = &variable.name else {
+                    continue;
+                };
+                if name.id.sym.as_ref() != "Paint" {
+                    continue;
+                }
+                let Some(Expr::Object(paint)) = variable.init.as_deref() else {
+                    continue;
+                };
+                for property in &paint.props {
+                    let PropOrSpread::Prop(property) = property else {
+                        continue;
+                    };
+                    let Prop::Method(begin) = property.as_ref() else {
+                        continue;
+                    };
+                    if prop_name(&begin.key).as_deref() != Some("begin") {
+                        continue;
+                    }
+                    let Some(body) = &begin.function.body else {
+                        continue;
+                    };
+                    for statement in &body.stmts {
+                        let Stmt::Decl(Decl::Var(locals)) = statement else {
+                            continue;
+                        };
+                        for local in &locals.decls {
+                            let Pat::Ident(name) = &local.name else {
+                                continue;
+                            };
+                            if name.id.sym.as_ref() != "frame" {
+                                continue;
+                            }
+                            let Some(Expr::Object(frame)) = local.init.as_deref() else {
+                                continue;
+                            };
+                            return frame
+                                .props
+                                .iter()
+                                .filter_map(|property| {
+                                    let PropOrSpread::Prop(property) = property else {
+                                        return None;
+                                    };
+                                    let Prop::Method(method) = property.as_ref() else {
+                                        return None;
+                                    };
+                                    if method_body_refuses_not_impl(method.function.body.as_ref()) {
+                                        return None;
+                                    }
+                                    prop_name(&method.key)
+                                })
+                                .collect();
+                        }
+                    }
+                }
+            }
+        }
+        HashSet::new()
+    });
+    &MEMBERS
+}
+
+fn preserved_native_frame_member(label: &str, owner: &str, member: &str) -> bool {
+    label == "*paint/Paint.js"
+        && owner == "PaintFrame"
+        && paint_frame_runtime_members().contains(member)
+}
 
 fn inherited_export(exp: &CompatExport, available: &[&CompatExport]) -> CompatExport {
     let mut resolved = exp.clone();
@@ -2485,7 +2647,12 @@ fn inherited_export(exp: &CompatExport, available: &[&CompatExport]) -> CompatEx
     resolved
 }
 
-fn compare_module(shim: &ShimModule, authored: &AuthoredModule, drifts: &mut Vec<String>) {
+fn compare_module(
+    shim: &ShimModule,
+    authored: &AuthoredModule,
+    preserved_members: &[(String, String)],
+    drifts: &mut Vec<String>,
+) {
     let label = wildcard_spec(&authored.specifier);
     let shim_types: Vec<_> = shim.exports.iter().chain(&shim.privates).collect();
     let declaration_types: Vec<_> = authored.exports.iter().chain(&authored.privates).collect();
@@ -2507,6 +2674,7 @@ fn compare_module(shim: &ShimModule, authored: &AuthoredModule, drifts: &mut Vec
             &label,
             &inherited_export(exp, &shim_types),
             &inherited_export(dts, &declaration_types),
+            preserved_members,
             drifts,
         );
     }
@@ -2551,7 +2719,13 @@ fn compare_module(shim: &ShimModule, authored: &AuthoredModule, drifts: &mut Vec
     }
 }
 
-fn compare_export(label: &str, shim: &CompatExport, dts: &CompatExport, drifts: &mut Vec<String>) {
+fn compare_export(
+    label: &str,
+    shim: &CompatExport,
+    dts: &CompatExport,
+    preserved_members: &[(String, String)],
+    drifts: &mut Vec<String>,
+) {
     match (shim, dts) {
         (
             CompatExport::Function {
@@ -2602,7 +2776,7 @@ fn compare_export(label: &str, shim: &CompatExport, dts: &CompatExport, drifts: 
                 members: dmembers, ..
             },
         ) => {
-            compare_members(label, name, members, dmembers, drifts);
+            compare_members(label, name, members, dmembers, preserved_members, drifts);
         }
         (CompatExport::Value { name }, _) => {
             if export_ident(dts) != name.as_str() {
@@ -2655,10 +2829,16 @@ fn compare_members(
     owner: &str,
     shim: &[Member],
     dts: &[Member],
+    preserved_members: &[(String, String)],
     drifts: &mut Vec<String>,
 ) {
     for m in shim {
         let Some(d) = dts.iter().find(|x| x.name == m.name) else {
+            // A JS class has an implicit zero-argument constructor when its
+            // declaration omits one; only explicit constructor parameters drift.
+            if m.kind == MemberKind::Constructor && m.params.is_empty() {
+                continue;
+            }
             drifts.push(format!("{label} {owner} missing member {}", m.name));
             continue;
         };
@@ -2681,8 +2861,17 @@ fn compare_members(
             );
         }
     }
+    let preserved_owner = preserved_members
+        .iter()
+        .any(|(module, member)| module == label && member == owner);
     for d in dts {
-        if !shim.iter().any(|m| m.name == d.name) {
+        if shim.iter().any(|m| m.name == d.name) {
+            continue;
+        }
+        let allowed_preserved_member = preserved_owner
+            && (preserved_overlay_has_not_impl_member(label, owner, &d.name)
+                || preserved_native_frame_member(label, owner, &d.name));
+        if !allowed_preserved_member {
             drifts.push(format!("{label} {owner} extra authored member {}", d.name));
         }
     }

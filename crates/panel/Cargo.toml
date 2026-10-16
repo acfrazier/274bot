@@ -6,7 +6,10 @@ publish = false
 
 [dependencies]
 api = { path = "../api" }
-arboard = { version = "3", default-features = false }
+# `wayland-data-control`: on a Wayland desktop read and write the Wayland
+# clipboard directly; without it arboard only reaches X11, whose clipboard is
+# empty while a Wayland window has focus, so Ctrl+V never pasted.
+arboard = { version = "3", default-features = false, features = ["wayland-data-control"] }
 client = { workspace = true, features = ["audio"] }
 dear-imgui-rs = "0.15"
 dear-imgui-wgpu = "0.15"

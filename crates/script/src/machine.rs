@@ -528,6 +528,9 @@ struct Entry {
     callbacks: &'static [&'static str],
     kick_on_start: bool,
     begin: fn(Value, Vec<Hook>, usize) -> Started,
+    /// [`Family::SYNC_HOOKS`]. The ABI coverage test reads this field.
+    #[cfg(test)]
+    sync_hooks: &'static [usize],
 }
 
 const fn entry<F: Family>() -> Entry {
@@ -536,6 +539,8 @@ const fn entry<F: Family>() -> Entry {
         callbacks: F::CALLBACKS,
         kick_on_start: F::KICK_ON_START,
         begin: begin_row::<F>,
+        #[cfg(test)]
+        sync_hooks: F::SYNC_HOOKS,
     }
 }
 
@@ -620,6 +625,8 @@ const FAMILIES: &[Entry] = &[
     entry::<tests::Kicked>(),
     #[cfg(test)]
     entry::<tests::Ask>(),
+    #[cfg(test)]
+    entry::<tests::NotificationOrder>(),
     #[cfg(test)]
     entry::<tests::Inline>(),
     #[cfg(test)]
@@ -1640,6 +1647,7 @@ pub(crate) mod tests {
     impl Family for Hooked {
         const NAME: &'static str = "hooked";
         const CALLBACKS: &'static [&'static str] = &["sync", "later", "mark"];
+        const SYNC_HOOKS: &'static [usize] = &[0];
         type Args = HookedArgs;
         type Output = Value;
 
@@ -1901,6 +1909,43 @@ pub(crate) mod tests {
                     hook: 0,
                     args: Vec::new(),
                 }),
+            }
+        }
+    }
+
+    /// Feeds a fixture effect through Hunt's real notification/decision
+    /// consumer, without duplicating its notes loop or callback mapping.
+    pub(crate) struct NotificationOrder {
+        started: bool,
+    }
+
+    impl Family for NotificationOrder {
+        const NAME: &'static str = "notification-order";
+        const CALLBACKS: &'static [&'static str] = crate::hunt::HOOKS;
+        const KICK_ON_START: bool = true;
+        type Args = Value;
+        type Output = Value;
+
+        fn begin(_args: Value, _cx: &mut Cx<'_>) -> Begin<Self> {
+            Begin::Run(Self { started: false })
+        }
+
+        fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+            if self.started {
+                return match cx.reply() {
+                    Some(Reply::Value(value)) => Step::Done(value),
+                    Some(Reply::Threw(thrown)) => Step::Fail(thrown),
+                    None => Step::Wait,
+                };
+            }
+            self.started = true;
+            let effect = json!({
+                "kind": "eat",
+                "notes": [{"kind": "count-kill"}, {"kind": "count-kill"}],
+            });
+            match crate::hunt::characterize_effect(&effect, cx) {
+                Ok(Some(step)) => step,
+                Ok(None) | Err(_) => Step::Wait,
             }
         }
     }
@@ -2610,5 +2655,86 @@ pub(crate) mod tests {
                 button(6)
             ]
         );
+    }
+
+    #[test]
+    fn every_production_family_callback_has_an_abi_row_matching_sync_hooks() {
+        use crate::native::abi::{FrozenPathStatus, HookPath, HOOK_CHARACTERIZATIONS};
+        use crate::native::divergence::{DivergenceStatus, DIVERGENCES};
+
+        const TEST_FAMILY_NAMES: &[&str] = &[
+            "probe",
+            "solo",
+            "walker",
+            "hooked",
+            "burst",
+            "present",
+            "nested",
+            "solo-hooked",
+            "inline",
+            "solo-asker",
+            "ask",
+            "notification-order",
+            "kicked",
+        ];
+        for family in super::FAMILIES {
+            if TEST_FAMILY_NAMES.contains(&family.name) {
+                continue;
+            }
+            for (index, member) in family.callbacks.iter().enumerate() {
+                let rows: Vec<_> = HOOK_CHARACTERIZATIONS
+                    .iter()
+                    .filter(|row| row.families().contains(&family.name) && row.member() == *member)
+                    .collect();
+                assert!(
+                    !rows.is_empty(),
+                    "no ABI row for registered {} / {}",
+                    family.name,
+                    member
+                );
+                let sync = family.sync_hooks.contains(&index);
+                for row in rows {
+                    assert_eq!(
+                        row.path() == HookPath::CallSync,
+                        sync,
+                        "{} / {} path {:?} vs SYNC_HOOKS {:?}",
+                        family.name,
+                        member,
+                        row.path(),
+                        family.sync_hooks
+                    );
+                }
+            }
+        }
+        for row in HOOK_CHARACTERIZATIONS {
+            for name in row.families() {
+                let family = super::FAMILIES
+                    .iter()
+                    .find(|family| {
+                        family.name == *name && !TEST_FAMILY_NAMES.contains(&family.name)
+                    })
+                    .unwrap_or_else(|| panic!("ABI row names unregistered family {name}"));
+                assert!(
+                    family.callbacks.contains(&row.member()),
+                    "ABI row {name} / {} is not a registered callback",
+                    row.member()
+                );
+            }
+        }
+        for row in HOOK_CHARACTERIZATIONS {
+            let FrozenPathStatus::ExistingDiscrepancy { q5_row, .. } = row.frozen_path() else {
+                continue;
+            };
+            let id = q5_row.to_string();
+            let found = DIVERGENCES
+                .iter()
+                .find(|divergence| divergence.id() == id)
+                .unwrap_or_else(|| panic!("q5_row {q5_row} is not in DIVERGENCES"));
+            assert_eq!(
+                found.status(),
+                DivergenceStatus::Existing,
+                "q5_row {q5_row} must be an existing discrepancy"
+            );
+        }
     }
 }

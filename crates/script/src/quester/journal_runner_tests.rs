@@ -583,6 +583,7 @@ fn lifecycle_followups_death_preserves_a_respawn_user_prayer_across_pause_and_ho
                     &data,
                     &quests,
                     cap,
+                    &crate::local_state::OperatorLoadouts::absent(),
                 )
             }
         })
@@ -1780,6 +1781,44 @@ fn nonempty_gate_needs_evidence_keeps_navigation_reason() {
         script.last_error.as_deref(),
         Some("walk needs authoritative quest-gate evidence")
     );
+}
+
+#[test]
+fn typed_bank_deposit_failures_keep_user_text_in_quester_status_and_trace() {
+    use crate::bank::ops::DepositFailure;
+
+    let (mut script, _) = fixture(false);
+    for (reason, expected) in [
+        (
+            DepositFailure::DispatchRefused,
+            "bank deposit dispatch was refused",
+        ),
+        (
+            DepositFailure::DispatchMissing,
+            "bank deposit dispatch receipt was not observed",
+        ),
+        (
+            DepositFailure::NoCountFall,
+            "bank deposit did not move inventory",
+        ),
+        (
+            DepositFailure::FullStack,
+            "bank deposit refused: full stack in bank",
+        ),
+        (
+            DepositFailure::BankFull,
+            "bank deposit refused: bank is full",
+        ),
+        (
+            DepositFailure::Unbankable,
+            "bank deposit refused: item cannot be banked",
+        ),
+    ] {
+        let error = ActionError::BankDeposit(reason);
+        script.record_failure(error.clone());
+        assert_eq!(script.blocked_failure().message.as_ref(), expected);
+        assert_eq!(trace_error_reason(&error), expected);
+    }
 }
 
 #[test]

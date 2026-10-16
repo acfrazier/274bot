@@ -7,6 +7,7 @@ use crate::keep_list;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvItemName {
     pub name: Option<String>,
+    pub noted: bool,
 }
 
 /// Food form keys for `foodName`, using selected item catalog when present.
@@ -14,8 +15,19 @@ pub fn food_forms_for(data: Option<&SelectedGameData>, food_name: &str) -> Vec<S
     keep_list::food_forms(data.map_or(&[], |data| data.items()), food_name)
 }
 
-/// Frozen `foodCount(items, foodName)` (`food.ts:78-80`): the slots holding
-/// any form of the food. Matches borrowed names; allocates nothing.
+/// Frozen `isEdibleFood(item, foodName)` (`food.ts:80-82`).
+pub fn is_edible_food(
+    data: Option<&SelectedGameData>,
+    item: &InvItemName,
+    food_name: &str,
+) -> bool {
+    !item.noted
+        && keep_list::FoodForms::new(data.map_or(&[], |data| data.items()), food_name)
+            .contains(item.name.as_deref().unwrap_or(""))
+}
+
+/// Frozen `foodCount(items, foodName)` (`food.ts:84-86`): unnoted slots
+/// holding any form of the food. Matches borrowed names; allocates nothing.
 pub fn food_count(
     data: Option<&SelectedGameData>,
     items: &[InvItemName],
@@ -24,7 +36,7 @@ pub fn food_count(
     let forms = keep_list::FoodForms::new(data.map_or(&[], |data| data.items()), food_name);
     items
         .iter()
-        .filter(|row| forms.contains(row.name.as_deref().unwrap_or("")))
+        .filter(|row| !row.noted && forms.contains(row.name.as_deref().unwrap_or("")))
         .count()
 }
 
@@ -108,12 +120,15 @@ mod tests {
             let items = vec![
                 InvItemName {
                     name: Some("Trout".into()),
+                    noted: false,
                 },
                 InvItemName {
                     name: Some("Trout".into()),
+                    noted: false,
                 },
                 InvItemName {
                     name: Some("Lobster".into()),
+                    noted: false,
                 },
             ];
             assert_eq!(food_count(Some(&data), &items, "Trout"), 2);
@@ -122,12 +137,32 @@ mod tests {
     }
 
     #[test]
+    fn noted_food_is_not_edible_or_counted() {
+        let data = data(ClientRevision::R274);
+        let noted = InvItemName {
+            name: Some("2/3 cake".into()),
+            noted: true,
+        };
+        let unnoted = InvItemName {
+            name: Some("2/3 cake".into()),
+            noted: false,
+        };
+        assert!(!is_edible_food(Some(&data), &noted, "Cake"));
+        assert!(is_edible_food(Some(&data), &unnoted, "Cake"));
+        assert_eq!(food_count(Some(&data), &[noted, unnoted], "Cake"), 1);
+    }
+
+    #[test]
     fn empty_name_matches_empty_form_key() {
         let data = data(ClientRevision::R274);
         let items = vec![
-            InvItemName { name: None },
+            InvItemName {
+                name: None,
+                noted: false,
+            },
             InvItemName {
                 name: Some("".into()),
+                noted: false,
             },
         ];
         assert_eq!(food_count(Some(&data), &items, ""), 2);

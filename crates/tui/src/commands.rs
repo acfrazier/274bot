@@ -5,6 +5,9 @@
 //! shortcuts: each table below is routed only while its pane has keyboard
 //! focus, so no letter leaks into another pane or a text field.
 
+use frontend_core::{
+    combined_bulk_scope, marked_availability, BulkScope, MarkedAction, MarkedBlock,
+};
 use script::RunState;
 
 use crate::app::{TuiApp, WalkSendMode};
@@ -28,6 +31,7 @@ pub enum Command {
     MarkAllShown,
     ClearMarks,
     LoadLoginAll,
+    ImportProfiles,
     LogoutAll,
     Login,
     Logout,
@@ -189,6 +193,7 @@ impl Command {
         Command::ClearMarks,
         Command::LoadLoginAll,
         Command::LogoutAll,
+        Command::ImportProfiles,
         Command::Login,
         Command::Logout,
         Command::Remove,
@@ -241,7 +246,8 @@ impl Command {
             | Command::MarkAllShown
             | Command::ClearMarks
             | Command::LoadLoginAll
-            | Command::LogoutAll => Group::Fleet,
+            | Command::LogoutAll
+            | Command::ImportProfiles => Group::Fleet,
             Command::Login
             | Command::Logout
             | Command::Remove
@@ -293,6 +299,7 @@ impl Command {
             Command::ClearMarks => "Clear row selection",
             Command::LoadLoginAll => "Load + log in all…",
             Command::LogoutAll => "Log out all…",
+            Command::ImportProfiles => "Import rs2b0t profiles…",
             Command::Login => "Log in",
             Command::Logout => "Log out",
             Command::Remove => "Remove from fleet…",
@@ -380,21 +387,27 @@ impl Command {
             Some(name) => format!("BOT {name}"),
             None => "no bot selected".to_string(),
         };
-        let selected_scope = || {
-            if app.table.selection.is_empty() {
-                format!("all {}", members_text(app.names.len()))
-            } else {
-                format!("{} marked bots", app.table.selection.len())
-            }
+        let selected_scope = || match combined_bulk_scope(&app.table.selection) {
+            BulkScope::All => format!("all {}", members_text(app.names.len())),
+            BulkScope::Marked => format!("{} marked bots", app.table.selection.len()),
         };
         match self.group() {
             Group::App => "app".into(),
             Group::Logs => "log".into(),
             Group::Fleet => match self {
-                Command::LoadLoginAll if !app.table.selection.is_empty() => selected_scope(),
+                Command::LoadLoginAll
+                    if combined_bulk_scope(&app.table.selection) == BulkScope::Marked =>
+                {
+                    selected_scope()
+                }
                 Command::LoadLoginAll => "every vault profile".into(),
-                Command::LogoutAll if !app.table.selection.is_empty() => selected_scope(),
+                Command::LogoutAll
+                    if combined_bulk_scope(&app.table.selection) == BulkScope::Marked =>
+                {
+                    selected_scope()
+                }
                 Command::LogoutAll => format!("all {}", members_text(app.names.len())),
+                Command::ImportProfiles => "vault".into(),
                 _ => "fleet table".into(),
             },
             Group::Script
@@ -502,27 +515,38 @@ impl Command {
                 .ok_or("no reload awaiting confirmation"),
             Command::ScriptStartAll | Command::ScriptStopAll => members(),
             Command::ScriptAssignMarked | Command::ScriptRestartMarked => {
-                if app.table.selection.is_empty() {
-                    Err("mark fleet rows first (Space)")
+                let action = if self == Command::ScriptAssignMarked {
+                    MarkedAction::Assign
                 } else {
-                    app.script_sel
-                        .as_ref()
-                        .map(|_| ())
-                        .ok_or("browse to pick a script first")
+                    MarkedAction::AssignAndRestart
+                };
+                match marked_availability(
+                    action,
+                    app.table.selection.len(),
+                    app.script_sel.is_some(),
+                    app.focused_name().is_some(),
+                ) {
+                    Ok(()) => Ok(()),
+                    Err(MarkedBlock::NothingMarked) => Err("mark fleet rows first (Space)"),
+                    Err(MarkedBlock::NoFocusedBot) => {
+                        Err("no bot selected (Fleet: Enter or click a row)")
+                    }
+                    Err(MarkedBlock::NoCard) => Err("browse to pick a script first"),
                 }
             }
-            Command::ScriptApplyMarked => {
-                if app.table.selection.is_empty() {
-                    Err("mark fleet rows first (Space)")
-                } else if app.focused_name().is_none() {
+            Command::ScriptApplyMarked => match marked_availability(
+                MarkedAction::ApplySettings,
+                app.table.selection.len(),
+                app.script_sel.is_some(),
+                app.focused_name().is_some(),
+            ) {
+                Ok(()) => Ok(()),
+                Err(MarkedBlock::NothingMarked) => Err("mark fleet rows first (Space)"),
+                Err(MarkedBlock::NoFocusedBot) => {
                     Err("no bot selected (Fleet: Enter or click a row)")
-                } else {
-                    app.script_sel
-                        .as_ref()
-                        .map(|_| ())
-                        .ok_or("browse to pick a script first")
                 }
-            }
+                Err(MarkedBlock::NoCard) => Err("browse to pick a script first"),
+            },
             Command::ToggleGameChat => app
                 .chat_data
                 .script_paint

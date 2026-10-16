@@ -3,8 +3,8 @@ use api::interact::Driver;
 use api::prot::Out;
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{
-    ActorView, GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocalPlayerView,
-    PlayerView, StatView, WorldStateView, WorldTile,
+    ActorView, GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView,
+    LocalPlayerView, PlayerView, SceneView, SideTabView, StatView, WorldStateView, WorldTile,
 };
 use api::ItemDefView;
 use script::native::{HostEffect, InteractionReceipt, NativePhase, SettingsBag};
@@ -1573,6 +1573,7 @@ fn restart_required_edit_is_not_applied_in_place() {
             Arc::new(bag),
             prepared_selected,
             Arc::default(),
+            None,
         )
     })
     .unwrap()
@@ -1738,6 +1739,7 @@ fn restart_required_edit_supersedes_an_older_boundary_edit() {
                 Arc::new(bag),
                 selected,
                 Arc::default(),
+                None,
             )
         })
         .unwrap()
@@ -1827,6 +1829,7 @@ fn power_to_bank_edit_waits_for_the_live_drop_batch_and_the_next_full_pack() {
             ),
             preparation_selected,
             Arc::default(),
+            None,
         )
     })
     .unwrap()
@@ -1942,7 +1945,7 @@ fn assert_resource_return(
     request: &script::native::WalkRequest,
     anchor: WorldTile,
 ) {
-    assert_eq!(request.arrival, nav::arrival::ArrivalKind::Area);
+    assert_eq!(request.arrival, nav::contract::ArrivalKind::Area);
     assert_eq!(request.radius, 1);
     assert_eq!(request.target.level, anchor.level);
     let region = api::gather_methods::SceneRegionInput {
@@ -2238,6 +2241,7 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
                 Arc::new(settings),
                 selected,
                 facts,
+                None,
             )
         }
     })
@@ -3385,6 +3389,7 @@ fn site_first_walk_resume_and_changed_site_fresh_start_keep_selected_resource_an
             Arc::new(changed),
             worker_selected,
             Arc::default(),
+            None,
         )
     })
     .unwrap()
@@ -3540,4 +3545,179 @@ fn exhausted_site_stops_instead_of_widening() {
         "resource-unavailable"
     );
     assert_eq!(site_work_anchor(&slot), anchor);
+}
+/// The Mime return mesbox can arrive before the inventory sidebar is restored.
+#[test]
+fn mime_unlock_page_is_continued_before_inventory_readiness() {
+    let selected = selected();
+    let mut settings = SettingsBag::new();
+    settings.insert("skill".into(), serde_json::json!("Woodcutting"));
+    settings.insert("woodcuttingResources".into(), serde_json::json!(["yew"]));
+    settings.insert("location".into(), serde_json::json!("Start"));
+    settings.insert("radius".into(), serde_json::json!(12));
+
+    let target = WorldTile {
+        x: 3_085,
+        z: 3_468,
+        level: 0,
+    };
+    let here = WorldTile {
+        x: target.x + 3,
+        z: target.z + 1,
+        ..target
+    };
+    let mut frame = snapshot(&[]);
+    frame.seed_stats(vec![StatView {
+        index: 8,
+        name: "woodcutting".into(),
+        effective: 60,
+        base: 60,
+        xp: 0,
+        used: true,
+    }]);
+    let mut world = *frame.world();
+    world.map_base_x = target.x - 52;
+    world.map_base_z = target.z - 52;
+    frame.seed_world(world);
+    frame.seed_scene(SceneView {
+        available: true,
+        base_x: target.x - 52,
+        base_z: target.z - 52,
+        level: 0,
+        width: 104,
+        height: 104,
+        collision_flags: vec![0; 104 * 104],
+    });
+    let mut player = frame.local_player().unwrap().clone();
+    player.player.actor.tile = here;
+    player.player.network = here;
+    frame.seed_local_player(player);
+    frame.seed_locs(vec![LocView {
+        typecode: 0,
+        info: 0,
+        id: 1_309,
+        name: Some("Yew".into()),
+        description: None,
+        actions: vec![Some("Chop down".into())],
+        tile: target,
+        distance: 0,
+        layer: LocLayer::Ground,
+        shape: 10,
+        angle: 0,
+        width: 3,
+        length: 3,
+        footprint_width: 3,
+        footprint_length: 3,
+        block_walk: true,
+        block_range: true,
+        active: true,
+        animation: -1,
+        map_function: -1,
+        map_scene: -1,
+        force_approach: 0,
+    }]);
+    frame.seed_side_tabs(
+        vec![SideTabView {
+            index: 3,
+            root_component_id: 3_213,
+            available: true,
+            active: false,
+            visible: false,
+            widgets: Vec::new(),
+        }],
+        -1,
+    );
+    let mut slot = started_with(4_270, &selected, settings);
+    let mut now = 0;
+    let (authority, id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    assert!(
+        matches!(
+            effect,
+            HostEffect::Interaction(InteractReq::Loc {
+                id: Some(1_309),
+                action,
+                ..
+            }) if action == "Chop down"
+        ),
+        "the Gatherer must be chopping before the Mime interruption"
+    );
+    accept_trip_operation(&mut slot, &authority, id, now);
+
+    // The return page reaches an already-running Gatherer before
+    // mapzoneexit restores the inventory tab (`macro_event_mime.rs2:38-41`).
+    frame.seed_side_tabs(
+        vec![SideTabView {
+            index: 3,
+            root_component_id: -1,
+            available: false,
+            active: false,
+            visible: false,
+            widgets: Vec::new(),
+        }],
+        -1,
+    );
+    frame.seed_inventory(Vec::new(), 0);
+    frame.seed_chat_modal(356, vec!["You can now use the Climb Rope emote!".into()]);
+    frame.seed_chat_options(Vec::new(), 358);
+
+    let mut continued = false;
+    for _ in 0..4 {
+        now += 1;
+        tick(&mut slot, &frame, now);
+        while let Some(action) = slot.take_native_action() {
+            continued |= matches!(
+                &action.effect,
+                HostEffect::Interaction(InteractReq::ContinueDialog { .. })
+            );
+            let authority = action.authority();
+            accept_trip_operation(&mut slot, &authority, action.request_id.get(), now);
+        }
+        if continued {
+            break;
+        }
+    }
+    assert!(
+        continued,
+        "Gatherer must continue the Mime reward page before requiring inventory readiness"
+    );
+
+    frame.seed_chat_modal(-1, Vec::new());
+    frame.seed_chat_options(Vec::new(), -1);
+    frame.seed_side_tabs(
+        vec![SideTabView {
+            index: 3,
+            root_component_id: 3_213,
+            available: true,
+            active: false,
+            visible: false,
+            widgets: Vec::new(),
+        }],
+        -1,
+    );
+    frame.seed_inventory(Vec::new(), 28);
+    let mut resumed = false;
+    for _ in 0..8 {
+        now += 1;
+        tick(&mut slot, &frame, now);
+        while let Some(action) = slot.take_native_action() {
+            resumed |= matches!(
+                &action.effect,
+                HostEffect::Interaction(InteractReq::Loc {
+                    id: Some(1_309),
+                    action,
+                    ..
+                }) if action == "Chop down"
+            );
+            let authority = action.authority();
+            accept_trip_operation(&mut slot, &authority, action.request_id.get(), now);
+        }
+        if resumed {
+            break;
+        }
+    }
+    assert!(
+        resumed,
+        "Gatherer must resume chopping after the Mime reward page closes"
+    );
+    slot.stop();
 }

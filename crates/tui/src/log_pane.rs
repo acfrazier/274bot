@@ -12,6 +12,7 @@ use frontend_core::log::{
     default_save_path, global, save_text, Level, LogEntry, LogScope, LogView, SaveTicket, Source,
 };
 use frontend_core::log_file::{apply_session_log, persist_session_log_setting};
+use host_play::local_state::Preferences;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -94,15 +95,15 @@ impl LogPaneState {
             PaneScope::Process => self.view.set_scope(LogScope::Process),
             PaneScope::All => self.view.set_scope(LogScope::All),
         }
-        let newest = self.view.rows().back().map(|e| e.seq);
-        if global().refresh(&mut self.view) && !self.view.follow {
+        let newest = self.view.rows().back().map(|e| e.seq());
+        if global().refresh(&mut self.view) && !self.view.follow() {
             // Keep a paused view on the rows it shows.
             let added = self
                 .view
                 .rows()
                 .iter()
                 .rev()
-                .take_while(|e| newest.is_some_and(|seq| e.seq > seq))
+                .take_while(|e| newest.is_some_and(|seq| e.seq() > seq))
                 .count();
             self.scroll = (self.scroll + added).min(self.view.len().saturating_sub(1));
         }
@@ -115,7 +116,7 @@ impl LogPaneState {
                 });
             }
         }
-        if self.view.follow {
+        if self.view.follow() {
             self.scroll = 0;
         }
     }
@@ -123,7 +124,7 @@ impl LogPaneState {
     /// The operator is looking at the log: nothing shown is unread.
     pub fn mark_seen(&mut self) {
         if let Some(entry) = self.view.rows().back() {
-            self.seen = self.seen.max(entry.seq);
+            self.seen = self.seen.max(entry.seq());
         }
     }
 
@@ -132,11 +133,11 @@ impl LogPaneState {
         let mut all = 0;
         let mut loud = 0;
         for entry in self.view.rows().iter().rev() {
-            if entry.seq <= self.seen {
+            if entry.seq() <= self.seen {
                 break;
             }
             all += 1;
-            loud += usize::from(entry.level >= Level::Warn);
+            loud += usize::from(entry.level() >= Level::Warn);
         }
         (all, loud)
     }
@@ -146,8 +147,14 @@ impl LogPaneState {
     }
 
     /// One key while the view has keyboard focus. Returns whether the view
-    /// used it; Esc outside the search line is left to the router.
-    pub fn on_key(&mut self, key: KeyEvent, focused: Option<&str>) -> bool {
+    /// used it; Esc outside the search line is left to the router. The
+    /// session-file toggle writes through the process service's preferences.
+    pub fn on_key(
+        &mut self,
+        key: KeyEvent,
+        focused: Option<&str>,
+        preferences: Option<&Preferences>,
+    ) -> bool {
         let text = !key
             .modifiers
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
@@ -169,8 +176,8 @@ impl LogPaneState {
         match key.code {
             KeyCode::Char('/') if text => self.editing = true,
             KeyCode::Char('v') if text => {
-                let next = next_level(self.view.filter().min_level);
-                self.view.edit_filter(|f| f.min_level = next);
+                let next = next_level(self.view.filter().min_level());
+                self.view.edit_filter(|f| f.set_min_level(next));
             }
             KeyCode::Char('s') if text => {
                 let next = next_source(self.view.filter().single_source());
@@ -178,7 +185,7 @@ impl LogPaneState {
             }
             KeyCode::Char('b') if text => self.scope = self.scope.next(),
             KeyCode::Char('f') if text => {
-                self.view.follow = !self.view.follow;
+                self.view.set_follow(!self.view.follow());
                 self.scroll = 0;
             }
             KeyCode::Up | KeyCode::Char('k') => self.scroll_up(1),
@@ -188,10 +195,10 @@ impl LogPaneState {
             KeyCode::Home => self.scroll_up(usize::MAX / 2),
             KeyCode::End => {
                 self.scroll = 0;
-                self.view.follow = true;
+                self.view.set_follow(true);
             }
             KeyCode::Char('w') if text => self.save(focused),
-            KeyCode::Char('F') if text => self.toggle_session_file(),
+            KeyCode::Char('F') if text => self.toggle_session_file(preferences),
             _ => return false,
         }
         true
@@ -209,9 +216,13 @@ impl LogPaneState {
     }
 
     /// Flip the shared session-file preference and apply it.
-    pub fn toggle_session_file(&mut self) {
+    pub fn toggle_session_file(&mut self, preferences: Option<&Preferences>) {
         let on = !global().file_open();
-        self.status = Some(match persist_session_log_setting(on) {
+        let Some(preferences) = preferences else {
+            self.status = Some("session file setting: preferences not bound".into());
+            return;
+        };
+        self.status = Some(match persist_session_log_setting(preferences, on) {
             Ok(()) => match apply_session_log(on) {
                 Some(path) => format!("session file {}", path.display()),
                 None => "session file off".into(),
@@ -231,12 +242,12 @@ impl LogPaneState {
 
     fn apply_search(&mut self) {
         let text = self.search.clone();
-        self.view.edit_filter(|f| f.text = text);
+        self.view.edit_filter(|f| f.set_text(text));
         self.scroll = 0;
     }
 
     fn scroll_up(&mut self, rows: usize) {
-        self.view.follow = false;
+        self.view.set_follow(false);
         self.scroll = self
             .scroll
             .saturating_add(rows)
@@ -246,7 +257,7 @@ impl LogPaneState {
     fn scroll_down(&mut self, rows: usize) {
         self.scroll = self.scroll.saturating_sub(rows);
         if self.scroll == 0 {
-            self.view.follow = true;
+            self.view.set_follow(true);
         }
     }
 
@@ -259,12 +270,16 @@ impl LogPaneState {
         };
         format!(
             "{scope} ≥{} src:{} {}",
-            self.view.filter().min_level.label(),
+            self.view.filter().min_level().label(),
             self.view
                 .filter()
                 .single_source()
                 .map_or("all", Source::label),
-            if self.view.follow { "follow" } else { "paused" }
+            if self.view.follow() {
+                "follow"
+            } else {
+                "paused"
+            }
         )
     }
 }
@@ -295,17 +310,17 @@ pub fn render_rows(state: &LogPaneState, area: Rect, buf: &mut Buffer, scroll: u
     let rows = state.view.rows();
     let end = rows.len().saturating_sub(scroll);
     let start = end.saturating_sub(usize::from(area.height));
-    let all = matches!(state.view.scope(), LogScope::All);
+    let all = state.view.scope().is_all();
     let ticks = area.width >= 100;
     let mut tick = [0u8; 16];
     for (i, entry) in rows.range(start..end).enumerate() {
         let y = area.y + i as u16;
         let mut x = area.x;
-        put(buf, right, &mut x, y, entry.clock.as_str(), dim);
+        put(buf, right, &mut x, y, entry.clock().as_str(), dim);
         x += 1;
         if ticks {
             let mut cursor = std::io::Cursor::new(&mut tick[..]);
-            let _ = match entry.tick {
+            let _ = match entry.tick() {
                 Some(t) => write!(cursor, "t{t:<7}"),
                 None => write!(cursor, "t-      "),
             };
@@ -321,25 +336,18 @@ pub fn render_rows(state: &LogPaneState, area: Rect, buf: &mut Buffer, scroll: u
             x += 1;
         }
         if all {
-            put(
-                buf,
-                right,
-                &mut x,
-                y,
-                entry.slot.as_deref().unwrap_or("*"),
-                accent,
-            );
+            put(buf, right, &mut x, y, entry.slot().unwrap_or("*"), accent);
             x += 1;
         }
-        put(buf, right, &mut x, y, entry.source.label(), dim);
+        put(buf, right, &mut x, y, entry.source().label(), dim);
         x += 1;
         put(
             buf,
             right,
             &mut x,
             y,
-            &entry.message,
-            level_style(entry.level),
+            entry.message(),
+            level_style(entry.level()),
         );
     }
     if rows.is_empty() && area.height > 0 {

@@ -1,7 +1,487 @@
 # Changelog
 
-All notable public changes to 274bot. Host workspace crate versions are `0.2.2` and
+All notable public changes to 274bot. Host workspace crate versions are `0.2.3` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
+
+## Unreleased
+
+### Scripts
+
+- Reload and catalog refresh prepare source, siblings and settings off the UI
+  thread. Their buttons show **Reloading…** or **Refreshing catalog…** through
+  preparation and validation, rather than calling both stages validation.
+- Load-script validation now waits for bounded admission without failing
+  merely because multiple refreshes submit together. If the independent JS
+  deadline service refuses a running execution, its tick error identifies
+  the service condition instead of calling the execution runaway.
+- A poisoned Load-script isolate can now retire without stopping the shared
+  deadline supervisor or refusing new scripts for other accounts.
+- Path-folder refreshes and Quester starts now prepare bounded Path batches
+  off the UI and game threads. Superseded preparations do not replace the
+  active Path registry.
+
+- Card preparation now admits bounded background jobs for Starts, restarts,
+  settings saves, gathering facts, catalogue refreshes and Path reloads. When
+  the worker is temporarily full, these actions wait for a receipt instead of
+  failing. Invalid or oversized inputs still produce a visible refusal.
+  The settings editor retains at most 64 pending native saves or deliveries.
+  Further requests report a queue-limit refusal until earlier receipts settle.
+- A card's source and sibling graph is limited to 8 MiB. The rs2b0t catalog
+  accepts at most 4,096 registrations and 8,192 source files. Exceeding
+  either limit reports a catalogue error rather than consuming unbounded resources.
+- Background preparation coalesces replaceable progress rather than failing
+  a valid large catalogue at a progress-count limit. If an arbitrary job
+  fills its immutable progress custody, it still completes; later progress
+  updates are dropped and reported as diagnostics. A contained job panic is
+  reported as **background work job failed internally**, not as a slice
+  allowance violation.
+- A Quester folder accepts at most 4,096 entries, 1 MiB per Path document and
+  16 MiB of retained documents. Larger folders or documents report a typed
+  validation error and leave the last successful registry available.
+
+### Random-event guardian
+
+- Disabling random-event handling no longer leaves Gatherer or other scripts
+  waiting forever on a detected event, such as a held Strange box. Events
+  remain visible, but do not pause scripts while handling is disabled.
+
+### Gatherer and banking
+
+- A Gatherer that stalls on its return from the bank now replans once from
+  its current position before stopping. It still requires arrival at the
+  gathering site and reports routes that remain blocked.
+- Gatherer and Quester banking now check the current inventory and retry once
+  after a refused or ineffective deposit. Items already deposited are not
+  counted twice, and protected items remain protected. Gatherer keeps unbankable
+  items and continues gathering whenever the pack still has space after depositing,
+  including tool-fetch and supply-only trips that deposit nothing. A pack filled
+  by actual supply withdrawals reports that no gathering space remains. Both
+  scripts report a full bank or full item stack. Quester still refuses
+  unbankable deposits.
+  Unsolved Strange boxes multiply over time and their stacks spread into freed
+  inventory slots. With event handling disabled, if no supply withdrawals fill
+  the pack first, Gatherer stops with the unbankable-item reason once the boxes
+  fill it.
+
+### Saved state
+
+- A vault file that ends right after its header is now reported as a corrupt
+  vault file, not a wrong passphrase. A file damaged further in still reports
+  a wrong passphrase, because the encryption can't tell the two apart.
+- Vault error messages in the panel and the log no longer quote values from
+  the decrypted vault.
+- A saved bank hint, `loadouts.json` or `panel-ui.json` that 274bot can't
+  read (a bank hint from another version or for another account, a file
+  larger than its limit or writable by other users, or a damaged bank hint
+  or `loadouts.json`) is now left untouched and named in the log with the
+  reason. It used to be treated as empty and overwritten at the next save.
+  A JavaScript script Start is refused, with the file and the reason, while
+  `loadouts.json` can't be read; a Quester stops the Path that needs it.
+- A damaged `panel-ui.json` (not JSON, or JSON that isn't an object) is
+  still moved aside to `panel-ui.json.corrupt-<time>` by the next
+  preference save, which then starts fresh preferences, as before; until
+  then, settings read from it fail closed. Now the copy keeps exactly the
+  damaged file's bytes and is on disk before the file is replaced, and the
+  log shows a warning and an audit line naming the copy. A `panel-ui.json`
+  refused for its permissions or size is never moved aside: preference
+  saves fail with a message until you repair or remove it.
+- A saved file holding something this version can't write back (a field it
+  doesn't know in a bank hint, a loadout row it can't read, a setting in
+  `panel-ui.json` it can't store as it is, for example one whose name has a
+  dot or a space in it) is read but never rewritten, so nothing in it is
+  lost. `panel-ui.json` has no version of its own: one written by another
+  version is read and saved like any other, and a save keeps every setting
+  in it, including ones this version doesn't know.
+- A bank hint now records the game content it was seen under, and a hint
+  from other content is not used. The log says so; remove the file to start
+  a new hint.
+- The Loadouts window (panel and TUI) and every preference save now go
+  through the same saving service as the bots, so a form save and a bot's
+  save can no longer overwrite each other. If the loadouts changed since
+  the window loaded them (another 274bot on the same home folder), the save
+  says so and keeps your edit for another try. Renaming a loadout to
+  another loadout's name is refused with "A loadout named "…" already
+  exists." (it used to leave two loadouts with one name).
+- If `loadouts.json` already has loadouts that share a name, 274bot renames
+  them apart when it reads the file: the second becomes "<name> (2)", the
+  third "<name> (3)", and so on, skipping a name another loadout already
+  has (a very long name is shortened to make room). Every loadout keeps its
+  gear and its place in the list. Before anything changes, the file is
+  copied exactly as it was to `loadouts.json.duplicates-<time>`, and the log
+  shows a warning and an audit line naming the copy and each renamed
+  loadout. Before, editing, renaming or removing one of those loadouts could
+  change or remove another one of the same name. If the copy fails, the save
+  fails before the file is replaced, or the file also holds a loadout row
+  this version can't write back, the file is left as it was and treated as
+  one 274bot can't read until it can be renamed. If the file was replaced
+  but 274bot couldn't confirm it reached the disk, the log warns that the
+  renames aren't saved for certain yet, and the renamed loadouts are used.
+- Renaming a loadout saves it in one step, in its place in the list, and
+  never loses it. If the save fails before the file is replaced, the
+  loadout stays saved under its old name. If the file was replaced but
+  274bot couldn't confirm it reached the disk (an error flushing its
+  folder), the save is reported as an error, and the loadout may already be
+  saved under its new name.
+- Two 274bot processes on the same home folder take turns writing each
+  saved file, and a save is reported done only when the file still holds it
+  after it reached the disk: a change by another program in the meantime is
+  reported as a conflict, never as saved.
+- No save is reported done before the file and its folder entries are on
+  disk, also after a failed attempt. Closing 274bot finishes saves still
+  waiting (up to 60 seconds); a save still waiting past that is reported
+  cancelled in the log, one line per save, instead of being dropped
+  silently.
+
+### Login
+
+- A login that finishes after its lease deadline, Logout, or world switch
+  cannot become an active session. An expired handshake keeps its place until
+  it actually returns, so another bot cannot overlap it. The queue cancels
+  its socket and then admits the next bot in normal order.
+- A login refused before it starts no longer uses the next bot's login
+  spacing or device/address allowance. Refused and cancelled sockets close
+  before the next queued login is admitted.
+- Relog now keeps the login request after logging out and clears its pending
+  notice when the replacement session starts. Queue cards distinguish a
+  server-imposed login hold from spacing and label a retiring handshake
+  **previous login is finishing**.
+- Editing a running bot's uid applies to its next login without repeatedly
+  cycling the login queue. Saving a new password does not count as a clean
+  logout: clean-logout release pacing remains in effect. A bot already waiting
+  in the login queue refuses its old login and rejoins at the back.
+- Unread session-end boundaries are delivered in order up to a bound of 32;
+  the consuming lifecycle read reports how many older boundaries were missed
+  if the bound fills.
+
+### Panel
+
+- The Fleet window's filter matches several words and world numbers, the
+  same as the TUI's: every word must match a bot's name or status, and
+  `w301` or `world:301` matches its world.
+- Start on the marked bots uses each bot's saved script when no card is
+  selected in Scripts, instead of being unavailable until a card is
+  picked. A marked bot with no saved script is named in the report.
+- When nothing is marked and no card is selected, the Fleet window's
+  Start, Assign and Assign & restart buttons now say "mark at least one
+  profile" first, instead of only asking for a card.
+- The Assign & restart confirmation names the first six bots it stops
+  and the first six it starts, and counts the rest ("+N more") beside
+  the total for each, instead of listing every name.
+
+### TUI
+
+- The Assign & restart confirmation names the bots whose running script
+  it stops and the idle bots it starts, as the panel's does: the first
+  six of each, with the rest counted ("+N more") beside each total.
+
+### Profiles
+
+- On Windows, giving the rs2b0t import a folder instead of the exported
+  file now says it is not a regular file, as on Linux and macOS, instead of
+  "cannot read …: Access is denied".
+
+### Fixed during development
+
+- One slow disk write no longer leaves script cards, the script catalogue or
+  profiles stopped until 274bot restarts.
+
+## [0.2.3] — 2026-10-14 — Beta 1 patch
+
+### Profiles
+
+- **Import your accounts from rs2b0t.** In rs2b0t, export your profiles from
+  Settings (this writes `rs2b0t-profiles.json`). Then choose **Import from
+  rs2b0t…** in the panel's Profiles window, or **Import rs2b0t profiles…** in
+  the TUI command palette, and give the file's path. The vault must be
+  unlocked, and nothing is saved until you confirm the preview.
+  - **What comes over:** each account's username, password (into the
+    encrypted vault) and world; its selected script and saved script
+    settings, matched by name in your rs2b0t script catalog (import the
+    catalog first); its genie lamp skill and clue duel partner; and
+    rs2b0t's renderer-off setting, which turns the profile's display off.
+  - **What doesn't:** tabs, rs2b0t's run-energy and route-drawing options,
+    loadouts and order books. The preview and the report list each one with
+    the reason.
+  - **Accounts you already have** are kept unless you choose Overwrite,
+    which changes only what the export carries. The preview shows each
+    setting's old and new value, and importing the same file again changes
+    nothing.
+  - **Accounts the server would refuse** (a username over 12 characters, or
+    a password that's empty or over 20 characters) are listed as unusable
+    and skipped unless you ask for them. Passwords are never shortened.
+  - **Your passwords stay private.** The export file holds them in plain
+    text, so once every imported account is confirmed saved, 274bot offers
+    to delete it. A password never appears in the preview, the report or a
+    log message; one that turns up in another field, such as a tab name,
+    shows as `***`. The log's account column still shows account names,
+    even one that matches a password.
+
+### Quests and dialogues
+
+- A conversation closed by an attack no longer counts as finished. Any hit,
+  even a miss, closes the chat; a quest step now stops with "dialogue
+  interrupted by combat" and can be retried, and script dialogues
+  (`driveDialog` / `talkThrough`) report failure the same way.
+
+### Random-event guardian
+
+- When a random event attacks (a River troll, a Swarm, an angry Strange plant
+  and similar), the bot keeps running between hits, misses included, instead
+  of walking back to its spot next to the attacker. It runs until the
+  attacker stops chasing and returns once the attacker is gone.
+  - If it's boxed in and gets no farther away for about 13 seconds while
+    still being attacked, it stops and hands back to the script, which can
+    then eat or fight.
+  - An attacker that's out of sight or has stopped attacking can keep the
+    script paused for up to about 10 minutes.
+  - Either way, the bot doesn't walk back toward the attacker.
+- Panel and TUI have a new per-event Policies control for random events.
+  Flee is the default and the only option that works yet.
+- When a chopped tree becomes an Ent, the Guardian stops chopping and waits
+  for the tree to return before the Gatherer resumes, so the Ent can't break
+  the axe.
+- Lost-tool recovery no longer gives up on a pickaxe or axe after one
+  refused click. It retries on the next game tick, within the existing
+  recovery limit.
+
+### Scripts
+
+- **More rs2b0t scripts and helpers work.** This release is checked against
+  a newer rs2b0t:
+  - JiveDragons, JiveDemons and JiveKBD now start. Their loot checks know
+    which held items stack, including noted, poisoned and untradeable items.
+  - CowKiller uses its supported locations and bank choices.
+  - Banking: `shouldBankNow`, `isDisposableGatherJunk` and `waitBankReady`.
+    The junk check covers gems, strange fruit, beer, kebabs, the
+    random-event casket, fliers and half-eaten pies. `waitBankReady` returns
+    as soon as the bank's item list has arrived, without rs2b0t's extra
+    short pause. `parseBankStrategy('Loot count')` now returns the declared
+    `items` strategy rather than `loot`.
+  - Combat and banking: `facingPlayer`, `resolveCombatStyle` and
+    `resolveBankOpenRoute`. Ranged plans honour caller-selected potions.
+  - Tools: Attack gates (`toolAttackLevel`, `toolsNeedingEquip`) stay
+    separate from held-tool selection (`bestHeldToolNames`,
+    `surplusHeldToolNames`), and axe requirements use rs2b0t's level-1
+    default.
+  - Firemaking: `parseBurnMode`, `findBurnLane`, spot selection and
+    tree-log helpers.
+  - Hunting: `ENCLAVE_TARGET_OPTIONS`, `enclaveTargets` and `chasesTarget`.
+    Paladin and Hero pickpocket leashes cover their 289 roaming areas.
+  - Clues and dialogues: `pickByLine`, `isUnderground`, `needsHop`,
+    `trailKit` and `nextCoordTool`; cake stalls get `classifySteal`.
+  - Food checks, ranged plans, trade and shop batching, clue distance,
+    door walking and mining helpers. Quest-only mining rocks stay out of
+    the regular ore options.
+  - TypeScript declarations cover script completion hooks, task labels,
+    current task names and the `InvItem.noted` flag.
+- A script that imports an rs2b0t value the bot doesn't support now loads;
+  using that value stops the script with a `not impl` message naming it,
+  instead of a missing-export error at Start.
+- When a catalog script uses an rs2b0t member this version doesn't provide,
+  Start names the member, without claiming the catalog is newer than this
+  version (some older members are missing too).
+- The Gatherer continues message boxes before waiting for its inventory tab,
+  so a Mime emote-unlock message after the return teleport no longer stops
+  gathering from resuming.
+
+### Panel
+
+- The "only render selected" checkbox is now called "only render focused".
+  It always meant the bot shown in the Game pane, not the bots selected in
+  the fleet list.
+- On Linux Wayland desktops (such as KDE Plasma), Ctrl+V now pastes into the
+  panel's text fields, including the vault password and profile fields.
+- The Profiles window shows the profile list and the editor side by side
+  when there is room, each scrolling on its own, with a divider you can
+  drag. In the narrow default dock the editor sits under the list, and
+  Close always stays in view.
+
+### Not in this release
+
+Planned work that didn't make this release, plus options and script calls
+that visibly refuse. Where a fix is planned, the item says so.
+
+**Quests and combat**
+
+- Quest guides cover 25 of 69 quests. Haunted Mine is unavailable on the
+  supported server. The guides that ship are still beta rather than all
+  checked end to end. More quest coverage is planned for a later release.
+- The Quester doesn't yet pick quest-aware supplies or pick up every quest
+  where you left off: earned quest items, some mid-conversation resumes,
+  following up on some quest targets, and coin costs in quest requirements
+  aren't handled. Quest resume and recipe work is planned for a later
+  release.
+- Prayer flicking, safespots, luring around corners, attacking other players,
+  range-aware standing spots, automatic gear switching and face-tank fallbacks
+  aren't here. Combat settings the game doesn't support still refuse to start,
+  and fights without progress still use the existing time limits. Combat
+  tactics are planned for later combat work.
+- Hunt keeps its two-minute fight limit and retreat behaviour; it hasn't moved
+  to the full combat system. Hunt parity is planned for later combat work.
+
+**Walking, gathering and clues**
+
+- Walks into quest areas that unlock as a quest progresses, regional
+  entrances and transports such as boats and gliders, the land route over
+  White Wolf Mountain below level 51, and some traveller and cosmetic walks
+  aren't fully handled yet. Fuller routing is planned for a later release.
+- Gathering sites the route finder can't reach yet stay hidden: 90 on 289 and
+  71 on 274. They're in Morytania, Tirannwn, the islands and boat or glider
+  trips, places behind gates and fences, and caves and underground areas. A
+  saved Gatherer card that names one refuses to start with an "unknown" site
+  error; pick another site. They come back as the route finder learns the
+  entrances, which is planned for a later release. A few enclosed spots have
+  no known way in yet, so those may stay hidden.
+- Apart from random events, the bot doesn't yet react when something attacks
+  it during non-combat work: it doesn't run from, for example, an aggressive
+  monster near a gathering spot, so a bot on a very long session can
+  occasionally die. Every hit, even a miss, also closes an open shop or bank
+  window. Reacting to other attackers is planned for later combat work; if a
+  bot dies, its log around the death helps us look into it.
+- In the random-event Policies control, Fight and Ignore can be chosen but
+  aren't available yet; a saved Fight or Ignore is treated as Flee. Running
+  from an angry Strange plant doesn't cure its poison.
+- Faster interactions aren't here: acting on the nearest thing first, not
+  walking through the thing you're acting on, shorter follow-ups when using an
+  item on something next to you, and reaching a clue's usable side in one walk.
+- The Gatherer gets no closest-site option, no shop tool buying, and no tool
+  provisioning while a quest route is holding the inventory. Finding locked
+  areas and matching gather timing are unchanged. More Gatherer work is
+  planned for a later release.
+- Clues that need a key you don't carry, locked chests, and Kharazi and
+  Tirannwn coverage stay incomplete, and clue conversations still go one step
+  at a time. The wider clue backlog is planned for a later release.
+- The WalkTo town list is unchanged, and map redraw work is planned for a
+  later release.
+
+**Scripts and compatibility**
+
+- Some catalog scripts are dimmed in the script picker and can't be started:
+  AIOQuester and Barcrawl (the built-in Quester replaces them, and Barcrawl
+  is planned for it); GatheringBot's Woodcutter, Miner and Fisher, and
+  EssMiner (the built-in Gatherer replaces them); MarketMaker and BankSorter
+  (both planned as built-in features); ArravSupplier and RoguesPurse (they use
+  rs2b0t quest helpers the bot doesn't provide yet); JiveKQ (its four-player
+  setup isn't qualified yet); and one BrimhavenAgility version that retries a
+  broken plank instead of taking another route.
+- Scripts that use these rs2b0t helpers still refuse to start, or stop with
+  a `not impl` message naming the helper when they reach it:
+  - Walking and NPCs: `Traversal.remaining`, `requestRepath`, `walkApproach`,
+    `gotoNpc`, `talkChoosingBy`, the walk destination list, and the
+    nearest-walkable-bank and walk-cost selectors.
+  - Banking: `sortBank`, `findQuestJunk`, `coinsToWithdraw`,
+    `purgePackAtBank`, `withdrawCoins`, `withdrawTo`, `bankPace` and
+    `bankPaceTicks`.
+  - Inventory: `backpackSnapshots`, `backpackCapacity` and
+    `acquireKeepNames`.
+  - Gathering: the woodcutting, mining and fishing location lists and
+    pickers, tool and fishing-gear buying and repair plans, and the checks
+    for walking back to a gathering spot.
+  - Shops and market: `Shop.buyById`, `buildCatalog`, `searchCatalog`,
+    `resolveByName` and `resetLiveCatalog`.
+  - Combat and spells: `Fight.hasChaseTarget`, `Game.castOnNpc`, and the
+    `Input` methods that use an item on something or cast a spell
+    (`useItemOnLoc`, `useItemOnNpc`, `useItemOnObj`, `useItemOnItem`,
+    `castOnNpc`, `castOnLoc`, `castOnItem`).
+  - Chat and objects: `ChatDialog.makeOne`, `Input.continueDialog`,
+    `EntityQuery.inside` and `nearestPreferLocal`, and `GameMessages.record`,
+    `reset`, `firstSince` and `recent`. `GameMessages.mark`, `since` and
+    `sawSince` read the chat the bot has seen, not a message list the script
+    can change.
+  - Paint: building a `PaintFrame` directly, `PaintState` and `paintState`,
+    the frame layout helpers (`cols`, `wrap`, `list`, `fill`, `grid`,
+    `stepper`) and the hit-testing helpers.
+  - Client access: snapshot invalidation, attach and detach, packet
+    listeners, object-catalog reset, object model sizes, readiness checks,
+    retaliate and modal-button reads, the combat-showing threshold and
+    `WELCOME_SCREEN`.
+  - Script runtime: settings catalogs, `settingOptionLabel`, run-policy and
+    runner lifecycle helpers, `BotHostImpl`, script events (`events.on`/`off`,
+    `registerScript`), the task classes (`AcquireTask`, `BranchTask`,
+    `LeafTask`), `resolveLoopCadence` and `stableClosedPoll`. rs2b0t's timing
+    isn't carried over.
+  - Quests, clues and duels: `Quests.journal`, the quest engine, the murder
+    and suspect tables, clue-visit locations, quest coin and bank rules,
+    `trailWalkOpts`, `extraItemShop`, `gateItemShop`, `ClueDuelSearch` and
+    `resetClueDuelSearch`.
+
+  Some other helpers refuse only a request they can't handle, with the same
+  message and the reason.
+- Scripts written against rs2b0t releases newer than the one this release
+  was checked against can use calls the bot doesn't know yet: they fail to
+  start, or stop when they reach the call.
+- The clearer Start messages don't yet separate "can't do that right now"
+  from "not implemented" everywhere in scripts.
+- FlourCollector, the Zanaris cook, JiveDemons and JiveKBD stay unqualified,
+  and the stronger pair-trade checks don't qualify every pair setup.
+- A Duel script that remembers the wrong opponent can still wait in a Duel
+  Arena fight pen until the fight moves on. Correct opponent tracking is
+  planned for a later release.
+
+**Panel, TUI, memory and host**
+
+- The rs2b0t import doesn't bring over rs2b0t's profile tabs and groups,
+  its account-wide run, bank and walking settings (auto-run, run energy,
+  bank junk, the Zanaris and Mage Arena banks, teleports, route drawing),
+  loadouts or order books. A selected script that's dimmed in 274bot (such
+  as Woodcutter, which the built-in Gatherer replaces) or missing from your
+  catalog isn't selected. The preview lists each of these with the reason.
+- No quick world switch from the world bubble, no Fleet bulk world switch
+  with script pause and resume, no game-window resizing, no script-window
+  auto-sizing, and no custom profile ordering. These controls are planned for
+  a later release.
+- Grid cells don't each paint their script, the terminal shows no game
+  pixels, GPU sampling stays approximate, and the pickpocket wall-clip fix
+  isn't in this release. Rendering work is planned for a later release.
+- The Mac memory readout still shows RSS rather than physical footprint, and
+  turning render-all off can leave counted-but-reclaimable memory behind; the
+  capacity warning doesn't change that accounting. Readout improvements are
+  planned for a later release.
+- Waking bots together and using fewer connection resources per bot are
+  planned for later host work; this release brings no broader CPU or memory
+  optimization.
+- Copying settings onto a profile with no bot can still save without
+  assigning when a later copy fails or is cancelled, and there is no saved
+  quest-route knowledge yet. Saved-state work is planned for a later release.
+- Full audit logging of operator actions, frame-stall diagnostics and
+  lock-order checking aren't here; the Gatherer and watchdog messages are
+  specific fixes, not that project. Region-load lines still appear under the
+  login category.
+
+**Testing and supported versions**
+
+- CowKiller, EdgevilleMonkeyBars, JiveMarketDumper and ShopRunner have no
+  live test scenario, so their behaviour on a live server is untested.
+- 289 is the supported server version; 274 stays best-effort and unqualified.
+
+### Known issues
+
+- **Panel (Linux):** on a desktop with two graphics chips (for example a
+  Ryzen with built-in graphics plus a separate graphics card), the panel can
+  close right after it starts with "importing the supplied dmabufs failed".
+  Start it with `WGPU_POWER_PREF=high ./panel-play` until this is fixed.
+  0.2.0.2, 0.2.1, 0.2.2 and 0.2.3 have the same problem.
+
+### Fixed during development
+
+- The random-event Guardian remembers where an attacker first appeared,
+  before its delayed attack starts. It keeps fleeing if a Tree spirit still
+  targets the bot after the first escape.
+- The escape route goes far enough to let an attacker stop chasing and leave.
+  A visible attacker normally prevents the bot from returning too soon.
+- When an attacker leaves view, the bot continues toward its escape target.
+  If the bot stops beyond the attacker's reach, it returns after about
+  13 seconds without seeing the attacker, even if the route stopped short.
+- A failed escape no longer prevents the script from eating for several
+  minutes while an attacker keeps hitting a boxed-in bot. After the bot
+  stops trying, the same attacker cannot immediately pause the script again.
+- Ordinary monsters with random-event names no longer trigger event handling.
+  A former attacker no longer hides a newly detected event.
+- The Guardian uses visible player targeting to avoid claiming another
+  player's nearby Ent. Before that target is visible, a nearby Ent can still
+  be mistaken for this bot's event. All Ent waits end after 60 game ticks.
+- Without selected game content, the status still shows an identified event
+  attacker, but the Guardian does not guess a flee distance or pause the script.
 
 ## [0.2.2] — 2026-10-13 — Beta 1 patch
 

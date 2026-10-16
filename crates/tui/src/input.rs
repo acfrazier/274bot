@@ -13,6 +13,7 @@
 //! menu and never acts as a left click.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use frontend_core::{combined_bulk_scope, BulkScope};
 
 use crate::app::{AppAction, TuiApp};
 use crate::commands::{
@@ -303,15 +304,7 @@ impl TuiApp {
             return AppAction::None;
         }
         if command.is_bulk() {
-            let marked = matches!(
-                command,
-                Command::ScriptStartAll
-                    | Command::ScriptStopAll
-                    | Command::ScriptAssignMarked
-                    | Command::ScriptRestartMarked
-                    | Command::LoadLoginAll
-                    | Command::LogoutAll
-            ) && !self.table.selection.is_empty();
+            let marked = combined_bulk_scope(&self.table.selection) == BulkScope::Marked;
             let members = if marked {
                 self.marked_names()
             } else {
@@ -386,6 +379,9 @@ impl TuiApp {
                 self.loadouts_state.worn_scratch.clear();
                 self.loadouts_state.carry_scratch.clear();
             }
+            Command::ImportProfiles => self.open_modal(Modal::ProfileImport(
+                crate::profile_import::ImportView::default(),
+            )),
             Command::ManualWalk => self.open_modal(Modal::Manual),
             Command::DismissNotice => return AppAction::AckBackground,
             Command::ScriptBrowse | Command::ScriptLoad | Command::ImportCatalog => {
@@ -421,7 +417,10 @@ impl TuiApp {
                 let focused = self.focused_name();
                 self.log.save(focused.as_deref());
             }
-            Command::LogSessionFile => self.log.toggle_session_file(),
+            Command::LogSessionFile => {
+                let preferences = self.shared_preferences().cloned();
+                self.log.toggle_session_file(preferences.as_ref())
+            }
             Command::ScriptApplyMarked => return AppAction::ScriptApplyMarkedPrepare,
             Command::LoadLoginAll
             | Command::LogoutAll
@@ -461,8 +460,9 @@ impl TuiApp {
 
     fn log_search_key(&mut self, key: KeyEvent) -> Option<AppAction> {
         let focused = self.focused_name();
+        let preferences = self.shared_preferences().cloned();
         self.log
-            .on_key(key, focused.as_deref())
+            .on_key(key, focused.as_deref(), preferences.as_ref())
             .then_some(AppAction::None)
     }
 
@@ -566,7 +566,11 @@ impl TuiApp {
             },
             Screen::Logs => {
                 let focused = self.focused_name();
-                if self.log.on_key(key, focused.as_deref()) {
+                let preferences = self.shared_preferences().cloned();
+                if self
+                    .log
+                    .on_key(key, focused.as_deref(), preferences.as_ref())
+                {
                     AppAction::None
                 } else if key.code == KeyCode::Esc {
                     self.show_screen(Screen::Overview)
@@ -590,7 +594,12 @@ impl TuiApp {
 
     fn drawer_key(&mut self, key: KeyEvent) -> AppAction {
         let focused = self.focused_name();
-        if !self.log.on_key(key, focused.as_deref()) && key.code == KeyCode::Esc {
+        let preferences = self.shared_preferences().cloned();
+        if !self
+            .log
+            .on_key(key, focused.as_deref(), preferences.as_ref())
+            && key.code == KeyCode::Esc
+        {
             self.key_focus = Pane::Detail;
         }
         AppAction::None
@@ -622,6 +631,12 @@ impl TuiApp {
                 // longer describes it.
                 self.settings_save.edited();
             }
+            SettingsKey::ChangedWithNotice(reason) => {
+                self.settings_dirty = true;
+                self.settings_save.edited();
+                self.error = Some(reason.into());
+            }
+            SettingsKey::Refused(reason) => self.error = Some(reason.into()),
             SettingsKey::WalkGlobal(preference) => {
                 let pending = frontend_core::WalkGlobalsView {
                     globals: self.nav,
@@ -634,21 +649,21 @@ impl TuiApp {
                     self.map_route_through_zones = false;
                 }
                 self.queue_nav_preference(preference);
-                if self.shared_preferences_path().is_none() {
+                if self.shared_preferences().is_none() {
                     self.refresh_walk_permissions();
                 }
             }
             SettingsKey::ScriptScopeNoticeAck => {
                 self.script_scope_notice_ack = true;
                 self.queue_nav_preference(frontend_core::NavPreference::ScriptScopeNoticeAck);
-                if self.shared_preferences_path().is_none() {
+                if self.shared_preferences().is_none() {
                     self.refresh_walk_permissions();
                 }
             }
             SettingsKey::SurvivableRoutingNoticeAck => {
                 self.survivable_routing_notice_ack = true;
                 self.queue_nav_preference(frontend_core::NavPreference::SurvivableRoutingNoticeAck);
-                if self.shared_preferences_path().is_none() {
+                if self.shared_preferences().is_none() {
                     self.refresh_walk_permissions();
                 }
             }

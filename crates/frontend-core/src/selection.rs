@@ -54,8 +54,37 @@ impl From<i32> for ProfileIdentity {
     }
 }
 
+/// The identity of member `index`: the caller's parallel vault identity
+/// when it has one, else the deterministic fixture identity of its name.
+/// `None` only when `index` has no name.
+pub fn profile_id_at(
+    ids: &[ProfileIdentity],
+    names: &[String],
+    index: usize,
+) -> Option<ProfileIdentity> {
+    ids.get(index).copied().or_else(|| {
+        names
+            .get(index)
+            .map(|name| ProfileIdentity::synthetic(name))
+    })
+}
+
+/// The identity of the member called `name` (see [`profile_id_at`]); a
+/// name with no member gets its fixture identity, which marks nothing.
+pub fn profile_id_for_name(
+    names: &[String],
+    ids: &[ProfileIdentity],
+    name: &str,
+) -> ProfileIdentity {
+    names
+        .iter()
+        .position(|candidate| candidate == name)
+        .and_then(|index| profile_id_at(ids, names, index))
+        .unwrap_or_else(|| ProfileIdentity::synthetic(name))
+}
+
 /// The shared checkbox state used by panel, TUI and later fleet actions.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct MarkedSelection {
     marks: BTreeSet<ProfileIdentity>,
 }
@@ -103,6 +132,17 @@ impl MarkedSelection {
         self.marks.extend(identities);
     }
 
+    /// Mark every shown member: `shown` indices into `names`, resolved
+    /// through the parallel `ids` (see [`profile_id_at`]). Existing marks
+    /// are retained.
+    pub fn mark_shown(&mut self, names: &[String], ids: &[ProfileIdentity], shown: &[usize]) {
+        for &index in shown {
+            if let Some(identity) = profile_id_at(ids, names, index) {
+                self.marks.insert(identity);
+            }
+        }
+    }
+
     /// Remove a deleted profile's mark. Returns whether a mark was removed.
     pub fn remove(&mut self, identity: ProfileIdentity) -> bool {
         self.marks.remove(&identity)
@@ -126,25 +166,71 @@ impl MarkedSelection {
         self.marks.retain(|identity| identities.contains(identity));
     }
 
+    /// Drop marks absent from `sorted`, a caller-kept slice of universe
+    /// identities in ascending order (duplicates are harmless). The
+    /// allocation-free form of [`Self::retain`] for a surface that
+    /// prunes every frame: membership is a binary search over the
+    /// borrowed slice, so nothing is collected.
+    pub fn retain_sorted(&mut self, sorted: &[ProfileIdentity]) {
+        self.marks
+            .retain(|identity| sorted.binary_search(identity).is_ok());
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = ProfileIdentity> + '_ {
         self.marks.iter().copied()
     }
 }
 
 /// One marked row that could not accept a bulk command.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct BulkSkip {
-    pub profile: String,
-    pub reason: String,
+    profile: String,
+    reason: String,
+}
+
+impl BulkSkip {
+    pub(crate) fn new(profile: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            profile: profile.into(),
+            reason: reason.into(),
+        }
+    }
+
+    /// The marked profile that could not take the command.
+    pub fn profile(&self) -> &str {
+        &self.profile
+    }
+
+    /// Why it was skipped.
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
 }
 
 /// The report of Stop on marked rows. Every marked row is counted once:
 /// stopped, cancelled (it was still waiting for its Start) or skipped.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct StopReport {
-    pub stopped: usize,
-    pub cancelled: usize,
-    pub skipped: Vec<BulkSkip>,
+    stopped: usize,
+    cancelled: usize,
+    skipped: Vec<BulkSkip>,
+}
+
+impl StopReport {
+    /// How many marked rows were stopped.
+    pub fn stopped(&self) -> usize {
+        self.stopped
+    }
+
+    /// How many waiting Starts were cancelled.
+    pub fn cancelled(&self) -> usize {
+        self.cancelled
+    }
+
+    /// Rows that could not take Stop.
+    pub fn skipped(&self) -> &[BulkSkip] {
+        &self.skipped
+    }
 }
 
 impl StopReport {
@@ -212,6 +298,37 @@ pub fn start_marked<Io>(
     }
     scripts.admit_starts(core, catalog_root);
     scripts.publish_bulk();
+}
+
+/// Whether a Start on the marked profiles could start anything, in the
+/// terms [`start_marked`] uses: with a selected card, any mark counts
+/// (rows that cannot take it are named in its report); without one, at
+/// least one marked profile needs a saved assignment [`start_marked`]
+/// can start. Front ends use this to enable their Start control, so
+/// it only borrows: no assignment or selection is cloned and no
+/// profile is looked up by name.
+pub fn marked_startable<Io>(
+    selection: &MarkedSelection,
+    core: &OperatorSession<Io>,
+    card: Option<&script::ScriptSel>,
+) -> bool {
+    if selection.is_empty() {
+        return false;
+    }
+    if card.is_some() {
+        return true;
+    }
+    let Some(vault) = core.vault() else {
+        return false;
+    };
+    vault.profiles().any(|profile| {
+        selection.contains(ProfileIdentity::uid(profile.uid))
+            && profile
+                .settings
+                .script_assignment
+                .as_ref()
+                .is_some_and(crate::scripts::assignment_has_sel)
+    })
 }
 
 /// Stop the selected profiles through [`OperatorSession::stop_scripts`]. A
@@ -333,6 +450,21 @@ mod tests {
     }
 
     #[test]
+    fn retain_sorted_drops_marks_outside_the_borrowed_universe() {
+        let alice = ProfileIdentity::uid(11);
+        let bob = ProfileIdentity::uid(22);
+        let carol = ProfileIdentity::uid(33);
+        let mut marked = MarkedSelection::default();
+        marked.mark_all([alice, bob, carol]);
+        marked.retain_sorted(&[alice, carol]);
+        assert!(marked.contains(alice));
+        assert!(!marked.contains(bob));
+        assert!(marked.contains(carol));
+        marked.retain_sorted(&[]);
+        assert!(marked.is_empty());
+    }
+
+    #[test]
     fn toggling_is_idempotent_for_duplicate_commands() {
         let id = ProfileIdentity::uid(4);
         let mut marked = MarkedSelection::default();
@@ -363,15 +495,12 @@ mod tests {
             },
         );
         assert_eq!(admitted, ["alice", "bob"]);
-        assert_eq!(report.accepted, 1);
+        assert_eq!(report.accepted(), 1);
         assert_eq!(report.total(), 3);
         assert_eq!(
-            report.skipped,
+            report.skipped(),
             vec![
-                super::BulkSkip {
-                    profile: "bob".into(),
-                    reason: "not ready".into(),
-                },
+                super::BulkSkip::new("bob", "not ready"),
                 super::BulkSkip {
                     profile: format!("profile#{}", missing.raw()),
                     reason: "profile unavailable".into(),

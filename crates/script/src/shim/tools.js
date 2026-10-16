@@ -15,8 +15,8 @@ function native(op, ...args) {
 export const AXES = native('toolTiers', 'axes');
 export const PICKAXES = native('toolTiers', 'pickaxes');
 
-export function exactTool(name) {
-    return { name: String(name) };
+export function exactTool(name, opts = {}) {
+    return native('exactTool', String(name), opts);
 }
 
 export function tinderboxReq() {
@@ -59,6 +59,14 @@ export function canWieldTool(name, attack) {
     return native('canWieldTool', name, attack);
 }
 
+export function toolAttackLevel(name) {
+    return native('toolAttackLevel', String(name));
+}
+
+export function toolsNeedingEquip(reqs, skillLevel, count, worn) {
+    return native('toolsNeedingEquip', reqs, skillLevel, count, worn);
+}
+
 export function toolRestockPlan(reqs, skillLevel, invCount, bankCount) {
     return native('toolRestockPlan', reqs, skillLevel, invCount, bankCount);
 }
@@ -73,4 +81,12 @@ export function toolKitLabel(reqs, skillLevel, count) {
 
 export function bankHasBetterGatherTool(reqs, skillLevel, invCount, bankCount) {
     return native('bankHasBetterGatherTool', reqs, skillLevel, invCount, bankCount);
+}
+
+export function bestHeldToolNames(reqs, skillLevel, count) {
+    return native('bestHeldToolNames', reqs, skillLevel, count);
+}
+
+export function surplusHeldToolNames(reqs, skillLevel, count) {
+    return native('surplusHeldToolNames', reqs, skillLevel, count);
 }

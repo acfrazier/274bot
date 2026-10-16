@@ -607,9 +607,12 @@ creation does not construct it. Host admission initializes combat/risk facts
 lazily once per bound `NavWorld`; its retained route assessments share `Arc`s
 rather than rebuilding facts for each bot.
 
-The estimate builds a compact `KindRisk` for each packed zone kind from the
-selected `NpcNameRow` and `CombatTables`; it does not change routing or pack
-format. Maximum hits reuse the shared `npc_max_hit` helper, and attack intervals
+The estimate builds a compact `KindRisk` for each selected NPC from its
+`NpcNameRow` and `CombatTables`, keyed by NPC id, and reads a zone's facts
+through the zone's `nav::contract::ZoneKindView` (NPC id or curated hazard
+damage); no pack kind-row index reaches the estimate, and it does not change
+routing or pack format. Maximum hits reuse the shared `npc_max_hit` helper,
+and attack intervals
 use `CombatTables::npc_rate` (the selected combat parameter defaults to four
 ticks). Missing NPC rows or stats, unsupported styles, and values outside the
 compact model stay explicitly unknown rather than becoming zero-risk facts.
@@ -657,6 +660,11 @@ Proceed (including compat v1) uses the ordinary all-zone search and retains
 the honest assessment; compat publishes it only to hostlog. Avoid uses
 strict/endpoint routing. Effective Inherit may diagnose one witness and,
 only for at most eight known nonlethal keys, try one named re-search.
+The host binds each witness key to the world's zone view
+(`nav::producer::bind_key`; a group's members through
+`nav::producer::group_members`) and reads its facts through `ZoneKindView`,
+as the estimate does. Every member of a group must be known and nonlethal;
+an empty group refuses.
 It is bounded best effort, not a search over survivability. Actual kernel
 searches include endpoint/area/bank diagnosis paths and are counted in tests.
 One top-level all-zone call can still run the router's safe and granted

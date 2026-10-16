@@ -1,21 +1,36 @@
 use super::Scripts;
-use crate::operations::{OperationId, Outcome};
+use crate::operations::OperationId;
 use crate::session::OperatorSession;
 use serde_json::Value;
 
 /// Options shared by the panel and TUI, including read-time aliases and
 /// preserved values that are no longer present in the selected facts.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct ParameterOptions {
-    pub values: Vec<String>,
-    pub labels: Vec<String>,
+    values: Vec<String>,
+    labels: Vec<String>,
     /// Number of trailing display-only values that are not picker choices.
-    pub preserved: usize,
+    preserved: usize,
     aliases: Vec<(String, String)>,
     case_insensitive: bool,
 }
 
 impl ParameterOptions {
+    /// Stored option keys, including preserved display-only rows.
+    pub fn values(&self) -> &[String] {
+        &self.values
+    }
+
+    /// Labels parallel to [`Self::values`].
+    pub fn labels(&self) -> &[String] {
+        &self.labels
+    }
+
+    /// Number of trailing display-only values that are not picker choices.
+    pub fn preserved(&self) -> usize {
+        self.preserved
+    }
+
     fn canonical_option<'a>(&'a self, value: &'a str) -> &'a str {
         if self.values.iter().any(|option| option == value) {
             return value;
@@ -482,7 +497,7 @@ fn setting_values(def: &script::SettingDef, bag: &serde_json::Map<String, Value>
 }
 
 /// Identity of one editable field in one profile's selected card.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct ParameterEditKey {
     profile: Option<String>,
     card: String,
@@ -529,6 +544,15 @@ impl ParameterEditKey {
             .and_then(|rest| rest.strip_prefix(':'))
             == Some(identity)
     }
+
+    /// Owned HashMap key for a first insert. Not [`Clone`].
+    pub(crate) fn duplicate(&self) -> Self {
+        Self {
+            profile: self.profile.clone(),
+            card: self.card.clone(),
+            field: self.field.clone(),
+        }
+    }
 }
 
 fn cached_parameter_key<'a>(
@@ -564,7 +588,7 @@ fn edit_mut_or_insert<'a>(
 ) -> &'a mut ParameterEdit {
     if !edits.contains_key(key) {
         edits.insert(
-            key.clone(),
+            key.duplicate(),
             ParameterEdit::new(initial_text, baseline_value.clone()),
         );
     }
@@ -718,10 +742,12 @@ impl Scripts {
         initial_text: &str,
         baseline_value: Option<Value>,
     ) -> &mut String {
-        let edit = self
-            .parameter_edits
-            .entry(key.clone())
-            .or_insert_with(|| ParameterEdit::new(initial_text, baseline_value.clone()));
+        let edit = edit_mut_or_insert(
+            &mut self.parameter_edits,
+            key,
+            initial_text,
+            &baseline_value,
+        );
         if edit.pending.is_none() && !edit.dirty && edit.baseline_text != initial_text {
             edit.text.clear();
             edit.text.push_str(initial_text);
@@ -771,10 +797,12 @@ impl Scripts {
         def: &script::SettingDef,
         options: &[String],
     ) -> Result<Value, String> {
-        let edit = self
-            .parameter_edits
-            .entry(key.clone())
-            .or_insert_with(|| ParameterEdit::new(baseline_text, baseline_value));
+        let edit = edit_mut_or_insert(
+            &mut self.parameter_edits,
+            key,
+            baseline_text,
+            &baseline_value,
+        );
         validate_edit(edit, def, options)
     }
 
@@ -878,10 +906,7 @@ impl Scripts {
                 )
             });
         {
-            let edit = self
-                .parameter_edits
-                .entry(key.clone())
-                .or_insert_with(|| ParameterEdit::new(&baseline_text, current.clone()));
+            let edit = edit_mut_or_insert(&mut self.parameter_edits, key, &baseline_text, &current);
             if edit.text != raw {
                 edit.text.clone_from(&raw);
                 edit.validated_text.clone_from(&raw);
@@ -974,56 +999,54 @@ impl Scripts {
     }
 
     pub(crate) fn settle_parameter_edits<Io>(&mut self, core: &OperatorSession<Io>) {
-        let mut remove = Vec::new();
-        for (key, edit) in &mut self.parameter_edits {
+        self.parameter_edits.retain(|key, edit| {
             let Some((op, value, submitted_text)) = edit.pending.as_ref() else {
-                continue;
+                return true;
+            };
+            let Some(profile) = key.profile.as_deref() else {
+                return true;
             };
             let Some(outcome) = core
                 .operation(*op)
-                .and_then(|report| report.outcome(key.profile.as_deref()?))
-                .cloned()
+                .and_then(|report| report.outcome(profile))
             else {
-                continue;
+                return true;
             };
-            if matches!(outcome, Outcome::Pending) {
-                continue;
+            if outcome.is_pending() {
+                return true;
             }
+            let completed = outcome.is_completed();
+            let failed = outcome.is_failed() || outcome.is_skipped();
+            let cancelled = outcome.is_cancelled();
+            let failed_reason = failed.then(|| outcome.reason().unwrap_or_default().to_owned());
             let value = value.clone();
             let submitted_text = submitted_text.clone();
             edit.pending = None;
-            match outcome {
-                Outcome::Completed => {
-                    edit.baseline_value = Some(value);
-                    edit.baseline_text = submitted_text.clone();
-                    edit.error = None;
-                    if edit.discard_after_pending || edit.text == submitted_text {
-                        remove.push(key.clone());
-                    } else {
-                        edit.dirty = edit.text != edit.baseline_text;
-                    }
+            let discard = edit.discard_after_pending;
+            if completed {
+                edit.baseline_value = Some(value);
+                edit.baseline_text.clone_from(&submitted_text);
+                edit.error = None;
+                if discard || edit.text == submitted_text {
+                    return false;
                 }
-                Outcome::Failed(error) | Outcome::Skipped(error) => {
-                    edit.error = Some(error);
-                    edit.dirty = edit.text != edit.baseline_text;
-                    if edit.discard_after_pending {
-                        remove.push(key.clone());
-                    }
+                edit.dirty = edit.text != edit.baseline_text;
+            } else if failed {
+                edit.error = Some(failed_reason.unwrap_or_default());
+                edit.dirty = edit.text != edit.baseline_text;
+                if discard {
+                    return false;
                 }
-                Outcome::Cancelled => {
-                    edit.error = Some("settings save was cancelled".into());
-                    edit.dirty = edit.text != edit.baseline_text;
-                    if edit.discard_after_pending {
-                        remove.push(key.clone());
-                    }
+            } else if cancelled {
+                edit.error = Some("settings save was cancelled".into());
+                edit.dirty = edit.text != edit.baseline_text;
+                if discard {
+                    return false;
                 }
-                Outcome::Pending => unreachable!(),
             }
             edit.discard_after_pending = false;
-        }
-        for key in remove {
-            self.parameter_edits.remove(&key);
-        }
+            true
+        });
     }
 }
 
@@ -1093,9 +1116,7 @@ mod tests {
     #[test]
     fn gathers_preserve_unknowns_and_resolve_aliases_food_and_quest_order() {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R274).unwrap();
-        let loadouts = LoadoutsStore::at(
-            std::env::temp_dir().join(format!("parameter-options-{}.json", std::process::id())),
-        );
+        let loadouts = LoadoutsStore::default();
 
         let resources = source_setting("woodcuttingResources", "string[]", "gather:woodcutting");
         let mut bag = serde_json::Map::new();
@@ -1179,9 +1200,19 @@ mod tests {
         );
         let order_options = resolve_parameter_options(&order, &bag, &loadouts, None);
         assert_eq!(order_options.values, ["sheep", "cook"]);
-        assert_eq!(
-            order_options.labels,
-            ["2. Sheep display", "1. Cook display"]
+        assert_eq!(order_options.labels.len(), 2);
+        assert_eq!(order_options.labels[0], "2. Sheep display");
+        // A concurrent Path reload may replace the process-wide cook label;
+        // its display name changes, but the requested order never does.
+        assert!(
+            [
+                "1. Cook display",
+                "1. Folder Cook [folder]",
+                "1. Edited Again [folder]",
+            ]
+            .contains(&order_options.labels[1].as_str()),
+            "{:?}",
+            order_options.labels
         );
 
         let mut paths = source_setting("quests", "string[]", "released-paths");
@@ -1245,9 +1276,7 @@ mod tests {
     #[test]
     fn stored_unavailable_priority_outside_the_selection_keeps_its_reason() {
         let reason = script::quester::card::unavailable_quest("hauntedmine").unwrap();
-        let loadouts = LoadoutsStore::at(
-            std::env::temp_dir().join(format!("quest-priority-{}.json", std::process::id())),
-        );
+        let loadouts = LoadoutsStore::default();
         let mut bag = serde_json::Map::new();
         bag.insert("quests".into(), serde_json::json!(["cook"]));
         bag.insert("order_override".into(), serde_json::json!(["hauntedmine"]));
@@ -1262,9 +1291,7 @@ mod tests {
 
     #[test]
     fn array_toggle_adds_choices_and_only_removes_preserved_rows() {
-        let loadouts = LoadoutsStore::at(
-            std::env::temp_dir().join(format!("quest-toggle-{}.json", std::process::id())),
-        );
+        let loadouts = LoadoutsStore::default();
         let mut bag = serde_json::Map::new();
         bag.insert("quests".into(), serde_json::json!(["cook"]));
         let options = resolve_parameter_options(quester_setting("quests"), &bag, &loadouts, None);
@@ -1289,9 +1316,7 @@ mod tests {
 
     #[test]
     fn preserved_only_priority_array_is_removal_only() {
-        let loadouts = LoadoutsStore::at(
-            std::env::temp_dir().join(format!("quest-priority-remove-{}.json", std::process::id())),
-        );
+        let loadouts = LoadoutsStore::default();
         let mut bag = serde_json::Map::new();
         bag.insert("quests".into(), serde_json::json!(["hauntedmine"]));
         bag.insert("order_override".into(), serde_json::json!(["hauntedmine"]));
@@ -1325,9 +1350,7 @@ mod tests {
     fn unavailable_quests_are_not_picker_choices_and_stored_picks_show_the_reason() {
         let reason = script::quester::card::unavailable_quest("hauntedmine")
             .expect("Haunted Mine is an unavailable release row");
-        let loadouts = LoadoutsStore::at(
-            std::env::temp_dir().join(format!("quest-unavailable-{}.json", std::process::id())),
-        );
+        let loadouts = LoadoutsStore::default();
         let mut bag = serde_json::Map::new();
         bag.insert("quests".into(), serde_json::json!(["hauntedmine"]));
         let card_settings = (script::quester::card::CARD.schema)();
@@ -1378,9 +1401,7 @@ mod tests {
     #[test]
     fn gather_sites_use_selected_resources_defaults_and_fishing_aliases() {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let loadouts = LoadoutsStore::at(
-            std::env::temp_dir().join(format!("site-options-{}.json", std::process::id())),
-        );
+        let loadouts = LoadoutsStore::default();
         let site = script::gatherer::settings::schema()
             .iter()
             .find(|field| field.id == "site")
@@ -1440,9 +1461,7 @@ mod tests {
     #[test]
     fn gather_site_invalid_current_is_display_only_and_has_a_reason() {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let loadouts = LoadoutsStore::at(
-            std::env::temp_dir().join(format!("site-invalid-{}.json", std::process::id())),
-        );
+        let loadouts = LoadoutsStore::default();
         let site = script::gatherer::settings::schema()
             .iter()
             .find(|field| field.id == "site")
@@ -1514,9 +1533,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(!refused_site_ids.is_empty());
 
-        let loadouts = LoadoutsStore::at(
-            std::env::temp_dir().join(format!("site-unselectable-{}.json", std::process::id())),
-        );
+        let loadouts = LoadoutsStore::default();
         let site = script::gatherer::settings::schema()
             .iter()
             .find(|field| field.id == "site")
@@ -1561,9 +1578,7 @@ mod tests {
     #[test]
     fn fishing_scalar_cycle_visits_every_selectable_group_and_wraps() {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let loadouts = LoadoutsStore::at(
-            std::env::temp_dir().join(format!("fishing-cycle-{}.json", std::process::id())),
-        );
+        let loadouts = LoadoutsStore::default();
         let fishing = source_setting("fishingMethod", "string", "gather:fishing");
         let options = resolve_parameter_options(
             &fishing,
@@ -1688,10 +1703,7 @@ mod tests {
         .expect("spawn Path compilation")
         .join()
         .expect("Path compilation worker");
-        let loadouts = LoadoutsStore::at(std::env::temp_dir().join(format!(
-            "parameter-path-loadouts-{}.json",
-            std::process::id()
-        )));
+        let loadouts = LoadoutsStore::default();
 
         let mut bag = serde_json::Map::new();
         bag.insert(
@@ -1765,10 +1777,7 @@ mod tests {
     fn bundled_drafts_are_marked_in_both_quest_and_priority_pickers() {
         use script::quester::registry::PathRegistry;
 
-        let loadouts = LoadoutsStore::at(std::env::temp_dir().join(format!(
-            "parameter-draft-path-loadouts-{}",
-            std::process::id()
-        )));
+        let loadouts = LoadoutsStore::default();
         let registry = PathRegistry::Bundled;
         let bag = serde_json::Map::new();
         let quests = resolve_parameter_options_with_registry(
@@ -1820,15 +1829,13 @@ export const SETTINGS: SettingsSchema = {
         assert_eq!(loadout_def.options_from.as_deref(), Some("loadouts"));
         assert_eq!(loadout_def.group.as_deref(), Some("Food & healing"));
 
-        let mut loadouts = LoadoutsStore::at(
-            std::env::temp_dir().join(format!("parameter-spread-loadouts-{}", std::process::id())),
-        );
+        let mut loadouts = LoadoutsStore::default();
         loadouts.upsert(
-            script::Loadout::new("Scenario Rock Crab food")
+            api::loadout::Loadout::new("Scenario Rock Crab food")
                 .with_slot("righthand", "Adamant scimitar")
                 .with_carry("Lobster", 12),
         );
-        loadouts.upsert(script::Loadout::new("Backup melee"));
+        loadouts.upsert(api::loadout::Loadout::new("Backup melee"));
 
         let bag = script::merge_bag(&schema, &serde_json::Map::new(), None);
         assert_eq!(bag.get("loadout"), Some(&serde_json::json!("")));
@@ -1900,9 +1907,9 @@ export const SETTINGS: SettingsSchema = {
                 .expect("catalog registers"),
             names.len()
         );
-        let mut loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
-        loadouts.upsert(script::Loadout::new("First choice"));
-        loadouts.upsert(script::Loadout::new("Second choice"));
+        let mut loadouts = LoadoutsStore::default();
+        loadouts.upsert(api::loadout::Loadout::new("First choice"));
+        loadouts.upsert(api::loadout::Loadout::new("Second choice"));
 
         for name in names {
             let initial = library
@@ -1917,9 +1924,29 @@ export const SETTINGS: SettingsSchema = {
             assert_eq!(initial_loadout.ty, "string", "{name}");
             assert_eq!(initial_loadout.default.as_deref(), Some(""), "{name}");
 
-            let prepared = library
-                .prepare_card_unvalidated(script::ScriptSource::Catalog, name)
-                .unwrap_or_else(|error| panic!("{name}: prepare failed: {error}"));
+            let path = library
+                .get(script::ScriptSource::Catalog, name)
+                .expect("registered card")
+                .path
+                .clone();
+            let mut source = std::fs::read_to_string(&path).unwrap();
+            source.push('\n');
+            std::fs::write(path, source).unwrap();
+            let prepared = match library
+                .card_preparation_snapshot(script::ScriptSource::Catalog, name, None)
+                .unwrap_or_else(|error| panic!("{name}: snapshot failed: {error}"))
+                .prepare()
+                .unwrap_or_else(|error| panic!("{name}: prepare failed: {error}"))
+            {
+                script::load::CardPreparationOutcome::Prepared(prepared) => prepared,
+                script::load::CardPreparationOutcome::Failed { error, .. } => {
+                    panic!("{name}: prepare failed: {error}")
+                }
+                script::load::CardPreparationOutcome::Unchanged
+                | script::load::CardPreparationOutcome::Confirmed => {
+                    panic!("{name}: changed catalog card was not prepared")
+                }
+            };
             let prepared_loadout = prepared
                 .card
                 .settings_schema

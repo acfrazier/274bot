@@ -46,6 +46,39 @@ impl ScriptNavPaint {
         }
     }
 }
+
+/// One prepared native-card configuration; an optional Quester registry is
+/// published only after the WorkAdmission result is consumed by its owner.
+pub struct PreparedScriptConfig {
+    config: Arc<script::native::PreparedConfig>,
+    registry: Option<script::quester::registry::PreparedRegistry>,
+}
+
+impl PreparedScriptConfig {
+    /// Commit a current Quester snapshot after the caller's operation and run
+    /// identity fences pass. A stale or cancelled result is dropped instead.
+    pub fn commit(
+        self,
+        identity: api::identity::WorkIdentity,
+    ) -> Result<Arc<script::native::PreparedConfig>, script::native::StartError> {
+        if let Some(registry) = self.registry {
+            script::quester::registry::commit_snapshot(registry, identity, identity).map_err(
+                |error| {
+                    script::native::StartError::Unavailable(
+                        format!(
+                            "{}: {}",
+                            error.code,
+                            error.detail.as_deref().unwrap_or("Path reload failed")
+                        )
+                        .into(),
+                    )
+                },
+            )?;
+        }
+        Ok(self.config)
+    }
+}
+
 /// Cloneable isolate-start handle for slot-thread live pumps that cannot
 /// hold `&Play` (the per-frame hook is built before `Play` is stored).
 #[derive(Clone)]
@@ -56,6 +89,10 @@ pub struct ScriptStartHandle {
     statuses: Arc<Mutex<Vec<crate::SlotStatus>>>,
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
     named_banks: Arc<api::named_banks::NamedBankFacts>,
+    /// The Play's state composition: a Start without caller-owned loadouts
+    /// leases the operator's rows from it. `None` for the legacy direct
+    /// connection, whose Starts post no operator rows.
+    state: Option<Arc<super::local_state::StateComposition>>,
 }
 
 pub(crate) enum StartRequest<'a> {
@@ -64,7 +101,7 @@ pub(crate) enum StartRequest<'a> {
         shape: script::LoadShape,
         bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
-        loadouts: Option<&'a [script::Loadout]>,
+        loadouts: Option<&'a [api::loadout::Loadout]>,
     },
     Compiled {
         id: script::CompiledId,
@@ -73,7 +110,7 @@ pub(crate) enum StartRequest<'a> {
 }
 
 fn validate_script_loadout_setting(
-    rows: &[script::Loadout],
+    rows: &[api::loadout::Loadout],
     bag: Option<&serde_json::Map<String, serde_json::Value>>,
 ) -> Result<(), String> {
     let wanted = bag.and_then(|bag| bag.get("loadout").map(|value| value.as_str().unwrap_or("")));
@@ -82,21 +119,22 @@ fn validate_script_loadout_setting(
         .map_err(|error| error.to_string())
 }
 
-fn validate_default_script_loadout_setting(
-    bag: &serde_json::Map<String, serde_json::Value>,
-) -> Result<(), String> {
-    if !bag.contains_key("loadout") {
-        return Ok(());
-    }
-    let loadouts = script::LoadoutsStore::with_default_path();
-    validate_script_loadout_setting(loadouts.loadouts(), Some(bag))
-}
-
 impl ScriptStartHandle {
+    /// The operator's loadout rows for a Start on `name`'s slot: the state
+    /// composition's current lease (a readback, so a row the frontend's
+    /// form just saved is seen), or no rows for a composition without a
+    /// state service.
+    fn operator_loadouts(&self, name: &str) -> Result<Vec<api::loadout::Loadout>, String> {
+        match &self.state {
+            Some(state) => state.operator_loadouts(name),
+            None => Ok(Vec::new()),
+        }
+    }
+
     /// Start a loaded JS bot on `name`'s slot. Same isolate spawn as
     /// [`Play::script_start_load`], without the control-thread wake
     /// (the slot thread is already pumping). Operator loadouts come from
-    /// the default store; harness scenario Start uses
+    /// the process state service; harness scenario Start uses
     /// [`Self::start_load_with_loadouts`] when the scenario owns fixture
     /// loadouts.
     pub fn start_load(
@@ -131,7 +169,7 @@ impl ScriptStartHandle {
         shape: script::LoadShape,
         settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
-        loadouts: &[script::Loadout],
+        loadouts: &[api::loadout::Loadout],
     ) -> Result<(), String> {
         self.dispatch_start(
             name,
@@ -194,7 +232,27 @@ impl ScriptStartHandle {
             .map_err(|_| Refused(format!("script slot retiring: {name}")))?;
         let result = match request {
             StartRequest::Compiled { id, bag } => {
-                if let Err(error) = validate_default_script_loadout_setting(&bag) {
+                // Every compiled Start reads the operator's loadouts file
+                // again, so the run's later leases (a quester compiling a
+                // Path, the progress page) see the rows the frontend's form
+                // saved, whether or not the bag names a loadout. Only a bag
+                // that names one needs the rows now: without one, a failed
+                // read is logged and the card's own lease reports it.
+                let refreshed = self.operator_loadouts(name);
+                let validated = if bag.contains_key("loadout") {
+                    refreshed.and_then(|rows| validate_script_loadout_setting(&rows, Some(&bag)))
+                } else {
+                    if let Err(error) = &refreshed {
+                        host_log!(
+                            Category::ScriptLifecycle,
+                            Level::Warn,
+                            slot = name,
+                            "{error}; the compiled Start goes on without fresh loadouts"
+                        );
+                    }
+                    Ok(())
+                };
+                if let Err(error) = validated {
                     Err(Refused(error))
                 } else if script::compiled_card(id).is_none() {
                     Err(Refused(format!("not ported: {}", id.0)))
@@ -218,35 +276,30 @@ impl ScriptStartHandle {
                 siblings,
                 loadouts,
             } => {
-                if let Some(loadouts) = loadouts {
-                    let result = match validate_script_loadout_setting(loadouts, bag.as_ref()) {
-                        Ok(()) => slot
-                            .start_load_with_loadouts_and_game_data(
-                                source,
-                                shape,
-                                siblings,
-                                loadouts,
-                                self.game_data.clone(),
-                                Arc::clone(&self.named_banks),
-                            )
-                            .map_err(Refused),
-                        Err(error) => Err(Refused(error)),
-                    };
-                    if result.is_ok() {
-                        if let Some(bag) = bag.as_ref() {
-                            slot.post_settings_bag(bag);
+                // Caller-owned rows (a harness scenario's fixtures) or the
+                // operator's current rows from the state service.
+                let leased;
+                let loadouts = match loadouts {
+                    Some(loadouts) => Ok(loadouts),
+                    None => match self.operator_loadouts(name) {
+                        Ok(rows) => {
+                            leased = rows;
+                            Ok(leased.as_slice())
                         }
-                    }
-                    result
-                } else {
-                    slot.start_load_with_settings_and_game_data_typed(
+                        Err(error) => Err(error),
+                    },
+                };
+                match loadouts {
+                    Ok(loadouts) => slot.start_load_with_settings_and_game_data_typed(
                         source,
                         shape,
                         bag.as_ref(),
                         siblings,
+                        loadouts,
                         self.game_data.clone(),
                         Arc::clone(&self.named_banks),
-                    )
+                    ),
+                    Err(error) => Err(Refused(error)),
                 }
             }
         };
@@ -435,28 +488,197 @@ impl Play {
         self.script_start_hold.lock().unwrap().upgrade()
     }
 
-    /// A settings preparer has only shared pinned resources, no slot or game
+    /// A profile preparer has only shared pinned resources, no slot or game
     /// action handle. Frontend persistence follows successful typed preparation.
+    /// The accepted job is charged to the one process WorkAdmission worker.
     pub fn script_prepare_config(
         &self,
         id: script::CompiledId,
         revision: u64,
         bag: Arc<script::native::SettingsBag>,
     ) -> Result<
-        std::thread::JoinHandle<
-            Result<Arc<script::native::PreparedConfig>, script::native::StartError>,
-        >,
-        String,
+        script::preparation::PreparedTask<Result<PreparedScriptConfig, script::native::StartError>>,
+        script::preparation::PreparationError,
     > {
-        let selected = self
-            .game_data
-            .clone()
-            .ok_or("selected game data unavailable")?;
+        let selected = self.game_data.clone().ok_or_else(|| {
+            script::preparation::PreparationError::Unavailable(
+                "selected game data unavailable".into(),
+            )
+        })?;
         let banks = Arc::clone(&self.named_banks);
-        api::selected::FamilyPreparation::run(move |worker| {
-            script::slot::prepare_config(worker, id, revision, bag, selected, banks)
-        })
-        .map_err(|error| error.to_string())
+        let quester = id == script::quester::card::CARD.id;
+        let cold_gathering =
+            id == script::CompiledId("Gatherer") && selected.try_gathering().is_none();
+        let settings_input = script::preparation::PreparationInput::for_settings(revision, &bag)?;
+        let mut folder_source = quester.then(script::quester::registry::source_for_preparation);
+        let input = if let Some(source) = folder_source.as_ref() {
+            script::preparation::PreparationInput::for_quester_folder(
+                revision,
+                settings_input,
+                source,
+            )?
+        } else if cold_gathering {
+            settings_input.with_gathering_family_decode()
+        } else {
+            settings_input
+        };
+        enum Stage {
+            Registry(Arc<script::native::SettingsBag>),
+            Decode(Arc<script::native::SettingsBag>),
+            Configure(Arc<script::native::SettingsBag>),
+            Done,
+        }
+        let mut stage = if quester {
+            Stage::Registry(bag)
+        } else if cold_gathering {
+            Stage::Decode(bag)
+        } else {
+            Stage::Configure(bag)
+        };
+        let mut registry_preparation = None;
+        let mut registry_quests = None;
+        let mut prepared_registry = None;
+        let mut registry_actions = 0_u32;
+        script::preparation::submit_cooperative(
+            script::preparation::PreparationKind::Profile,
+            api::identity::Scope::Process,
+            input,
+            move |worker| match std::mem::replace(&mut stage, Stage::Done) {
+                Stage::Registry(bag) => {
+                    registry_actions = registry_actions
+                        .checked_add(1)
+                        .expect("bounded Quester registry action count");
+                    let result = (|| -> Result<
+                        Option<script::quester::registry::PreparedRegistry>,
+                        script::native::StartError,
+                    > {
+                        if registry_preparation.is_none() {
+                            let quests = Arc::new(
+                                api::quest_facts::QuestCatalog::from_identity(
+                                    selected.quest_identity(),
+                                )
+                                .map_err(script::native::StartError::Facts)?,
+                            );
+                            registry_preparation = Some(
+                                script::quester::registry::RegistryPreparation::from_source(
+                                    folder_source.take().expect("Quester folder source captured"),
+                                    Arc::clone(&selected),
+                                    Arc::clone(&quests),
+                                )
+                                .map_err(|error| {
+                                    script::native::StartError::Unavailable(
+                                        format!(
+                                            "{}: {}",
+                                            error.code,
+                                            error.detail.as_deref().unwrap_or("Path reload failed")
+                                        )
+                                        .into(),
+                                    )
+                                })?,
+                            );
+                            registry_quests = Some(quests);
+                        }
+                        registry_preparation
+                            .as_mut()
+                            .expect("registry preparation initialized")
+                            .step(worker)
+                            .map_err(|error| {
+                                script::native::StartError::Unavailable(
+                                    format!(
+                                        "{}: {}",
+                                        error.code,
+                                        error.detail.as_deref().unwrap_or("Path reload failed")
+                                    )
+                                    .into(),
+                                )
+                            })
+                    })();
+                    match result {
+                        Ok(Some(candidate)) => {
+                            registry_preparation = None;
+                            prepared_registry = Some(candidate);
+                            stage = Stage::Configure(bag);
+                            script::preparation::CooperativePreparationStep::Continue {
+                                completed: registry_actions,
+                                total: Some(registry_actions),
+                            }
+                        }
+                        Ok(None) => {
+                            stage = Stage::Registry(bag);
+                            script::preparation::CooperativePreparationStep::Continue {
+                                completed: registry_actions,
+                                total: None,
+                            }
+                        }
+                        Err(error) => script::preparation::CooperativePreparationStep::Complete {
+                            output: Err(error),
+                            completed: registry_actions,
+                            total: Some(registry_actions),
+                        },
+                    }
+                }
+                Stage::Decode(bag) => match selected.prepare_gathering(worker) {
+                    Ok(_) => {
+                        stage = Stage::Configure(bag);
+                        script::preparation::CooperativePreparationStep::Continue {
+                            completed: 1,
+                            total: Some(2),
+                        }
+                    }
+                    Err(error) => script::preparation::CooperativePreparationStep::Complete {
+                        output: Err(script::native::StartError::Facts(error)),
+                        completed: 1,
+                        total: Some(2),
+                    },
+                },
+                Stage::Configure(bag) => {
+                    let ready = if quester {
+                        Some(script::quester::card::QuesterRegistryReady::new(
+                            prepared_registry
+                                .as_ref()
+                                .expect("Quester registry prepared")
+                                .registry()
+                                .clone(),
+                            registry_quests
+                                .take()
+                                .expect("Quester quest facts prepared"),
+                        ))
+                    } else {
+                        None
+                    };
+                    script::preparation::CooperativePreparationStep::Complete {
+                        output: script::slot::prepare_config(
+                            worker,
+                            id,
+                            revision,
+                            bag,
+                            Arc::clone(&selected),
+                            Arc::clone(&banks),
+                            ready,
+                        )
+                        .map(|config| PreparedScriptConfig {
+                            config,
+                            registry: prepared_registry.take(),
+                        }),
+                        completed: if quester {
+                            registry_actions + 1
+                        } else if cold_gathering {
+                            2
+                        } else {
+                            1
+                        },
+                        total: Some(if quester {
+                            registry_actions + 1
+                        } else if cold_gathering {
+                            2
+                        } else {
+                            1
+                        }),
+                    }
+                }
+                Stage::Done => unreachable!("completed preparation is not dispatched"),
+            },
+        )
     }
 
     pub fn script_configure_compiled(
@@ -621,6 +843,7 @@ impl Play {
             statuses: Arc::clone(&self.statuses),
             game_data: self.game_data.clone(),
             named_banks: Arc::clone(&self.named_banks),
+            state: self.local_state.clone(),
         }
     }
 

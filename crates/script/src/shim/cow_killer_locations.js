@@ -1,36 +1,36 @@
 import Tile from '../geometry/Tile.js';
 
 const selectedFacts = globalThis.__rs2b0t_selected_facts;
-const facts = selectedFacts('cow-locations');
+const facts = selectedFacts('cow-locations', Tile);
 
-function location(row) {
-    return {
-        name: row.name,
-        anchor: new Tile(row.x, row.z, row.level ?? 0),
-        usesAlKharidToll: row.usesAlKharidToll === true,
-    };
+export const COW_LOCATIONS = facts.locations;
+export const COW_LOCATION_OPTIONS = facts.options;
+export const DRAYNOR_BANK = facts.draynorBank;
+export const FALADOR_EAST_BANK = facts.faladorEastBank;
+export const ARDOUGNE_WEST_BANK = facts.ardougneWestBank;
+export const AL_KHARID_BANK = facts.alKharidBank;
+export const TOLL_COIN_TARGET = facts.tollCoinTarget;
+
+export function isCowFieldLootTile(anchor, leashRadius, tile) {
+    return selectedFacts('cow-loot-tile', anchor, leashRadius, tile);
 }
 
-export const COW_LOCATIONS = facts.locations.map(location);
-
-export const COW_LOCATION_OPTIONS = [
-    'Auto',
-    ...COW_LOCATIONS.map((row) => row.name),
-    'Start tile',
-];
-
-export const AL_KHARID_BANK = new Tile(
-    facts.alKharidBank.x,
-    facts.alKharidBank.z,
-    facts.alKharidBank.level ?? 0,
-);
-
-export function resolveCowLocation(setting) {
-    const want = String(setting || '').toLowerCase();
-    return COW_LOCATIONS.find((row) => row.name.toLowerCase() === want) || null;
+export function resolveCowLocation(setting, start) {
+    return selectedFacts('cow-resolve', setting, start, COW_LOCATIONS);
 }
 
 export function nearestCowLocation(tile) {
-    const nearest = selectedFacts('cow-nearest', tile);
-    return nearest ? resolveCowLocation(nearest.name) : undefined;
+    return selectedFacts('cow-nearest', tile, COW_LOCATIONS);
+}
+
+export function needsTollCoins(location, enabled) {
+    return selectedFacts('cow-needs-toll', location, enabled);
+}
+
+export function cowBankDestination(location, tollEnabled) {
+    return selectedFacts('cow-bank-destination', location, tollEnabled, AL_KHARID_BANK);
+}
+
+export function shouldBootstrapTollCoins(location, start, coins, enabled) {
+    return selectedFacts('cow-bootstrap-toll', location, start, coins, enabled);
 }

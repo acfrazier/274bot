@@ -2,10 +2,9 @@
 //!
 //! Frontends render and admit manual walks from the same projection. Reads
 //! fail closed; writes merge only values changed by the caller into the
-//! shared `panel-ui.json` transaction.
+//! shared preferences, through the process local-state service.
 
 use std::io;
-use std::path::Path;
 
 pub use host_play::DangerLevel;
 use host_play::WalkGlobals;
@@ -105,22 +104,13 @@ pub struct WalkGlobalsView {
 }
 
 impl WalkGlobalsView {
-    /// Read the shared preference file once. A missing file is a first-run
-    /// default; unreadable or malformed files deny every grant.
-    pub fn read_at(path: &Path) -> Self {
-        let bytes = match std::fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Self::default(),
-            Err(_) => return Self::fail_closed(),
-        };
-        let document = match serde_json::from_slice::<serde_json::Value>(&bytes) {
-            Ok(document) => document,
-            Err(_) => return Self::fail_closed(),
-        };
-        let Some(root) = document.as_object() else {
+    /// Read the shared preferences once. A missing file is a first-run
+    /// default; a refused file or a malformed `nav` denies every grant.
+    pub fn read(preferences: &host_play::local_state::Preferences) -> Self {
+        let Ok(document) = preferences.document() else {
             return Self::fail_closed();
         };
-        let Some(nav) = root.get("nav") else {
+        let Some(nav) = document.get("nav") else {
             return Self::default();
         };
         let Some(nav_object) = nav.as_object() else {
@@ -179,8 +169,12 @@ impl WalkGlobalsView {
     }
 
     /// Persist only globals and notice acknowledgement changed by this edit,
-    /// merging them together under the shared panel-preferences transaction.
-    pub fn persist_changed_at(path: &Path, before: Self, after: Self) -> io::Result<()> {
+    /// merging them together into the shared preferences.
+    pub fn persist_changed(
+        preferences: &host_play::local_state::Preferences,
+        before: Self,
+        after: Self,
+    ) -> io::Result<()> {
         let changed = [
             (
                 "allow_teleports",
@@ -222,11 +216,10 @@ impl WalkGlobalsView {
             return Ok(());
         }
 
-        host_play::update_panel_ui_at(path, |document, _, _| {
-            let root = document.as_object_mut().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, "panel-ui.json is not an object")
-            })?;
-            let nav = root.entry("nav").or_insert_with(|| serde_json::json!({}));
+        preferences.update(|document| {
+            let nav = document
+                .entry("nav")
+                .or_insert_with(|| serde_json::json!({}));
             if !nav.is_object() {
                 *nav = serde_json::json!({});
             }
@@ -238,7 +231,7 @@ impl WalkGlobalsView {
                     nav.insert(key.into(), serde_json::Value::Bool(after));
                 }
             }
-            Ok(None)
+            Ok(())
         })
     }
 }
@@ -246,14 +239,16 @@ impl WalkGlobalsView {
 #[cfg(test)]
 mod tests {
     use super::{DangerLevel, WalkGlobalsView};
+    use host_play::local_state::{LocalStateService, Preferences, StateRoot};
     use host_play::WalkGlobals;
     use nav::zones::ZoneExempt;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct TempStore {
         dir: PathBuf,
         path: PathBuf,
+        preferences: Preferences,
     }
 
     impl TempStore {
@@ -265,13 +260,23 @@ mod tests {
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             std::fs::create_dir_all(&dir).unwrap();
+            let preferences =
+                LocalStateService::open_process(StateRoot::new(dir.clone())).preferences();
             Self {
-                path: dir.join("panel-ui.json"),
+                path: preferences.path(),
                 dir,
+                preferences,
             }
         }
 
-        fn path(&self) -> &Path {
+        /// The preferences, read again (a file the test just wrote is seen).
+        fn prefs(&self) -> &Preferences {
+            let _ = self.preferences.reload();
+            &self.preferences
+        }
+
+        /// The file, for writes another writer makes.
+        fn path(&self) -> &std::path::Path {
             &self.path
         }
     }
@@ -285,7 +290,7 @@ mod tests {
     #[test]
     fn projection_reads_migrates_and_fails_closed_without_reusing_the_old_notice_ack() {
         let store = TempStore::new("read");
-        let absent = WalkGlobalsView::read_at(store.path());
+        let absent = WalkGlobalsView::read(store.prefs());
         assert_eq!(absent, WalkGlobalsView::default());
         assert_eq!(absent.danger_level(), DangerLevel::WhenSurvivable);
         assert!(!absent.survivable_routing_notice_ack);
@@ -295,7 +300,7 @@ mod tests {
             r#"{"nav":{"allow_teleports":true,"allow_wilderness":true,"allow_bank_fetch":true,"allow_danger_zones":true,"survivable_routing":false,"script_scope_notice_ack":true,"survivable_routing_notice_ack":true}}"#,
         )
         .unwrap();
-        let view = WalkGlobalsView::read_at(store.path());
+        let view = WalkGlobalsView::read(store.prefs());
         assert_eq!(
             view.globals,
             WalkGlobals {
@@ -324,7 +329,7 @@ mod tests {
             r#"{"nav":{"allow_danger_zones":false,"script_scope_notice_ack":true}}"#,
         )
         .unwrap();
-        let migrated = WalkGlobalsView::read_at(store.path());
+        let migrated = WalkGlobalsView::read(store.prefs());
         assert_eq!(migrated.danger_level(), DangerLevel::WhenSurvivable);
         assert!(migrated.globals.survivable_routing);
         assert_eq!(
@@ -335,7 +340,7 @@ mod tests {
         assert!(!migrated.survivable_routing_notice_ack);
 
         std::fs::write(store.path(), b"{truncated").unwrap();
-        let malformed = WalkGlobalsView::read_at(store.path());
+        let malformed = WalkGlobalsView::read(store.prefs());
         assert_eq!(malformed.globals, WalkGlobals::fail_closed());
         assert!(!malformed.globals.survivable_routing);
         assert!(!malformed.script_scope_notice_ack);
@@ -350,7 +355,7 @@ mod tests {
             r#"{"nav":{"allow_teleports":true,"allow_wilderness":true,"allow_bank_fetch":true,"allow_danger_zones":false}}"#,
         )
         .unwrap();
-        let view = WalkGlobalsView::read_at(store.path());
+        let view = WalkGlobalsView::read(store.prefs());
         assert!(view.danger_this_walk(true));
         let once = view.manual_options(view.danger_this_walk(true));
         assert!(once.allow_teleports);
@@ -363,7 +368,7 @@ mod tests {
             .is_all());
 
         std::fs::write(store.path(), r#"{"nav":{"allow_danger_zones":true}}"#).unwrap();
-        let global = WalkGlobalsView::read_at(store.path());
+        let global = WalkGlobalsView::read(store.prefs());
         assert!(!global.danger_this_walk(true));
         assert_eq!(
             global.manual_options(global.danger_this_walk(true)).zones,
@@ -379,7 +384,7 @@ mod tests {
             r#"{"unrelated":{"keep":true},"nav":{"show_nav_path":true,"allow_wilderness":false,"allow_danger_zones":true,"survivable_routing":false,"custom":"keep"}}"#,
         )
         .unwrap();
-        let before = WalkGlobalsView::read_at(store.path());
+        let before = WalkGlobalsView::read(store.prefs());
         let mut external =
             serde_json::from_slice::<serde_json::Value>(&std::fs::read(store.path()).unwrap())
                 .unwrap();
@@ -396,7 +401,7 @@ mod tests {
             survivable_routing_notice_ack: true,
         };
         after.globals.set_danger_level(DangerLevel::WhenSurvivable);
-        WalkGlobalsView::persist_changed_at(store.path(), before, after).unwrap();
+        WalkGlobalsView::persist_changed(store.prefs(), before, after).unwrap();
         let persisted =
             serde_json::from_slice::<serde_json::Value>(&std::fs::read(store.path()).unwrap())
                 .unwrap();
@@ -411,14 +416,14 @@ mod tests {
         assert_eq!(persisted["nav"]["survivable_routing_notice_ack"], true);
         assert_eq!(persisted["nav"]["show_nav_path"], false);
 
-        crate::nav_preference_at(
-            store.path(),
+        crate::nav_preference(
+            store.prefs(),
             crate::NavPreference::AllowTeleports,
             Some(false),
         )
         .unwrap();
-        WalkGlobalsView::persist_changed_at(store.path(), after, after).unwrap();
-        let after_noop = WalkGlobalsView::read_at(store.path());
+        WalkGlobalsView::persist_changed(store.prefs(), after, after).unwrap();
+        let after_noop = WalkGlobalsView::read(store.prefs());
         assert!(!after_noop.globals.allow_teleports);
         assert_eq!(after_noop.danger_level(), DangerLevel::WhenSurvivable);
         assert_eq!(

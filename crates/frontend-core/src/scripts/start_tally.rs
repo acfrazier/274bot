@@ -74,6 +74,16 @@ impl StartTally {
             }
         }
     }
+    /// An accepted preparation may be cancelled before it dispatches a
+    /// script. Reopen that optimistic `started` entry so cancellation can
+    /// replace it; an already-dispatched Start stays started.
+    pub fn retract_unstarted(&mut self, profile: &str) {
+        if let Some((_, outcome @ Outcome::Started)) =
+            self.bots.iter_mut().find(|(name, _)| name == profile)
+        {
+            *outcome = Outcome::Queued;
+        }
+    }
 
     /// `Start all: started S[, queued Q], skipped K[, failed F]`, then the
     /// failure reasons and the skip reasons. Failures come first so a

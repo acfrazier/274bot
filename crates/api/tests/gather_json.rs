@@ -5,16 +5,24 @@ use api::gather_methods::{
     gas_rock_ids, gather_methods, gather_placements, gather_resource, GatherCatalog,
     SceneRegionInput,
 };
+use api::identity::Deadline;
 use api::selected::{ClientRevision, FamilyPreparation};
+use api::work::{PreparationPhase, SharedCancellation, SliceBudget, StepContext, SystemClock};
 use serde_json::{json, Value};
+use std::num::NonZeroU32;
 use std::sync::{Arc, LazyLock};
+use std::time::{Duration, Instant};
 
 fn prepare(revision: ClientRevision) -> Arc<GatherCatalog> {
     let data = for_revision(revision).expect("selected data");
-    FamilyPreparation::run(move |worker| data.prepare_gathering(worker))
-        .expect("worker")
-        .join()
-        .expect("worker panicked")
+    let clock = SystemClock;
+    let cancel = SharedCancellation::new();
+    let budget = SliceBudget::new(
+        NonZeroU32::MIN,
+        Deadline::at(Instant::now() + Duration::from_secs(60)),
+    );
+    let mut step = StepContext::<PreparationPhase>::new(&clock, budget, &cancel);
+    FamilyPreparation::within(&mut step, |worker| data.prepare_gathering(worker))
         .expect("gathering family prepares")
 }
 

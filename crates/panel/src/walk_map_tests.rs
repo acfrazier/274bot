@@ -134,6 +134,85 @@ fn fixture_png_is_real_258_rgba8() {
     assert_eq!(rgba[i + 3], 255);
 }
 
+/// F0-4 (§26 §2.2, §2.6): the frozen walk-map-decode family characterizes
+/// this producer: one `decode_checked` job is the interruptible unit,
+/// `Stop` is not a unit, and the PNG length check is a size bound only.
+#[test]
+fn frozen_walk_map_decode_family_characterizes_decode_loop() {
+    use api::work::{WalkMapDecodeCommand, WorkFamily};
+    use nav::map::MapError;
+    use std::sync::mpsc;
+
+    use super::{decode_loop, DecodeDone, DecodeJob, WorkerCmd, DECODE_LIMIT_BYTES};
+
+    fn frozen(cmd: &WorkerCmd) -> WalkMapDecodeCommand {
+        match cmd {
+            WorkerCmd::Job(_) => WalkMapDecodeCommand::Job,
+            WorkerCmd::Stop => WalkMapDecodeCommand::Stop,
+        }
+    }
+
+    let key = lod0(50, 50);
+    let identity = super::fixtures::image_identity();
+    let png = encode_tile(key).expect("encode");
+    let (cmd_tx, cmd_rx) = mpsc::channel::<WorkerCmd>();
+    let (done_tx, done_rx) = mpsc::channel::<DecodeDone>();
+    let jobs = [
+        WorkerCmd::Job(DecodeJob {
+            generation: 7,
+            identity,
+            key,
+            png: png.clone(),
+        }),
+        WorkerCmd::Job(DecodeJob {
+            generation: 8,
+            identity,
+            key,
+            png: vec![0u8; DECODE_LIMIT_BYTES + 1],
+        }),
+        WorkerCmd::Stop,
+    ];
+    let units: Vec<bool> = jobs
+        .iter()
+        .map(|cmd| frozen(cmd).is_interruptible_unit())
+        .collect();
+    assert_eq!(units, [true, true, false]);
+    for cmd in jobs {
+        cmd_tx.send(cmd).unwrap();
+    }
+    drop(cmd_tx);
+    // The loop runs one job per command and returns on Stop.
+    decode_loop(cmd_rx, done_tx);
+    let done: Vec<DecodeDone> = done_rx.try_iter().collect();
+    assert_eq!(
+        done.len(),
+        units.iter().filter(|unit| **unit).count(),
+        "exactly one completion per Job command, none for Stop"
+    );
+    assert_eq!(done[0].generation, 7);
+    assert_eq!(done[0].identity, identity);
+    assert_eq!(done[0].key, key);
+    assert_eq!(
+        done[0].result.as_ref().map(Vec::len),
+        Ok(TILE_RGBA_BYTES),
+        "one decoded RGBA tile"
+    );
+    assert_eq!(done[1].generation, 8);
+    assert_eq!(
+        done[1].result.as_ref().map(Vec::len),
+        Err(&MapError::Limit("png bytes").to_string()),
+        "the PNG length check refuses oversize input; it is a size bound, not a time bound"
+    );
+    assert_eq!(
+        WorkFamily::WalkMapDecode.interruptible_unit(),
+        "one decode_checked job (not PNG-length alone)"
+    );
+    assert_eq!(
+        WorkFamily::WalkMapDecode.phases(),
+        &["Receive", "Decode", "Publish"]
+    );
+}
+
 #[test]
 fn overlay_fit_uses_world_span_not_window_scale() {
     let ready = overlay_fit(small_view());

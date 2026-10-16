@@ -56,6 +56,17 @@ pub fn parse_bank_strategy(raw: &str) -> BankStrategy {
     }
 }
 
+/// Parse the exact `shouldBankNow` strategy tokens without label aliases.
+pub(crate) fn parse_bank_strategy_token(raw: &str) -> Option<BankStrategy> {
+    match raw {
+        "off" => Some(BankStrategy::Off),
+        "items" => Some(BankStrategy::Items),
+        "time" => Some(BankStrategy::Time),
+        "either" => Some(BankStrategy::Either),
+        _ => None,
+    }
+}
+
 /// Frozen `shouldBankNow`.
 pub fn should_bank_now(
     strategy: BankStrategy,

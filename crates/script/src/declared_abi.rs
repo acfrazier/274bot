@@ -432,8 +432,8 @@ const REEXPORTS: &[Reexport] = &[
         line: "export { Game } from '../../api/game/Game.js';",
     },
     Reexport {
-        names: &["Inventory"],
-        line: "export { Inventory } from '../../api/inventory/Inventory.js';",
+        names: &["Inventory", "InvItem"],
+        line: "export { Inventory, InvItem } from '../../api/inventory/Inventory.js';",
     },
     Reexport {
         names: &["Skills"],
@@ -452,17 +452,24 @@ const REEXPORTS: &[Reexport] = &[
             "matchesCommonBankLoot",
             "PERIODIC_BANK_SETTINGS",
             "RANDOM_EVENT_CASKET_ID",
+            "NEARBY_BANK_RADIUS",
+            "resolveBankOpenRoute",
             "parseBankStrategy",
+            "shouldBankNow",
         ],
-        line: "export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, parseBankStrategy } from '../../api/bank/Banking.js';",
+        line: "export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, NEARBY_BANK_RADIUS, resolveBankOpenRoute, parseBankStrategy, shouldBankNow } from '../../api/bank/Banking.js';",
+    },
+    Reexport {
+        names: &["bankDistance"],
+        line: "export { bankDistance } from '../../api/bank/BankLocations.js';",
     },
     Reexport {
         names: &["reader"],
         line: "export { reader } from '../../adapter/ClientAdapter.js';",
     },
     Reexport {
-        names: &["AXES", "PICKAXES", "TINDERBOX", "HAMMER", "KNIFE", "CHISEL", "NEEDLE", "exactTool", "tinderboxReq", "axeReq", "pickaxeReq", "toolKeepNames", "hasToolReq", "hasAllTools", "bestAxe", "bestPickaxe", "bestFromTiers", "canWieldTool", "toolRestockPlan", "missingToolLabels", "toolKitLabel", "bankHasBetterGatherTool"],
-        line: "export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool } from '../../api/acquisition/Tools.js';",
+        names: &["AXES", "PICKAXES", "TINDERBOX", "HAMMER", "KNIFE", "CHISEL", "NEEDLE", "exactTool", "tinderboxReq", "axeReq", "pickaxeReq", "toolKeepNames", "hasToolReq", "hasAllTools", "bestAxe", "bestPickaxe", "bestFromTiers", "canWieldTool", "toolAttackLevel", "toolsNeedingEquip", "toolRestockPlan", "missingToolLabels", "toolKitLabel", "bankHasBetterGatherTool", "bestHeldToolNames", "surplusHeldToolNames"],
+        line: "export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolAttackLevel, toolsNeedingEquip, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool, bestHeldToolNames, surplusHeldToolNames } from '../../api/acquisition/Tools.js';",
     },
     Reexport {
         names: &["EventSignal"],
@@ -549,6 +556,11 @@ const REEXPORTS: &[Reexport] = &[
         line: "export { BANK_LOCATIONS, bankUnlocked, nearestBank } from '../../api/bank/BankLocations.js';",
     },
     Reexport {
+        names: &["NAV_PURE_WALK", "NAV_WITH_TELES"],
+        line: "export { NAV_PURE_WALK, NAV_WITH_TELES } from '../../api/walking/Traversal.js';",
+    },
+
+    Reexport {
         names: &[
             "PICKPOCKET_TARGETS",
             "PICKPOCKET_TARGET_NAMES",
@@ -565,8 +577,18 @@ const REEXPORTS: &[Reexport] = &[
         line: "export { ROCK_OPTIONS, ROCK_TYPES, GAS_ROCK_IDS, GAS_ROCK_TICKS, BROKEN_PICKAXE, resolveRockIds } from '../../data/miningRocks.js';",
     },
     Reexport {
-        names: &["COW_LOCATIONS", "COW_LOCATION_OPTIONS", "AL_KHARID_BANK", "resolveCowLocation", "nearestCowLocation"],
-        line: "export { COW_LOCATIONS, COW_LOCATION_OPTIONS, AL_KHARID_BANK, resolveCowLocation, nearestCowLocation } from '../../data/cowKillerLocations.js';",
+        names: &[
+            "COW_LOCATIONS",
+            "COW_LOCATION_OPTIONS",
+            "AL_KHARID_BANK",
+            "TOLL_COIN_TARGET",
+            "isCowFieldLootTile",
+            "resolveCowLocation",
+            "nearestCowLocation",
+            "needsTollCoins",
+            "shouldBootstrapTollCoins",
+        ],
+        line: "export { COW_LOCATIONS, COW_LOCATION_OPTIONS, AL_KHARID_BANK, TOLL_COIN_TARGET, isCowFieldLootTile, resolveCowLocation, nearestCowLocation, needsTollCoins, shouldBootstrapTollCoins } from '../../data/cowKillerLocations.js';",
     },
     Reexport {
         names: &["RUNES", "RUNE_OPTIONS", "DEFAULT_RUNE"],
@@ -598,21 +620,6 @@ pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
         }
     }
     out.push('\n');
-
-    // Walk flags are constants (not a walker clone).
-    if wanted.contains("NAV_PURE_WALK") && !covered.contains("NAV_PURE_WALK") {
-        out.push_str(
-            "export const NAV_PURE_WALK = { useTeleportCatalog: false, policy: { useTeleports: false } };\n",
-        );
-        covered.insert("NAV_PURE_WALK");
-    }
-    if wanted.contains("NAV_WITH_TELES") && !covered.contains("NAV_WITH_TELES") {
-        out.push_str(
-            "export const NAV_WITH_TELES = { useTeleportCatalog: true, policy: { useTeleports: true } };\n",
-        );
-        covered.insert("NAV_WITH_TELES");
-    }
-
     for exp in exports {
         if covered.contains(exp.name.as_str()) {
             continue;

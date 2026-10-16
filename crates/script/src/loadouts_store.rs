@@ -1,30 +1,27 @@
-//! Operator loadouts persisted at `~/.274bot/loadouts.json` (0o600).
+//! Operator loadouts persisted at `<state root>/loadouts.json` (0o600).
 //!
 //! Wire shape is `{ name, worn: {slot: name}, carry: [{item, qty}], unassigned? }`.
 //! Legacy `{ worn: [name], carry: [name] }` files are read without guessing
 //! slots or dropping items. `optionsFrom: 'loadouts'` fills setting combos
-//! from [`LoadoutsStore::names`].
+//! from [`LoadoutsStore::names`]. The neutral values (`Loadout`,
+//! `CarryEntry`, the worn-slot table) live in `api::loadout`; this module
+//! keeps the frontends' form editor and the behaviour helpers.
+//!
+//! The form reads and writes nothing itself: it loads from and saves
+//! through a [`LoadoutsBacking`], which the composition root binds to the
+//! process local-state service (T5.2), so a form save and a slot's lease go
+//! through one writer. A save is a list of typed edits against the version
+//! the form loaded: an edit made meanwhile by another writer is a conflict,
+//! never overwritten. A renamed row is one [`LoadoutOp::Rename`], so it
+//! keeps its place and is never removed in one write and re-added in
+//! another. Slots and native cards read operator loadouts through the
+//! same service ([`crate::local_state::SlotState`]).
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
-use vault::write_private_file;
-
-/// Loadout equipment slots, named as the content wearpos decoder names them.
-pub const WORN_SLOTS: [&str; 11] = [
-    "hat",
-    "back",
-    "front",
-    "righthand",
-    "torso",
-    "lefthand",
-    "legs",
-    "hands",
-    "feet",
-    "ring",
-    "quiver",
-];
+use api::loadout::{CarryEntry, Loadout, WORN_SLOTS};
+use api::local_state::{LoadoutOp, StoreVersion};
 
 /// Compact equipment layout used by the native editor. `None` is a spacer.
 pub const WORN_SLOT_LAYOUT: [[Option<&'static str>; 3]; 5] = [
@@ -52,202 +49,112 @@ pub fn worn_slot_label(slot: &str) -> &'static str {
     }
 }
 
-pub fn is_worn_slot(slot: &str) -> bool {
-    WORN_SLOTS.contains(&slot)
-}
-
-/// One carried supply with a required positive quantity.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CarryEntry {
-    pub item: String,
-    pub qty: u32,
-}
-
-impl CarryEntry {
-    pub fn new(item: impl Into<String>, qty: u32) -> Self {
-        Self {
-            item: item.into(),
-            qty: qty.max(1),
-        }
-    }
-}
-
-/// One named equipment/inventory preset.
+/// The operator loadouts at one store version: what a form loads, and what
+/// the store holds after each save.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Loadout {
-    pub name: String,
-    pub worn: BTreeMap<String, String>,
-    pub unassigned: Vec<String>,
-    pub carry: Vec<CarryEntry>,
+pub struct LoadoutsBaseline {
+    pub rows: Vec<Loadout>,
+    pub version: StoreVersion,
 }
 
-impl Loadout {
-    pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            worn: BTreeMap::new(),
-            unassigned: Vec::new(),
-            carry: Vec::new(),
-        }
-    }
-
-    pub fn with_slot(mut self, slot: &str, item: impl Into<String>) -> Self {
-        if is_worn_slot(slot) {
-            self.worn.insert(slot.to_string(), item.into());
-        } else {
-            self.unassigned.push(item.into());
-        }
-        self
-    }
-
-    pub fn with_carry(mut self, item: impl Into<String>, qty: u32) -> Self {
-        self.carry.push(CarryEntry::new(item, qty));
-        self
-    }
-
-    pub fn set_slot(&mut self, slot: &str, item: Option<String>) {
-        if !is_worn_slot(slot) {
-            return;
-        }
-        match item {
-            Some(name) if !name.trim().is_empty() => {
-                self.worn.insert(slot.to_string(), name);
-            }
-            _ => {
-                self.worn.remove(slot);
-            }
-        }
-    }
+/// Why a form's save did not land whole.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoadoutsSaveError {
+    /// Another writer changed the store after the form loaded it: what was
+    /// left of the save was not written. `latest` is what the store holds
+    /// now.
+    Conflict {
+        latest: LoadoutsBaseline,
+        reason: String,
+    },
+    /// The store refused or failed the write, or did not settle it in time.
+    Failed(String),
 }
 
-impl Serialize for Loadout {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        #[derive(Serialize)]
-        struct Wire<'a> {
-            name: &'a str,
-            worn: &'a BTreeMap<String, String>,
-            carry: &'a [CarryEntry],
-            #[serde(skip_serializing_if = "slice_empty")]
-            unassigned: &'a [String],
-        }
-        Wire {
-            name: &self.name,
-            worn: &self.worn,
-            carry: &self.carry,
-            unassigned: &self.unassigned,
-        }
-        .serialize(serializer)
-    }
+/// Where a frontend's loadout form loads from and saves to: the process
+/// local-state service, bound by the composition root (host-play
+/// implements it). Both calls block, bounded, on an operator action, as
+/// the old file read and write did.
+pub trait LoadoutsBacking: Send + Sync {
+    /// The rows as the store holds them now, read again from their file.
+    fn load(&self) -> Result<LoadoutsBaseline, String>;
+
+    /// Apply `ops` in order, the first expecting the store at `expected`
+    /// and each later one at the version the one before committed, waiting
+    /// until each is durable. What the store holds after the last.
+    fn commit(
+        &self,
+        ops: Vec<LoadoutOp>,
+        expected: StoreVersion,
+    ) -> Result<LoadoutsBaseline, LoadoutsSaveError>;
 }
 
-fn slice_empty(value: &[String]) -> bool {
-    value.is_empty()
-}
-
-impl<'de> Deserialize<'de> for Loadout {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        parse_loadout(&value).ok_or_else(|| serde::de::Error::custom("invalid loadout"))
-    }
-}
-
-fn parse_loadout(value: &serde_json::Value) -> Option<Loadout> {
-    let name = value.get("name")?.as_str()?.trim();
-    if name.is_empty() {
-        return None;
-    }
-    let mut worn = BTreeMap::new();
-    let mut unassigned = Vec::new();
-    match value.get("worn") {
-        Some(serde_json::Value::Array(rows)) => {
-            for row in rows {
-                if let Some(item) = row.as_str().map(str::trim).filter(|s| !s.is_empty()) {
-                    unassigned.push(item.to_string());
-                }
-            }
-        }
-        Some(serde_json::Value::Object(map)) => {
-            for (slot, raw) in map {
-                let Some(item) = raw.as_str().map(str::trim).filter(|s| !s.is_empty()) else {
-                    continue;
-                };
-                if is_worn_slot(slot) {
-                    worn.insert(slot.clone(), item.to_string());
-                } else {
-                    unassigned.push(item.to_string());
-                }
-            }
-        }
-        _ => {}
-    }
-    if let Some(serde_json::Value::Array(rows)) = value.get("unassigned") {
-        for row in rows {
-            if let Some(item) = row.as_str().map(str::trim).filter(|s| !s.is_empty()) {
-                unassigned.push(item.to_string());
-            }
-        }
-    }
-    let mut carry = Vec::new();
-    if let Some(serde_json::Value::Array(rows)) = value.get("carry") {
-        for row in rows {
-            if let Some(item) = row.as_str().map(str::trim).filter(|s| !s.is_empty()) {
-                carry.push(CarryEntry::new(item, 1));
-                continue;
-            }
-            let Some(item) = row
-                .get("item")
-                .and_then(|v| v.as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            else {
-                continue;
-            };
-            let qty = row
-                .get("qty")
-                .and_then(|v| {
-                    v.as_u64()
-                        .or_else(|| v.as_i64().and_then(|n| u64::try_from(n).ok()))
-                        .or_else(|| v.as_f64().and_then(|n| (n >= 1.0).then_some(n as u64)))
-                })
-                .unwrap_or(1);
-            carry.push(CarryEntry::new(item, qty.min(u32::MAX as u64) as u32));
-        }
-    }
-    Some(Loadout {
-        name: name.to_string(),
-        worn,
-        unassigned,
-        carry,
-    })
-}
-
-/// Default operator loadouts path (`~/.274bot/loadouts.json`).
-pub fn default_loadouts_path() -> PathBuf {
-    crate::bot_file("loadouts.json")
-}
-
-/// Persisted loadout list.
+/// The operator's loadout list as a form edits it.
 pub struct LoadoutsStore {
-    path: PathBuf,
+    backing: Option<Arc<dyn LoadoutsBacking>>,
     loadouts: Vec<Loadout>,
+    /// For each row of `loadouts`, the name of the `base` row it edits
+    /// (`None` for a row the form added): a row whose name differs from
+    /// its origin is a rename of that row.
+    origins: Vec<Option<String>>,
+    /// What the store held at `version` when this form last loaded or
+    /// saved: a save writes the difference from it.
+    base: Vec<Loadout>,
+    version: StoreVersion,
     dirty: bool,
+    /// Why the last load failed, while it stands.
+    load_error: Option<String>,
+}
+
+impl Default for LoadoutsStore {
+    fn default() -> Self {
+        Self::detached(Vec::new())
+    }
 }
 
 impl LoadoutsStore {
-    pub fn at(path: PathBuf) -> Self {
-        let loadouts = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|raw| parse_loadouts_file(&raw))
-            .unwrap_or_default();
-        LoadoutsStore {
-            path,
+    /// The form over `backing`, loaded from it now. A failed load leaves
+    /// the form empty, keeps the reason ([`Self::load_error`]), and the
+    /// store refuses saves into a file it refused to read.
+    pub fn over(backing: Arc<dyn LoadoutsBacking>) -> Self {
+        let mut store = Self {
+            backing: Some(backing),
+            ..Self::detached(Vec::new())
+        };
+        if let Err(error) = store.reload() {
+            store.load_error = Some(error);
+        }
+        store
+    }
+
+    /// Rows with nowhere to save them (a setting's option list, a test):
+    /// [`Self::save`] refuses.
+    pub fn detached(loadouts: Vec<Loadout>) -> Self {
+        Self {
+            backing: None,
+            origins: origins_of(&loadouts),
+            base: loadouts.clone(),
             loadouts,
+            version: StoreVersion::INITIAL,
             dirty: false,
+            load_error: None,
         }
     }
 
-    pub fn with_default_path() -> Self {
-        Self::at(default_loadouts_path())
+    /// Read the rows again from the store, dropping unsaved edits.
+    pub fn reload(&mut self) -> Result<(), String> {
+        let Some(backing) = &self.backing else {
+            return Err(NOT_BOUND.into());
+        };
+        let loaded = backing.load()?;
+        self.adopt(loaded);
+        self.load_error = None;
+        Ok(())
+    }
+
+    /// Why the last load failed, while it stands.
+    pub fn load_error(&self) -> Option<&str> {
+        self.load_error.as_deref()
     }
 
     pub fn loadouts(&self) -> &[Loadout] {
@@ -266,8 +173,11 @@ impl LoadoutsStore {
         self.loadouts.clone()
     }
 
-    pub fn restore(&mut self, loadouts: Vec<Loadout>) {
-        self.loadouts = loadouts;
+    /// Drop unsaved edits: the rows return to what the store held when
+    /// this form last loaded or saved.
+    pub fn discard(&mut self) {
+        self.loadouts = self.base.clone();
+        self.origins = origins_of(&self.base);
         self.dirty = false;
     }
 
@@ -277,12 +187,23 @@ impl LoadoutsStore {
             *existing = loadout;
         } else {
             self.loadouts.push(loadout);
+            self.origins.push(None);
         }
     }
 
-    /// Replace the loadout at `index`, including renames (does not key on name).
+    /// Replace the loadout at `index`, including renames (does not key on
+    /// name): the row keeps its place, and a save writes a rename as one
+    /// edit. Refused (`false`, nothing changes) when `index` is out of
+    /// range or another row already has the new name: rows are keyed by
+    /// name in the store, so saving that rename would replace the other row.
     pub fn replace_at(&mut self, index: usize, loadout: Loadout) -> bool {
-        if index >= self.loadouts.len() {
+        if index >= self.loadouts.len()
+            || self
+                .loadouts
+                .iter()
+                .enumerate()
+                .any(|(at, row)| at != index && row.name == loadout.name)
+        {
             return false;
         }
         self.dirty = true;
@@ -291,36 +212,172 @@ impl LoadoutsStore {
     }
 
     pub fn remove(&mut self, name: &str) -> bool {
-        let before = self.loadouts.len();
-        self.loadouts.retain(|l| l.name != name);
-        if self.loadouts.len() != before {
-            self.dirty = true;
-            true
-        } else {
-            false
-        }
+        let Some(index) = self.loadouts.iter().position(|l| l.name == name) else {
+            return false;
+        };
+        self.loadouts.remove(index);
+        self.origins.remove(index);
+        self.dirty = true;
+        true
     }
 
     pub fn is_dirty(&self) -> bool {
         self.dirty
     }
 
+    /// Write the form's edits through the store: one typed edit per row
+    /// added, changed, renamed or removed since the form loaded, each
+    /// expecting the version the one before left, and each durable before
+    /// this returns. A rename is one edit that replaces the row where it
+    /// stands, so a failed save never leaves the store without the row
+    /// under either name, and a renamed row keeps its place. On success the
+    /// form holds what the store holds. When another writer changed the
+    /// store first, nothing more is written and the conflict is the error;
+    /// the form then holds what the store holds now with its own edits
+    /// applied on top (save again to retry them against it, or
+    /// [`Self::discard`] them), so a retry never removes the other writer's
+    /// rows. A rename whose row the other writer removed, or whose new name
+    /// it took, is not applied, and the error says so.
     pub fn save(&mut self) -> Result<(), String> {
         if !self.dirty {
             return Ok(());
         }
-        let raw = serde_json::to_string_pretty(&self.loadouts)
-            .map_err(|e| format!("loadouts encode: {e}"))?;
-        write_private_file(&self.path, raw.as_bytes()).map_err(|e| e.to_string())?;
+        let Some(backing) = self.backing.clone() else {
+            return Err(NOT_BOUND.into());
+        };
+        let ops = edits_between(&self.base, &self.loadouts, &self.origins);
+        if ops.is_empty() {
+            self.dirty = false;
+            return Ok(());
+        }
+        match backing.commit(ops.clone(), self.version) {
+            Ok(after) => {
+                self.adopt(after);
+                Ok(())
+            }
+            Err(LoadoutsSaveError::Conflict { latest, reason }) => {
+                let notes = self.replay(latest, &ops);
+                let mut error = format!(
+                    "{reason}; the loadouts changed since this list was loaded, so the rest \
+                     was not written"
+                );
+                for note in notes {
+                    error.push_str("; ");
+                    error.push_str(&note);
+                }
+                Err(error)
+            }
+            Err(LoadoutsSaveError::Failed(reason)) => Err(reason),
+        }
+    }
+
+    fn adopt(&mut self, baseline: LoadoutsBaseline) {
+        self.origins = origins_of(&baseline.rows);
+        self.base = baseline.rows.clone();
+        self.loadouts = baseline.rows;
+        self.version = baseline.version;
         self.dirty = false;
-        Ok(())
+    }
+
+    /// Hold `latest` with `ops` applied the way the store applies them (an
+    /// upsert replaces the row of its name or appends, a removal drops that
+    /// name, a rename replaces its row in place), keeping the form dirty.
+    /// A rename the store would refuse is left out; what it says about each
+    /// is returned.
+    fn replay(&mut self, latest: LoadoutsBaseline, ops: &[LoadoutOp]) -> Vec<String> {
+        self.origins = origins_of(&latest.rows);
+        self.loadouts = latest.rows.clone();
+        self.base = latest.rows;
+        self.version = latest.version;
+        let mut notes = Vec::new();
+        for op in ops {
+            match op {
+                LoadoutOp::Upsert(row) => self.upsert(row.clone()),
+                LoadoutOp::Remove { name } => {
+                    self.remove(name);
+                }
+                LoadoutOp::Rename { from, loadout } => {
+                    match self.loadouts.iter().position(|row| row.name == *from) {
+                        None => notes.push(format!(
+                            "\"{from}\" is no longer saved, so renaming it to \"{}\" was not \
+                             kept",
+                            loadout.name
+                        )),
+                        Some(index) => {
+                            if !self.replace_at(index, loadout.clone()) {
+                                notes.push(format!(
+                                    "A loadout named \"{}\" already exists.",
+                                    loadout.name
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.dirty = true;
+        notes
     }
 }
 
-fn parse_loadouts_file(raw: &str) -> Option<Vec<Loadout>> {
-    let payload: serde_json::Value = serde_json::from_str(raw).ok()?;
-    let rows = payload.as_array()?;
-    Some(rows.iter().filter_map(parse_loadout).collect())
+fn origins_of(rows: &[Loadout]) -> Vec<Option<String>> {
+    rows.iter().map(|row| Some(row.name.clone())).collect()
+}
+
+const NOT_BOUND: &str = "loadouts are not bound to the local-state service";
+
+/// The typed edits that turn `base` into `rows` (each row of `rows` from
+/// the `base` row named by its `origins` entry, or new): a removal for each
+/// base row no row comes from, then a rename for each row whose name
+/// differs from its origin's, then an upsert for each row added or
+/// changed, in `rows` order. A rename onto a name another rename frees
+/// goes after that one; a cycle of renames is left in order, and the store
+/// refuses its first (names key the rows).
+fn edits_between(base: &[Loadout], rows: &[Loadout], origins: &[Option<String>]) -> Vec<LoadoutOp> {
+    let mut ops: Vec<LoadoutOp> = base
+        .iter()
+        .filter(|old| {
+            !origins
+                .iter()
+                .any(|origin| origin.as_ref() == Some(&old.name))
+        })
+        .map(|old| LoadoutOp::Remove {
+            name: old.name.clone(),
+        })
+        .collect();
+    let mut renames: Vec<(&String, &Loadout)> = rows
+        .iter()
+        .zip(origins)
+        .filter_map(|(row, origin)| {
+            origin
+                .as_ref()
+                .filter(|from| **from != row.name)
+                .map(|from| (from, row))
+        })
+        .collect();
+    while !renames.is_empty() {
+        let ready = renames
+            .iter()
+            .position(|(_, row)| !renames.iter().any(|(from, _)| **from == row.name))
+            .unwrap_or(0);
+        let (from, row) = renames.remove(ready);
+        ops.push(LoadoutOp::Rename {
+            from: from.clone(),
+            loadout: row.clone(),
+        });
+    }
+    ops.extend(
+        rows.iter()
+            .zip(origins)
+            .filter(|(row, origin)| match origin {
+                None => true,
+                Some(from) => {
+                    *from == row.name && base.iter().find(|old| old.name == row.name) != Some(*row)
+                }
+            })
+            .map(|(row, _)| LoadoutOp::Upsert(row.clone())),
+    );
+    ops
 }
 
 pub fn unique_loadout_name(existing: &[Loadout], base: &str) -> String {
@@ -870,115 +927,268 @@ pub fn weapon_of(loadout: &serde_json::Value, fallback: Option<&str>) -> serde_j
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
     use crate::rs2b0t_registry::{ItemOptionCandidate, ItemOptionSpec, SettingDef};
-    use crate::IsolatedEnv;
 
-    fn tmp_path() -> (IsolatedEnv, PathBuf) {
-        let scratch = IsolatedEnv::enter("loadouts-store");
-        let path = scratch.dir.join("loadouts.json");
-        (scratch, path)
+    /// A store held in memory: rows at a version, applying each typed edit
+    /// the way the service does (an upsert replaces by name or appends, a
+    /// removal drops by name, a rename replaces its row in place or is
+    /// refused), conflicting when the expectation is stale.
+    #[derive(Default)]
+    struct Memory {
+        state: Mutex<(Vec<Loadout>, u64)>,
+        commits: Mutex<Vec<Vec<LoadoutOp>>>,
     }
 
-    #[test]
-    fn store_round_trips_at_private_mode() {
-        let (_scratch, path) = tmp_path();
-        {
-            let mut store = LoadoutsStore::at(path.clone());
-            store.upsert(
-                Loadout::new("melee")
-                    .with_slot("hat", "helm")
-                    .with_slot("torso", "plate")
-                    .with_carry("food", 1),
-            );
-            store.upsert(Loadout::new("range").with_slot("hat", "coif"));
-            store.save().expect("save loadouts");
+    fn version(n: u64) -> StoreVersion {
+        (0..n).fold(StoreVersion::INITIAL, |v, _| v.checked_next().unwrap())
+    }
+
+    impl Memory {
+        fn baseline(&self) -> LoadoutsBaseline {
+            let state = self.state.lock().unwrap();
+            LoadoutsBaseline {
+                rows: state.0.clone(),
+                version: version(state.1),
+            }
         }
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode, 0o600, "loadouts.json must be 0o600");
+        /// Another writer's edit, landing between a form's load and save.
+        fn outside(&self, row: Loadout) {
+            let mut state = self.state.lock().unwrap();
+            state.0.push(row);
+            state.1 += 1;
         }
 
-        let store = LoadoutsStore::at(path);
-        assert_eq!(
-            store.names(),
-            vec!["melee".to_string(), "range".to_string()]
-        );
-        let melee = store.get("melee").expect("melee loadout");
-        assert_eq!(melee.worn.get("hat").map(String::as_str), Some("helm"));
-        assert_eq!(melee.worn.get("torso").map(String::as_str), Some("plate"));
-        assert_eq!(melee.carry, vec![CarryEntry::new("food", 1)]);
+        /// Another writer's removal, landing between a form's load and save.
+        fn outside_remove(&self, name: &str) {
+            let mut state = self.state.lock().unwrap();
+            state.0.retain(|row| row.name != name);
+            state.1 += 1;
+        }
     }
 
-    #[test]
-    fn legacy_array_worn_and_carry_are_preserved_without_guessing_slots() {
-        let (_scratch, path) = tmp_path();
-        std::fs::write(
-            &path,
-            r#"[{"name":"old","worn":["helm","plate"],"carry":["Lobster"]}]"#,
-        )
-        .unwrap();
-        let store = LoadoutsStore::at(path.clone());
-        let row = store.get("old").expect("legacy loadout");
-        assert!(row.worn.is_empty(), "array order must not invent slots");
-        assert_eq!(row.unassigned, vec!["helm", "plate"]);
-        assert_eq!(row.carry, vec![CarryEntry::new("Lobster", 1)]);
+    impl LoadoutsBacking for Memory {
+        fn load(&self) -> Result<LoadoutsBaseline, String> {
+            Ok(self.baseline())
+        }
 
-        let mut store = LoadoutsStore::at(path.clone());
-        let mut row = store.get("old").unwrap().clone();
-        row.name = "old-renamed".into();
-        store.replace_at(0, row);
-        store.save().unwrap();
-        let raw = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            raw.contains("helm"),
-            "rename/save must keep unassigned gear"
-        );
-        assert!(raw.contains("Lobster"));
-        assert!(!raw.contains("\"worn\": ["), "save writes the slot map");
+        fn commit(
+            &self,
+            ops: Vec<LoadoutOp>,
+            expected: StoreVersion,
+        ) -> Result<LoadoutsBaseline, LoadoutsSaveError> {
+            self.commits.lock().unwrap().push(ops.clone());
+            let mut expected = expected;
+            for op in ops {
+                let mut state = self.state.lock().unwrap();
+                if version(state.1) != expected {
+                    drop(state);
+                    return Err(LoadoutsSaveError::Conflict {
+                        latest: self.baseline(),
+                        reason: "version conflict".into(),
+                    });
+                }
+                match op {
+                    LoadoutOp::Upsert(row) => {
+                        match state.0.iter_mut().find(|old| old.name == row.name) {
+                            Some(old) => *old = row,
+                            None => state.0.push(row),
+                        }
+                    }
+                    LoadoutOp::Remove { name } => state.0.retain(|old| old.name != name),
+                    LoadoutOp::Rename { from, loadout } => {
+                        let Some(at) = state.0.iter().position(|old| old.name == from) else {
+                            drop(state);
+                            return Err(LoadoutsSaveError::Conflict {
+                                latest: self.baseline(),
+                                reason: "version conflict".into(),
+                            });
+                        };
+                        if state.0.iter().any(|old| old.name == loadout.name) {
+                            return Err(LoadoutsSaveError::Failed("duplicate id".into()));
+                        }
+                        state.0[at] = loadout;
+                    }
+                }
+                state.1 += 1;
+                expected = version(state.1);
+            }
+            Ok(self.baseline())
+        }
     }
 
+    fn form() -> (Arc<Memory>, LoadoutsStore) {
+        let memory = Arc::new(Memory::default());
+        let store = LoadoutsStore::over(Arc::clone(&memory) as Arc<dyn LoadoutsBacking>);
+        (memory, store)
+    }
+
+    /// T5.2 r3: a form saves typed edits through its backing, never a file
+    /// of its own: one upsert per new or changed row, one removal per row
+    /// gone, and afterwards it holds what the store holds.
     #[test]
-    fn explicit_slots_and_quantities_survive_file_round_trip() {
-        let (_scratch, path) = tmp_path();
-        let mut store = LoadoutsStore::at(path.clone());
+    fn a_form_saves_typed_edits_through_its_backing() {
+        let (memory, mut store) = form();
         store.upsert(
             Loadout::new("melee")
-                .with_slot("righthand", "Rune scimitar")
-                .with_carry("Lobster", 10)
-                .with_carry("Prayer potion(4)", 2),
+                .with_slot("hat", "helm")
+                .with_carry("food", 1),
         );
+        store.upsert(Loadout::new("range").with_slot("hat", "coif"));
         store.save().unwrap();
-        let store = LoadoutsStore::at(path);
-        let row = store.get("melee").unwrap();
+        assert!(!store.is_dirty());
+        assert_eq!(memory.baseline().rows, store.loadouts());
+        assert_eq!(store.names(), ["melee", "range"]);
+
+        store.remove("melee");
+        store.upsert(Loadout::new("range").with_slot("hat", "helm"));
+        store.save().unwrap();
         assert_eq!(
-            row.worn.get("righthand").map(String::as_str),
-            Some("Rune scimitar")
+            memory.commits.lock().unwrap().last().unwrap(),
+            &vec![
+                LoadoutOp::Remove {
+                    name: "melee".into()
+                },
+                LoadoutOp::Upsert(Loadout::new("range").with_slot("hat", "helm")),
+            ]
         );
-        assert_eq!(row.carry[0], CarryEntry::new("Lobster", 10));
-        assert_eq!(row.carry[1], CarryEntry::new("Prayer potion(4)", 2));
+        assert_eq!(store.names(), ["range"]);
+
+        // Nothing changed: nothing is written.
+        let commits = memory.commits.lock().unwrap().len();
+        store.upsert(Loadout::new("range").with_slot("hat", "helm"));
+        store.save().unwrap();
+        assert_eq!(memory.commits.lock().unwrap().len(), commits);
     }
 
+    /// T5.2 r4: a rename is one edit that replaces the row where it stands,
+    /// keeping the row's gear and its place in the list.
     #[test]
-    fn failed_save_can_restore_the_previous_file_image() {
-        let (_scratch, path) = tmp_path();
-        let mut store = LoadoutsStore::at(path.clone());
+    fn a_rename_is_one_edit_and_keeps_the_rows_gear_and_place() {
+        let (memory, mut store) = form();
+        store.upsert(Loadout::new("old").with_carry("Lobster", 1));
+        store.upsert(Loadout::new("other"));
+        store.save().unwrap();
+        let mut row = store.get("old").unwrap().clone();
+        row.name = "old-renamed".into();
+        assert!(store.replace_at(0, row.clone()));
+        store.save().unwrap();
+        assert_eq!(
+            memory.commits.lock().unwrap().last().unwrap(),
+            &vec![LoadoutOp::Rename {
+                from: "old".into(),
+                loadout: row,
+            }]
+        );
+        assert_eq!(store.names(), ["old-renamed", "other"]);
+        assert_eq!(memory.baseline().rows, store.loadouts());
+        assert_eq!(
+            store.get("old-renamed").unwrap().carry,
+            vec![CarryEntry::new("Lobster", 1)]
+        );
+    }
+
+    /// T5.2 r4: renames that free and take each other's names are ordered
+    /// so each lands (a → b after b → c); a removed row and a new row under
+    /// a renamed-away name are a removal and an upsert around them.
+    #[test]
+    fn chained_renames_are_ordered_and_new_rows_follow_them() {
+        let (memory, mut store) = form();
+        for name in ["a", "b", "gone"] {
+            store.upsert(Loadout::new(name));
+        }
+        store.save().unwrap();
+        assert!(store.replace_at(1, Loadout::new("c")));
+        assert!(store.replace_at(0, Loadout::new("b")));
+        assert!(store.remove("gone"));
+        store.upsert(Loadout::new("a").with_carry("Shark", 2));
+        store.save().unwrap();
+        assert_eq!(
+            memory.commits.lock().unwrap().last().unwrap(),
+            &vec![
+                LoadoutOp::Remove {
+                    name: "gone".into()
+                },
+                LoadoutOp::Rename {
+                    from: "b".into(),
+                    loadout: Loadout::new("c"),
+                },
+                LoadoutOp::Rename {
+                    from: "a".into(),
+                    loadout: Loadout::new("b"),
+                },
+                LoadoutOp::Upsert(Loadout::new("a").with_carry("Shark", 2)),
+            ]
+        );
+        assert_eq!(store.names(), ["b", "c", "a"]);
+    }
+
+    /// T5.2 r4: a rename whose row another writer removed meanwhile is not
+    /// replayed (nothing is re-inserted under the new name), and the error
+    /// names it.
+    #[test]
+    fn a_rename_of_a_row_removed_meanwhile_is_not_replayed_and_is_named() {
+        let (memory, mut store) = form();
+        store.upsert(Loadout::new("old"));
+        store.upsert(Loadout::new("other"));
+        store.save().unwrap();
+        assert!(store.replace_at(0, Loadout::new("new")));
+        memory.outside_remove("old");
+        let error = store.save().unwrap_err();
+        assert!(
+            error.contains("\"old\" is no longer saved, so renaming it to \"new\" was not kept"),
+            "{error}"
+        );
+        assert_eq!(store.names(), ["other"]);
+        assert_eq!(memory.baseline().rows, [Loadout::new("other")]);
+    }
+
+    /// T5.2 r3: an edit another writer made after the form loaded is never
+    /// overwritten: the save conflicts, writes nothing more, keeps the
+    /// form's edit on top of what the store holds now, and saving again
+    /// keeps both rows.
+    #[test]
+    fn a_save_after_another_writer_conflicts_and_keeps_both_rows() {
+        let (memory, mut store) = form();
+        memory.outside(Loadout::new("saved-elsewhere"));
+        store.upsert(Loadout::new("mine"));
+        let error = store.save().unwrap_err();
+        assert!(error.contains("conflict"), "{error}");
+        assert!(store.is_dirty(), "the form keeps its edit");
+        assert_eq!(memory.baseline().rows, [Loadout::new("saved-elsewhere")]);
+
+        store.save().unwrap();
+        let names: Vec<String> = memory
+            .baseline()
+            .rows
+            .iter()
+            .map(|row| row.name.clone())
+            .collect();
+        assert_eq!(names, ["saved-elsewhere", "mine"]);
+    }
+
+    /// T5.2 r3: discarding drops unsaved edits back to what the store held;
+    /// a detached form refuses to save instead of pretending it did.
+    #[test]
+    fn discard_returns_to_the_store_and_a_detached_form_refuses_to_save() {
+        let (_memory, mut store) = form();
         store.upsert(Loadout::new("keep").with_carry("Lobster", 4));
         store.save().unwrap();
-        let backup = store.snapshot();
         store.upsert(Loadout::new("keep").with_carry("Shark", 9));
-        std::fs::remove_file(&path).unwrap();
-        std::fs::create_dir_all(&path).unwrap();
-        assert!(store.save().is_err());
-        store.restore(backup);
+        store.discard();
         assert_eq!(
             store.get("keep").unwrap().carry[0],
             CarryEntry::new("Lobster", 4)
         );
         assert!(!store.is_dirty());
+
+        let mut detached = LoadoutsStore::detached(vec![Loadout::new("fixture")]);
+        detached.upsert(Loadout::new("more"));
+        assert_eq!(detached.save().unwrap_err(), NOT_BOUND);
+        assert!(detached.is_dirty());
     }
 
     #[test]
@@ -999,8 +1209,7 @@ mod tests {
 
     #[test]
     fn catalog_metadata_options_when_schema_empty() {
-        let (_scratch, path) = tmp_path();
-        let store = LoadoutsStore::at(path);
+        let store = LoadoutsStore::default();
         let def = SettingDef {
             id: "location".into(),
             ty: "string".into(),
@@ -1046,8 +1255,7 @@ mod tests {
 
     #[test]
     fn food_options_follow_selected_fixed_heal_facts() {
-        let (_scratch, path) = tmp_path();
-        let store = LoadoutsStore::at(path);
+        let store = LoadoutsStore::default();
         let def = equipment_from("FOOD_OPTIONS");
         assert!(resolve_setting_options(&def, &store, None).is_empty());
 
@@ -1074,8 +1282,7 @@ mod tests {
 
     #[test]
     fn gatherer_food_options_start_with_none_and_inline_labels_are_preserved() {
-        let (_scratch, path) = tmp_path();
-        let store = LoadoutsStore::at(path);
+        let store = LoadoutsStore::default();
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let food = equipment_from("gatherer-food");
         let no_facts = resolve_setting_options_with_labels(&food, &store, None);
@@ -1103,8 +1310,7 @@ mod tests {
     }
     #[test]
     fn w1c_equipment_options_closed_without_game_data() {
-        let (_scratch, path) = tmp_path();
-        let store = LoadoutsStore::at(path);
+        let store = LoadoutsStore::default();
         let def = equipment_from("STAFFS");
         assert!(resolve_setting_options(&def, &store, None).is_empty());
         assert!(resolve_setting_options(&equipment_from("AXES"), &store, None).is_empty());
@@ -1112,8 +1318,7 @@ mod tests {
 
     #[test]
     fn w1c_equipment_options_match_curated_families_on_both_pins() {
-        let (_scratch, path) = tmp_path();
-        let store = LoadoutsStore::at(path);
+        let store = LoadoutsStore::default();
         let r274 = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         let r289 = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         for ident in [
@@ -1198,8 +1403,7 @@ mod tests {
 
     #[test]
     fn recovered_inline_options_still_win_over_metadata() {
-        let (_scratch, path) = tmp_path();
-        let store = LoadoutsStore::at(path);
+        let store = LoadoutsStore::default();
         let def = SettingDef {
             id: "surface".into(),
             ty: "string".into(),
@@ -1225,8 +1429,7 @@ mod tests {
 
     #[test]
     fn resolve_setting_options_lists_loadout_names() {
-        let (_scratch, path) = tmp_path();
-        let mut store = LoadoutsStore::at(path);
+        let mut store = LoadoutsStore::default();
         store.upsert(Loadout::new("fish").with_carry("net", 1));
         store.upsert(Loadout::new("mine"));
         let def = SettingDef {
@@ -1366,8 +1569,7 @@ mod tests {
 
     #[test]
     fn resolve_item_options_matches_both_pinned_revisions() {
-        let (_scratch, path) = tmp_path();
-        let store = LoadoutsStore::at(path);
+        let store = LoadoutsStore::default();
         let def = item_def(alcher_spec(&[]));
         let r274 = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         let r289 = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
@@ -1397,8 +1599,7 @@ mod tests {
 
     #[test]
     fn resolve_item_options_label_sort_orders_prefix_then_keys_on_both_pins() {
-        let (_scratch, path) = tmp_path();
-        let store = LoadoutsStore::at(path);
+        let store = LoadoutsStore::default();
         let spec = ItemOptionSpec {
             prefix: vec!["custom".into()],
             candidates: vec![
@@ -1446,8 +1647,7 @@ mod tests {
 
     #[test]
     fn resolve_item_options_none_facts_prefix_only() {
-        let (_scratch, path) = tmp_path();
-        let store = LoadoutsStore::at(path);
+        let store = LoadoutsStore::default();
         let def = item_def(alcher_spec(&[]));
         let opts = resolve_setting_options(&def, &store, None);
         assert_eq!(opts, vec!["custom".to_string()]);
@@ -1456,8 +1656,7 @@ mod tests {
 
     #[test]
     fn resolve_item_options_drops_missing_alias_and_keeps_sort() {
-        let (_scratch, path) = tmp_path();
-        let store = LoadoutsStore::at(path);
+        let store = LoadoutsStore::default();
         let def = item_def(alcher_spec(&[cand("not_a_real_selected_item", None)]));
         let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         let opts = resolve_setting_options(&def, &store, Some(data.as_ref()));
@@ -1470,8 +1669,7 @@ mod tests {
 
     #[test]
     fn resolve_item_options_tie_order_and_identity_labels() {
-        let (_scratch, path) = tmp_path();
-        let store = LoadoutsStore::at(path);
+        let store = LoadoutsStore::default();
         let def = item_def(alcher_spec(&[]));
         let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         let resolved = resolve_setting_options_with_labels(&def, &store, Some(data.as_ref()));
@@ -1504,8 +1702,7 @@ mod tests {
 
     #[test]
     fn resolve_item_options_rebounds_without_mutating_schema() {
-        let (_scratch, path) = tmp_path();
-        let store = LoadoutsStore::at(path);
+        let store = LoadoutsStore::default();
         let def = item_def(alcher_spec(&[]));
         let r274 = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         let r289 = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
@@ -1520,8 +1717,7 @@ mod tests {
 
     #[test]
     fn resolve_item_options_leaves_literals_and_loadouts() {
-        let (_scratch, path) = tmp_path();
-        let mut store = LoadoutsStore::at(path);
+        let mut store = LoadoutsStore::default();
         store.upsert(Loadout::new("fish"));
         let literal = SettingDef {
             id: "material".into(),
@@ -1550,8 +1746,7 @@ mod tests {
 
     #[test]
     fn replace_at_renames_without_duplicating() {
-        let (_scratch, path) = tmp_path();
-        let mut store = LoadoutsStore::at(path);
+        let mut store = LoadoutsStore::default();
         store.upsert(Loadout::new("melee").with_slot("hat", "helm"));
         store.upsert(Loadout::new("range"));
         assert!(store.replace_at(0, Loadout::new("melee2").with_slot("hat", "helm")));
@@ -1559,6 +1754,23 @@ mod tests {
         assert_eq!(store.loadouts()[0].name, "melee2");
         assert!(store.get("melee").is_none());
         assert!(store.get("melee2").is_some());
+    }
+
+    /// Rows are keyed by name in the store, so a rename onto another row's
+    /// name would replace that row when saved: it is refused instead.
+    #[test]
+    fn replace_at_refuses_a_rename_onto_another_rows_name() {
+        let mut store = LoadoutsStore::default();
+        store.upsert(Loadout::new("melee").with_slot("hat", "helm"));
+        store.upsert(Loadout::new("range"));
+        let before = store.snapshot();
+        assert!(!store.replace_at(1, Loadout::new("melee")));
+        assert_eq!(store.loadouts(), before.as_slice());
+        assert!(!store.replace_at(2, Loadout::new("tank")), "out of range");
+        assert!(
+            store.replace_at(0, Loadout::new("melee")),
+            "a row keeps its own name"
+        );
     }
 
     #[test]
@@ -1570,7 +1782,7 @@ mod tests {
 
     fn gather_game_data() -> api::game_data::SelectedGameData {
         serde_json::from_value(serde_json::json!({
-            "schema_version": 4,
+            "schema_version": 5,
             "revision": 289,
             "provenance": {"cache_identity": {"cache_id": "x"}, "inputs": [], "content_inputs": [], "decoder_sources": []},
             "items": [],
@@ -1588,8 +1800,7 @@ mod tests {
 
     #[test]
     fn resolve_gather_options_values_labels_and_gap_suffix() {
-        let (_scratch, path) = tmp_path();
-        let store = LoadoutsStore::at(path);
+        let store = LoadoutsStore::default();
         let data = gather_game_data();
         let mining = resolve_setting_options_with_labels(
             &equipment_from("gather:mining"),
@@ -1631,8 +1842,7 @@ mod tests {
 
     #[test]
     fn resolve_gather_options_empty_without_facts() {
-        let (_scratch, path) = tmp_path();
-        let store = LoadoutsStore::at(path);
+        let store = LoadoutsStore::default();
         assert!(resolve_setting_options(&equipment_from("gather:mining"), &store, None).is_empty());
         let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         assert!(
@@ -1648,8 +1858,7 @@ mod tests {
 
     #[test]
     fn resolve_named_banks_keeps_nearest_before_catalog_names() {
-        let (_scratch, path) = tmp_path();
-        let store = LoadoutsStore::at(path);
+        let store = LoadoutsStore::default();
         let mut def = equipment_from("named-banks");
         def.options.push("Nearest".into());
         let banks = resolve_setting_options(&def, &store, None);
@@ -1664,8 +1873,7 @@ mod tests {
 
     #[test]
     fn resolve_gatherer_teleports_uses_only_available_selected_spell_facts() {
-        let (_scratch, path) = tmp_path();
-        let store = LoadoutsStore::at(path);
+        let store = LoadoutsStore::default();
         let mut def = equipment_from("gatherer-teleports");
         def.options.push("Off".into());
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();

@@ -606,9 +606,7 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
         monotonic: false,
     };
     let areas = HashMap::new();
-    let loadouts = LoadoutOverlay::from_default_store(
-        Arc::<[crate::loadouts_store::Loadout]>::from(Vec::new()),
-    );
+    let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from([]));
     let recipes = HashMap::new();
     let path = FactKey::new("combat_unattackable");
     let cx = fixture_compile_context(
@@ -1141,6 +1139,7 @@ fn with_step_context_at_walk_seq<R>(
     })
 }
 
+#[cfg(feature = "load")]
 fn publish_walk_outcome(seq: u64, cancel_reason: crate::isolate_fb::WalkCancelReason) {
     crate::observed::replace(seq, true, |post| {
         post.walk_outcome(crate::observed::WalkOutcome {
@@ -2449,6 +2448,7 @@ fn target_gone_walk_user_input_parks_without_reengaging() {
     assert!(run.action.is_none());
 }
 
+#[cfg(feature = "load")]
 #[test]
 fn manual_movement_baseline_covers_return_and_loot_sublegs() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
@@ -3141,7 +3141,7 @@ fn combat_finish_tick_budget_covers_the_dialogue_and_interruption_blocks() {
     });
     assert!(matches!(
         result,
-        Poll::Ready(Err(ActionError::Blocked(reason))) if reason.contains("interrupted")
+        Poll::Ready(Err(ActionError::CombatInterrupted))
     ));
 }
 
@@ -3355,7 +3355,7 @@ fn combat_kit_carry_keeps_compiled_alias_ids() {
     );
     // The overlay row holds display names, as the compiled Path rows do; the
     // carry map holds the alias-resolved identities native consumers use.
-    let row = crate::loadouts_store::Loadout::new("kitpath/cash")
+    let row = api::loadout::Loadout::new("kitpath/cash")
         .with_carry("Coins", 1000)
         .with_carry("Bones", 5);
     let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from([row]));

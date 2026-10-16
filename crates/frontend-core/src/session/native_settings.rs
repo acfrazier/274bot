@@ -2,8 +2,8 @@
 //! Same-card replacements inherit accepted copy holds through their durable commit.
 use super::*;
 use script::native::{PreparedConfig, SettingsBag, StartError};
+use script::preparation::PreparedTask;
 use std::sync::atomic::AtomicBool;
-use std::thread::JoinHandle;
 
 /// Cancellation is shared by the sync report and its existing preparations/
 /// writes. Equality follows the owning sync operation, not its mutable flag.
@@ -64,6 +64,12 @@ struct AssignmentIntent {
     next: Option<vault::ScriptAssignment>,
 }
 
+/// At most this many settings receipts may wait for the shared worker.
+/// This bounds retained drafts when an operator repeatedly saves while full.
+const MAX_PENDING_NATIVE_SETTINGS: usize = 64;
+
+type NativePreparation = PreparedTask<Result<host_play::PreparedScriptConfig, StartError>>;
+
 pub(super) struct PendingPreparation {
     profile: Profile,
     /// Explicit or inherited intent from a pending same-card draft. New copies
@@ -72,44 +78,65 @@ pub(super) struct PendingPreparation {
     renamed_from: Option<String>,
     mirror: ArmMirror,
     label: &'static str,
-    worker: JoinHandle<Result<Arc<PreparedConfig>, StartError>>,
+    worker: Option<NativePreparation>,
+    waiting: Option<(script::CompiledId, u64, Arc<SettingsBag>)>,
+    failure: Option<String>,
+    #[cfg(test)]
+    publication_gate: Option<Arc<AtomicBool>>,
     copy_start_hold: Option<NativeCopyHold>,
+}
+
+impl PendingPreparation {
+    fn is_finished(&self) -> bool {
+        #[cfg(test)]
+        if self
+            .publication_gate
+            .as_ref()
+            .is_some_and(|gate| !gate.load(Ordering::Acquire))
+        {
+            return false;
+        }
+        self.failure.is_some() || self.worker.as_ref().is_some_and(PreparedTask::is_finished)
+    }
 }
 
 pub(super) struct PendingDelivery {
     op: OperationId,
     name: String,
     live: LiveSettings,
-    worker: JoinHandle<Result<Arc<PreparedConfig>, StartError>>,
+    worker: Option<NativePreparation>,
+    admission: Option<(script::CompiledId, u64)>,
 }
 
 impl ArmMirror {
     pub(super) fn native_identity(&self) -> Option<String> {
-        match self {
-            Self::NativeSettings { id, .. } => Some(script::compiled_identity_key(*id)),
-            Self::ScriptSettings { card, .. } => Some(card.clone()),
-            Self::Remember(Some(live)) if live.run.is_some() => Some(live.identity.clone()),
+        match &self.0 {
+            ArmMirrorKind::NativeSettings { id, .. } => Some(script::compiled_identity_key(*id)),
+            ArmMirrorKind::ScriptSettings { card, .. } => Some(card.clone()),
+            ArmMirrorKind::Remember(Some(live)) if live.run.is_some() => {
+                Some(live.identity.clone())
+            }
             _ => None,
         }
     }
 
     pub(super) fn native_draft(&self) -> Option<(script::CompiledId, Arc<SettingsBag>)> {
-        match self {
-            Self::NativeSettings { id, bag, .. } => Some((*id, Arc::clone(bag))),
+        match &self.0 {
+            ArmMirrorKind::NativeSettings { id, bag, .. } => Some((*id, Arc::clone(bag))),
             _ => None,
         }
     }
 
     fn prepared(self, config: Arc<PreparedConfig>) -> Self {
-        match self {
-            Self::NativeSettings { id, live, .. } => Self::ScriptSettings {
+        match self.0 {
+            ArmMirrorKind::NativeSettings { id, live, .. } => Self(ArmMirrorKind::ScriptSettings {
                 card: script::compiled_identity_key(id),
                 live: live.map(|mut live| {
                     live.prepared = Some(config);
                     live
                 }),
-            },
-            other => other,
+            }),
+            other => Self(other),
         }
     }
 }
@@ -130,7 +157,17 @@ impl<Io> OperatorSession<Io> {
             self.settings_writes.push(SettingsWrite {
                 op,
                 profile: name,
-                result: SettingsResult::Saved(LiveDelivery::Stale),
+                result: SettingsResult::saved(LiveDelivery::Stale),
+            });
+            return;
+        }
+        if self.deliveries.len() >= MAX_PENDING_NATIVE_SETTINGS {
+            self.settings_writes.push(SettingsWrite {
+                op,
+                profile: name,
+                result: SettingsResult::saved(LiveDelivery::rejected(
+                    "too many pending native settings deliveries",
+                )),
             });
             return;
         }
@@ -145,62 +182,146 @@ impl<Io> OperatorSession<Io> {
                     op.0.max(play.script_native_settings_revision(&name).unwrap_or(1))
                         .checked_add(1)
                         .ok_or_else(|| "settings revision exhausted".to_string())?;
-                play.script_prepare_config(id, revision, Arc::clone(&live.bag))
+                Ok((id, revision))
             });
         match result {
-            Ok(worker) => self.deliveries.push(PendingDelivery {
-                op,
-                name,
-                live,
-                worker,
-            }),
+            Ok((id, revision)) => {
+                let play = self.play.as_ref().expect("checked play");
+                match play.script_prepare_config(id, revision, Arc::clone(&live.bag)) {
+                    Ok(worker) => self.deliveries.push(PendingDelivery {
+                        op,
+                        name,
+                        live,
+                        worker: Some(worker),
+                        admission: None,
+                    }),
+                    Err(script::preparation::PreparationError::Refused(
+                        api::work::SubmissionRefusal::Full,
+                    )) => {
+                        self.deliveries.push(PendingDelivery {
+                            op,
+                            name,
+                            live,
+                            worker: None,
+                            admission: Some((id, revision)),
+                        });
+                    }
+                    Err(error) => self.settings_writes.push(SettingsWrite {
+                        op,
+                        profile: name,
+                        result: SettingsResult::saved(LiveDelivery::rejected(error.to_string())),
+                    }),
+                }
+            }
             Err(error) => self.settings_writes.push(SettingsWrite {
                 op,
                 profile: name,
-                result: SettingsResult::Saved(LiveDelivery::Rejected(error)),
+                result: SettingsResult::saved(LiveDelivery::rejected(error)),
             }),
         }
     }
 
     pub(super) fn take_native_deliveries(&mut self, wait: bool) {
-        let mut index = 0;
-        while index < self.deliveries.len() {
-            if !wait && !self.deliveries[index].worker.is_finished() {
-                index += 1;
-                continue;
-            }
-            let mut pending = self.deliveries.remove(index);
-            let prepared = pending
-                .worker
-                .join()
-                .map_err(|_| "native settings preparation worker panicked".to_string())
-                .and_then(|result| result.map_err(|error| error.to_string()));
-            let delivery =
-                if !self.native_edit_current(&pending.name, &pending.live.identity, pending.op) {
-                    LiveDelivery::Stale
-                } else if let Some(play) = &self.play {
-                    if play.script_native_run(&pending.name) != pending.live.run {
-                        LiveDelivery::Stale
-                    } else {
-                        match prepared {
-                            Ok(config) => {
-                                pending.live.prepared = Some(config);
-                                deliver_settings(play, &pending.name, Some(pending.live))
+        loop {
+            let mut index = 0;
+            let mut blocked_on_admission = false;
+            while index < self.deliveries.len() {
+                if let Some((id, revision)) = self.deliveries[index].admission {
+                    let result = self
+                        .play
+                        .as_ref()
+                        .ok_or_else(|| {
+                            script::preparation::PreparationError::Unavailable("no play".into())
+                        })
+                        .and_then(|play| {
+                            play.script_prepare_config(
+                                id,
+                                revision,
+                                Arc::clone(&self.deliveries[index].live.bag),
+                            )
+                        });
+                    match result {
+                        Ok(worker) => {
+                            self.deliveries[index].worker = Some(worker);
+                            self.deliveries[index].admission = None;
+                        }
+                        Err(script::preparation::PreparationError::Refused(
+                            api::work::SubmissionRefusal::Full,
+                        )) => {
+                            if wait {
+                                blocked_on_admission = true;
                             }
-                            Err(error) => LiveDelivery::Rejected(error),
+                            // Keep later receipts moving: joining one releases
+                            // its retained WorkAdmission charge.
+                            index += 1;
+                            continue;
+                        }
+                        Err(error) => {
+                            let pending = self.deliveries.remove(index);
+                            self.settings_writes.push(SettingsWrite {
+                                op: pending.op,
+                                profile: pending.name,
+                                result: SettingsResult::saved(LiveDelivery::rejected(
+                                    error.to_string(),
+                                )),
+                            });
+                            continue;
                         }
                     }
-                } else {
-                    LiveDelivery::Stale
-                };
-            self.settings_writes.push(SettingsWrite {
-                op: pending.op,
-                profile: pending.name,
-                result: SettingsResult::Saved(delivery),
-            });
+                }
+                if !wait
+                    && !self.deliveries[index]
+                        .worker
+                        .as_ref()
+                        .is_some_and(PreparedTask::is_finished)
+                {
+                    index += 1;
+                    continue;
+                }
+                let mut pending = self.deliveries.remove(index);
+                let worker = pending
+                    .worker
+                    .take()
+                    .expect("admitted delivery has a worker");
+                let identity = worker.identity();
+                let prepared = worker
+                    .join()
+                    .map_err(|error| error.to_string())
+                    .and_then(|result| result.map_err(|error| error.to_string()));
+                let delivery =
+                    if !self.native_edit_current(&pending.name, &pending.live.identity, pending.op)
+                    {
+                        LiveDelivery::Stale
+                    } else if let Some(play) = &self.play {
+                        if play.script_native_run(&pending.name) != pending.live.run {
+                            LiveDelivery::Stale
+                        } else {
+                            match prepared.and_then(|config| {
+                                config.commit(identity).map_err(|error| error.to_string())
+                            }) {
+                                Ok(config) => {
+                                    pending.live.prepared = Some(config);
+                                    deliver_settings(play, &pending.name, Some(pending.live))
+                                }
+                                Err(error) => LiveDelivery::rejected(error),
+                            }
+                        }
+                    } else {
+                        LiveDelivery::Stale
+                    };
+                self.settings_writes.push(SettingsWrite {
+                    op: pending.op,
+                    profile: pending.name,
+                    result: SettingsResult::saved(delivery),
+                });
+            }
+            if !wait || !blocked_on_admission {
+                return;
+            }
+            // Retry admissions only after later receipts have been consumed.
+            std::thread::park_timeout(Duration::from_millis(5));
         }
     }
-
     /// A parameter editor can compose a newer edit over its still-preparing
     /// draft. Starts and spawns use the durable profile, not this projection.
     pub fn settings_for_edit(&self, name: &str) -> Option<&ProfileSettings> {
@@ -262,7 +383,10 @@ impl<Io> OperatorSession<Io> {
             return Err(format!("{label}: profile unavailable: {source}"));
         }
         let card = script::compiled_identity_key(id);
-        let assign = matches!(mirror, ArmMirror::NativeSettings { assign: true, .. });
+        let assign = matches!(
+            &mirror.0,
+            ArmMirrorKind::NativeSettings { assign: true, .. }
+        );
         let assignment_intent = if assign {
             self.vault
                 .as_ref()
@@ -282,6 +406,9 @@ impl<Io> OperatorSession<Io> {
                 .and_then(|prior_op| self.preparations.get(prior_op))
                 .and_then(|pending| pending.assignment_intent.clone())
         };
+        if self.preparations.len() >= MAX_PENDING_NATIVE_SETTINGS {
+            return Err(format!("{label}: too many pending native settings saves"));
+        }
         let play = self
             .play
             .as_ref()
@@ -291,11 +418,15 @@ impl<Io> OperatorSession<Io> {
             op.0.max(play.script_native_settings_revision(source).unwrap_or(1))
                 .checked_add(1)
                 .ok_or("settings revision exhausted")?;
-        let worker = match play.script_prepare_config(id, revision, bag) {
-            Ok(worker) => worker,
+        let (worker, waiting) = match play.script_prepare_config(id, revision, Arc::clone(&bag)) {
+            Ok(worker) => (Some(worker), None),
+            Err(script::preparation::PreparationError::Refused(
+                api::work::SubmissionRefusal::Full,
+            )) => (None, Some((id, revision, bag))),
             Err(error) => {
+                let error = error.to_string();
                 self.operations
-                    .set(op, &profile.username, Outcome::Failed(error.clone()));
+                    .set(op, &profile.username, Outcome::failed(error.clone()));
                 return Err(error);
             }
         };
@@ -333,6 +464,10 @@ impl<Io> OperatorSession<Io> {
                 mirror,
                 label,
                 worker,
+                waiting,
+                failure: None,
+                #[cfg(test)]
+                publication_gate: None,
                 copy_start_hold,
             },
         );
@@ -343,148 +478,205 @@ impl<Io> OperatorSession<Io> {
         if self.preparations.is_empty() {
             return;
         }
-        let now = Instant::now();
-        let mut ready: Vec<_> = self
-            .preparations
-            .iter()
-            .filter(|(_, pending)| {
-                wait || pending.worker.is_finished()
-                    || pending.copy_start_hold.as_ref().is_some_and(|hold| {
+        loop {
+            if self.preparations.is_empty() {
+                return;
+            }
+            for pending in self.preparations.values_mut() {
+                let Some((id, revision, bag)) = pending.waiting.as_ref() else {
+                    continue;
+                };
+                let Some(play) = self.play.as_ref() else {
+                    pending.failure = Some("no play".into());
+                    pending.waiting = None;
+                    continue;
+                };
+                match play.script_prepare_config(*id, *revision, Arc::clone(bag)) {
+                    Ok(worker) => {
+                        pending.worker = Some(worker);
+                        pending.waiting = None;
+                    }
+                    Err(script::preparation::PreparationError::Refused(
+                        api::work::SubmissionRefusal::Full,
+                    )) => {}
+                    Err(error) => {
+                        pending.failure = Some(error.to_string());
+                        pending.waiting = None;
+                    }
+                }
+            }
+            let now = Instant::now();
+            let mut ready: Vec<_> = self
+                .preparations
+                .iter()
+                .filter(|(_, pending)| {
+                    #[cfg(test)]
+                    let gated = pending
+                        .publication_gate
+                        .as_ref()
+                        .is_some_and(|gate| !gate.load(Ordering::Acquire));
+                    #[cfg(not(test))]
+                    let gated = false;
+                    if !gated && (pending.is_finished() || (wait && pending.worker.is_some())) {
+                        return true;
+                    }
+                    pending.copy_start_hold.as_ref().is_some_and(|hold| {
                         now >= hold.deadline
                             || hold.cancellation.is_cancelled()
                             || self.play.is_none()
                             || self.vault.is_none()
                             || !self.members().contains(&pending.profile.username)
                     })
-            })
-            .map(|(op, _)| *op)
-            .collect();
-        ready.sort_unstable();
-        for op in ready {
-            let mut pending = self.preparations.remove(&op).expect("ready preparation");
-            let name = pending.profile.username.clone();
-            let source = pending.renamed_from.as_deref().unwrap_or(&name);
-            let result = if pending
-                .copy_start_hold
-                .as_ref()
-                .is_some_and(|hold| now >= hold.deadline)
-                && !pending.worker.is_finished()
-            {
-                // Dropping the JoinHandle detaches a stuck preparer. Its late
-                // result cannot be persisted after this failed copy.
-                Err("settings copy timed out during native preparation".to_string())
-            } else if pending
-                .copy_start_hold
-                .as_ref()
-                .is_some_and(|hold| hold.cancellation.is_cancelled())
-            {
-                Err("settings copy cancelled".to_string())
-            } else if pending.copy_start_hold.is_some()
-                && (self.play.is_none() || self.vault.is_none() || !self.members().contains(&name))
-            {
-                Err("settings copy cancelled: bot or vault unavailable".to_string())
-            } else {
-                pending
-                    .worker
-                    .join()
-                    .map_err(|_| "native settings preparation worker panicked".to_string())
-                    .and_then(|result| result.map_err(|error| error.to_string()))
-            };
-            let card = pending
-                .mirror
-                .native_identity()
-                .expect("native draft identity");
-            let current = self.native_edit_current(&name, &card, op)
-                && self.native_edit_current(source, &card, op)
-                && self.vault.as_ref().is_some_and(|vault| {
-                    vault.get(source).is_some()
-                        && (pending.renamed_from.is_none() || vault.get(&name).is_none())
-                });
-            // Invalid drafts remain failed even if an unrelated durable write
-            // overtook them. They were never eligible for persistence.
-            let config = match result {
-                Ok(config) => config,
-                Err(error) => {
-                    self.operations
-                        .set(op, &name, Outcome::Failed(error.clone()));
-                    self.write_failures
-                        .push(crate::profile_saves::WriteFailure {
-                            op,
-                            target: name.clone(),
-                            label: pending.label,
-                            error: error.clone(),
-                        });
-                    if matches!(pending.mirror, ArmMirror::NativeSettings { .. }) {
+                })
+                .map(|(op, _)| *op)
+                .collect();
+            ready.sort_unstable();
+            let nothing_ready = ready.is_empty();
+            for op in ready {
+                let mut pending = self.preparations.remove(&op).expect("ready preparation");
+                let name = pending.profile.username.clone();
+                let worker = pending.worker.take();
+                let identity = worker.as_ref().map(PreparedTask::identity);
+                let source = pending.renamed_from.as_deref().unwrap_or(&name);
+                let result = if pending
+                    .copy_start_hold
+                    .as_ref()
+                    .is_some_and(|hold| now >= hold.deadline)
+                    && !worker.as_ref().is_some_and(PreparedTask::is_finished)
+                {
+                    // Abandon the exact job; its worker and charge remain in
+                    // custody until the shared WorkAdmission worker returns.
+                    // Its late result cannot be persisted after this failed copy.
+                    Err("settings copy timed out during native preparation".to_string())
+                } else if pending
+                    .copy_start_hold
+                    .as_ref()
+                    .is_some_and(|hold| hold.cancellation.is_cancelled())
+                {
+                    Err("settings copy cancelled".to_string())
+                } else if pending.copy_start_hold.is_some()
+                    && (self.play.is_none()
+                        || self.vault.is_none()
+                        || !self.members().contains(&name))
+                {
+                    Err("settings copy cancelled: bot or vault unavailable".to_string())
+                } else if let Some(error) = pending.failure.take() {
+                    Err(error)
+                } else {
+                    worker
+                        .expect("ready native preparation has a worker")
+                        .join()
+                        .map_err(|error| error.to_string())
+                        .and_then(|result| result.map_err(|error| error.to_string()))
+                };
+                let card = pending
+                    .mirror
+                    .native_identity()
+                    .expect("native draft identity");
+                let current = self.native_edit_current(&name, &card, op)
+                    && self.native_edit_current(source, &card, op)
+                    && self.vault.as_ref().is_some_and(|vault| {
+                        vault.get(source).is_some()
+                            && (pending.renamed_from.is_none() || vault.get(&name).is_none())
+                    });
+                // Invalid drafts remain failed even if an unrelated durable write
+                // overtook them. They were never eligible for persistence.
+                if !current && result.is_ok() {
+                    self.operations.set(op, &name, Outcome::Cancelled);
+                    if pending.mirror.is_native_settings() {
                         self.settings_writes.push(SettingsWrite {
                             op,
                             profile: name.clone(),
-                            result: SettingsResult::Failed(error),
+                            result: SettingsResult::Superseded,
                         });
                     }
                     continue;
                 }
-            };
-            if !current {
-                self.operations.set(op, &name, Outcome::Cancelled);
-                if matches!(pending.mirror, ArmMirror::NativeSettings { .. }) {
-                    self.settings_writes.push(SettingsWrite {
-                        op,
-                        profile: name.clone(),
-                        result: SettingsResult::Superseded,
-                    });
-                }
-                continue;
-            }
-            let assignment_action = if pending.assignment_intent.is_some() {
-                "native sync assignment"
-            } else {
-                "native parameters"
-            };
-            // Preparation owns this card's entry, not a snapshot of the whole
-            // profile. Preserve unrelated writes that landed while it ran.
-            if let Some(mut latest) = self
-                .vault
-                .as_ref()
-                .and_then(|vault| vault.get(source))
-                .cloned()
-            {
-                if let Some(entry) = pending.profile.settings.script_settings.remove(&card) {
-                    latest.settings.script_settings.insert(card, entry);
-                } else {
-                    latest.settings.script_settings.remove(&card);
-                }
-                if let Some(assignment) = pending.assignment_intent {
-                    if latest.settings.script_assignment == assignment.previous {
-                        latest.settings.script_assignment = assignment.next;
+                let config = match result.and_then(|config| {
+                    config
+                        .commit(identity.expect("successful native preparation had an identity"))
+                        .map_err(|error| error.to_string())
+                }) {
+                    Ok(config) => config,
+                    Err(error) => {
+                        self.operations
+                            .set(op, &name, Outcome::failed(error.clone()));
+                        self.write_failures
+                            .push(crate::profile_saves::WriteFailure::new(
+                                op,
+                                name.clone(),
+                                pending.label,
+                                error.clone(),
+                            ));
+                        if pending.mirror.is_native_settings() {
+                            self.settings_writes.push(SettingsWrite {
+                                op,
+                                profile: name.clone(),
+                                result: SettingsResult::failed(error),
+                            });
+                        }
+                        continue;
                     }
+                };
+                let assignment_action = if pending.assignment_intent.is_some() {
+                    "native sync assignment"
+                } else {
+                    "native parameters"
+                };
+                // Preparation owns this card's entry, not a snapshot of the whole
+                // profile. Preserve unrelated writes that landed while it ran.
+                if let Some(mut latest) = self
+                    .vault
+                    .as_ref()
+                    .and_then(|vault| vault.get(source))
+                    .cloned()
+                {
+                    if let Some(entry) = pending.profile.settings.script_settings.remove(&card) {
+                        latest.settings.script_settings.insert(card, entry);
+                    } else {
+                        latest.settings.script_settings.remove(&card);
+                    }
+                    if let Some(assignment) = pending.assignment_intent {
+                        if latest.settings.script_assignment == assignment.previous {
+                            latest.settings.script_assignment = assignment.next;
+                        }
+                    }
+                    latest.username.clone_from(&name);
+                    pending.profile = latest;
                 }
-                latest.username.clone_from(&name);
-                pending.profile = latest;
-            }
-            self.ensure_writer();
-            self.hold_durable(&name);
-            api::hostlog::register_secret(&pending.profile.password);
-            let mut changes = vec![VaultChange::Upsert(pending.profile.clone())];
-            if let Some(old) = pending.renamed_from {
-                self.hold_durable(&old);
-                self.cancel_profile_start(&old);
+                self.ensure_writer();
+                self.hold_durable(&name);
+                api::hostlog::register_secret(&pending.profile.password);
+                let mut changes = vec![VaultChange::Upsert(pending.profile.clone())];
+                if let Some(old) = pending.renamed_from {
+                    self.hold_durable(&old);
+                    self.cancel_profile_start(&old);
+                    if let Some(vault) = self.vault.as_mut() {
+                        vault.stage_remove(&old);
+                    }
+                    changes.push(VaultChange::Remove(old));
+                }
                 if let Some(vault) = self.vault.as_mut() {
-                    vault.stage_remove(&old);
+                    vault.stage_upsert(pending.profile);
                 }
-                changes.push(VaultChange::Remove(old));
+                self.submit_write_at(
+                    op,
+                    changes,
+                    pending.mirror.prepared(config),
+                    pending.label,
+                    assignment_action,
+                );
+                if let Some(write) = self.writes.get_mut(&op) {
+                    write.copy_start_hold = pending.copy_start_hold;
+                }
             }
-            if let Some(vault) = self.vault.as_mut() {
-                vault.stage_upsert(pending.profile);
+            if !wait {
+                return;
             }
-            self.submit_write_at(
-                op,
-                changes,
-                pending.mirror.prepared(config),
-                pending.label,
-                assignment_action,
-            );
-            if let Some(write) = self.writes.get_mut(&op) {
-                write.copy_start_hold = pending.copy_start_hold;
+            // Synchronous flushes wait on the receipt, never fail on temporary
+            // WorkAdmission fullness. Frame polling above never parks the UI.
+            if nothing_ready {
+                std::thread::park_timeout(Duration::from_millis(5));
             }
         }
     }
@@ -516,17 +708,17 @@ impl<Io> OperatorSession<Io> {
             pending.copy_start_hold = None;
             pending.copy_abandoned = true;
             self.operations
-                .set(*op, &pending.member, Outcome::Failed(error.clone()));
-            self.write_failures.push(WriteFailure {
-                op: *op,
-                target: pending.member.clone(),
-                label: pending.label,
-                error: error.clone(),
-            });
+                .set(*op, &pending.member, Outcome::failed(error.clone()));
+            self.write_failures.push(WriteFailure::new(
+                *op,
+                pending.member.clone(),
+                pending.label,
+                error.clone(),
+            ));
             self.settings_writes.push(SettingsWrite {
                 op: *op,
                 profile: pending.member.clone(),
-                result: SettingsResult::Failed(error),
+                result: SettingsResult::failed(error),
             });
         }
     }
@@ -620,12 +812,11 @@ mod tests {
                 .expect("native settings revision")
                 .checked_add(1)
                 .expect("settings revision");
-            let prepared = play
+            let worker = play
                 .script_prepare_config(id, revision, Arc::new(bag))
-                .unwrap()
-                .join()
-                .unwrap()
                 .unwrap();
+            let identity = worker.identity();
+            let prepared = worker.join().unwrap().unwrap().commit(identity).unwrap();
             play.script_configure_compiled(name, prepared, run)
         }
     }
@@ -660,25 +851,14 @@ mod tests {
         f
     }
 
-    /// Gate a real preparation result without relying on worker scheduling.
-    fn block_preparation(
-        f: &mut Fixture,
-    ) -> (std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>) {
+    /// Pause only publication of a real WorkAdmission result. The worker can
+    /// finish and release its thread while the owner holds the exact terminal.
+    fn block_preparation(f: &mut Fixture) -> Arc<AtomicBool> {
         let op = *f.core.preparations.keys().max().unwrap();
-        let mut pending = f.core.preparations.remove(&op).unwrap();
-        let (release, wait) = std::sync::mpsc::channel();
-        let (finished, done) = std::sync::mpsc::channel();
-        // Keep the real worker in the gated worker; a late result has no
-        // access to the session or writer after its handle is discarded.
-        let original = pending.worker;
-        pending.worker = std::thread::spawn(move || {
-            let result = original.join().unwrap();
-            wait.recv().unwrap();
-            finished.send(()).unwrap();
-            result
-        });
-        f.core.preparations.insert(op, pending);
-        (release, done)
+        let gate = Arc::new(AtomicBool::new(false));
+        let pending = f.core.preparations.get_mut(&op).unwrap();
+        pending.publication_gate = Some(Arc::clone(&gate));
+        gate
     }
 
     fn wait_running(f: &mut Fixture, name: &str) {
@@ -718,7 +898,7 @@ mod tests {
         f.scripts
             .set_compiled_setting(&mut f.core, "bob", id, "radius", json!(24))
             .unwrap();
-        let (release, done) = block_preparation(&mut f);
+        let release = block_preparation(&mut f);
 
         // Settle only the superseded copy, leaving the real replacement
         // result gated. The queued Start must not consume the pre-copy bag.
@@ -734,8 +914,7 @@ mod tests {
         }
         let state = f.core.play().unwrap().script_state("bob");
         let held_place = f.scripts.start_queue_place("bob");
-        release.send(()).unwrap();
-        done.recv_timeout(Duration::from_secs(3)).unwrap();
+        release.store(true, Ordering::Release);
         assert_eq!(state, script::RunState::Idle, "replacement still preparing");
         assert_eq!(held_place, Some(place));
 
@@ -769,12 +948,17 @@ mod tests {
         let mut f = preparing_copy("copy-preparation-failure");
         let op = *f.core.preparations.keys().next().unwrap();
         let mut pending = f.core.preparations.remove(&op).unwrap();
-        pending.worker.join().unwrap().unwrap();
-        pending.worker = std::thread::spawn(|| {
-            Err(StartError::Unavailable(
-                "injected preparation failure".into(),
-            ))
-        });
+        pending.worker.take().unwrap().join().unwrap().unwrap();
+        let id = script::CompiledId("Gatherer");
+        let mut invalid = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
+        invalid.insert("radius".into(), json!("not a radius"));
+        pending.worker = Some(
+            f.core
+                .play()
+                .unwrap()
+                .script_prepare_config(id, op.0, Arc::new(invalid))
+                .unwrap(),
+        );
         f.core.preparations.insert(op, pending);
         f.core.take_preparations(true);
         f.scripts.poll(&mut f.core);
@@ -784,14 +968,13 @@ mod tests {
     #[test]
     fn cancelled_native_preparation_releases_copy_hold_without_a_late_write() {
         let mut f = preparing_copy("copy-cancel");
-        let (release, done) = block_preparation(&mut f);
+        let release = block_preparation(&mut f);
         assert!(f.scripts.start_profile(&mut f.core, "bob", None).is_err());
         f.scripts.cancel_settings_sync();
         f.core.poll();
         f.scripts.poll(&mut f.core);
         assert_pre_copy_start(&mut f);
-        release.send(()).unwrap();
-        done.recv_timeout(Duration::from_secs(3)).unwrap();
+        release.store(true, Ordering::Release);
         f.core.flush_writes();
         let disk = Vault::unlock(&f.dir.join("vault"), PASSPHRASE).unwrap();
         let entry = disk
@@ -810,9 +993,9 @@ mod tests {
     }
 
     #[test]
-    fn stuck_native_preparation_times_out_and_releases_copy_hold() {
+    fn withheld_native_preparation_times_out_and_releases_copy_hold() {
         let mut f = preparing_copy("copy-preparation-timeout");
-        let (release, done) = block_preparation(&mut f);
+        let release = block_preparation(&mut f);
         f.core
             .preparations
             .values_mut()
@@ -828,15 +1011,14 @@ mod tests {
         assert!(f.scripts.last_settings_sync().unwrap().failed[0]
             .1
             .contains("timed out"));
-        release.send(()).unwrap();
-        done.recv_timeout(Duration::from_secs(3)).unwrap();
+        release.store(true, Ordering::Release);
         f.core.flush_writes();
     }
 
     #[test]
     fn removed_slot_releases_its_native_preparation_hold() {
         let mut f = preparing_copy("copy-removed");
-        let (release, done) = block_preparation(&mut f);
+        let release = block_preparation(&mut f);
         f.core
             .remove("bob", Instant::now(), &mut HeadlessSurface::new());
         f.core.poll();
@@ -844,8 +1026,7 @@ mod tests {
         f.scripts.start_profile(&mut f.core, "alice", None).unwrap();
         wait_running(&mut f, "alice");
         assert_eq!(f.scripts.last_settings_sync().unwrap().failed.len(), 1);
-        release.send(()).unwrap();
-        done.recv_timeout(Duration::from_secs(3)).unwrap();
+        release.store(true, Ordering::Release);
         f.core.flush_writes();
     }
 
@@ -854,7 +1035,7 @@ mod tests {
         let mut f = preparing_copy("copy-locked");
         let id = script::CompiledId("Gatherer");
         let before = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
-        let (release, done) = block_preparation(&mut f);
+        let release = block_preparation(&mut f);
         f.core.vault = None;
         f.core.poll();
         f.scripts.poll(&mut f.core);
@@ -869,8 +1050,7 @@ mod tests {
             script::CompiledDelivery::Unchanged
         );
         assert_eq!(f.scripts.last_settings_sync().unwrap().failed.len(), 1);
-        release.send(()).unwrap();
-        done.recv_timeout(Duration::from_secs(3)).unwrap();
+        release.store(true, Ordering::Release);
     }
 
     #[test]
@@ -948,7 +1128,7 @@ mod tests {
         let mut unrelated = f.core.vault().unwrap().get("bob").unwrap().clone();
         unrelated.settings.random_events = false;
         f.core
-            .save_profile(unrelated, crate::ArmMirror::None, "unrelated")
+            .save_profile(unrelated, crate::ArmMirror::none(), "unrelated")
             .unwrap();
         f.core.flush_writes();
         f.scripts.poll(&mut f.core);
@@ -1114,7 +1294,7 @@ mod tests {
             .unwrap();
         assert!(Scripts::assignment(&f.core, "bob").is_none());
 
-        let intermediate = if let Some((release, done)) = gate {
+        let intermediate = if let Some(release) = gate {
             let deadline = Instant::now() + Duration::from_secs(10);
             while f.core.preparations.contains_key(&second) {
                 assert!(Instant::now() < deadline, "second copy did not settle");
@@ -1128,8 +1308,7 @@ mod tests {
             let assignment = disk.get("bob").unwrap().settings.script_assignment.clone();
             // Release before asserting so a negative control cannot strand
             // the older real preparation during fixture cleanup.
-            release.send(()).unwrap();
-            done.recv_timeout(Duration::from_secs(3)).unwrap();
+            release.store(true, Ordering::Release);
             Some(assignment)
         } else {
             None

@@ -10,13 +10,23 @@
 
 use api::snapshot::WorldTile;
 
-/// A named cow field: the walk-in tile, not a gathering camp.
+/// CowKiller's named bank route. The native bank catalog supplies the selected
+/// tile when available; the recorded tile keeps load-only isolates complete.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CowBankDestination {
+    pub name: &'static str,
+    pub tile: WorldTile,
+}
+
+/// A named cow field, anchored at its verified spawn cluster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CowField {
     pub name: &'static str,
     pub x: i32,
     pub z: i32,
     pub level: i32,
+    pub uses_al_kharid_toll: bool,
+    pub bank_destination: Option<CowBankDestination>,
 }
 
 /// Fire plot: bank stand plus a rectangular grass AABB.
@@ -30,27 +40,52 @@ pub struct FirePlot {
     pub z1: i32,
 }
 
-/// Lumbridge pen interior is the nav cow-pen tile. NW Lumbridge sits between
-/// the Draynor and Lumbridge walk pins, north of the river road. South of
-/// Falador is south of the Falador walk pin.
+/// Supported field anchors are centered on their map-backed cow spawn groups:
+/// `m50_51.jm2:7562-7568`, `m49_51.jm2:6318-6332` and
+/// `m49_52.jm2:8831-8867`, `m47_51.jm2:6945-6952`, and
+/// `m41_52.jm2:7520-7529` (NPC id 81). The north-west anchor covers the
+/// western group; the separate group farther east is outside that field.
 pub const COW_FIELDS: &[CowField] = &[
     CowField {
         name: "Lumbridge cow field",
-        x: 3253,
-        z: 3282,
+        x: 3255,
+        z: 3288,
         level: 0,
+        uses_al_kharid_toll: true,
+        bank_destination: None,
     },
     CowField {
         name: "North-west of Lumbridge",
-        x: 3162,
-        z: 3311,
+        x: 3168,
+        z: 3329,
         level: 0,
+        uses_al_kharid_toll: false,
+        bank_destination: Some(CowBankDestination {
+            name: "Draynor",
+            tile: DRAYNOR_BANK,
+        }),
     },
     CowField {
         name: "South of Falador",
-        x: 3029,
-        z: 3305,
+        x: 3033,
+        z: 3306,
         level: 0,
+        uses_al_kharid_toll: false,
+        bank_destination: Some(CowBankDestination {
+            name: "Falador East",
+            tile: FALADOR_EAST_BANK,
+        }),
+    },
+    CowField {
+        name: "East Ardougne cow field",
+        x: 2664,
+        z: 3347,
+        level: 0,
+        uses_al_kharid_toll: false,
+        bank_destination: Some(CowBankDestination {
+            name: "Ardougne West",
+            tile: ARDOUGNE_WEST_BANK,
+        }),
     },
 ];
 
@@ -60,13 +95,55 @@ pub const AL_KHARID_BANK: WorldTile = WorldTile {
     level: 0,
 };
 
+pub const DRAYNOR_BANK: WorldTile = WorldTile {
+    x: 3093,
+    z: 3243,
+    level: 0,
+};
+
+pub const FALADOR_EAST_BANK: WorldTile = WorldTile {
+    x: 3013,
+    z: 3355,
+    level: 0,
+};
+
+pub const ARDOUGNE_WEST_BANK: WorldTile = WorldTile {
+    x: 2616,
+    z: 3332,
+    level: 0,
+};
+
+/// Two crossings at the 10-coin fare in
+/// `content/scripts/areas/area_alkharid/scripts/border_gate.rs2:33,47-54`.
+pub const COW_TOLL_COIN_TARGET: i32 = 20;
+
+/// Frozen `shouldBootstrapTollCoins` API guard; this is a tile-distance
+/// threshold, not a wait or retry interval.
+pub const COW_TOLL_BOOTSTRAP_RADIUS: i32 = 80;
+
 pub fn cow_uses_al_kharid_toll(field: &CowField) -> bool {
-    field.name == "Lumbridge cow field"
+    field.uses_al_kharid_toll
 }
 
-/// Frozen `Tile.distanceTo` nearest field: Chebyshev xz, different level
-/// is `1_000_000 + xz`. Ties keep the earlier table row. Computed in `i64`
-/// so any script-supplied tile, however far out of range, cannot overflow.
+pub fn cow_location_named(name: &str) -> Option<&'static CowField> {
+    COW_FIELDS
+        .iter()
+        .find(|field| field.name.eq_ignore_ascii_case(name))
+}
+
+pub fn resolve_cow_field(setting: &str, start: Option<WorldTile>) -> Option<&'static CowField> {
+    let setting = setting.trim();
+    if setting.eq_ignore_ascii_case("start tile") {
+        return None;
+    }
+    if setting.eq_ignore_ascii_case("auto") {
+        return start.and_then(nearest_cow_field);
+    }
+    cow_location_named(setting)
+}
+
+/// Frozen `Tile.distanceTo`: Chebyshev xz, with different levels separated
+/// by `1_000_000 + xz`. Compute in `i64` to avoid overflow for script tiles.
 pub fn nearest_cow_field(from: WorldTile) -> Option<&'static CowField> {
     COW_FIELDS
         .iter()
@@ -74,10 +151,59 @@ pub fn nearest_cow_field(from: WorldTile) -> Option<&'static CowField> {
 }
 
 fn cow_field_distance(field: &CowField, from: WorldTile) -> i64 {
-    let dx = (i64::from(field.x) - i64::from(from.x)).abs();
-    let dz = (i64::from(field.z) - i64::from(from.z)).abs();
-    let xz = dx.max(dz);
-    if field.level != from.level {
+    tile_distance(
+        WorldTile {
+            x: field.x,
+            z: field.z,
+            level: field.level,
+        },
+        from,
+    )
+}
+
+pub fn is_cow_field_loot_tile(anchor: WorldTile, leash_radius: f64, tile: WorldTile) -> bool {
+    anchor.level == tile.level && xz_distance(anchor, tile) as f64 <= leash_radius
+}
+
+pub fn needs_cow_toll_coins(uses_al_kharid_toll: bool, enabled: bool) -> bool {
+    enabled && uses_al_kharid_toll
+}
+
+pub fn cow_bank_destination(
+    uses_al_kharid_toll: bool,
+    toll_enabled: bool,
+    bank_destination: Option<CowBankDestination>,
+) -> Option<CowBankDestination> {
+    if needs_cow_toll_coins(uses_al_kharid_toll, toll_enabled) {
+        Some(CowBankDestination {
+            name: "Al Kharid",
+            tile: AL_KHARID_BANK,
+        })
+    } else {
+        bank_destination
+    }
+}
+
+pub fn should_bootstrap_cow_toll_coins(
+    uses_al_kharid_toll: bool,
+    start: WorldTile,
+    coins: f64,
+    enabled: bool,
+) -> bool {
+    needs_cow_toll_coins(uses_al_kharid_toll, enabled)
+        && coins < f64::from(COW_TOLL_COIN_TARGET)
+        && tile_distance(AL_KHARID_BANK, start) <= i64::from(COW_TOLL_BOOTSTRAP_RADIUS)
+}
+
+fn xz_distance(left: WorldTile, right: WorldTile) -> i64 {
+    let dx = (i64::from(left.x) - i64::from(right.x)).abs();
+    let dz = (i64::from(left.z) - i64::from(right.z)).abs();
+    dx.max(dz)
+}
+
+fn tile_distance(left: WorldTile, right: WorldTile) -> i64 {
+    let xz = xz_distance(left, right);
+    if left.level != right.level {
         1_000_000 + xz
     } else {
         xz
@@ -200,11 +326,7 @@ pub const FIRE_PLOTS: &[FirePlot] = &[
     },
     FirePlot {
         name: "Draynor",
-        bank: WorldTile {
-            x: 3093,
-            z: 3243,
-            level: 0,
-        },
+        bank: DRAYNOR_BANK,
         x0: 3078,
         x1: 3098,
         z0: 3240,
@@ -255,14 +377,19 @@ pub const PICKPOCKET_SPOTS: &[PickpocketSpot] = &[
         x: 2661,
         z: 3306,
         level: 0,
-        leash: 12,
+        // 289 content: api/data/game-data/289.json:103317-103329 (maxrange 4),
+        // 206121-206125 (spawn 2653,3315; 9 tiles from this anchor): leash = 9 + 4.
+        leash: 13,
     },
     PickpocketSpot {
         name: "Hero",
         x: 2661,
         z: 3306,
         level: 0,
-        leash: 17,
+        // 289 content: api/data/game-data/289.json:103349-103357 (maxrange 7),
+        // 206086-206090 (spawn 2647,3306; 14 tiles from the anchor) and
+        // 206233-206237 (spawn 2667,3316; 10 tiles from the anchor).
+        leash: 21,
     },
     PickpocketSpot {
         name: "Man",
@@ -320,48 +447,197 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cow_fields_include_lumbridge_pen() {
-        let lum = COW_FIELDS
+    fn cow_fields_match_verified_spawn_anchors() {
+        let anchors: Vec<_> = COW_FIELDS
             .iter()
-            .find(|f| f.name == "Lumbridge cow field")
-            .expect("lumbridge");
-        assert_eq!((lum.x, lum.z, lum.level), (3253, 3282, 0));
+            .map(|field| (field.name, field.x, field.z, field.level))
+            .collect();
+        assert_eq!(
+            anchors,
+            vec![
+                ("Lumbridge cow field", 3255, 3288, 0),
+                ("North-west of Lumbridge", 3168, 3329, 0),
+                ("South of Falador", 3033, 3306, 0),
+                ("East Ardougne cow field", 2664, 3347, 0),
+            ]
+        );
+        assert_eq!(
+            COW_FIELDS[1].bank_destination,
+            Some(CowBankDestination {
+                name: "Draynor",
+                tile: DRAYNOR_BANK,
+            })
+        );
+        assert_eq!(
+            COW_FIELDS[2].bank_destination,
+            Some(CowBankDestination {
+                name: "Falador East",
+                tile: FALADOR_EAST_BANK,
+            })
+        );
+        assert_eq!(
+            COW_FIELDS[3].bank_destination,
+            Some(CowBankDestination {
+                name: "Ardougne West",
+                tile: ARDOUGNE_WEST_BANK,
+            })
+        );
     }
 
     #[test]
-    fn nearest_cow_field_uses_tile_distance() {
-        let falador_east = WorldTile {
-            x: 3013,
-            z: 3355,
-            level: 0,
-        };
+    fn resolve_cow_field_matches_names_and_auto_distance() {
         assert_eq!(
-            nearest_cow_field(falador_east).map(|field| field.name),
+            resolve_cow_field(
+                "south of falador",
+                Some(WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0
+                })
+            )
+            .map(|field| field.name),
             Some("South of Falador")
         );
-        let lumbridge = WorldTile {
-            x: 3253,
-            z: 3282,
-            level: 0,
-        };
+        assert_eq!(resolve_cow_field("Start tile", Some(AL_KHARID_BANK)), None);
         assert_eq!(
-            nearest_cow_field(lumbridge).map(|field| field.name),
+            resolve_cow_field("Auto", Some(AL_KHARID_BANK)).map(|field| field.name),
             Some("Lumbridge cow field")
         );
-        let north_west = WorldTile {
-            x: 3162,
-            z: 3311,
-            level: 0,
-        };
-        assert_eq!(
-            nearest_cow_field(north_west).map(|field| field.name),
-            Some("North-west of Lumbridge")
-        );
+        assert_eq!(resolve_cow_field("Auto", None), None);
+        for (tile, expected) in [
+            (
+                WorldTile {
+                    x: 3185,
+                    z: 3440,
+                    level: 0,
+                },
+                "North-west of Lumbridge",
+            ),
+            (
+                WorldTile {
+                    x: 3013,
+                    z: 3355,
+                    level: 0,
+                },
+                "South of Falador",
+            ),
+            (
+                WorldTile {
+                    x: 2616,
+                    z: 3332,
+                    level: 0,
+                },
+                "East Ardougne cow field",
+            ),
+        ] {
+            assert_eq!(
+                nearest_cow_field(tile).map(|field| field.name),
+                Some(expected)
+            );
+        }
     }
 
-    /// A script can pass any tile. Extreme coordinates must not overflow
-    /// (which would panic inside the V8 callback and abort the process);
-    /// they still resolve to a field by the frozen rule.
+    #[test]
+    fn cow_loot_leash_uses_same_level_chebyshev_distance() {
+        let lumbridge = WorldTile {
+            x: COW_FIELDS[0].x,
+            z: COW_FIELDS[0].z,
+            level: COW_FIELDS[0].level,
+        };
+        assert!(!is_cow_field_loot_tile(
+            lumbridge,
+            18.0,
+            WorldTile {
+                x: 3233,
+                z: 3298,
+                level: 0,
+            }
+        ));
+        assert!(is_cow_field_loot_tile(
+            lumbridge,
+            18.0,
+            WorldTile {
+                x: 3237,
+                z: 3298,
+                level: 0,
+            }
+        ));
+        assert!(!is_cow_field_loot_tile(
+            lumbridge,
+            18.0,
+            WorldTile {
+                x: 3255,
+                z: 3288,
+                level: 1,
+            }
+        ));
+    }
+
+    #[test]
+    fn cow_toll_helpers_follow_the_gate_fare_and_location_policy() {
+        let lumbridge = &COW_FIELDS[0];
+        let falador = &COW_FIELDS[2];
+        assert!(needs_cow_toll_coins(lumbridge.uses_al_kharid_toll, true));
+        assert!(!needs_cow_toll_coins(lumbridge.uses_al_kharid_toll, false));
+        assert!(!needs_cow_toll_coins(falador.uses_al_kharid_toll, true));
+        assert!(!needs_cow_toll_coins(false, true));
+        assert_eq!(
+            cow_bank_destination(lumbridge.uses_al_kharid_toll, true, None),
+            Some(CowBankDestination {
+                name: "Al Kharid",
+                tile: AL_KHARID_BANK,
+            })
+        );
+        assert_eq!(
+            cow_bank_destination(lumbridge.uses_al_kharid_toll, false, None),
+            None
+        );
+        assert_eq!(
+            cow_bank_destination(
+                COW_FIELDS[1].uses_al_kharid_toll,
+                true,
+                COW_FIELDS[1].bank_destination
+            ),
+            COW_FIELDS[1].bank_destination
+        );
+        assert_eq!(
+            cow_bank_destination(
+                COW_FIELDS[3].uses_al_kharid_toll,
+                false,
+                COW_FIELDS[3].bank_destination
+            ),
+            COW_FIELDS[3].bank_destination
+        );
+        assert!(should_bootstrap_cow_toll_coins(
+            lumbridge.uses_al_kharid_toll,
+            AL_KHARID_BANK,
+            0.0,
+            true
+        ));
+        assert!(!should_bootstrap_cow_toll_coins(
+            lumbridge.uses_al_kharid_toll,
+            AL_KHARID_BANK,
+            f64::from(COW_TOLL_COIN_TARGET),
+            true
+        ));
+        assert!(!should_bootstrap_cow_toll_coins(
+            falador.uses_al_kharid_toll,
+            AL_KHARID_BANK,
+            0.0,
+            true
+        ));
+        assert!(!should_bootstrap_cow_toll_coins(
+            lumbridge.uses_al_kharid_toll,
+            WorldTile {
+                x: 3210,
+                z: 3424,
+                level: 0,
+            },
+            0.0,
+            true
+        ));
+    }
+
     #[test]
     fn nearest_cow_field_survives_extreme_tiles() {
         for from in [

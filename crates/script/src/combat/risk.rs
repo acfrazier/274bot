@@ -1,5 +1,12 @@
 //! Conservative, pure route estimates. This module neither admits a walk nor
 //! observes a live slot; callers retain the immutable route used by the plan.
+//!
+//! Routes, zones and wilderness reach this module only as `nav::contract`
+//! views (T5.1, I-nav-closure): the host manufactures them at the owner
+//! boundary, and every retained zone identity is a pack-bound key, so a plan
+//! judged against another pack's table is refused, never misindexed. A
+//! zone's risk facts come from its facade kind view (`ZoneKindView`) and the
+//! NPC-keyed [`RiskTables`]; no kind-row order or pack index reaches here.
 mod facts;
 mod geometry;
 mod input;
@@ -8,12 +15,18 @@ use api::WorldTile;
 pub use facts::*;
 pub use geometry::{build_plan, RoutePath};
 pub use input::*;
-use nav::zones::{ZoneKey, ZoneTable};
+use nav::contract::{BoundZoneKey, ContractError, PackId, ZoneKey, ZoneTableView};
 pub use replay::{
     admission_passes, assess, candidate_cost, eat_line, estimated_floor, replay, Estimate, Grants,
     ReplayResult,
 };
 use std::sync::Arc;
+
+/// A facade refusal: the route, plan, key or exemption belongs to another
+/// nav pack, or names a row this pack does not have.
+fn nav_identity(_: ContractError) -> UnknownWhy {
+    UnknownWhy::NavIdentity
+}
 
 /// Evidence-calibrated tuning, not a survival proof (design §2).
 pub mod consts {
@@ -52,15 +65,18 @@ impl PackedTile {
         }
     }
 }
-
-/// Complete geometry for one engaged zone. The bound zone table supplies the
-/// canonical group key and exact stationary shape; indices address the retained
-/// immutable route. NPC ids outside i16 are explicitly Unknown(Overflow).
+/// Complete geometry for one engaged zone. The bound zone key supplies the
+/// canonical group key and exact stationary shape through the pack's table
+/// view; indices address the retained immutable route. NPC ids outside i16
+/// are explicitly Unknown(Overflow).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ZoneInterval {
     pub spawn: PackedTile,
     ident: i16,
-    pub zone: u16,
+    /// The engaged zone row, bound to the pack the plan was built on.
+    pub zone: BoundZoneKey,
+    /// Why the row's kind is unsupported for the assessed world, if it is.
+    unknown: Option<UnknownKind>,
     pub a: u16,
     pub b: u16,
     pub e: u16,
@@ -75,7 +91,7 @@ pub struct ZoneInterval {
 impl ZoneInterval {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        zone: u16,
+        zone: BoundZoneKey,
         ident: i32,
         spawn: WorldTile,
         a: u16,
@@ -87,7 +103,7 @@ impl ZoneInterval {
         max_hit: u8,
         rate: u8,
         style: Style,
-        unknown: bool,
+        unknown: Option<UnknownKind>,
         ap: bool,
         hazard: bool,
     ) -> Result<Self, UnknownWhy> {
@@ -98,6 +114,7 @@ impl ZoneInterval {
             spawn: PackedTile::new(spawn)?,
             ident: i16::try_from(ident).map_err(|_| UnknownWhy::Overflow)?,
             zone,
+            unknown,
             a,
             b,
             e,
@@ -107,17 +124,24 @@ impl ZoneInterval {
             max_hit,
             rate,
             style,
-            flags: u8::from(unknown) | (u8::from(ap) << 1) | (u8::from(hazard) << 2),
+            flags: (u8::from(ap) << 1) | (u8::from(hazard) << 2),
         })
     }
     pub fn ident(self) -> i32 {
         i32::from(self.ident)
     }
-    pub fn key(self, zones: &ZoneTable) -> ZoneKey {
-        zones.key(self.zone)
+    /// The canonical opt-out identity of the engaged row: its group key when
+    /// the pack groups it, else the zone key. Refused against another pack.
+    pub fn key(self, zones: ZoneTableView<'_>) -> Result<ZoneKey, UnknownWhy> {
+        let view = zones.zone(self.zone).map_err(nav_identity)?;
+        Ok(view.group().unwrap_or(self.zone).key())
     }
     pub fn unknown(self) -> bool {
-        self.flags & 1 != 0
+        self.unknown.is_some()
+    }
+    /// The unsupported class behind [`Self::unknown`].
+    pub fn unknown_kind(self) -> Option<UnknownKind> {
+        self.unknown
     }
     pub fn ap(self) -> bool {
         self.flags & 2 != 0
@@ -157,6 +181,9 @@ pub struct RoutePlan {
     /// False only when geometry could not be assessed. An empty complete plan
     /// proves there is no entering crossing, even when live inputs are unknown.
     pub complete: bool,
+    /// The pack whose table built this plan; `None` on an incomplete plan.
+    /// Admission refuses a plan against another pack's table.
+    pub pack: Option<PackId>,
     pub intervals: Box<[ZoneInterval]>,
     pub crossings: Box<[CrossingGeom]>,
     // Walk-leg starts are derived from the retained route, not separately allocated.

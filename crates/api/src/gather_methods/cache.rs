@@ -1,9 +1,10 @@
-//! Process-shared weak cache of the prepared gathering catalog, keyed by the selected manifest.
+//! Process-shared bounded cache of the prepared gathering catalog, keyed by
+//! the selected manifest. There are exactly two pinned revision manifests.
 //!
-//! Preparation (`prepare`) needs the off-pump `FamilyPreparation` capability: it verifies the embedded family file
-//! against the pinned manifest and decodes it once. Every user then holds an `Arc`; when the last one drops, the
-//! catalog is freed and only a dead `Weak` remains until the next preparation prunes it. The tick/UI path
-//! (`cached`) never decodes, hashes or waits for a preparation in flight.
+//! Preparation (`prepare`) needs the off-pump `FamilyPreparation` capability: it verifies the
+//! embedded family file against the pin before retaining its decoded catalog. The first caller
+//! pays that qualified bounded unit; subsequent callers share the catalog for this process.
+//! The tick/UI path (`cached`) never decodes, hashes or waits for a preparation in flight.
 
 use super::catalog::GatherCatalog;
 use super::wire;
@@ -13,7 +14,7 @@ use crate::selected::{
     ClientRevision, FactError, FamilyPreparation, SelectedPin, GATHERING_FAMILY,
 };
 use parking_lot::Mutex;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 const GATHERING_274: &[u8] = include_bytes!("../../data/game-data/274/gathering.json");
 const GATHERING_289: &[u8] = include_bytes!("../../data/game-data/289/gathering.json");
@@ -43,20 +44,20 @@ impl Key {
 
 struct Slot {
     key: Key,
-    catalog: Weak<GatherCatalog>,
+    catalog: Arc<GatherCatalog>,
 }
 
-/// Slots are only touched under brief locks; `preparing` serializes decodes so one revision is decoded once while
-/// `lookup` (the tick path) never waits behind it.
+/// Slots are only touched under brief locks; `preparing` serializes decodes
+/// while `lookup` (the tick path) never waits behind a decode.
 struct Cache {
-    slots: Mutex<Vec<Slot>>,
+    slots: Mutex<[Option<Slot>; 2]>,
     preparing: Mutex<()>,
 }
 
 impl Cache {
     const fn new() -> Self {
         Self {
-            slots: Mutex::new(Vec::new()),
+            slots: Mutex::new([None, None]),
             preparing: Mutex::new(()),
         }
     }
@@ -65,8 +66,9 @@ impl Cache {
         self.slots
             .lock()
             .iter()
+            .flatten()
             .find(|slot| slot.key == *key)
-            .and_then(|slot| slot.catalog.upgrade())
+            .map(|slot| Arc::clone(&slot.catalog))
     }
 
     fn prepare(
@@ -81,12 +83,16 @@ impl Cache {
         if let Some(hit) = self.lookup(&key) {
             return Ok(hit);
         }
+        let empty = self
+            .slots
+            .lock()
+            .iter()
+            .position(Option::is_none)
+            .ok_or(FactError::PinMismatch)?;
         let catalog = Arc::new(load()?);
-        let mut slots = self.slots.lock();
-        slots.retain(|slot| slot.key != key && slot.catalog.strong_count() > 0);
-        slots.push(Slot {
+        self.slots.lock()[empty] = Some(Slot {
             key,
-            catalog: Arc::downgrade(&catalog),
+            catalog: Arc::clone(&catalog),
         });
         Ok(catalog)
     }
@@ -94,7 +100,8 @@ impl Cache {
 
 static CACHE: Cache = Cache::new();
 
-/// Verify and decode the selected revision's gathering family, or share the copy another user already holds.
+/// Verify and decode the selected revision's gathering family once per
+/// process, or share the immutable copy another caller prepared.
 /// Off-pump only: the `FamilyPreparation` capability exists solely on the preparation worker.
 pub fn prepare(
     data: &SelectedGameData,
@@ -106,7 +113,7 @@ pub fn prepare(
     })
 }
 
-/// The prepared catalog if some user still holds it. Never decodes and never waits for a preparation.
+/// The prepared catalog if the selected manifest was already decoded. Never decodes or waits for preparation.
 pub fn cached(data: &SelectedGameData) -> Option<Arc<GatherCatalog>> {
     let pin = data.selected_pin().ok()?;
     CACHE.lookup(&Key::of(&pin))
@@ -127,6 +134,7 @@ fn load(
 mod tests {
     use super::*;
     use sha2::Digest;
+    use std::time::Instant;
 
     fn pin_289() -> Arc<SelectedPin> {
         crate::game_data::for_revision(ClientRevision::R289)
@@ -141,27 +149,66 @@ mod tests {
     }
 
     #[test]
-    fn a_prepared_catalog_is_shared_and_released_after_its_last_user() {
+    fn a_prepared_catalog_is_shared_after_the_last_caller_drops() {
         let cache = Cache::new();
         let key = Key::of(&pin_289());
-        assert!(
-            cache.lookup(&key).is_none(),
-            "nothing is decoded before preparation"
-        );
+        assert!(cache.lookup(&key).is_none(), "nothing decoded yet");
         let first = cache.prepare(key, || Ok(real())).unwrap();
         let second = cache
-            .prepare(key, || {
-                panic!("a live catalog must be shared, not decoded again")
-            })
+            .prepare(key, || panic!("a cached catalog must not be decoded again"))
             .unwrap();
         assert!(Arc::ptr_eq(&first, &second));
-        assert!(Arc::ptr_eq(&cache.lookup(&key).unwrap(), &first));
         drop(first);
-        assert!(cache.lookup(&key).is_some(), "one user still holds it");
         drop(second);
-        assert!(cache.lookup(&key).is_none(), "released after the last user");
-        let again = cache.prepare(key, || Ok(real())).unwrap();
-        assert_eq!(again.methods().len(), real().methods().len());
+        let again = cache
+            .prepare(key, || panic!("the last caller cannot evict process cache"))
+            .unwrap();
+        assert!(Arc::ptr_eq(&again, &cache.lookup(&key).unwrap()));
+    }
+
+    #[test]
+    fn selected_revision_pins_stay_isolated_and_the_cache_is_bounded() {
+        let cache = Cache::new();
+        let pin_274 = crate::game_data::for_revision(ClientRevision::R274)
+            .unwrap()
+            .selected_pin()
+            .unwrap();
+        let key_274 = Key::of(&pin_274);
+        let pin_289 = pin_289();
+        let key_289 = Key::of(&pin_289);
+        let cold_274 = Instant::now();
+        let catalog_274 = cache
+            .prepare(key_274, || load(&pin_274, MANIFEST, GATHERING_274))
+            .unwrap();
+        println!(
+            "pinned gathering decode 274: input={}B cold={:?}",
+            GATHERING_274.len(),
+            cold_274.elapsed()
+        );
+        let cold_289 = Instant::now();
+        let catalog_289 = cache
+            .prepare(key_289, || load(&pin_289, MANIFEST, GATHERING_289))
+            .unwrap();
+        println!(
+            "pinned gathering decode 289: input={}B cold={:?}",
+            GATHERING_289.len(),
+            cold_289.elapsed()
+        );
+        assert!(!Arc::ptr_eq(&catalog_274, &catalog_289));
+        drop((catalog_274, catalog_289));
+        assert!(cache.lookup(&key_274).is_some());
+        assert!(cache.lookup(&key_289).is_some());
+        let unknown = Key {
+            revision: key_289.revision,
+            manifest: [0; 32],
+        };
+        assert!(cache.lookup(&unknown).is_none());
+        assert_eq!(
+            cache
+                .prepare(unknown, || panic!("a third pin cannot expand the cache"))
+                .unwrap_err(),
+            FactError::PinMismatch
+        );
     }
 
     #[test]

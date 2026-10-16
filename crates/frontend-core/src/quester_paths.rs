@@ -1,9 +1,11 @@
 //! Durable operator configuration and asynchronous reload for Quester Paths.
 
+use api::identity::{Scope, WorkIdentity};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
+
+use host_play::local_state::Preferences;
 
 /// Shared settings label used by panel and TUI.
 pub const LOAD_PATHS_LABEL: &str = "Load quest Paths from folder";
@@ -15,10 +17,10 @@ pub const QUEST_PATHS_HEADING: &str = "Quest Paths (all bots)";
 pub const QUESTER_HEADING: &str = "Quester";
 
 /// Persisted host-wide folder source for the Quester Path registry.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct QuesterPathsView {
-    pub enabled: bool,
-    pub folder: PathBuf,
+    enabled: bool,
+    folder: PathBuf,
 }
 
 impl Default for QuesterPathsView {
@@ -31,9 +33,34 @@ impl Default for QuesterPathsView {
 }
 
 impl QuesterPathsView {
+    /// Whether Paths load from the configured folder.
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Set whether Paths load from the configured folder.
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    /// The configured Path folder.
+    pub fn folder(&self) -> &Path {
+        &self.folder
+    }
+
+    /// Replace the configured Path folder.
+    pub fn set_folder(&mut self, folder: PathBuf) {
+        self.folder = folder;
+    }
+
+    /// A Path-folder view for a form draft or a persist.
+    pub fn new(enabled: bool, folder: PathBuf) -> Self {
+        Self { enabled, folder }
+    }
+
     /// Read the host-wide settings object without touching any Path files.
-    fn read_at(prefs_path: &Path) -> Self {
-        let Some(value) = host_play::panel_ui_value_at(prefs_path, "quester_paths") else {
+    fn read(preferences: &Preferences) -> Self {
+        let Some(value) = preferences.value("quester_paths") else {
             return Self::default();
         };
         let Some(settings) = value.as_object() else {
@@ -52,19 +79,17 @@ impl QuesterPathsView {
         }
     }
 
-    /// Write only fields changed by this editor through the shared panel-ui transaction.
-    fn persist_changed_at(prefs_path: &Path, before: &Self, after: &Self) -> io::Result<()> {
+    /// Write only fields changed by this editor through the shared
+    /// preferences.
+    fn persist_changed(preferences: &Preferences, before: &Self, after: &Self) -> io::Result<()> {
         let enabled_changed = before.enabled != after.enabled;
         let folder_changed = before.folder != after.folder;
         if !enabled_changed && !folder_changed {
             return Ok(());
         }
 
-        host_play::update_panel_ui_at(prefs_path, |document, _, _| {
-            let root = document.as_object_mut().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, "panel-ui.json is not an object")
-            })?;
-            let settings = root
+        preferences.update(|document| {
+            let settings = document
                 .entry("quester_paths")
                 .or_insert_with(|| serde_json::json!({}));
             if !settings.is_object() {
@@ -82,7 +107,7 @@ impl QuesterPathsView {
                     serde_json::Value::String(after.folder.to_string_lossy().into_owned()),
                 );
             }
-            Ok(None)
+            Ok(())
         })
     }
 
@@ -95,66 +120,170 @@ impl QuesterPathsView {
     }
 }
 
-/// Non-blocking owner for one Path-registry reload.
-#[derive(Default)]
-struct ReloadPaths {
-    receiver: Option<Receiver<Result<Arc<str>, String>>>,
+enum ReloadValue {
+    Prepared(script::quester::registry::PreparedRegistry),
 }
 
-impl ReloadPaths {
-    /// Re-read the configured source and publish its snapshot on a
-    /// FamilyPreparation worker, never on the caller.
-    fn start(&mut self, selected: Arc<api::game_data::SelectedGameData>) -> Result<(), String> {
-        self.start_with(move |worker| {
-            let registry = script::quester::registry::reload(&selected, worker)
-                .map_err(|error| compile_error_message(&error))?;
-            Ok(registry.report().cloned().unwrap_or_else(|| {
-                Arc::from(format!(
-                    "Reload Paths: bundled release registry active ({} rows)",
-                    registry.rows().len()
-                ))
-            }))
-        })
-    }
+struct PendingReload {
+    selected: Arc<api::game_data::SelectedGameData>,
+    source: script::quester::registry::FolderSource,
+}
 
-    fn start_with(
+/// Non-blocking owner for one Path-registry reload. Only a consumed
+/// WorkAdmission terminal may publish the current snapshot.
+#[derive(Default)]
+struct ReloadPaths {
+    worker: Option<script::preparation::PreparedTask<Result<ReloadValue, String>>>,
+    pending: Option<PendingReload>,
+    current: Option<WorkIdentity>,
+    revision: u64,
+}
+impl ReloadPaths {
+    fn start(
         &mut self,
-        work: impl FnOnce(&mut api::selected::FamilyPreparation) -> Result<Arc<str>, String>
-            + Send
-            + 'static,
+        selected: Arc<api::game_data::SelectedGameData>,
+        source: script::quester::registry::FolderSource,
     ) -> Result<(), String> {
         if self.is_running() {
             return Err("a Path reload is already running".into());
         }
-        let (sender, receiver) = mpsc::channel();
-        let worker = api::selected::FamilyPreparation::run(move |worker| {
-            let _ = sender.send(work(worker));
-        })
-        .map_err(|error| format!("could not start Path reload worker: {error}"))?;
-        drop(worker);
-        self.receiver = Some(receiver);
+        let pending = PendingReload { selected, source };
+        match self.submit(&pending) {
+            Ok(()) => Ok(()),
+            Err(SubmissionError::Full) => {
+                self.pending = Some(pending);
+                Ok(())
+            }
+            Err(SubmissionError::Failed(error)) => Err(error),
+        }
+    }
+
+    fn retry_pending(&mut self) -> Result<(), String> {
+        let Some(pending) = self.pending.take() else {
+            return Ok(());
+        };
+        match self.submit(&pending) {
+            Ok(()) => Ok(()),
+            Err(SubmissionError::Full) => {
+                self.pending = Some(pending);
+                Ok(())
+            }
+            Err(SubmissionError::Failed(error)) => Err(error),
+        }
+    }
+
+    fn submit(&mut self, pending: &PendingReload) -> Result<(), SubmissionError> {
+        use script::preparation::CooperativePreparationStep as Step;
+        use script::quester::registry::RegistryPreparation;
+
+        let revision = self
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| SubmissionError::Failed("Path reload revision exhausted".into()))?;
+        let settings =
+            script::preparation::PreparationInput::new(revision, 0, 0, 0).map_err(|error| {
+                SubmissionError::Failed(format!("could not admit Path reload settings: {error}"))
+            })?;
+        let input = script::preparation::PreparationInput::for_quester_folder(
+            revision,
+            settings,
+            &pending.source,
+        )
+        .map_err(|error| {
+            SubmissionError::Failed(format!("could not admit Path reload: {error}"))
+        })?;
+        let selected = Arc::clone(&pending.selected);
+        let mut source = Some(pending.source.clone());
+        let mut preparation = None;
+        let mut actions = 0_u32;
+        let worker = script::preparation::submit_cooperative(
+            script::preparation::PreparationKind::Catalogue,
+            Scope::Process,
+            input,
+            move |context| {
+                actions = actions.checked_add(1).expect("bounded folder action count");
+                if preparation.is_none() {
+                    match RegistryPreparation::from_source_without_catalog(
+                        source.take().expect("first registry initialization"),
+                        Arc::clone(&selected),
+                    ) {
+                        Ok(candidate) => preparation = Some(candidate),
+                        Err(error) => {
+                            return Step::Complete {
+                                output: Err(compile_error_message(&error)),
+                                completed: actions,
+                                total: Some(actions),
+                            };
+                        }
+                    }
+                }
+                let candidate = preparation.as_mut().expect("registry initialized");
+                let result = match candidate.step(context) {
+                    Ok(Some(candidate)) => Some(Ok(ReloadValue::Prepared(candidate))),
+                    Ok(None) => None,
+                    Err(error) => Some(Err(compile_error_message(&error))),
+                };
+                match result {
+                    Some(output) => Step::Complete {
+                        output,
+                        completed: actions,
+                        total: Some(actions),
+                    },
+                    None => Step::Continue {
+                        completed: actions,
+                        total: None,
+                    },
+                }
+            },
+        )
+        .map_err(|error| match error {
+            script::preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full) => {
+                SubmissionError::Full
+            }
+            error => SubmissionError::Failed(format!("could not start Path reload: {error}")),
+        })?;
+        self.current = Some(worker.identity());
+        self.worker = Some(worker);
+        self.revision = revision;
         Ok(())
     }
 
     /// Take a completed summary or error without blocking the UI/pump.
     fn poll(&mut self) -> Option<Result<Arc<str>, String>> {
-        let receiver = self.receiver.as_ref()?;
-        match receiver.try_recv() {
-            Ok(result) => {
-                self.receiver = None;
-                Some(result)
-            }
-            Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => {
-                self.receiver = None;
-                Some(Err("Path reload worker ended without a result".into()))
-            }
+        if !self.worker.as_ref()?.is_finished() {
+            return None;
         }
+        let worker = self.worker.take().expect("finished Path preparation");
+        let completed = worker.identity();
+        let current = self.current.take().expect("current Path preparation");
+        let result = worker
+            .join()
+            .map_err(|error| format!("Path reload worker: {error}"))
+            .and_then(|result| result)
+            .and_then(|candidate| match candidate {
+                ReloadValue::Prepared(candidate) => {
+                    let registry =
+                        script::quester::registry::commit_snapshot(candidate, completed, current)
+                            .map_err(|error| compile_error_message(&error))?;
+                    Ok(registry.report().cloned().unwrap_or_else(|| {
+                        Arc::from(format!(
+                            "Reload Paths: bundled release registry active ({} rows)",
+                            registry.rows().len()
+                        ))
+                    }))
+                }
+            });
+        Some(result)
     }
 
     fn is_running(&self) -> bool {
-        self.receiver.is_some()
+        self.worker.is_some() || self.pending.is_some()
     }
+}
+
+enum SubmissionError {
+    Full,
+    Failed(String),
 }
 
 /// Owns the shared settings, reload lifecycle, notice state and user-facing
@@ -170,8 +299,8 @@ pub struct QuesterPathsController {
 impl QuesterPathsController {
     /// Restore and apply saved settings. An enabled source is reloaded the
     /// first time selected game data is supplied to [`Self::advance`].
-    pub fn restore_at(&mut self, prefs_path: &Path) {
-        self.settings = QuesterPathsView::read_at(prefs_path);
+    pub fn restore(&mut self, preferences: &Preferences) {
+        self.settings = QuesterPathsView::read(preferences);
         self.settings.apply();
         self.reload_when_ready = self.settings.enabled;
         self.notice = None;
@@ -182,19 +311,19 @@ impl QuesterPathsController {
     }
 
     /// Persist (when requested), apply and reload a changed source.
-    pub fn apply_changed_at(
+    pub fn apply_changed(
         &mut self,
-        prefs_path: &Path,
-        after: QuesterPathsView,
+        preferences: &Preferences,
+        after: &QuesterPathsView,
         selected: Option<Arc<api::game_data::SelectedGameData>>,
         persist: bool,
     ) -> Result<(), String> {
-        if after == self.settings {
+        if after == &self.settings {
             return Ok(());
         }
         if persist {
             if let Err(error) =
-                QuesterPathsView::persist_changed_at(prefs_path, &self.settings, &after)
+                QuesterPathsView::persist_changed(preferences, &self.settings, after)
             {
                 let message = format!("Quest Paths settings were not saved: {error}");
                 self.set_notice(Err(Arc::from(message.clone())));
@@ -202,7 +331,8 @@ impl QuesterPathsController {
             }
         }
 
-        self.settings = after;
+        self.settings.enabled = after.enabled;
+        self.settings.folder.clone_from(&after.folder);
         self.settings.apply();
         self.reload_when_ready = true;
         if selected.is_none() {
@@ -241,6 +371,17 @@ impl QuesterPathsController {
             if let Some(selected) = selected {
                 self.reload_when_ready = false;
                 self.start_reload(selected);
+                return;
+            }
+        }
+        if self.reload.worker.is_none() {
+            let was_pending = self.reload.pending.is_some();
+            match self.reload.retry_pending() {
+                Ok(()) if was_pending && self.reload.pending.is_none() => {
+                    self.set_notice(Ok(Arc::from("Reloading quest Paths…")));
+                }
+                Ok(()) => {}
+                Err(error) => self.set_notice(Err(reload_error(error))),
             }
         }
     }
@@ -268,7 +409,11 @@ impl QuesterPathsController {
     }
 
     fn start_reload(&mut self, selected: Arc<api::game_data::SelectedGameData>) {
-        match self.reload.start(selected) {
+        let source = script::quester::registry::source_for_preparation();
+        match self.reload.start(selected, source) {
+            Ok(()) if self.reload.pending.is_some() => self.set_notice(Ok(Arc::from(
+                "Reload Paths queued until background capacity is available.",
+            ))),
             Ok(()) => self.set_notice(Ok(Arc::from("Reloading quest Paths…"))),
             Err(error) => self.set_notice(Err(reload_error(error))),
         }
@@ -305,15 +450,16 @@ fn compile_error_message(error: &script::quester::compile::CompileError) -> Stri
 mod tests {
     use super::{QuesterPathsView, ReloadPaths};
     use api::selected::{ClientRevision, FamilyPreparation};
-    use script::quester::registry::{FolderSource, PathRegistry};
+    use host_play::local_state::{LocalStateService, Preferences, StateRoot};
+    use script::quester::registry::FolderSource;
     use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     struct TempStore {
         dir: PathBuf,
-        prefs: PathBuf,
+        preferences: Preferences,
     }
 
     impl TempStore {
@@ -326,13 +472,14 @@ mod tests {
             ));
             std::fs::create_dir_all(&dir).unwrap();
             Self {
-                prefs: dir.join("panel-ui.json"),
+                preferences: LocalStateService::open_process(StateRoot::new(dir.clone()))
+                    .preferences(),
                 dir,
             }
         }
 
-        fn prefs(&self) -> &Path {
-            &self.prefs
+        fn prefs(&self) -> &Preferences {
+            &self.preferences
         }
 
         fn dir(&self) -> &Path {
@@ -343,6 +490,22 @@ mod tests {
     impl Drop for TempStore {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    struct RestoreRegistrySource;
+
+    impl Drop for RestoreRegistrySource {
+        fn drop(&mut self) {
+            script::quester::registry::set_source(FolderSource::default());
+        }
+    }
+
+    struct ReleaseHeldWork(Arc<AtomicBool>);
+
+    impl Drop for ReleaseHeldWork {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
         }
     }
 
@@ -367,37 +530,10 @@ mod tests {
         .unwrap();
     }
 
-    fn registry_summary(
-        source: &FolderSource,
-        selected: &api::game_data::SelectedGameData,
-        worker: &mut api::selected::FamilyPreparation,
-    ) -> Arc<str> {
-        let quests = api::quest_facts::QuestCatalog::from_identity(selected.quest_identity())
-            .expect("quest facts");
-        let registry =
-            PathRegistry::load(source, selected, &quests, worker).expect("folder Path load");
-        let mut summary = registry
-            .report()
-            .map_or_else(|| "bundled Paths".to_owned(), ToString::to_string);
-        for row in registry
-            .rows()
-            .iter()
-            .filter(|row| matches!(row.id.as_str(), "cook" | "fresh-draft" | "broken-draft"))
-        {
-            summary.push_str(&format!(
-                "\n{} source={} label={} unavailable={}",
-                row.id,
-                row.source.label(),
-                row.label,
-                row.unavailable.as_deref().unwrap_or("-")
-            ));
-        }
-        summary.into()
-    }
-
     fn finish_reload(reload: &mut ReloadPaths) -> Result<Arc<str>, String> {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
+            reload.retry_pending().expect("retry pending Path reload");
             if let Some(result) = reload.poll() {
                 return result;
             }
@@ -409,7 +545,7 @@ mod tests {
     #[test]
     fn missing_preferences_disable_folder_paths_and_use_product_data_directory() {
         let store = TempStore::new();
-        let view = QuesterPathsView::read_at(store.prefs());
+        let view = QuesterPathsView::read(store.prefs());
         assert!(!view.enabled);
         assert_eq!(view.folder, script::bot_file("quester/paths/289"));
     }
@@ -417,21 +553,23 @@ mod tests {
     #[test]
     fn changed_preferences_round_trip_without_replacing_unrelated_values() {
         let store = TempStore::new();
+        let path = store.prefs().path();
         std::fs::write(
-            store.prefs(),
+            &path,
             r#"{"unrelated":{"keep":true},"nav":{"show_nav_path":true,"custom":"preserve"},"quester_paths":{"enabled":false,"folder":"old","future":"preserve"}}"#,
         )
         .unwrap();
-        let before = QuesterPathsView::read_at(store.prefs());
+        store.prefs().reload().unwrap();
+        let before = QuesterPathsView::read(store.prefs());
         let after = QuesterPathsView {
             enabled: true,
             folder: store.dir().join("checkout").join("quest-paths"),
         };
 
-        QuesterPathsView::persist_changed_at(store.prefs(), &before, &after).unwrap();
+        QuesterPathsView::persist_changed(store.prefs(), &before, &after).unwrap();
 
         let saved: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(store.prefs()).unwrap()).unwrap();
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(saved["unrelated"]["keep"], true);
         assert_eq!(saved["nav"]["show_nav_path"], true);
         assert_eq!(saved["nav"]["custom"], "preserve");
@@ -441,11 +579,11 @@ mod tests {
             after.folder.to_string_lossy().as_ref()
         );
         assert_eq!(saved["quester_paths"]["future"], "preserve");
-        assert_eq!(QuesterPathsView::read_at(store.prefs()), after);
+        assert_eq!(QuesterPathsView::read(store.prefs()), after);
     }
 
     #[test]
-    fn async_reload_uses_edited_folder_files_and_keeps_draft_diagnostics() {
+    fn async_reload_retries_temporary_full_and_publishes_edited_folder_files() {
         let store = TempStore::new();
         let folder = store.dir().join("paths");
         std::fs::create_dir_all(&folder).unwrap();
@@ -476,37 +614,159 @@ mod tests {
             enabled: true,
             folder: folder.clone(),
         };
+        let zero = script::preparation::PreparationInput::new(0, 0, 0, 0).unwrap();
+        let folder_charge =
+            script::preparation::PreparationInput::for_quester_folder(0, zero, &source)
+                .unwrap()
+                .charge()
+                .total_bytes()
+                .unwrap();
+        assert!(folder_charge > 48 * 1024 * 1024);
 
+        let started = Arc::new(AtomicBool::new(false));
+        let released = Arc::new(AtomicBool::new(false));
+        let _release_on_panic = ReleaseHeldWork(Arc::clone(&released));
+        // Reserve bounded jobs until the byte ledger reports Full. One
+        // 48 MiB reservation is smaller than this folder reload's charge,
+        // so the next attempt must wait rather than refuse the reload.
+        let mut held = Vec::new();
+        for index in 0..64_u64 {
+            let worker_started = Arc::clone(&started);
+            let worker_released = Arc::clone(&released);
+            let request = script::preparation::submit_cooperative(
+                script::preparation::PreparationKind::Catalogue,
+                api::identity::Scope::Process,
+                script::preparation::PreparationInput::new(777_001 + index, 48 * 1024 * 1024, 0, 0)
+                    .expect("bounded temporary admission load"),
+                move |_| {
+                    worker_started.store(true, Ordering::Release);
+                    if worker_released.load(Ordering::Acquire) {
+                        script::preparation::CooperativePreparationStep::Complete {
+                            output: (),
+                            completed: 1,
+                            total: Some(1),
+                        }
+                    } else {
+                        script::preparation::CooperativePreparationStep::Continue {
+                            completed: 0,
+                            total: Some(1),
+                        }
+                    }
+                },
+            );
+            match request {
+                Ok(job) => held.push(job),
+                Err(script::preparation::PreparationError::Refused(
+                    api::work::SubmissionRefusal::Full,
+                )) => break,
+                Err(error) => panic!("temporary capacity fixture: {error}"),
+            }
+        }
+        assert!(
+            !held.is_empty(),
+            "fixture must reserve WorkAdmission capacity"
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !started.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline, "capacity fixture did not start");
+            std::thread::yield_now();
+        }
+        script::quester::registry::set_source(source.clone());
+        let _restore_source = RestoreRegistrySource;
         let mut reload = ReloadPaths::default();
-        let first_source = source.clone();
-        let first_selected = Arc::clone(&selected);
-        reload
-            .start_with(move |worker| Ok(registry_summary(&first_source, &first_selected, worker)))
-            .expect("start asynchronous reload");
-        let summary = finish_reload(&mut reload).expect("folder reload report");
-        assert!(summary.contains("Folder Cook [folder]"), "{summary}");
-        assert!(summary.contains("Fresh Draft [draft]"), "{summary}");
+        let queued = reload.start(Arc::clone(&selected), source.clone());
+        assert!(
+            reload.pending.is_some(),
+            "Path reload must encounter temporary Full"
+        );
+        assert!(
+            reload.is_running(),
+            "a reload waiting for WorkAdmission capacity is running"
+        );
+        let replacement = FolderSource {
+            enabled: true,
+            folder: store.dir().join("replacement"),
+        };
+        assert!(
+            reload.start(Arc::clone(&selected), replacement).is_err(),
+            "queued Path reload demand must not be replaced"
+        );
+        assert_eq!(
+            reload
+                .pending
+                .as_ref()
+                .map(|pending| &pending.source.folder),
+            Some(&folder),
+            "the original queued demand remains intact"
+        );
+        released.store(true, Ordering::Release);
+        for job in held {
+            job.join().expect("temporary capacity worker completes");
+        }
+        queued.expect("Full Path reload remains pending");
+        assert!(reload.pending.is_some());
+        let mut controller = super::QuesterPathsController {
+            reload,
+            ..Default::default()
+        };
+        controller.advance(Some(Arc::clone(&selected)));
+        assert!(
+            controller.reload.pending.is_none(),
+            "controller retries queued demand"
+        );
+        assert!(controller.is_running());
+        let summary = finish_reload(&mut controller.reload).expect("folder reload report");
+        assert!(summary.contains("Reload Paths:"), "{summary}");
+        let published = script::quester::registry::snapshot();
+        for (id, label) in [
+            ("cook", "Folder Cook [folder]"),
+            ("fresh-draft", "Fresh Draft [draft]"),
+        ] {
+            assert!(
+                published
+                    .rows()
+                    .iter()
+                    .any(|row| row.id == id && row.label == label),
+                "published registry missing {id} [{label}]: {published:?}"
+            );
+        }
+        let diagnostics = published
+            .diagnostics()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
         for expected in [
             "broken-draft.json",
-            "Broken Draft [draft]",
             "step=start",
             "code=invalid-args",
             "not_a_real_argument",
         ] {
             assert!(
-                summary.contains(expected),
-                "missing {expected} in {summary}"
+                diagnostics.contains(expected),
+                "missing {expected} in {diagnostics}"
             );
         }
 
         write_cook(&folder, "cook", "Edited Again", false);
-        let second_source = source.clone();
-        reload
-            .start_with(move |worker| Ok(registry_summary(&second_source, &selected, worker)))
+        controller
+            .reload
+            .start(Arc::clone(&selected), source.clone())
             .expect("restart asynchronous reload");
-        let edited = finish_reload(&mut reload).expect("second folder reload report");
-        assert!(edited.contains("Edited Again [folder]"), "{edited}");
-        assert!(!edited.contains("Folder Cook [folder]"), "{edited}");
-        assert!(edited.contains("code=invalid-args"), "{edited}");
+        finish_reload(&mut controller.reload).expect("second folder reload report");
+        let edited = script::quester::registry::snapshot();
+        assert!(edited
+            .rows()
+            .iter()
+            .any(|row| row.id == "cook" && row.label == "Edited Again [folder]"));
+        assert!(!edited
+            .rows()
+            .iter()
+            .any(|row| row.id == "cook" && row.label == "Folder Cook [folder]"));
+        assert!(edited
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.to_string().contains("invalid-args")));
+        // The restore guard resets the process-global source even on panic.
     }
 }

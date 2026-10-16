@@ -1,7 +1,6 @@
 //! Permission composition and durable danger levels at host admissions.
 use std::collections::HashMap;
 use std::io;
-use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use nav::router::FindOptions;
@@ -90,23 +89,16 @@ impl WalkGlobals {
         }
     }
 
-    /// Read all globals in one pass, ignoring unrelated panel preferences.
-    /// An absent file is a first-run default; any other read/parse error is
-    /// reported so callers can use [`Self::fail_closed`].
-    pub fn read_at(path: &Path) -> io::Result<Self> {
-        #[derive(Default, serde::Deserialize)]
-        #[serde(default)]
-        struct Preferences {
-            nav: WalkGlobals,
+    /// Read all globals in one pass from the shared preferences, ignoring
+    /// unrelated ones. An absent file or `nav` member is a first-run
+    /// default; a refused file or a malformed `nav` is an error, so callers
+    /// can use [`Self::fail_closed`].
+    pub fn read(preferences: &super::local_state::Preferences) -> io::Result<Self> {
+        match preferences.document()?.get("nav") {
+            None => Ok(Self::default()),
+            Some(nav) => serde_json::from_value(nav.clone())
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
         }
-        let file = match std::fs::File::open(path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
-            Err(error) => return Err(error),
-        };
-        serde_json::from_reader::<_, Preferences>(file)
-            .map(|prefs| prefs.nav)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
     }
 
     /// Project the stored pair of booleans to the three-level setting.
@@ -196,7 +188,9 @@ impl WalkGlobals {
 
 pub(crate) fn globals_for(bot: Option<&super::NavBot>) -> WalkGlobals {
     match bot.and_then(|bot| bot.walk_globals_store.as_ref()) {
-        Some(path) => WalkGlobals::read_at(path).unwrap_or_else(|_| WalkGlobals::fail_closed()),
+        Some(preferences) => {
+            WalkGlobals::read(preferences).unwrap_or_else(|_| WalkGlobals::fail_closed())
+        }
         None => bot
             .and_then(|bot| bot.walk_globals.as_ref())
             .map_or_else(WalkGlobals::default, |globals| *globals.lock().unwrap()),
@@ -355,28 +349,56 @@ mod tests {
         }
     }
 
+    /// The scratch-rooted process service's shared preferences.
+    fn preferences(scratch: &script::IsolatedEnv) -> super::super::local_state::Preferences {
+        super::super::local_state::LocalStateService::open_process(
+            super::super::local_state::StateRoot::new(scratch.home.join(".274bot")),
+        )
+        .preferences()
+    }
+    /// Retry the globals write while it stays queued past the frontend's
+    /// bounded durability wait; under machine load it settles later. The
+    /// update re-reads and re-applies its merge on a conflict, so a retry
+    /// after a late-landing write converges instead of duplicating it.
+    fn set_nav_patiently(
+        preferences: &super::super::local_state::Preferences,
+        value: serde_json::Value,
+    ) {
+        let start = std::time::Instant::now();
+        loop {
+            match preferences.set("nav", value.clone()) {
+                Ok(()) => return,
+                Err(error)
+                    if error.to_string().contains("not durable within")
+                        && start.elapsed() < std::time::Duration::from_secs(60) =>
+                {
+                    std::thread::yield_now();
+                }
+                Err(error) => panic!("globals write failed: {error}"),
+            }
+        }
+    }
+
     #[test]
     fn durable_globals_are_reread_at_native_and_manual_admissions() {
-        let _iso = script::IsolatedEnv::enter("walk-globals-reread");
-        let path = super::super::panel_ui_path();
+        let scratch = script::IsolatedEnv::enter("walk-globals-reread");
+        let preferences = preferences(&scratch);
         let bot = super::super::NavBot {
-            walk_globals_store: Some(Arc::new(path.clone())),
+            walk_globals_store: Some(preferences.clone()),
             native_permissions: Some(WalkPermissions::default()),
             ..Default::default()
         };
         let navs = Arc::new(Mutex::new(HashMap::from([("alice".into(), bot)])));
         for enabled in [true, false, true] {
-            super::super::persist_panel_ui_value_at(
-                &path,
-                "nav",
+            set_nav_patiently(
+                &preferences,
                 serde_json::json!({
                     "allow_teleports": enabled,
                     "allow_wilderness": enabled,
                     "allow_bank_fetch": enabled,
                     "allow_danger_zones": enabled,
                 }),
-            )
-            .unwrap();
+            );
             let (native, policy, _) =
                 native_admission(&navs, "alice", WalkOptions::default(), None);
             assert_eq!(
@@ -388,7 +410,9 @@ mod tests {
                 }
             );
             let compiled = compiled_options(&navs, "alice", FindOptions::default());
-            let manual = WalkGlobals::read_at(&path).unwrap().manual_options(false);
+            let manual = WalkGlobals::read(&preferences)
+                .unwrap()
+                .manual_options(false);
             for options in [native, compiled, manual] {
                 assert_eq!(options.allow_teleports, enabled);
                 assert_eq!(options.allow_wilderness, enabled);
@@ -431,10 +455,9 @@ mod tests {
     }
     #[test]
     fn walk_globals_round_trip_default_absent_old_file_and_fail_closed_error() {
-        let dir =
-            std::env::temp_dir().join(format!("host-play-walk-globals-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("panel-ui.json");
+        let scratch = script::IsolatedEnv::enter("walk-globals-round-trip");
+        let preferences = preferences(&scratch);
+        let path = preferences.path();
 
         let defaults = WalkGlobals::default();
         assert!(!defaults.allow_teleports);
@@ -448,16 +471,20 @@ mod tests {
             serde_json::from_value::<WalkGlobals>(serde_json::to_value(defaults).unwrap()).unwrap(),
             defaults
         );
-        assert_eq!(WalkGlobals::read_at(&path).unwrap(), defaults);
+        assert_eq!(WalkGlobals::read(&preferences).unwrap(), defaults);
 
+        // A file an older build (or the other frontend's process) wrote.
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, r#"{"nav":{"allow_danger_zones":false}}"#).unwrap();
-        let migrated = WalkGlobals::read_at(&path).unwrap();
+        preferences.reload().unwrap();
+        let migrated = WalkGlobals::read(&preferences).unwrap();
         assert_eq!(migrated.danger_level(), DangerLevel::WhenSurvivable);
         assert!(migrated.survivable_routing);
         assert_eq!(migrated.effective_danger_level(), DangerLevel::Never);
 
         std::fs::write(&path, b"{malformed").unwrap();
-        assert!(WalkGlobals::read_at(&path).is_err());
+        assert!(preferences.reload().is_err());
+        assert!(WalkGlobals::read(&preferences).is_err());
         assert_eq!(
             WalkGlobals::fail_closed(),
             WalkGlobals {
@@ -468,7 +495,6 @@ mod tests {
                 survivable_routing: false,
             }
         );
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

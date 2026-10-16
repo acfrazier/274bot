@@ -101,6 +101,61 @@ fn wait_until(timeout: Duration, mut pred: impl FnMut() -> bool) -> bool {
 }
 
 #[test]
+fn ten_isolates_share_one_deadline_supervisor() {
+    // Count only the ten isolates this test owns, not other default-parallel
+    // tests sharing the parent process.
+    const CHILD: &str = "SCRIPT_CENSUS_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "ten_isolates_share_one_deadline_supervisor",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .status()
+            .unwrap();
+        assert!(status.success(), "isolated census child failed: {status}");
+        return;
+    }
+    let mut isolates = Vec::new();
+    for _ in 0..10 {
+        let isolate =
+            spawn_class("export default class T extends LoopingBot { loop() {} onStop() {} }");
+        assert_eq!(isolate.probe("1").unwrap(), 1);
+        isolates.push(isolate);
+    }
+    for isolate in &isolates {
+        assert_eq!(isolate.teardown_proof().supervisor_workers(), 1);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let names = std::fs::read_dir("/proc/self/task")
+            .unwrap()
+            .map(|task| {
+                let task = task.unwrap();
+                std::fs::read_to_string(task.path().join("comm")).unwrap()
+            })
+            .collect::<Vec<_>>();
+        let count = |prefix: &str| names.iter().filter(|name| name.starts_with(prefix)).count();
+        assert_eq!(count("js-deadline"), 1, "one OS deadline supervisor");
+        assert_eq!(count("script-bridge"), 1, "exactly one async bridge worker");
+        assert!(
+            count("script-blk") <= 1,
+            "at most one optional blocking bridge thread"
+        );
+        assert_eq!(
+            count("js-isolate"),
+            10,
+            "one OS V8 owner per active isolate"
+        );
+    }
+    for isolate in isolates {
+        isolate.join();
+    }
+}
+
+#[test]
 fn self_stop_hostile_onstop_without_later_tick_or_probe() {
     let iso = spawn_class(
         r#"
@@ -113,9 +168,9 @@ export default class T extends LoopingBot {
     );
     let proof = iso.teardown_proof();
     assert_eq!(
-        proof.deadline_workers(),
-        0,
-        "no idle deadline fleet while Running"
+        proof.supervisor_workers(),
+        1,
+        "the process supervisor is active before the hook"
     );
     iso.on_game_tick(1);
     let t0 = Instant::now();
@@ -142,9 +197,9 @@ export default class T extends LoopingBot {
         "onStop must have entered and been interrupted before join: {logs:?}"
     );
     assert_eq!(
-        proof.deadline_workers(),
-        0,
-        "deadline worker must not remain after self-stop"
+        proof.supervisor_workers(),
+        1,
+        "the process supervisor persists after self-stop"
     );
     assert!(proof.invoked(), "hostile self-stop entered onStop");
 }
@@ -161,9 +216,9 @@ fn drop_without_join_does_not_block_and_leaves_fresh_isolate() {
     iso.on_game_tick(1);
     let _ = iso.probe("1");
     assert_eq!(
-        proof.deadline_workers(),
-        0,
-        "no idle deadline fleet while Running"
+        proof.supervisor_workers(),
+        1,
+        "the process supervisor is shared while the isolate runs"
     );
     assert!(!proof.finished(), "Running isolate has not consumed Stop");
     let t0 = Instant::now();
@@ -182,9 +237,9 @@ fn drop_without_join_does_not_block_and_leaves_fresh_isolate() {
         "raw Drop must not invoke onStop after the isolate consumed Stop"
     );
     assert_eq!(
-        proof.deadline_workers(),
-        0,
-        "deadline workers must not remain after Drop"
+        proof.supervisor_workers(),
+        1,
+        "the process supervisor persists after raw Drop"
     );
     let iso = spawn_class(
         "export default class T extends LoopingBot { loop() { globalThis.__fresh = 1; } }",
@@ -223,7 +278,7 @@ fn delayed_hook_entry_keeps_deadline_interrupt() {
 }
 
 #[test]
-fn deadline_spawn_failure_skips_hook_and_stays_bounded() {
+fn deadline_registration_failure_skips_hook_and_stays_bounded() {
     let iso = spawn_class(
         "export default class T extends LoopingBot {
             loop() {}
@@ -233,7 +288,7 @@ fn deadline_spawn_failure_skips_hook_and_stays_bounded() {
     let proof = iso.teardown_proof();
     iso.on_game_tick(1);
     let _ = iso.probe("1");
-    iso.fail_onstop_deadline_spawn();
+    iso.fail_onstop_deadline_registration();
     let t0 = Instant::now();
     let logs = iso.join();
     let elapsed = t0.elapsed();
@@ -254,7 +309,147 @@ fn deadline_spawn_failure_skips_hook_and_stays_bounded() {
         "fail-closed isolate must still finish within the generous hang guard"
     );
     assert!(!proof.invoked(), "fail-closed must not invoke onStop");
-    assert_eq!(proof.deadline_workers(), 0);
+    assert_eq!(proof.supervisor_workers(), 1);
+}
+
+#[test]
+fn credited_transfer_refusal_and_actual_join_reopen_admission() {
+    // A child process owns the four process-global credits exclusively; the
+    // default-parallel parent suite cannot transiently refuse unrelated JS.
+    const CHILD: &str = "SCRIPT_QUARANTINE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "credited_transfer_refusal_and_actual_join_reopen_admission",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "isolated quarantine child failed: {status}"
+        );
+        return;
+    }
+    use script::load::{isolate_capacity_status, LoadIsolateError};
+    let mut isolates = Vec::new();
+    for _ in 0..5 {
+        let isolate =
+            spawn_class("export default class T extends LoopingBot { loop() {} onStop() {} }");
+        isolate.on_game_tick(1);
+        assert_eq!(isolate.probe("1").unwrap(), 1);
+        assert_eq!(isolate.poll_ready(), script::load::Ready::Ready);
+        isolate.delay_onstop_after_deadline_arm(Duration::from_millis(3_500));
+        isolates.push(isolate);
+    }
+    let mut receivers = Vec::new();
+    for isolate in isolates {
+        let (tx, rx) = std::sync::mpsc::channel();
+        isolate.join_detached(tx);
+        receivers.push(rx);
+    }
+    assert!(
+        wait_until(Duration::from_secs(4), || {
+            isolate_capacity_status()
+                .is_ok_and(|status| status.quarantined == 4 && status.retiring_gameplay == 1)
+        }),
+        "four A and one J must coexist; status={:?}",
+        isolate_capacity_status()
+    );
+    let status = isolate_capacity_status().unwrap();
+    assert_eq!(status.quarantined, 4, "{status:?}");
+    assert_eq!(
+        status.retiring_gameplay, 1,
+        "no credit retains J: {status:?}"
+    );
+    // Registry publication precedes receipt delivery: seeing four credits
+    // does not imply the supervisor has sent their receipts yet.
+    let mut received = [false; 5];
+    let mut credited = 0;
+    assert!(
+        wait_until(Duration::from_secs(2), || {
+            for (index, rx) in receivers.iter().enumerate() {
+                if !received[index] {
+                    if let Ok(lines) = rx.try_recv() {
+                        assert!(
+                            lines
+                                .iter()
+                                .any(|line| line.contains("quarantined after join deadline")),
+                            "{lines:?}"
+                        );
+                        received[index] = true;
+                        credited += 1;
+                    }
+                }
+            }
+            credited == 4
+        }),
+        "only credited transfer releases a slot receipt; received={credited}"
+    );
+    assert!(matches!(
+        LoadIsolate::spawn(
+            "export function tick() {}".into(),
+            LoadShape::NativeTick,
+            vec![]
+        ),
+        Err(LoadIsolateError::QuarantineFull {
+            quarantined: 4,
+            retiring_gameplay: 1,
+            ..
+        })
+    ));
+    assert!(
+        wait_until(Duration::from_secs(5), || {
+            isolate_capacity_status().is_ok_and(|status| status.quarantined == 0)
+        }),
+        "real joins must release all credits"
+    );
+    let replacement =
+        spawn_class("export default class T extends LoopingBot { loop() {} onStop() {} }");
+    assert_eq!(replacement.probe("1").unwrap(), 1);
+    replacement.join();
+}
+
+#[test]
+fn missing_execution_deadline_cuts_with_the_actual_supervisor_cause() {
+    for (stopped, cause) in [
+        (false, "JS deadline supervisor is at capacity"),
+        (true, "JS deadline supervisor worker stopped"),
+    ] {
+        let iso = spawn_class(
+            "export default class T extends LoopingBot {
+                loop() { while (true) {} }
+                onStop() { this.log('clean-stop'); }
+            }",
+        );
+        iso.fail_execution_deadline_registration(stopped);
+        iso.on_game_tick(1);
+        assert!(wait_until(Duration::from_secs(2), || iso.execution_active()));
+        iso.pause();
+        let mut logs = Vec::new();
+        assert!(
+            wait_until(Duration::from_secs(2), || {
+                logs.extend(iso.drain_logs());
+                logs.iter().any(|line| {
+                    line.contains("tick 1: execution interrupted:") && line.contains(cause)
+                })
+            }),
+            "tick error for {cause}: {logs:?}"
+        );
+        assert!(
+            logs.iter().any(|line| line.contains("tick 1: execution interrupted:") && line.contains(cause)),
+            "user-visible tick error must state the refusal: {logs:?}"
+        );
+        assert!(
+            !logs
+                .iter()
+                .any(|line| line.contains("runaway execution interrupted")),
+            "supervisor refusal is not a runaway execution: {logs:?}"
+        );
+        iso.join();
+    }
 }
 
 #[test]

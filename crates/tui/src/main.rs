@@ -9,11 +9,20 @@ static ALLOCATOR: host_play::memory::BenchmarkAllocator = host_play::memory::BEN
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    script::bootstrap_v8_platform();
+    if let Err(error) = script::bootstrap_v8_platform() {
+        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
+        return ExitCode::FAILURE;
+    }
     #[cfg(feature = "memory-profile")]
     host_play::memory::mark_process_start();
     // Before any slot starts: macOS defaults the soft limit to 256 open files.
     // The session log records the result when it opens.
     host_play::fd_limit::raise_at_startup();
-    tui::bin::main()
+    let result = tui::bin::main();
+    if let Err(error) = script::work_admission::WorkService::shutdown_if_started() {
+        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "background work shutdown: {error}");
+        ExitCode::FAILURE
+    } else {
+        result
+    }
 }

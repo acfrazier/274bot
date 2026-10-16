@@ -5,13 +5,8 @@ export {
     matchesCommonBankLoot,
     depositMatcher,
     depositAllExcept,
+    shouldBankNow,
+    isDisposableGatherJunk,
 } from './Banking.js';
-import { notImpl } from '../../shim/_kernel.js';
 
-export function shouldBankNow() {
-    throw notImpl('bankRules.shouldBankNow');
-}
-
-export function isDisposableGatherJunk() {
-    throw notImpl('bankRules.isDisposableGatherJunk');
-}
+export { RANDOM_EVENT_CASKET_ID } from './Banking.js';

@@ -202,6 +202,7 @@ globalThis.TaskBot = class TaskBot extends globalThis.LoopingBot {
     constructor() {
         super();
         this._tasks = [];
+        this.activeTaskName = null;
     }
     add(...tasks) {
         this._tasks.push(...tasks);
@@ -209,10 +210,13 @@ globalThis.TaskBot = class TaskBot extends globalThis.LoopingBot {
     async loop() {
         for (const task of this._tasks) {
             if (await task.validate()) {
+                this.activeTaskName = task.label ?? null;
                 await task.execute();
+                this.activeTaskName = null;
                 return;
             }
         }
+        this.activeTaskName = null;
     }
 };
 globalThis.TreeBot = class TreeBot extends globalThis.LoopingBot {

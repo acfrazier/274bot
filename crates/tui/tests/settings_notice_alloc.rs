@@ -84,10 +84,10 @@ fn a_notice_adds_no_allocation_to_a_drawn_frame() {
         "vault write failed: permission denied ".repeat(4)
     );
     let notices = [
-        FormNotice::Refused("settings: random: no profile alice".into()),
-        FormNotice::Failed("random: Permission denied (os error 13)".into()),
-        FormNotice::Failed(long),
-        FormNotice::Saved("Saved alice.".into()),
+        FormNotice::refused("settings: random: no profile alice"),
+        FormNotice::failed("random: Permission denied (os error 13)"),
+        FormNotice::failed(long),
+        FormNotice::saved("Saved alice."),
     ];
     for (w, h) in [(80, 24), (120, 40)] {
         let area = Rect::new(0, 0, w, h);

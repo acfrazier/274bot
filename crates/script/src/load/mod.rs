@@ -5,11 +5,12 @@
 //! resolution and V8 isolate need `load`. Static registry parsing and settings
 //! schemas live in `rs2b0t_registry` and compile without that feature.
 //!
-//! Loading (`JsLibrary::load`) only reads, classifies, validates the source
-//! in a throwaway Runtime (dropped before `load()` returns), registers the
-//! card, and persists `{name, path}`. The isolate is spawned **only** on
-//! Start of a JS card (`LoadIsolate::spawn`); nothing here `include_str!`s
-//! a script tree. 0.1.5 listed TS is an operator `$RS2B0T` path.
+//! Loading (`JsLibrary::load`) reads and classifies source, registers the card,
+//! and persists `{name, path}`. Reload validates prepared candidates through
+//! the process ValidationSeat. Gameplay gets a separate isolate only on JS
+//! Start via the slot-owned factory; validation has no gameplay authority.
+//! Nothing here `include_str!`s a script tree. 0.1.5 listed TS is an operator
+//! `$RS2B0T` path.
 
 #[cfg(feature = "load")]
 mod area;
@@ -71,9 +72,13 @@ mod recovery_hints_v8;
 #[cfg(feature = "load")]
 mod run_policy_v8;
 #[cfg(feature = "load")]
+mod runtime_bridge;
+#[cfg(feature = "load")]
 mod scene_v8;
 mod selected_facts_v8;
 mod shape;
+#[cfg(feature = "load")]
+mod shop_ops_v8;
 #[cfg(feature = "load")]
 mod snapshot;
 mod supply_v8;
@@ -83,6 +88,8 @@ mod targets_v8;
 mod tools_v8;
 #[cfg(feature = "load")]
 mod wait_clock;
+#[cfg(feature = "load")]
+mod walk_opening_v8;
 
 pub use shape::{
     collect_raw_sibling_hashes, detect_shape, first_unloadable_for_card,
@@ -101,12 +108,20 @@ pub use library::{
     default_js_store, format_load_failures, CatalogApplyReport, CatalogDiff, JsCard, LoadFailure,
     LoadStage, PreparedCard,
 };
+#[cfg(feature = "load")]
+pub use library::{
+    CardPreparationOutcome, CardPreparationSnapshot, CatalogPreparationResult,
+    CatalogPreparationSnapshot,
+};
 
+#[cfg(feature = "load")]
+pub(crate) use isolate::GameplayFactory;
 #[cfg(feature = "load")]
 pub(crate) use isolate::TickOutcome;
 #[cfg(feature = "load")]
 pub use isolate::{
-    LoadIsolate, LoadIsolateError, QueuedInteract, Ready, ScriptStopReceipt, TeardownProof,
+    isolate_capacity_status, IsolateCapacityStatus, LoadIsolate, LoadIsolateError, QueuedInteract,
+    Ready, ScriptStopReceipt, TeardownProof, ValidationBatch, ValidationError,
 };
 #[cfg(feature = "load")]
 pub use platform::bootstrap_v8_platform;

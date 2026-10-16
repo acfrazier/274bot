@@ -2,8 +2,7 @@
 //! running on the panel-owned window loop in `crate::window`.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
 
@@ -48,7 +47,8 @@ use host_play::progress::{
 use crate::input_capture::{discard_unconsumed_native_capture, stream_capture, KeyboardOwner};
 use crate::session::{
     debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, script_active,
-    script_pause_enabled, script_stop_enabled, PanelWindow, ProfilePreparationCompletion, Session,
+    script_pause_enabled, script_stop_enabled, PanelWindow, ProfilePreparation,
+    ProfilePreparationCompletion, Session,
 };
 use crate::theme::{
     applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title, native_applet,
@@ -57,7 +57,7 @@ use crate::theme::{
 };
 use frontend_core::resources::{background_ack_text, format_background, format_bots};
 use frontend_core::scripts::BrowseCard;
-use frontend_core::{FleetRow, FormNotice, Phase, ResourceView};
+use frontend_core::{FleetRow, Phase, ResourceView};
 
 #[path = "live_harness.rs"]
 mod live_harness;
@@ -223,16 +223,36 @@ enum Boot {
 
 struct ProfilePrepareJob {
     generation: u64,
-    receiver: Receiver<Result<Arc<host_play::SharedClientTemplate>, String>>,
+    task: script::preparation::PreparedTask<Result<Arc<host_play::SharedClientTemplate>, String>>,
     progress: LatestProgress,
 }
 
 struct ProfileValidateJob {
     generation: u64,
     boot: Boot,
-    receiver: Receiver<Result<host_play::ValidatedTemplate, String>>,
+    task: script::preparation::PreparedTask<Result<host_play::ValidatedTemplate, String>>,
     progress: LatestProgress,
 }
+struct ProfilePreparePending {
+    generation: u64,
+    preparation: Arc<ProfilePreparation>,
+    observer: ProfileProgressObserver,
+    progress: LatestProgress,
+}
+
+struct ProfileValidatePending {
+    generation: u64,
+    boot: Boot,
+    template: Arc<host_play::SharedClientTemplate>,
+    observer: ProfileProgressObserver,
+    progress: LatestProgress,
+}
+
+/// One capped process-profile reservation for captured inputs, decode scratch,
+/// and the prepared shared-client template.
+const PROFILE_PREPARATION_INPUT_BYTES: usize = 64 * 1024 * 1024;
+const PROFILE_PREPARATION_SCRATCH_BYTES: usize = 32 * 1024 * 1024;
+const PROFILE_PREPARATION_RESULT_BYTES: usize = 32 * 1024 * 1024;
 
 type LatestProgress = Arc<Mutex<Option<ProfileProgress>>>;
 
@@ -261,7 +281,9 @@ fn progress_channel(initial: ProfileProgress) -> (ProfileProgressObserver, Lates
 
 struct StartupPreparation {
     prepare: Option<ProfilePrepareJob>,
+    prepare_pending: Option<ProfilePreparePending>,
     validate: Option<ProfileValidateJob>,
+    validate_pending: Option<ProfileValidatePending>,
     pending_boot: Option<Boot>,
     failed_generation: Option<u64>,
 }
@@ -270,14 +292,19 @@ impl StartupPreparation {
     fn new(pending_boot: Option<Boot>) -> Self {
         Self {
             prepare: None,
+            prepare_pending: None,
             validate: None,
+            validate_pending: None,
             pending_boot,
             failed_generation: None,
         }
     }
 
     fn in_flight(&self) -> bool {
-        self.prepare.is_some() || self.validate.is_some()
+        self.prepare.is_some()
+            || self.prepare_pending.is_some()
+            || self.validate.is_some()
+            || self.validate_pending.is_some()
     }
 }
 
@@ -288,12 +315,24 @@ fn startup_progress(startup: &StartupPreparation, generation: u64) -> Option<Sta
         .filter(|job| job.generation == generation)
     {
         (ProgressPhase::FinalChecks, &job.progress)
-    } else {
-        let job = startup
-            .prepare
-            .as_ref()
-            .filter(|job| job.generation == generation)?;
+    } else if let Some(pending) = startup
+        .validate_pending
+        .as_ref()
+        .filter(|pending| pending.generation == generation)
+    {
+        (ProgressPhase::FinalChecks, &pending.progress)
+    } else if let Some(job) = startup
+        .prepare
+        .as_ref()
+        .filter(|job| job.generation == generation)
+    {
         (ProgressPhase::Preparing, &job.progress)
+    } else {
+        let pending = startup
+            .prepare_pending
+            .as_ref()
+            .filter(|pending| pending.generation == generation)?;
+        (ProgressPhase::Preparing, &pending.progress)
     };
     let progress = latest.lock().ok()?.as_ref().copied()?;
     Some(StartupProgressView { phase, progress })
@@ -359,17 +398,28 @@ fn boot_failure_is_fatal(boot: &Boot) -> bool {
     !matches!(boot, Boot::Unlock { .. })
 }
 
+fn exit_after_work_shutdown(code: i32) -> ! {
+    let code = match script::work_admission::WorkService::shutdown_if_started() {
+        Ok(()) => code,
+        Err(error) => {
+            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "background work shutdown: {error}");
+            1
+        }
+    };
+    std::process::exit(code)
+}
+
 fn fail_startup(session: &mut Session, fatal: bool, error: String) {
     session.set_profile_preparing(false);
     session.error = Some(error.clone());
     if fatal {
         eprintln!("FAIL: {error}");
-        std::process::exit(1);
+        exit_after_work_shutdown(1);
     }
 }
 
-/// Poll the two sequential startup workers. Both resource-heavy phases run
-/// away from the event loop; profile/template installation and all vault,
+/// Poll the two sequential WorkAdmission preparations. Resource-heavy phases
+/// run away from the event loop; profile/template installation and all vault,
 /// Play, GPU, JS-store and slot ownership remain on this UI thread.
 fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
     if let Some(pass) = state.session.take_requested_unlock() {
@@ -379,6 +429,12 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
             .filter(|job| matches!(&job.boot, Boot::Unlock { .. }))
         {
             job.boot = Boot::Unlock { pass };
+        } else if let Some(pending) = startup
+            .validate_pending
+            .as_mut()
+            .filter(|pending| matches!(&pending.boot, Boot::Unlock { .. }))
+        {
+            pending.boot = Boot::Unlock { pass };
         } else if startup
             .pending_boot
             .as_ref()
@@ -394,8 +450,13 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
         .prepare
         .as_ref()
         .is_some_and(|job| job.generation != generation)
+        || startup
+            .prepare_pending
+            .as_ref()
+            .is_some_and(|pending| pending.generation != generation)
     {
         startup.prepare = None;
+        startup.prepare_pending = None;
         startup.failed_generation = None;
         state.session.set_profile_preparing(false);
     }
@@ -403,15 +464,14 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
     let prepared = startup
         .prepare
         .as_ref()
-        .and_then(|job| match job.receiver.try_recv() {
-            Ok(result) => Some(result),
-            Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => {
-                Some(Err("profile preparation worker stopped".into()))
-            }
-        });
-    if let Some(result) = prepared {
+        .is_some_and(|job| job.task.is_finished());
+    if prepared {
         let job = startup.prepare.take().expect("polled preparation job");
+        let result = job
+            .task
+            .join()
+            .map_err(|error| error.to_string())
+            .and_then(|result| result);
         match state
             .session
             .finish_profile_preparation(job.generation, result)
@@ -437,15 +497,14 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
     let validated = startup
         .validate
         .as_ref()
-        .and_then(|job| match job.receiver.try_recv() {
-            Ok(result) => Some(result),
-            Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => {
-                Some(Err("profile validation worker stopped".into()))
-            }
-        });
-    if let Some(result) = validated {
+        .is_some_and(|job| job.task.is_finished());
+    if validated {
         let job = startup.validate.take().expect("polled validation job");
+        let result = job
+            .task
+            .join()
+            .map_err(|error| error.to_string())
+            .and_then(|result| result);
         state.session.set_profile_preparing(false);
         if job.generation != state.session.profile_generation() {
             return;
@@ -465,43 +524,95 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
         && startup.prepare.is_none()
         && startup.failed_generation != Some(generation)
     {
-        match state.session.profile_preparation() {
-            Ok((generation, preparation)) => {
-                let (sender, receiver) = mpsc::sync_channel(1);
-                let (observer, progress) = progress_channel(ProfileProgress::steps(
-                    ProfileProgressStage::SelectingServerProfile,
-                    0,
-                    1,
-                ));
-                state.session.error = None;
-                state.session.set_profile_preparing(true);
-                std::thread::spawn(move || {
-                    let _ = sender.send(preparation.run_with_progress(&observer));
-                });
-                startup.prepare = Some(ProfilePrepareJob {
-                    generation,
-                    receiver,
-                    progress,
-                });
+        if startup.prepare_pending.is_none() {
+            match state.session.profile_preparation() {
+                Ok((generation, preparation)) => {
+                    let (observer, progress) = progress_channel(ProfileProgress::steps(
+                        ProfileProgressStage::SelectingServerProfile,
+                        0,
+                        1,
+                    ));
+                    state.session.error = None;
+                    state.session.set_profile_preparing(true);
+                    startup.prepare_pending = Some(ProfilePreparePending {
+                        generation,
+                        preparation: Arc::new(preparation),
+                        observer,
+                        progress,
+                    });
+                }
+                Err(error) => {
+                    startup.failed_generation = Some(generation);
+                    let fatal = startup
+                        .pending_boot
+                        .as_ref()
+                        .is_some_and(boot_failure_is_fatal);
+                    fail_startup(&mut state.session, fatal, error);
+                }
             }
-            Err(error) => {
-                startup.failed_generation = Some(generation);
-                let fatal = startup
-                    .pending_boot
-                    .as_ref()
-                    .is_some_and(boot_failure_is_fatal);
-                fail_startup(&mut state.session, fatal, error);
+        }
+
+        if let Some(pending) = startup.prepare_pending.as_ref() {
+            let generation = pending.generation;
+            let preparation = Arc::clone(&pending.preparation);
+            let observer = pending.observer.clone();
+            let progress = Arc::clone(&pending.progress);
+            let input = script::preparation::PreparationInput::new(
+                generation,
+                PROFILE_PREPARATION_INPUT_BYTES,
+                PROFILE_PREPARATION_SCRATCH_BYTES,
+                PROFILE_PREPARATION_RESULT_BYTES,
+            );
+            match input {
+                Ok(input) => match script::preparation::submit(
+                    script::preparation::PreparationKind::Profile,
+                    api::identity::Scope::Process,
+                    input,
+                    move |_| preparation.run_with_progress(&observer),
+                ) {
+                    Ok(task) => {
+                        startup.prepare_pending = None;
+                        startup.prepare = Some(ProfilePrepareJob {
+                            generation,
+                            task,
+                            progress,
+                        });
+                    }
+                    Err(script::preparation::PreparationError::Refused(
+                        api::work::SubmissionRefusal::Full,
+                    )) => {}
+                    Err(error) => {
+                        startup.prepare_pending = None;
+                        startup.failed_generation = Some(generation);
+                        let fatal = startup
+                            .pending_boot
+                            .as_ref()
+                            .is_some_and(boot_failure_is_fatal);
+                        fail_startup(&mut state.session, fatal, error.to_string());
+                    }
+                },
+                Err(error) => {
+                    startup.prepare_pending = None;
+                    startup.failed_generation = Some(generation);
+                    let fatal = startup
+                        .pending_boot
+                        .as_ref()
+                        .is_some_and(boot_failure_is_fatal);
+                    fail_startup(&mut state.session, fatal, error.to_string());
+                }
             }
         }
     }
 
-    if state.session.profile_bound() && startup.validate.is_none() && startup.pending_boot.is_some()
+    if state.session.profile_bound()
+        && startup.validate.is_none()
+        && startup.validate_pending.is_none()
+        && startup.pending_boot.is_some()
     {
         let boot = startup.pending_boot.take().expect("pending boot");
         let fatal = boot_failure_is_fatal(&boot);
         match state.session.template_for_validation() {
             Ok(template) => {
-                let (sender, receiver) = mpsc::sync_channel(1);
                 let (observer, progress) = progress_channel(ProfileProgress::steps(
                     ProfileProgressStage::FinalChecks,
                     0,
@@ -509,17 +620,68 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
                 ));
                 state.session.error = None;
                 state.session.set_profile_preparing(true);
-                std::thread::spawn(move || {
-                    let _ = sender.send(template.validate_for_play_with_progress(&observer));
-                });
-                startup.validate = Some(ProfileValidateJob {
+                startup.validate_pending = Some(ProfileValidatePending {
                     generation,
                     boot,
-                    receiver,
+                    template,
+                    observer,
                     progress,
                 });
             }
             Err(error) => fail_startup(&mut state.session, fatal, error),
+        }
+    }
+
+    if let Some(pending) = startup.validate_pending.as_ref() {
+        let generation = pending.generation;
+        let template = Arc::clone(&pending.template);
+        let observer = pending.observer.clone();
+        let progress = Arc::clone(&pending.progress);
+        let input = script::preparation::PreparationInput::new(
+            generation,
+            std::mem::size_of::<Arc<host_play::SharedClientTemplate>>(),
+            0,
+            std::mem::size_of::<host_play::ValidatedTemplate>(),
+        );
+        match input {
+            Ok(input) => match script::preparation::submit(
+                script::preparation::PreparationKind::Profile,
+                api::identity::Scope::Process,
+                input,
+                move |_| template.validate_for_play_with_progress(&observer),
+            ) {
+                Ok(task) => {
+                    let pending = startup
+                        .validate_pending
+                        .take()
+                        .expect("validation demand retained");
+                    startup.validate = Some(ProfileValidateJob {
+                        generation,
+                        boot: pending.boot,
+                        task,
+                        progress,
+                    });
+                }
+                Err(script::preparation::PreparationError::Refused(
+                    api::work::SubmissionRefusal::Full,
+                )) => {}
+                Err(error) => {
+                    let pending = startup
+                        .validate_pending
+                        .take()
+                        .expect("validation demand retained");
+                    let fatal = boot_failure_is_fatal(&pending.boot);
+                    fail_startup(&mut state.session, fatal, error.to_string());
+                }
+            },
+            Err(error) => {
+                let pending = startup
+                    .validate_pending
+                    .take()
+                    .expect("validation demand retained");
+                let fatal = boot_failure_is_fatal(&pending.boot);
+                fail_startup(&mut state.session, fatal, error.to_string());
+            }
         }
     }
 }
@@ -612,12 +774,12 @@ impl PanelState {
         for (row, labels) in self.fleet.iter().zip(&mut self.fleet_labels) {
             labels.title.clear();
             // `###cap`: the select keeps its ID while the brief changes.
-            let _ = write!(labels.title, "{}: {}###cap", row.name, row.brief);
+            let _ = write!(labels.title, "{}: {}###cap", row.name(), row.brief());
             labels.world.clear();
             labels.world_tip.clear();
-            if let Some(number) = row.world {
+            if let Some(number) = row.world() {
                 let _ = write!(labels.world, "{number}");
-                let _ = write!(labels.world_tip, "w{number} · {}", row.brief);
+                let _ = write!(labels.world_tip, "w{number} · {}", row.brief());
             }
         }
     }
@@ -631,7 +793,7 @@ impl PanelState {
         }
         self.debug_resources = generation;
         let view = self.session.core.resources();
-        eprintln!("[panel] ram={} bots={}", view.ram.text(), view.bots);
+        eprintln!("[panel] ram={} bots={}", view.ram().text(), view.bots());
         if let Some(view) = self.game_view.as_ref() {
             let s = view.present_stats;
             eprintln!(
@@ -1418,18 +1580,18 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     {
         let focus = state.session.focus.lock().unwrap();
         dispose_idle_views(&mut state.views, gpu, |name| {
-            rows.iter().any(|row| row.name == name) && draw_for_slot(&focus, name)
+            rows.iter().any(|row| row.name() == name) && draw_for_slot(&focus, name)
         });
     }
     let debug_actions = state.session.debug_ui();
     // Only the focused cell paints the script overlay (an `Arc`, no copy).
     let mut focused_paint = focused_paint(&state.session);
     for ((row, labels), [cx, cy, cw, ch]) in rows.iter().zip(&labels).zip(cells) {
-        let name = &row.name;
+        let name = row.name();
         let (is_focused, draw) = {
             let focus = state.session.focus.lock().unwrap();
             (
-                focus.focused.as_deref() == Some(name.as_str()),
+                focus.focused.as_deref() == Some(name),
                 draw_for_slot(&focus, name),
             )
         };
@@ -1441,11 +1603,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             true,
             &state.session.ui.rail_preview,
         );
-        let identity = state
-            .session
-            .core
-            .profile_identity(&row.name)
-            .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(&row.name));
+        let identity = state.session.core.profile_identity_or_synthetic(row.name());
         let mut marked = state.session.fleet_selection.contains(identity);
         let restart_required = state.session.scripts.has_restart_badge(name);
         let (cap_select, cap_remove, cap_fold) = rail_cap(
@@ -1492,7 +1650,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                     .keyboard
                     .capture_keys(ui, state.session.capture_tx.as_ref());
             }
-            state.queue_cards.frame(ui, name, row.queue, image_min);
+            state.queue_cards.frame(ui, name, row.queue(), image_min);
             if is_focused {
                 overlay_script_paint(
                     ui,
@@ -1508,8 +1666,8 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         }
         if cap_fold {
             let next = !preview;
-            state.session.ui.rail_preview.insert(name.clone(), next);
-            crate::ui_state::save(&state.session.ui);
+            state.session.ui.rail_preview.insert(name.to_string(), next);
+            crate::ui_state::save(&state.session.preferences, &state.session.ui);
         } else if cap_remove {
             state.session.rail_remove(name);
         } else if cap_select || body_clicked {
@@ -1699,14 +1857,14 @@ fn banner(ui: &Ui, session: &Session, progress: Option<StartupProgressView>) {
 /// elapsed timer when one applies), parked, or failing. Nothing while it is
 /// in game or not started.
 fn slot_banner(ui: &Ui, detail: &frontend_core::SlotDetail) {
-    let phase = detail.row.phase;
+    let phase = detail.row().phase();
     if matches!(phase, Phase::Ready | Phase::Offline) {
         return;
     }
-    let text = sentence_case(&detail.state);
+    let text = sentence_case(detail.state());
     if phase.is_error() {
         ui.text_colored(ERROR, &text);
-    } else if let Some(since) = detail.since {
+    } else if let Some(since) = detail.since() {
         let elapsed = since.elapsed().as_secs_f64();
         let text = text.trim_end_matches('…');
         ui.text_colored(ACCENT, format!("{text} — {elapsed:.1}s"));
@@ -1747,7 +1905,7 @@ fn section_open(ui: &Ui, session: &mut Session, id: &str) -> bool {
             .entry(user)
             .or_default()
             .insert(id.to_string(), !open);
-        crate::ui_state::save(&session.ui);
+        crate::ui_state::save(&session.preferences, &session.ui);
     }
     open
 }
@@ -1782,7 +1940,7 @@ fn heading_dnd(ui: &Ui, session: &mut Session, id: &str) {
                     let mut order = resolve_heading_order(&session.ui.section_order);
                     move_heading(&mut order, &from, id);
                     session.ui.section_order = order;
-                    crate::ui_state::save(&session.ui);
+                    crate::ui_state::save(&session.preferences, &session.ui);
                 }
             }
         }
@@ -1804,13 +1962,13 @@ std::thread_local! {
 fn draw_resource_rows(ui: &Ui, view: &ResourceView, show_background: bool) {
     #[cfg(test)]
     TEST_RESOURCE_READOUTS.set(TEST_RESOURCE_READOUTS.get() + 1);
-    kv_row(ui, "bots", &format_bots(view.bots, view.ingame));
-    if show_background && view.background > 0 {
-        kv_row(ui, "background", &format_background(view.background));
+    kv_row(ui, "bots", &format_bots(view.bots(), view.ingame()));
+    if show_background && view.background() > 0 {
+        kv_row(ui, "background", &format_background(view.background()));
     }
-    kv_row(ui, "cpu", view.cpu.text());
-    kv_row(ui, "ram", view.ram.text());
-    kv_row(ui, "traffic", view.traffic.text());
+    kv_row(ui, "cpu", view.cpu().text());
+    kv_row(ui, "ram", view.ram().text());
+    kv_row(ui, "traffic", view.traffic().text());
 }
 
 /// Same-line gap that matches [`equal_button_width`]'s `BUTTON_GAP`.
@@ -2181,7 +2339,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
         .map(|sel| match sel {
             script::ScriptSel::Loaded(source, identity) => session
                 .scripts
-                .js
+                .js()
                 .get(*source, identity)
                 .map(|card| card.name.clone())
                 .unwrap_or_else(|| {
@@ -2250,11 +2408,11 @@ fn script_section(ui: &Ui, session: &mut Session) {
         gap_line(ui);
     }
     let confirming = session.script_reload_confirmation_pending();
-    let validating = session.reload_validation_pending();
+    let pending = session.reload_validation_pending();
     {
-        let _validating = validating.then(|| ui.begin_disabled());
-        let label = if validating {
-            "Validating…"
+        let _pending = pending.then(|| ui.begin_disabled());
+        let label = if pending {
+            "Reloading…"
         } else if confirming {
             "Confirm"
         } else {
@@ -2264,14 +2422,14 @@ fn script_section(ui: &Ui, session: &mut Session) {
             session.begin_script_reload_clicked();
         }
     }
-    ui.set_item_tooltip(if validating {
-        "validating candidate script off the UI thread"
+    ui.set_item_tooltip(if pending {
+        "preparing and validating candidate script off the UI thread"
     } else if confirming {
         "confirm reload: restart listed running bots and stop listed paused bots"
     } else {
         "hash source and supported siblings; unchanged skips transpile"
     });
-    if (confirming || validating) && ui.button_with_size("Cancel reload", [avail, 0.0]) {
+    if (confirming || pending) && ui.button_with_size("Cancel reload", [avail, 0.0]) {
         session.cancel_reload();
     }
 
@@ -2340,7 +2498,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
         .core
         .fleet_view()
         .detail()
-        .and_then(|detail| detail.walk_risk.as_deref())
+        .and_then(|detail| detail.walk_risk())
     {
         kv_row(ui, "Walk risk", reason);
     }
@@ -2439,7 +2597,7 @@ fn category_chip_dnd(ui: &Ui, session: &mut Session, cat: &str) {
                         resolve_category_order(&session.ui.script_category_order, &present);
                     move_category(&mut order, &from, cat);
                     session.ui.script_category_order = order;
-                    crate::ui_state::save(&session.ui);
+                    crate::ui_state::save(&session.preferences, &session.ui);
                 }
             }
         }
@@ -2525,7 +2683,7 @@ fn browse_script_card(
                     let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
                     ui.text_disabled(line);
                 }
-                if let Some(failure) = session.scripts.js.load_failure(&loaded.identity_key()) {
+                if let Some(failure) = session.scripts.js().load_failure(&loaded.identity_key()) {
                     ui.text_colored(ERROR, format!("failed {}", failure.stage.as_str()));
                     if selected {
                         ui.text_wrapped(failure.named_line());
@@ -2589,21 +2747,21 @@ fn browse_card_grid(
 }
 fn browse_window_body(ui: &Ui, session: &mut Session) {
     let w = ui.content_region_avail()[0];
-    let validating = session.reload_validation_pending();
-    let label = if validating {
-        "Validating catalog…"
+    let pending = session.reload_validation_pending();
+    let label = if pending {
+        "Refreshing catalog…"
     } else if session.scripts.catalog_refresh_confirm() {
         "Confirm catalog reload"
     } else {
         "Refresh catalog"
     };
     {
-        let _validating = validating.then(|| ui.begin_disabled());
+        let _pending = pending.then(|| ui.begin_disabled());
         if ui.button_with_size(label, [w, 0.0]) {
             session.begin_refresh_catalog();
         }
     }
-    if (session.scripts.catalog_refresh_confirm() || validating)
+    if (session.scripts.catalog_refresh_confirm() || pending)
         && ui.button_with_size("Cancel reload", [w, 0.0])
     {
         session.cancel_reload();
@@ -2625,14 +2783,14 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
     let order = resolve_category_order(&session.ui.script_category_order, &present);
     if order != session.ui.script_category_order {
         session.ui.script_category_order = order.clone();
-        crate::ui_state::save(&session.ui);
+        crate::ui_state::save(&session.preferences, &session.ui);
     }
     if !order.is_empty() {
         script_category_chips(ui, session, &order);
         ui.spacing();
     }
     let busy = !session.transpile_queue.is_empty();
-    let need = session.scripts.js.cards_needing_transpile().len();
+    let need = session.scripts.js().cards_needing_transpile().len();
     if need > 0 || busy {
         let w = ui.content_region_avail()[0];
         let _off = busy.then(|| ui.begin_disabled());
@@ -2655,7 +2813,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         }
         ui.spacing();
     }
-    let named_failures = session.scripts.js.named_failure_output();
+    let named_failures = session.scripts.js().named_failure_output();
     if !named_failures.is_empty() {
         // Collapsed by default: the list is long (dim catalog cards are
         // expected misses) and pushes the script browser off screen.
@@ -2663,7 +2821,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         let open = ui.collapsing_header(
             format!(
                 "{} failed###script-failures",
-                session.scripts.js.load_failures().len()
+                session.scripts.js().load_failures().len()
             ),
             TreeNodeFlags::NONE,
         );
@@ -2756,7 +2914,7 @@ fn persist_dialog_cwd(session: &mut Session, mode: DialogMode) {
         }
     }
     if session.persist_ui {
-        crate::ui_state::save(&session.ui);
+        crate::ui_state::save(&session.preferences, &session.ui);
     }
 }
 
@@ -2897,7 +3055,7 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
                     ui.table_next_row();
                     ui.table_next_column();
                     let glyph = if row.is_dir { GLYPH_FOLDER } else { GLYPH_FILE };
-                    let label = format!("{glyph}  {}##fdrow{i}", row.name);
+                    let label = format!("{glyph}  {}##fdrow{i}", row.name());
                     let selected = i == session.script_load_sel;
                     if ui
                         .selectable_config(&label)
@@ -2910,12 +3068,12 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
                     if ui.is_item_hovered() && ui.is_mouse_double_clicked(MouseButton::Left) {
                         if row.is_dir {
                             match mode {
-                                DialogMode::File => session.script_load_dir.push(&row.name),
-                                DialogMode::Folder => session.rs2b0t_catalog_dir.push(&row.name),
+                                DialogMode::File => session.script_load_dir.push(row.name()),
+                                DialogMode::Folder => session.rs2b0t_catalog_dir.push(row.name()),
                             }
                             persist_dialog_cwd(session, mode);
                         } else if mode == DialogMode::File {
-                            session.load_js(&cwd.join(&row.name));
+                            session.load_js(&cwd.join(row.name()));
                         }
                     }
                     ui.table_next_column();
@@ -2940,7 +3098,7 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
                     ui.set_cursor_pos_x(ui.cursor_pos_x() + x);
                     if ui.button_with_size("Load", [btn_w, 0.0]) {
                         if let Some(row) = rows.get(session.script_load_sel).filter(|r| !r.is_dir) {
-                            session.load_js(&cwd.join(&row.name));
+                            session.load_js(&cwd.join(row.name()));
                         }
                     }
                     ui.same_line();
@@ -3219,9 +3377,9 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                     );
                 }
                 let save_result =
-                    crate::ui_state::save_at_checked(&session.walk_permissions_path, &session.ui);
-                let routing_result = frontend_core::WalkGlobalsView::persist_changed_at(
-                    &session.walk_permissions_path,
+                    crate::ui_state::save_to_checked(&session.preferences, &session.ui);
+                let routing_result = frontend_core::WalkGlobalsView::persist_changed(
+                    &session.preferences,
                     previous_permissions,
                     after_permissions,
                 );
@@ -3279,7 +3437,7 @@ fn parameters_section(ui: &Ui, session: &mut Session) {
     }
     match &session.script_sel {
         Some(script::ScriptSel::Loaded(source, name)) => {
-            if let Some(card) = session.scripts.js.get(*source, name) {
+            if let Some(card) = session.scripts.js().get(*source, name) {
                 let bag = session.merged_settings_bag(*source, name, &card.settings_schema);
                 for (label, value) in script::parameter_rows(&card.settings_schema, &bag) {
                     kv_row(ui, &label, &value);
@@ -3331,17 +3489,15 @@ fn persist_profile_setting(
             }
         }
         script::ScriptSel::Loaded(source, lookup) => {
-            let Some(card) = session.scripts.js.get(*source, lookup).cloned() else {
+            let Some(card) = session.scripts.js().get(*source, lookup).cloned() else {
                 return;
             };
             if let Some(profile) = session.focused_name() {
                 session.set_profile_setting(&profile, *source, &card.name, &card.path, id, value);
             } else {
-                session
-                    .scripts
-                    .legacy
-                    .set_value(*source, &card.name, id, value);
-                let _ = session.scripts.legacy.save();
+                let legacy = session.scripts.legacy_mut();
+                legacy.set_value(*source, &card.name, id, value);
+                let _ = legacy.save();
             }
         }
     }
@@ -3367,7 +3523,7 @@ fn unavailable_parameter_text(
     if def.options_from.as_deref() == Some("loadouts") {
         return format!("{label} (no loadouts available)");
     }
-    if def.ty == "string" && options.preserved > 0 {
+    if def.ty == "string" && options.preserved() > 0 {
         let current = bag
             .get(&def.id)
             .and_then(serde_json::Value::as_str)
@@ -3481,7 +3637,7 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
     }
     let (schema, mut bag): (std::borrow::Cow<'_, [script::SettingDef]>, _) = match &selection {
         script::ScriptSel::Loaded(source, name) => {
-            let Some(card) = session.scripts.js.get(*source, name).cloned() else {
+            let Some(card) = session.scripts.js().get(*source, name).cloned() else {
                 ui.text_disabled("(parameters unavailable)");
                 return;
             };
@@ -3692,7 +3848,7 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     })
                     .unwrap_or_default();
                 let mut changed = false;
-                for (index, opt) in resolved.values.iter().enumerate() {
+                for (index, opt) in resolved.values().iter().enumerate() {
                     let mut on = selected
                         .iter()
                         .any(|value| resolved.matches_option(value, opt));
@@ -3772,11 +3928,15 @@ fn restart_settings_popup(ui: &Ui, session: &mut Session) {
         ui.open_popup(RESTART_SETTINGS_POPUP);
     }
     ui.modal_popup(RESTART_SETTINGS_POPUP, || {
-        let Some(prompt) = session.scripts.pending_restart_prompt().cloned() else {
+        let Some(summary) = session
+            .scripts
+            .pending_restart_prompt()
+            .map(|prompt| prompt.summary())
+        else {
             ui.close_current_popup();
             return;
         };
-        ui.text_wrapped(prompt.summary());
+        ui.text_wrapped(&summary);
         if ui.button("Restart##script-settings") {
             session.restart_pending_settings();
             ui.close_current_popup();
@@ -3811,7 +3971,7 @@ fn script_prefs_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 "Show parameters in rail",
                 &mut session.ui.show_parameters_rail,
             ) {
-                crate::ui_state::save(&session.ui);
+                crate::ui_state::save(&session.preferences, &session.ui);
             }
             ui.spacing();
             ui.text_wrapped(
@@ -3840,8 +4000,6 @@ fn quest_paths_section(ui: &Ui, session: &mut Session) {
     ui.separator();
     ui.text_colored(ACCENT, frontend_core::QUEST_PATHS_HEADING);
     ui.text_disabled("Folder Paths reload here and again when a Quester starts.");
-    let before_paths = session.quester_paths.settings().clone();
-    let mut after_paths = before_paths.clone();
     let mut paths_changed = false;
     let path_reload_running = session.quester_paths.is_running();
     let _path_controls_disabled = if path_reload_running {
@@ -3849,9 +4007,8 @@ fn quest_paths_section(ui: &Ui, session: &mut Session) {
     } else {
         None
     };
-    let mut enabled = after_paths.enabled;
+    let mut enabled = session.quester_paths.settings().enabled();
     if ui.checkbox(frontend_core::LOAD_PATHS_LABEL, &mut enabled) {
-        after_paths.enabled = enabled;
         paths_changed = true;
     }
     ui.text("Folder");
@@ -3861,9 +4018,11 @@ fn quest_paths_section(ui: &Ui, session: &mut Session) {
         &mut session.quester_paths_folder_edit,
     )
     .build();
+    let mut folder_committed = false;
     if ui.is_item_deactivated_after_edit() {
-        after_paths.folder = PathBuf::from(session.quester_paths_folder_edit.clone());
-        paths_changed |= after_paths.folder != before_paths.folder;
+        folder_committed = true;
+        paths_changed |= Path::new(&session.quester_paths_folder_edit)
+            != session.quester_paths.settings().folder();
     }
     drop(_path_controls_disabled);
 
@@ -3876,7 +4035,7 @@ fn quest_paths_section(ui: &Ui, session: &mut Session) {
         reload_requested = ui.button(frontend_core::RELOAD_PATHS_LABEL);
     }
     if paths_changed {
-        let _ = session.persist_quester_paths(after_paths);
+        let _ = session.persist_quester_paths_change(enabled, folder_committed);
     } else if reload_requested {
         session.start_quester_paths_reload();
     }
@@ -3928,7 +4087,7 @@ fn parameters_rail_placeholder(session: &Session) -> Option<&'static str> {
     match &session.script_sel {
         None => Some("(no script selected)"),
         Some(script::ScriptSel::Loaded(source, name)) => {
-            match session.scripts.js.get(*source, name) {
+            match session.scripts.js().get(*source, name) {
                 None => Some(MissingCard::of(session, *source).rail_text()),
                 Some(card) if card.settings_schema.is_empty() => Some("(no parameters)"),
                 Some(_) => None,
@@ -3962,7 +4121,7 @@ fn script_prefs_disabled_hint(session: &Session) -> Option<&'static str> {
             frontend_core::scripts::SchemaView::Ready { .. } => None,
         },
         Some(script::ScriptSel::Loaded(source, name)) => {
-            let Some(card) = session.scripts.js.get(*source, name) else {
+            let Some(card) = session.scripts.js().get(*source, name) else {
                 return Some(MissingCard::of(session, *source).prefs_hint());
             };
             if card.settings_schema.is_empty() {
@@ -4056,7 +4215,7 @@ fn status_section(ui: &Ui, session: &mut Session) {
 }
 
 fn status_detail_rows(ui: &Ui, d: &frontend_core::SlotDetail, walk: &str, mem: &str) {
-    kv_row(ui, "state", &d.state);
+    kv_row(ui, "state", d.state());
     if let Some(script) = d.script_phase() {
         kv_row(ui, "script", script.label());
         if let Some(phase) = script.phase() {
@@ -4069,36 +4228,40 @@ fn status_detail_rows(ui: &Ui, d: &frontend_core::SlotDetail, walk: &str, mem: &
     kv_row(
         ui,
         "player",
-        if d.player.is_empty() { "?" } else { &d.player },
+        if d.player().is_empty() {
+            "?"
+        } else {
+            d.player()
+        },
     );
-    if let Some(world) = d.row.world {
+    if let Some(world) = d.row().world() {
         kv_row(ui, "world", &format!("w{world}"));
     }
-    kv_row(ui, "tile", &format!("{} {}", d.tile.0, d.tile.1));
+    kv_row(ui, "tile", &format!("{} {}", d.tile().0, d.tile().1));
     status_kv_row(ui, "walk", walk);
-    if let Some(reason) = d.manual_walk_risk.as_deref() {
+    if let Some(reason) = d.manual_walk_risk() {
         status_kv_row(ui, "Walk risk", reason);
     }
     let queue = d
-        .row
-        .queue
+        .row()
+        .queue()
         .map_or_else(|| "—".to_string(), |q| q.to_string());
     status_kv_row(ui, "queue", &queue);
-    if matches!(d.row.phase, Phase::Ready) {
-        status_kv_row(ui, "modals", &d.modal.to_string());
+    if matches!(d.row().phase(), Phase::Ready) {
+        status_kv_row(ui, "modals", &d.modal().to_string());
     }
-    if let Some(welcome) = d.welcome.as_deref() {
+    if let Some(welcome) = d.welcome() {
         kv_row(ui, "welcome", welcome);
     }
-    if let Some(random) = d.random.as_deref() {
+    if let Some(random) = d.random() {
         kv_row(ui, "random", random);
     }
-    if !d.row.phase.is_error() {
-        if let Some(error) = d.row.error.as_deref() {
+    if !d.row().phase().is_error() {
+        if let Some(error) = d.row().error() {
             kv_row(ui, "last error", error);
         }
     }
-    if let Some(op) = d.row.last_op.as_ref() {
+    if let Some(op) = d.row().last_op() {
         kv_row(ui, "operation", &op.to_string());
     }
     kv_row(ui, "mem", mem);
@@ -4284,7 +4447,7 @@ fn config_section(ui: &Ui, session: &mut Session, id: &str, body: impl FnOnce(&U
     };
     if open != desired {
         session.ui.config_collapsed.insert(id.to_string(), !open);
-        crate::ui_state::save(&session.ui);
+        crate::ui_state::save(&session.preferences, &session.ui);
     }
     if open {
         body(ui, session);
@@ -4310,7 +4473,7 @@ fn panel_heading_toggles(ui: &Ui, session: &mut Session) {
         let mut visible = crate::ui_state::panel_section_visible(&session.ui, id);
         if ui.checkbox(*id, &mut visible) {
             crate::ui_state::set_panel_section_visible(&mut session.ui, id, visible);
-            crate::ui_state::save(&session.ui);
+            crate::ui_state::save(&session.preferences, &session.ui);
         }
     }
     ui.spacing();
@@ -4331,7 +4494,7 @@ fn panel_heading_toggles(ui: &Ui, session: &mut Session) {
     changed |= chrome_color_field(ui, "green", &mut chrome.green);
     if changed {
         session.ui.chrome = chrome;
-        crate::ui_state::save(&session.ui);
+        crate::ui_state::save(&session.preferences, &session.ui);
     }
 }
 
@@ -4404,7 +4567,7 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
     ui.text_wrapped("all rail/grid members; all-or-nothing");
     let current = session.focus.lock().unwrap().only_render_selected;
     let mut only = current;
-    if ui.checkbox("only render selected", &mut only) {
+    if ui.checkbox("only render focused", &mut only) {
         only_render_selected_clicked(session, only);
     }
     let live = session.scenario.lock().unwrap().is_some();
@@ -4513,13 +4676,13 @@ fn rail_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     }
 }
 
-/// Apply an "only render selected" checkbox change: re-checking on is
+/// Apply an "only render focused" checkbox change: re-checking on is
 /// immediate; unchecking keeps the safe default and opens the scary
 /// confirm instead, unless the operator saved "Don't show again" (`acked`),
 /// when it applies at once. Returns `(new_only_render_selected, open_warn)`.
 pub fn apply_only_render_selected(current: bool, checked: bool, acked: bool) -> (bool, bool) {
     if checked && !current {
-        // user just checked "only render selected" — apply immediately
+        // user just checked "only render focused" — apply immediately
         return (true, false);
     }
     if !checked && current {
@@ -4532,7 +4695,7 @@ pub fn apply_only_render_selected(current: bool, checked: bool, acked: bool) -> 
     (current, false)
 }
 
-/// The "only render selected" checkbox was clicked to `checked`. The policy
+/// The "only render focused" checkbox was clicked to `checked`. The policy
 /// flips every wall member's draw state, so the slots are kicked and parked
 /// threads apply the change within a frame (slot threads read it every frame).
 fn only_render_selected_clicked(session: &mut Session, checked: bool) {
@@ -4574,7 +4737,7 @@ fn rail_bulk_row(ui: &Ui, state: &mut PanelState) {
     }
     let current = state.session.focus.lock().unwrap().only_render_selected;
     let mut only = current;
-    if ui.checkbox("only render selected", &mut only) {
+    if ui.checkbox("only render focused", &mut only) {
         only_render_selected_clicked(&mut state.session, only);
     }
 }
@@ -4657,7 +4820,7 @@ pub fn status_value_visible(label: &str, value: &str) -> bool {
     !matches!(label, "walk" | "queue" | "modals") || !matches!(value.trim(), "" | "—" | "-1")
 }
 
-/// Scary confirm before "only render selected" can be unchecked: OK and
+/// Scary confirm before "only render focused" can be unchecked: OK and
 /// "Don't show again" stay disabled until "I understand" is ticked. Both
 /// write `only_render_selected = false`; "Don't show again" also saves the
 /// acknowledgement so the box unchecks at once from then on. Cancel keeps the
@@ -4808,15 +4971,15 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     {
         let focus = state.session.focus.lock().unwrap();
         dispose_idle_views(&mut state.views, gpu, |name| {
-            rows.iter().any(|row| row.name == name) && draw_for_slot(&focus, name)
+            rows.iter().any(|row| row.name() == name) && draw_for_slot(&focus, name)
         });
     }
     for (row, labels) in rows.iter().zip(&labels) {
-        let name = &row.name;
+        let name = row.name();
         let (is_focused, draw) = {
             let focus = state.session.focus.lock().unwrap();
             (
-                focus.focused.as_deref() == Some(name.as_str()),
+                focus.focused.as_deref() == Some(name),
                 draw_for_slot(&focus, name),
             )
         };
@@ -4828,11 +4991,7 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
             false,
             &state.session.ui.rail_preview,
         );
-        let identity = state
-            .session
-            .core
-            .profile_identity(name)
-            .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(name));
+        let identity = state.session.core.profile_identity_or_synthetic(name);
         let mut marked = state.session.fleet_selection.contains(identity);
         let restart_required = state.session.scripts.has_restart_badge(name);
         let (cap_select, cap_remove, cap_fold) = rail_cap(
@@ -4856,8 +5015,8 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         };
         if cap_fold {
             let next = !preview;
-            state.session.ui.rail_preview.insert(name.clone(), next);
-            crate::ui_state::save(&state.session.ui);
+            state.session.ui.rail_preview.insert(name.to_string(), next);
+            crate::ui_state::save(&state.session.preferences, &state.session.ui);
         } else if cap_remove {
             state.session.rail_remove(name);
         } else if cap_select || body_clicked {
@@ -4895,7 +5054,7 @@ fn rail_cap(
     const BTN: f32 = 28.0;
     const DOT_W: f32 = 18.0;
     const MARK_W: f32 = 18.0;
-    let _id = ui.push_id(row.name.as_str());
+    let _id = ui.push_id(row.name());
     let [screen_x, screen_y] = ui.cursor_screen_pos();
     // Fractional scaled spacing can leave the next rail row between pixels.
     ui.set_cursor_screen_pos([screen_x, screen_y.round()]);
@@ -4981,10 +5140,7 @@ fn record_test_rail_item(ui: &Ui) {
 
 #[cfg(test)]
 pub(crate) fn draw_test_rail_cap(ui: &Ui, width: f32) -> (Vec<[f32; 4]>, [f32; 4]) {
-    let row = FleetRow {
-        name: "pixel-layout".into(),
-        ..FleetRow::default()
-    };
+    let row = FleetRow::for_profile("pixel-layout");
     let labels = CapLabels {
         title: "pixel-layout".into(),
         ..CapLabels::default()
@@ -5028,10 +5184,7 @@ std::thread_local! {
 /// allow Debug, as `rail_cap` draws it.
 #[cfg(test)]
 fn draw_test_rail_mark_tooltip(ui: &Ui, debug_actions: bool) -> &'static str {
-    let row = FleetRow {
-        name: "mark-tip".into(),
-        ..FleetRow::default()
-    };
+    let row = FleetRow::for_profile("mark-tip");
     let labels = CapLabels {
         title: "mark-tip".into(),
         ..CapLabels::default()
@@ -5300,11 +5453,45 @@ fn edit_switch_popup(ui: &Ui, session: &mut Session) {
     });
 }
 
+/// The Profiles editor pane's narrowest width. The edit form is laid out
+/// for the 330 px docked panel, so its content width there (`PANEL_WIDTH`
+/// less the window's 8 px padding on each side) is the narrowest it reads
+/// at.
+const PROFILES_EDITOR_MIN_W: f32 = PANEL_WIDTH - 16.0;
+/// The profile list's narrowest width beside the editor: a short name and
+/// its Edit and ✕.
+const PROFILES_LIST_MIN_W: f32 = 180.0;
+/// The draggable divider between the list and the editor pane.
+const PROFILES_DIVIDER: f32 = 8.0;
+/// From this content width (314 + 8 + 180 = 502 logical px) the list and
+/// the editor pane sit side by side; narrower, as in the 330 px dock, the
+/// editor sits under the list.
+const PROFILES_SIDE_BY_SIDE_W: f32 = PROFILES_EDITOR_MIN_W + PROFILES_DIVIDER + PROFILES_LIST_MIN_W;
+/// The least height a Profiles region keeps.
+const PROFILES_REGION_MIN_H: f32 = 72.0;
+/// One profile row.
+const PROFILE_ROW_H: f32 = 24.0;
+
+/// What the operator did in the profile list this frame.
+#[derive(Default)]
+struct ListPick {
+    picked: Option<String>,
+    removed: Option<String>,
+    edit: Option<String>,
+}
+
 /// Profile picker (single-bot and MultiBox). Click a row to focus it
-/// (and load onto the wall while MultiBox is on); Edit opens user/pass;
-/// ✕ deletes the vault row only. Load all is MultiBox-only.
+/// (and load onto the wall while MultiBox is on); Edit opens the form;
+/// ✕ deletes the vault row only. Load all is MultiBox-only. The list and
+/// the editor pane (the edit form or the rs2b0t import, one at a time)
+/// each scroll on their own, side by side when the window is wide enough
+/// ([`PROFILES_SIDE_BY_SIDE_W`]) and stacked otherwise, with a draggable
+/// divider between them; Close stays at the bottom.
 fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if !session.wall.chooser_open {
+        if session.profile_import_open || !session.profile_import.is_fresh() {
+            session.close_profile_import();
+        }
         return;
     }
     // An opener asked for Profiles, or a leave prompt was staged from
@@ -5329,149 +5516,27 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             if session.core.vault().is_none() {
                 vault_unlock_prompt(ui, session);
             } else {
-            let names: Vec<String> = session.core.vault()
-                .map(|v| v.profiles().map(|p| p.username.clone()).collect())
-                .unwrap_or_default();
-            let w = on_screen_avail(ui, right);
-            let focused = session.focused_name();
-            let members = session.core.members().to_vec();
-            let multibox = session.multibox;
-            if multibox && ui.button_with_size("Load all", [w, 0.0]) {
-                session.load_all();
-            }
-            if ui.button_with_size("New profile", [w, 0.0]) {
-                session.begin_edit_profile(None);
-            }
-            ui.spacing();
-            ui.text_colored(ACCENT, "Vault profiles");
-            let mut picked: Option<String> = None;
-            let mut removed: Option<String> = None;
-            let mut edit: Option<String> = None;
-            if names.is_empty() {
-                ui.text_disabled("vault is empty — New profile then Save");
-            } else {
-                const ROW_H: f32 = 24.0;
-                let viewport_h = ui.main_viewport().work_size()[1] / ui_scale(ui);
-                // Leave room for the edit form when it is open; the list has
-                // its own scroll region, so a long vault remains usable.
-                let max_list = if session.chooser_edit.is_some() {
-                    220.0
-                } else {
-                    (viewport_h - 280.0).clamp(120.0, 360.0)
-                };
-                let need = (names.len() as f32) * ROW_H + 8.0;
-                let list_h = scale_px(ui, need.min(max_list));
-                ui.child_window("##profiles-list")
-                    .size([0.0, list_h])
-                    .build(ui, || {
-                        for name in &names {
-                            let selected = if multibox {
-                                members.iter().any(|m| m == name)
-                            } else {
-                                focused.as_deref() == Some(name.as_str())
-                            };
-                            // A profile whose first save is still being
-                            // written is not selectable, editable or
-                            // deletable until the write settles.
-                            let saving = session.core.profile_saving(name);
-                            let _saving = saving.then(|| ui.begin_disabled());
-                            let (p, r, e) = chooser_row(ui, name, selected, right);
-                            if saving {
-                                continue;
-                            }
-                            if e {
-                                edit = Some(name.clone());
-                            } else if r {
-                                removed = Some(name.clone());
-                            } else if p {
-                                picked = Some(name.clone());
-                            }
-                        }
-                    });
-            }
-            if let Some(name) = edit {
-                session.begin_edit_profile(Some(&name));
-            } else if let Some(name) = removed {
-                session.delete_understood = false;
-                session.pending_profile_delete = Some(name);
-                ui.open_popup(PROFILE_DELETE_POPUP);
-            } else if let Some(name) = picked {
-                // Row pick is pure focus (a wall load in MultiBox): the
-                // picker and any open edit form stay exactly as they are.
-                session.pick_profile(&name);
-            }
-            if session.chooser_edit.is_some() {
-                ui.spacing();
-                ui.separator();
-                {
-                    let edit = session.chooser_edit.as_deref().unwrap_or("");
-                    if edit.is_empty() {
-                        ui.text_colored(ACCENT, "New profile");
-                    } else {
-                        ui.text_colored(ACCENT, "Editing");
-                        ui.same_line();
-                        ui.text_colored(ACCENT, edit);
-                    }
+                profiles_toolbar(ui, session, right);
+                let footer = profiles_footer_height(ui, session);
+                let region_h = (ui.content_region_avail()[1] - footer)
+                    .max(scale_px(ui, PROFILES_REGION_MIN_H));
+                let pick = profiles_regions(ui, session, right, region_h);
+                if let Some(name) = pick.edit {
+                    session.begin_edit_profile(Some(&name));
+                } else if let Some(name) = pick.removed {
+                    session.delete_understood = false;
+                    session.pending_profile_delete = Some(name);
+                    ui.open_popup(PROFILE_DELETE_POPUP);
+                } else if let Some(name) = pick.picked {
+                    // Row pick is pure focus (a wall load in MultiBox): the
+                    // picker and the editor pane stay exactly as they are.
+                    session.pick_profile(&name);
                 }
-                // One id scope per opened target: a text field still active
-                // from the previous target cannot write its edit buffer into
-                // this one's fields.
-                let _form = ui.push_id(session.chooser_form);
-                ui.text_disabled("user");
-                if ui
-                    .input_text("##cred-user", &mut session.cred_user)
-                    .hint("username")
-                    .build()
-                {
-                    session.note_chooser_edited();
-                }
-                ui.text_disabled("pass");
-                if ui
-                    .input_text("##cred-pass", &mut session.cred_pass)
-                    .password(true)
-                    .hint("password")
-                    .build()
-                {
-                    session.note_chooser_edited();
-                }
-                slot_capture_section(ui, session);
-                slot_random_section(ui, session);
-                slot_clue_section(ui, session);
-                // Save's outcome, next to Save: a refusal or a write that
-                // failed after it was queued (nothing was written; the
-                // banner is hidden while Profiles is open) or, once the
-                // write is durable, `Saved <name>.`.
-                match session.chooser_save.notice() {
-                    Some(FormNotice::Saved(saved)) => ui.text_colored(GREEN, saved),
-                    Some(notice) => {
-                        if let Some(reason) = notice.error() {
-                            ui.text_colored(ERROR, reason);
-                            ui.text_disabled(frontend_core::NOTHING_SAVED);
-                        }
-                    }
-                    None => {}
-                }
-                let avail = on_screen_avail(ui, right);
-                let (bw, stack) = scaled_button_row_layout(ui, avail, 2);
-                // One Save at a time: the form follows a rename or a new
-                // profile only once its write is durable.
-                let saving = session.form_saving().then(|| ui.begin_disabled());
-                if ui.button_with_size("Save", [bw, 0.0]) {
-                    session.save_credentials();
-                }
-                drop(saving);
-                if !stack {
-                    gap_line(ui);
-                }
-                if ui.button_with_size("Cancel", [bw, 0.0]) {
-                    session.request_cancel_edit();
-                }
-            }
-            edit_switch_popup(ui, session);
+                edit_switch_popup(ui, session);
             }
             ui.spacing();
             if let Some(record) = session.core.saves_in_flight().last() {
-                let name = record.destination.as_str();
+                let name = record.destination();
                 ui.text_disabled("saving ");
                 ui.same_line_with_spacing(0.0, 0.0);
                 ui.text_disabled(name);
@@ -5509,6 +5574,480 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
         open = !session.request_close_profiles();
     }
     session.wall.chooser_open = session.wall.chooser_open && open;
+}
+
+/// Load all (MultiBox), then New profile and Import on one row. While an
+/// import's writes are being saved the editor pane keeps its report, so
+/// New profile waits.
+fn profiles_toolbar(ui: &Ui, session: &mut Session, right: f32) {
+    let w = on_screen_avail(ui, right);
+    if session.multibox && ui.button_with_size("Load all", [w, 0.0]) {
+        session.load_all();
+    }
+    let (bw, stack) = scaled_button_row_layout(ui, w, 2);
+    let writing = session.import_writing();
+    {
+        let _waits = ui.begin_disabled_with_cond(writing);
+        if ui.button_with_size("New profile", [bw, 0.0]) {
+            session.begin_edit_profile(None);
+        }
+    }
+    if !stack {
+        gap_line(ui);
+    }
+    {
+        let _open = ui.begin_disabled_with_cond(session.profile_import_open);
+        if ui.button_with_size("Import from rs2b0t…", [bw, 0.0]) {
+            session.request_open_import();
+        }
+    }
+    if writing {
+        ui.text_disabled("Editing waits until the import's writes are saved.");
+    }
+}
+
+/// The height under the split regions: the spacing, the saving line and
+/// Close.
+fn profiles_footer_height(ui: &Ui, session: &Session) -> f32 {
+    let spacing = ui.clone_style().item_spacing()[1];
+    let saving = if session.core.saves_in_flight().is_empty() {
+        0.0
+    } else {
+        ui.text_line_height_with_spacing()
+    };
+    spacing + saving + ui.frame_height_with_spacing()
+}
+
+/// The profile list and, when the form or the import is open, the editor
+/// pane, in `region_h`: side by side from [`PROFILES_SIDE_BY_SIDE_W`],
+/// stacked below it. Returns what the list was asked to do.
+fn profiles_regions(ui: &Ui, session: &mut Session, right: f32, region_h: f32) -> ListPick {
+    let w = on_screen_avail(ui, right);
+    if session.chooser_edit.is_none() && !session.profile_import_open {
+        return profile_list(ui, session, right, [w, region_h]);
+    }
+    let divider = scale_px(ui, PROFILES_DIVIDER);
+    if w >= scale_px(ui, PROFILES_SIDE_BY_SIDE_W) {
+        let list_w = (w * session.profiles_split[0])
+            .clamp(
+                scale_px(ui, PROFILES_LIST_MIN_W),
+                w - divider - scale_px(ui, PROFILES_EDITOR_MIN_W),
+            )
+            .floor();
+        let pick = profile_list(ui, session, right, [list_w, region_h]);
+        ui.same_line_with_spacing(0.0, 0.0);
+        if let Some(dx) = profiles_divider(ui, "##profiles-divider-x", [divider, region_h], true) {
+            session.profiles_split[0] = ((list_w + dx) / w).clamp(0.0, 1.0);
+        }
+        ui.same_line_with_spacing(0.0, 0.0);
+        ui.group(|| profiles_editor(ui, session, [w - list_w - divider, region_h]));
+        pick
+    } else {
+        // The list and the divider are each followed by item spacing.
+        let gaps = 2.0 * ui.clone_style().item_spacing()[1];
+        let min_h = scale_px(ui, PROFILES_REGION_MIN_H);
+        let max_list = (region_h - divider - gaps - min_h).max(min_h);
+        let list_h = (region_h * session.profiles_split[1])
+            .clamp(min_h, max_list)
+            .min(profile_list_height(ui, session))
+            .floor();
+        let pick = profile_list(ui, session, right, [w, list_h]);
+        if let Some(dy) = profiles_divider(ui, "##profiles-divider-y", [w, divider], false) {
+            session.profiles_split[1] = ((list_h + dy) / region_h).clamp(0.0, 1.0);
+        }
+        profiles_editor(
+            ui,
+            session,
+            [w, (region_h - list_h - divider - gaps).max(min_h)],
+        );
+        pick
+    }
+}
+
+/// The height the whole profile list needs: its heading and every row.
+fn profile_list_height(ui: &Ui, session: &Session) -> f32 {
+    let rows = session
+        .core
+        .vault()
+        .map_or(0, |v| v.profiles().count())
+        .max(1);
+    ui.text_line_height_with_spacing() + scale_px(ui, rows as f32 * PROFILE_ROW_H + 8.0)
+}
+
+/// A draggable divider of `size` between the list and the editor pane
+/// (`vertical`: a column between them side by side). Returns how far it
+/// was dragged this frame.
+fn profiles_divider(ui: &Ui, id: &str, size: [f32; 2], vertical: bool) -> Option<f32> {
+    let min = ui.cursor_screen_pos();
+    ui.invisible_button(id, size);
+    let hovered = ui.is_item_hovered();
+    let active = ui.is_item_active();
+    if hovered || active {
+        ui.set_mouse_cursor(Some(if vertical {
+            dear_imgui_rs::MouseCursor::ResizeEW
+        } else {
+            dear_imgui_rs::MouseCursor::ResizeNS
+        }));
+    }
+    let colour = if hovered || active { ACCENT } else { TEXT_DIM };
+    let draw = ui.get_window_draw_list();
+    if vertical {
+        let x = (min[0] + size[0] * 0.5).floor();
+        draw.add_line([x, min[1]], [x, min[1] + size[1]], colour)
+            .build();
+    } else {
+        let y = (min[1] + size[1] * 0.5).floor();
+        draw.add_line([min[0], y], [min[0] + size[0], y], colour)
+            .build();
+    }
+    let delta = ui.io().mouse_delta()[usize::from(!vertical)];
+    (active && delta != 0.0).then_some(delta)
+}
+
+/// The profile list in its own scrolling region of `size`.
+fn profile_list(ui: &Ui, session: &Session, right: f32, size: [f32; 2]) -> ListPick {
+    let names: Vec<String> = session
+        .core
+        .vault()
+        .map(|v| v.profiles().map(|p| p.username.clone()).collect())
+        .unwrap_or_default();
+    let focused = session.focused_name();
+    let members = session.core.members();
+    let multibox = session.multibox;
+    // The editor pane keeps an import's report while its writes are saved.
+    let edit_waits = session.import_writing();
+    let mut pick = ListPick::default();
+    ui.child_window("##profiles-list")
+        .size(size)
+        .child_flags(ChildFlags::NAV_FLATTENED)
+        .build(ui, || {
+            ui.text_colored(ACCENT, "Vault profiles");
+            if names.is_empty() {
+                ui.text_disabled("vault is empty — New profile then Save");
+                return;
+            }
+            for name in &names {
+                let selected = if multibox {
+                    members.iter().any(|m| m == name)
+                } else {
+                    focused.as_deref() == Some(name.as_str())
+                };
+                // A profile whose first save is still being written is not
+                // selectable, editable or deletable until the write settles.
+                let saving = session.core.profile_saving(name);
+                let _saving = saving.then(|| ui.begin_disabled());
+                let (p, r, e) = chooser_row(ui, name, selected, right, edit_waits);
+                if saving {
+                    continue;
+                }
+                if e {
+                    pick.edit = Some(name.clone());
+                } else if r {
+                    pick.removed = Some(name.clone());
+                } else if p {
+                    pick.picked = Some(name.clone());
+                }
+            }
+        });
+    pick
+}
+
+/// The editor pane in `size`: the edit form or the rs2b0t import. Its body
+/// scrolls on its own; its buttons (and the form's save notice) stay under
+/// it.
+fn profiles_editor(ui: &Ui, session: &mut Session, size: [f32; 2]) {
+    let [w, h] = size;
+    let min_h = scale_px(ui, PROFILES_REGION_MIN_H) * 0.5;
+    // The body is followed by item spacing, then the buttons.
+    let h = h - ui.clone_style().item_spacing()[1];
+    if session.profile_import_open {
+        let bar = profile_import_bar_height(ui, w);
+        let mut preview = false;
+        ui.child_window("##profiles-editor")
+            .size([w, (h - bar).max(min_h)])
+            .child_flags(ChildFlags::NAV_FLATTENED)
+            .build(ui, || preview = profile_import_body(ui, session));
+        profile_import_bar(ui, session, w, preview);
+    } else if session.chooser_edit.is_some() {
+        let bar = profile_form_bar_height(ui, session, w);
+        ui.child_window("##profiles-editor")
+            .size([w, (h - bar).max(min_h)])
+            .child_flags(ChildFlags::NAV_FLATTENED)
+            .build(ui, || profile_form_body(ui, session));
+        profile_form_bar(ui, session, w);
+    }
+}
+
+/// The edit form's fields, in the editor pane.
+fn profile_form_body(ui: &Ui, session: &mut Session) {
+    {
+        let edit = session.chooser_edit.as_deref().unwrap_or("");
+        if edit.is_empty() {
+            ui.text_colored(ACCENT, "New profile");
+        } else {
+            ui.text_colored(ACCENT, "Editing");
+            ui.same_line();
+            ui.text_colored(ACCENT, edit);
+        }
+    }
+    // One id scope per opened target: a text field still active from the
+    // previous target cannot write its edit buffer into this one's fields.
+    let _form = ui.push_id(session.chooser_form);
+    ui.text_disabled("user");
+    if ui
+        .input_text("##cred-user", &mut session.cred_user)
+        .hint("username")
+        .build()
+    {
+        session.note_chooser_edited();
+    }
+    ui.text_disabled("pass");
+    if ui
+        .input_text("##cred-pass", &mut session.cred_pass)
+        .password(true)
+        .hint("password")
+        .build()
+    {
+        session.note_chooser_edited();
+    }
+    slot_capture_section(ui, session);
+    slot_random_section(ui, session);
+    slot_clue_section(ui, session);
+}
+
+/// The height of one wrapped block of `text` at `width`, with its spacing.
+fn wrapped_height(ui: &Ui, text: &str, width: f32) -> f32 {
+    ui.current_font()
+        .calc_text_size(ui.current_font_size(), f32::MAX, width.max(1.0), text)[1]
+        + ui.clone_style().item_spacing()[1]
+}
+
+/// The rows a two-button bar of `width` takes.
+fn button_rows(ui: &Ui, width: f32) -> f32 {
+    let (_, stack) = scaled_button_row_layout(ui, width, 2);
+    if stack {
+        2.0
+    } else {
+        1.0
+    }
+}
+
+fn profile_form_bar_height(ui: &Ui, session: &Session, width: f32) -> f32 {
+    let notice = match session.chooser_save.notice() {
+        Some(notice) if notice.is_saved() => wrapped_height(ui, notice.text(), width),
+        Some(notice) => notice.error().map_or(0.0, |reason| {
+            wrapped_height(ui, reason, width)
+                + wrapped_height(ui, frontend_core::NOTHING_SAVED, width)
+        }),
+        None => 0.0,
+    };
+    notice + button_rows(ui, width) * ui.frame_height_with_spacing()
+}
+
+/// Save's outcome and Save / Cancel, under the form's body.
+fn profile_form_bar(ui: &Ui, session: &mut Session, width: f32) {
+    let _form = ui.push_id(session.chooser_form);
+    // Save's outcome, next to Save: a refusal or a write that failed after
+    // it was queued (nothing was written; the banner is hidden while
+    // Profiles is open) or, once the write is durable, `Saved <name>.`.
+    match session.chooser_save.notice() {
+        Some(notice) if notice.is_saved() => ui.text_colored(GREEN, notice.text()),
+        Some(notice) => {
+            if let Some(reason) = notice.error() {
+                ui.text_colored(ERROR, reason);
+                ui.text_disabled(frontend_core::NOTHING_SAVED);
+            }
+        }
+        None => {}
+    }
+    let (bw, stack) = scaled_button_row_layout(ui, width, 2);
+    // One Save at a time: the form follows a rename or a new profile only
+    // once its write is durable.
+    let saving = session.form_saving().then(|| ui.begin_disabled());
+    if ui.button_with_size("Save", [bw, 0.0]) {
+        session.save_credentials();
+    }
+    drop(saving);
+    if !stack {
+        gap_line(ui);
+    }
+    if ui.button_with_size("Cancel", [bw, 0.0]) {
+        session.request_cancel_edit();
+    }
+}
+
+const IMPORT_DELETE_POPUP: &str = "Delete the rs2b0t export file?";
+
+/// The rs2b0t profile import in the editor pane (vault unlocked): the
+/// export file's path, then a preview with the choices (nothing is written
+/// until Import), then the report while the writes are saved and after.
+/// The flow is frontend-core's, shared with the TUI. Returns whether Enter
+/// asked for the preview.
+fn profile_import_body(ui: &Ui, session: &mut Session) -> bool {
+    use frontend_core::rs2b0t_import::{ConflictPolicy, Stage, PROFILE_FILE_NAME};
+    ui.text_colored(ACCENT, "Import rs2b0t profiles");
+    let stage = session.profile_import.stage();
+    let mut entered = false;
+    match stage {
+        Stage::Path => {
+            ui.text_wrapped(format!(
+                "Path of the {PROFILE_FILE_NAME} file rs2b0t exported (its Settings → export). \
+                 The preview lists every account and setting before anything is written."
+            ));
+            ui.set_next_item_width(-1.0);
+            entered = ui
+                .input_text("##rs2b0t-import-path", session.profile_import.path_mut())
+                .hint(PROFILE_FILE_NAME)
+                .enter_returns_true(true)
+                .build();
+        }
+        Stage::Preview => {
+            ui.text_disabled("Existing profiles:");
+            let policy = session.profile_import.policy();
+            let mut next = policy;
+            // The two choices share a line when it fits them.
+            let style = ui.clone_style();
+            let radio = |label: &str| {
+                ui.frame_height()
+                    + style.item_inner_spacing()[0]
+                    + ui.current_font()
+                        .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, label)[0]
+            };
+            let one_line = radio("Skip (keep them)") + style.item_spacing()[0] + radio("Overwrite")
+                <= ui.content_region_avail()[0];
+            if ui.radio_button("Skip (keep them)", policy == ConflictPolicy::Skip) {
+                next = ConflictPolicy::Skip;
+            }
+            if one_line {
+                ui.same_line();
+            }
+            if ui.radio_button("Overwrite", policy == ConflictPolicy::Overwrite) {
+                next = ConflictPolicy::Overwrite;
+            }
+            if next != policy {
+                session
+                    .profile_import
+                    .set_policy(&session.core, &session.scripts, next);
+                session.refresh_profile_import();
+            }
+            // The preview's lines say which accounts and why.
+            let unusable = session
+                .profile_import
+                .plan()
+                .map_or(0, |plan| plan.unusable());
+            if unusable > 0 {
+                let mut include = session.profile_import.include_unusable();
+                if ui.checkbox("Import unusable accounts", &mut include) {
+                    session.profile_import.set_include_unusable(
+                        &session.core,
+                        &session.scripts,
+                        include,
+                    );
+                    session.refresh_profile_import();
+                }
+            }
+        }
+        Stage::Report => {
+            if !session.profile_import_settled {
+                session.refresh_profile_import();
+            }
+        }
+    }
+    if let Some(error) = session.profile_import.error() {
+        ui.text_colored(ERROR, error);
+    }
+    if stage != Stage::Path {
+        ui.separator();
+        for line in &session.profile_import_lines {
+            ui.text_wrapped(line);
+        }
+    }
+    entered
+}
+
+fn profile_import_bar_height(ui: &Ui, width: f32) -> f32 {
+    button_rows(ui, width) * ui.frame_height_with_spacing()
+}
+
+/// The import's buttons under its body, and the delete-file confirm.
+fn profile_import_bar(ui: &Ui, session: &mut Session, width: f32, entered: bool) {
+    use frontend_core::rs2b0t_import::Stage;
+    let (bw, stack) = scaled_button_row_layout(ui, width, 2);
+    let mut changed = false;
+    match session.profile_import.stage() {
+        Stage::Path => {
+            if ui.button_with_size("Preview", [bw, 0.0]) || entered {
+                // Script names map through the catalog: register it from its
+                // known root first (no folder prompt).
+                session.fill_rs2b0t_cards_once();
+                session
+                    .profile_import
+                    .preview(&session.core, &session.scripts);
+                changed = true;
+            }
+            if !stack {
+                gap_line(ui);
+            }
+            if ui.button_with_size("Cancel##rs2b0t-import", [bw, 0.0]) {
+                session.close_profile_import();
+                return;
+            }
+        }
+        Stage::Preview => {
+            if ui.button_with_size("Import", [bw, 0.0]) {
+                session
+                    .profile_import
+                    .confirm(&mut session.core, &session.scripts);
+                changed = true;
+            }
+            if !stack {
+                gap_line(ui);
+            }
+            if ui.button_with_size("Back##rs2b0t-import", [bw, 0.0]) {
+                session.profile_import.back();
+                changed = true;
+            }
+        }
+        Stage::Report => {
+            if session.profile_import.can_delete(&session.core) {
+                if ui.button_with_size("Delete export file…", [bw, 0.0]) {
+                    session.import_delete_understood = false;
+                    ui.open_popup(IMPORT_DELETE_POPUP);
+                }
+                if !stack {
+                    gap_line(ui);
+                }
+            }
+            {
+                // The report stays until its writes are saved.
+                let _saving = ui.begin_disabled_with_cond(session.import_writing());
+                if ui.button_with_size("Done##rs2b0t-import", [bw, 0.0]) {
+                    session.close_profile_import();
+                    return;
+                }
+            }
+            let body = match session.profile_import.export_path() {
+                Some(path) => format!(
+                    "Delete {}? It holds your rs2b0t passwords in plain text. This cannot be undone.",
+                    path.display()
+                ),
+                None => "Delete the export file?".into(),
+            };
+            if scary_confirm_popup(
+                ui,
+                IMPORT_DELETE_POPUP,
+                &body,
+                "Delete",
+                &mut session.import_delete_understood,
+            ) {
+                session.profile_import.confirm_delete(&session.core);
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        session.refresh_profile_import();
+    }
 }
 
 fn settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
@@ -5596,10 +6135,9 @@ fn slot_clue_section(ui: &Ui, session: &mut Session) {
     );
 }
 
-/// random: the guardian's per-profile toggles + lamp reward settings
-/// (guardian spec `ProfileSettings`). Checkboxes and the skill combo write
-/// straight through the vault upsert (`Session::set_random_settings`); the
-/// lamp auto rubs through the guardian when enabled (`lamp_auto`).
+/// Random-event toggles, per-event Guardian policies and lamp reward settings.
+/// Profile choices use the same vault save path as the existing random-event
+/// and lamp controls.
 fn slot_random_section(ui: &Ui, session: &mut Session) {
     let mut events = session.cred_settings.random_events;
     if ui.checkbox("random events", &mut events) {
@@ -5615,7 +6153,26 @@ fn slot_random_section(ui: &Ui, session: &mut Session) {
         }
         session.note_chooser_edited();
     }
-    ui.text_wrapped("talk random events through on this profile. Off: never talk, never hold — still detects and shows the status row.");
+    ui.text_wrapped("Off: show event status only; do not handle or hold events.");
+    let policies_open = ui.collapsing_header("Policies", TreeNodeFlags::NONE);
+    ui.set_item_tooltip(
+        "Per-event response: Flee is available; Fight and Ignore are disabled, and saved choices are treated as Flee.",
+    );
+    if policies_open {
+        for (event, label) in vault::RANDOM_EVENT_POLICY_EVENTS {
+            ui.text_disabled(label);
+            ui.same_line();
+            let mut policy = session.cred_settings.random_event_policy(event);
+            if random_event_policy_combo(ui, event, &mut policy) {
+                session.cred_settings.set_random_event_policy(event, policy);
+                if let Some(name) = session.chooser_edit.as_deref().filter(|n| !n.is_empty()) {
+                    let name = name.to_string();
+                    session.set_random_event_policy(&name, event, policy);
+                }
+                session.note_chooser_edited();
+            }
+        }
+    }
     let mut auto = session.cred_settings.lamp_auto;
     if ui.checkbox("lamp auto", &mut auto) {
         session.cred_settings.lamp_auto = auto;
@@ -5674,6 +6231,38 @@ fn lamp_skill_combo(ui: &Ui, skill: &mut String) -> bool {
     changed
 }
 
+fn random_event_policy_combo(ui: &Ui, event: &str, policy: &mut vault::RandomEventPolicy) -> bool {
+    use vault::RandomEventPolicy::{Fight, Flee, Ignore};
+
+    let preview = match *policy {
+        Flee => "Flee",
+        Fight => "Fight (not available yet)",
+        Ignore => "Ignore (not available yet)",
+    };
+    let id = format!("##random-event-policy-{event}");
+    let options = ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
+    let mut changed = false;
+    ui.set_next_item_width(-1.0);
+    if let Some(_open) = ui.begin_combo_with_flags(&id, preview, options) {
+        for (option, label) in [
+            (Flee, "Flee"),
+            (Fight, "Fight (not available yet)"),
+            (Ignore, "Ignore (not available yet)"),
+        ] {
+            let selected = option == *policy;
+            let _disabled = (option != Flee).then(|| ui.begin_disabled());
+            if ui.selectable_config(label).selected(selected).build() && option == Flee {
+                *policy = option;
+                changed = true;
+            }
+            if selected {
+                ui.set_item_default_focus();
+            }
+        }
+    }
+    changed
+}
+
 /// The lamp dialogue's skill names from the client skill table, minus the
 /// unused slots.
 fn lamp_skill_presets() -> Vec<&'static str> {
@@ -5687,8 +6276,15 @@ fn lamp_skill_presets() -> Vec<&'static str> {
 /// One picker row: name (click focuses / loads), Edit, then red ✕ (vault
 /// delete, confirm). Sibling buttons so an Edit/✕ click never also picks.
 /// The row ends at `right` (see [`chooser_right_edge`]), so Edit and ✕ stay
-/// on screen when the docked window runs past the display.
-fn chooser_row(ui: &Ui, name: &str, selected: bool, right: f32) -> (bool, bool, bool) {
+/// on screen when the docked window runs past the display. `edit_waits`
+/// disables Edit (an import's writes keep the editor pane).
+fn chooser_row(
+    ui: &Ui,
+    name: &str,
+    selected: bool,
+    right: f32,
+    edit_waits: bool,
+) -> (bool, bool, bool) {
     const EDIT_W: f32 = 44.0;
     const X_W: f32 = 28.0;
     let avail = on_screen_avail(ui, right);
@@ -5702,7 +6298,10 @@ fn chooser_row(ui: &Ui, name: &str, selected: bool, right: f32) -> (bool, bool, 
         .size([name_w, 0.0])
         .build();
     gap_line(ui);
-    let edit = ui.button_with_size(format!("Edit##edit-{name}"), [edit_w, 0.0]);
+    let edit = {
+        let _waits = ui.begin_disabled_with_cond(edit_waits);
+        ui.button_with_size(format!("Edit##edit-{name}"), [edit_w, 0.0])
+    };
     gap_line(ui);
     let _red = ui.push_style_color(StyleColor::Text, ERROR);
     let removed = ui.button_with_size(format!("✕##{name}"), [x_w, 0.0]);
@@ -5807,7 +6406,7 @@ fn init_panel_running(
             Ok(pass) => Some(pass),
             Err(msg) => {
                 eprintln!("FAIL: {msg}");
-                std::process::exit(1);
+                exit_after_work_shutdown(1);
             }
         }
     } else {
@@ -5826,14 +6425,14 @@ fn init_panel_running(
                 .map(|profile| profile.profile_class());
             if let Err(error) = class.and_then(host_play::memory::require_live_benchmark) {
                 eprintln!("FAIL: {error}");
-                std::process::exit(1);
+                exit_after_work_shutdown(1);
             }
             Some(Boot::Memory(config))
         }
         Ok(None) => boot,
         Err(error) => {
             eprintln!("FAIL: {error}");
-            std::process::exit(1);
+            exit_after_work_shutdown(1);
         }
     };
     Ok((state, StartupPreparation::new(boot)))
@@ -5905,7 +6504,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     if let Some(scenario) = args.mode.prepare_fixture_name() {
         return run_offline_prepare_fixture(&args, scenario).map_err(|e| {
             eprintln!("FAIL: {e}");
-            std::process::exit(1);
+            exit_after_work_shutdown(1);
         });
     }
     let skip_lock = !matches!(args.mode, RunMode::Interactive);
@@ -5927,7 +6526,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
         }
         Err(e) => {
             eprintln!("panel: instance lock: {e}");
-            std::process::exit(1);
+            exit_after_work_shutdown(1);
         }
     }
     let mut presented = false;
@@ -5966,7 +6565,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
                             Ok(ready) => running = Some(ready),
                             Err(e) => {
                                 eprintln!("panel: {e}");
-                                std::process::exit(1);
+                                exit_after_work_shutdown(1);
                             }
                         }
                     }
@@ -6285,12 +6884,12 @@ fn ui_frame(
             match run.poll(play) {
                 Ok(true) => {
                     eprintln!("PASS: memory panel observation complete");
-                    std::process::exit(0);
+                    exit_after_work_shutdown(0);
                 }
                 Ok(false) => {}
                 Err(error) => {
                     eprintln!("FAIL: memory panel: {error}");
-                    std::process::exit(1);
+                    exit_after_work_shutdown(1);
                 }
             }
         }
@@ -6416,9 +7015,7 @@ mod parameter_options_tests {
     #[test]
     fn panel_site_filter_uses_selectable_shared_search_results() {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let loadouts = script::LoadoutsStore::at(
-            std::env::temp_dir().join(format!("panel-site-filter-{}.json", std::process::id())),
-        );
+        let loadouts = script::LoadoutsStore::default();
         let schema = script::gatherer::settings::schema();
         let site = schema
             .iter()
@@ -6455,9 +7052,7 @@ mod parameter_options_tests {
     #[test]
     fn disabled_panel_site_keeps_the_saved_reason_read_only() {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let loadouts = script::LoadoutsStore::at(
-            std::env::temp_dir().join(format!("panel-site-disabled-{}.json", std::process::id())),
-        );
+        let loadouts = script::LoadoutsStore::default();
         let schema = script::gatherer::settings::schema();
         let site = schema
             .iter()
@@ -6487,10 +7082,7 @@ mod parameter_options_tests {
 
     #[test]
     fn preserved_only_priority_array_is_editable_for_removal() {
-        let loadouts = script::LoadoutsStore::at(std::env::temp_dir().join(format!(
-            "panel-priority-removal-{}.json",
-            std::process::id()
-        )));
+        let loadouts = script::LoadoutsStore::default();
         let schema = (script::quester::card::CARD.schema)();
         let priority = schema
             .iter()
@@ -6508,7 +7100,7 @@ mod parameter_options_tests {
         );
         assert!(parameter_array_editor_enabled(priority, &bag, &options));
         let haunted = options
-            .values
+            .values()
             .iter()
             .position(|value| value == "hauntedmine")
             .expect("the saved unavailable priority remains displayed");

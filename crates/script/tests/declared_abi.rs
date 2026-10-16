@@ -228,34 +228,35 @@ fn regen_js_declared_abi() {
     );
 }
 
-/// A declared name no shim module owns must throw `not impl` on any use — a
-/// string conversion, a member read, an iteration — never answer a fake
-/// value or `[object Object]` / `NaN`.
+/// Declared symbols without a shim implementation throw on use instead of
+/// returning fake values. An unimplemented callable must name the member.
 #[test]
-fn declared_value_stubs_throw_on_use() {
+fn declared_stubs_throw_on_use() {
     use script::load::{LoadIsolate, LoadShape};
 
     let src = r#"
 import * as api from '@rs2b0t/api';
+import { bankPace } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
-    loop() {
-        const use = (fn) => {
+    async loop() {
+        const use = async (fn) => {
             try {
-                fn();
+                await fn();
                 return 'no-throw';
             } catch (e) {
                 return String(e.message || e);
             }
         };
-        globalThis.__probe = [
+        globalThis.__probe = await Promise.all([
             use(() => api.ALL_FISHING_GEAR_NAMES.includes('net')),
             use(() => String(api.COINS)),
             use(() => api.FISHING_LOCATIONS.length),
             use(() => api.MAP_SQUARE + 1),
             use(() => Object.prototype.toString.call(api.WALK_OPTIONS)),
             use(() => api.AXE_SHOP_COSTS.map((c) => c)),
-        ];
-    }
+            use(() => bankPace()),
+        ]);
+}
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
@@ -264,7 +265,7 @@ export default class T extends LoopingBot {
     let probe = iso.probe("__probe").expect("probe __probe");
     iso.join();
     let rows = probe.as_array().cloned().unwrap_or_default();
-    assert_eq!(rows.len(), 6, "every stub use must be probed: {probe:?}");
+    assert_eq!(rows.len(), 7, "every stub use must be probed: {probe:?}");
     for (i, row) in rows.iter().enumerate() {
         let text = row.as_str().unwrap_or("");
         assert!(
@@ -272,6 +273,323 @@ export default class T extends LoopingBot {
             "stub use {i} must throw not impl, got {text:?}"
         );
     }
+    let bank_pace = rows[6].as_str().unwrap_or("");
+    assert!(
+        bank_pace.contains("not impl: bankPace"),
+        "unimplemented call must name bankPace, got {bank_pace:?}"
+    );
+}
+
+fn compat_overlay_entries(workspace: &std::path::Path) -> Vec<serde_json::Value> {
+    let root = workspace.join("crates/script/compat-js");
+    [
+        "overlay.json",
+        "overlay-native.json",
+        "overlay-not-impl.json",
+        "overlay-scene.json",
+    ]
+    .into_iter()
+    .flat_map(|name| {
+        serde_json::from_str::<Vec<serde_json::Value>>(
+            &std::fs::read_to_string(root.join(name)).expect("read compatibility overlay"),
+        )
+        .expect("parse compatibility overlay")
+    })
+    .collect()
+}
+
+fn assert_overlay_citations(workspace: &std::path::Path, entries: &[serde_json::Value]) {
+    for entry in entries {
+        let id = entry["id"].as_str().expect("overlay id");
+        let runtime = entry["runtime"].as_str().expect("overlay runtime citation");
+        let (path, line) = runtime.rsplit_once(':').expect("runtime line number");
+        let line = line.parse::<usize>().expect("numeric runtime line");
+        let source = std::fs::read_to_string(workspace.join(path))
+            .unwrap_or_else(|error| panic!("read {runtime} for {id}: {error}"));
+        let target = source
+            .lines()
+            .nth(line.checked_sub(1).expect("one-based runtime line"))
+            .unwrap_or_else(|| panic!("runtime line out of range: {runtime} ({id})"));
+        assert!(
+            !target.trim().is_empty(),
+            "blank runtime citation: {runtime} ({id})"
+        );
+
+        let selector = entry["selector"].as_str().expect("overlay selector");
+        let declaration = entry["declaration"].as_str().unwrap_or_default();
+        let type_only = ["export interface ", "interface ", "export type ", "type "]
+            .iter()
+            .any(|prefix| declaration.trim_start().starts_with(prefix));
+        if !selector.starts_with('$') && !type_only {
+            let symbol = selector.rsplit('.').next().expect("selector symbol");
+            assert!(
+                target.contains(symbol),
+                "runtime citation {runtime} for {id} does not name selector {selector}: {target:?}"
+            );
+        }
+    }
+}
+
+fn unconditional_refusal_exports(source: &str) -> Vec<(String, bool)> {
+    let lines: Vec<_> = source.lines().collect();
+    let mut refusals = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        if let Some(declaration) = trimmed.strip_prefix("export const ") {
+            if let Some((name, initializer)) = declaration.split_once('=') {
+                if initializer.trim_start().starts_with("notImplValue(") {
+                    refusals.push((name.trim().to_owned(), true));
+                }
+            }
+        }
+
+        let function = trimmed
+            .strip_prefix("export async function ")
+            .or_else(|| trimmed.strip_prefix("export function "));
+        let Some(signature) = function else {
+            continue;
+        };
+        let Some((name, _)) = signature.split_once('(') else {
+            continue;
+        };
+        let mut body = String::new();
+        let mut depth = 0_usize;
+        let mut opened = false;
+        'scan: for row in lines.iter().skip(index) {
+            for character in row.chars() {
+                if !opened {
+                    if character == '{' {
+                        opened = true;
+                        depth = 1;
+                    }
+                    continue;
+                }
+                match character {
+                    '{' => {
+                        depth += 1;
+                        body.push(character);
+                    }
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break 'scan;
+                        }
+                        body.push(character);
+                    }
+                    _ => body.push(character),
+                }
+            }
+            if opened {
+                body.push('\n');
+            }
+        }
+        let compact: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+        if opened
+            && depth == 0
+            && compact.starts_with("thrownotImpl(")
+            && compact.ends_with(");")
+            && compact.matches(';').count() == 1
+        {
+            refusals.push((name.trim().to_owned(), false));
+        }
+    }
+    refusals
+}
+
+fn collect_javascript_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).expect("read shim directory") {
+        let entry = entry.expect("read shim directory entry");
+        let path = entry.path();
+        if entry.file_type().expect("shim entry type").is_dir() {
+            collect_javascript_files(&path, files);
+        } else if path.extension().is_some_and(|extension| extension == "js") {
+            files.push(path);
+        }
+    }
+}
+
+#[test]
+fn overlay_runtime_citations_are_current() {
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let entries = compat_overlay_entries(&workspace);
+    assert_overlay_citations(&workspace, &entries);
+}
+
+#[test]
+fn unconditional_refusals_have_never_overlays() {
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let entries = compat_overlay_entries(&workspace);
+    let mut files = Vec::new();
+    collect_javascript_files(&workspace.join("crates/script/src/shim"), &mut files);
+    files.sort();
+
+    for file in files {
+        let source = std::fs::read_to_string(&file).expect("read shim source");
+        let relative = file
+            .strip_prefix(&workspace)
+            .expect("shim path under workspace")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if relative.ends_with("/declared_surface.js") {
+            assert!(
+                entries.iter().any(|entry| {
+                    entry["selector"] == "$barrel" && entry["operation"] == "runtime-values"
+                }),
+                "generated barrel refusals lack their group overlay"
+            );
+            continue;
+        }
+        for (symbol, is_value) in unconditional_refusal_exports(&source) {
+            let matching = entries.iter().filter(|entry| {
+                let Some(runtime) = entry["runtime"].as_str() else {
+                    return false;
+                };
+                let Some((path, _)) = runtime.rsplit_once(':') else {
+                    return false;
+                };
+                let selector = entry["selector"].as_str().unwrap_or_default();
+                path == relative && selector.rsplit('.').next() == Some(symbol.as_str())
+            });
+            if is_value {
+                let never_declaration = format!("export const {symbol}: never;");
+                assert!(
+                    matching.into_iter().any(|entry| {
+                        entry["declaration"].as_str().is_some_and(|declaration| {
+                            declaration
+                                .lines()
+                                .any(|line| line.trim() == never_declaration)
+                        })
+                    }),
+                    "refused value {relative}:{symbol} is not declared as never"
+                );
+            } else {
+                assert!(
+                    matching
+                        .into_iter()
+                        .any(|entry| entry["operation"] == "not-impl"),
+                    "refused function {relative}:{symbol} lacks a not-impl overlay"
+                );
+            }
+        }
+    }
+}
+
+/// Every not-impl overlay citation points to a throwing native refusal, and
+/// every named member still throws that refusal when imported from Load.
+#[test]
+fn not_impl_overlay_runtime_members_still_throw() {
+    use script::load::{LoadIsolate, LoadShape};
+
+    let entries: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("../compat-js/overlay-not-impl.json"))
+            .expect("not-impl overlay JSON");
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut modules = Vec::<String>::new();
+    for entry in &entries {
+        assert_eq!(entry["operation"], "not-impl", "{entry}");
+        let runtime = entry["runtime"].as_str().expect("runtime citation");
+        let (path, line) = runtime.rsplit_once(':').expect("runtime line number");
+        let line = line.parse::<usize>().expect("numeric runtime line");
+        let source = std::fs::read_to_string(workspace.join(path))
+            .unwrap_or_else(|error| panic!("read {runtime}: {error}"));
+        let target = source
+            .lines()
+            .nth(line - 1)
+            .unwrap_or_else(|| panic!("runtime line out of range: {runtime}"));
+        assert!(
+            target.contains("notImpl(") || target.contains("notImplValue("),
+            "{runtime} does not point to a not-impl refusal: {target:?}"
+        );
+        let module = entry["module"].as_str().expect("overlay module");
+        if !modules.iter().any(|known| known == module) {
+            modules.push(module.to_owned());
+        }
+    }
+
+    let mut source = String::new();
+    for (index, module) in modules.iter().enumerate() {
+        let specifier = serde_json::to_string(&format!("#/bot/{module}")).unwrap();
+        source.push_str(&format!("import * as overlay{index} from {specifier};\n"));
+    }
+    let module_names = (0..modules.len())
+        .map(|index| format!("overlay{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    source.push_str(&format!("const overlayModules = [{module_names}];\n"));
+    let cases: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            let module = entry["module"].as_str().expect("overlay module");
+            let module_index = modules
+                .iter()
+                .position(|known| known == module)
+                .expect("registered overlay module");
+            serde_json::json!([module_index, entry["selector"]])
+        })
+        .collect();
+    source.push_str(&format!(
+        "const overlayCases = {};\n",
+        serde_json::to_string(&cases).unwrap()
+    ));
+    source.push_str(
+        r#"
+export default class NotImplOverlayProbe extends LoopingBot {
+    async loop() {
+        const unexpected = [];
+        let paintFrame;
+        for (const [moduleIndex, selector] of overlayCases) {
+            try {
+                const parts = selector.split('.');
+                const namespace = overlayModules[moduleIndex];
+                let owner = namespace;
+                if (parts.length > 1) {
+                    const rootName = parts.shift();
+                    if (rootName === 'PaintFrame') {
+                        paintFrame ??= namespace.Paint.begin(null, {});
+                        owner = paintFrame;
+                    } else {
+                        owner = namespace[rootName];
+                        if (owner === undefined && namespace.default?.name === rootName) {
+                            owner = namespace.default;
+                        }
+                    }
+                }
+                while (parts.length > 1) owner = owner[parts.shift()];
+                const memberName = parts.at(-1);
+                let receiver = owner;
+                let member = owner[memberName];
+                if (typeof owner === 'function' && owner.prototype && member === undefined) {
+                    receiver = Object.create(owner.prototype);
+                    member = Reflect.get(owner.prototype, memberName, receiver);
+                }
+                if (typeof member === 'function') await member.call(receiver);
+                else member.valueOf();
+                unexpected.push(`${selector} returned`);
+            } catch (error) {
+                const message = String(error?.message ?? error);
+                if (!message.includes('not impl:') || !message.includes(selector.split('.').at(-1))) {
+                    unexpected.push(`${selector}: ${message}`);
+                }
+            }
+        }
+        globalThis.__overlayUnexpected = unexpected;
+    }
+}
+"#,
+    );
+
+    let isolate =
+        LoadIsolate::spawn(source, LoadShape::CompatClass, vec![]).expect("overlay probe loads");
+    isolate.on_game_tick(1);
+    let unexpected = isolate
+        .probe("globalThis.__overlayUnexpected")
+        .expect("overlay probe result");
+    isolate.join();
+    assert_eq!(
+        unexpected,
+        serde_json::json!([]),
+        "overlay refusals: {unexpected}"
+    );
 }
 
 /// Writes `src/shim/declared_surface.js` from the checked-in fixture, so the
@@ -297,4 +615,155 @@ fn declared_surface_matches_generator() {
          regen_declared_surface_from_fixture -- --ignored",
         path.display()
     );
+}
+
+#[test]
+fn t2_1_abi_contract_covers_exports_families_and_visible_debt() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../compat-js/abi-contract.json"))
+            .expect("generated ABI contract");
+    let graph: serde_json::Value =
+        serde_json::from_str(include_str!("../compat-js/family-predecessors.json"))
+            .expect("generated family predecessors");
+    assert_eq!(contract["endpoint"], "T2.1");
+    assert_eq!(contract["activation_state"], "not-activated");
+    assert_eq!(contract["active_families"], serde_json::json!([]));
+
+    let family_rows = graph["families"].as_array().expect("family rows");
+    let family_ids: std::collections::HashSet<&str> = family_rows
+        .iter()
+        .map(|row| row["family_id"].as_str().expect("family id"))
+        .collect();
+    let mut export_names = std::collections::HashSet::new();
+    for row in contract["compatibility_name_maps"]
+        .as_array()
+        .expect("compatibility name maps")
+    {
+        let name = row["public_name"].as_str().expect("public name");
+        assert!(
+            export_names.insert(name),
+            "duplicate compatibility export {name}"
+        );
+        assert!(
+            family_ids.contains(row["family_id"].as_str().expect("family id")),
+            "unclassified compatibility export {name}"
+        );
+    }
+    let fixture = load_fixture().expect("declared ABI fixture");
+    assert_eq!(
+        export_names.len(),
+        fixture.len(),
+        "compatibility map/export coverage"
+    );
+    for export in fixture {
+        assert!(
+            export_names.contains(export.name.as_str()),
+            "missing compatibility name map for {}",
+            export.name
+        );
+    }
+
+    for declaration in contract["declarations"].as_array().expect("declarations") {
+        let name = declaration["name"].as_str().expect("declaration name");
+        assert!(
+            family_ids.contains(declaration["family_id"].as_str().expect("family id")),
+            "unclassified declaration {name}"
+        );
+        for member in declaration["members"].as_array().expect("members") {
+            let member_name = member["name"].as_str().expect("member name");
+            assert!(
+                family_ids.contains(member["family_id"].as_str().expect("family id")),
+                "unclassified member {name}.{member_name}"
+            );
+            for signature in member["signatures"].as_array().expect("member overloads") {
+                assert!(
+                    family_ids.contains(signature["family_id"].as_str().expect("family id")),
+                    "unclassified overload {name}.{member_name}"
+                );
+            }
+        }
+        for signature in declaration["signatures"].as_array().expect("overloads") {
+            assert!(
+                family_ids.contains(signature["family_id"].as_str().expect("family id")),
+                "unclassified overload of {name}"
+            );
+        }
+    }
+    for debt in contract["not_impl_debt"].as_array().expect("not-impl debt") {
+        assert_eq!(debt["state"], "not-impl");
+        assert!(
+            debt["member"]
+                .as_str()
+                .is_some_and(|member| !member.is_empty()),
+            "not-impl debt must name its member: {debt}"
+        );
+        assert!(
+            family_ids.contains(debt["family_id"].as_str().expect("family id")),
+            "unclassified not-impl debt: {debt}"
+        );
+    }
+    for callback in contract["callbacks"].as_array().expect("callback rows") {
+        let member = callback["member"].as_str().expect("callback member");
+        assert!(!member.is_empty(), "unnamed callback member");
+        assert!(
+            ["awaited", "call-sync", "ask"]
+                .iter()
+                .any(|path| callback["path"] == *path),
+            "unknown callback path for {member}"
+        );
+        assert!(
+            ["used", "ignored"]
+                .iter()
+                .any(|value| callback["value"] == *value),
+            "unknown callback value use for {member}"
+        );
+        assert!(
+            family_ids.contains(callback["family_id"].as_str().expect("family id")),
+            "unclassified callback member {member}"
+        );
+    }
+    for family in family_rows {
+        let id = family["family_id"].as_str().expect("family id");
+        let predecessors = family["predecessors"]
+            .as_array()
+            .expect("family predecessors");
+        for required in ["F0", "T1.3", "T2.1"] {
+            assert!(
+                predecessors.iter().any(|row| row == required),
+                "family {id} is missing predecessor {required}"
+            );
+        }
+        if family["nav_consuming"]
+            .as_bool()
+            .expect("nav classification")
+        {
+            assert!(
+                predecessors.iter().any(|row| row == "T5.1"),
+                "nav-consuming family {id} is missing T5.1"
+            );
+        }
+        let canonical = family["canonical_endpoint_predecessors"]
+            .as_array()
+            .expect("canonical endpoint predecessors");
+        let canonical_names: Vec<_> = canonical
+            .iter()
+            .map(|row| row.as_str().expect("canonical predecessor"))
+            .collect();
+        let expected_canonical: Vec<_> = if id == "bank" {
+            vec!["F0", "T1.3", "T2.2", "T5.1"]
+        } else {
+            predecessors
+                .iter()
+                .map(|row| row.as_str().expect("predecessor"))
+                .collect()
+        };
+        assert_eq!(
+            canonical_names, expected_canonical,
+            "family {id} canonical edge"
+        );
+        assert!(
+            !predecessors.iter().any(|row| row == "consolidated backend"),
+            "family {id} has a vague predecessor"
+        );
+    }
 }

@@ -11,9 +11,36 @@ use vault::Profile;
 /// retains for that slot (and hands back when a terminal lifetime restarts
 /// or a cancelled removal re-adds the member).
 pub struct SlotAttach<Io> {
-    pub io: Io,
-    pub input: Option<Arc<SlotInput>>,
-    pub mailbox: Option<Arc<FrameBuf>>,
+    io: Io,
+    input: Option<Arc<SlotInput>>,
+    mailbox: Option<Arc<FrameBuf>>,
+}
+
+impl<Io> SlotAttach<Io> {
+    /// Host handles for one worker spawn.
+    pub fn new(io: Io, input: Option<Arc<SlotInput>>, mailbox: Option<Arc<FrameBuf>>) -> Self {
+        Self { io, input, mailbox }
+    }
+
+    /// Surface-owned value retained for this slot.
+    pub fn io(&self) -> &Io {
+        &self.io
+    }
+
+    /// Consume the attach into its parts.
+    pub fn into_parts(self) -> (Io, Option<Arc<SlotInput>>, Option<Arc<FrameBuf>>) {
+        (self.io, self.input, self.mailbox)
+    }
+
+    /// Slot input handle, when the surface supplies one.
+    pub fn input(&self) -> Option<&Arc<SlotInput>> {
+        self.input.as_ref()
+    }
+
+    /// Frame mailbox, when the surface supplies one.
+    pub fn mailbox(&self) -> Option<&Arc<FrameBuf>> {
+        self.mailbox.as_ref()
+    }
 }
 
 pub trait SlotSurface {
@@ -75,11 +102,7 @@ impl<F: FnMut(&str)> SlotSurface for HeadlessSurface<F> {
         _retained: Option<()>,
     ) -> SlotAttach<()> {
         profile.settings.raster = vault::RasterMode::Off;
-        SlotAttach {
-            io: (),
-            input: None,
-            mailbox: None,
-        }
+        SlotAttach::new((), None, None)
     }
 
     fn lifetime_reset(&mut self, name: &str) {

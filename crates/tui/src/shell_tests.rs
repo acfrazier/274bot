@@ -11,7 +11,7 @@ use crate::test_support::{ch, draw, find, fleet_app, key, ready_detail, text};
 fn compact_80x24_keeps_one_main_pane_between_header_drawer_and_footer() {
     let mut app = fleet_app(&["alice", "bob"]);
     app.error = Some("Start all: started 2, skipped 0".into());
-    app.resources.brief = "cpu 12% ram 263.9 MB net 1.2 KB/s".into();
+    app.resources.set_brief("cpu 12% ram 263.9 MB net 1.2 KB/s");
     let rows = draw(&mut app, 80, 24);
     assert!(rows[0].contains("289bot"), "{}", rows[0]);
     assert!(

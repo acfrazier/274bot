@@ -1,80 +1,13 @@
 //! Live-slot facts the operator session's resource meter samples
 //! (`frontend-core` owns the meter itself), the background-bot count, and
-//! the shared `panel-ui.json` preferences store.
+//! the background-bots notice preference. The shared `panel-ui.json`
+//! preferences are the process local-state service's `preferences` domain
+//! (T5.2 r3, [`crate::local_state::Preferences`]); nothing here reads or
+//! writes the file.
 
-use std::fs::{File, OpenOptions};
-use std::io::{self, ErrorKind};
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::io;
 
-static PANEL_UI_WRITE_LOCK: Mutex<()> = Mutex::new(());
-
-fn panel_ui_write_lock() -> std::sync::MutexGuard<'static, ()> {
-    PANEL_UI_WRITE_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-fn panel_ui_lock_path(path: &Path) -> PathBuf {
-    let mut lock_path = path.as_os_str().to_os_string();
-    lock_path.push(".lock");
-    PathBuf::from(lock_path)
-}
-
-fn panel_ui_file_lock(path: &Path) -> io::Result<File> {
-    if let Some(parent) = path.parent() {
-        vault::create_private_dir(parent)?;
-    }
-    let lock_path = panel_ui_lock_path(path);
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&lock_path)?;
-    file.lock()?;
-    Ok(file)
-}
-
-fn preserve_corrupt_panel_ui(path: &Path, error: &str) -> io::Result<()> {
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let backup = path.with_file_name(format!("panel-ui.json.corrupt-{stamp}"));
-    eprintln!(
-        "host-play: refusing to clobber invalid {}; moving it to {}",
-        path.display(),
-        backup.display()
-    );
-    if backup.exists() {
-        eprintln!(
-            "host-play: refusing to overwrite existing corrupt backup {}",
-            backup.display()
-        );
-        return Err(io::Error::new(
-            ErrorKind::AlreadyExists,
-            format!(
-                "corrupt panel-ui backup already exists: {}",
-                backup.display()
-            ),
-        ));
-    }
-    if let Err(rename_error) = std::fs::rename(path, &backup) {
-        eprintln!(
-            "host-play: could not preserve invalid {} as {}: {rename_error}",
-            path.display(),
-            backup.display()
-        );
-        return Err(io::Error::new(
-            ErrorKind::InvalidData,
-            format!("invalid panel-ui.json ({error}); backup failed: {rename_error}"),
-        ));
-    }
-    Ok(())
-}
-
+use crate::local_state::Preferences;
 use crate::Play;
 
 /// One live worker lifetime at sample time. Terminal history rows are omitted
@@ -152,28 +85,12 @@ where
 
 const BACKGROUND_BOTS_ACK_KEY: &str = "background_bots_ack";
 
-/// `~/.274bot/panel-ui.json` — the shared panel/TUI prefs store.
-pub fn panel_ui_path() -> PathBuf {
-    script::bot_file("panel-ui.json")
-}
-
-pub fn background_bots_acked() -> bool {
-    panel_ui_value(BACKGROUND_BOTS_ACK_KEY)
+/// Whether the operator acknowledged that other profiles keep running.
+pub fn background_bots_acked(preferences: &Preferences) -> bool {
+    preferences
+        .value(BACKGROUND_BOTS_ACK_KEY)
         .and_then(|value| value.as_bool())
         .unwrap_or(false)
-}
-
-/// One top-level value of `panel-ui.json`; `None` when the file, the key or
-/// a readable JSON object is absent.
-pub fn panel_ui_value(key: &str) -> Option<serde_json::Value> {
-    panel_ui_value_at(&panel_ui_path(), key)
-}
-
-/// Read one top-level preference from an explicitly supplied store.
-pub fn panel_ui_value_at(path: &Path, key: &str) -> Option<serde_json::Value> {
-    let data = std::fs::read(path).ok()?;
-    let mut value: serde_json::Value = serde_json::from_slice(&data).ok()?;
-    value.as_object_mut()?.remove(key)
 }
 
 pub fn background_bots_ack_error(err: &io::Error) -> String {
@@ -189,64 +106,9 @@ pub fn clear_background_bots_ack_error(error: &mut Option<String>) {
     }
 }
 
-/// Set `background_bots_ack` in `panel-ui.json`, preserving other keys.
-pub fn persist_background_bots_ack() -> io::Result<()> {
-    persist_panel_ui_value(BACKGROUND_BOTS_ACK_KEY, serde_json::Value::Bool(true))
-}
-
-/// Set one top-level key of `panel-ui.json`, preserving every other key.
-pub fn persist_panel_ui_value(key: &str, value: serde_json::Value) -> io::Result<()> {
-    persist_panel_ui_value_at(&panel_ui_path(), key, value)
-}
-
-/// Run a read/merge/write update under the shared in-process mutex and an
-/// advisory sidecar lock, including Continue-anyway concurrent frontends.
-/// `merge` receives the parsed document, whether a file existed, and whether
-/// its JSON was malformed; it may return an alternate destination.
-pub fn update_panel_ui_at(
-    path: &Path,
-    merge: impl FnOnce(&mut serde_json::Value, bool, bool) -> io::Result<Option<PathBuf>>,
-) -> io::Result<()> {
-    let _write = panel_ui_write_lock();
-    let _file_lock = panel_ui_file_lock(path)?;
-    let (mut document, file_exists, corrupt_json) = match std::fs::read(path) {
-        Ok(data) => match serde_json::from_slice(&data) {
-            Ok(document) => (document, true, None),
-            Err(error) => (serde_json::json!({}), true, Some(error.to_string())),
-        },
-        Err(error) if error.kind() == ErrorKind::NotFound => (serde_json::json!({}), false, None),
-        Err(error) => return Err(error),
-    };
-    let alternate = merge(&mut document, file_exists, corrupt_json.is_some())?;
-    if document.as_object().is_none() {
-        return Err(io::Error::new(
-            ErrorKind::InvalidData,
-            "panel-ui.json is not an object",
-        ));
-    }
-    if alternate.is_none() {
-        if let Some(error) = corrupt_json.as_deref() {
-            preserve_corrupt_panel_ui(path, error)?;
-        }
-    }
-    let data = serde_json::to_vec_pretty(&document)
-        .map_err(|error| io::Error::new(ErrorKind::InvalidData, error))?;
-    vault::write_private_file(alternate.as_deref().unwrap_or(path), &data)
-}
-
-/// Set one top-level key in an explicitly supplied preference store.
-pub fn persist_panel_ui_value_at(
-    path: &Path,
-    key: &str,
-    value: serde_json::Value,
-) -> io::Result<()> {
-    update_panel_ui_at(path, |document, _, _| {
-        let object = document.as_object_mut().ok_or_else(|| {
-            io::Error::new(ErrorKind::InvalidData, "panel-ui.json is not an object")
-        })?;
-        object.insert(key.into(), value);
-        Ok(None)
-    })
+/// Record the acknowledgement, durably, keeping every other preference.
+pub fn persist_background_bots_ack(preferences: &Preferences) -> io::Result<()> {
+    preferences.set(BACKGROUND_BOTS_ACK_KEY, serde_json::Value::Bool(true))
 }
 
 #[cfg(test)]
@@ -322,72 +184,45 @@ mod tests {
         assert_eq!(play.background_bot_count(Some("alice")), 1);
     }
 
+    fn preferences(scratch: &script::IsolatedEnv) -> Preferences {
+        crate::local_state::LocalStateService::open_process(crate::local_state::StateRoot::new(
+            scratch.home.join(".274bot"),
+        ))
+        .preferences()
+    }
+
     #[test]
     fn persist_merges_ack_into_panel_ui_json() {
-        let _iso = script::IsolatedEnv::enter("ack-json");
-        let path = panel_ui_path();
+        let scratch = script::IsolatedEnv::enter("ack-json");
+        let preferences = preferences(&scratch);
+        let path = preferences.path();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, r#"{"last_focus":"alice"}"#).unwrap();
-        assert!(!background_bots_acked());
-        persist_background_bots_ack().unwrap();
-        assert!(background_bots_acked());
-        persist_background_bots_ack().unwrap();
+        assert!(!background_bots_acked(&preferences));
+        persist_background_bots_ack(&preferences).unwrap();
+        assert!(background_bots_acked(&preferences));
+        persist_background_bots_ack(&preferences).unwrap();
         let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(v["last_focus"], "alice");
         assert_eq!(v["background_bots_ack"], true);
     }
 
+    /// T5.2 r4: a corrupt preferences file is moved aside, byte for byte,
+    /// to `panel-ui.json.corrupt-<time>` (the pre-T5.2 recovery, now under
+    /// the file's lock and flushed), and the acknowledgement is saved in
+    /// fresh preferences.
     #[test]
-    #[ignore = "preference-lock subprocess"]
-    fn preference_lock_child() {
-        let path = PathBuf::from(std::env::var_os("274BOT_PREFS_LOCK_PATH").unwrap());
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(panel_ui_lock_path(&path))
-            .unwrap();
-        assert!(matches!(
-            lock.try_lock(),
-            Err(std::fs::TryLockError::WouldBlock)
-        ));
-    }
-
-    #[test]
-    fn shared_preference_transaction_holds_cross_process_advisory_lock() {
-        let _iso = script::IsolatedEnv::enter("prefs-advisory-lock");
-        let path = panel_ui_path();
-        update_panel_ui_at(&path, |document, _, _| {
-            let status = std::process::Command::new(std::env::current_exe()?)
-                .args([
-                    "--ignored",
-                    "--exact",
-                    "resource_view::tests::preference_lock_child",
-                ])
-                .env("274BOT_PREFS_LOCK_PATH", &path)
-                .status()?;
-            assert!(status.success(), "other process must see the lock held");
-            document["nav"] = serde_json::json!({"allow_danger_zones": true});
-            Ok(None)
-        })
-        .unwrap();
-        let lock = panel_ui_file_lock(&path).expect("lock released after transaction");
-        lock.unlock().unwrap();
-        assert_eq!(
-            panel_ui_value_at(&path, "nav").unwrap()["allow_danger_zones"],
-            true
-        );
-    }
-
-    #[test]
-    fn persist_moves_corrupt_panel_ui_before_writing() {
-        let _iso = script::IsolatedEnv::enter("ack-corrupt");
-        let path = panel_ui_path();
+    fn persist_moves_a_corrupt_panel_ui_aside_before_writing() {
+        let scratch = script::IsolatedEnv::enter("ack-corrupt");
+        let preferences = preferences(&scratch);
+        let path = preferences.path();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let corrupt = b"{not valid json";
         std::fs::write(&path, corrupt).unwrap();
 
-        persist_background_bots_ack().unwrap();
+        persist_background_bots_ack(&preferences).unwrap();
 
+        assert!(background_bots_acked(&preferences));
         let mut backups = std::fs::read_dir(path.parent().unwrap())
             .unwrap()
             .filter_map(Result::ok)
@@ -398,29 +233,27 @@ mod tests {
                     .starts_with("panel-ui.json.corrupt-")
             });
         let backup = backups.next().expect("corrupt panel-ui backup");
-        assert!(backups.next().is_none(), "one backup per corrupt write");
+        assert!(backups.next().is_none(), "one backup");
         assert_eq!(std::fs::read(backup.path()).unwrap(), corrupt);
-        let written: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert_eq!(written["background_bots_ack"], true);
     }
 
     #[test]
     fn persist_fails_when_parent_is_a_file() {
-        let _iso = script::IsolatedEnv::enter("ack-parent-file");
-        let parent = panel_ui_path().parent().unwrap().to_path_buf();
+        let scratch = script::IsolatedEnv::enter("ack-parent-file");
+        let preferences = preferences(&scratch);
+        let parent = preferences.path().parent().unwrap().to_path_buf();
         std::fs::write(&parent, b"not-a-dir").unwrap();
-        assert!(persist_background_bots_ack().is_err());
-        assert!(!background_bots_acked());
+        assert!(persist_background_bots_ack(&preferences).is_err());
+        assert!(!background_bots_acked(&preferences));
     }
 
     #[test]
     fn persist_fails_when_panel_ui_path_is_a_directory() {
-        let _iso = script::IsolatedEnv::enter("ack-path-dir");
-        let path = panel_ui_path();
-        std::fs::create_dir_all(&path).unwrap();
-        assert!(!background_bots_acked());
-        assert!(persist_background_bots_ack().is_err());
-        assert!(!background_bots_acked());
+        let scratch = script::IsolatedEnv::enter("ack-path-dir");
+        let preferences = preferences(&scratch);
+        std::fs::create_dir_all(preferences.path()).unwrap();
+        assert!(!background_bots_acked(&preferences));
+        assert!(persist_background_bots_ack(&preferences).is_err());
+        assert!(!background_bots_acked(&preferences));
     }
 }

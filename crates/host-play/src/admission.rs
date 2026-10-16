@@ -1,9 +1,16 @@
 //! One host route-admission seam. The estimate is advisory under Proceed;
 //! no runtime net or poison-clear observer is claimed before S2c integration.
+//!
+//! This is the owner boundary for script's risk module (T5.1): the route,
+//! zone table, wilderness and exemptions it judges are served here as
+//! `nav::contract` views over the storage host-play retains. Script's risk
+//! facts are keyed by NPC id, never by the pack's kind rows.
 use std::sync::Arc;
 
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, SnapshotView};
+use nav::contract::BoundZoneKey;
+use nav::producer;
 use nav::router::{AvoidRect, FindOptions, Route};
 use nav::world::NavWorld;
 use nav::zones::{ZoneExempt, ZoneKey};
@@ -170,13 +177,29 @@ fn tables(world: &NavWorld) -> Option<&Tables> {
     world
         .risk_facts(|| {
             let combat = script::combat::guard::shared_tables().ok()?;
-            let risks = match world.graph.zones.as_ref() {
-                Some(zones) => RiskTables::build(zones, &combat),
-                None => RiskTables::without_zones(&combat),
-            };
+            let risks = RiskTables::build(&combat);
             Some(Tables { combat, risks })
         })
         .as_ref()
+}
+
+fn unknown_assessment(
+    why: UnknownWhy,
+    reason: &'static str,
+    admission: &Admission,
+) -> Arc<RouteAssessment> {
+    Arc::new(RouteAssessment {
+        verdict: Verdict::Unknown(why),
+        plan: Default::default(),
+        crossings: Box::new([]),
+        more: 0,
+        supplies: Box::new([]),
+        hp_after: admission.input.hp,
+        volley: u8::MAX,
+        input: admission.input,
+        generation: admission.generation,
+        reason: Arc::from(reason),
+    })
 }
 
 /// Absent observations are missing facts, not witnessed overflow or damage.
@@ -224,24 +247,28 @@ pub fn capture(
 
 pub fn assess(route: &Route, world: &NavWorld, admission: &Admission) -> Arc<RouteAssessment> {
     let Some(tables) = tables(world) else {
-        return Arc::new(RouteAssessment {
-            verdict: Verdict::Unknown(UnknownWhy::MissingFacts),
-            plan: Default::default(),
-            crossings: Box::new([]),
-            more: 0,
-            supplies: Box::new([]),
-            hp_after: admission.input.hp,
-            volley: u8::MAX,
-            input: admission.input,
-            generation: admission.generation,
-            reason: Arc::from("Route assessment unknown: selected combat facts unavailable"),
-        });
+        return unknown_assessment(
+            UnknownWhy::MissingFacts,
+            "Route assessment unknown: selected combat facts unavailable",
+            admission,
+        );
+    };
+    let (Ok(route), Ok(zones), Ok(wilderness)) = (
+        producer::route_view(world, route),
+        producer::zones_view(world),
+        producer::wilderness_view(world),
+    ) else {
+        return unknown_assessment(
+            UnknownWhy::NavIdentity,
+            "Route assessment unknown: navigation lease identity unavailable",
+            admission,
+        );
     };
     risk::assess(
         route,
         &Estimate {
-            zones: world.graph.zones.as_ref(),
-            wilderness: &world.graph.wilderness,
+            zones,
+            wilderness,
             risks: &tables.risks,
             combat: &tables.combat,
             allow: admission.allow,
@@ -273,7 +300,15 @@ pub fn permits(
     if assessment.plan.crossings.is_empty() {
         return true;
     }
-    let (Some(zones), Some(tables)) = (world.graph.zones.as_ref(), tables(world)) else {
+    let (Ok(Some(zones)), Some(tables), Ok(route), Ok(wilderness)) = (
+        producer::zones_view(world),
+        tables(world),
+        producer::route_view(world, route),
+        producer::wilderness_view(world),
+    ) else {
+        return false;
+    };
+    let Ok(named) = producer::bind_exempt(zones, admission.grants) else {
         return false;
     };
     risk::admission_passes(
@@ -282,34 +317,40 @@ pub fn permits(
         zones,
         &tables.combat,
         admission.allow,
-        risk::Grants::request(admission.grants, &world.graph.wilderness),
+        risk::Grants::request(named, wilderness),
     )
     .unwrap_or(false)
 }
 
 /// Check every member of a witness group; one unsupported or lethal member
 /// refuses the one-round expansion. This never relaxes any hard constraint.
+/// Each raw witness key is bound to the world's zone view (the identity its
+/// lease serves) and judged through the facade kind view.
 pub fn witness_admissible(world: &NavWorld, input: &RiskInput, keys: &[ZoneKey]) -> bool {
     if keys.is_empty() || keys.len() > 8 || matches!(input.poison, PoisonState::Unknown { .. }) {
         return false;
     }
-    let (Some(zones), Some(tables)) = (world.graph.zones.as_ref(), tables(world)) else {
+    let (Ok(Some(zones)), Some(tables)) = (producer::zones_view(world), tables(world)) else {
         return false;
     };
-    let acceptable = |index: u16| {
-        zones
-            .zones()
-            .get(usize::from(index))
-            .and_then(|zone| tables.risks.kind(zone.kind))
-            .is_some_and(|kind| {
-                kind.unknown_for(input.map_members).is_none() && kind.max_hit < input.hp
-            })
+    let acceptable = |bound: BoundZoneKey| {
+        zones.zone(bound).is_ok_and(|zone| {
+            let kind = tables.risks.zone_kind(zone.kind());
+            kind.unknown_for(input.map_members).is_none() && kind.max_hit < input.hp
+        })
     };
-    keys.iter().all(|key| match *key {
-        ZoneKey::Zone(index) => acceptable(index),
-        ZoneKey::Group(index) => zones.groups().get(usize::from(index)).is_some_and(|group| {
-            !group.members.is_empty() && group.members.iter().copied().all(acceptable)
-        }),
+    keys.iter().all(|&key| {
+        let Ok(bound) = producer::bind_key(zones, key) else {
+            return false;
+        };
+        match key {
+            ZoneKey::Zone(_) => acceptable(bound),
+            // An empty group refuses; every member must be acceptable.
+            ZoneKey::Group(_) => producer::group_members(zones, bound).is_ok_and(|members| {
+                let mut members = members.peekable();
+                members.peek().is_some() && members.all(acceptable)
+            }),
+        }
     })
 }
 
@@ -402,14 +443,15 @@ pub fn escape_reason(escape: script::combat::guard::Escape) -> String {
 }
 
 pub(crate) fn assessment_keys(world: &NavWorld, assessment: &RouteAssessment) -> Vec<ZoneKey> {
-    let Some(zones) = world.graph.zones.as_ref() else {
+    let Ok(Some(zones)) = producer::zones_view(world) else {
         return Vec::new();
     };
+    // A key from another pack cannot name a row here; it is not reported.
     let mut keys: Vec<_> = assessment
         .plan
         .intervals
         .iter()
-        .map(|interval| interval.key(zones))
+        .filter_map(|interval| interval.key(zones).ok())
         .collect();
     keys.sort_unstable_by_key(|key| match *key {
         ZoneKey::Zone(index) => u32::from(index),

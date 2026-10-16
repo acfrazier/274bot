@@ -5,7 +5,7 @@ use api::interact::Driver;
 pub use api::random::{DetectedRandom, RandomClaim};
 
 /// Walk opt-ins a script may pass to [`ScriptCtx::walk_with`]. All default
-/// off, mirroring the three booleans of `nav::router::FindOptions`; the nav
+/// off, mirroring the three booleans of the host's router options; the nav
 /// type also carries essence and zone-exemption state the host owns, so the
 /// host converts between the two at the hook boundary. `allow_bank_fetch` latches a host
 /// BankBudget session when true; JS `Banking.walk` still uses defaults
@@ -42,7 +42,7 @@ pub struct CompiledTick<'a> {
     pub bank_memory: Option<&'a api::bank_memory::BankMemory>,
     /// Packed world collision for off-scene Area arrival (resource return
     /// stands). `None` in a bare ctx or when the host has no nav pack.
-    pub collision: Option<&'a nav::collision::WorldCollision>,
+    pub collision: Option<nav::contract::CollisionView<'a>>,
     /// The frame's cooperative interrupt: the guardian's `hold` or the
     /// detected-`ours` flag — the same pair `EventSignal.pending()` reads.
     /// `false` on a frame neither gate fired.
@@ -246,6 +246,39 @@ pub mod test_support {
         fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
             true
         }
+    }
+
+    /// Resolve a local-only test asset, skipping on GitHub-hosted CI when absent.
+    ///
+    /// Covers the real nav pack (`NAV_PACK`), a decoded cache snapshot
+    /// (`BOT_NAV_SNAPSHOT_ROOT`), and engine content (`ENGINE_DIR` and friends):
+    /// pass the env var, its local default, and a short asset label.
+    /// Returns the existing path. When the path is missing, prints
+    /// `skipped on hosted CI: needs <asset>` and returns `None` on hosted CI
+    /// (`GITHUB_ACTIONS=true`, caller returns early); elsewhere panics with
+    /// which env var or path to set so local runs and the nightly keep running.
+    pub fn local_asset_path(
+        env_var: &str,
+        default_path: &str,
+        asset: &str,
+    ) -> Option<std::path::PathBuf> {
+        let path = std::env::var_os(env_var)
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(default_path));
+        if path.exists() {
+            return Some(path);
+        }
+        if std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true") {
+            eprintln!(
+                "skipped on hosted CI: needs {asset} (missing {}; set {env_var})",
+                path.display()
+            );
+            return None;
+        }
+        panic!(
+            "missing {asset} at {}: set {env_var} to a local {asset}",
+            path.display()
+        );
     }
 }
 

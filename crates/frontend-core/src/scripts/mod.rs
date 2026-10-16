@@ -47,18 +47,18 @@ pub use reload::{PendingReload, PendingReloadKind, ReloadOutcome, ReloadWarning}
 pub use sync::{RestartPrompt, SyncReport, SyncScope};
 
 /// A card's parameters bound to the run they were edited for.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct LiveSettings {
     /// Card identity and run generation the push is fenced to.
-    pub identity: String,
-    pub generation: u64,
+    pub(crate) identity: String,
+    pub(crate) generation: u64,
     /// Native controls also bind the worker incarnation and session.
-    pub run: Option<api::selected::RunKey>,
+    pub(crate) run: Option<api::selected::RunKey>,
     /// The run's whole bag: the card's merged parameters and its profile's
     /// global settings.
-    pub bag: Arc<Map<String, Value>>,
+    pub(crate) bag: Arc<Map<String, Value>>,
     /// Present only after the native preparer has validated the complete bag.
-    pub prepared: Option<Arc<script::native::PreparedConfig>>,
+    pub(crate) prepared: Option<Arc<script::native::PreparedConfig>>,
 }
 
 impl PartialEq for LiveSettings {
@@ -75,65 +75,268 @@ impl PartialEq for LiveSettings {
     }
 }
 
-/// What a durable parameter write did to the run captured at edit time.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LiveDelivery {
-    /// No run of that card was captured, or it has ended.
+impl LiveSettings {
+    /// Card identity the push is fenced to.
+    pub fn identity(&self) -> &str {
+        &self.identity
+    }
+
+    /// Run generation the push is fenced to.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Native controls also bind the worker incarnation and session.
+    pub fn run(&self) -> Option<api::selected::RunKey> {
+        self.run
+    }
+
+    /// The run's whole bag.
+    pub fn bag(&self) -> &Map<String, Value> {
+        &self.bag
+    }
+
+    /// Present only after the native preparer has validated the complete bag.
+    pub fn prepared(&self) -> Option<&script::native::PreparedConfig> {
+        self.prepared.as_deref()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LiveDeliveryKind {
     NotRunning,
     Delivered,
     Applied,
     PendingBoundary,
     RestartRequired,
-    Rejected(String),
-    /// The run already had this bag.
+    Rejected,
     Unchanged,
-    /// The captured run was replaced (identity or generation changed)
-    /// before the write became durable; it was not posted to.
     Stale,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SettingsResult {
-    Saved(LiveDelivery),
+/// What a durable parameter write did to the run captured at edit time.
+#[derive(Debug, PartialEq, Eq)]
+pub struct LiveDelivery {
+    kind: LiveDeliveryKind,
+    reason: Option<String>,
+}
+
+#[allow(non_upper_case_globals)]
+impl LiveDelivery {
+    /// No run of that card was captured, or it has ended.
+    pub const NotRunning: Self = Self {
+        kind: LiveDeliveryKind::NotRunning,
+        reason: None,
+    };
+    pub const Delivered: Self = Self {
+        kind: LiveDeliveryKind::Delivered,
+        reason: None,
+    };
+    pub const Applied: Self = Self {
+        kind: LiveDeliveryKind::Applied,
+        reason: None,
+    };
+    pub const PendingBoundary: Self = Self {
+        kind: LiveDeliveryKind::PendingBoundary,
+        reason: None,
+    };
+    pub const RestartRequired: Self = Self {
+        kind: LiveDeliveryKind::RestartRequired,
+        reason: None,
+    };
+    /// The run already had this bag.
+    pub const Unchanged: Self = Self {
+        kind: LiveDeliveryKind::Unchanged,
+        reason: None,
+    };
+    /// The captured run was replaced (identity or generation changed)
+    /// before the write became durable; it was not posted to.
+    pub const Stale: Self = Self {
+        kind: LiveDeliveryKind::Stale,
+        reason: None,
+    };
+
+    /// The write was rejected with `reason`.
+    pub fn rejected(reason: impl Into<String>) -> Self {
+        Self {
+            kind: LiveDeliveryKind::Rejected,
+            reason: Some(reason.into()),
+        }
+    }
+
+    pub(crate) fn kind(&self) -> LiveDeliveryKind {
+        self.kind
+    }
+
+    /// Rejection text, when this delivery was refused.
+    pub fn rejection(&self) -> Option<&str> {
+        self.reason.as_deref()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettingsResultKind {
+    Saved,
+    Superseded,
+    Failed,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct SettingsResult {
+    kind: SettingsResultKind,
+    delivery: Option<LiveDelivery>,
+    error: Option<String>,
+}
+
+#[allow(non_upper_case_globals)]
+impl SettingsResult {
     /// This edit never settled on its own: a newer edit of the same card's
     /// parameters in the same commit replaced it, or the commit failed and
     /// a newer write of the profile reports the failure.
-    Superseded,
-    Failed(String),
+    pub const Superseded: Self = Self {
+        kind: SettingsResultKind::Superseded,
+        delivery: None,
+        error: None,
+    };
+
+    /// A durable save with its live delivery.
+    pub fn saved(delivery: LiveDelivery) -> Self {
+        Self {
+            kind: SettingsResultKind::Saved,
+            delivery: Some(delivery),
+            error: None,
+        }
+    }
+
+    /// A failed write.
+    pub fn failed(error: impl Into<String>) -> Self {
+        Self {
+            kind: SettingsResultKind::Failed,
+            delivery: None,
+            error: Some(error.into()),
+        }
+    }
+
+    /// Whether this result is a durable save.
+    pub fn is_saved(&self) -> bool {
+        self.kind == SettingsResultKind::Saved
+    }
+
+    /// Whether this edit was replaced by a later write.
+    pub fn is_superseded(&self) -> bool {
+        self.kind == SettingsResultKind::Superseded
+    }
+
+    /// Whether this result failed.
+    pub fn is_failed(&self) -> bool {
+        self.kind == SettingsResultKind::Failed
+    }
+
+    /// Live delivery of a saved write.
+    pub fn delivery(&self) -> Option<&LiveDelivery> {
+        self.delivery.as_ref()
+    }
+
+    /// Failure text, when this result failed.
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
 }
 
 /// One settled script-parameter write.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct SettingsWrite {
-    pub op: OperationId,
-    pub profile: String,
-    pub result: SettingsResult,
+    pub(crate) op: OperationId,
+    pub(crate) profile: String,
+    pub(crate) result: SettingsResult,
+}
+
+impl SettingsWrite {
+    pub(crate) fn new(op: OperationId, profile: impl Into<String>, result: SettingsResult) -> Self {
+        Self {
+            op,
+            profile: profile.into(),
+            result,
+        }
+    }
+
+    /// The write's operation.
+    pub fn op(&self) -> OperationId {
+        self.op
+    }
+
+    /// The profile written.
+    pub fn profile(&self) -> &str {
+        &self.profile
+    }
+
+    /// How the write ended.
+    pub fn result(&self) -> &SettingsResult {
+        &self.result
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NoticeKind {
+    Show,
+    Clear,
+    Retract,
 }
 
 /// Operator-facing message from the last script operation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Notice {
-    Show(String),
-    Clear,
+#[derive(Debug, PartialEq, Eq)]
+pub struct Notice {
+    kind: NoticeKind,
+    text: Option<String>,
+    with: Option<String>,
+}
+
+#[allow(non_upper_case_globals)]
+impl Notice {
+    pub const Clear: Self = Self {
+        kind: NoticeKind::Clear,
+        text: None,
+        with: None,
+    };
+
+    /// Show `text` on the banner.
+    pub fn show(text: impl Into<String>) -> Self {
+        Self {
+            kind: NoticeKind::Show,
+            text: Some(text.into()),
+            with: None,
+        }
+    }
+
     /// Replace the banner with `with` only while it still shows `shown`:
     /// an asynchronous update (a Start settling) never erases a newer
     /// message the front end or another command put there.
-    Retract {
-        shown: String,
-        with: Option<String>,
-    },
-}
+    pub fn retract(shown: impl Into<String>, with: Option<String>) -> Self {
+        Self {
+            kind: NoticeKind::Retract,
+            text: Some(shown.into()),
+            with,
+        }
+    }
 
-impl Notice {
+    /// The banner text this notice would show, if any.
+    pub fn text(&self) -> Option<&str> {
+        match self.kind {
+            NoticeKind::Show => self.text.as_deref(),
+            NoticeKind::Clear => None,
+            NoticeKind::Retract => self.with.as_deref(),
+        }
+    }
+
     /// Apply this notice to a front end's banner (the one both the panel
     /// and the TUI use).
     pub fn apply(self, banner: &mut Option<String>) {
-        match self {
-            Self::Show(text) => *banner = Some(text),
-            Self::Clear => *banner = None,
-            Self::Retract { shown, with } => {
-                if banner.as_deref() == Some(shown.as_str()) {
-                    *banner = with;
+        match self.kind {
+            NoticeKind::Show => *banner = self.text,
+            NoticeKind::Clear => *banner = None,
+            NoticeKind::Retract => {
+                if banner.as_deref() == self.text.as_deref() {
+                    *banner = self.with;
                 }
             }
         }
@@ -258,12 +461,12 @@ impl<'a> BrowseCard<'a> {
 
 pub struct Scripts {
     /// The card library: catalog, loaded files, transpile cache.
-    pub js: script::JsLibrary,
+    js: script::JsLibrary,
     /// Legacy global per-card overrides (`script-settings.json`), claimed
     /// into a profile's bag on its first use of a card.
-    pub legacy: script::ScriptSettingsStore,
+    legacy: script::ScriptSettingsStore,
     /// Scenario/live inject merged last on Start.
-    pub inject: Option<Map<String, Value>>,
+    inject: Option<Map<String, Value>>,
     /// Per-profile Browse selection, never treated as a successful Start.
     pending_browse: HashMap<String, script::ScriptSel>,
     /// Reused editor keys for the currently displayed profile and card.
@@ -282,6 +485,8 @@ pub struct Scripts {
     catalog_filled: bool,
     /// Root of the most recent catalog registry scan.
     catalog_root: Option<PathBuf>,
+    /// Bounded WorkAdmission jobs for catalog scans, loaded Starts, and warmup.
+    async_work: reload::ScriptWorkState,
     reload: reload::ReloadState,
     sync: sync::SyncState,
     notice: Option<Notice>,
@@ -293,7 +498,7 @@ pub struct Scripts {
     /// Test-only: fail the replacement Start for this profile after it
     /// passed eligibility and was stopped.
     #[cfg(any(test, feature = "test-support"))]
-    pub fail_reload_start_for: Option<String>,
+    fail_reload_start_for: Option<String>,
 }
 
 impl Scripts {
@@ -314,6 +519,7 @@ impl Scripts {
             last_bulk_report: None,
             catalog_filled: false,
             catalog_root: None,
+            async_work: reload::ScriptWorkState::default(),
             reload: reload::ReloadState::default(),
             sync: sync::SyncState::default(),
             notice: None,
@@ -322,6 +528,59 @@ impl Scripts {
             #[cfg(any(test, feature = "test-support"))]
             fail_reload_start_for: None,
         }
+    }
+
+    /// The card library.
+    pub fn js(&self) -> &script::JsLibrary {
+        &self.js
+    }
+
+    /// The card library, for load/transpile.
+    pub fn js_mut(&mut self) -> &mut script::JsLibrary {
+        &mut self.js
+    }
+
+    /// Replace the card library (tests and session setup).
+    pub fn set_js(&mut self, js: script::JsLibrary) {
+        self.js = js;
+    }
+
+    /// Replace the legacy global per-card store (tests).
+    pub fn set_legacy(&mut self, legacy: script::ScriptSettingsStore) {
+        self.legacy = legacy;
+    }
+
+    /// Disjoint library, legacy store and inject bag for live Start.
+    pub fn live_start_parts(
+        &mut self,
+    ) -> (
+        &mut script::JsLibrary,
+        &script::ScriptSettingsStore,
+        Option<&Map<String, Value>>,
+    ) {
+        (&mut self.js, &self.legacy, self.inject.as_ref())
+    }
+
+    /// Legacy global per-card overrides.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn legacy(&self) -> &script::ScriptSettingsStore {
+        &self.legacy
+    }
+
+    /// Legacy global per-card overrides, for writes.
+    pub fn legacy_mut(&mut self) -> &mut script::ScriptSettingsStore {
+        &mut self.legacy
+    }
+
+    /// Set the scenario/live inject bag.
+    pub fn set_inject(&mut self, inject: Option<Map<String, Value>>) {
+        self.inject = inject;
+    }
+
+    /// Fail the replacement Start for this profile (tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_fail_reload_start_for(&mut self, profile: Option<String>) {
+        self.fail_reload_start_for = profile;
     }
 
     fn track_settings_card(&mut self, op: OperationId, selection: script::ScriptSel, name: &str) {
@@ -489,10 +748,10 @@ impl Scripts {
         Ok((run_identity, generation))
     }
 
-    fn show(&mut self, text: impl Into<String>) {
+    pub(crate) fn show(&mut self, text: impl Into<String>) {
         let text = text.into();
         self.shown = Some(text.clone());
-        self.notice = Some(Notice::Show(text));
+        self.notice = Some(Notice::show(text));
     }
 
     fn clear_notice(&mut self) {
@@ -528,27 +787,17 @@ impl Scripts {
         self.catalog_filled = true;
     }
 
-    /// Register the catalog and remember its root only after registration succeeds.
-    pub fn register_catalog(&mut self, root: &Path, path_file: &Path) -> Result<usize, String> {
-        let registered = self.js.register_rs2b0t(root, path_file)?;
-        self.catalog_root = Some(root.to_path_buf());
-        self.catalog_filled = true;
-        Ok(registered)
-    }
-
-    /// Register the catalog at `root` once per session. Without a root the
-    /// catalog stays unfilled so a later Browse can still prompt.
+    /// Queue the catalog's first source-only scan once per root. The shared
+    /// WorkAdmission worker performs all registry and source-file reads.
     pub fn fill_catalog_once(&mut self, root: Option<&Path>) {
-        if self.catalog_filled {
-            return;
-        }
         let Some(root) = root else {
             return;
         };
-        if let Err(error) = self.register_catalog(root, &script::default_rs2b0t_path_file()) {
-            if host::debug_enabled() {
-                eprintln!("[scripts] $RS2B0T registry: {error}");
-            }
+        if self.catalog_filled && self.catalog_root.as_deref() == Some(root) {
+            return;
+        }
+        if let Err(error) = self.request_catalog_fill(root, &script::default_rs2b0t_path_file()) {
+            self.show(format!("$RS2B0T registry: {error}"));
         }
     }
 
@@ -613,7 +862,7 @@ impl Scripts {
         edit: impl FnOnce(&mut vault::ProfileSettings),
     ) -> Result<OperationId, String> {
         let result = core.vault().map(|vault| {
-            if matches!(mirror, ArmMirror::NativeSettings { .. }) {
+            if mirror.is_native_settings() {
                 core.profile_for_edit(profile).cloned()
             } else {
                 vault.get(profile).cloned()
@@ -654,7 +903,7 @@ impl Scripts {
         if Self::assignment(core, profile).as_ref() == Some(&assignment) {
             return true;
         }
-        self.upsert_profile_settings(core, profile, ArmMirror::None, log_action, |settings| {
+        self.upsert_profile_settings(core, profile, ArmMirror::none(), log_action, |settings| {
             settings.script_assignment = Some(assignment);
         })
         .is_ok()
@@ -670,7 +919,7 @@ impl Scripts {
         let _ = self.upsert_profile_settings(
             core,
             profile,
-            ArmMirror::None,
+            ArmMirror::none(),
             "unavailable",
             |settings| {
                 if let Some(asg) = settings.script_assignment.as_mut() {
@@ -702,7 +951,7 @@ impl Scripts {
         let _ = self.upsert_profile_settings(
             core,
             profile,
-            ArmMirror::None,
+            ArmMirror::none(),
             "legacy claim",
             |settings| {
                 script::claim_legacy_overrides(settings, key, card_name, &legacy);
@@ -909,10 +1158,7 @@ impl Scripts {
         let result = self.upsert_profile_settings(
             core,
             profile,
-            ArmMirror::ScriptSettings {
-                card: key.clone(),
-                live,
-            },
+            ArmMirror::script_settings(key.clone(), live),
             "parameter edit",
             |settings| {
                 settings.script_settings.insert(key.clone(), bag);
@@ -960,7 +1206,7 @@ impl Scripts {
     /// Whether any Load Start has not settled, including paced Starts still
     /// waiting for a permit.
     pub fn starts_pending(&self) -> bool {
-        !self.starts.is_empty() || !self.admit.is_empty()
+        !self.starts.is_empty() || !self.admit.is_empty() || self.start_preparation_pending()
     }
 
     /// k-of-n place while `profile` waits for a Start-all (or marked) permit.
@@ -976,11 +1222,25 @@ impl Scripts {
 
     /// Drop a waiting Start and record `reason` in the running Start tally.
     pub fn cancel_queued_as(&mut self, profile: &str, reason: &str) -> bool {
-        if self.admit.leave(profile).is_none() {
-            return false;
+        let pending_marked = self
+            .cancel_pending_catalog_assignment(Some(profile))
+            .is_some();
+        if pending_marked {
+            self.credit_skipped(profile, reason);
         }
-        self.credit_skipped(profile, reason);
-        true
+        if self.admit.leave(profile).is_some() {
+            self.credit_skipped(profile, reason);
+            return true;
+        }
+        if let Some((kind, tallied)) = self.cancel_start_preparation(profile) {
+            if tallied {
+                self.skip_unstarted_tally(profile, reason);
+            } else if kind == StartKind::RestartSettings {
+                self.show(format!("Restart cancelled for {profile}: {reason}"));
+            }
+            return true;
+        }
+        pending_marked
     }
 
     /// Open the running tally for a Start click. While a bot it holds still
@@ -988,7 +1248,8 @@ impl Scripts {
     /// names it); otherwise the finished tally is replaced.
     pub(crate) fn open_tally(&mut self, label: &'static str) {
         let open = self.tally.as_ref().is_some_and(StartTally::waiting)
-            || self.starts.values().any(|pending| pending.tallied);
+            || self.starts.values().any(|pending| pending.tallied)
+            || self.tallied_start_preparation_pending();
         match self.tally.as_mut() {
             Some(tally) if open => tally.relabel(label),
             _ => self.tally = Some(StartTally::new(label)),
@@ -1007,6 +1268,13 @@ impl Scripts {
 
     pub(crate) fn tally_fail(&mut self, profile: &str, reason: &str) {
         self.tally_record(profile, Outcome::Failed(reason.to_string()), LogTo::Slot);
+    }
+    pub(crate) fn tally_queued_pending(&mut self, profile: &str) {
+        self.tally_record(
+            profile,
+            Outcome::Held("catalog scan pending".into()),
+            LogTo::Slot,
+        );
     }
 
     /// Record `profile`'s outcome in the running tally. A new skip or
@@ -1158,7 +1426,7 @@ impl Scripts {
                 let bag = self
                     .compiled_bag(core, profile, *id)
                     .map_err(script::StartLoadError::Refused)?;
-                core.start_script(profile, ScriptStart::Compiled { id: *id, bag }, None)?;
+                core.start_script(profile, ScriptStart::compiled(*id, bag), None)?;
                 self.starts.insert(
                     profile.to_string(),
                     PendingStart {
@@ -1169,71 +1437,21 @@ impl Scripts {
                 );
                 Ok(())
             }
-            script::ScriptSel::Loaded(source, lookup) => {
-                // A saved catalog assignment restored at launch names a card
-                // before any Browse/Load has filled the catalog.
-                if *source == script::ScriptSource::Catalog {
-                    self.fill_catalog_once(catalog_root);
-                }
-                let card = self
-                    .startable_card(*source, lookup)
-                    .map_err(script::StartLoadError::Refused)?;
-                if let Some(reason) = &card.unloadable {
+            script::ScriptSel::Loaded(..) => {
+                if !wall_member(core, profile) {
                     return Err(script::StartLoadError::Refused(format!(
-                        "unloadable import: {reason}"
+                        "no slot: {profile}"
                     )));
                 }
-                self.js
-                    .ensure_js(*source, lookup)
-                    .map_err(script::StartLoadError::Refused)?;
-                let card = self.js.get(*source, lookup).cloned().ok_or_else(|| {
-                    script::StartLoadError::Refused(format!("no loaded script: {lookup}"))
-                })?;
-                let bag = self.merged_profile_bag(
-                    core,
-                    profile,
-                    *source,
-                    &card.name,
-                    &card.path,
-                    &card.settings_schema,
-                );
-                let bag = (!bag.is_empty()).then_some(bag);
-                let siblings = script::resolve_sibling_modules(
-                    &card.path,
-                    &card.origin,
-                    self.js.cache(),
-                    script::CacheMeta {
-                        kind: card.kind,
-                        source: card.source,
-                        shape: None,
-                        api_family: Some(card.api_family.as_str().into()),
-                    },
-                )
-                .map_err(script::StartLoadError::Refused)?;
-                let start = ScriptStart::Load {
-                    js: card.js.clone(),
-                    shape: card.shape,
-                    bag,
-                    siblings,
-                };
-                if let Err(e) = core.start_script(profile, start, Some(card.identity_key())) {
-                    if matches!(e, script::StartLoadError::Waiting(_)) {
-                        return Err(e);
-                    }
-                    return self
-                        .js
-                        .record_start_result(&card, Err(e))
-                        .map_err(script::StartLoadError::Refused);
+                if let Some(reason) = core
+                    .play()
+                    .and_then(host_play::Play::script_start_wait_reason)
+                {
+                    return Err(script::StartLoadError::Waiting(format!(
+                        "{profile}: blocked, {reason}"
+                    )));
                 }
-                self.starts.insert(
-                    profile.to_string(),
-                    PendingStart {
-                        card: PendingCard::Loaded(Box::new(card)),
-                        kind,
-                        tallied,
-                    },
-                );
-                Ok(())
+                self.queue_loaded_start(core, profile, sel, catalog_root, kind, tallied)
             }
         }
     }
@@ -1293,6 +1511,10 @@ impl Scripts {
         if self.admit.contains(profile) {
             return Ok(());
         }
+        if self.has_start_preparation(profile) {
+            self.tally_skip(profile, "already starting");
+            return Ok(());
+        }
         let (had_arm, latched) = arm_flags(core, profile);
         self.admit.enqueue(QueuedStart {
             profile: profile.to_string(),
@@ -1333,7 +1555,21 @@ impl Scripts {
                 LogTo::Slot,
             );
         }
-        if !cancelled.is_empty() {
+        let preparing = self.cancel_all_start_preparations();
+        for (profile, _, tallied) in &preparing {
+            if *tallied {
+                self.skip_unstarted_tally(profile, "cancelled");
+            }
+        }
+        let pending_marked = self
+            .cancel_pending_catalog_assignment(None)
+            .unwrap_or_default();
+        for profile in &pending_marked {
+            self.tally_record(profile, Outcome::Skipped("cancelled".into()), LogTo::Slot);
+        }
+        let cancelled_any =
+            !cancelled.is_empty() || !preparing.is_empty() || !pending_marked.is_empty();
+        if cancelled_any {
             self.publish_bulk();
         }
         self.publish_start_places(core);
@@ -1348,7 +1584,7 @@ impl Scripts {
             return stopped;
         }
         self.last_bulk_report = Some(report);
-        if stopped > 0 || !cancelled.is_empty() {
+        if stopped > 0 || cancelled_any {
             self.clear_notice();
         }
         stopped
@@ -1368,6 +1604,8 @@ impl Scripts {
     /// Call once per UI frame, after [`OperatorSession::poll`].
     pub fn poll<Io>(&mut self, core: &mut OperatorSession<Io>) {
         self.settle_parameter_edits(core);
+        self.poll_script_work(core);
+        self.poll_reload_preparation(core);
         self.poll_reload_validation(core);
         self.release_stopped_restarts(core);
         if !self.admit.is_empty() {
@@ -1377,10 +1615,7 @@ impl Scripts {
         self.settle_starts(core);
         for write in core.take_settings_writes() {
             let is_sync_write = self.sync.tracks_write(write.op);
-            if matches!(
-                &write.result,
-                SettingsResult::Saved(LiveDelivery::RestartRequired)
-            ) {
+            if write.result.delivery() == Some(&LiveDelivery::RestartRequired) {
                 let card = self.settings_cards.remove(&write.op).or_else(|| {
                     let assignment = Self::assignment(core, &write.profile)?;
                     Some(SettingsCard {
@@ -1438,7 +1673,7 @@ impl Scripts {
                         let _ = self.upsert_profile_settings(
                             core,
                             &name,
-                            ArmMirror::None,
+                            ArmMirror::none(),
                             "Start",
                             |settings| {
                                 settings.script_assignment = Some(script::compiled_assignment(id));
@@ -1474,7 +1709,7 @@ impl Scripts {
                             let with = (!self.js.load_failures().is_empty())
                                 .then(|| self.js.named_failure_output());
                             self.shown.clone_from(&with);
-                            self.notice = Some(Notice::Retract { shown, with });
+                            self.notice = Some(Notice::retract(shown, with));
                         }
                         self.persist_assignment_with_action(
                             core,
@@ -1640,6 +1875,13 @@ impl Scripts {
         self.tally_record(profile, Outcome::Skipped(reason.to_string()), LogTo::Slot);
         self.publish_bulk();
     }
+    /// The permit was credited, but the worker had not dispatched a script.
+    fn skip_unstarted_tally(&mut self, profile: &str, reason: &str) {
+        if let Some(tally) = &mut self.tally {
+            tally.retract_unstarted(profile);
+        }
+        self.credit_skipped(profile, reason);
+    }
 
     /// Show the running tally when its text changed.
     pub(crate) fn publish_bulk(&mut self) {
@@ -1712,6 +1954,16 @@ pub fn sel_from_assignment(asg: &ScriptAssignment) -> Option<script::ScriptSel> 
     }
     let source = script::parse_source_kind(&asg.source_kind)?;
     Some(script::ScriptSel::Loaded(source, asg.identity.clone()))
+}
+
+/// Whether [`sel_from_assignment`] would name a card for `asg`, decided
+/// by borrowing only (the selection `sel_from_assignment` builds clones
+/// the stored identity, which a per-frame enable check must not do).
+pub(crate) fn assignment_has_sel(asg: &ScriptAssignment) -> bool {
+    if asg.source_kind == "compiled" {
+        return script::compiled_id(&asg.identity).is_some();
+    }
+    script::parse_source_kind(&asg.source_kind).is_some()
 }
 
 /// The library lookup for a card: a File card by path, others by name.

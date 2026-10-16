@@ -370,22 +370,18 @@ impl LiveState {
         let Some(handle) = self.start_handle.as_ref() else {
             return Err("Start reached before ScriptStartHandle install".into());
         };
-        let _iso = script::IsolatedEnv::enter("loadout-provision-live");
-        let mut store = script::LoadoutsStore::with_default_path();
-        store.upsert(
-            script::Loadout::new(PRESET_NAME)
-                .with_slot("righthand", WEAPON_NAME)
-                .with_carry(SUPPLY_NAME, SUPPLY_QTY as u32),
-        );
-        store.save()?;
+        let rows = vec![api::loadout::Loadout::new(PRESET_NAME)
+            .with_slot("righthand", WEAPON_NAME)
+            .with_carry(SUPPLY_NAME, SUPPLY_QTY as u32)];
         let mut bag = Map::new();
         bag.insert("loadout".into(), json!(PRESET_NAME));
-        handle.start_load(
+        handle.start_load_with_loadouts(
             &self.account,
             PROVISION_JS.to_string(),
             script::LoadShape::CompatClass,
             Some(bag),
             vec![],
+            &rows,
         )?;
         self.started = true;
         println!(

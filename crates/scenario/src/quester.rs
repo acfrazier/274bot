@@ -5,10 +5,11 @@
 //! S2 and combat/WalkGuard cells; their bespoke stat tuples are unchanged.
 use crate::{start_compiled_step, Proof, Scenario, ScenarioSettings, Seed, Step, StepKind, Wait};
 use api::game_data::{QuestIdentityRow, SelectedGameData};
+use api::selected::ClientRevision;
 use api::selected::SkillMinimum;
-use api::selected::{ClientRevision, FamilyPreparation};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::skill::Skill;
+use script::preparation::{self, PreparationInput, PreparationKind};
 use script::quester::path::{
     LoadoutCarryDocument, PathDocument, QuestLoadoutDocument, QuestRequirementKindDocument,
 };
@@ -1212,17 +1213,79 @@ pub fn reload_quester_path_source(
     let previous = registry::source();
     registry::set_source(source.clone());
     let loaded = (|| {
-        let selected =
-            FamilyPreparation::run(|_| api::game_data::for_revision(ClientRevision::R289))
-                .map_err(|error| format!("selected data worker: {error:?}"))?
-                .join()
-                .map_err(|error| format!("selected data worker: {error:?}"))?
-                .map_err(|error| format!("selected R289 data: {error}"))?;
+        let selected = preparation::submit(
+            PreparationKind::Catalogue,
+            api::identity::Scope::Process,
+            PreparationInput::new(289, 0, 2 * 1024 * 1024, 2 * 1024 * 1024)
+                .map_err(|error| format!("selected data charge: {error}"))?,
+            |_| api::game_data::for_revision(ClientRevision::R289),
+        )
+        .map_err(|error| format!("selected data worker: {error}"))?
+        .join()
+        .map_err(|error| format!("selected data worker: {error}"))?
+        .map_err(|error| format!("selected R289 data: {error}"))?;
         let data = std::sync::Arc::clone(&selected);
-        let loaded = FamilyPreparation::run(move |worker| registry::reload(&data, worker))
-            .map_err(|error| format!("Path registry worker: {error:?}"))?
+        use script::preparation::CooperativePreparationStep as Step;
+        use script::quester::registry::RegistryPreparation;
+        let input =
+            PreparationInput::new(290, 64 * 1024 * 1024, 32 * 1024 * 1024, 32 * 1024 * 1024)
+                .map_err(|error| format!("Path registry charge: {error}"))?
+                .with_quester_registry_actions();
+        let preparation_source = source.clone();
+        let mut preparation = None;
+        let mut actions = 0_u32;
+        let worker = preparation::submit_cooperative(
+            PreparationKind::Catalogue,
+            api::identity::Scope::Process,
+            input,
+            move |worker| {
+                actions = actions
+                    .checked_add(1)
+                    .expect("bounded registry action count");
+                if preparation.is_none() {
+                    match RegistryPreparation::from_source_without_catalog(
+                        preparation_source.clone(),
+                        std::sync::Arc::clone(&data),
+                    ) {
+                        Ok(candidate) => preparation = Some(candidate),
+                        Err(error) => {
+                            return Step::Complete {
+                                output: Err(error),
+                                completed: actions,
+                                total: Some(actions),
+                            };
+                        }
+                    }
+                }
+                match preparation
+                    .as_mut()
+                    .expect("registry preparation initialized")
+                    .step(worker)
+                {
+                    Ok(Some(prepared)) => Step::Complete {
+                        output: Ok(prepared),
+                        completed: actions,
+                        total: Some(actions),
+                    },
+                    Ok(None) => Step::Continue {
+                        completed: actions,
+                        total: None,
+                    },
+                    Err(error) => Step::Complete {
+                        output: Err(error),
+                        completed: actions,
+                        total: Some(actions),
+                    },
+                }
+            },
+        )
+        .map_err(|error| format!("Path registry worker: {error}"))?;
+        let identity = worker.identity();
+        let prepared = worker
             .join()
-            .map_err(|error| format!("Path registry worker: {error:?}"))?
+            .map_err(|error| format!("Path registry worker: {error}"))?
+            .map_err(|error| format!("Path registry reload: {error:?}"))?;
+        let loaded = registry::commit_snapshot(prepared, identity, identity)
             .map_err(|error| format!("Path registry reload: {error:?}"))?;
         let path_source = loaded.path_source(quest);
         if loaded.bytes(quest).is_none() {
