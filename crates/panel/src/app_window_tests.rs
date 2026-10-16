@@ -16,7 +16,11 @@ use host_play as map_host;
 // The shared host-play fixture (also loaded by `session_tests`), for a
 // Local server profile: Debug draws only on one.
 #[path = "../../host-play/tests/support/map_fixture.rs"]
-#[allow(dead_code, clippy::duplicate_mod)]
+#[allow(
+    dead_code,
+    clippy::duplicate_mod,
+    reason = "shared host-play map fixture also loaded by session_tests; duplicate_mod for the shared path include"
+)]
 mod map_fixture;
 
 const OPENER_HOST: &str = "Opener harness";
@@ -174,7 +178,7 @@ fn frames(
 fn assert_no_start(session: &Session, step: &str) {
     if let Some(op) = session.core.last_operation() {
         assert_ne!(
-            op.action,
+            op.action(),
             frontend_core::ActionKind::ScriptStart,
             "{step}: nothing may start a script"
         );
@@ -626,10 +630,13 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
             .unwrap();
     }
     drop(vault);
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
-        last_focus: Some("alice".into()),
-        ..Default::default()
-    });
+    crate::ui_state::save(
+        &crate::test_support::thread_preferences(),
+        &crate::ui_state::PanelUiState {
+            last_focus: Some("alice".into()),
+            ..Default::default()
+        },
+    );
     let mut session = Session::new();
     session.persist_ui = false;
     session.core.set_spawn_workers(false);

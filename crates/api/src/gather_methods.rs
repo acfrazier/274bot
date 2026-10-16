@@ -92,6 +92,50 @@ pub fn rock_type_names(data: &crate::game_data::SelectedGameData) -> Vec<&str> {
         .collect()
 }
 
+/// Ordinary rock loc ids from R289 content `pack/loc.pack:2091-2110`.
+pub const ROCK_TYPE_IDS: [(&str, &[i32]); 10] = [
+    ("Clay", &[2108, 2109]),
+    ("Copper", &[2090, 2091]),
+    ("Tin", &[2094, 2095]),
+    ("Iron", &[2092, 2093]),
+    ("Silver", &[2100, 2101]),
+    ("Coal", &[2096, 2097]),
+    ("Gold", &[2098, 2099]),
+    ("Mithril", &[2102, 2103]),
+    ("Adamantite", &[2104, 2105]),
+    ("Runite", &[2106, 2107]),
+];
+
+/// Quest-only rock loc ids: Blurite is `loc.pack:2111`; limestone is
+/// `rocks.loc:742-780` and `mine.dbrow:175-202`.
+pub const QUEST_ROCK_TYPE_IDS: [(&str, &[i32]); 2] =
+    [("Blurite", &[2110]), ("Limestone", &[4027, 4028, 4029])];
+
+/// Macro gas duration from R289 `scripts/macro events/scripts/mining/macro_event_gas.rs2:11-18`.
+pub const GAS_ROCK_TICKS: i32 = 60;
+
+/// Display name from R289 `scripts/macro events/configs/antimacro.obj:40,71,102,131,162,193`.
+pub const BROKEN_PICKAXE: &str = "Broken pickaxe";
+
+pub fn rock_type_order() -> impl ExactSizeIterator<Item = &'static str> {
+    ROCK_TYPE_IDS.iter().map(|(name, _)| *name)
+}
+
+pub fn rock_tier_by_id(id: i32) -> i32 {
+    ROCK_TYPE_IDS
+        .iter()
+        .position(|(_, ids)| ids.contains(&id))
+        .map_or(-1, |tier| tier as i32)
+}
+
+pub fn rock_ids_for_name(name: &str) -> Option<&'static [i32]> {
+    let wanted = name.trim();
+    ROCK_TYPE_IDS
+        .iter()
+        .find(|(candidate, _)| candidate.eq_ignore_ascii_case(wanted))
+        .map(|(_, ids)| *ids)
+}
+
 /// Gas-event rock loc ids, derived from the selected mining methods' hazard targets rather than copied from the
 /// JavaScript catalog: the selectable ore ladder plus quest-only blurite, not the separate gem rock. Ascending,
 /// without repeats; `None` (no generated slice) is unavailable, never an empty list.

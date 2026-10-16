@@ -13,7 +13,7 @@ use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 use rand_core::{OsRng, RngCore};
 
@@ -47,19 +47,21 @@ pub fn valid_component(value: &str) -> bool {
 ///
 /// Every write stages its bytes in its own temp file, `.<name>.<random>.tmp`,
 /// created with `create_new` (so it can never be an existing name, a planted
-/// symlink or a directory) and `0o600` from the moment it exists. This call
-/// removes only the temp it created, and only while the name still refers to
-/// that same file; before publishing it checks that it does, and returns an
-/// error instead of acknowledging bytes that are not its own. The target
-/// directory is created `0o700` when missing. On Unix it must be owned by this
-/// user or root and not writable by group or others: a directory this user
-/// owns that is group/other-writable (an older or `umask 002` install) is
-/// tightened to `mode & !0o022` on first publication, then re-checked; one
-/// owned by anyone else that is writable by others is refused, and a sticky
-/// directory such as `/tmp` is accepted as it is (others cannot remove or
-/// rename this user's entries in it). That check is what keeps the temp bound
-/// to this writer between the check and the rename; a failing one is
-/// `PermissionDenied`.
+/// symlink or a directory) and `0o600` from the moment it exists, and removes
+/// that temp again when the write fails. The target directory is created
+/// `0o700` when missing. On Unix it must be owned by this user or root and not
+/// writable by group or others: a directory this user owns that is
+/// group/other-writable (an older or `umask 002` install) is tightened to
+/// `mode & !0o022` on first publication, then re-checked; one owned by anyone
+/// else that is writable by others is refused, and a sticky directory such as
+/// `/tmp` is accepted as it is (others cannot remove or rename this user's
+/// entries in it). That check keeps other users from replacing the file while
+/// it is written; a failing one is `PermissionDenied`.
+///
+/// Threat model: concurrent writers in this process and in other 274bot
+/// processes are handled; tampering with the directory from outside 274bot
+/// (another program running as this user that moves or replaces its files) is
+/// not defended against.
 ///
 /// Writers to the same target inside one process are serialized, so the file
 /// left behind is the one whose call returned last. Processes are not
@@ -74,7 +76,25 @@ pub fn valid_component(value: &str) -> bool {
 /// inspect or set ACLs, so the directory's inherited ACL is what protects the
 /// file.
 pub fn write_private_file(path: &Path, data: &[u8]) -> Result<(), io::Error> {
-    publish(path, data, Publish::Replace)
+    publish(path, data, Publish::Replace, &mut || Ok(()))
+}
+
+/// [`write_private_file`] with a last look before publication: `check` runs
+/// after the bytes are staged and flushed, immediately before the rename. An
+/// error from it publishes nothing (the staged file is removed) and is
+/// returned. A writer that holds its own cross-process lock uses this to
+/// re-check what the target holds at the last moment, so a writer that does
+/// not take that lock can replace the target only in the instant between the
+/// check and the rename, not during the slow staging write and flush.
+pub fn write_private_file_checked(
+    path: &Path,
+    data: &[u8],
+    check: impl FnOnce() -> io::Result<()>,
+) -> Result<(), io::Error> {
+    let mut check = Some(check);
+    publish(path, data, Publish::Replace, &mut || {
+        check.take().map_or(Ok(()), |check| check())
+    })
 }
 
 /// Creates `path` with `data`, failing with [`io::ErrorKind::AlreadyExists`]
@@ -89,7 +109,7 @@ pub fn write_private_file(path: &Path, data: &[u8]) -> Result<(), io::Error> {
 /// place: still exclusive, but a crash mid-write leaves a truncated file
 /// where a new file was being created (no earlier data is at risk).
 pub fn create_private_file(path: &Path, data: &[u8]) -> Result<(), io::Error> {
-    publish(path, data, Publish::CreateNew)
+    publish(path, data, Publish::CreateNew, &mut || Ok(()))
 }
 
 #[derive(Clone, Copy)]
@@ -98,7 +118,12 @@ enum Publish {
     CreateNew,
 }
 
-fn publish(path: &Path, data: &[u8], mode: Publish) -> io::Result<()> {
+fn publish(
+    path: &Path,
+    data: &[u8],
+    mode: Publish,
+    before_publish: &mut dyn FnMut() -> io::Result<()>,
+) -> io::Result<()> {
     let name = path.file_name().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -111,7 +136,7 @@ fn publish(path: &Path, data: &[u8], mode: Publish) -> io::Result<()> {
         .unwrap_or_else(|| Path::new("."));
     ensure_private_dir(dir)?;
     serialized(fs::canonicalize(dir)?.join(name), || {
-        publish_staged(dir, name, path, data, mode)
+        publish_staged(dir, name, path, data, mode, before_publish)
     })
 }
 
@@ -121,14 +146,12 @@ fn publish_staged(
     path: &Path,
     data: &[u8],
     mode: Publish,
+    before_publish: &mut dyn FnMut() -> io::Result<()>,
 ) -> io::Result<()> {
     let staged = Staged::write(dir, name, data)?;
-    if !staged.is_ours() {
-        // The name now belongs to someone else: leave it alone.
-        return Err(io::Error::other(format!(
-            "{}: the staging file was replaced while it was written; nothing was published",
-            staged.path.display()
-        )));
+    if let Err(error) = before_publish() {
+        staged.discard();
+        return Err(error);
     }
     let published = match mode {
         Publish::Replace => replace(&staged.path, path),
@@ -180,6 +203,8 @@ fn link_without_replacing(staged: &Staged, path: &Path, data: &[u8]) -> io::Resu
             let claimed = Identity::of(&file)?;
             if let Err(error) = file.write_all(data).and_then(|()| file.sync_all()) {
                 drop(file);
+                // Another 274bot process may have replaced the name since it
+                // was claimed; its file is not this call's to remove.
                 if claimed.names(path) {
                     let _ = fs::remove_file(path);
                 }
@@ -190,10 +215,9 @@ fn link_without_replacing(staged: &Staged, path: &Path, data: &[u8]) -> io::Resu
     }
 }
 
-/// A temp file this call created, with the identity it had when created.
+/// A temp file this call created.
 struct Staged {
     path: PathBuf,
-    id: Identity,
 }
 
 impl Staged {
@@ -210,10 +234,7 @@ impl Staged {
             let path = dir.join(format!(".{prefix}.{:016x}.tmp", OsRng.next_u64()));
             match open_exclusive(&path) {
                 Ok(mut file) => {
-                    let staged = Staged {
-                        id: Identity::of(&file)?,
-                        path,
-                    };
+                    let staged = Staged { path };
                     return match file.write_all(data).and_then(|()| file.sync_all()) {
                         Ok(()) => Ok(staged),
                         Err(error) => {
@@ -231,22 +252,15 @@ impl Staged {
         Err(last.unwrap_or_else(|| io::Error::other("no free temp file name")))
     }
 
-    /// Whether the temp name still refers to the file this call created.
-    fn is_ours(&self) -> bool {
-        self.id.names(&self.path)
-    }
-
-    /// Removes the temp name if, and only if, it is still this call's file.
+    /// Removes the temp this call created.
     fn discard(&self) {
-        if self.is_ours() {
-            let _ = fs::remove_file(&self.path);
-        }
+        let _ = fs::remove_file(&self.path);
     }
 }
 
 /// Which file a name refers to: device and inode on Unix. There is no stable
 /// equivalent in `std` on Windows, where the check always holds and the
-/// unique name plus the sharing-denied handle stand in for it.
+/// exclusive, sharing-denied handle stands in for it.
 #[cfg(unix)]
 struct Identity {
     dev: u64,
@@ -299,24 +313,43 @@ type TargetLocks = HashMap<PathBuf, Arc<Mutex<()>>>;
 static TARGET_LOCKS: Mutex<Option<TargetLocks>> = Mutex::new(None);
 
 /// Runs `work` while holding the lock for `key`, so writers to one target
-/// within this process take turns.
-fn serialized<T>(key: PathBuf, work: impl FnOnce() -> T) -> T {
-    let lock = TARGET_LOCKS
+/// within this process take turns. A poisoned registry or target lock fails
+/// closed and requires restarting 274bot; it is not recovered automatically.
+fn serialized<T>(key: PathBuf, work: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+    serialized_with_registry(&TARGET_LOCKS, key, work)
+}
+
+fn serialized_with_registry<T>(
+    registry: &Mutex<Option<TargetLocks>>,
+    key: PathBuf,
+    work: impl FnOnce() -> io::Result<T>,
+) -> io::Result<T> {
+    let lock = registry
         .lock()
-        .unwrap_or_else(PoisonError::into_inner)
+        .map_err(|_| {
+            io::Error::other(
+                "private-file lock registry is poisoned; restart 274bot before writing private files",
+            )
+        })?
         .get_or_insert_with(HashMap::new)
         .entry(key.clone())
         .or_default()
         .clone();
     let result = {
-        let _turn = lock.lock().unwrap_or_else(PoisonError::into_inner);
+        let _turn = lock.lock().map_err(|_| {
+            io::Error::other(
+                "private-file target lock is poisoned; restart 274bot before writing this file",
+            )
+        })?;
         work()
     };
-    let mut locks = TARGET_LOCKS.lock().unwrap_or_else(PoisonError::into_inner);
-    // Only the map and this call hold the lock: nobody is waiting on it.
-    if Arc::strong_count(&lock) == 2 {
-        if let Some(map) = locks.as_mut() {
-            map.remove(&key);
+    // A registry failure after publication must not claim that the write failed.
+    if let Ok(mut locks) = registry.lock() {
+        // Only the map and this call hold it: nobody is waiting on the target lock.
+        if Arc::strong_count(&lock) == 2 {
+            if let Some(map) = locks.as_mut() {
+                map.remove(&key);
+            }
         }
     }
     result
@@ -582,11 +615,11 @@ fn store_file_verdict(facts: &StoreFacts, euid: u32, max_bytes: u64) -> Verdict 
     Verdict::Accept
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use std::os::unix::fs::{symlink, PermissionsExt};
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread;
 
     use super::*;
@@ -672,6 +705,92 @@ mod tests {
     }
 
     #[test]
+    fn a_poisoned_target_lock_requires_restart_on_every_write() {
+        let dir = scratch("poisoned-lock");
+        let target = dir.join("state.json");
+        let key = fs::canonicalize(&dir).unwrap().join("state.json");
+
+        let panic = std::panic::catch_unwind(|| {
+            let _ = serialized(key, || -> io::Result<()> {
+                panic!("poison the target lock");
+            });
+        });
+        assert!(panic.is_err(), "the test must poison its target lock");
+
+        let mut messages = Vec::with_capacity(2);
+        for attempt in 1..=2 {
+            let error = write_private_file(&target, b"must not publish").unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::Other);
+            messages.push(error.to_string());
+            assert!(!target.exists(), "attempt {attempt} published the target");
+            assert!(names(&dir).is_empty(), "attempt {attempt} left a temp file");
+        }
+        assert_eq!(
+            messages,
+            vec![
+                "private-file target lock is poisoned; restart 274bot before writing this file"
+                    .to_owned(),
+                "private-file target lock is poisoned; restart 274bot before writing this file"
+                    .to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_poisoned_lock_registry_requires_restart() {
+        let registry = Mutex::new(None);
+        let panic = std::panic::catch_unwind(|| {
+            let _guard = registry.lock().unwrap();
+            panic!("poison the lock registry");
+        });
+        assert!(panic.is_err(), "the test must poison its lock registry");
+
+        let mut work_called = false;
+        let error = serialized_with_registry(&registry, PathBuf::from("unused"), || {
+            work_called = true;
+            Ok(())
+        })
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(
+            error.to_string(),
+            "private-file lock registry is poisoned; restart 274bot before writing private files"
+        );
+        assert!(
+            !work_called,
+            "poisoned registry must refuse without writing"
+        );
+    }
+
+    #[test]
+    fn a_refusing_check_publishes_nothing_and_leaves_no_temp() {
+        let dir = scratch("checked");
+        let target = dir.join("state.json");
+        fs::write(&target, "old").unwrap();
+        let mut staged_seen = Vec::new();
+
+        let refused = write_private_file_checked(&target, b"new", || {
+            // The bytes are staged and flushed beside the target by now.
+            staged_seen = names(&dir);
+            Err(io::Error::other("the target changed"))
+        })
+        .unwrap_err();
+
+        assert_eq!(refused.to_string(), "the target changed");
+        assert_eq!(
+            staged_seen.len(),
+            2,
+            "the staged temp exists during the check"
+        );
+        assert_eq!(fs::read_to_string(&target).unwrap(), "old");
+        assert_eq!(names(&dir), ["state.json"], "the temp was removed");
+
+        write_private_file_checked(&target, b"new", || Ok(())).unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+        assert_eq!(names(&dir), ["state.json"]);
+    }
+
+    #[test]
     fn a_long_file_name_still_gets_a_valid_temp_name() {
         let dir = scratch("long");
         let target = dir.join("n".repeat(250));
@@ -708,62 +827,6 @@ mod tests {
         assert_eq!(bytes.len(), size, "a whole payload, not a torn one");
         assert!(bytes.iter().all(|b| *b == bytes[0]), "one writer's bytes");
         assert_eq!(names(&dir), ["state.json"], "no temp survives");
-    }
-
-    /// An actor that can already write the directory unlinks the writer's
-    /// staging file mid-write and puts its own bytes at that name. The writer
-    /// must not acknowledge those bytes as its own, and must not remove them.
-    #[test]
-    fn a_swapped_staging_file_is_never_acknowledged_as_the_writers_data() {
-        let dir = scratch("swap");
-        let target = dir.join("state.json");
-        fs::write(&target, "old").unwrap();
-        let payload = vec![b'W'; 32 * 1024 * 1024];
-
-        let mut swaps = 0;
-        for _ in 0..5 {
-            let stop = Arc::new(AtomicBool::new(false));
-            let attacker = {
-                let (dir, stop) = (dir.clone(), stop.clone());
-                thread::spawn(move || {
-                    while !stop.load(Ordering::Relaxed) {
-                        for entry in fs::read_dir(&dir).unwrap().flatten() {
-                            let path = entry.path();
-                            if path.extension().is_some_and(|e| e == "tmp") {
-                                let _ = fs::remove_file(&path);
-                                fs::write(&path, b"ATTACKER").unwrap();
-                                return Some(path);
-                            }
-                        }
-                    }
-                    None
-                })
-            };
-            let outcome = write_private_file(&target, &payload);
-            stop.store(true, Ordering::Relaxed);
-            let Some(planted) = attacker.join().unwrap() else {
-                continue;
-            };
-            swaps += 1;
-
-            match outcome {
-                Ok(()) => assert!(
-                    fs::read(&target).unwrap() == payload,
-                    "acknowledged, but the target does not hold the writer's bytes"
-                ),
-                Err(_) => {
-                    assert_eq!(fs::read(&target).unwrap(), b"old", "nothing published");
-                    assert_eq!(
-                        fs::read(&planted).unwrap(),
-                        b"ATTACKER",
-                        "the writer removed a file it did not create"
-                    );
-                }
-            }
-            let _ = fs::remove_file(&planted);
-            fs::write(&target, "old").unwrap();
-        }
-        assert!(swaps > 0, "the attacker never got to swap a staging file");
     }
 
     #[test]
@@ -883,16 +946,17 @@ mod tests {
         let target = dir.join("vault");
         let start = Arc::new(std::sync::Barrier::new(8));
 
-        let creators: Vec<_> = (0..8u8)
-            .map(|id| {
-                let (target, start) = (target.clone(), start.clone());
-                thread::spawn(move || {
-                    start.wait();
-                    create_private_file(&target, &[id; 4096]).map(|()| id)
-                })
-            })
-            .collect();
-        let outcomes: Vec<_> = creators.into_iter().map(|c| c.join().unwrap()).collect();
+        // Spawn every creator before joining any: the barrier needs all eight
+        // racers waiting at once, so a fused spawn-join chain would deadlock.
+        let mut handles = Vec::with_capacity(8);
+        for id in 0..8u8 {
+            let (target, start) = (target.clone(), start.clone());
+            handles.push(thread::spawn(move || {
+                start.wait();
+                create_private_file(&target, &[id; 4096]).map(|()| id)
+            }));
+        }
+        let outcomes: Vec<_> = handles.into_iter().map(|c| c.join().unwrap()).collect();
 
         let winners: Vec<u8> = outcomes
             .iter()
@@ -986,7 +1050,8 @@ mod tests {
     }
 }
 
-#[cfg(all(test, windows))]
+#[cfg(test)]
+#[cfg(windows)]
 mod windows_tests {
     use std::os::windows::fs::OpenOptionsExt;
     use std::time::Duration;

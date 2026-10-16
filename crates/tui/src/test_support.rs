@@ -45,10 +45,10 @@ pub fn ready(name: &str, world: u16) -> FleetRow {
 /// The selected member's projected detail: in game on w2 at 3200,3201.
 pub fn ready_detail(name: &str) -> SlotDetail {
     let mut detail = SlotDetail::default();
-    detail.row = ready(name, 2);
-    detail.state = "ingame scene 2".into();
-    detail.tile = (3200, 3201, 0);
-    detail.ready_tile = Some((3200, 3201, 0));
+    detail.set_row(ready(name, 2));
+    detail.set_state("ingame scene 2");
+    detail.set_tile((3200, 3201, 0));
+    detail.set_ready_tile(Some((3200, 3201, 0)));
     detail
 }
 

@@ -19,47 +19,106 @@ use parking_lot::Mutex;
 /// How often the meter samples.
 pub const SAMPLE_PERIOD: Duration = Duration::from_secs(1);
 
-/// One meter value.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Metric {
-    /// A rate that needs a second sample (or a re-baseline) first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MetricKind {
     Measuring,
-    Available(String),
-    /// Not measurable here; the reason says why.
-    Unavailable(&'static str),
-    Error(String),
+    Available,
+    Unavailable,
+    Error,
 }
 
+/// One meter value.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Metric {
+    kind: MetricKind,
+    owned: Option<String>,
+    stat: Option<&'static str>,
+}
+
+#[allow(non_upper_case_globals)]
 impl Metric {
+    /// A rate that needs a second sample (or a re-baseline) first.
+    pub const Measuring: Self = Self {
+        kind: MetricKind::Measuring,
+        owned: None,
+        stat: None,
+    };
+
+    /// A measured value.
+    pub fn available(text: impl Into<String>) -> Self {
+        Self {
+            kind: MetricKind::Available,
+            owned: Some(text.into()),
+            stat: None,
+        }
+    }
+
+    /// Not measurable here; the reason says why.
+    pub fn unavailable(reason: &'static str) -> Self {
+        Self {
+            kind: MetricKind::Unavailable,
+            owned: None,
+            stat: Some(reason),
+        }
+    }
+
+    /// A failed sample.
+    pub fn error(text: impl Into<String>) -> Self {
+        Self {
+            kind: MetricKind::Error,
+            owned: Some(text.into()),
+            stat: None,
+        }
+    }
+
+    /// Whether this value is still measuring.
+    pub fn is_measuring(&self) -> bool {
+        self.kind == MetricKind::Measuring
+    }
+
+    /// Whether this value was measured.
+    pub fn is_available(&self) -> bool {
+        self.kind == MetricKind::Available
+    }
+
     /// The value, or the reason it has none.
     pub fn text(&self) -> &str {
-        match self {
-            Self::Measuring => "measuring…",
-            Self::Available(text) | Self::Error(text) => text,
-            Self::Unavailable(reason) => reason,
+        match self.kind {
+            MetricKind::Measuring => "measuring…",
+            MetricKind::Available | MetricKind::Error => self.owned.as_deref().unwrap_or_default(),
+            MetricKind::Unavailable => self.stat.unwrap_or_default(),
+        }
+    }
+
+    /// A second owner of this metric. Not [`Clone`].
+    pub(crate) fn duplicate(&self) -> Self {
+        Self {
+            kind: self.kind,
+            owned: self.owned.clone(),
+            stat: self.stat,
         }
     }
 }
 
 /// What the meter shows.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ResourceView {
     /// Live worker lifetimes: logged-out, queued and connecting workers
     /// count; ended ones do not.
-    pub bots: usize,
-    pub ingame: usize,
+    bots: usize,
+    ingame: usize,
     /// Live workers other than the selected bot.
-    pub background: usize,
+    background: usize,
     /// Process CPU: busy cores and their share of all cores.
-    pub cpu: Metric,
+    cpu: Metric,
     /// Process memory: the current resident set and the lifetime peak.
-    pub ram: Metric,
+    ram: Metric,
     /// Summed stream bytes of every live worker, per second.
-    pub traffic: Metric,
+    traffic: Metric,
     /// The three values on one narrow line for a header: `cpu 12% ram
     /// 263.9 MB net 1.2 KB/s`. A value still measuring reads `…`, one with
     /// nothing to measure `-` and a failed one `err`.
-    pub brief: String,
+    brief: String,
 }
 
 impl Default for ResourceView {
@@ -76,14 +135,87 @@ impl Default for ResourceView {
     }
 }
 
+impl ResourceView {
+    /// Live worker lifetimes.
+    pub fn bots(&self) -> usize {
+        self.bots
+    }
+
+    /// Workers currently in game.
+    pub fn ingame(&self) -> usize {
+        self.ingame
+    }
+
+    /// Live workers other than the selected bot.
+    pub fn background(&self) -> usize {
+        self.background
+    }
+
+    /// Process CPU: busy cores and their share of all cores.
+    pub fn cpu(&self) -> &Metric {
+        &self.cpu
+    }
+
+    /// Process memory: the current resident set and the lifetime peak.
+    pub fn ram(&self) -> &Metric {
+        &self.ram
+    }
+
+    /// Summed stream bytes of every live worker, per second.
+    pub fn traffic(&self) -> &Metric {
+        &self.traffic
+    }
+
+    /// The three values on one narrow line for a header.
+    pub fn brief(&self) -> &str {
+        &self.brief
+    }
+
+    /// Copy another view into this one, reusing `brief`'s buffer.
+    pub fn copy_from(&mut self, source: &Self) {
+        self.bots = source.bots;
+        self.ingame = source.ingame;
+        self.background = source.background;
+        self.cpu = source.cpu.duplicate();
+        self.ram = source.ram.duplicate();
+        self.traffic = source.traffic.duplicate();
+        self.brief.clone_from(&source.brief);
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl ResourceView {
+    /// Fixture meter values for UI tests.
+    pub fn with_metrics(cpu: Metric, ram: Metric, traffic: Metric) -> Self {
+        Self {
+            cpu,
+            ram,
+            traffic,
+            ..Self::default()
+        }
+    }
+
+    /// Set the header line (test fixtures).
+    pub fn set_brief(&mut self, brief: impl Into<String>) {
+        self.brief = brief.into();
+    }
+
+    /// Set live-worker counts (test fixtures).
+    pub fn set_counts(&mut self, bots: usize, ingame: usize, background: usize) {
+        self.bots = bots;
+        self.ingame = ingame;
+        self.background = background;
+    }
+}
+
 /// One value as a narrow header shows it: `figure` when measured, else
 /// `…` (measuring), `-` (nothing to measure) or `err`.
 fn brief_text<'a>(metric: &'a Metric, figure: &'a str) -> &'a str {
-    match metric {
-        Metric::Measuring => "…",
-        Metric::Available(_) => figure,
-        Metric::Unavailable(_) => "-",
-        Metric::Error(_) => "err",
+    match metric.kind {
+        MetricKind::Measuring => "…",
+        MetricKind::Available => figure,
+        MetricKind::Unavailable => "-",
+        MetricKind::Error => "err",
     }
 }
 
@@ -129,7 +261,7 @@ const PROBE_FAILED: &str = "process sample failed";
 
 /// CPU and memory as the probe thread last measured them, with the short
 /// figures a narrow header shows while they are available.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 struct ProcessMetrics {
     cpu: Metric,
     ram: Metric,
@@ -143,7 +275,7 @@ impl ProcessMetrics {
     /// Both values in one state that has no figure.
     fn without_figures(value: Metric) -> Self {
         Self {
-            cpu: value.clone(),
+            cpu: value.duplicate(),
             ram: value,
             cpu_figure: String::new(),
             ram_figure: String::new(),
@@ -197,11 +329,11 @@ fn process_metrics(
     match probe {
         ProcessProbe::Unsupported => {
             *last_cpu = None;
-            ProcessMetrics::without_figures(Metric::Unavailable(NOT_MEASURED_HERE))
+            ProcessMetrics::without_figures(Metric::unavailable(NOT_MEASURED_HERE))
         }
         ProcessProbe::Failed => {
             *last_cpu = None;
-            ProcessMetrics::without_figures(Metric::Error(PROBE_FAILED.into()))
+            ProcessMetrics::without_figures(Metric::error(PROBE_FAILED))
         }
         ProcessProbe::Sampled {
             cpu_seconds,
@@ -218,18 +350,18 @@ fn process_metrics(
                     )
                 });
             let (cpu, cpu_figure) = match cpu {
-                Some((text, figure)) => (Metric::Available(text), figure),
+                Some((text, figure)) => (Metric::available(text), figure),
                 None => (Metric::Measuring, String::new()),
             };
             let (ram, ram_figure) = match resident {
                 Some(resident) => {
                     let now = format_bytes(resident);
                     let ram = format!("{now} process, peak {}", format_bytes(peak.max(resident)));
-                    (Metric::Available(ram), now)
+                    (Metric::available(ram), now)
                 }
                 None => {
                     let peak = format!("peak {}", format_bytes(peak));
-                    (Metric::Available(format!("{peak} process")), peak)
+                    (Metric::available(format!("{peak} process")), peak)
                 }
             };
             ProcessMetrics {
@@ -269,7 +401,7 @@ impl Traffic {
         let (sample, before) = (&self.last, &self.current);
         let previous = self.at.replace(now);
         if sample.is_empty() {
-            return Metric::Unavailable(NO_LIVE_SLOTS);
+            return Metric::unavailable(NO_LIVE_SLOTS);
         }
         let Some(then) = previous else {
             return Metric::Measuring;
@@ -286,7 +418,7 @@ impl Traffic {
             }
             bytes = bytes.saturating_add(now.bytes - then.bytes);
         }
-        Metric::Available(format_rate(bytes as f64 / dt))
+        Metric::available(format_rate(bytes as f64 / dt))
     }
 }
 
@@ -399,8 +531,8 @@ impl Resources {
         let latest = self.shared.latest.lock();
         let changed = self.view.cpu != latest.cpu || self.view.ram != latest.ram;
         if changed {
-            self.view.cpu.clone_from(&latest.cpu);
-            self.view.ram.clone_from(&latest.ram);
+            self.view.cpu = latest.cpu.duplicate();
+            self.view.ram = latest.ram.duplicate();
             self.cpu_figure.clone_from(&latest.cpu_figure);
             self.ram_figure.clone_from(&latest.ram_figure);
         }
@@ -444,9 +576,9 @@ impl Resources {
     }
 
     fn set_process_error(&mut self, error: String) -> bool {
-        let metric = Metric::Error(error);
+        let metric = Metric::error(error);
         let changed = self.view.cpu != metric || self.view.ram != metric;
-        self.view.cpu.clone_from(&metric);
+        self.view.cpu = metric.duplicate();
         self.view.ram = metric;
         changed
     }

@@ -201,6 +201,7 @@ fn with_tick_output_reach<R>(
     budget.observe(tick);
     let mut actions = NativeActions { _private: () };
     let mut native = NativeTick {
+        state: None,
         actions: &mut actions,
         cx: crate::native::ActionContext {
             evidence,
@@ -392,6 +393,38 @@ pub(crate) fn policy_s2_recipe_run(child: Box<dyn StepRun>) -> Box<dyn StepRun> 
         clear_prayers: None,
         trace_events: std::collections::VecDeque::new(),
     })
+}
+
+#[test]
+fn typed_bank_deposit_failure_keeps_user_text_in_acquisition_trace() {
+    struct RefusedDeposit;
+    impl StepRun for RefusedDeposit {
+        fn poll(&mut self, _: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+            Poll::Ready(Err(ActionError::BankDeposit(
+                crate::bank::ops::DepositFailure::FullStack,
+            )))
+        }
+        fn cancel(&mut self, _: &mut NativeActions) {}
+    }
+
+    let snapshot = ready();
+    let mut ledger = None;
+    let mut run = policy_s2_recipe_run(Box::new(RefusedDeposit));
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        }),
+        Poll::Ready(Err(ActionError::BankDeposit(
+            crate::bank::ops::DepositFailure::FullStack
+        )))
+    ));
+    assert!(matches!(
+        run.take_trace_event(),
+        Some(StepTraceEvent::Acquisition {
+            outcome: AcquisitionTraceOutcome::Failed(reason),
+            ..
+        }) if reason.as_ref() == "bank deposit refused: full stack in bank"
+    ));
 }
 
 pub(crate) fn post_user_input_walk_receipt(
@@ -5310,9 +5343,7 @@ fn dialogue_hostile_close_never_reports_success() {
     assert!(
         matches!(
             result,
-            Poll::Ready(Ok(
-                crate::dialogue_outcome::DialogueOutcome::CombatInterrupted
-            ))
+            Poll::Ready(Err(crate::native::ActionError::CombatInterrupted))
         ),
         "a hostile close, including a zero-damage hit, cannot complete dialogue: {result:?}"
     );
@@ -5321,7 +5352,7 @@ fn dialogue_hostile_close_never_reports_success() {
 #[test]
 fn dialogue_combat_interruption_covers_open_and_page_acknowledgements() {
     use super::dialogue::Dialogue;
-    use crate::dialogue_outcome::DialogueOutcome;
+    use crate::native::ActionError;
     for continue_component in [None, Some(4883), Some(-1)] {
         let mut snapshot = ready();
         seed_dialogue_combat(&mut snapshot, false);
@@ -5367,7 +5398,7 @@ fn dialogue_combat_interruption_covers_open_and_page_acknowledgements() {
         with_tick(&snapshot, &mut ledger, 3, |t| {
             assert!(matches!(
                 t.actions.poll(&handle, &mut t.cx),
-                Poll::Ready(Ok(DialogueOutcome::CombatInterrupted))
+                Poll::Ready(Err(ActionError::CombatInterrupted))
             ));
         });
     }
@@ -6201,7 +6232,10 @@ fn talk_expected_combat_only_hands_off_to_the_authored_opponent() {
                         if *npc_type == expected.id
                 ));
             } else {
-                assert!(matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))));
+                assert!(matches!(
+                    result,
+                    Poll::Ready(Err(ActionError::CombatInterrupted))
+                ));
             }
         }
     });
@@ -6228,7 +6262,7 @@ mod chooser_tests;
 mod extension_tests;
 fn with_loadout_context<R>(f: impl FnOnce(&CompileContext<'_>) -> R) -> R {
     compile_context_test(|base| {
-        let row = crate::loadouts_store::Loadout::new("cook/disguise")
+        let row = api::loadout::Loadout::new("cook/disguise")
             .with_slot("torso", "Desert shirt")
             .with_slot("feet", "Desert boots");
         let loadouts =
@@ -6276,7 +6310,7 @@ pub(crate) fn loadout_predicate_truth(plan: &dyn PredicatePlan, snapshot: &GameS
 #[test]
 fn loadout_waits_for_inventory_observation_before_bank_plan() {
     compile_context_test(|base| {
-        let row = crate::loadouts_store::Loadout::new("cook/carry").with_carry("Lobster", 1);
+        let row = api::loadout::Loadout::new("cook/carry").with_carry("Lobster", 1);
         let loadouts =
             crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([row]));
         let cx = CompileContext {

@@ -10,16 +10,17 @@
 //! logout bounded by [`SLOT_REMOVE_TIMEOUT`], and workers are joined only
 //! once finished.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use api::host_log;
 use api::hostlog::{Category, Level, Source};
+use api::identity::SessionKey;
 use host::{CapacityEval, FrameBuf, SlotInput};
 use host_play::{InstancePermit, Play, SlotArm, SlotStatus, WalkArms};
-use vault::{Profile, ProfileSettings, Vault, VaultChange};
+use vault::{Profile, ProfileSettings, RandomEventPolicy, Vault, VaultChange};
 
 use crate::capacity::{CapacityNotice, RenderPolicyLabel};
 use crate::fleet::Fleet;
@@ -71,43 +72,193 @@ struct DeferredSpawn {
     arm: Option<Arc<SlotArm>>,
 }
 
-/// One observed status change since the previous poll.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Transition {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TransitionKind {
     SlotUp,
-    LoginError(String),
+    LoginError,
     Ingame,
-    Scene(i32),
-    Welcome(String),
-    WelcomeFailure(String),
+    Scene,
+    Welcome,
+    WelcomeFailure,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One observed status change since the previous poll.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Transition {
+    kind: TransitionKind,
+    error: Option<String>,
+    state: Option<i32>,
+    text: Option<String>,
+}
+
+#[allow(non_upper_case_globals)]
+impl Transition {
+    pub const SlotUp: Self = Self {
+        kind: TransitionKind::SlotUp,
+        error: None,
+        state: None,
+        text: None,
+    };
+    pub const Ingame: Self = Self {
+        kind: TransitionKind::Ingame,
+        error: None,
+        state: None,
+        text: None,
+    };
+
+    /// Scene-state change.
+    pub fn scene(state: i32) -> Self {
+        Self {
+            kind: TransitionKind::Scene,
+            error: None,
+            state: Some(state),
+            text: None,
+        }
+    }
+
+    /// Login error text.
+    pub fn login_error(error: impl Into<String>) -> Self {
+        Self {
+            kind: TransitionKind::LoginError,
+            error: Some(error.into()),
+            state: None,
+            text: None,
+        }
+    }
+
+    /// Welcome-modal line.
+    pub fn welcome(text: impl Into<String>) -> Self {
+        Self {
+            kind: TransitionKind::Welcome,
+            error: None,
+            state: None,
+            text: Some(text.into()),
+        }
+    }
+
+    /// Welcome-modal dismiss failure.
+    pub fn welcome_failure(error: impl Into<String>) -> Self {
+        Self {
+            kind: TransitionKind::WelcomeFailure,
+            error: Some(error.into()),
+            state: None,
+            text: None,
+        }
+    }
+
+    pub(crate) fn kind(&self) -> TransitionKind {
+        self.kind
+    }
+
+    /// Login or welcome-failure text, when this carries one.
+    pub fn error(&self) -> Option<&str> {
+        match self.kind {
+            TransitionKind::LoginError | TransitionKind::WelcomeFailure => self.error.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Scene state, when this is a scene change.
+    pub fn state(&self) -> Option<i32> {
+        self.state
+    }
+
+    /// Welcome line, when this is a welcome.
+    pub fn text(&self) -> Option<&str> {
+        match self.kind {
+            TransitionKind::Welcome => self.text.as_deref(),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct SlotTransition {
-    pub slot: String,
-    pub transition: Transition,
+    pub(crate) slot: String,
+    pub(crate) transition: Transition,
+}
+
+impl SlotTransition {
+    /// The slot that changed.
+    pub fn slot(&self) -> &str {
+        &self.slot
+    }
+
+    /// What changed.
+    pub fn transition(&self) -> &Transition {
+        &self.transition
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectionKind {
+    Unchanged,
+    Changed,
 }
 
 /// Selection change result. `previous` is the bot that lost selection.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Selection {
-    Unchanged,
-    Changed { previous: Option<String> },
+#[derive(Debug, PartialEq, Eq)]
+pub struct Selection {
+    kind: SelectionKind,
+    previous: Option<String>,
+}
+
+#[allow(non_upper_case_globals)]
+impl Selection {
+    pub const Unchanged: Self = Self {
+        kind: SelectionKind::Unchanged,
+        previous: None,
+    };
+
+    pub(crate) fn changed(previous: Option<String>) -> Self {
+        Self {
+            kind: SelectionKind::Changed,
+            previous,
+        }
+    }
+
+    /// Whether selection stayed the same.
+    pub fn is_unchanged(&self) -> bool {
+        self.kind == SelectionKind::Unchanged
+    }
+
+    /// The bot that lost selection, when selection changed.
+    pub fn previous(&self) -> Option<&str> {
+        match self.kind {
+            SelectionKind::Changed => self.previous.as_deref(),
+            SelectionKind::Unchanged => None,
+        }
+    }
 }
 
 /// What a removal did to the selection.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Removal {
-    pub op: OperationId,
+    pub(crate) op: OperationId,
     /// The removed member was selected and its neighbour is now selected.
-    pub reselected: Option<String>,
+    pub(crate) reselected: Option<String>,
     /// The removed member was selected and no member remains to select.
-    pub selection_cleared: bool,
+    pub(crate) selection_cleared: bool,
 }
 
-/// A script Start request. Native configuration/factory preparation and Load
-/// isolate setup both settle asynchronously through the host.
-pub enum ScriptStart {
+impl Removal {
+    /// The removal's operation.
+    pub fn op(&self) -> OperationId {
+        self.op
+    }
+
+    /// The neighbour now selected, when the removed member was selected.
+    pub fn reselected(&self) -> Option<&str> {
+        self.reselected.as_deref()
+    }
+
+    /// Whether the removed member was selected and no member remains.
+    pub fn selection_cleared(&self) -> bool {
+        self.selection_cleared
+    }
+}
+
+enum ScriptStartKind {
     Compiled {
         id: script::CompiledId,
         bag: serde_json::Map<String, serde_json::Value>,
@@ -120,22 +271,81 @@ pub enum ScriptStart {
     },
 }
 
+/// A script Start request. Native configuration/factory preparation and Load
+/// isolate setup both settle asynchronously through the host.
+pub struct ScriptStart(ScriptStartKind);
+
+impl ScriptStart {
+    /// Start a compiled card.
+    pub fn compiled(
+        id: script::CompiledId,
+        bag: serde_json::Map<String, serde_json::Value>,
+    ) -> Self {
+        Self(ScriptStartKind::Compiled { id, bag })
+    }
+
+    /// Start a loaded JS/TS card.
+    pub fn load(
+        js: String,
+        shape: script::LoadShape,
+        bag: Option<serde_json::Map<String, serde_json::Value>>,
+        siblings: Vec<(String, String)>,
+    ) -> Self {
+        Self(ScriptStartKind::Load {
+            js,
+            shape,
+            bag,
+            siblings,
+        })
+    }
+
+    pub(crate) fn is_compiled(&self) -> bool {
+        matches!(self.0, ScriptStartKind::Compiled { .. })
+    }
+}
+
 /// A Load Start whose isolate setup settled (or was cancelled by removal:
 /// `outcome == None`). Front ends consume these to commit assignments and
 /// record load diagnostics.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct StartSettled {
-    pub slot: String,
-    pub op: OperationId,
-    pub outcome: Option<script::StartOutcome>,
+    pub(crate) slot: String,
+    pub(crate) op: OperationId,
+    pub(crate) outcome: Option<script::StartOutcome>,
+}
+
+impl StartSettled {
+    /// The slot whose Start settled.
+    pub fn slot(&self) -> &str {
+        &self.slot
+    }
+
+    /// The Start operation.
+    pub fn op(&self) -> OperationId {
+        self.op
+    }
+
+    /// Isolate setup outcome, or `None` if removal cancelled it.
+    pub fn outcome(&self) -> Option<&script::StartOutcome> {
+        self.outcome.as_ref()
+    }
 }
 
 /// What a running slot learns once a profile write is durable. Writes of
 /// one profile saved in one commit each settle and deliver their own
 /// setting; only a later one with the same setting replaces an earlier
 /// one's.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ArmMirror {
+#[derive(PartialEq)]
+pub struct ArmMirror(ArmMirrorKind);
+
+impl std::fmt::Debug for ArmMirror {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum ArmMirrorKind {
     /// Nothing live changes (assignments, tutorial flag, render prefs).
     None,
     AutoLogin(bool),
@@ -143,6 +353,10 @@ pub enum ArmMirror {
         random_events: bool,
         lamp_skill: String,
         lamp_auto: bool,
+    },
+    RandomEventPolicy {
+        event: String,
+        policy: RandomEventPolicy,
     },
     /// Memory mode (`ProfileSettings.lowmem`): queued for the next login.
     /// Set when the toggle is issued and re-affirmed once durable; a failed
@@ -171,20 +385,75 @@ pub enum ArmMirror {
 }
 
 impl ArmMirror {
+    pub fn none() -> Self {
+        Self(ArmMirrorKind::None)
+    }
+
+    pub fn auto_login(on: bool) -> Self {
+        Self(ArmMirrorKind::AutoLogin(on))
+    }
+
+    pub fn guardian(random_events: bool, lamp_skill: String, lamp_auto: bool) -> Self {
+        Self(ArmMirrorKind::Guardian {
+            random_events,
+            lamp_skill,
+            lamp_auto,
+        })
+    }
+
+    pub fn random_event_policy(event: String, policy: RandomEventPolicy) -> Self {
+        Self(ArmMirrorKind::RandomEventPolicy { event, policy })
+    }
+
+    pub fn memory(lowmem: bool) -> Self {
+        Self(ArmMirrorKind::Memory(lowmem))
+    }
+
+    pub fn remember(live: Option<LiveSettings>) -> Self {
+        Self(ArmMirrorKind::Remember(live))
+    }
+
+    pub fn script_settings(card: String, live: Option<LiveSettings>) -> Self {
+        Self(ArmMirrorKind::ScriptSettings { card, live })
+    }
+
+    pub fn native_settings(
+        id: script::CompiledId,
+        bag: Arc<serde_json::Map<String, serde_json::Value>>,
+        live: Option<LiveSettings>,
+        assign: bool,
+    ) -> Self {
+        Self(ArmMirrorKind::NativeSettings {
+            id,
+            bag,
+            live,
+            assign,
+        })
+    }
+
+    pub(crate) fn is_native_settings(&self) -> bool {
+        matches!(&self.0, ArmMirrorKind::NativeSettings { .. })
+    }
+
     /// Whether this mirror, on a later write committed together with
     /// `earlier`'s, sets the same setting, so `earlier` need not settle or
     /// reach the slot on its own. Parameters replace the same card's, and a
     /// profile save an earlier save's handshake settings and partner: the
     /// later edit captured the current run, if any.
     fn replaces(&self, earlier: &Self) -> bool {
-        match (self, earlier) {
-            (Self::AutoLogin(_), Self::AutoLogin(_))
-            | (Self::Guardian { .. }, Self::Guardian { .. })
-            | (Self::Remember(_), Self::Remember(_))
-            | (Self::Memory(_), Self::Memory(_)) => true,
-            (Self::ScriptSettings { card: later, .. }, Self::ScriptSettings { card, .. }) => {
-                later == card
-            }
+        match (&self.0, &earlier.0) {
+            (ArmMirrorKind::AutoLogin(_), ArmMirrorKind::AutoLogin(_))
+            | (ArmMirrorKind::Guardian { .. }, ArmMirrorKind::Guardian { .. })
+            | (ArmMirrorKind::Remember(_), ArmMirrorKind::Remember(_))
+            | (ArmMirrorKind::Memory(_), ArmMirrorKind::Memory(_)) => true,
+            (
+                ArmMirrorKind::RandomEventPolicy { event: later, .. },
+                ArmMirrorKind::RandomEventPolicy { event, .. },
+            ) => later == event,
+            (
+                ArmMirrorKind::ScriptSettings { card: later, .. },
+                ArmMirrorKind::ScriptSettings { card, .. },
+            ) => later == card,
             _ => false,
         }
     }
@@ -321,10 +590,8 @@ pub struct OperatorSession<Io> {
     views: Views,
     /// Start-all / marked-Start places fed into the single row derivation.
     start_places: HashMap<String, QueuePlace>,
-    /// Slots whose operator-requested Relog-now is still in its logout half.
-    mem_relog: HashSet<String>,
-    /// Slots whose Relog-now has parked and queued its automatic login half.
-    mem_relog_login: HashSet<String>,
+    /// Operator Relog-nows pending a different owner-authorized session.
+    mem_relog: HashMap<String, Option<SessionKey>>,
     /// Operation outcomes taken by the last poll (reused buffer).
     op_changes: Vec<OpChange>,
     /// Reused buffer for operation log lines.
@@ -338,7 +605,11 @@ pub struct OperatorSession<Io> {
     /// either front end updates its projection.
     pause_script_on_manual_walk_abort: bool,
     walk_globals: host_play::WalkGlobals,
-    walk_globals_store: Option<std::path::PathBuf>,
+    walk_globals_store: Option<host_play::local_state::Preferences>,
+    /// The process local-state service the front end's composition root
+    /// opened; every `Play` this session adopts uses it, so the process has
+    /// one writer for its state files.
+    local_state: Option<Arc<host_play::local_state::LocalStateService>>,
     /// Process-lifetime single-instance lock (or an explicit skip).
     _instance: InstancePermit,
     /// Shared host-capacity warning; both front ends read [`Self::capacity_notice`].
@@ -398,8 +669,7 @@ impl<Io> OperatorSession<Io> {
             bypass_asset_startup: false,
             views: Views::default(),
             start_places: HashMap::new(),
-            mem_relog: HashSet::new(),
-            mem_relog_login: HashSet::new(),
+            mem_relog: HashMap::new(),
             op_changes: Vec::new(),
             op_line: String::new(),
             resources: Resources::default(),
@@ -407,6 +677,7 @@ impl<Io> OperatorSession<Io> {
             pause_script_on_manual_walk_abort: true,
             walk_globals: host_play::WalkGlobals::default(),
             walk_globals_store: None,
+            local_state: None,
             _instance: instance,
             capacity: None,
             capacity_kind: CapacityKind::Clear,
@@ -422,15 +693,30 @@ impl<Io> OperatorSession<Io> {
         for profile in vault.profiles() {
             api::hostlog::register_secret(&profile.password);
         }
+        if let Some(service) = self.local_state.as_ref() {
+            play.adopt_local_state(Arc::clone(service));
+        }
         play.set_pause_script_on_manual_walk_abort(self.pause_script_on_manual_walk_abort);
         play.set_walk_globals(self.walk_globals);
-        if let Some(path) = self.walk_globals_store.as_ref() {
-            play.set_walk_globals_store(path.clone());
+        if let Some(preferences) = self.walk_globals_store.as_ref() {
+            play.set_walk_globals_store(preferences.clone());
         }
         play.statuses_into(&mut self.statuses);
         self.play = Some(play);
         self.vault = Some(vault);
         self.writer = None;
+    }
+
+    /// Bind the process local-state service the front end's composition
+    /// root opened, before any `Play` starts: [`Self::start`] hands it to
+    /// each `Play`, so slots and forms write through one service.
+    pub fn bind_local_state(&mut self, service: Arc<host_play::local_state::LocalStateService>) {
+        self.local_state = Some(service);
+    }
+
+    /// The process local-state service bound at startup, if any.
+    pub fn local_state(&self) -> Option<&Arc<host_play::local_state::LocalStateService>> {
+        self.local_state.as_ref()
     }
 
     /// Project the persisted manual-movement pause setting onto the current
@@ -453,12 +739,13 @@ impl<Io> OperatorSession<Io> {
         }
     }
 
-    /// Interactive frontends share the durable store even after Continue anyway.
-    pub fn set_walk_globals_store(&mut self, path: std::path::PathBuf) {
+    /// Interactive frontends share the durable preferences even after
+    /// Continue anyway: every admission reads the globals from them.
+    pub fn set_walk_globals_store(&mut self, preferences: host_play::local_state::Preferences) {
         if let Some(play) = self.play.as_mut() {
-            play.set_walk_globals_store(path.clone());
+            play.set_walk_globals_store(preferences.clone());
         }
-        self.walk_globals_store = Some(path);
+        self.walk_globals_store = Some(preferences);
     }
 
     pub fn vault(&self) -> Option<&Vault> {
@@ -477,7 +764,6 @@ impl<Io> OperatorSession<Io> {
     pub fn close_play(&mut self) {
         self.deferred.clear();
         self.mem_relog.clear();
-        self.mem_relog_login.clear();
         self.play = None;
     }
 
@@ -612,6 +898,13 @@ impl<Io> OperatorSession<Io> {
             .map(|profile| crate::selection::ProfileIdentity::uid(profile.uid))
     }
 
+    /// [`Self::profile_identity`], or the deterministic fixture identity
+    /// for a name with no vault row (it marks nothing real).
+    pub fn profile_identity_or_synthetic(&self, name: &str) -> crate::selection::ProfileIdentity {
+        self.profile_identity(name)
+            .unwrap_or_else(|| crate::selection::ProfileIdentity::synthetic(name))
+    }
+
     pub fn profile_names(&self) -> Vec<String> {
         let mut names: Vec<String> = self
             .vault
@@ -649,7 +942,7 @@ impl<Io> OperatorSession<Io> {
                 play.wake(old);
             }
         }
-        Selection::Changed { previous }
+        Selection::changed(previous)
     }
 
     /// Control arm for a vault profile: auto-login remains a saved policy,
@@ -663,6 +956,7 @@ impl<Io> OperatorSession<Io> {
         arm.lamp_auto
             .store(profile.settings.lamp_auto, Ordering::Relaxed);
         *arm.lamp_skill.lock().unwrap() = profile.settings.lamp_skill.clone();
+        *arm.random_event_policies.lock().unwrap() = profile.settings.random_event_policies.clone();
         if self.fleet.latched(name) {
             arm.hold_logged_out();
         }
@@ -702,6 +996,7 @@ impl<Io> OperatorSession<Io> {
         surface.lifetime_reset(name);
         let retained = self.slots.remove(name);
         let attach = surface.attach(name, &mut profile, retained);
+        let (io, input, mailbox) = attach.into_parts();
         if let Some(arm) = arm.as_ref() {
             // The surface may apply a session-only override to the disposable
             // spawn profile. Queue that mode for this lifetime's next login.
@@ -712,7 +1007,7 @@ impl<Io> OperatorSession<Io> {
             if let (Some(play), Some(arm)) = (self.play.as_mut(), arm.as_ref()) {
                 play.attach_arm(name, Arc::clone(arm));
             }
-            self.slots.insert(name.to_string(), attach.io);
+            self.slots.insert(name.to_string(), io);
             return Ok(());
         }
         #[cfg(any(test, feature = "test-support"))]
@@ -728,24 +1023,24 @@ impl<Io> OperatorSession<Io> {
                 name.to_string(),
                 DeferredSpawn {
                     profile,
-                    input: attach.input,
-                    mailbox: attach.mailbox,
+                    input,
+                    mailbox,
                     arm,
                 },
             );
-            self.slots.insert(name.to_string(), attach.io);
+            self.slots.insert(name.to_string(), io);
             return Ok(());
         }
         if self.play.is_some() {
             self.old_lifetime_retired(name);
         }
         if let Some(play) = self.play.as_mut() {
-            if let Err(error) = play.try_spawn_slot(profile, attach.input, attach.mailbox, arm) {
-                self.slots.insert(name.to_string(), attach.io);
+            if let Err(error) = play.try_spawn_slot(profile, input, mailbox, arm) {
+                self.slots.insert(name.to_string(), io);
                 return Err(error);
             }
         }
-        self.slots.insert(name.to_string(), attach.io);
+        self.slots.insert(name.to_string(), io);
         Ok(())
     }
 
@@ -840,8 +1135,7 @@ impl<Io> OperatorSession<Io> {
         surface: &mut S,
     ) -> bool {
         if self.profile_saving(name) {
-            self.operations
-                .set(op, name, Outcome::Skipped(SAVING.into()));
+            self.operations.set(op, name, Outcome::skipped(SAVING));
             return false;
         }
         let cancelled_removal = self.cancel_removal(name);
@@ -938,12 +1232,9 @@ impl<Io> OperatorSession<Io> {
         name: &str,
         surface: &mut S,
     ) -> Result<(), String> {
-        // A manual login supersedes either half of any Relog-now for the
-        // slot. The server-mode baseline changes only when the worker
-        // publishes a successful handshake; arming intent here must not hide
-        // the notice.
+        // A manual Login supersedes the pending Relog-now; the worker still
+        // owns the applied server-mode observation.
         self.mem_relog.remove(name);
-        self.mem_relog_login.remove(name);
         if let Some(arm) = self.play.as_ref().and_then(|play| play.arm(name)) {
             arm.arm_explicit_login();
             return Ok(());
@@ -959,13 +1250,13 @@ impl<Io> OperatorSession<Io> {
         self.operations.cancel_pending(ActionKind::Logout, name);
         self.operations.cancel_pending(ActionKind::Login, name);
         let outcome = match result {
-            Err(error) => Outcome::Failed(error),
-            Ok(()) if self.play.is_none() => Outcome::Failed("vault locked".into()),
+            Err(error) => Outcome::failed(error),
+            Ok(()) if self.play.is_none() => Outcome::failed("vault locked"),
             Ok(())
                 if self.play.as_ref().and_then(|p| p.arm(name)).is_none()
                     && !self.deferred.contains_key(name) =>
             {
-                Outcome::Failed(format!("no profile {name}"))
+                Outcome::failed(format!("no profile {name}"))
             }
             Ok(()) => Outcome::Pending,
         };
@@ -1010,10 +1301,8 @@ impl<Io> OperatorSession<Io> {
     }
 
     fn logout_member(&mut self, op: OperationId, name: &str) {
-        // An explicit user Logout/Logout-all always outranks a pending
-        // Relog-now; once parked, no automatic login half may fire.
+        // An explicit Logout supersedes the owner's Relog-now login half.
         self.mem_relog.remove(name);
-        self.mem_relog_login.remove(name);
         self.fleet.latch_logout(name);
         self.operations.cancel_pending(ActionKind::Login, name);
         self.operations.cancel_pending(ActionKind::Logout, name);
@@ -1050,7 +1339,7 @@ impl<Io> OperatorSession<Io> {
         Some(MemoryNotice {
             login_lowmem: status.login_lowmem?,
             desired_lowmem: self.memory_mode(name)?,
-            relog_pending: self.mem_relog.contains(name) || self.mem_relog_login.contains(name),
+            relog_pending: self.mem_relog.contains_key(name),
             connected: status.connected,
             login_applies_memory: self
                 .play
@@ -1081,7 +1370,7 @@ impl<Io> OperatorSession<Io> {
             .cloned()
             .ok_or_else(|| format!("memory: no profile {name}"))?;
         profile.settings.lowmem = lowmem;
-        let op = self.save_profile(profile, ArmMirror::Memory(lowmem), "memory")?;
+        let op = self.save_profile(profile, ArmMirror::memory(lowmem), "memory")?;
         if let Some(arm) = self.play.as_ref().and_then(|play| play.arm(name)) {
             arm.set_lowmem_handshake(lowmem);
         }
@@ -1094,81 +1383,44 @@ impl<Io> OperatorSession<Io> {
         Ok(op)
     }
 
-    /// Relog-now for a memory-mode switch: log out through the normal path
-    /// and re-arm the login once the poll sees the slot parked, so the new
-    /// mode goes through the login FIFO like any operator login. A slot
-    /// with no worker logs straight back in. Never automatic: only the
-    /// operator's Relog action calls this.
+    /// Post one Relog-now row. The owner holds its login half across the
+    /// current session exit; the frontend only tracks the originating
+    /// session for the operator's pending notice.
     pub fn request_memory_relog<S: SlotSurface<Io = Io>>(
         &mut self,
         name: &str,
         surface: &mut S,
     ) -> OperationId {
-        if self.play.as_ref().and_then(|play| play.arm(name)).is_none() {
+        let Some(arm) = self.play.as_ref().and_then(|play| play.arm(name)) else {
             return self.login(name, surface);
-        }
+        };
         let op = self.operations.open(ActionKind::Logout);
-        self.logout_member(op, name);
-        self.mem_relog.insert(name.to_string());
-        self.mem_relog_login.remove(name);
+        let previous = arm.session_key();
+        arm.request_relog();
+        self.mem_relog.insert(name.to_string(), previous);
+        self.operations.cancel_pending(ActionKind::Logout, name);
+        self.operations.set(op, name, Outcome::Pending);
         if let Some(play) = self.play.as_ref() {
             play.wake(name);
         }
         op
     }
 
-    /// Fire the login half of operator Relog-nows whose logout has parked:
-    /// the slot sits latched on the title, so re-arming logs it back in
-    /// through the login FIFO. The relog stays pending until that login
-    /// succeeds. Runs in the poll, never on the caller.
-    fn complete_memory_relogs(&mut self) {
-        if self.mem_relog.is_empty() || self.play.is_none() {
-            return;
-        }
-        let ready: Vec<String> = self
-            .mem_relog
-            .iter()
-            .filter(|name| {
-                self.statuses
-                    .iter()
-                    .find(|s| &s.username == *name)
-                    .is_some_and(|s| s.login_latched && !s.connected)
-            })
-            .cloned()
-            .collect();
-        for name in ready {
-            let Some(arm) = self.play.as_ref().and_then(|play| play.arm(&name)) else {
-                continue;
-            };
-            arm.arm_explicit_login();
-            self.fleet.clear_latch(&name);
-            self.mem_relog.remove(&name);
-            self.mem_relog_login.insert(name.clone());
-            self.operations.cancel_pending(ActionKind::Logout, &name);
-            self.operations.cancel_pending(ActionKind::Login, &name);
-            let op = self.operations.open(ActionKind::Login);
-            self.operations.set(op, &name, Outcome::Pending);
-            if let Some(play) = self.play.as_ref() {
-                play.wake(&name);
-            }
-        }
-    }
-
-    /// Settle Relog-now's visible queued state after the login half reaches
-    /// the game or stops on a terminal login error. While it remains queued,
-    /// another Relog action must not be offered.
     fn finish_memory_relogs(&mut self) {
         let statuses = &self.statuses;
         let play = self.play.as_ref();
-        self.mem_relog_login.retain(|name| {
+        self.mem_relog.retain(|name, previous| {
             let logged_in = statuses
                 .iter()
                 .find(|status| status.username == *name)
                 .is_some_and(|status| status.ingame);
-            let failed = play
-                .and_then(|play| play.arm(name))
-                .is_some_and(|arm| arm.login_held_by_error());
-            !logged_in && !failed
+            let arm = play.and_then(|play| play.arm(name));
+            let failed = arm.as_ref().is_some_and(|arm| arm.login_held_by_error());
+            let new_session = arm
+                .as_ref()
+                .and_then(|arm| arm.session_key())
+                .is_some_and(|current| Some(current) != *previous);
+            !((logged_in && new_session) || failed || arm.is_none())
         });
     }
 
@@ -1199,8 +1451,7 @@ impl<Io> OperatorSession<Io> {
     ) -> Removal {
         let op = self.operations.open(ActionKind::Remove);
         if self.profile_saving(name) {
-            self.operations
-                .set(op, name, Outcome::Failed(SAVING.into()));
+            self.operations.set(op, name, Outcome::failed(SAVING));
             return Removal {
                 op,
                 reselected: None,
@@ -1214,7 +1465,6 @@ impl<Io> OperatorSession<Io> {
         self.operations.cancel_pending(ActionKind::Login, name);
         self.deferred.remove(name);
         self.mem_relog.remove(name);
-        self.mem_relog_login.remove(name);
         let connected = self
             .play
             .as_ref()
@@ -1307,9 +1557,6 @@ impl<Io> OperatorSession<Io> {
             self.poll_starts();
             record_transitions(&self.statuses, &self.polled, &mut self.transitions);
             std::mem::swap(&mut self.statuses, &mut self.polled);
-            // Parked Relog-nows re-arm here so their login half is logged
-            // and settled like any operator command this poll.
-            self.complete_memory_relogs();
             self.finish_memory_relogs();
             self.log_poll();
             self.settle_operations();
@@ -1445,20 +1692,28 @@ impl<Io> OperatorSession<Io> {
         let log = crate::log::global();
         for change in &self.transitions {
             let (source, level, text): (Source, Level, std::borrow::Cow<'_, str>) =
-                match &change.transition {
-                    Transition::SlotUp => (Source::Host, Level::Info, "slot up".into()),
-                    Transition::LoginError(e) => {
+                match change.transition.kind() {
+                    TransitionKind::SlotUp => (Source::Host, Level::Info, "slot up".into()),
+                    TransitionKind::LoginError => {
+                        let e = change.transition.error().unwrap_or_default();
                         (Source::Login, Level::Error, format!("login {e}").into())
                     }
                     // Visible by default: the operator reads a stuck bot's
                     // story (logged in, which scene) at a glance. The host's
                     // LoadingScene/Ready phase lines say the same at Debug.
-                    Transition::Ingame => (Source::Login, Level::Info, "ingame".into()),
-                    Transition::Scene(scene) => {
+                    TransitionKind::Ingame => (Source::Login, Level::Info, "ingame".into()),
+                    TransitionKind::Scene => {
+                        let scene = change.transition.state().unwrap_or_default();
                         (Source::Host, Level::Info, format!("scene {scene}").into())
                     }
-                    Transition::Welcome(line) => (Source::Login, Level::Info, line.into()),
-                    Transition::WelcomeFailure(line) => (Source::Login, Level::Warn, line.into()),
+                    TransitionKind::Welcome => {
+                        let line = change.transition.text().unwrap_or_default();
+                        (Source::Login, Level::Info, line.into())
+                    }
+                    TransitionKind::WelcomeFailure => {
+                        let line = change.transition.error().unwrap_or_default();
+                        (Source::Login, Level::Warn, line.into())
+                    }
                 };
             log.slot_line(&change.slot, source, level, &text);
         }
@@ -1556,12 +1811,9 @@ impl<Io> OperatorSession<Io> {
             let Some(spawn) = self.deferred.remove(&name) else {
                 continue;
             };
-            // A fresh lifetime handshakes on its own: any Relog-now
-            // sequencing for the previous lifetime is moot (its baseline
-            // is recorded below; a still-unsettled toggle stays visible
-            // until it settles and the slot logs in again).
+            // A replacement worker has its own mailbox and session; the
+            // previous lifetime's pending notice cannot follow it.
             self.mem_relog.remove(&name);
-            self.mem_relog_login.remove(&name);
             self.old_lifetime_retired(&name);
             // Deleted while it waited: nothing to spawn.
             let Some(mut profile) = self.durable_profile(&name).cloned() else {
@@ -1604,8 +1856,8 @@ impl<Io> OperatorSession<Io> {
             self.starts.remove(&slot);
             let result = match &outcome {
                 Some(script::StartOutcome::Ready) => Outcome::Completed,
-                Some(script::StartOutcome::Failed(error)) => Outcome::Failed(error.clone()),
-                Some(script::StartOutcome::Rejected(error)) => Outcome::Failed(error.to_string()),
+                Some(script::StartOutcome::Failed(error)) => Outcome::failed(error.clone()),
+                Some(script::StartOutcome::Rejected(error)) => Outcome::failed(error.to_string()),
                 Some(script::StartOutcome::Cancelled) | None => Outcome::Cancelled,
             };
             self.operations.set(op, &slot, result);
@@ -1633,9 +1885,9 @@ impl<Io> OperatorSession<Io> {
                     if row.ingame {
                         Some(Outcome::Completed)
                     } else if let Some(error) = row.terminal_startup_error() {
-                        Some(Outcome::Failed(error.to_string()))
+                        Some(Outcome::failed(error.to_string()))
                     } else if row.worker_terminal.is_some() {
-                        Some(Outcome::Failed(
+                        Some(Outcome::failed(
                             row.error.clone().unwrap_or_else(|| "worker ended".into()),
                         ))
                     } else if arm.as_ref().is_some_and(|arm| arm.login_latched()) {
@@ -1664,7 +1916,7 @@ impl<Io> OperatorSession<Io> {
                     match play.map_or(script::RunState::Idle, |p| p.script_state(slot)) {
                         script::RunState::Paused => Some(Outcome::Completed),
                         script::RunState::Idle | script::RunState::Error => {
-                            Some(Outcome::Skipped("no running script".into()))
+                            Some(Outcome::skipped("no running script"))
                         }
                         _ => None,
                     }
@@ -1673,7 +1925,7 @@ impl<Io> OperatorSession<Io> {
                     match play.map_or(script::RunState::Idle, |p| p.script_state(slot)) {
                         script::RunState::Paused => None,
                         script::RunState::Idle | script::RunState::Error => {
-                            Some(Outcome::Skipped("no script".into()))
+                            Some(Outcome::skipped("no script"))
                         }
                         _ => Some(Outcome::Completed),
                     }
@@ -1703,10 +1955,10 @@ impl<Io> OperatorSession<Io> {
             .play
             .as_ref()
             .ok_or_else(|| script::StartLoadError::Refused("no play".into()))?;
-        let compiled = matches!(start, ScriptStart::Compiled { .. });
-        match start {
-            ScriptStart::Compiled { id, bag } => play.script_start_typed(name, id, bag)?,
-            ScriptStart::Load {
+        let compiled = start.is_compiled();
+        match start.0 {
+            ScriptStartKind::Compiled { id, bag } => play.script_start_typed(name, id, bag)?,
+            ScriptStartKind::Load {
                 js,
                 shape,
                 bag,
@@ -1740,8 +1992,7 @@ impl<Io> OperatorSession<Io> {
             Some(play) if paused => play.script_resume(name),
             Some(play) => play.script_pause(name),
             None => {
-                self.operations
-                    .set(op, name, Outcome::Failed("no play".into()));
+                self.operations.set(op, name, Outcome::failed("no play"));
                 return op;
             }
         }
@@ -1758,9 +2009,7 @@ impl<Io> OperatorSession<Io> {
                 play.script_stop(name);
                 self.operations.set(op, name, Outcome::Pending);
             }
-            None => self
-                .operations
-                .set(op, name, Outcome::Failed("no play".into())),
+            None => self.operations.set(op, name, Outcome::failed("no play")),
         }
         op
     }
@@ -1788,7 +2037,7 @@ impl<Io> OperatorSession<Io> {
                     stopped += 1;
                     Outcome::Pending
                 }
-                _ => Outcome::Skipped("no script".into()),
+                _ => Outcome::skipped("no script"),
             };
             self.operations.set(op, name, outcome);
         }
@@ -1847,8 +2096,19 @@ impl<Io> OperatorSession<Io> {
         mirror: ArmMirror,
         label: &'static str,
     ) -> Result<OperationId, String> {
+        self.create_profile_with_log_action(profile, mirror, label, "profile save")
+    }
+
+    /// [`Self::create_profile`] with the action that owns its assignment log.
+    pub(crate) fn create_profile_with_log_action(
+        &mut self,
+        profile: Profile,
+        mirror: ArmMirror,
+        label: &'static str,
+        assignment_action: &'static str,
+    ) -> Result<OperationId, String> {
         self.refuse_existing(&profile.username, label)?;
-        self.save_profile(profile, mirror, label)
+        self.save_profile_with_log_action(profile, mirror, label, assignment_action)
     }
 
     /// Rename `old` to `profile.username` as one transaction: the new row
@@ -1967,7 +2227,7 @@ impl<Io> OperatorSession<Io> {
         Ok(Some(self.submit_write(
             ActionKind::DeleteProfile,
             vec![VaultChange::Remove(name.to_string())],
-            ArmMirror::None,
+            ArmMirror::none(),
             "chooser",
             "profile delete",
         )))
@@ -2059,7 +2319,7 @@ impl<Io> OperatorSession<Io> {
             .cloned()
             .ok_or_else(|| format!("auto-login: no profile {name}"))?;
         profile.settings.auto_login = on;
-        self.save_profile(profile, ArmMirror::AutoLogin(on), "auto-login")
+        self.save_profile(profile, ArmMirror::auto_login(on), "auto-login")
     }
 
     /// Persist a profile's random-event guardian fields; a running slot's
@@ -2082,12 +2342,32 @@ impl<Io> OperatorSession<Io> {
         profile.settings.random_events = random_events;
         profile.settings.lamp_skill = lamp_skill.to_string();
         profile.settings.lamp_auto = lamp_auto;
-        let mirror = ArmMirror::Guardian {
-            random_events,
-            lamp_skill: lamp_skill.to_string(),
-            lamp_auto,
-        };
+        let mirror = ArmMirror::guardian(random_events, lamp_skill.to_string(), lamp_auto);
         self.save_profile(profile, mirror, "random")
+    }
+
+    /// Persist one hostile random's policy and mirror it to a running slot
+    /// once the vault write is durable.
+    pub fn set_random_event_policy(
+        &mut self,
+        name: &str,
+        event: &str,
+        policy: RandomEventPolicy,
+    ) -> Result<OperationId, String> {
+        let mut profile = self
+            .vault
+            .as_ref()
+            .ok_or_else(|| "random: vault locked".to_string())?
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("random: no profile {name}"))?;
+        let event = event.trim().to_ascii_lowercase();
+        profile.settings.set_random_event_policy(&event, policy);
+        self.save_profile(
+            profile,
+            ArmMirror::random_event_policy(event, policy),
+            "random",
+        )
     }
 
     /// Whether `name` has no durable row yet: its first save (new or
@@ -2164,7 +2444,7 @@ impl<Io> OperatorSession<Io> {
     }
 
     fn settle_write(&mut self, written: Written) {
-        let Some(pending) = self.writes.remove(&written.op) else {
+        let Some(mut pending) = self.writes.remove(&written.op) else {
             return;
         };
         // Profiles whose newest queued write this is: only those may be put
@@ -2198,8 +2478,8 @@ impl<Io> OperatorSession<Io> {
         }
         let member = pending.member;
         let settings = matches!(
-            pending.mirror,
-            ArmMirror::ScriptSettings { .. } | ArmMirror::Remember(Some(_))
+            &pending.mirror.0,
+            ArmMirrorKind::ScriptSettings { .. } | ArmMirrorKind::Remember(Some(_))
         );
         // A superseded write (later writes in this commit wrote every row it
         // did) is durable only inside their rows. If the commit succeeded, it
@@ -2228,35 +2508,41 @@ impl<Io> OperatorSession<Io> {
                     };
                     self.saves.settle(written.op, saved);
                 }
-                if let ArmMirror::Remember(Some(live)) = &pending.mirror {
-                    if live.run.is_some() {
-                        if let Some(play) = self.play.as_mut() {
-                            if let Some(profile) = committed {
-                                play.remember_profile(profile);
-                            }
+                if matches!(
+                    &pending.mirror.0,
+                    ArmMirrorKind::Remember(Some(live)) if live.run.is_some()
+                ) {
+                    let ArmMirrorKind::Remember(Some(live)) =
+                        std::mem::replace(&mut pending.mirror, ArmMirror::none()).0
+                    else {
+                        unreachable!("Remember(Some) with a run was matched above");
+                    };
+                    if let Some(play) = self.play.as_mut() {
+                        if let Some(profile) = committed {
+                            play.remember_profile(profile);
                         }
-                        self.queue_native_delivery(written.op, member, live.clone());
-                        return;
                     }
+                    self.queue_native_delivery(written.op, member, live);
+                    return;
                 }
                 // Operation IDs order profile saves across commits, not just
                 // within a writer batch. A late memory completion must never
                 // re-arm a mode the operator has since cancelled.
-                let delivery = if matches!(pending.mirror, ArmMirror::Memory(_))
+                let delivery = if matches!(&pending.mirror.0, ArmMirrorKind::Memory(_))
                     && !newest.iter().any(|(name, _)| *name == member)
                 {
                     LiveDelivery::NotRunning
                 } else {
                     self.apply_mirror(&member, pending.mirror, committed)
                 };
-                SettingsResult::Saved(delivery)
+                SettingsResult::saved(delivery)
             }
             Err(error) if !written.superseded => {
                 // A failed memory toggle put the arm ahead of the restored
                 // durable row: pull it back so the next handshake sends the
                 // restored value, never the refused one.
-                let reset_lowmem = match &pending.mirror {
-                    ArmMirror::Memory(_) => newest
+                let reset_lowmem = match &pending.mirror.0 {
+                    ArmMirrorKind::Memory(_) => newest
                         .iter()
                         .find(|(name, _)| *name == member)
                         .and_then(|(_, durable)| durable.as_ref())
@@ -2281,32 +2567,28 @@ impl<Io> OperatorSession<Io> {
                         }
                     }
                 }
-                let failure = WriteFailure {
-                    op: written.op,
-                    target: member.clone(),
-                    label: pending.label,
-                    error: error.clone(),
-                };
+                let failure =
+                    WriteFailure::new(written.op, member.clone(), pending.label, error.clone());
                 if tracked {
                     self.saves
-                        .settle(written.op, SaveResult::Failed(failure.clone()));
+                        .settle(written.op, SaveResult::failed(failure.duplicate()));
                 }
                 self.write_failures.push(failure);
                 self.operations
-                    .set(written.op, &member, Outcome::Failed(error.clone()));
-                SettingsResult::Failed(error)
+                    .set(written.op, &member, Outcome::failed(error.clone()));
+                SettingsResult::failed(error)
             }
             _ => {
                 self.operations.set(written.op, &member, Outcome::Cancelled);
                 if tracked {
                     // Reported once, through the write that owns the row.
                     let result = match commit_error {
-                        Some(error) => SaveResult::Failed(WriteFailure {
-                            op: written.op,
-                            target: member.clone(),
-                            label: pending.label,
+                        Some(error) => SaveResult::failed(WriteFailure::new(
+                            written.op,
+                            member.clone(),
+                            pending.label,
                             error,
-                        }),
+                        )),
                         None if durable_row => SaveResult::Saved,
                         None => SaveResult::Gone,
                     };
@@ -2316,11 +2598,8 @@ impl<Io> OperatorSession<Io> {
             }
         };
         if settings {
-            self.settings_writes.push(SettingsWrite {
-                op: written.op,
-                profile: member,
-                result,
-            });
+            self.settings_writes
+                .push(SettingsWrite::new(written.op, member, result));
         }
     }
 
@@ -2328,7 +2607,7 @@ impl<Io> OperatorSession<Io> {
     /// setting (a live effect or a card's parameters) that no later write
     /// of `member` in its commit (`later`) replaces.
     fn keeps_own_setting(&self, member: &str, mirror: &ArmMirror, later: &[OperationId]) -> bool {
-        !matches!(mirror, ArmMirror::None)
+        !matches!(&mirror.0, ArmMirrorKind::None)
             && !later
                 .iter()
                 .filter_map(|op| self.writes.get(op))
@@ -2346,15 +2625,15 @@ impl<Io> OperatorSession<Io> {
         let Some(play) = self.play.as_mut() else {
             return LiveDelivery::NotRunning;
         };
-        match mirror {
-            ArmMirror::None => {}
-            ArmMirror::AutoLogin(on) => {
+        match mirror.0 {
+            ArmMirrorKind::None => {}
+            ArmMirrorKind::AutoLogin(on) => {
                 if let Some(arm) = play.arm(name) {
                     arm.set_auto_login(on);
                 }
                 play.wake(name);
             }
-            ArmMirror::Guardian {
+            ArmMirrorKind::Guardian {
                 random_events,
                 lamp_skill,
                 lamp_auto,
@@ -2365,14 +2644,22 @@ impl<Io> OperatorSession<Io> {
                     *arm.lamp_skill.lock().unwrap() = lamp_skill;
                 }
             }
-            ArmMirror::Memory(lowmem) => {
+            ArmMirrorKind::RandomEventPolicy { event, policy } => {
+                if let Some(arm) = play.arm(name) {
+                    arm.random_event_policies
+                        .lock()
+                        .unwrap()
+                        .insert(event, policy);
+                }
+            }
+            ArmMirrorKind::Memory(lowmem) => {
                 // Re-affirm the toggle the command already armed: the
                 // durable row and the handshake channel agree again.
                 if let Some(arm) = play.arm(name) {
                     arm.set_lowmem_handshake(lowmem);
                 }
             }
-            ArmMirror::Remember(live) => {
+            ArmMirrorKind::Remember(live) => {
                 // The committed row, not the staged vault (a newer edit may
                 // be queued behind this one).
                 if let Some(profile) = committed {
@@ -2380,9 +2667,11 @@ impl<Io> OperatorSession<Io> {
                 }
                 return deliver_settings(play, name, live);
             }
-            ArmMirror::ScriptSettings { live, .. } => return deliver_settings(play, name, live),
-            ArmMirror::NativeSettings { .. } => {
-                return LiveDelivery::Rejected("native settings were not prepared".into())
+            ArmMirrorKind::ScriptSettings { live, .. } => {
+                return deliver_settings(play, name, live)
+            }
+            ArmMirrorKind::NativeSettings { .. } => {
+                return LiveDelivery::rejected("native settings were not prepared")
             }
         }
         LiveDelivery::NotRunning
@@ -2403,7 +2692,7 @@ fn deliver_settings(play: &Play, name: &str, live: Option<LiveSettings>) -> Live
     }
     if let Some(target) = live.run {
         let Some(config) = live.prepared else {
-            return LiveDelivery::Rejected("native settings were not prepared".into());
+            return LiveDelivery::rejected("native settings were not prepared");
         };
         return match play.script_configure_compiled(name, config, target) {
             script::CompiledDelivery::Applied => LiveDelivery::Applied,
@@ -2412,7 +2701,7 @@ fn deliver_settings(play: &Play, name: &str, live: Option<LiveSettings>) -> Live
             script::CompiledDelivery::Unchanged => LiveDelivery::Unchanged,
             script::CompiledDelivery::Stale => LiveDelivery::Stale,
             script::CompiledDelivery::NotRunning => LiveDelivery::NotRunning,
-            script::CompiledDelivery::Rejected(error) => LiveDelivery::Rejected(format!(
+            script::CompiledDelivery::Rejected(error) => LiveDelivery::rejected(format!(
                 "{}: {} ({})",
                 error.field, error.message, error.code
             )),
@@ -2490,7 +2779,7 @@ impl<Io> OperatorSession<Io> {
 fn completed_or_failed(result: Result<(), String>) -> Outcome {
     match result {
         Ok(()) => Outcome::Completed,
-        Err(error) => Outcome::Failed(error),
+        Err(error) => Outcome::failed(error),
     }
 }
 
@@ -2516,29 +2805,29 @@ fn record_transitions(
             None => {
                 push(name, Transition::SlotUp);
                 if let Some(e) = &s.error {
-                    push(name, Transition::LoginError(e.clone()));
+                    push(name, Transition::login_error(e.clone()));
                 }
             }
             Some(p) => {
                 if p.error.is_none() {
                     if let Some(e) = &s.error {
-                        push(name, Transition::LoginError(e.clone()));
+                        push(name, Transition::login_error(e.clone()));
                     }
                 }
                 if !p.ingame && s.ingame {
                     push(name, Transition::Ingame);
                 }
                 if p.scene_state != s.scene_state {
-                    push(name, Transition::Scene(s.scene_state));
+                    push(name, Transition::scene(s.scene_state));
                 }
                 if p.welcome_notice != s.welcome_notice {
                     if let Some(line) = &s.welcome_notice {
-                        push(name, Transition::Welcome(line.clone()));
+                        push(name, Transition::welcome(line.clone()));
                     }
                 }
                 if p.welcome_failure.is_none() {
                     if let Some(line) = &s.welcome_failure {
-                        push(name, Transition::WelcomeFailure(line.clone()));
+                        push(name, Transition::welcome_failure(line.clone()));
                     }
                 }
             }

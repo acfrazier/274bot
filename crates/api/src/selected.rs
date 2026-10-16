@@ -187,8 +187,12 @@ pub enum FactError {
     },
 }
 
-/// Process-local identity; `slot` comes from Play's worker lifetime owner only.
-/// Intentionally not deserializable or persistable.
+/// Process-local identity of one operator run, stamped with the session it
+/// currently executes in; `slot` comes from Play's worker lifetime owner only.
+/// Intentionally not deserializable or persistable. The typed projections
+/// ([`slot_key`](Self::slot_key), [`session_key`](Self::session_key),
+/// [`same_run`](Self::same_run)) and the rest of the identity envelope live in
+/// [`crate::identity`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RunKey {
     pub slot: u64,
@@ -196,20 +200,30 @@ pub struct RunKey {
     pub session: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GenerationExhausted;
-
 impl RunKey {
-    pub fn next_run(self) -> Result<Self, GenerationExhausted> {
+    /// The next operator run of the same slot, or a refusal once the run
+    /// space is exhausted; never wraps.
+    pub fn next_run(self) -> Result<Self, crate::identity::IdentityError> {
         Ok(Self {
-            run: self.run.checked_add(1).ok_or(GenerationExhausted)?,
+            run: self
+                .run
+                .checked_add(1)
+                .ok_or(crate::identity::IdentityError::Exhausted(
+                    crate::identity::IdentityKind::Run,
+                ))?,
             ..self
         })
     }
 
-    pub fn next_session(self) -> Result<Self, GenerationExhausted> {
+    /// The same run re-stamped with the next session epoch, or a refusal once
+    /// the epoch space is exhausted; never wraps.
+    pub fn next_session(self) -> Result<Self, crate::identity::IdentityError> {
         Ok(Self {
-            session: self.session.checked_add(1).ok_or(GenerationExhausted)?,
+            session: self.session.checked_add(1).ok_or(
+                crate::identity::IdentityError::Exhausted(
+                    crate::identity::IdentityKind::SessionEpoch,
+                ),
+            )?,
             ..self
         })
     }
@@ -307,16 +321,18 @@ pub struct Requirement {
     pub source: SourceSpan,
 }
 
-/// Preparation-worker capability. Only [`Self::run`] constructs one, on its
-/// worker thread; pump/tick callers never receive it. It cannot leave that
-/// thread or be retained by a prepared card.
+/// Preparation-worker capability. Production constructs it only inside
+/// [`Self::within`] on a WorkAdmission `Prepare` step; fixture tests can use
+/// `FamilyPreparation::run` on a dedicated thread. Pump/tick callers never receive it.
+/// It cannot leave that thread or be retained by a prepared card.
 pub struct FamilyPreparation {
     _thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
 }
 
 impl FamilyPreparation {
-    /// Run preparation off-pump. The caller owns joining/settling the worker
-    /// and must fence its result against Stop, replacement and profile removal.
+    /// Test-only off-pump preparation helper. Production callers must submit
+    /// through WorkAdmission and fence the result before publication.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn run<R: Send + 'static>(
         work: impl FnOnce(&mut Self) -> R + Send + 'static,
     ) -> std::io::Result<std::thread::JoinHandle<R>> {
@@ -328,11 +344,48 @@ impl FamilyPreparation {
                 })
             })
     }
+
+    /// Run preparation inline on the calling thread with a
+    /// [`crate::work::PreparationPhase`] context. Production callers supply
+    /// this context inside a WorkAdmission Prepare step; the public context
+    /// type does not itself attest to the caller's thread or worker identity.
+    /// The capability exists only for the duration of `work` and is dropped
+    /// before this returns, so it cannot be retained across a yield. No
+    /// thread is spawned by this method.
+    pub fn within<R>(
+        _step: &mut crate::work::StepContext<'_, crate::work::PreparationPhase>,
+        work: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        work(&mut Self {
+            _thread_bound: std::marker::PhantomData,
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn within_runs_on_the_calling_worker_thread_without_spawning() {
+        use crate::identity::Deadline;
+        use crate::work::{
+            PreparationPhase, SharedCancellation, SliceBudget, StepContext, SystemClock,
+        };
+        use std::num::NonZeroU32;
+        use std::time::{Duration, Instant};
+
+        let clock = SystemClock;
+        let cancel = SharedCancellation::new();
+        let budget = SliceBudget::new(
+            NonZeroU32::MIN,
+            Deadline::at(Instant::now() + Duration::from_secs(60)),
+        );
+        let mut step = StepContext::<PreparationPhase>::new(&clock, budget, &cancel);
+        let caller = std::thread::current().id();
+        let ran_on = FamilyPreparation::within(&mut step, |_| std::thread::current().id());
+        assert_eq!(ran_on, caller);
+    }
 
     #[test]
     fn unknown_never_authorizes_even_when_negated_or_partial() {
@@ -406,8 +459,18 @@ mod tests {
             session: u64::MAX,
             ..original
         };
-        assert_eq!(exhausted.next_run(), Err(GenerationExhausted));
-        assert_eq!(exhausted.next_session(), Err(GenerationExhausted));
+        assert_eq!(
+            exhausted.next_run(),
+            Err(crate::identity::IdentityError::Exhausted(
+                crate::identity::IdentityKind::Run
+            ))
+        );
+        assert_eq!(
+            exhausted.next_session(),
+            Err(crate::identity::IdentityError::Exhausted(
+                crate::identity::IdentityKind::SessionEpoch
+            ))
+        );
     }
 
     #[test]

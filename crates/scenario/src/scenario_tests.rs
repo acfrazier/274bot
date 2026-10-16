@@ -9582,7 +9582,7 @@ fn every_nav_scenario_uses_the_paint_preset() {
             !n.nsew_labels && !n.component_flood,
             "{name} must not force NSEW / flood"
         );
-        if name == "nav_door" || name == "nav_shantay" {
+        if matches!(name, "nav_door" | "nav_shantay" | "nav_mage_arena_bank") {
             assert!(
                 n.engine_speed_ms.is_none(),
                 "{name} keeps Engine A at 600ms without sending ::speed"
@@ -9596,7 +9596,7 @@ fn every_nav_scenario_uses_the_paint_preset() {
 #[test]
 fn nav_shantay_walks_exactly_through_both_henge_branches() {
     let s = get("nav_shantay").expect("nav_shantay");
-    assert_eq!(s.steps.len(), 4);
+    assert_eq!(s.steps.len(), 9);
     for (index, expected) in [
         (
             1,
@@ -9629,6 +9629,147 @@ fn nav_shantay_walks_exactly_through_both_henge_branches() {
         s.settings.nav.engine_speed_ms.is_none(),
         "the live Shantay route must keep the 600ms engine speed without ::speed"
     );
+    // Upstream tail (shantay-pass-route-test): the Varrock walk from the
+    // desert start with 10 coins must latch the crossing-tile watcher and
+    // end inside the Varrock radius, with the toll paid.
+    let StepKind::Walk { dest } = &s.steps[6].kind else {
+        panic!("tail step 6 must be the Varrock WalkTo");
+    };
+    assert_eq!(
+        *dest,
+        WorldTile {
+            x: 3213,
+            z: 3424,
+            level: 0
+        }
+    );
+    assert!(matches!(
+        s.steps[6].wait.arm,
+        Proof::VisitedWithin {
+            min_x: 3300,
+            max_x: 3306,
+            min_z: 3118,
+            max_z: 3122,
+            level: 0
+        }
+    ));
+    assert!(matches!(
+        s.steps[5].wait.arm,
+        Proof::ItemId { count: 10, .. }
+    ));
+    assert!(matches!(
+        s.steps[8].wait.arm,
+        Proof::ItemIdAtMost { count: 0, .. }
+    ));
+}
+
+#[test]
+fn nav_mage_arena_bank_walks_the_wilderness_lever_then_banks_with_gundai() {
+    let s = get("nav_mage_arena_bank").expect("nav_mage_arena_bank is registered");
+    assert_eq!(s.steps.len(), 9);
+    assert_eq!(s.seed.profiles, vec![("test", "test")]);
+    assert!(s.seed.mainland);
+    assert!(matches!(s.proof, Proof::BankOpen));
+    assert!(s.settings.nav.allow_teleports && s.settings.nav.allow_wilderness);
+    assert!(
+        s.settings.nav.engine_speed_ms.is_none(),
+        "the mage route keeps Engine A at 600ms without ::speed"
+    );
+    assert_eq!(s.settings.deadline, Duration::from_secs(600));
+    let index = |name: &str| {
+        s.steps
+            .iter()
+            .position(|step| step.name.starts_with(name))
+            .unwrap_or_else(|| panic!("step {name:?} missing"))
+    };
+    // Wield before the walk: the webs need a worn slash weapon (upstream).
+    assert!(index("wield the rune scimitar") < index("walk to the Mage Arena cellar"));
+    assert!(index("teleport outside Ardougne") < index("walk to the Mage Arena cellar"));
+    let walk = &s.steps[index("walk to the Mage Arena cellar")];
+    let StepKind::Walk { dest } = &walk.kind else {
+        panic!("the cellar step must be a nav Walk");
+    };
+    assert_eq!(
+        *dest,
+        WorldTile {
+            x: 2542,
+            z: 4714,
+            level: 0
+        }
+    );
+    // Upstream's Wilderness-lever sighting: lever (3154,3924) +/-8, Chebyshev.
+    assert!(matches!(
+        walk.wait.arm,
+        Proof::VisitedWithin {
+            min_x: 3146,
+            max_x: 3162,
+            min_z: 3916,
+            max_z: 3932,
+            level: 0
+        }
+    ));
+    assert_eq!(walk.wait.budget_ticks, 800);
+    assert!(matches!(
+        s.steps[s.steps.len() - 1].wait.arm,
+        Proof::BankOpen
+    ));
+    assert!(names().contains(&"nav_mage_arena_bank"));
+}
+
+#[test]
+fn flour_collector_seeds_thirty_pots_then_proves_both_loads_at_seers() {
+    let s = get("flour_collector").expect("flour_collector is registered");
+    assert_eq!(s.settings.start_script, Some("FlourCollector"));
+    assert!(s.settings.require_mainland_base);
+    assert_eq!(s.settings.deadline, Duration::from_secs(480));
+    assert!(matches!(s.proof, Proof::ItemId { id: 1933, count: 1 }));
+    // Upstream's quest gate: a fresh post-relog `getvar murderquest 1` reply.
+    let quest = s
+        .steps
+        .iter()
+        .position(|step| step.name.starts_with("set Murder Mystery"))
+        .expect("quest gate step");
+    assert!(matches!(
+        s.steps[quest].wait.arm,
+        Proof::FreshChat {
+            needle: "get murderquest: 1"
+        }
+    ));
+    // Upstream's seed: 30 empty pots banked at Seers, none in the pack or bank as flour.
+    assert!(
+        s.steps.iter().any(|step| matches!(
+            step.wait.arm,
+            Proof::BankItemId {
+                id: 1931,
+                count: 30
+            }
+        )),
+        "the exact 30-pot seed must be proven in the bank before Start"
+    );
+    // Upstream's per-load counts: 28 pots withdrawn and filled, 2 restocked.
+    for expected in [
+        Proof::ItemId {
+            id: 1931,
+            count: 28,
+        },
+        Proof::ItemId {
+            id: 1933,
+            count: 28,
+        },
+        Proof::BankItemId {
+            id: 1933,
+            count: 28,
+        },
+        Proof::ItemId { id: 1931, count: 2 },
+    ] {
+        assert!(
+            s.steps
+                .iter()
+                .any(|step| step.wait.arm.name() == expected.name()),
+            "missing step proof {}",
+            expected.name()
+        );
+    }
 }
 
 #[test]
@@ -12813,4 +12954,333 @@ fn sherlock_scenarios_start_the_compiled_card_with_one_seeded_clue() {
         );
         assert!(names().contains(&name));
     }
+}
+
+#[test]
+fn jive_cells_are_registered_with_cards_and_loadouts() {
+    // (cell, card, loadout pinned)
+    let cells: &[(&str, &str, bool)] = &[
+        ("jive_chests", "JiveChests", false),
+        ("jive_crafting", "JiveCrafting", false),
+        ("jive_enchanter", "JiveEnchanter", false),
+        ("jive_dragons", "JiveDragons", true),
+        ("jive_dragons_black_range", "JiveDragons", true),
+        ("jive_dragons_potion_restock", "JiveDragons", true),
+        ("jive_demons", "JiveDemons", true),
+        ("jive_kbd", "JiveKBD", true),
+    ];
+    for &(name, card, pinned) in cells {
+        assert!(names().contains(&name), "{name} registered");
+        let s = get(name).unwrap_or_else(|| panic!("{name} resolves"));
+        assert_eq!(s.name, name);
+        assert_eq!(s.settings.start_script, Some(card), "{name} card");
+        assert_eq!(
+            s.settings.nav.engine_speed_ms,
+            Some(600),
+            "{name} keeps Engine A at the default 600ms tick"
+        );
+        let start = s
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap_or_else(|| panic!("{name} starts its card"));
+        assert!(start > 3, "{name} seeds and acknowledges before Start");
+        assert!(
+            s.steps[start + 1..]
+                .iter()
+                .all(|step| matches!(step.kind, StepKind::Perform { .. })),
+            "{name} only watches after Start"
+        );
+        if pinned {
+            let inject =
+                settings_inject_map(s.settings.script_settings_inject).expect("inject map");
+            assert_eq!(
+                inject.get("loadout"),
+                Some(&Value::String("Scenario Green Dragon food".into())),
+                "{name} pins the existing GreenDragon fixture loadout by name"
+            );
+            let loadouts = s
+                .settings
+                .fixture_loadouts
+                .unwrap_or_else(|| panic!("{name} posts fixture loadouts at Start"));
+            assert_eq!(loadouts[0].name, "Scenario Green Dragon food", "{name}");
+        } else {
+            assert!(
+                s.settings.fixture_loadouts.is_none(),
+                "{name}'s card reads no loadout, so none is posted"
+            );
+        }
+    }
+}
+
+#[test]
+fn jive_terminal_proofs_are_not_their_own_seed() {
+    // Terminal proofs need post-Start work: banked/recoiled products start
+    // at zero and XP baselines are captured at Start, so assert the seed's
+    // own zero-proofs are what the pre-Start steps acknowledge.
+    let crafting = get("jive_crafting").expect("jive_crafting");
+    assert_eq!(
+        crafting.proof,
+        Proof::StatXpGain {
+            id: CRAFTING_STAT,
+            min: 560
+        },
+        "crafting gate is a full load plus one ring of real XP"
+    );
+    let enchanter = get("jive_enchanter").expect("jive_enchanter");
+    assert_eq!(
+        enchanter.proof,
+        Proof::StatXpGain {
+            id: MAGIC_STAT,
+            min: 490
+        },
+        "enchanter gate is a full load plus one cast of real XP"
+    );
+    let black = get("jive_dragons_black_range").expect("jive_dragons_black_range");
+    assert_eq!(
+        black.proof,
+        Proof::StatXpGain { id: 5, min: 72 },
+        "black range gate is the buried kill bones, never seeded XP"
+    );
+    let restock = get("jive_dragons_potion_restock").expect("jive_dragons_potion_restock");
+    assert!(
+        restock
+            .steps
+            .iter()
+            .any(|step| matches!(step.wait.arm, Proof::BankItemId { id: 379, count: 35 })),
+        "restock watches the bank reach at least 35 lobsters"
+    );
+    let noted_gone = restock
+        .steps
+        .iter()
+        .position(|step| matches!(step.wait.arm, Proof::ItemIdAtMost { id: 380, count: 0 }))
+        .expect("restock watches the noted lobsters leave the pack");
+    let bank_at_most = restock
+        .steps
+        .iter()
+        .position(|step| {
+            matches!(
+                step.wait.arm,
+                Proof::BankItemIdAtMost { id: 379, count: 35 }
+            )
+        })
+        .expect("restock re-reads the bank at at most 35 lobsters");
+    assert!(
+        bank_at_most > noted_gone,
+        "the at-most bank check runs after the withdraw watches, pinning exactly 35"
+    );
+    let demons = get("jive_demons").expect("jive_demons");
+    assert!(
+        !demons
+            .steps
+            .iter()
+            .any(|step| matches!(step.wait.arm, Proof::BankItemIdAny { .. })),
+        "demons must not gate on a chance drop: only Ashes are guaranteed"
+    );
+    assert_eq!(
+        demons.proof,
+        Proof::StatXpGain { id: 4, min: 1 },
+        "demons' function proof is Ranged XP from the fight"
+    );
+}
+
+/// E2E-PORT-CONVERSIONS: the four rs2b0t class-B ports register with
+/// converted gates only — XP/counts inside fixed deadlines, real fields,
+/// and no chance or spawn oracle. Rate, projection, exact-herb-ID and
+/// swarm gates from the upstream files must not reappear as proofs.
+#[test]
+fn e2e_port_conversions_register_converted_gates() {
+    let start = |s: &Scenario| {
+        s.steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap()
+    };
+    let arms = |s: &Scenario, range: std::ops::RangeFrom<usize>| {
+        s.steps[range]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>()
+    };
+
+    let thiever = get("thiever_guard_no_bank").expect("thiever_guard_no_bank");
+    assert_eq!(thiever.settings.start_script, Some("Thiever"));
+    assert_eq!(thiever.settings.deadline, Duration::from_secs(420));
+    let inject = settings_inject_map(thiever.settings.script_settings_inject).unwrap();
+    assert_eq!(inject.get("target"), Some(&Value::String("Guard".into())));
+    assert_eq!(inject.get("banking"), Some(&Value::String("None".into())));
+    assert_eq!(inject.get("loot"), Some(&Value::String(String::new())));
+    let watch = arms(&thiever, start(&thiever) + 1..);
+    assert_eq!(
+        watch,
+        vec![Proof::StatXpGain { id: 17, min: 2084 }],
+        "25k XP/hr converted to one sustained XP gate over the 300s watch"
+    );
+    assert_eq!(thiever.proof, watch[0]);
+
+    let rune = get("dart_fletcher_rune").expect("dart_fletcher_rune");
+    assert_eq!(rune.settings.start_script, Some("DartFletcher"));
+    assert_eq!(rune.settings.deadline, SCRIPT_GOLD_DEADLINE);
+    let inject = settings_inject_map(rune.settings.script_settings_inject).unwrap();
+    assert_eq!(inject.get("tier"), Some(&Value::String("Rune".into())));
+    let rune_start = start(&rune);
+    let seed = arms(&rune, 0..);
+    assert!(seed[..rune_start].contains(&Proof::Stat {
+        id: FLETCHING_STAT,
+        min: 99,
+    }));
+    assert!(seed[..rune_start].contains(&Proof::ItemId {
+        id: RUNE_DART_TIP_ID,
+        count: 1200,
+    }));
+    let watch = arms(&rune, rune_start + 1..);
+    assert!(watch.contains(&Proof::ItemId {
+        id: RUNE_DART_ID,
+        count: 1000,
+    }));
+    assert!(watch.contains(&Proof::ItemIdAtMost {
+        id: BRONZE_DART_ID,
+        count: 0,
+    }));
+    assert_eq!(
+        rune.proof,
+        Proof::StatXpGain {
+            id: FLETCHING_STAT,
+            min: 18000,
+        }
+    );
+
+    let targets = get("auto_fighter_targets").expect("auto_fighter_targets");
+    assert_eq!(targets.settings.start_script, Some("AutoFighter"));
+    assert_eq!(targets.settings.deadline, Duration::from_secs(420));
+    let inject = settings_inject_map(targets.settings.script_settings_inject).unwrap();
+    assert_eq!(
+        inject.get("target"),
+        Some(&Value::String("Bear, Unicorn".into()))
+    );
+    assert_eq!(
+        inject.get("loadout"),
+        Some(&Value::String("Scenario AutoFighter food".into()))
+    );
+    assert!(
+        targets.settings.fixture_loadouts.is_some_and(|rows| rows
+            .iter()
+            .any(|row| row.name == "Scenario AutoFighter food")),
+        "Start resolves the loadout setting from posted fixture rows"
+    );
+    assert_eq!(
+        inject.get("loot"),
+        Some(&Value::Array(vec![
+            Value::String("Unicorn horn".into()),
+            Value::String("Fur".into()),
+        ]))
+    );
+    let targets_start = start(&targets);
+    let seed = arms(&targets, 0..);
+    for id in [UNICORN_HORN_ID, FUR_ID] {
+        assert!(
+            seed[..targets_start].contains(&Proof::ItemIdAtMost { id, count: 0 }),
+            "no seeded kill loot {id} before Start"
+        );
+    }
+    let watch = arms(&targets, targets_start + 1..);
+    let unicorn = watch
+        .iter()
+        .position(|arm| {
+            *arm == Proof::BankItemId {
+                id: UNICORN_HORN_ID,
+                count: 1,
+            }
+        })
+        .unwrap();
+    let bear = watch
+        .iter()
+        .position(|arm| {
+            *arm == Proof::BankItemId {
+                id: FUR_ID,
+                count: 1,
+            }
+        })
+        .unwrap();
+    let closed = watch
+        .iter()
+        .position(|arm| *arm == Proof::BankClosed)
+        .unwrap();
+    let fresh = watch
+        .iter()
+        .position(|arm| {
+            *arm == Proof::FreshStatXpGain {
+                id: STRENGTH_STAT,
+                min: 1,
+            }
+        })
+        .unwrap();
+    assert!(unicorn < closed && bear < closed && closed < fresh);
+
+    let food = get("auto_fighter_food_override").expect("auto_fighter_food_override");
+    assert_eq!(food.settings.start_script, Some("AutoFighter"));
+    assert_eq!(food.settings.deadline, SCRIPT_GOLD_DEADLINE);
+    let inject = settings_inject_map(food.settings.script_settings_inject).unwrap();
+    assert_eq!(inject.get("food"), Some(&Value::String("Cake".into())));
+    let food_start = start(&food);
+    assert_eq!(
+        inject.get("loadout"),
+        Some(&Value::String("Scenario AutoFighter food".into()))
+    );
+    assert!(food.settings.fixture_loadouts.is_some());
+    let seed = arms(&food, 0..);
+    assert!(seed[..food_start].contains(&Proof::ItemId {
+        id: TROUT_ID,
+        count: 5,
+    }));
+    assert!(seed[..food_start].contains(&Proof::ItemIdAtMost {
+        id: CAKE_ID,
+        count: 0,
+    }));
+    let watch = arms(&food, food_start + 1..);
+    assert_eq!(
+        watch[0],
+        Proof::ItemId {
+            id: CAKE_ID,
+            count: 3,
+        },
+        "bank-first: the Cake withdrawal is the first post-Start gate"
+    );
+    assert!(watch.contains(&Proof::BankClosed));
+
+    let furnace = get("smelter_bot_furnace").expect("smelter_bot_furnace");
+    assert_eq!(furnace.settings.start_script, Some("SmelterBot"));
+    assert_eq!(furnace.settings.deadline, SCRIPT_GOLD_DEADLINE);
+    let inject = settings_inject_map(furnace.settings.script_settings_inject).unwrap();
+    assert_eq!(inject.get("bar"), Some(&Value::String("Bronze".into())));
+    let furnace_start = start(&furnace);
+    let seed = arms(&furnace, 0..);
+    assert!(seed[..furnace_start].contains(&Proof::ItemId {
+        id: COPPER_ORE_ID,
+        count: 9,
+    }));
+    assert!(seed[..furnace_start].contains(&Proof::ItemId {
+        id: TIN_ORE_ID,
+        count: 9,
+    }));
+    assert!(seed[..furnace_start].contains(&Proof::ItemIdAtMost {
+        id: BRONZE_BAR_ID,
+        count: 0,
+    }));
+    let watch = arms(&furnace, furnace_start + 1..);
+    assert!(watch.contains(&Proof::ItemId {
+        id: BRONZE_BAR_ID,
+        count: 1,
+    }));
+    assert!(watch.contains(&Proof::ItemIdAtMost {
+        id: COPPER_ORE_ID,
+        count: 0,
+    }));
+    assert_eq!(
+        furnace.proof,
+        Proof::ItemId {
+            id: BRONZE_BAR_ID,
+            count: 1,
+        }
+    );
 }

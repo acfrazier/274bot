@@ -6,7 +6,7 @@ use std::fmt;
 use std::ops::{Deref, DerefMut};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroize;
 
 /// A secret string. `Debug` never prints the value, the whole allocation is
 /// zeroed on drop and by [`Secret::clear`], and it serializes as the plain
@@ -17,13 +17,13 @@ use zeroize::{Zeroize, Zeroizing};
 /// login block), and not earlier reallocations of a buffer that grew. Reserve
 /// capacity up front ([`Secret::with_capacity`]) for text typed by hand.
 #[derive(Clone, Default, PartialEq, Eq)]
-pub struct Secret(Zeroizing<String>);
+pub struct Secret(String);
 
 impl Secret {
     /// An empty secret with room for `capacity` bytes, so typing into it does
     /// not reallocate (and leave an unzeroed copy behind) for a normal length.
     pub fn with_capacity(capacity: usize) -> Self {
-        Self(Zeroizing::new(String::with_capacity(capacity)))
+        Self(String::with_capacity(capacity))
     }
 
     pub fn as_str(&self) -> &str {
@@ -39,13 +39,19 @@ impl Secret {
 
 impl From<String> for Secret {
     fn from(value: String) -> Self {
-        Self(Zeroizing::new(value))
+        Self(value)
     }
 }
 
 impl From<&str> for Secret {
     fn from(value: &str) -> Self {
-        Self(Zeroizing::new(value.to_owned()))
+        Self(value.to_owned())
+    }
+}
+
+impl Drop for Secret {
+    fn drop(&mut self) {
+        self.0.zeroize();
     }
 }
 

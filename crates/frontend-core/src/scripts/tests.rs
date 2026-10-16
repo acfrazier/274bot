@@ -2,15 +2,24 @@
 //! [`host_play::Play`] (no server contact), real script slots and the real
 //! profile writer over a temp vault.
 
+use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use super::{parse_parameter_text, Notice, ParameterCommit, ParameterEditKey, Scripts};
+use crate::command::{
+    CardKind, CommandBook, CommandFailure, Completion, OperatorCommand, Pending, Stage, Subject,
+};
 use crate::marked::prepare_apply_settings_marked;
 use crate::operations::{ActionKind, Outcome};
 use crate::selection::{start_marked, stop_marked, MarkedSelection, ProfileIdentity};
 use crate::session::OperatorSession;
 use crate::surface::HeadlessSurface;
+use api::identity::{ProcessIncarnation, ProcessTime, RequestIdMinter, Scope, Settlement};
+use api::process_condition::{
+    ConditionCause, ConditionId, ProcessCapability, ProcessConditions, ProcessServiceCode,
+    ProcessServiceCondition,
+};
 use host_play::{InstancePermit, Play, PlayOptions};
 use serde_json::{json, Map, Value};
 
@@ -78,7 +87,7 @@ impl Fixture {
     fn card(&mut self, file: &str, src: &str) -> script::JsCard {
         let path = self.dir.join(file);
         std::fs::write(&path, src).unwrap();
-        self.scripts.js.load(&path).unwrap()
+        self.scripts.js_mut().load(&path).unwrap()
     }
 
     fn assign(&mut self, name: &str, card: &script::JsCard) {
@@ -99,6 +108,18 @@ impl Fixture {
         assert!(
             !self.scripts.starts_pending(),
             "script Start did not settle"
+        );
+    }
+    fn settle_catalog_work(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while self.scripts.catalog_work_pending() && Instant::now() < deadline {
+            self.core.poll();
+            self.scripts.poll(&mut self.core);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            !self.scripts.catalog_work_pending(),
+            "catalog work did not settle"
         );
     }
 
@@ -168,11 +189,15 @@ impl Fixture {
         if let Some(run) = play.script_native_run(name) {
             let id = script::compiled_id(identity.strip_prefix("compiled:").unwrap()).unwrap();
             let revision = play.script_native_settings_revision(name).unwrap() + 1;
-            let config = play
+            let worker = play
                 .script_prepare_config(id, revision, std::sync::Arc::new(bag.clone()))
-                .unwrap()
+                .unwrap();
+            let work_identity = worker.identity();
+            let config = worker
                 .join()
                 .unwrap()
+                .unwrap()
+                .commit(work_identity)
                 .unwrap();
             return play.script_configure_compiled(name, config, run)
                 == script::CompiledDelivery::Unchanged;
@@ -254,7 +279,7 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
         &card.settings_schema,
     );
     f.core.flush_writes();
-    let before = f.core.last_operation().map(|report| report.id);
+    let before = f.core.last_operation().map(|report| report.id());
 
     for text in ["1", "12", "123"] {
         let buffer = f.scripts.parameter_text_mut_for(
@@ -277,7 +302,7 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
             ),
             Ok(json!(text.parse::<u64>().unwrap()))
         );
-        assert_eq!(f.core.last_operation().map(|report| report.id), before);
+        assert_eq!(f.core.last_operation().map(|report| report.id()), before);
     }
 
     let buffer = f.scripts.parameter_text_mut_for(
@@ -301,7 +326,7 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
         )
         .is_err());
     assert_eq!(
-        f.core.last_operation().map(|report| report.id),
+        f.core.last_operation().map(|report| report.id()),
         before,
         "an invalid partial number never creates a save operation"
     );
@@ -331,7 +356,7 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
         .start_profile(&mut f.core, "alice", None)
         .unwrap_err();
     assert!(start_error.contains("uncommitted"));
-    assert_eq!(f.core.last_operation().map(|report| report.id), before);
+    assert_eq!(f.core.last_operation().map(|report| report.id()), before);
     assert!(
         f.scripts.parameter_edit_blocks_start("alice"),
         "a valid but uncommitted draft must hold Start"
@@ -354,12 +379,12 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
         other => panic!("expected one queued profile save, got {other:?}"),
     };
     assert_eq!(
-        f.core.last_operation().map(|report| report.id),
+        f.core.last_operation().map(|report| report.id()),
         Some(op),
         "the explicit commit adds exactly one operation"
     );
     assert_eq!(
-        f.core.operation(op).unwrap().action,
+        f.core.operation(op).unwrap().action(),
         ActionKind::SaveProfile
     );
     assert_eq!(
@@ -376,7 +401,7 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
         ParameterCommit::Pending(op),
         "the same in-flight value must reuse its operation"
     );
-    assert_eq!(f.core.last_operation().map(|report| report.id), Some(op));
+    assert_eq!(f.core.last_operation().map(|report| report.id()), Some(op));
 
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
@@ -398,7 +423,7 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
             .unwrap(),
         ParameterCommit::Unchanged
     );
-    assert_eq!(f.core.last_operation().map(|report| report.id), Some(op));
+    assert_eq!(f.core.last_operation().map(|report| report.id()), Some(op));
 }
 
 #[test]
@@ -449,7 +474,7 @@ fn unknown_resource_save_survives_and_radius_remains_editable() {
         json!(["coppe"]),
         "the typo is syntactically valid but not a known Mining resource"
     );
-    let before = f.core.last_operation().map(|report| report.id);
+    let before = f.core.last_operation().map(|report| report.id());
     let result = f.scripts.commit_parameter_value(
         &mut f.core,
         &key,
@@ -466,7 +491,7 @@ fn unknown_resource_save_survives_and_radius_remains_editable() {
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
     let report = f.core.operation(op).unwrap();
-    assert_eq!(report.action, ActionKind::SaveProfile);
+    assert_eq!(report.action(), ActionKind::SaveProfile);
     assert_eq!(
         report.outcome("alice"),
         Some(&Outcome::Completed),
@@ -489,7 +514,7 @@ fn unknown_resource_save_survives_and_radius_remains_editable() {
             ),
             Ok(ParameterCommit::Unchanged)
         ));
-        assert_eq!(f.core.last_operation().map(|report| report.id), Some(op));
+        assert_eq!(f.core.last_operation().map(|report| report.id()), Some(op));
     }
 
     let current_bag = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
@@ -537,7 +562,7 @@ fn unknown_resource_save_survives_and_radius_remains_editable() {
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
     let radius_report = f.core.operation(radius_op).unwrap();
-    assert_eq!(radius_report.action, ActionKind::SaveProfile);
+    assert_eq!(radius_report.action(), ActionKind::SaveProfile);
     assert_eq!(radius_report.outcome("alice"), Some(&Outcome::Completed));
     let saved = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
     assert_eq!(saved.get("miningResources"), Some(&json!(["coppe"])));
@@ -572,7 +597,7 @@ fn merged_profile_bag_carries_profile_global_clue_partner() {
     let mut profile = f.core.vault().unwrap().get("alice").unwrap().clone();
     profile.settings.clue_duel_partner = "Helper".into();
     f.core
-        .save_profile(profile, crate::ArmMirror::Remember(None), "clue-global")
+        .save_profile(profile, crate::ArmMirror::remember(None), "clue-global")
         .unwrap();
     f.core.flush_writes();
     let card = f.card("clue.ts", LOOPING);
@@ -638,14 +663,14 @@ fn apply_to_all_reaches_same_card_members_and_skips_other_cards() {
     );
     let report = f.scripts.last_settings_sync().unwrap();
     assert_eq!(
-        (report.saved, report.failed.len(), report.skipped.len()),
+        (report.saved, report.failed.len(), report.skipped().len()),
         (2, 0, 1)
     );
     assert_eq!((report.delivered, report.not_running), (1, 1));
     let operation = f.core.operation(op).unwrap();
     assert!(matches!(
         operation.outcome("carol"),
-        Some(Outcome::Skipped(_))
+        Some(o) if o.is_skipped()
     ));
     assert_eq!(operation.outcome("bob"), Some(&Outcome::Completed));
     assert_eq!(operation.outcome("dave"), Some(&Outcome::Completed));
@@ -655,7 +680,7 @@ fn apply_to_all_reaches_same_card_members_and_skips_other_cards() {
         "carol's run of another card was never posted"
     );
     let summary = report.summary().to_string();
-    assert_eq!(f.scripts.take_notice(), Some(Notice::Show(summary)));
+    assert_eq!(f.scripts.take_notice(), Some(Notice::show(summary)));
 }
 
 /// Wall-wide Apply to all copies same-card members only: unassigned members
@@ -837,7 +862,7 @@ fn scenario_start_script_waits_for_copy_confirmation() {
             Some(bag.clone()),
             Vec::new(),
             if loadouts {
-                vec![script::Loadout::new("fixture")]
+                vec![api::loadout::Loadout::new("fixture")]
             } else {
                 Vec::new()
             },
@@ -965,7 +990,7 @@ fn apply_to_all_keeps_each_live_targets_global_clue_partner() {
         let mut profile = f.core.vault().unwrap().get(name).unwrap().clone();
         profile.settings.clue_duel_partner = partner.into();
         f.core
-            .save_profile(profile, crate::ArmMirror::Remember(None), "partner")
+            .save_profile(profile, crate::ArmMirror::remember(None), "partner")
             .unwrap();
     }
     f.core.flush_writes();
@@ -1012,7 +1037,7 @@ fn a_saved_partner_reaches_the_running_script() {
         .scripts
         .profile_save_live(&f.core, "alice", &profile.settings);
     f.core
-        .save_profile(profile, crate::ArmMirror::Remember(live), "credentials")
+        .save_profile(profile, crate::ArmMirror::remember(live), "credentials")
         .unwrap();
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
@@ -1037,14 +1062,20 @@ fn coalesced_partner_saves_settle_on_the_newest_partner() {
             .scripts
             .profile_save_live(&f.core, "alice", &profile.settings);
         f.core
-            .save_profile(profile, crate::ArmMirror::Remember(live), "credentials")
+            .save_profile(profile, crate::ArmMirror::remember(live), "credentials")
             .unwrap()
     });
     drop(held);
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
 
-    let outcome = |op| f.core.operation(op).unwrap().outcome("alice").cloned();
+    let outcome = |op| {
+        f.core
+            .operation(op)
+            .unwrap()
+            .outcome("alice")
+            .map(|o| o.duplicate())
+    };
     assert_eq!(outcome(saves[0]), Some(Outcome::Cancelled));
     assert_eq!(outcome(saves[1]), Some(Outcome::Completed));
     assert!(f.run_has_bag("alice", &bag(&[("clueDuelPartner", json!("Second"))])));
@@ -1202,9 +1233,8 @@ fn start_all_and_stop_all_cover_every_member() {
     f.scripts.start_all(&mut f.core, None);
     assert_eq!(
         f.scripts.take_notice(),
-        Some(Notice::Show(
-            "Start all: started 1, skipped 1, failed 1: carol: no assignment; skipped bob: already active"
-                .into(),
+        Some(Notice::show(
+            "Start all: started 1, skipped 1, failed 1: carol: no assignment; skipped bob: already active",
         ))
     );
     f.settle();
@@ -1256,7 +1286,7 @@ fn a_parameter_edit_reaches_the_run_once_durable() {
     // Delivered, not Unchanged: the run had not received it while queued.
     assert_eq!(
         writes[0].result,
-        super::SettingsResult::Saved(super::LiveDelivery::Delivered)
+        super::SettingsResult::saved(super::LiveDelivery::Delivered)
     );
     assert!(f.run_has_bag("alice", &bag(&[("target", json!("Guard"))])));
 }
@@ -1343,7 +1373,7 @@ fn overlapping_syncs_each_settle_their_own_operation() {
     }
     assert!(matches!(
         f.core.operation(second).unwrap().outcome("bob"),
-        Some(Outcome::Completed)
+        Some(&Outcome::Completed)
     ));
     assert_eq!(f.scripts.last_settings_sync().unwrap().op, second);
     assert_eq!(
@@ -1365,16 +1395,16 @@ fn a_ready_start_keeps_the_start_all_report_shown() {
     f.assign("alice", &card);
     f.scripts.start_profile(&mut f.core, "alice", None).unwrap();
     f.settle();
-    assert!(f.scripts.js.load_failure(&card.identity_key()).is_some());
+    assert!(f.scripts.js().load_failure(&card.identity_key()).is_some());
     std::fs::write(f.dir.join("gate.ts"), "export const fail = false;").unwrap();
     f.scripts.take_notice();
 
     f.scripts.start_all(&mut f.core, None);
-    let report = Notice::Show("Start all: started 1, skipped 0".into());
+    let report = Notice::show("Start all: started 1, skipped 0");
     assert_eq!(f.scripts.take_notice(), Some(report));
     f.settle();
     f.core.flush_writes();
-    assert!(f.scripts.js.load_failure(&card.identity_key()).is_none());
+    assert!(f.scripts.js().load_failure(&card.identity_key()).is_none());
     assert_eq!(f.scripts.take_notice(), None, "the report is not replaced");
     f.core.play().unwrap().script_stop("alice");
 }
@@ -1439,7 +1469,7 @@ fn a_start_carries_its_operation_to_the_row_and_the_log() {
         f.core
             .fleet_view()
             .row(name)
-            .and_then(|row| row.last_op.clone())
+            .and_then(|row| row.last_op().map(|op| op.duplicate()))
             .expect(name)
     };
 
@@ -1449,42 +1479,60 @@ fn a_start_carries_its_operation_to_the_row_and_the_log() {
     f.scripts
         .start_selected(&mut f.core, "opid-bob", None, None)
         .unwrap();
-    f.core.poll();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while f
+        .core
+        .fleet_view()
+        .row("opid-alice")
+        .and_then(|row| row.last_op())
+        .is_none_or(|op| op.action() != crate::ActionKind::ScriptStart)
+    {
+        assert!(
+            Instant::now() < deadline,
+            "Start preparation did not publish"
+        );
+        f.core.poll();
+        f.scripts.poll(&mut f.core);
+        std::thread::sleep(Duration::from_millis(5));
+    }
     let accepted = op_of(&f, "opid-alice");
-    // Accepted (it may already have settled if the isolate was quick).
-    assert_eq!(accepted.action, crate::ActionKind::ScriptStart);
+    assert_eq!(accepted.action(), crate::ActionKind::ScriptStart);
     f.settle();
     f.core.poll();
 
     let alice = op_of(&f, "opid-alice");
     assert_eq!(
-        (alice.id, &alice.outcome),
-        (accepted.id, &Outcome::Completed)
+        (alice.id(), alice.outcome()),
+        (accepted.id(), &Outcome::Completed)
     );
     let bob = op_of(&f, "opid-bob");
     assert!(
-        matches!(&bob.outcome, Outcome::Failed(reason) if reason.contains("setup-fails")),
+        bob.outcome().is_failed()
+            && bob
+                .outcome()
+                .reason()
+                .is_some_and(|reason| reason.contains("setup-fails")),
         "{bob:?}"
     );
     let failed = f.core.fleet_view().row("opid-bob").unwrap().has_failure();
     assert!(failed, "a failed Start is a visible row failure");
 
     let lines = |slot: &str| {
-        let mut view = crate::log::LogView::new(crate::log::LogScope::Slot(slot.into()));
+        let mut view = crate::log::LogView::new(crate::log::LogScope::slot(slot));
         crate::log::global().refresh(&mut view);
         view.rows()
             .iter()
-            .map(|e| (e.level, e.message.to_string()))
+            .map(|e| (e.level(), e.message().to_string()))
             .collect::<Vec<_>>()
     };
     let alice_log = lines("opid-alice");
     let at = |text: String| alice_log.iter().position(|(_, line)| *line == text);
     let (start, done) = (
-        at(format!("op#{} Start accepted", alice.id.0)),
-        at(format!("op#{} Start completed", alice.id.0)),
+        at(format!("op#{} Start accepted", alice.id().0)),
+        at(format!("op#{} Start completed", alice.id().0)),
     );
     assert!(start.is_some() && start < done, "{alice_log:?}");
-    let prefix = format!("op#{} Start failed: ", bob.id.0);
+    let prefix = format!("op#{} Start failed: ", bob.id().0);
     assert!(
         lines("opid-bob").iter().any(|(level, line)| {
             *level == api::hostlog::Level::Error
@@ -1549,13 +1597,13 @@ fn marked_start_skips_active_rows_and_duplicate_start_is_idempotent() {
     }
 
     let stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
-    assert_eq!((stop.stopped, stop.cancelled), (3, 0));
+    assert_eq!((stop.stopped(), stop.cancelled()), (3, 0));
     let duplicate_stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
-    assert_eq!(duplicate_stop.stopped, 0);
+    assert_eq!(duplicate_stop.stopped(), 0);
     assert!(duplicate_stop
-        .skipped
+        .skipped()
         .iter()
-        .any(|skip| skip.reason.contains("stopping")));
+        .any(|skip| skip.reason().contains("stopping")));
 }
 
 fn native_fixture(test: &str, members: &[&str]) -> Fixture {
@@ -1743,7 +1791,7 @@ fn save_native_partner(f: &mut Fixture, name: &str, partner: &str) {
         .profile_save_live(&f.core, name, &row.settings)
         .unwrap();
     f.core
-        .save_profile(row, crate::ArmMirror::Remember(Some(live)), "partner")
+        .save_profile(row, crate::ArmMirror::remember(Some(live)), "partner")
         .unwrap();
 }
 
@@ -1765,7 +1813,7 @@ fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_sche
                 .insert(key.clone(), entry.as_object().unwrap().clone());
         }
         f.core
-            .save_profile(row, crate::ArmMirror::None, "restore")
+            .save_profile(row, crate::ArmMirror::none(), "restore")
             .unwrap();
         f.core.flush_writes();
         let super::SchemaView::Ready { version, fields } =
@@ -1789,7 +1837,7 @@ fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_sche
             .script_settings
             .insert(key.clone(), entry.as_object().unwrap().clone());
         f.core
-            .save_profile(row, crate::ArmMirror::None, "restore")
+            .save_profile(row, crate::ArmMirror::none(), "restore")
             .unwrap();
         f.core.flush_writes();
         assert!(matches!(
@@ -1825,10 +1873,7 @@ fn native_invalid_preparation_keeps_assignment_and_durable_settings() {
     f.core.flush_writes();
     assert!(matches!(
         f.core.take_settings_writes().as_slice(),
-        [super::SettingsWrite {
-            result: super::SettingsResult::Failed(_),
-            ..
-        }]
+        [super::SettingsWrite { result, .. }] if result.error().is_some()
     ));
     assert_eq!(
         f.saved_bag("alice", &script::compiled_identity_key(id)),
@@ -1909,7 +1954,7 @@ fn gatherer_profile_loads_integral_legacy_float_and_rejects_fraction() {
             .into_entry(),
         );
         f.core
-            .save_profile(row, crate::ArmMirror::None, "legacy-radius")
+            .save_profile(row, crate::ArmMirror::none(), "legacy-radius")
             .unwrap();
         f.core.flush_writes();
 
@@ -2015,7 +2060,7 @@ fn native_settings_reply_loses_to_profile_recreation() {
         .unwrap();
     f.core.vault_remove("alice").unwrap();
     f.core
-        .create_profile(replacement, crate::ArmMirror::None, "recreate")
+        .create_profile(replacement, crate::ArmMirror::none(), "recreate")
         .unwrap();
     f.core.flush_writes();
     assert!(matches!(
@@ -2045,17 +2090,14 @@ fn profile_form_save_survives_stop_and_restart_with_stale_live_delivery() {
             .unwrap();
         let op = f
             .core
-            .save_profile(row, crate::ArmMirror::Remember(Some(live)), "form")
+            .save_profile(row, crate::ArmMirror::remember(Some(live)), "form")
             .unwrap();
         f.core.stop_script("alice");
         if restart {
             f.core
                 .start_script(
                     "alice",
-                    crate::ScriptStart::Compiled {
-                        id: script::CompiledId("Sherlock"),
-                        bag: Map::new(),
-                    },
+                    crate::ScriptStart::compiled(script::CompiledId("Sherlock"), Map::new()),
                     None,
                 )
                 .unwrap();
@@ -2066,8 +2108,8 @@ fn profile_form_save_survives_stop_and_restart_with_stale_live_delivery() {
         assert_eq!(saved.settings.clue_duel_partner, "Bob");
         assert!(
             matches!(f.core.take_settings_writes().as_slice(), [super::SettingsWrite {
-            op: saved_op, result: super::SettingsResult::Saved(super::LiveDelivery::Stale), ..
-        }] if *saved_op == op)
+            op: saved_op, result, ..
+        }] if *saved_op == op && result.delivery() == Some(&super::LiveDelivery::Stale))
         );
     }
 }
@@ -2119,7 +2161,7 @@ fn unrelated_writes_never_persist_invalid_native_drafts_or_poison_start() {
             .core
             .take_write_failures()
             .iter()
-            .any(|failure| failure.error.contains("unknown")));
+            .any(|failure| failure.error().contains("unknown")));
         f.core.stop_script("alice");
         start_sherlock(&mut f, "alice");
     }
@@ -2194,13 +2236,11 @@ fn valid_native_draft_survives_unrelated_writes() {
             expected,
             "{writer}"
         );
-        assert!(
-            f.core
-                .take_settings_writes()
-                .iter()
-                .any(|write| write.op == op
-                    && matches!(write.result, super::SettingsResult::Saved(_)))
-        );
+        assert!(f
+            .core
+            .take_settings_writes()
+            .iter()
+            .any(|write| write.op == op && write.result.is_saved()));
     }
 }
 
@@ -2217,7 +2257,7 @@ fn profile_partner_delivery_survives_unrelated_write() {
         .unwrap();
     let op = f
         .core
-        .save_profile(row, crate::ArmMirror::Remember(Some(live)), "form")
+        .save_profile(row, crate::ArmMirror::remember(Some(live)), "form")
         .unwrap();
     f.core.set_auto_login("alice", true).unwrap();
     f.core.flush_writes();
@@ -2227,10 +2267,7 @@ fn profile_partner_delivery_survives_unrelated_write() {
         .take_settings_writes()
         .iter()
         .any(|write| write.op == op
-            && matches!(
-                write.result,
-                super::SettingsResult::Saved(super::LiveDelivery::Applied)
-            )));
+            && write.result.delivery() == Some(&super::LiveDelivery::Applied)));
 }
 
 #[test]
@@ -2246,7 +2283,7 @@ fn rejected_native_live_preparation_does_not_reject_profile_form_durability() {
         .unwrap();
     live.bag = std::sync::Arc::new(bag(&[("unknown", json!(1))]));
     f.core
-        .save_profile(row, crate::ArmMirror::Remember(Some(live)), "form")
+        .save_profile(row, crate::ArmMirror::remember(Some(live)), "form")
         .unwrap();
     f.core.flush_writes();
     let disk = Vault::unlock(&f.dir.join("vault"), "test-passphrase-01").unwrap();
@@ -2255,10 +2292,8 @@ fn rejected_native_live_preparation_does_not_reject_profile_form_durability() {
     assert_eq!(saved.settings.clue_duel_partner, "Bob");
     assert!(matches!(
         f.core.take_settings_writes().as_slice(),
-        [super::SettingsWrite {
-            result: super::SettingsResult::Saved(super::LiveDelivery::Rejected(_)),
-            ..
-        }]
+        [super::SettingsWrite { result, .. }]
+            if result.delivery().and_then(|live| live.rejection()).is_some()
     ));
 }
 
@@ -2303,10 +2338,8 @@ fn durable_native_reply_never_configures_a_replacement_run() {
     f.core.flush_writes();
     assert!(matches!(
         f.core.take_settings_writes().as_slice(),
-        [super::SettingsWrite {
-            result: super::SettingsResult::Saved(super::LiveDelivery::Stale),
-            ..
-        }]
+        [super::SettingsWrite { result, .. }]
+            if result.delivery() == Some(&super::LiveDelivery::Stale)
     ));
     assert_eq!(
         f.core
@@ -2406,7 +2439,7 @@ fn failed_native_copy_does_not_assign_an_unassigned_bot() {
             .clone(),
     );
     f.core
-        .save_profile(row, crate::ArmMirror::None, "plant")
+        .save_profile(row, crate::ArmMirror::none(), "plant")
         .unwrap();
     f.core.flush_writes();
     assert!(Scripts::assignment(&f.core, "bob").is_none());
@@ -2537,7 +2570,7 @@ fn restart_prompt_skips_stopped_profile_at_click() {
     assert!(f.scripts.pending_restart_prompt().is_none());
     assert!(matches!(
         f.scripts.take_notice(),
-        Some(Notice::Show(message)) if message == "Skipped alice: not running"
+        Some(notice) if notice.text() == Some("Skipped alice: not running")
     ));
 }
 
@@ -2571,7 +2604,7 @@ fn restart_prompt_skips_run_that_ends_after_click_check() {
     assert_eq!(start_accepted(&f, "alice"), starts_before);
     assert!(matches!(
         f.scripts.take_notice(),
-        Some(Notice::Show(message)) if message == "Skipped alice: not running"
+        Some(notice) if notice.text() == Some("Skipped alice: not running")
     ));
 }
 
@@ -2589,7 +2622,7 @@ fn restart_prompt_skips_logout_latch_at_click() {
     assert!(f.scripts.pending_restart_prompt().is_none());
     assert!(matches!(
         f.scripts.take_notice(),
-        Some(Notice::Show(message)) if message.starts_with("Skipped alice:")
+        Some(notice) if notice.text().is_some_and(|text| text.starts_with("Skipped alice:"))
     ));
 }
 
@@ -2620,7 +2653,7 @@ fn restart_prompt_skips_reassigned_profile_without_reassigning_or_starting() {
     assert!(!f.scripts.restart_required_for("alice", &selection));
     assert!(matches!(
         f.scripts.take_notice(),
-        Some(Notice::Show(message)) if message == "Skipped alice: reassigned"
+        Some(notice) if notice.text() == Some("Skipped alice: reassigned")
     ));
 }
 
@@ -2883,7 +2916,7 @@ fn start_accepted(f: &Fixture, name: &str) -> usize {
     (1..)
         .map_while(|id| f.core.operation(crate::OperationId(id)))
         .filter(|report| {
-            report.action == crate::ActionKind::ScriptStart && report.outcome(name).is_some()
+            report.action() == crate::ActionKind::ScriptStart && report.outcome(name).is_some()
         })
         .count()
 }
@@ -2937,37 +2970,33 @@ fn start_all_over_n_members_dispatches_at_most_the_permit_budget_in_the_click_fr
         "Start all dispatched {starting} in the click frame (budget {})",
         super::START_ADMIT_PER_FRAME
     );
-    assert!(starting > 0, "Start all granted nobody in the click frame");
+    assert!(f.scripts.starts_pending(), "Start all admitted no work");
+    assert_eq!(shown_bulk(&f), "Start all: started 1, queued 4, skipped 0");
     assert_eq!(starting + idle.len(), names.len());
-    if let Some(name) = idle.first() {
-        let brief = f
-            .core
-            .fleet_view()
-            .row(name)
-            .map(|row| row.brief.clone())
-            .unwrap_or_default();
-        assert!(
-            brief.starts_with("queued "),
-            "{name} should reuse the login-queue brief, got {brief:?}"
-        );
-    }
+    let waiting = names
+        .iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("a second member still waits for a permit");
+    let brief = f
+        .core
+        .fleet_view()
+        .row(waiting)
+        .map(|row| row.brief())
+        .unwrap_or("");
+    assert!(
+        brief.starts_with("queued "),
+        "{waiting} should reuse the login-queue brief, got {brief:?}"
+    );
     f.core.poll();
     f.scripts.poll(&mut f.core);
-    let admitted = names
-        .iter()
-        .filter(|name| f.state(name) != script::RunState::Idle)
-        .count();
+    let after_poll = shown_bulk(&f);
     assert!(
-        admitted > starting,
-        "later frames must admit waiting members: click={starting} after_poll={admitted}"
-    );
-    assert!(
-        admitted <= super::START_ADMIT_PER_FRAME * 2,
-        "the second frame exceeded the permit budget: {admitted}"
+        after_poll.starts_with("Start all: started 2, queued 3, skipped 0"),
+        "the later frame grants another waiting member: {after_poll}"
     );
     let notice = f.scripts.take_notice();
-    let text = match &notice {
-        Some(Notice::Show(text)) => text.as_str(),
+    let text = match notice.as_ref().and_then(Notice::text) {
+        Some(text) => text,
         other => panic!("{other:?}"),
     };
     assert!(
@@ -3032,11 +3061,11 @@ fn reassign_while_queued_does_not_start_stale_work() {
     }
 
     f.scripts.start_all(&mut f.core, None);
-    let queued = idle_among(&f, &names)
-        .first()
-        .copied()
-        .expect("need a queued member")
-        .to_string();
+    let queued = names
+        .iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("need a member still waiting for a permit")
+        .clone();
     f.assign(&queued, &second);
 
     f.settle();
@@ -3055,6 +3084,63 @@ fn reassign_while_queued_does_not_start_stale_work() {
     );
 }
 
+/// Once the permit has admitted a worker but before it publishes the Start,
+/// a changed assignment or departing member must still fence the old card.
+#[test]
+fn prepared_start_rechecks_assignment_removal_and_logout_before_dispatch() {
+    for (scenario, reason) in [
+        ("reassigned", "reassigned"),
+        ("removed", "removed"),
+        ("logged-out", "logged out"),
+    ] {
+        let mut f = fixture(
+            &format!("pace-inflight-{scenario}"),
+            &["inflight-alice", "inflight-bob"],
+        );
+        let first = f.card("first.ts", LOOPING);
+        let replacement = f.card("replacement.ts", LOOPING);
+        for name in ["inflight-alice", "inflight-bob"] {
+            f.assign(name, &first);
+        }
+        f.scripts.start_all(&mut f.core, None);
+        assert!(
+            f.scripts.start_queue_place("inflight-alice").is_none(),
+            "first member already has the worker permit"
+        );
+        assert_eq!(f.state("inflight-alice"), script::RunState::Idle);
+        match scenario {
+            "reassigned" => f.assign("inflight-alice", &replacement),
+            "removed" => {
+                let mut surface = HeadlessSurface::new();
+                f.core
+                    .remove("inflight-alice", Instant::now(), &mut surface);
+            }
+            "logged-out" => f
+                .core
+                .play()
+                .unwrap()
+                .arm("inflight-alice")
+                .unwrap()
+                .request_logout(),
+            _ => unreachable!(),
+        }
+        f.settle();
+        let report = shown_bulk(&f);
+        assert!(
+            report.contains(&format!("inflight-alice: {reason}")),
+            "{scenario}: {report}"
+        );
+        assert_eq!(start_accepted(&f, "inflight-alice"), 0, "{scenario}");
+        assert_ne!(
+            f.state("inflight-alice"),
+            script::RunState::Running,
+            "{scenario}: stale card was dispatched"
+        );
+        f.wait_state("inflight-bob", script::RunState::Running);
+        f.core.play().unwrap().script_stop("inflight-bob");
+    }
+}
+
 /// Removing a member that still holds a Start-all place must not start it.
 #[test]
 fn remove_while_queued_does_not_start_stale_work() {
@@ -3067,11 +3153,11 @@ fn remove_while_queued_does_not_start_stale_work() {
     }
 
     f.scripts.start_all(&mut f.core, None);
-    let queued = idle_among(&f, &names)
-        .first()
-        .copied()
-        .expect("need a queued member")
-        .to_string();
+    let queued = names
+        .iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("need a member still waiting for a permit")
+        .clone();
     let mut surface = crate::surface::HeadlessSurface::new();
     f.core.remove(&queued, Instant::now(), &mut surface);
 
@@ -3113,11 +3199,11 @@ fn logout_while_queued_does_not_start_stale_work() {
     }
 
     f.scripts.start_all(&mut f.core, None);
-    let queued = idle_among(&f, &names)
-        .first()
-        .copied()
-        .expect("need a queued member")
-        .to_string();
+    let queued = names
+        .iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("need a member still waiting for a permit")
+        .clone();
     f.core
         .play()
         .unwrap()
@@ -3145,17 +3231,18 @@ fn single_start_of_a_queued_member_is_immediate() {
     }
 
     f.scripts.start_all(&mut f.core, None);
-    let queued = idle_among(&f, &names)
-        .first()
-        .copied()
-        .expect("need a queued member")
-        .to_string();
+    let queued = names
+        .iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("need a member still waiting for a permit")
+        .clone();
     f.scripts.start_profile(&mut f.core, &queued, None).unwrap();
     assert_eq!(
         f.state(&queued),
-        script::RunState::Starting,
-        "{queued} should start without waiting for later frames"
+        script::RunState::Idle,
+        "the single Start is accepted without waiting for another permit frame"
     );
+    assert!(f.scripts.starts_pending());
     f.settle();
     f.wait_state(&queued, script::RunState::Running);
     assert_eq!(
@@ -3218,6 +3305,7 @@ fn assigned_catalog_card_missing_from_loaded_catalog_names_scanned_root() {
     std::fs::write(present_dir.join("PresentBot.ts"), LOOPING).unwrap();
 
     f.scripts.fill_catalog_once(Some(&root));
+    f.settle_catalog_work();
     let present = f
         .scripts
         .js
@@ -3254,6 +3342,7 @@ fn failed_catalog_fill_does_not_latch_root_or_block_later_fill() {
     std::fs::write(failed_scripts.join("index.ts"), "const x = 1;\n").unwrap();
 
     f.scripts.fill_catalog_once(Some(&failed_root));
+    f.settle_catalog_work();
     assert!(
         !f.scripts.catalog_filled,
         "a failed registry parse must not mark the catalog filled"
@@ -3276,6 +3365,7 @@ fn failed_catalog_fill_does_not_latch_root_or_block_later_fill() {
     std::fs::write(present_dir.join("PresentBot.ts"), LOOPING).unwrap();
 
     f.scripts.fill_catalog_once(Some(&root));
+    f.settle_catalog_work();
     assert!(f.scripts.catalog_filled);
     assert_eq!(f.scripts.catalog_root.as_deref(), Some(root.as_path()));
     assert!(
@@ -3285,6 +3375,113 @@ fn failed_catalog_fill_does_not_latch_root_or_block_later_fill() {
             .is_some(),
         "a later valid $RS2B0T root must still register its cards"
     );
+}
+
+#[test]
+fn loaded_start_preparation_bounds_pending_demands_and_preserves_accepted_work() {
+    const LIMIT: usize = 64;
+    let mut f = fixture("loaded-start-bound", &["alice"]);
+    let root = f.dir.join("catalog-root");
+    std::fs::create_dir_all(&root).unwrap();
+    let selected = script::ScriptSel::Loaded(script::ScriptSource::Catalog, "BoneBurier".into());
+    let accepted = (0..LIMIT)
+        .map(|index| format!("profile-{index}"))
+        .collect::<Vec<_>>();
+
+    for profile in &accepted {
+        f.scripts
+            .queue_loaded_start(
+                &f.core,
+                profile,
+                &selected,
+                Some(&root),
+                super::StartKind::Start,
+                false,
+            )
+            .expect("demand within the pending bound");
+    }
+
+    f.scripts
+        .queue_loaded_start(
+            &f.core,
+            &accepted[0],
+            &selected,
+            Some(&root),
+            super::StartKind::Start,
+            false,
+        )
+        .expect("a duplicate Start reuses its admitted preparation");
+    assert!(matches!(
+        f.scripts.queue_loaded_start(
+            &f.core,
+            "profile-over-limit",
+            &selected,
+            Some(&root),
+            super::StartKind::Start,
+            false,
+        ),
+        Err(script::StartLoadError::Refused(error))
+            if error.contains("limit") && error.contains("64")
+    ));
+    for profile in &accepted {
+        f.scripts
+            .queue_loaded_start(
+                &f.core,
+                profile,
+                &selected,
+                Some(&root),
+                super::StartKind::Start,
+                false,
+            )
+            .expect("admitted Start demand is not replaced by a duplicate");
+        assert!(
+            f.scripts.has_start_preparation(profile),
+            "accepted Start demand for {profile} must remain pending"
+        );
+    }
+
+    for profile in accepted {
+        f.scripts.cancel_start_preparation(&profile);
+    }
+    f.settle_catalog_work();
+}
+
+#[test]
+fn marked_catalog_assignment_reports_pending_until_scan_settles() {
+    let mut f = fixture("marked-catalog-assignment-pending", &["alice", "bob"]);
+    let root = f.dir.join("catalog-root");
+    let scripts = root.join("src/bot/scripts");
+    let card_dir = scripts.join("BoneBurier");
+    std::fs::create_dir_all(&card_dir).unwrap();
+    std::fs::write(
+        scripts.join("index.ts"),
+        "import BoneBurier from './BoneBurier/BoneBurier.js';\n\
+         ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });\n",
+    )
+    .unwrap();
+    std::fs::write(card_dir.join("BoneBurier.ts"), LOOPING).unwrap();
+    let selection = mark_uids(&[1, 2]);
+    let card = script::ScriptSel::Loaded(script::ScriptSource::Catalog, "BoneBurier".into());
+
+    let report =
+        crate::marked::assign_marked(&selection, &mut f.core, &mut f.scripts, &card, Some(&root));
+    assert_eq!(report.pending_count(), 2);
+    assert_eq!(report.failed_count(), 0);
+    assert!(
+        report.summary().contains("pending 2")
+            && report.summary().contains("alice: catalog scan pending"),
+        "{}",
+        report.summary()
+    );
+    assert!(report.rows().iter().all(|row| row.outcome().is_pending()));
+    for profile in ["alice", "bob"] {
+        assert_eq!(Scripts::assignment(&f.core, profile), None);
+    }
+
+    f.settle_catalog_work();
+    for profile in ["alice", "bob"] {
+        assert!(Scripts::assignment(&f.core, profile).is_some(), "{profile}");
+    }
 }
 
 /// A member removed while waiting for a marked Start is named as skipped
@@ -3306,8 +3503,8 @@ fn marked_start_removed_member_is_named_and_never_dispatched() {
     );
     let queued = ["alice", "bob", "carol"]
         .into_iter()
-        .find(|name| f.state(name) == script::RunState::Idle)
-        .expect("need a queued member")
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("need a member still waiting for a permit")
         .to_string();
     let mut surface = crate::surface::HeadlessSurface::new();
     f.core.remove(&queued, Instant::now(), &mut surface);
@@ -3361,11 +3558,11 @@ fn start_all_while_a_marked_batch_waits_joins_its_report() {
 }
 
 fn slot_lines(slot: &str) -> Vec<(api::hostlog::Level, String)> {
-    let mut view = crate::log::LogView::new(crate::log::LogScope::Slot(slot.into()));
+    let mut view = crate::log::LogView::new(crate::log::LogScope::slot(slot));
     crate::log::global().refresh(&mut view);
     view.rows()
         .iter()
-        .map(|e| (e.level, e.message.to_string()))
+        .map(|e| (e.level(), e.message().to_string()))
         .collect()
 }
 
@@ -3444,7 +3641,7 @@ fn a_deleted_file_card_is_refused_even_when_its_stored_path_matches() {
     let mut f = fixture("deleted-canonical", &["alice"]);
     let path = f.dir.canonicalize().unwrap().join("gone-later.ts");
     std::fs::write(&path, LOOPING).unwrap();
-    let card = f.scripts.js.load(&path).unwrap();
+    let card = f.scripts.js_mut().load(&path).unwrap();
     assert_eq!(card.path, path, "the stored path is the canonical one");
     f.assign("alice", &card);
     std::fs::remove_file(&path).unwrap();
@@ -3508,15 +3705,213 @@ fn stop_on_marked_rows_reports_waiting_rows_as_cancelled() {
     let stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
     assert_eq!(
         stop.summary(),
-        "Stop selected: stopped 1, cancelled 2, skipped 0"
+        "Stop selected: stopped 0, cancelled 3, skipped 0"
     );
-    assert_eq!(
-        shown_bulk(&f),
-        "Start selected: started 1, skipped 2: bob: cancelled, carol: cancelled"
+    let report = shown_bulk(&f);
+    assert!(
+        report.starts_with("Start selected: started 0, skipped 3"),
+        "{report}"
     );
+    for name in ["alice", "bob", "carol"] {
+        assert!(report.contains(&format!("{name}: cancelled")), "{report}");
+    }
     f.settle();
-    for name in ["bob", "carol"] {
+    for name in ["alice", "bob", "carol"] {
         assert_eq!(start_accepted(&f, name), 0, "{name}");
         assert_eq!(f.state(name), script::RunState::Idle, "{name}");
+    }
+}
+
+/// A frozen command book with one latched process condition.
+fn frozen_book(code: Option<ProcessServiceCode>) -> (CommandBook, ProcessConditions) {
+    let incarnation = ProcessIncarnation::from_start_nonce(NonZeroU64::MIN);
+    let mut conditions = ProcessConditions::new(incarnation);
+    if let Some(code) = code {
+        conditions
+            .publish(ProcessServiceCondition::new(
+                ConditionId::new(incarnation, code),
+                ConditionCause::Panicked,
+                ProcessTime::ZERO,
+                None,
+            ))
+            .unwrap();
+    }
+    (CommandBook::new(), conditions)
+}
+
+/// R2-M1 against the real settings path (the review's fixture): a loaded
+/// JS card's parameter save is staged at once and taken by the durable
+/// writer, so its frozen row is admitted under a latched work-admission
+/// outage and the writer's result settles it; the saved value is on disk.
+#[test]
+fn a_ready_js_settings_save_is_admitted_and_written_under_a_work_outage() {
+    let mut f = fixture("frozen-js-save", &["alice"]);
+    let thiever = f.card("thiever.ts", LOOPING);
+    f.assign("alice", &thiever);
+    let (mut book, conditions) = frozen_book(Some(ProcessServiceCode::WorkAdmissionUnavailable));
+    let alice = Subject::Profile(ProfileIdentity::uid(1));
+    let save = RequestIdMinter::new().mint().unwrap();
+    book.open(
+        save,
+        OperatorCommand::SaveScriptSettings(CardKind::Script),
+        &[(alice, Scope::Process)],
+        &conditions,
+    )
+    .unwrap();
+    assert_eq!(
+        book.report(save).unwrap().member(alice).unwrap().pending(),
+        Some(Pending::Accepted)
+    );
+
+    f.set("alice", &thiever, "target", json!("Guard"));
+    f.core.flush_writes();
+    let writes = f.core.take_settings_writes();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(
+        writes[0].result,
+        super::SettingsResult::saved(super::LiveDelivery::NotRunning)
+    );
+    assert_eq!(
+        f.saved_bag("alice", &thiever.identity_key()),
+        Some(bag(&[("target", json!("Guard"))]))
+    );
+    // The outage never touched the member; the writer's result settles it.
+    assert_eq!(book.fail_unavailable(&conditions), 0);
+    assert_eq!(book.blocked_by(save, alice, &conditions), None);
+    book.settle(save, alice, Settlement::Completed(Completion::Done), None)
+        .unwrap();
+    assert!(book.report(save).unwrap().is_settled());
+}
+
+/// A native card's parameter save is a preparation job first
+/// (`queue_native_settings` → `script_prepare_config`), then the durable
+/// write: its frozen row needs the background service until the
+/// preparation staged the row, and only the writer afterwards.
+#[test]
+fn a_native_settings_save_needs_the_background_service_only_until_prepared() {
+    let mut f = native_fixture("frozen-native-save", &["alice"]);
+    let id = script::CompiledId("Gatherer");
+    let key = script::compiled_identity_key(id);
+    assert!(f
+        .scripts
+        .persist_assignment(&mut f.core, "alice", script::compiled_assignment(id)));
+    f.core.flush_writes();
+    let (mut book, mut conditions) = frozen_book(None);
+    let alice = Subject::Profile(ProfileIdentity::uid(1));
+    let requests = RequestIdMinter::new();
+    let save = requests.mint().unwrap();
+    book.open(
+        save,
+        OperatorCommand::SaveScriptSettings(CardKind::Native),
+        &[(alice, Scope::Process)],
+        &conditions,
+    )
+    .unwrap();
+    let member = |book: &CommandBook| book.report(save).unwrap().member(alice).unwrap().stage();
+    assert_eq!(member(&book), Stage::Admitted);
+
+    // Hold the writer: the preparation stages the row, nothing is durable.
+    let gate = f.core.write_gate();
+    let held = gate.lock().unwrap();
+    f.scripts
+        .set_compiled_overrides(
+            &mut f.core,
+            "alice",
+            id,
+            bag(&[("targetPreference", json!("Nearest"))]),
+        )
+        .unwrap();
+    let staged_value = |f: &Fixture| {
+        f.core
+            .vault()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .script_settings
+            .get(&key)
+            .and_then(|entry| vault::CompiledSettingsRecord::view(entry).ok())
+            .map(|(_, values)| values.get("targetPreference").cloned())
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while staged_value(&f) != Some(Some(json!("Nearest"))) {
+        assert!(
+            Instant::now() < deadline,
+            "native preparation did not settle"
+        );
+        f.core.poll();
+        f.scripts.poll(&mut f.core);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(f.saved_bag("alice", &key), None, "nothing durable yet");
+    // The preparation owner reports; the member no longer needs the service.
+    book.prepared(save, alice).unwrap();
+    assert_eq!(member(&book), Stage::Prepared);
+    let incarnation = ProcessIncarnation::from_start_nonce(NonZeroU64::MIN);
+    let work = ConditionId::new(incarnation, ProcessServiceCode::WorkAdmissionUnavailable);
+    conditions
+        .publish(ProcessServiceCondition::new(
+            work,
+            ConditionCause::Panicked,
+            ProcessTime::ZERO,
+            None,
+        ))
+        .unwrap();
+    assert_eq!(book.fail_unavailable(&conditions), 0);
+    assert_eq!(book.blocked_by(save, alice, &conditions), None);
+    // A second native save is refused now; the prepared one still writes.
+    let refused = requests.mint().unwrap();
+    book.open(
+        refused,
+        OperatorCommand::SaveScriptSettings(CardKind::Native),
+        &[(alice, Scope::Process)],
+        &conditions,
+    )
+    .unwrap();
+    assert!(matches!(
+        book.report(refused)
+            .unwrap()
+            .member(alice)
+            .unwrap()
+            .terminal(),
+        Some(Settlement::Failed(CommandFailure::Refused {
+            capability: ProcessCapability::BackgroundWork,
+            ..
+        }))
+    ));
+    drop(held);
+    f.core.flush_writes();
+    f.core.poll();
+    let writes = f.core.take_settings_writes();
+    assert_eq!(writes.len(), 1, "{writes:?}");
+    assert!(writes[0].result.is_saved());
+    let saved = f.saved_bag("alice", &key).unwrap();
+    let (_, values) = vault::CompiledSettingsRecord::view(&saved).unwrap();
+    assert_eq!(values["targetPreference"], json!("Nearest"));
+    book.settle(save, alice, Settlement::Completed(Completion::Done), None)
+        .unwrap();
+    assert!(book.report(save).unwrap().is_settled());
+}
+
+#[test]
+fn assignment_has_sel_agrees_with_sel_from_assignment() {
+    for (source_kind, identity) in [
+        ("compiled", "Gatherer"),
+        ("compiled", "no-such-card"),
+        ("file", "looper.ts"),
+        ("catalog", "Thiever"),
+        ("bogus", "looper.ts"),
+        ("", ""),
+    ] {
+        let assignment = vault::ScriptAssignment {
+            source_kind: source_kind.into(),
+            identity: identity.into(),
+            ..vault::ScriptAssignment::default()
+        };
+        assert_eq!(
+            super::assignment_has_sel(&assignment),
+            super::sel_from_assignment(&assignment).is_some(),
+            "{source_kind}:{identity}"
+        );
     }
 }

@@ -96,6 +96,13 @@ pub struct WalkSendRow {
     pub checked: bool,
 }
 
+impl WalkSendRow {
+    /// Profile name for this send row.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct WalkSendState {
     pub mode: WalkSendMode,
@@ -229,6 +236,8 @@ pub enum AppAction {
     ScriptLoad(std::path::PathBuf),
     /// Persist the background-bots notice ("Got it, don't show again").
     AckBackground,
+    /// One step of the rs2b0t profile import; the binary owns the flow.
+    ProfileImport(crate::profile_import::ImportAction),
     /// A key for the parameters popup: the binary owns the commit path.
     ParamsKey(KeyEvent),
     /// A key for the loadouts popup: the binary owns the store.
@@ -444,7 +453,7 @@ pub struct TuiApp {
     pub pause_script_on_manual_walk_abort: bool,
     /// The global manual-movement pause preference changed; the session persists it.
     pub pause_script_on_manual_walk_abort_dirty: bool,
-    shared_preferences_path: Option<std::path::PathBuf>,
+    shared_preferences: Option<host_play::local_state::Preferences>,
     pub loadouts_state: LoadoutsState,
     /// The focused slot's script lifecycle (shape display only).
     pub script_state: RunState,
@@ -569,7 +578,7 @@ impl TuiApp {
             quester_paths_dirty: false,
             pause_script_on_manual_walk_abort: true,
             pause_script_on_manual_walk_abort_dirty: false,
-            shared_preferences_path: None,
+            shared_preferences: None,
             map_bake_dirty: false,
             loadouts_state: LoadoutsState::default(),
             script_state: RunState::Idle,
@@ -608,34 +617,41 @@ impl TuiApp {
         }
     }
 
-    /// Bind the shared `panel-ui.json` preference store. Walk permissions
-    /// are refreshed again for every relevant render and admission.
-    pub fn restore_preferences(&mut self, path: impl Into<std::path::PathBuf>) {
-        let path = path.into();
-        self.quester_paths_controller.restore_at(&path);
-        self.quester_paths = self.quester_paths_controller.settings().clone();
-        self.pause_script_on_manual_walk_abort = frontend_core::nav_preference_at(
-            &path,
+    /// Bind the shared process-service preferences. Walk permissions are
+    /// refreshed again for every relevant render and admission.
+    pub fn restore_preferences(&mut self, preferences: host_play::local_state::Preferences) {
+        self.quester_paths_controller.restore(&preferences);
+        let enabled = self.quester_paths_controller.settings().enabled();
+        let folder = self
+            .quester_paths_controller
+            .settings()
+            .folder()
+            .to_path_buf();
+        self.quester_paths.set_enabled(enabled);
+        self.quester_paths.set_folder(folder);
+        self.pause_script_on_manual_walk_abort = frontend_core::nav_preference(
+            &preferences,
             frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
             None,
         )
         .unwrap_or(true);
-        self.shared_preferences_path = Some(path.clone());
+        self.shared_preferences = Some(preferences.clone());
         self.refresh_walk_permissions();
-        self.map.restore_persisted_wilderness(path);
+        self.map.restore_persisted_wilderness(&preferences);
     }
 
     /// Refresh all TUI views of the shared walk permissions from their
     /// durable source. An unbound app uses its local values for isolated
-    /// widgets; production binds and rereads the shared preference file.
+    /// widgets; production binds and rereads the shared preferences (cheap
+    /// per pump: the service re-reads the file at most once per second).
     pub(crate) fn refresh_walk_permissions(&mut self) {
-        let view = self.shared_preferences_path.as_deref().map_or(
+        let view = self.shared_preferences.as_ref().map_or(
             WalkGlobalsView {
                 globals: self.nav,
                 script_scope_notice_ack: self.script_scope_notice_ack,
                 survivable_routing_notice_ack: self.survivable_routing_notice_ack,
             },
-            WalkGlobalsView::read_at,
+            WalkGlobalsView::read,
         );
         self.walk_permissions = view;
         self.nav = view.globals;
@@ -649,12 +665,13 @@ impl TuiApp {
         }
     }
 
-    pub(crate) fn shared_preferences_path(&self) -> Option<&std::path::Path> {
-        self.shared_preferences_path.as_deref()
+    pub(crate) fn shared_preferences(&self) -> Option<&host_play::local_state::Preferences> {
+        self.shared_preferences.as_ref()
     }
 
     pub(crate) fn toggle_map_wilderness(&mut self) {
-        match self.map.toggle_wilderness() {
+        let preferences = self.shared_preferences.clone();
+        match self.map.toggle_wilderness(preferences.as_ref()) {
             Ok(()) => {
                 if self
                     .error
@@ -680,7 +697,7 @@ impl TuiApp {
         let name = self.focused_name()?;
         self.detail
             .as_ref()
-            .filter(|detail| detail.row.name == name)
+            .filter(|detail| detail.row().name() == name)
     }
 
     /// The focused slot's username.
@@ -688,11 +705,7 @@ impl TuiApp {
         self.focused.and_then(|i| self.names.get(i)).cloned()
     }
     pub(crate) fn profile_id_for_name(&self, name: &str) -> frontend_core::ProfileIdentity {
-        self.names
-            .iter()
-            .position(|candidate| candidate == name)
-            .and_then(|index| self.profile_ids.get(index).copied())
-            .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(name))
+        frontend_core::profile_id_for_name(&self.names, &self.profile_ids, name)
     }
     pub(crate) fn is_marked_name(&self, name: &str) -> bool {
         self.table
@@ -703,13 +716,9 @@ impl TuiApp {
         self.names
             .iter()
             .enumerate()
-            .filter(|(index, name)| {
-                self.table.selection.contains(
-                    self.profile_ids
-                        .get(*index)
-                        .copied()
-                        .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(name)),
-                )
+            .filter(|(index, _)| {
+                frontend_core::profile_id_at(&self.profile_ids, &self.names, *index)
+                    .is_some_and(|identity| self.table.selection.contains(identity))
             })
             .map(|(_, name)| name.clone())
             .collect()
@@ -720,7 +729,7 @@ impl TuiApp {
     pub fn refresh(&mut self) {
         self.here = self
             .focused_detail()
-            .and_then(|detail| detail.ready_tile)
+            .and_then(|detail| detail.ready_tile())
             .map(|(x, z, level)| WorldTile { x, z, level });
         if !self.map_active {
             if let Some(here) = self.here {
@@ -1010,7 +1019,7 @@ impl TuiApp {
         let names: Vec<String> = if !self.names.is_empty() {
             self.names.clone()
         } else {
-            self.fleet.iter().map(|row| row.name.clone()).collect()
+            self.fleet.iter().map(|row| row.name().to_owned()).collect()
         };
         let mut rows = Vec::with_capacity(names.len());
         for name in names {
@@ -1043,7 +1052,7 @@ impl TuiApp {
                 .rows
                 .iter()
                 .filter(|row| row.status.is_eligible())
-                .map(|row| self.profile_id_for_name(&row.name))
+                .map(|row| self.profile_id_for_name(row.name()))
                 .collect::<Vec<_>>();
             for row in &mut self.walk_send.rows {
                 if row.status.is_eligible() {
@@ -1065,7 +1074,7 @@ impl TuiApp {
             .walk_send
             .rows
             .iter_mut()
-            .find(|row| row.name == focused)
+            .find(|row| row.name() == focused)
         {
             if row.status.is_eligible() {
                 row.checked = !row.checked;
@@ -1776,10 +1785,10 @@ impl TuiApp {
                         let mark = if row.checked { "*" } else { " " };
                         match row.status {
                             WalkSlotStatus::Eligible(_) => {
-                                format!("{mark}{}", row.name)
+                                format!("{mark}{}", row.name())
                             }
                             WalkSlotStatus::Excluded(reason) => {
-                                format!("{mark}{} ({reason})", row.name)
+                                format!("{mark}{} ({reason})", row.name())
                             }
                         }
                     })
@@ -2028,10 +2037,7 @@ impl TuiApp {
             self.focused_detail()
                 .and_then(|detail| detail.native_status()),
         )
-        .with_walk_risk(
-            self.focused_detail()
-                .and_then(|detail| detail.walk_risk.as_deref()),
-        );
+        .with_walk_risk(self.focused_detail().and_then(|detail| detail.walk_risk()));
         frame.render_widget(pane, area);
     }
 }

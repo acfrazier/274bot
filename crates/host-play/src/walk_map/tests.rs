@@ -1307,7 +1307,7 @@ fn selected_spell_names_match_only_bound_spell_landings() {
     let data =
         |content: Digest| -> Arc<api::game_data::SelectedGameData> {
             Arc::new(serde_json::from_value(serde_json::json!({
-            "schema_version": 4, "revision": 289,
+            "schema_version": 5, "revision": 289,
             "provenance": {
                 "cache_identity": { "cache_id": "fixture", "content_id": content.to_string() },
                 "inputs": [], "content_inputs": [], "decoder_sources": []

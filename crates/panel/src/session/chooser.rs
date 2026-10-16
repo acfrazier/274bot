@@ -1,8 +1,9 @@
 //! Chooser credential scratch: picker edit buffers and vault read/write helpers.
 
+use frontend_core::fresh_uid;
 use vault::{Profile, ProfileSettings};
 
-use super::{fresh_uid, Session};
+use super::Session;
 
 /// What Discard does on a staged Discard / Keep editing prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +19,8 @@ pub enum EditLeave {
     DeleteTarget,
     /// Turn MultiBox off, which closes Profiles and the form with it.
     MultiBoxOff,
+    /// Close the form and open the rs2b0t import in the editor pane.
+    OpenImport,
 }
 
 /// A staged Discard / Keep editing prompt: the operator asked to leave the
@@ -107,7 +110,7 @@ impl Session {
                     .profile_save_live(&self.core, &profile.username, &profile.settings)
             })
             .flatten();
-        let mirror = frontend_core::ArmMirror::Remember(live);
+        let mirror = frontend_core::ArmMirror::remember(live);
         let saved = match rename_from {
             Some(old) => {
                 let old = old.to_string();
@@ -153,11 +156,12 @@ impl Session {
     /// result, and the leave it asked for is the operator's to ask again.
     pub(crate) fn settle_profile_save(&mut self) {
         for settled in self.chooser_save.settle(&mut self.core) {
-            let frontend_core::FormSettled::Saved(saved) = settled else {
+            let Some(saved) = settled.into_saved() else {
                 continue;
             };
-            let name = saved.record.destination;
-            if saved.same_form {
+            let same_form = saved.same_form();
+            let name = saved.into_destination();
+            if same_form {
                 self.chooser_edit = Some(name.clone());
             }
             // `select` builds the arm from the durable auto-login.
@@ -181,8 +185,18 @@ impl Session {
     /// pending target is staged for the Discard / Keep editing prompt
     /// ([`Self::confirm_pending_edit_switch`],
     /// [`Self::cancel_pending_edit_switch`]). Focus changes never come
-    /// through here, so they can never retarget the form.
+    /// through here, so they can never retarget the form. The form and the
+    /// rs2b0t import share the editor pane: an import whose writes are
+    /// still being saved keeps it (the edit does not open), and any other
+    /// import (its path, or a preview, which has written nothing) closes.
     pub fn begin_edit_profile(&mut self, name: Option<&str>) {
+        if self.import_writing() {
+            self.wall.chooser_open = true;
+            return;
+        }
+        if self.profile_import_open {
+            self.close_profile_import();
+        }
         let target = name.unwrap_or("");
         if self.chooser_edit.as_deref() == Some(target) {
             // Same target: keep the buffers — an explicit re-open never
@@ -201,6 +215,34 @@ impl Session {
             return;
         }
         self.open_edit_profile(target);
+    }
+
+    /// Open the rs2b0t import in the editor pane, in place of the edit
+    /// form. With unsaved changes on the form, or its save still being
+    /// written, the Discard / Keep editing prompt asks first.
+    pub fn request_open_import(&mut self) {
+        if self.profile_import_open {
+            return;
+        }
+        if self.chooser_edit.is_some() {
+            if self.edit_dirty() || self.form_saving() {
+                self.stage_edit_exit(EditLeave::OpenImport, "", "import rs2b0t profiles");
+                return;
+            }
+            self.cancel_edit_profile();
+        }
+        self.open_import();
+    }
+
+    fn open_import(&mut self) {
+        self.profile_import_open = true;
+        self.refresh_profile_import();
+    }
+
+    /// Whether a confirmed rs2b0t import's writes are still being saved:
+    /// the editor pane stays on its report until they settle.
+    pub fn import_writing(&self) -> bool {
+        self.profile_import_open && self.profile_import.writing(&self.core)
     }
 
     /// Stage the Discard / Keep editing prompt for leaving the form to
@@ -266,6 +308,10 @@ impl Session {
             EditLeave::MultiBoxOff => {
                 self.cancel_edit_profile();
                 self.apply_multibox(false);
+            }
+            EditLeave::OpenImport => {
+                self.cancel_edit_profile();
+                self.open_import();
             }
         }
     }
@@ -374,5 +420,27 @@ impl Session {
     /// Whether the open edit form's own save is still being written.
     pub fn form_saving(&self) -> bool {
         self.chooser_save.saving(&self.core)
+    }
+
+    /// Rebuild the rs2b0t import text from its flow: after each step, and
+    /// each frame while a confirmed import's writes are still settling.
+    pub fn refresh_profile_import(&mut self) {
+        use frontend_core::rs2b0t_import::Stage;
+        let flow = &self.profile_import;
+        self.profile_import_lines = match flow.stage() {
+            Stage::Path => Vec::new(),
+            Stage::Preview => flow.preview_lines(),
+            Stage::Report => flow.report_lines(&self.core),
+        };
+        self.profile_import_settled = flow.settled(&self.core);
+    }
+
+    /// Close the rs2b0t import, dropping its parsed file (and passwords).
+    pub fn close_profile_import(&mut self) {
+        self.profile_import = frontend_core::rs2b0t_import::ProfileImport::new();
+        self.profile_import_open = false;
+        self.profile_import_lines.clear();
+        self.profile_import_settled = false;
+        self.import_delete_understood = false;
     }
 }

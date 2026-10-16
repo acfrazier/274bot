@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
-use super::{LiveDelivery, LiveSettings, Scripts, SettingsResult, SettingsWrite};
+use super::{LiveDeliveryKind, LiveSettings, Scripts, SettingsWrite};
 use crate::operations::{ActionKind, OperationId, Outcome};
 use crate::session::{ArmMirror, NativeCopyCancellation, OperatorSession};
 
@@ -27,7 +27,7 @@ const UNAVAILABLE: &str = "profile unavailable";
 
 /// A settled settings write (or sync) that needs the operator to choose
 /// whether its affected scripts should restart.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct RestartPrompt {
     op: OperationId,
     targets: Vec<RestartTarget>,
@@ -136,26 +136,26 @@ impl RestartBadge {
 }
 
 /// A prepared sync, frozen for confirmation.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct SyncScope {
-    pub source: String,
+    pub(crate) source: String,
     /// Canonical card identity the bag belongs to.
-    pub card: String,
-    pub card_name: String,
+    pub(crate) card: String,
+    pub(crate) card_name: String,
     /// Wall members assigned the same card when prepared.
-    pub targets: Vec<String>,
+    pub(crate) targets: Vec<String>,
     /// Other wall members, with the reason each is skipped.
-    pub skipped: Vec<(String, String)>,
+    pub(crate) skipped: Vec<(String, String)>,
     /// The source's overrides bag copied to every target.
-    pub overrides: Map<String, Value>,
+    pub(crate) overrides: Map<String, Value>,
     selection: script::ScriptSel,
     /// Per-target fields kept locally, published before any preparation/save.
-    pub excluded: Vec<(String, Vec<String>)>,
+    pub(crate) excluded: Vec<(String, Vec<String>)>,
     /// Set when the scope is narrowed to the marked rows: how many other
     /// wall members are left unchanged because they are not marked.
-    pub unmarked: Option<usize>,
+    pub(crate) unmarked: Option<usize>,
     /// Marked unassigned targets: Apply assigns this card as it copies.
-    pub assigning: Vec<String>,
+    pub(crate) assigning: Vec<String>,
     /// Per-account fields every compiled target keeps; empty for JS cards.
     excluded_fields: Vec<String>,
     field: Option<String>,
@@ -181,6 +181,46 @@ impl SyncScope {
     /// The confirmation line: card, source and frozen scope.
     pub fn prompt(&self) -> &str {
         &self.prompt
+    }
+
+    /// Profile whose parameters are copied.
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// Canonical card identity the bag belongs to.
+    pub fn card(&self) -> &str {
+        &self.card
+    }
+
+    /// Display name of the card.
+    pub fn card_name(&self) -> &str {
+        &self.card_name
+    }
+
+    /// Wall members assigned the same card when prepared.
+    pub fn targets(&self) -> &[String] {
+        &self.targets
+    }
+
+    /// Other wall members, with the reason each is skipped.
+    pub fn skipped(&self) -> &[(String, String)] {
+        &self.skipped
+    }
+
+    /// The source's overrides bag copied to every target.
+    pub fn overrides(&self) -> &Map<String, Value> {
+        &self.overrides
+    }
+
+    /// Marked unassigned targets: Apply assigns this card as it copies.
+    pub fn assigning(&self) -> &[String] {
+        &self.assigning
+    }
+
+    /// Unmarked members left unchanged, when the scope was marked-only.
+    pub fn unmarked(&self) -> Option<usize> {
+        self.unmarked
     }
 
     /// Narrow the scope to the marked rows (`marked`: every marked profile
@@ -289,31 +329,31 @@ fn append_preserved(prompt: &mut String, excluded: &[(String, Vec<String>)]) {
 }
 
 /// Result of one applied sync. Counts fill in as member writes settle.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct SyncReport {
-    pub op: OperationId,
-    pub source: String,
-    pub card: String,
-    pub card_name: String,
+    pub(crate) op: OperationId,
+    pub(crate) source: String,
+    pub(crate) card: String,
+    pub(crate) card_name: String,
     selection: script::ScriptSel,
-    pub skipped: Vec<(String, String)>,
-    pub saved: usize,
+    pub(crate) skipped: Vec<(String, String)>,
+    pub(crate) saved: usize,
     /// A newer edit of this card's parameters on the member (on a failed
     /// save, a newer write of the member) owns its value.
-    pub superseded: usize,
-    pub failed: Vec<(String, String)>,
-    pub delivered: usize,
-    pub unchanged: usize,
-    pub stale: usize,
-    pub not_running: usize,
-    pub applied: usize,
-    pub pending_boundary: usize,
-    pub restart_required: usize,
+    pub(crate) superseded: usize,
+    pub(crate) failed: Vec<(String, String)>,
+    pub(crate) delivered: usize,
+    pub(crate) unchanged: usize,
+    pub(crate) stale: usize,
+    pub(crate) not_running: usize,
+    pub(crate) applied: usize,
+    pub(crate) pending_boundary: usize,
+    pub(crate) restart_required: usize,
     restart_profiles: Vec<String>,
-    pub live_rejected: Vec<(String, String)>,
-    pub excluded: Vec<(String, Vec<String>)>,
+    pub(crate) live_rejected: Vec<(String, String)>,
+    pub(crate) excluded: Vec<(String, Vec<String>)>,
     /// Marked-scope syncs: the unmarked members left unchanged.
-    pub unmarked: Option<usize>,
+    pub(crate) unmarked: Option<usize>,
     /// Member writes not yet settled: (write operation, member).
     pending: Vec<(OperationId, String)>,
     copy_cancellation: Option<NativeCopyCancellation>,
@@ -321,6 +361,96 @@ pub struct SyncReport {
 }
 
 impl SyncReport {
+    /// The write operation this report belongs to.
+    pub fn op(&self) -> OperationId {
+        self.op
+    }
+
+    /// Profile whose parameters were copied.
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// Canonical card identity.
+    pub fn card(&self) -> &str {
+        &self.card
+    }
+
+    /// Display name of the card.
+    pub fn card_name(&self) -> &str {
+        &self.card_name
+    }
+
+    /// Members skipped, with reasons.
+    pub fn skipped(&self) -> &[(String, String)] {
+        &self.skipped
+    }
+
+    /// How many member writes saved.
+    pub fn saved(&self) -> usize {
+        self.saved
+    }
+
+    /// How many member writes were superseded.
+    pub fn superseded(&self) -> usize {
+        self.superseded
+    }
+
+    /// Member writes that failed, with reasons.
+    pub fn failed(&self) -> &[(String, String)] {
+        &self.failed
+    }
+
+    /// How many runs received the bag.
+    pub fn delivered(&self) -> usize {
+        self.delivered
+    }
+
+    /// How many members were unchanged.
+    pub fn unchanged(&self) -> usize {
+        self.unchanged
+    }
+
+    /// How many captured runs were stale.
+    pub fn stale(&self) -> usize {
+        self.stale
+    }
+
+    /// How many members were not running the card.
+    pub fn not_running(&self) -> usize {
+        self.not_running
+    }
+
+    /// How many live deliveries applied.
+    pub fn applied(&self) -> usize {
+        self.applied
+    }
+
+    /// How many live deliveries waited on a boundary.
+    pub fn pending_boundary(&self) -> usize {
+        self.pending_boundary
+    }
+
+    /// How many live deliveries require a restart.
+    pub fn restart_required(&self) -> usize {
+        self.restart_required
+    }
+
+    /// Live deliveries rejected, with reasons.
+    pub fn live_rejected(&self) -> &[(String, String)] {
+        &self.live_rejected
+    }
+
+    /// Per-target fields kept locally.
+    pub fn excluded(&self) -> &[(String, Vec<String>)] {
+        &self.excluded
+    }
+
+    /// Unmarked members left unchanged, when the scope was marked-only.
+    pub fn unmarked(&self) -> Option<usize> {
+        self.unmarked
+    }
+
     pub fn pending(&self) -> usize {
         self.pending.len()
     }
@@ -737,39 +867,40 @@ impl SyncState {
 
 /// Count one settled member write into `report`; the member's outcome.
 fn fold(report: &mut SyncReport, write: &SettingsWrite) -> Outcome {
-    match &write.result {
-        SettingsResult::Saved(live) => {
-            report.saved += 1;
-            match live {
-                LiveDelivery::Delivered => report.delivered += 1,
-                LiveDelivery::Unchanged => report.unchanged += 1,
-                LiveDelivery::Stale => report.stale += 1,
-                LiveDelivery::NotRunning => report.not_running += 1,
-                LiveDelivery::Applied => report.applied += 1,
-                LiveDelivery::PendingBoundary => report.pending_boundary += 1,
-                LiveDelivery::RestartRequired => {
-                    report.restart_required += 1;
-                    if !report.restart_profiles.contains(&write.profile) {
-                        report.restart_profiles.push(write.profile.clone());
-                    }
-                }
-                LiveDelivery::Rejected(error) => {
-                    report
-                        .live_rejected
-                        .push((write.profile.clone(), error.clone()));
-                    return Outcome::Failed(format!("saved, live rejected: {error}"));
+    if let Some(live) = write.result.delivery() {
+        report.saved += 1;
+        match live.kind() {
+            LiveDeliveryKind::Delivered => report.delivered += 1,
+            LiveDeliveryKind::Unchanged => report.unchanged += 1,
+            LiveDeliveryKind::Stale => report.stale += 1,
+            LiveDeliveryKind::NotRunning => report.not_running += 1,
+            LiveDeliveryKind::Applied => report.applied += 1,
+            LiveDeliveryKind::PendingBoundary => report.pending_boundary += 1,
+            LiveDeliveryKind::RestartRequired => {
+                report.restart_required += 1;
+                if !report.restart_profiles.contains(&write.profile) {
+                    report.restart_profiles.push(write.profile.clone());
                 }
             }
-            Outcome::Completed
+            LiveDeliveryKind::Rejected => {
+                let error = live.rejection().unwrap_or_default();
+                report
+                    .live_rejected
+                    .push((write.profile.clone(), error.to_string()));
+                return Outcome::failed(format!("saved, live rejected: {error}"));
+            }
         }
-        SettingsResult::Superseded => {
-            report.superseded += 1;
-            Outcome::Cancelled
-        }
-        SettingsResult::Failed(error) => {
-            report.failed.push((write.profile.clone(), error.clone()));
-            Outcome::Failed(error.clone())
-        }
+        Outcome::Completed
+    } else if write.result.is_superseded() {
+        report.superseded += 1;
+        Outcome::Cancelled
+    } else if let Some(error) = write.result.error() {
+        report
+            .failed
+            .push((write.profile.clone(), error.to_string()));
+        Outcome::failed(error.to_string())
+    } else {
+        Outcome::Cancelled
     }
 }
 
@@ -971,7 +1102,11 @@ impl Scripts {
             .then(|| NativeCopyCancellation::new(op));
         let mut failed = Vec::new();
         let mut pending = Vec::new();
-        let resolved_assignment = self.assignment_for(&selection, None);
+        let resolved_assignment = match self.assignment_for(&selection, None) {
+            Ok(Some(assignment)) => Ok(assignment),
+            Ok(None) => Err("catalog preparation pending".into()),
+            Err(error) => Err(error),
+        };
         for target in targets {
             let row = core.vault().and_then(|v| v.get(&target)).cloned();
             let Some(mut row) = row else {
@@ -1039,10 +1174,7 @@ impl Scripts {
                         });
                     core.save_profile_with_log_action(
                         row,
-                        ArmMirror::ScriptSettings {
-                            card: card.clone(),
-                            live,
-                        },
+                        ArmMirror::script_settings(card.clone(), live),
                         "apply to all",
                         "settings sync",
                     )
@@ -1064,10 +1196,10 @@ impl Scripts {
             }
         }
         for (member, reason) in &skipped {
-            core.set_outcome(op, member, Outcome::Skipped(reason.clone()));
+            core.set_outcome(op, member, Outcome::skipped(reason.clone()));
         }
         for (member, error) in &failed {
-            core.set_outcome(op, member, Outcome::Failed(error.clone()));
+            core.set_outcome(op, member, Outcome::failed(error.clone()));
         }
         for (_, member) in &pending {
             core.set_outcome(op, member, Outcome::Pending);

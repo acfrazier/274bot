@@ -81,16 +81,22 @@ impl<'de> serde::Deserialize<'de> for MapBakeChoice {
     }
 }
 
-/// The remembered choice from `panel-ui.json` (read once per front-end start).
-pub fn load_map_bake_choice() -> MapBakeChoice {
-    host_play::panel_ui_value(MAP_BAKE_KEY)
+/// The remembered choice from the shared preferences (read once per
+/// front-end start).
+pub fn load_map_bake_choice(preferences: &host_play::local_state::Preferences) -> MapBakeChoice {
+    preferences
+        .value(MAP_BAKE_KEY)
         .and_then(|value| value.as_str().map(MapBakeChoice::parse))
         .unwrap_or_default()
 }
 
-/// Write the remembered choice into `panel-ui.json`, keeping every other key.
-pub fn persist_map_bake_choice(choice: MapBakeChoice) -> io::Result<()> {
-    host_play::persist_panel_ui_value(MAP_BAKE_KEY, choice.as_str().into())
+/// Write the remembered choice into the shared preferences, keeping every
+/// other one.
+pub fn persist_map_bake_choice(
+    preferences: &host_play::local_state::Preferences,
+    choice: MapBakeChoice,
+) -> io::Result<()> {
+    preferences.set(MAP_BAKE_KEY, choice.as_str().into())
 }
 
 /// Whether the front end shows the bake warning.
@@ -109,7 +115,7 @@ pub enum MapBakePrompt {
 /// Per-process bake consent for one front end. Open every WalkTo map
 /// demand through [`Self::open`]; it starts a local terrain bake only with
 /// consent (this session's accept, or [`MapBakeChoice::Always`]).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct MapBakeGate {
     choice: MapBakeChoice,
     accepted: bool,

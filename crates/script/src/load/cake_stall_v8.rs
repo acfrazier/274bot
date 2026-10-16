@@ -40,6 +40,65 @@ fn run<'s>(
             )
             .into())
         }
+        "data" => cake_data(scope),
+        "classify_steal" => classify_steal(scope, args.get(1)),
+        "should_reset" => should_reset(scope, args.get(1)),
         _ => Err(cb::not_impl(scope, "cakeStall")),
     }
+}
+
+fn cake_data<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let items: Vec<_> = crate::cake_stall::CAKE_ITEMS
+        .iter()
+        .map(|name| cb::string(scope, name))
+        .collect();
+    let items = v8::Array::new_with_elements(scope, &items).into();
+    let lockout_ticks = cb::num(scope, crate::cake_stall::LOCKOUT_TICKS as f64);
+    let reset_after_refusals = cb::num(scope, f64::from(crate::cake_stall::RESET_AFTER_REFUSALS));
+    cb::object(
+        scope,
+        &[
+            ("cakeItems", items),
+            ("lockoutTicks", lockout_ticks),
+            ("resetAfterRefusals", reset_after_refusals),
+        ],
+    )
+}
+
+fn classify_steal<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    signals: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let gained = cb::get(scope, signals, "gained")?;
+    let gained = cb::truthy(scope, gained);
+    let combat = if gained {
+        false
+    } else {
+        let combat = cb::get(scope, signals, "combat")?;
+        cb::truthy(scope, combat)
+    };
+    let lockout_seen = if gained || combat {
+        false
+    } else {
+        let lockout_seen = cb::get(scope, signals, "lockoutSeen")?;
+        cb::truthy(scope, lockout_seen)
+    };
+    let attempt_seen = if gained || combat || lockout_seen {
+        false
+    } else {
+        let attempt_seen = cb::get(scope, signals, "attemptSeen")?;
+        cb::truthy(scope, attempt_seen)
+    };
+    Ok(cb::string(
+        scope,
+        crate::cake_stall::classify_steal(gained, combat, lockout_seen, attempt_seen),
+    ))
+}
+
+fn should_reset<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    consecutive_refusals: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let consecutive_refusals = cb::number(scope, consecutive_refusals)?;
+    Ok(v8::Boolean::new(scope, crate::cake_stall::should_reset(consecutive_refusals)).into())
 }

@@ -27,22 +27,89 @@ const DONE: &str = "walking";
 /// One bot's inputs to the router, supplied by the front end that owns the
 /// per-bot world snapshot.
 pub struct WalkInputs {
-    pub state: WorldState,
+    state: WorldState,
     /// The bot's bank memory rows ([`host_play::Play::bank_rows`]).
-    pub bank: nav::bank_fetch::BankRows,
-    pub risk_input: host_play::admission::RiskInput,
+    bank: nav::bank_fetch::BankRows,
+    risk_input: host_play::admission::RiskInput,
+}
+
+impl WalkInputs {
+    /// One bot's router inputs.
+    pub fn new(
+        state: WorldState,
+        bank: nav::bank_fetch::BankRows,
+        risk_input: host_play::admission::RiskInput,
+    ) -> Self {
+        Self {
+            state,
+            bank,
+            risk_input,
+        }
+    }
+
+    /// The bot's world snapshot.
+    pub fn state(&self) -> &WorldState {
+        &self.state
+    }
+
+    /// The bot's bank memory rows.
+    pub fn bank(&self) -> &nav::bank_fetch::BankRows {
+        &self.bank
+    }
+
+    /// Risk admission input for this bot.
+    pub fn risk_input(&self) -> &host_play::admission::RiskInput {
+        &self.risk_input
+    }
 }
 
 /// The consumed destination plus the routing options that produced it.
 pub struct MarkedWalk<'a> {
     /// The consumed map selection with its binding, or why none could be
     /// built (the confirmation was stale, nothing was selected, ...).
-    pub prepared: Result<(MapContext, MapWalkPlan), ActionError>,
+    prepared: Result<(MapContext, MapWalkPlan), ActionError>,
     /// The pending destination as read before it was consumed, for the
     /// per-bot receipts of a refused request.
-    pub destination: Option<Tile>,
-    pub options: FindOptions,
-    pub arms: &'a WalkArms,
+    destination: Option<Tile>,
+    options: FindOptions,
+    arms: &'a WalkArms,
+}
+
+impl<'a> MarkedWalk<'a> {
+    /// A consumed walk request.
+    pub fn new(
+        prepared: Result<(MapContext, MapWalkPlan), ActionError>,
+        destination: Option<Tile>,
+        options: FindOptions,
+        arms: &'a WalkArms,
+    ) -> Self {
+        Self {
+            prepared,
+            destination,
+            options,
+            arms,
+        }
+    }
+
+    /// The consumed map selection with its binding, or why none could be built.
+    pub fn prepared(&self) -> Result<&(MapContext, MapWalkPlan), &ActionError> {
+        self.prepared.as_ref()
+    }
+
+    /// The pending destination as read before it was consumed.
+    pub fn destination(&self) -> Option<Tile> {
+        self.destination
+    }
+
+    /// Routing options that produced the destination.
+    pub fn options(&self) -> &FindOptions {
+        &self.options
+    }
+
+    /// Live walk arms for the marked bots.
+    pub fn arms(&self) -> &'a WalkArms {
+        self.arms
+    }
 }
 
 /// A report for a click with nothing marked.

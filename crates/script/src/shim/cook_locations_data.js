@@ -29,3 +29,6 @@ export function findCookLocation(locs, name) {
 export function buildCookLocations() {
     return COOK_LOCATIONS;
 }
+export function nearestCookSurface(origin, maxCheb) {
+    return globalThis.__rs2b0t_nearest_cook_surface(origin, maxCheb);
+}

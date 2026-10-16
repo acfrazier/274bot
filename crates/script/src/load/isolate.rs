@@ -1,7 +1,11 @@
 //! LoadIsolate: rustyscript V8 on its own thread (feature `load` only).
 
+mod supervisor;
 mod teardown;
 mod thread;
+mod validation;
+pub use supervisor::{capacity_status as isolate_capacity_status, IsolateCapacityStatus};
+pub use validation::{ValidationBatch, ValidationError};
 
 pub use teardown::TeardownProof;
 use teardown::{TeardownPhase, TeardownState};
@@ -23,12 +27,39 @@ use std::sync::{Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+/// A failed isolate may poison a shared lock before the supervisor can
+/// retire it. Keep its state available for teardown rather than propagating
+/// that isolate-local failure to the process-wide supervisor.
+fn lock_after_isolate_failure<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poison| poison.into_inner())
+}
+
 /// Failures before an isolate thread has been created.
 #[derive(Debug, thiserror::Error)]
 pub enum LoadIsolateError {
     /// The embedder did not initialize V8 at its process root.
     #[error("V8 platform is not bootstrapped: call script::bootstrap_v8_platform() on main before creating any JavaScript runtime worker threads")]
     PlatformNotBootstrapped,
+    #[error("V8 platform bootstrap must run on the process main thread")]
+    PlatformNotMainThread,
+    #[error("shared isolate bridge: {0}")]
+    Bridge(String),
+    #[error("JS deadline supervisor: {0}")]
+    Supervisor(String),
+    #[error("JS deadline supervisor is at capacity")]
+    SupervisorCapacity,
+    #[error("JS quarantine full (A={quarantined}, retiring J={retiring_gameplay}, retiring V={retiring_validation}); wait for actual isolate join")]
+    QuarantineFull {
+        quarantined: usize,
+        retiring_gameplay: usize,
+        retiring_validation: usize,
+    },
+    #[error("JS isolate admission at process cap (active={active}, retiring J={retiring_gameplay}, retiring V={retiring_validation})")]
+    IsolateCapacity {
+        active: usize,
+        retiring_gameplay: usize,
+        retiring_validation: usize,
+    },
     /// The operating system refused to create the isolate thread.
     #[error("isolate thread: {0}")]
     ThreadSpawn(#[source] std::io::Error),
@@ -36,34 +67,6 @@ pub enum LoadIsolateError {
 
 static NEXT_PAINT_GENERATION: AtomicU64 = AtomicU64::new(1);
 static LIVE_RUNTIMES: AtomicUsize = AtomicUsize::new(0);
-static ABANDONED_ISOLATES: Mutex<Vec<JoinHandle<()>>> = Mutex::new(Vec::new());
-
-fn reap_finished_abandoned(list: &mut Vec<JoinHandle<()>>) {
-    let mut i = 0;
-    while i < list.len() {
-        if list[i].is_finished() {
-            let handle = list.remove(i);
-            let _ = handle.join();
-        } else {
-            i += 1;
-        }
-    }
-}
-
-fn retain_abandoned_thread(handle: JoinHandle<()>) {
-    let mut list = ABANDONED_ISOLATES.lock().unwrap();
-    reap_finished_abandoned(&mut list);
-    list.push(handle);
-}
-
-/// Isolates whose `join` hit [`JOIN_TIMEOUT`] and were not dropped silently.
-#[doc(hidden)]
-#[allow(dead_code)]
-pub fn abandoned_isolate_count() -> usize {
-    let mut list = ABANDONED_ISOLATES.lock().unwrap();
-    reap_finished_abandoned(&mut list);
-    list.len()
-}
 
 /// V8 runtimes currently owned by isolate threads. Tests use this to prove a
 /// cancelled non-yielding startup was destroyed rather than merely detached.
@@ -93,6 +96,8 @@ const VALIDATION_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long `join` waits for the isolate thread after Stop + terminate
 /// before abandoning it: a stuck isolate must never freeze the caller.
 const JOIN_TIMEOUT: Duration = Duration::from_secs(2);
+/// The explicit stack reservation of each admitted isolate thread.
+const ISOLATE_STACK: usize = 2 * 1024 * 1024;
 /// Heap cap for the isolate (~64 MB, the brief's number).
 const MAX_HEAP: usize = 64 * 1024 * 1024;
 /// Bounded native pairing metadata for mouse gestures produced by one
@@ -154,7 +159,7 @@ enum IsolateCmd {
     /// built on the isolate thread as V8 values (never JSON text).
     Settings(serde_json::Map<String, serde_json::Value>),
     /// Available loadouts. Rust keeps them for `selectedLoadout`.
-    Loadouts(Vec<crate::loadouts_store::Loadout>),
+    Loadouts(Vec<api::loadout::Loadout>),
     /// The slot's recovery hints, which outlive this isolate.
     RecoveryHints(std::sync::Arc<super::RecoveryHintsCell>),
     Pause,
@@ -399,12 +404,29 @@ enum SetupState {
     Failed(String),
 }
 
+/// The only production gameplay construction path is the slot-owned factory.
+/// UI and control callers cannot create an isolate with this crate-private type.
+pub(crate) struct GameplayFactory;
+
+impl GameplayFactory {
+    pub(crate) fn spawn_with_content(
+        js: String,
+        shape: LoadShape,
+        siblings: Vec<(String, String)>,
+        game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+        named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    ) -> Result<LoadIsolate, LoadIsolateError> {
+        LoadIsolate::spawn_inner(js, shape, siblings, game_data, named_banks)
+    }
+}
+
 impl LoadIsolate {
     /// Spawn the isolate thread with already-cached JS (no transpile).
     /// Returns as soon as the thread is created; V8 setup is resolved by
     /// [`LoadIsolate::poll_ready`]. Missing process-root
     /// [`crate::bootstrap_v8_platform`] or thread-create failure is returned
     /// synchronously, before any runtime worker is started.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn spawn(
         js: String,
         shape: LoadShape,
@@ -421,6 +443,7 @@ impl LoadIsolate {
 
     /// Spawn with immutable selected-revision facts. The Arc is shared
     /// until the isolate's one startup publication is complete.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn spawn_with_game_data(
         js: String,
         shape: LoadShape,
@@ -437,6 +460,7 @@ impl LoadIsolate {
     }
 
     /// Spawn with selected-revision facts and named aliases.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn spawn_with_content(
         js: String,
         shape: LoadShape,
@@ -447,25 +471,12 @@ impl LoadIsolate {
         Self::spawn_inner(js, shape, siblings, game_data, named_banks)
     }
 
-    /// Evaluate and instantiate the candidate in a throwaway Runtime
-    /// using the same [`wire_runtime`] path Start uses. Old isolates
-    /// are not touched. Fails on top-level throw, missing export, or
-    /// unresolvable sibling.
-    pub fn validate_source(
-        js: &str,
-        shape: LoadShape,
-        siblings: &[(String, String)],
-    ) -> Result<(), String> {
-        let isolate = Self::spawn(js.to_owned(), shape, siblings.to_vec())
-            .map_err(|error| error.to_string())?;
-        let result = isolate.resolve_setup(Some(Instant::now() + VALIDATION_TIMEOUT));
-        let result = match result {
-            Ready::Ready => Ok(()),
-            Ready::Failed(error) => Err(error),
-            Ready::Pending => unreachable!("bounded setup wait cannot remain pending"),
-        };
-        let _ = isolate.join_without_hook();
-        result
+    /// Queue a whole refresh on the single process ValidationSeat. The
+    /// receiver owns the original cards, so the UI can fence the result.
+    pub fn validate_prepared_batch(
+        cards: Vec<super::library::PreparedCard>,
+    ) -> Result<ValidationBatch, ValidationError> {
+        validation::validate_batch(cards)
     }
 
     fn spawn_inner(
@@ -476,6 +487,9 @@ impl LoadIsolate {
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<Self, LoadIsolateError> {
         super::platform::require_v8_platform()?;
+        let supervisor = supervisor::get()?;
+        let permit = supervisor.admit()?;
+        let runtime_handle = super::runtime_bridge::handle()?;
         let (tx, rx) = mpsc::channel::<IsolateCmd>();
         let (setup_tx, setup_rx) = mpsc::channel::<SetupMessage>();
         let (msg_tx, msg_rx) = mpsc::channel::<ThreadMsg>();
@@ -502,13 +516,16 @@ impl LoadIsolate {
         let thread_walking_ownership = std::sync::Arc::clone(&walking_ownership);
         let handle = std::thread::Builder::new()
             .name("js-isolate".into())
+            .stack_size(ISOLATE_STACK)
             .spawn(move || {
+                let _permit = permit;
                 isolate_main(
                     js,
                     shape,
                     siblings,
                     game_data,
                     named_banks,
+                    runtime_handle,
                     CmdQueue {
                         rx,
                         queued: thread_queued,
@@ -620,7 +637,7 @@ impl LoadIsolate {
     }
 
     /// Post available loadouts before subsequent tick commands.
-    pub fn post_loadouts(&self, loadouts: &[crate::loadouts_store::Loadout]) {
+    pub fn post_loadouts(&self, loadouts: &[api::loadout::Loadout]) {
         self.send(IsolateCmd::Loadouts(loadouts.to_vec()));
     }
     /// Deliver a broker batch without allowing it to grow the isolate command
@@ -793,9 +810,8 @@ impl LoadIsolate {
         }
     }
 
-    /// Keep the active execution's original runaway horizon alive when the
-    /// next dispatch, Pause, or session reset observes it. At most one sleeper
-    /// is created for an execution; Pause/session reset can replace its owner.
+    /// Arm the independent process supervisor against the execution's original
+    /// start. Changing Pause/reset ownership never extends that deadline.
     fn arm_active_execution_deadline(&self, owner: teardown::ExecutionInterrupt) {
         let deadline = {
             let mut st = self.teardown.lock().unwrap();
@@ -817,56 +833,39 @@ impl LoadIsolate {
                 return;
             }
             st.execution_deadline_armed = true;
-            Some((
+            (
                 st.execution_id,
-                EXECUTION_WATCHDOG_HORIZON.saturating_sub(started.elapsed()),
+                started + EXECUTION_WATCHDOG_HORIZON,
                 handle.clone(),
-            ))
+            )
         };
-        let Some((execution_id, delay, terminate)) = deadline else {
-            return;
-        };
-        let (thread_name, log_name) = match owner {
-            teardown::ExecutionInterrupt::Watchdog => ("script-watchdog-deadline", "watchdog"),
-            teardown::ExecutionInterrupt::Pause => ("script-pause-deadline", "pause"),
-            teardown::ExecutionInterrupt::SessionReset => {
-                ("script-session-deadline", "session reset")
-            }
-        };
-        let teardown = std::sync::Arc::clone(&self.teardown);
-        let worker_teardown = std::sync::Arc::clone(&teardown);
-        if let Err(error) = std::thread::Builder::new()
-            .name(thread_name.into())
-            .spawn(move || {
-                std::thread::sleep(delay);
-                let mut st = worker_teardown.lock().unwrap();
-                if st.execution_id != execution_id {
-                    return;
-                }
-                st.execution_deadline_armed = false;
-                let owner = st.execution_deadline_owner.take().unwrap_or(owner);
-                if st.phase == TeardownPhase::Running
-                    && (owner != teardown::ExecutionInterrupt::Pause || st.pause_requested)
-                    && st.execution_active
-                    && st.execution_interrupt.is_none()
-                {
-                    st.execution_interrupt = Some(teardown::InterruptedExecution {
-                        owner,
-                        consumed: false,
-                    });
-                    terminate.terminate_execution();
+        let (id, at, handle) = deadline;
+        #[cfg(any(test, feature = "test-hooks"))]
+        let injected = self.teardown.lock().unwrap().fail_execution_registration;
+        #[cfg(not(any(test, feature = "test-hooks")))]
+        let injected: Option<teardown::DeadlineRefusal> = None;
+        let registration = if let Some(reason) = injected {
+            Err(match reason {
+                teardown::DeadlineRefusal::Capacity => LoadIsolateError::SupervisorCapacity,
+                teardown::DeadlineRefusal::Stopped => {
+                    LoadIsolateError::Supervisor("supervisor worker stopped".into())
                 }
             })
-        {
-            let mut st = teardown.lock().unwrap();
-            if st.execution_id == execution_id {
-                st.execution_deadline_armed = false;
-                st.execution_deadline_owner = None;
-            }
-            self.logs
-                .lock()
-                .unwrap()
-                .push(format!("{log_name} deadline worker: {error}"));
+        } else {
+            supervisor::get().and_then(|service| {
+                service.arm_execution(self.teardown.clone(), handle, id, owner, at)
+            })
+        };
+        if let Err(error) = registration {
+            // No independent owner: interrupt this exact execution immediately.
+            // Pause still allows healthy work when registration succeeds; without
+            // an independent bound, it cannot promise an unbounded completion.
+            let reason = match error {
+                LoadIsolateError::SupervisorCapacity => teardown::DeadlineRefusal::Capacity,
+                _ => teardown::DeadlineRefusal::Stopped,
+            };
+            self.fire_execution_interrupt(id, teardown::ExecutionInterrupt::NoDeadline(reason));
+            self.logs.lock().unwrap().push(error.to_string());
         }
     }
 
@@ -891,8 +890,8 @@ impl LoadIsolate {
 
     /// Park future tick dispatch. Pause intent shares the execution lock with
     /// entry, so a queued tick cannot enter after this call. Healthy work that
-    /// already owns execution is allowed to finish; a one-shot bound tied to
-    /// that exact execution terminates it only if it exceeds the tick budget.
+    /// already owns execution is allowed to finish when its independent deadline
+    /// is registered; otherwise it is cut immediately rather than run unbounded.
     pub fn pause(&self) {
         let ready = self.poll_ready() == Ready::Ready;
         self.pump_logs();
@@ -1071,17 +1070,28 @@ impl LoadIsolate {
         self.tick_errors.lock().unwrap().len()
     }
 
-    /// Isolate-scoped seam: delay after the deadline owner is armed and
-    /// before getter/body. Proves a late cancel cannot drop the one-shot.
+    /// Isolate-scoped seam: delay after the shared deadline is armed and
+    /// before getter/body. Proves a late completion cannot cancel it.
     #[doc(hidden)]
     pub fn delay_onstop_after_deadline_arm(&self, delay: Duration) {
         self.teardown.lock().unwrap().hook_entry_delay = Some(delay);
     }
 
-    /// Isolate-scoped seam: deadline-thread spawn fails for this isolate.
+    /// Isolate-scoped seam: refuse supervisor hook registration.
     #[doc(hidden)]
-    pub fn fail_onstop_deadline_spawn(&self) {
-        self.teardown.lock().unwrap().fail_deadline_spawn = true;
+    pub fn fail_onstop_deadline_registration(&self) {
+        self.teardown.lock().unwrap().fail_hook_registration = true;
+    }
+
+    /// Isolate-scoped deadline refusal seam for capacity/stopped diagnostics.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn fail_execution_deadline_registration(&self, stopped: bool) {
+        self.teardown.lock().unwrap().fail_execution_registration = Some(if stopped {
+            teardown::DeadlineRefusal::Stopped
+        } else {
+            teardown::DeadlineRefusal::Capacity
+        });
     }
 
     /// Give a success-path unit test enough scheduling headroom while
@@ -1298,7 +1308,7 @@ impl LoadIsolate {
     }
 
     fn resolve_setup(&self, block_until: Option<Instant>) -> Ready {
-        let mut setup = self.setup.lock().unwrap();
+        let mut setup = lock_after_isolate_failure(&self.setup);
         let (rx, deadline) = match &*setup {
             SetupState::Ready => return Ready::Ready,
             SetupState::Failed(e) => return Ready::Failed(e.clone()),
@@ -1323,7 +1333,7 @@ impl LoadIsolate {
                     // Ready/Failed result. A startup eval can now be
                     // interrupted even if it never returns to send Ready.
                     let _ = self.terminate.set(handle);
-                    let st = self.teardown.lock().unwrap();
+                    let st = lock_after_isolate_failure(&self.teardown);
                     if st.phase == TeardownPhase::UnwindingTick {
                         // Serialized with Hook entry: join can never fire
                         // this startup/tick interrupt after onStop begins.
@@ -1334,7 +1344,7 @@ impl LoadIsolate {
                     // A tick queued before setup finished starts running
                     // now: measure its budget from actual V8 readiness, not
                     // from the send time.
-                    if let Some(entry) = self.in_flight.lock().unwrap().as_mut() {
+                    if let Some(entry) = lock_after_isolate_failure(&self.in_flight).as_mut() {
                         entry.2 = Instant::now();
                     }
                     break Ready::Ready;
@@ -1398,7 +1408,10 @@ impl LoadIsolate {
         }
         st.execution_interrupt = Some(teardown::InterruptedExecution {
             owner,
-            consumed: false,
+            // Refused supervision is a terminal cut even if the V8-entry
+            // fence has not consumed the terminate request yet. Otherwise a
+            // Pause before entry could suppress both the cut and its cause.
+            consumed: matches!(owner, teardown::ExecutionInterrupt::NoDeadline(_)),
         });
         self.fire_terminate();
         true
@@ -1406,7 +1419,7 @@ impl LoadIsolate {
 
     /// Terminate setup/tick failure while it is still before Hook.
     fn fire_before_hook(&self) {
-        let st = self.teardown.lock().unwrap();
+        let st = lock_after_isolate_failure(&self.teardown);
         if matches!(
             st.phase,
             TeardownPhase::Running | TeardownPhase::UnwindingTick
@@ -1415,69 +1428,40 @@ impl LoadIsolate {
         }
     }
 
-    /// Stop without blocking the caller. `join` (onStop hook plus the 2 s
-    /// cap) runs on a reaper thread that reports leftover logs.
+    /// Transfer Stop and actual join custody to the one process supervisor.
+    /// The slot receives a receipt only after join or credited quarantine.
     pub fn join_detached(self, done: Sender<Vec<String>>) {
-        let _ = std::thread::Builder::new()
-            .name("isolate-reaper".into())
-            .spawn(move || {
-                let _ = done.send(self.join());
-            });
+        self.retire(true, false, done);
     }
 
-    /// Stop the isolate: tell the thread to exit, interrupt a live tick
-    /// so Stop can be processed, and wait for the thread (the Runtime
-    /// is dropped there). The wait is bounded by [`JOIN_TIMEOUT`]:
-    /// a stuck isolate is abandoned (thread tracked, not dropped) so Stop
-    /// can never freeze the panel. Returns leftover log lines (including
-    /// `onStop` / `this.log` drained during teardown) after `pump_logs`.
-    ///
-    /// Tick interruption is claimed only while phase is `Running`. Once
-    /// the isolate has entered the hook, only that hook's 50 ms
-    /// one-shot may terminate; join never samples `in_flight` to decide.
-    /// A join during setup first waits (bounded by the setup deadline) for
-    /// the terminate handle, so a tick queued before Ready can still be
-    /// interrupted; the reaper, never the UI, owns that wait.
-    pub fn join(self) -> Vec<String> {
-        self.join_inner(true)
-    }
-
-    /// Validation owns a throwaway isolate but must not invoke user
-    /// `onStop`; it only needs the runtime to finish and release.
-    fn join_without_hook(self) -> Vec<String> {
-        self.join_inner(false)
-    }
-
-    fn join_inner(mut self, invoke_hook: bool) -> Vec<String> {
+    fn retire(self, invoke_hook: bool, validation: bool, done: Sender<Vec<String>>) {
         self.revoke_compat_journal();
         self.send(IsolateCmd::Stop { invoke_hook });
         {
-            let mut st = self.teardown.lock().unwrap();
+            let mut st = lock_after_isolate_failure(&self.teardown);
             if st.phase == TeardownPhase::Running {
                 st.phase = TeardownPhase::UnwindingTick;
             }
             if st.phase == TeardownPhase::UnwindingTick {
-                // Fire immediately when poll_ready already consumed the
-                // startup handle. Otherwise resolve_setup fires as soon as
-                // that independently owned handle arrives.
                 self.fire_terminate();
             }
         }
-        let _ = self.resolve_setup(Some(Instant::now() + SETUP_TIMEOUT));
-        if let Some(handle) = self.handle.take() {
-            let deadline = Instant::now() + JOIN_TIMEOUT;
-            while !handle.is_finished() && Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(5));
-                self.pump_logs();
-            }
-            if handle.is_finished() {
-                let _ = handle.join();
-            } else {
-                retain_abandoned_thread(handle);
-            }
-        }
-        self.pump_logs();
-        std::mem::take(&mut *self.logs.lock().unwrap())
+        supervisor::get()
+            .expect("isolate creation initialized the supervisor")
+            .retire(self, done, validation);
+    }
+
+    /// Synchronous test/embedder stop uses the same process retirement owner.
+    /// A failed retiree stays owned after this bounded wait returns.
+    pub fn join(self) -> Vec<String> {
+        self.join_inner()
+    }
+
+    fn join_inner(self) -> Vec<String> {
+        let (tx, rx) = mpsc::channel();
+        self.retire(true, false, tx);
+        rx.recv_timeout(SETUP_TIMEOUT + JOIN_TIMEOUT + Duration::from_secs(1))
+            .unwrap_or_else(|_| vec!["JS isolate still retiring under process supervision".into()])
     }
 
     fn teardown_blocks_dispatch(&self) -> bool {
@@ -1495,23 +1479,21 @@ impl LoadIsolate {
     fn pump_logs(&self) {
         loop {
             let msg = {
-                let rx = self.rx.lock().unwrap();
+                let rx = lock_after_isolate_failure(&self.rx);
                 rx.try_recv().ok()
             };
             let Some(msg) = msg else {
                 break;
             };
             match msg {
-                ThreadMsg::Log(line) => self.logs.lock().unwrap().push(line),
+                ThreadMsg::Log(line) => lock_after_isolate_failure(&self.logs).push(line),
                 ThreadMsg::TickError {
                     tick,
                     generation,
                     message,
                 } => {
                     self.revoke_compat_journal();
-                    self.tick_errors
-                        .lock()
-                        .unwrap()
+                    lock_after_isolate_failure(&self.tick_errors)
                         .entry((tick, generation))
                         .or_default()
                         .push(message);
@@ -1523,10 +1505,11 @@ impl LoadIsolate {
                 }
                 ThreadMsg::ScriptStopped { tick, reason } => {
                     self.revoke_compat_journal();
-                    *self.script_stop.lock().unwrap() = Some(ScriptStopReceipt { tick, reason });
+                    *lock_after_isolate_failure(&self.script_stop) =
+                        Some(ScriptStopReceipt { tick, reason });
                 }
                 ThreadMsg::SessionReset { generation } => {
-                    let mut fence = self.held_fence.lock().unwrap();
+                    let mut fence = lock_after_isolate_failure(&self.held_fence);
                     if *fence == Some(generation) {
                         *fence = None;
                     }
@@ -1535,16 +1518,16 @@ impl LoadIsolate {
                     self.revoke_compat_journal();
                     self.stopped
                         .store(true, std::sync::atomic::Ordering::Release);
-                    *self.in_flight.lock().unwrap() = None;
-                    self.interacts.lock().unwrap().clear();
-                    self.lifecycle.lock().unwrap().clear();
+                    *lock_after_isolate_failure(&self.in_flight) = None;
+                    lock_after_isolate_failure(&self.interacts).clear();
+                    lock_after_isolate_failure(&self.lifecycle).clear();
                 }
                 ThreadMsg::Interact {
                     bytes,
                     generation,
                     observed_walk_outcome_seq,
                 } => {
-                    let mut interacts = self.interacts.lock().unwrap();
+                    let mut interacts = lock_after_isolate_failure(&self.interacts);
                     if generation
                         != self
                             .work_generation
@@ -1558,7 +1541,7 @@ impl LoadIsolate {
                         {
                             if let Ok(reqs) = crate::isolate_fb::decode_interact_batch(&bytes) {
                                 hold_walk_requests(
-                                    &mut self.held_walks.lock().unwrap(),
+                                    &mut lock_after_isolate_failure(&self.held_walks),
                                     reqs.into_iter().map(|req| QueuedInteract {
                                         req,
                                         observed_walk_outcome_seq,
@@ -1570,7 +1553,7 @@ impl LoadIsolate {
                     }
                     match crate::isolate_fb::decode_interact_batch(&bytes) {
                         Ok(reqs) => {
-                            let mut lifecycle = self.lifecycle.lock().unwrap();
+                            let mut lifecycle = lock_after_isolate_failure(&self.lifecycle);
                             for req in reqs {
                                 if req.is_watchdog_lifecycle() {
                                     lifecycle.push(req);
@@ -1582,7 +1565,9 @@ impl LoadIsolate {
                                 }
                             }
                         }
-                        Err(e) => self.logs.lock().unwrap().push(format!("interact: {e}")),
+                        Err(e) => {
+                            lock_after_isolate_failure(&self.logs).push(format!("interact: {e}"))
+                        }
                     }
                 }
                 ThreadMsg::Paint(frame) => {
@@ -1600,10 +1585,10 @@ impl LoadIsolate {
                         restamped.generation = generation;
                         std::sync::Arc::new(restamped)
                     };
-                    *self.paint.lock().unwrap() = Some(frame);
+                    *lock_after_isolate_failure(&self.paint) = Some(frame);
                 }
                 ThreadMsg::IgnoredRandoms(list) => {
-                    *self.ignored_randoms.lock().unwrap() = list;
+                    *lock_after_isolate_failure(&self.ignored_randoms) = list;
                 }
                 ThreadMsg::Completed {
                     tick,
@@ -1611,10 +1596,11 @@ impl LoadIsolate {
                     successful,
                     report_errors,
                 } => {
-                    let error = self.tick_errors.lock().unwrap().remove(&(tick, generation));
+                    let error =
+                        lock_after_isolate_failure(&self.tick_errors).remove(&(tick, generation));
                     if report_errors {
                         if let Some(messages) = error.as_ref() {
-                            let mut logs = self.logs.lock().unwrap();
+                            let mut logs = lock_after_isolate_failure(&self.logs);
                             logs.extend(
                                 messages
                                     .iter()
@@ -1627,7 +1613,8 @@ impl LoadIsolate {
                             .work_generation
                             .load(std::sync::atomic::Ordering::Acquire);
                     if current {
-                        let mut active = self.tick_outcome_error_generation.lock().unwrap();
+                        let mut active =
+                            lock_after_isolate_failure(&self.tick_outcome_error_generation);
                         let outcome = match error {
                             Some(messages) if report_errors => {
                                 *active = Some(generation);
@@ -1644,13 +1631,13 @@ impl LoadIsolate {
                             _ => None,
                         };
                         if let Some(outcome) = outcome {
-                            self.tick_outcomes.lock().unwrap().push(outcome);
+                            lock_after_isolate_failure(&self.tick_outcomes).push(outcome);
                         }
                     }
                     if !current {
                         continue;
                     }
-                    let mut in_flight = self.in_flight.lock().unwrap();
+                    let mut in_flight = lock_after_isolate_failure(&self.in_flight);
                     #[cfg(feature = "memory-profile")]
                     self.last_completed
                         .fetch_max(tick, std::sync::atomic::Ordering::Relaxed);
@@ -1666,7 +1653,7 @@ impl LoadIsolate {
                     {
                         continue;
                     }
-                    let mut in_flight = self.in_flight.lock().unwrap();
+                    let mut in_flight = lock_after_isolate_failure(&self.in_flight);
                     if in_flight.is_some_and(|(g, t, _)| g == generation && t == tick) {
                         *in_flight = None;
                     }
@@ -1679,19 +1666,12 @@ impl LoadIsolate {
 impl Drop for LoadIsolate {
     fn drop(&mut self) {
         self.revoke_compat_journal();
-        // Best-effort: unblock a stuck tick and close the channel; the
-        // thread exits and drops its Runtime by itself (no join here,
-        // and no cancel — the thread clears the terminate once the tick
-        // has returned). After a successful join the hook is Done: do
-        // not re-interrupt a completed teardown.
+        // Revoke the handle's authority even if its owner omitted join.
+        // A live thread remains charged to the supervisor until real exit.
         {
-            let mut st = self.teardown.lock().unwrap();
-            match st.phase {
-                TeardownPhase::Done => {}
-                TeardownPhase::Running | TeardownPhase::UnwindingTick | TeardownPhase::Hook => {
-                    st.phase = TeardownPhase::Done;
-                    st.cancel.take();
-                }
+            let mut st = lock_after_isolate_failure(&self.teardown);
+            if st.phase != TeardownPhase::Done {
+                st.phase = TeardownPhase::Done;
             }
         }
         let _ = self.poll_ready();
@@ -1701,7 +1681,9 @@ impl Drop for LoadIsolate {
             if handle.is_finished() {
                 let _ = handle.join();
             } else {
-                retain_abandoned_thread(handle);
+                supervisor::get()
+                    .expect("isolate creation initialized the supervisor")
+                    .retain_uncredited(handle);
             }
         }
     }

@@ -347,7 +347,7 @@ fn catalog_missing_compat_api_export_gets_actionable_start_message() {
         .expect_err("missing compat API export must refuse Start");
     assert_eq!(
         error,
-        "This script needs a newer rs2b0t API than this build supports (frozen at commit 00d39a17e0; missing export: inDuelChallengeArea)."
+        "This script imports compatibility API member 'inDuelChallengeArea', which this build does not provide."
     );
 
     let failure = lib

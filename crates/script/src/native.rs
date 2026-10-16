@@ -16,7 +16,14 @@ use api::selected::{FactError, FamilyPreparation, QuestGate, RunKey, SelectedPin
 use api::snapshot::SnapshotView;
 use api::{DetectedRandom, RandomClaim, WorldTile};
 
+pub mod abi;
 mod actions;
+pub mod custody;
+pub mod divergence;
+pub mod request;
+pub mod services;
+pub use request::NativeRequest;
+pub use services::{LocalStateCapability, ScriptServices, ServiceAuthority, ServiceError};
 pub mod death;
 pub(crate) mod ledger;
 mod owner;
@@ -222,6 +229,8 @@ pub struct CompiledCard {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartError {
     Busy,
+    /// A typed refusal from preparation; temporary Full is retried first.
+    WorkRefused(api::work::SubmissionRefusal),
     Unavailable(Arc<str>),
     Facts(FactError),
     Config(ConfigError),
@@ -247,6 +256,7 @@ impl std::fmt::Display for StartError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Busy => f.write_str("script already active: stop it first"),
+            Self::WorkRefused(refusal) => write!(f, "preparation refused: {refusal}"),
             Self::Unavailable(reason) => f.write_str(reason),
             Self::Facts(error) => write!(f, "selected facts: {error:?}"),
             Self::Config(error) => write!(f, "{}: {} ({})", error.field, error.message, error.code),
@@ -377,8 +387,27 @@ pub struct NativeTick<'a> {
     pub cx: ActionContext<'a>,
     pub output: &'a mut dyn NativeOutput,
     pub pairs: Option<&'a dyn QuestPairPort>,
+    /// The slot's local-state capability (T5.2): operator loadouts and
+    /// the account's durable identity. `None` when the composition bound
+    /// no state service to this slot.
+    pub state: Option<&'a crate::local_state::SlotState>,
     #[cfg(feature = "load")]
     pub(crate) frame: HostFrame<'a>,
+}
+
+impl NativeTick<'_> {
+    /// The operator's loadout rows this tick may plan with: the bound
+    /// service's current lease, or explicitly absent rows when no service
+    /// is bound. `NotReady` while the domain is cold: the card retries on
+    /// a later tick, never plans with fabricated empty rows.
+    pub fn operator_loadouts(
+        &self,
+    ) -> Result<crate::local_state::OperatorLoadouts, api::local_state::ErrorCode> {
+        match self.state {
+            Some(state) => state.operator_loadouts(),
+            None => Ok(crate::local_state::OperatorLoadouts::absent()),
+        }
+    }
 }
 
 #[cfg(all(feature = "load", feature = "test-hooks"))]
@@ -516,7 +545,7 @@ pub struct WalkRequest {
     /// within this margin; off-scene geometry is an estimate, not arrival proof.
     pub radius: u16,
     /// Destination settlement mode; `Reach` remains the default behavior.
-    pub arrival: nav::arrival::ArrivalKind,
+    pub arrival: nav::contract::ArrivalKind,
     pub options: WalkOptions,
     pub required_after: EvidenceStamp,
     pub evidence: Option<Arc<dyn EvidenceProvider>>,
@@ -572,11 +601,34 @@ pub struct AssessReceipt {
     pub route_ticks: u32,
 }
 
+/// Native walk failure classification, independent of Traveller internals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkStallReason {
+    /// The hop exhausted its budget after making partial progress.
+    Expired,
+    /// The hop exhausted its budget without leaving the send tile.
+    Dropped,
+    /// The live scene refused the route's final tile.
+    EndBlocked,
+}
+
+/// Cold terminal data stays shared instead of enlarging every native ledger.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalkStall {
+    pub at: WorldTile,
+    pub aiming: WorldTile,
+    pub why: WalkStallReason,
+    pub tries: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WalkEnd {
     Arrived,
     UserInput,
     RouteEnded,
+    /// A Traveller hop reached its finite budget without its aim being reached.
+    /// Retain its actual position, aim, reason and send count for the owner.
+    Stalled(Arc<WalkStall>),
     Refused,
     Blocked,
     Failed,
@@ -589,19 +641,26 @@ pub struct WalkReceipt {
     pub request_id: u64,
     pub evidence: EvidenceStamp,
     pub end: WalkEnd,
-    pub blocked: Option<Arc<[nav::zones::ZoneKey]>>,
+    pub blocked: Option<Arc<[nav::contract::ZoneKey]>>,
     pub detail: Option<Arc<str>>,
     pub refusal: Option<WalkRefusal>,
     pub assessment: Option<Arc<crate::combat::risk::RouteAssessment>>,
     pub escape: Option<crate::combat::guard::Escape>,
 }
 impl WalkReceipt {
-    /// Prefer host-supplied detail, then the advisory's model reason, then a
-    /// typed refusal description. Callers use this before generic fallbacks.
+    /// Prefer host detail and a typed stall over an advisory's model reason,
+    /// then a typed refusal. Callers use this before generic fallbacks.
     pub fn failure_detail(&self) -> Option<Arc<str>> {
         self.detail
             .as_ref()
             .map(Arc::clone)
+            .or_else(|| match &self.end {
+                WalkEnd::Stalled(stall) => Some(Arc::from(format!(
+                    "walk stalled ({:?}) at {:?}, aiming at {:?}, tries: {}",
+                    stall.why, stall.at, stall.aiming, stall.tries
+                ))),
+                _ => None,
+            })
             .or_else(|| {
                 self.assessment
                     .as_ref()
@@ -628,12 +687,14 @@ impl WalkReceipt {
                     LazyLock::new(|| Arc::from("walk route ended before arrival"));
                 Arc::clone(&REASON)
             }))),
-            WalkEnd::Aborted | WalkEnd::Refused | WalkEnd::Blocked | WalkEnd::Failed => {
-                Err(ActionError::Blocked(failure_detail.unwrap_or_else(|| {
-                    static REASON: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("walk failed"));
-                    Arc::clone(&REASON)
-                })))
-            }
+            WalkEnd::Stalled(_)
+            | WalkEnd::Aborted
+            | WalkEnd::Refused
+            | WalkEnd::Blocked
+            | WalkEnd::Failed => Err(ActionError::Blocked(failure_detail.unwrap_or_else(|| {
+                static REASON: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("walk failed"));
+                Arc::clone(&REASON)
+            }))),
         }
     }
 }
@@ -729,6 +790,13 @@ pub enum ActionError {
     UserInput,
     Unavailable(Arc<str>),
     Failed(Arc<str>),
+    /// A typed permanent refusal from the shared bank-deposit machine.
+    BankDeposit(crate::bank::ops::DepositFailure),
+    /// A hit on the local player closed the dialogue before it finished
+    /// (the NPC combat scripts `if_close` on every swing, including a
+    /// 0-damage miss). Typed so callers never match on a reason string;
+    /// runners treat it like `Blocked` (park for an explicit retry).
+    CombatInterrupted,
     /// The step cannot continue safely without an explicit operator retry.
     Blocked(Arc<str>),
     /// The action requires typed quest evidence before it can continue.
@@ -973,6 +1041,7 @@ mod defer_budget_tests {
             ActionError::UserInput,
             ActionError::Unavailable(Arc::from("unavailable")),
             ActionError::Failed(Arc::from("failed")),
+            ActionError::BankDeposit(crate::bank::ops::DepositFailure::FullStack),
             ActionError::Blocked(Arc::from("blocked")),
             ActionError::NeedsEvidence(Arc::<[QuestGate]>::from([])),
         ];

@@ -1542,10 +1542,7 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     session.poll_scripts();
     session.fleet_prepare_apply_settings();
     let first_scope = session.scripts.prepared_settings_sync().unwrap();
-    assert_eq!(
-        first_scope.targets.as_slice(),
-        std::slice::from_ref(&target)
-    );
+    assert_eq!(first_scope.targets(), std::slice::from_ref(&target));
     session.apply_settings_sync();
     session.core.flush_writes();
     session.poll_scripts();
@@ -1666,8 +1663,8 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     let (saved_count, restart_required, sync_summary) = {
         let report = session.scripts.last_settings_sync().unwrap();
         (
-            report.saved,
-            report.restart_required,
+            report.saved(),
+            report.restart_required(),
             report.summary().to_string(),
         )
     };

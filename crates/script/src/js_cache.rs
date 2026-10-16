@@ -48,6 +48,7 @@ struct Manifest {
 }
 
 /// SHA-256 content cache for transpiled JS.
+#[derive(Debug)]
 pub struct JsCache {
     root: PathBuf,
 }

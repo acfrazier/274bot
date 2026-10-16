@@ -1,8 +1,5 @@
-// Name-map `PartnerTrade`: partner predicates, settings parsers and the
-// first-screen decisions live in `script::partner_trade`. Trade HUD actions
-// stay on `Trade` / `drivePartnerTrade`.
-import { notImpl } from '../../shim/_kernel.js';
-
+// Name-map `PartnerTrade`; its predicates, settings parsers and first-screen
+// decisions are Rust-owned. Trade HUD actions stay on `Trade` / `drivePartnerTrade`.
 const pt = (name, ...args) => globalThis.__rs2b0t_partner_trade(name, ...args);
 
 export const DEFAULT_TRADE_RANGE = pt('DEFAULT_TRADE_RANGE');
@@ -23,6 +20,5 @@ export const muleSupplierActive = (mode, partners, powerMode) =>
     pt('muleSupplierActive', mode, partners, powerMode);
 export const muleNonGathererActive = (mode, partners) => pt('muleNonGathererActive', mode, partners);
 
-export function countOfferMatching() {
-    throw notImpl('PartnerTrade.countOfferMatching', 'caller match predicate per offer slot');
-}
+export const countOfferMatching = (items, match) =>
+    pt('countOfferMatching', items, match);

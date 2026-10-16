@@ -9,7 +9,7 @@ pub struct Wall {
     pub opened_once: bool,
     pub grid: bool,
     /// Scary "render all" confirm: wanted while the user has unchecked
-    /// "only render selected" but not yet accepted (OK) or backed out.
+    /// "only render focused" but not yet accepted (OK) or backed out.
     pub render_all_warn_open: bool,
     /// "I understand" checkbox state inside that confirm.
     pub render_all_understood: bool,

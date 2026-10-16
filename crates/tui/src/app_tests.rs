@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
+use host_play::local_state::{LocalStateService, StateRoot};
 use nav::tile::Tile;
 use script::{RunState, ScriptKind, ScriptSel, ScriptSource};
 use vault::ProfileSettings;
@@ -37,10 +38,10 @@ fn member(name: &str, phase: Phase) -> FleetRow {
 /// The selected slot's projected detail while it is in game on `tile`.
 fn ready_detail(name: &str, tile: (i32, i32, i32)) -> SlotDetail {
     let mut detail = SlotDetail::default();
-    detail.row = member(name, Phase::Ready);
-    detail.state = "ingame scene 2".into();
-    detail.tile = tile;
-    detail.ready_tile = Some(tile);
+    detail.set_row(member(name, Phase::Ready));
+    detail.set_state("ingame scene 2");
+    detail.set_tile(tile);
+    detail.set_ready_tile(Some(tile));
     detail
 }
 
@@ -343,7 +344,7 @@ fn status_card_shows_a_parked_quester_phase_and_reason_at_common_sizes() {
     let mut app = crate::test_support::fleet_app(&["alice"]);
     app.show_screen(Screen::Overview);
     let mut detail = crate::test_support::ready_detail("alice");
-    detail.row.script = RunState::Running;
+    detail.row_mut().set_script(RunState::Running);
     let status = ScriptStatus {
         run: api::selected::RunKey {
             slot: 1,
@@ -411,11 +412,13 @@ fn wilderness_persistence_errors_are_visible() {
         std::env::temp_dir().join(format!("274bot-tui-map-pref-error-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
-    let parent = root.join("not-a-directory");
-    std::fs::write(&parent, b"file").unwrap();
+    let blocker = root.join("not-a-directory");
+    std::fs::write(&blocker, b"file").unwrap();
+    // A service rooted at a file cannot write: the failure surfaces.
+    let blocked = LocalStateService::open_process(StateRoot::new(blocker.clone())).preferences();
 
     let mut app = TuiApp::new("274bot headless");
-    app.restore_preferences(parent.join("panel-ui.json"));
+    app.restore_preferences(blocked.clone());
     app.toggle_map_wilderness();
 
     assert!(app.map.layers.wilderness);
@@ -427,8 +430,8 @@ fn wilderness_persistence_errors_are_visible() {
         app.error
     );
 
-    std::fs::remove_file(&parent).unwrap();
-    std::fs::create_dir(&parent).unwrap();
+    std::fs::remove_file(&blocker).unwrap();
+    std::fs::create_dir(&blocker).unwrap();
     app.toggle_map_wilderness();
     assert!(!app.map.layers.wilderness);
     assert!(
@@ -640,7 +643,7 @@ fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes
             "Settings opens at {width}x{height}"
         );
 
-        for _ in 0..10 {
+        for _ in 0..12 {
             app.on_key(key(KeyCode::Down));
         }
         let rows = draw(&mut app, width, height);
@@ -652,9 +655,9 @@ fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes
             text(&rows).contains(frontend_core::quester_paths::LOAD_PATHS_LABEL),
             "the off-by-default folder gate stays visible at {width}x{height}: {rows:?}"
         );
-        assert!(!app.quester_paths.enabled, "folder Paths start disabled");
+        assert!(!app.quester_paths.enabled(), "folder Paths start disabled");
         assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
-        assert!(app.quester_paths.enabled, "the gate toggles on");
+        assert!(app.quester_paths.enabled(), "the gate toggles on");
 
         app.on_key(key(KeyCode::Down));
         let rows = draw(&mut app, width, height);
@@ -663,7 +666,7 @@ fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes
             "the folder field stays visible at {width}x{height}: {rows:?}"
         );
         assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
-        let previous = app.quester_paths.folder.to_string_lossy().chars().count();
+        let previous = app.quester_paths.folder().to_string_lossy().chars().count();
         for _ in 0..previous {
             app.on_key(key(KeyCode::Backspace));
         }
@@ -677,7 +680,7 @@ fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes
             "Enter commits the editable folder field"
         );
         assert_eq!(
-            app.quester_paths.folder,
+            app.quester_paths.folder(),
             std::path::PathBuf::from(selected_folder)
         );
 
@@ -701,7 +704,7 @@ fn routing_scope_note_heads_the_routing_rows_once_at_common_sizes() {
         let mut app = crate::test_support::fleet_app(&["alice"]);
         app.show_screen(Screen::Overview);
         assert_eq!(app.on_key(ch('o')), AppAction::None);
-        for _ in 0..3 {
+        for _ in 0..7 {
             app.on_key(key(KeyCode::Down));
         }
         let rows = draw(&mut app, width, height);
@@ -742,10 +745,10 @@ fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped
     let mut app = TuiApp::new("274bot headless");
     assert!(app.pause_script_on_manual_walk_abort);
     app.settings_state.open = true;
-    for _ in 0..7 {
+    for _ in 0..9 {
         assert_eq!(app.on_key(key(KeyCode::Down)), AppAction::None);
     }
-    assert_eq!(app.settings_state.row, 7);
+    assert_eq!(app.settings_state.row, 9);
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     assert!(!app.pause_script_on_manual_walk_abort);
     assert!(app.pause_script_on_manual_walk_abort_dirty);
@@ -754,7 +757,7 @@ fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped
         app.on_key(key(KeyCode::Down));
     }
     assert_eq!(
-        app.settings_state.row, 12,
+        app.settings_state.row, 14,
         "Reload Paths remains reachable at the final settings row"
     );
 }
@@ -766,7 +769,7 @@ fn wrapped_global_settings_rows_use_the_drawn_hit_target() {
     app.nav.set_danger_level(frontend_core::DangerLevel::Always);
     app.script_scope_notice_ack = true;
     app.survivable_routing_notice_ack = true;
-    app.settings_state.row = 6;
+    app.settings_state.row = 8;
     let rows = draw(&mut app, 60, 14);
     let (col, row) = find(&rows, "Danger routing:")
         .expect("the selected global remains visible in a compact terminal");
@@ -893,7 +896,7 @@ fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
     app.nav.allow_danger_zones = false;
     app.map_route_through_zones = true;
     app.settings_state.open = true;
-    app.settings_state.row = 6;
+    app.settings_state.row = 8;
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     app.settings_state.open = false;
     assert!(app.nav.allow_danger_zones);
@@ -926,10 +929,11 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
             .as_nanos()
     ));
     std::fs::create_dir_all(&root).unwrap();
-    let path = root.join("panel-ui.json");
-    let loadouts = script::LoadoutsStore::at(root.join("loadouts.json"));
+    let preferences =
+        LocalStateService::open_process(StateRoot::new(root.join(".274bot"))).preferences();
+    let loadouts = script::LoadoutsStore::default();
     let mut app = open_map_world();
-    app.restore_preferences(path.clone());
+    app.restore_preferences(preferences.clone());
     app.script_sel = Some(ScriptSel::Loaded(
         ScriptSource::Catalog,
         "WalkPermissions".into(),
@@ -957,8 +961,8 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
     let crossing = text(&draw(&mut app, 120, 40));
     assert!(crossing.contains("crossing (z)"), "{crossing}");
 
-    frontend_core::nav_preference_at(
-        &path,
+    frontend_core::nav_preference(
+        &preferences,
         frontend_core::NavPreference::AllowDangerZones,
         Some(true),
     )
@@ -984,8 +988,8 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
     );
     app.params_state.open = false;
 
-    frontend_core::nav_preference_at(
-        &path,
+    frontend_core::nav_preference(
+        &preferences,
         frontend_core::NavPreference::AllowDangerZones,
         Some(false),
     )
@@ -1011,7 +1015,10 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
     assert!(!app.map_route_through_zones);
     assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
 
-    std::fs::write(&path, "{corrupt").unwrap();
+    std::fs::write(preferences.path(), "{corrupt").unwrap();
+    // A directly written file is seen after an explicit re-read; a corrupt
+    // one is refused from here on.
+    assert!(preferences.reload().is_err());
     let corrupt = text(&draw(&mut app, 120, 40));
     assert!(
         corrupt.contains("avoided") && !corrupt.contains("crossing (z)"),
@@ -1566,7 +1573,7 @@ fn load_browser_enter_returns_script_load() {
 fn script_params_click_and_space_toggle_persist_bool() {
     let dir = std::env::temp_dir().join(format!("274bot-tui-app-params-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let loadouts = script::LoadoutsStore::at(dir.join("loadouts.json"));
+    let loadouts = script::LoadoutsStore::default();
     let mut commits: Vec<(String, serde_json::Value)> = Vec::new();
     let schema = vec![script::SettingDef {
         id: "buryBones".into(),
@@ -1644,7 +1651,7 @@ fn script_params_numeric_edit_persists_and_global_keys_stay_consumed() {
             .as_nanos()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    let loadouts = script::LoadoutsStore::at(dir.join("loadouts.json"));
+    let loadouts = script::LoadoutsStore::default();
     let mut commits: Vec<(String, serde_json::Value)> = Vec::new();
     let mut commit = |id: &str, value: serde_json::Value, _current: Option<serde_json::Value>| {
         commits.push((id.to_string(), value));

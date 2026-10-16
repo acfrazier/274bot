@@ -10,43 +10,93 @@ use std::fmt::{self, Write as _};
 /// Names listed per outcome kind in the summary; the counts cover the rest.
 const LISTED: usize = 6;
 
-/// What a command came to for one marked bot.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BulkOutcome {
-    /// The command took effect (the report's `done` verb).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BulkOutcomeKind {
     Done,
-    /// The bot was not eligible; nothing was sent to it.
-    Skipped(String),
-    /// The bot was eligible but the command was refused.
-    Failed(String),
+    Skipped,
+    Pending,
+    Failed,
 }
 
+/// What a command came to for one marked bot.
+#[derive(Debug, PartialEq, Eq)]
+pub struct BulkOutcome {
+    kind: BulkOutcomeKind,
+    reason: Option<String>,
+}
+
+#[allow(non_upper_case_globals)]
 impl BulkOutcome {
+    /// The command took effect (the report's `done` verb).
+    pub const Done: Self = Self {
+        kind: BulkOutcomeKind::Done,
+        reason: None,
+    };
+
+    /// The command is retained for completion after an asynchronous
+    /// prerequisite.
+    pub const Pending: Self = Self {
+        kind: BulkOutcomeKind::Pending,
+        reason: None,
+    };
+
     fn rank(&self) -> u8 {
-        match self {
-            Self::Failed(_) => 0,
-            Self::Skipped(_) => 1,
-            Self::Done => 2,
+        match self.kind {
+            BulkOutcomeKind::Failed => 0,
+            BulkOutcomeKind::Skipped => 1,
+            BulkOutcomeKind::Pending => 2,
+            BulkOutcomeKind::Done => 3,
         }
     }
 
     pub fn skipped(reason: impl Into<String>) -> Self {
-        Self::Skipped(reason.into())
+        Self {
+            kind: BulkOutcomeKind::Skipped,
+            reason: Some(reason.into()),
+        }
     }
 
     pub fn failed(reason: impl Into<String>) -> Self {
-        Self::Failed(reason.into())
+        Self {
+            kind: BulkOutcomeKind::Failed,
+            reason: Some(reason.into()),
+        }
+    }
+
+    /// Whether the command took effect.
+    pub fn is_done(&self) -> bool {
+        self.kind == BulkOutcomeKind::Done
+    }
+
+    /// Whether the bot was not eligible.
+    pub fn is_skipped(&self) -> bool {
+        self.kind == BulkOutcomeKind::Skipped
+    }
+
+    /// Whether the command is retained for an asynchronous prerequisite.
+    pub fn is_pending(&self) -> bool {
+        self.kind == BulkOutcomeKind::Pending
+    }
+
+    /// Whether the command was refused.
+    pub fn is_failed(&self) -> bool {
+        self.kind == BulkOutcomeKind::Failed
+    }
+
+    /// Skip or failure text, when this outcome carries one.
+    pub fn reason(&self) -> Option<&str> {
+        self.reason.as_deref()
     }
 }
 
 /// One marked row's outcome.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct BulkRow {
-    pub profile: String,
-    pub outcome: BulkOutcome,
+    profile: String,
+    outcome: BulkOutcome,
     /// Host detail carries zone labels or the legacy-grid note through row
     /// inspection and summary rendering without changing the short outcome.
-    pub detail: Option<String>,
+    detail: Option<String>,
 }
 
 impl BulkRow {
@@ -60,6 +110,21 @@ impl BulkRow {
     pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
         self.detail = Some(detail.into());
         self
+    }
+
+    /// The marked profile this row is for.
+    pub fn profile(&self) -> &str {
+        &self.profile
+    }
+
+    /// What the command came to for this profile.
+    pub fn outcome(&self) -> &BulkOutcome {
+        &self.outcome
+    }
+
+    /// Host detail, when the short outcome is not enough.
+    pub fn detail(&self) -> Option<&str> {
+        self.detail.as_deref()
     }
 }
 
@@ -81,7 +146,7 @@ fn write_row_reason(text: &mut String, row: &BulkRow, reason: &str) {
 }
 
 /// The report of one command on the marked rows.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct BulkReport {
     label: &'static str,
     done_verb: &'static str,
@@ -130,30 +195,33 @@ impl BulkReport {
 
     /// Names of the bots the command took effect on, in report order.
     pub fn done(&self) -> impl Iterator<Item = &str> + '_ {
-        self.rows.iter().filter_map(|row| match row.outcome {
-            BulkOutcome::Done => Some(row.profile.as_str()),
-            _ => None,
-        })
+        self.rows
+            .iter()
+            .filter_map(|row| row.outcome.is_done().then_some(row.profile.as_str()))
     }
 
     pub fn done_count(&self) -> usize {
-        self.count(|o| matches!(o, BulkOutcome::Done))
+        self.count(BulkOutcome::is_done)
     }
 
     pub fn skipped_count(&self) -> usize {
-        self.count(|o| matches!(o, BulkOutcome::Skipped(_)))
+        self.count(BulkOutcome::is_skipped)
     }
 
     pub fn failed_count(&self) -> usize {
-        self.count(|o| matches!(o, BulkOutcome::Failed(_)))
+        self.count(BulkOutcome::is_failed)
+    }
+
+    pub fn pending_count(&self) -> usize {
+        self.count(BulkOutcome::is_pending)
     }
 
     fn count(&self, pick: impl Fn(&BulkOutcome) -> bool) -> usize {
         self.rows.iter().filter(|row| pick(&row.outcome)).count()
     }
 
-    /// `Label: verb D, skipped K[, failed F]`, then the failure reasons and
-    /// the skip reasons plus any per-row host detail. Successful detailed rows
+    /// `Label: verb D, skipped K[, pending P][, failed F]`, then each
+    /// failure, skip and retained pending reason. Successful detailed rows
     /// are also named. A refused command names its one cause instead.
     pub fn summary(&self) -> String {
         if let Some(reason) = &self.refusal {
@@ -166,12 +234,19 @@ impl BulkReport {
         if self.rows.is_empty() {
             return format!("{}: no bots marked", self.label);
         }
-        let (done, skipped, failed) =
-            (self.done_count(), self.skipped_count(), self.failed_count());
+        let (done, skipped, pending, failed) = (
+            self.done_count(),
+            self.skipped_count(),
+            self.pending_count(),
+            self.failed_count(),
+        );
         let mut text = format!(
             "{}: {} {done}, skipped {skipped}",
             self.label, self.done_verb
         );
+        if pending > 0 {
+            let _ = write!(text, ", pending {pending}");
+        }
         if failed > 0 {
             let _ = write!(text, ", failed {failed}");
         }
@@ -179,10 +254,10 @@ impl BulkReport {
         for row in self
             .rows
             .iter()
-            .filter(|row| matches!(&row.outcome, BulkOutcome::Failed(_)))
+            .filter(|row| row.outcome.is_failed())
             .take(LISTED)
         {
-            let BulkOutcome::Failed(reason) = &row.outcome else {
+            let Some(reason) = row.outcome.reason() else {
                 continue;
             };
             let _ = write!(text, "{sep}");
@@ -193,17 +268,38 @@ impl BulkReport {
         for row in self
             .rows
             .iter()
-            .filter(|row| matches!(&row.outcome, BulkOutcome::Skipped(_)))
+            .filter(|row| row.outcome.is_skipped())
             .take(LISTED)
         {
-            let BulkOutcome::Skipped(reason) = &row.outcome else {
+            let Some(reason) = row.outcome.reason() else {
                 continue;
             };
             let _ = write!(text, "{sep}");
             write_row_reason(&mut text, row, reason);
             sep = ", ";
         }
-        let mut detail_sep = if failed > 0 || skipped > 0 {
+        if pending > 0 {
+            let mut sep = if failed > 0 || skipped > 0 {
+                "; "
+            } else {
+                ": "
+            };
+            for row in self
+                .rows
+                .iter()
+                .filter(|row| row.outcome.is_pending())
+                .take(LISTED)
+            {
+                let _ = write!(
+                    text,
+                    "{sep}{}: {}",
+                    row.profile,
+                    row.detail.as_deref().unwrap_or("pending")
+                );
+                sep = ", ";
+            }
+        }
+        let mut detail_sep = if failed > 0 || skipped > 0 || pending > 0 {
             "; "
         } else {
             ": "
@@ -211,7 +307,7 @@ impl BulkReport {
         for row in self
             .rows
             .iter()
-            .filter(|row| matches!(&row.outcome, BulkOutcome::Done) && row.detail.is_some())
+            .filter(|row| row.outcome.is_done() && row.detail.is_some())
             .take(LISTED)
         {
             let detail = row.detail.as_deref().unwrap_or_default();
@@ -260,6 +356,23 @@ mod tests {
                 .map(|r| r.profile.as_str())
                 .collect::<Vec<_>>(),
             ["zed", "bob", "alice"]
+        );
+    }
+
+    #[test]
+    fn pending_demands_are_counted_and_named_without_becoming_failures() {
+        let report = BulkReport::new(
+            "Assign marked",
+            "assigned",
+            vec![BulkRow::new("alice", BulkOutcome::Pending).with_detail("catalog scan pending")],
+            None,
+        );
+
+        assert_eq!(report.pending_count(), 1);
+        assert_eq!(report.failed_count(), 0);
+        assert_eq!(
+            report.summary(),
+            "Assign marked: assigned 0, skipped 0, pending 1: alice: catalog scan pending"
         );
     }
 }

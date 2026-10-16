@@ -1,15 +1,31 @@
 import { notImpl, runMachine } from '../../shim/_kernel.js';
 
+export function faceSteps(door, canStep) {
+    return globalThis.__rs2b0t_walk_opening('faceSteps', door, canStep);
+}
+
+export function openedNeighbour(door, before, after) {
+    return globalThis.__rs2b0t_walk_opening('openedNeighbour', door, before, after);
+}
+
+export function farSide(door, across, here) {
+    return globalThis.__rs2b0t_walk_opening('farSide', door, across, here);
+}
+
+export function isOpenableObstacle(name, actions, obstacles) {
+    return globalThis.__rs2b0t_walk_opening('isOpenableObstacle', name, actions, obstacles);
+}
+
 export function openOp(actions) {
-    return (actions || []).find((a) => /^open/i.test(String(a))) ?? null;
+    return globalThis.__rs2b0t_walk_opening('openOp', actions);
 }
 
-export function towardDest(_from, _here, _toward) {
-    throw notImpl('towardDest');
+export function closeOp(actions) {
+    return globalThis.__rs2b0t_walk_opening('closeOp', actions);
 }
 
-export function isOpenableObstacle(_name, _actions, _obstacles) {
-    throw notImpl('isOpenableObstacle');
+export function towardDest(door, here, dest) {
+    return globalThis.__rs2b0t_walk_opening('towardDest', door, here, dest);
 }
 
 export async function walkOpening(dest, radius, obstacles, log) {

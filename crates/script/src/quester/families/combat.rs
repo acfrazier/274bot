@@ -13,13 +13,13 @@ use crate::combat::{
     PrayerMode, RaisedPrayers, RangedMode, SpellRef, Style, Tactic, Target, WalkGuard,
 };
 use crate::dialogue_outcome::DialogueOutcome;
-use crate::loadouts_store::WORN_SLOTS;
 use crate::native::walk::Walk;
 use crate::native::{
     ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, WalkAllow, WalkReceipt,
 };
 use crate::shim::InteractReq;
 use api::gather_methods::SceneRegionInput;
+use api::loadout::WORN_SLOTS;
 use api::selected::Truth;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -48,8 +48,6 @@ static COMBAT_FINISH_TIMEOUT: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from("combat finish exceeded its tick budget"));
 static COMBAT_FINISH_FAILED: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from("combat finish dialogue failed"));
-static COMBAT_FINISH_INTERRUPTED: std::sync::LazyLock<Arc<str>> =
-    std::sync::LazyLock::new(|| Arc::from("combat interrupted the post-transform dialogue"));
 static ABORT_HOLD_SAFE: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from(ABORT_HOLD_SAFE_REASON));
 static ABORT_HOLD_UNAVAILABLE: std::sync::LazyLock<Arc<str>> =
@@ -2002,12 +2000,6 @@ impl StepRun for CombatRun {
             ActionPoll::Dialogue(DialogueOutcome::Failed) => {
                 self.action = None;
                 Poll::Ready(Err(ActionError::Blocked(Arc::clone(&COMBAT_FINISH_FAILED))))
-            }
-            ActionPoll::Dialogue(DialogueOutcome::CombatInterrupted) => {
-                self.action = None;
-                Poll::Ready(Err(ActionError::Blocked(Arc::clone(
-                    &COMBAT_FINISH_INTERRUPTED,
-                ))))
             }
         }
     }

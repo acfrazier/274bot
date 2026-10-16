@@ -35,11 +35,7 @@ impl SlotSurface for Recorder {
             self.attached += 1;
             self.attached
         });
-        SlotAttach {
-            io,
-            input: None,
-            mailbox: None,
-        }
+        SlotAttach::new(io, None, None)
     }
 
     fn lifetime_reset(&mut self, name: &str) {
@@ -304,7 +300,7 @@ fn load_follows_saved_auto_login_while_login_arms_an_explicit_handshake() {
 
     let login = s.login("manual", &mut surface);
     assert!(arm(&s, "manual").wants_login());
-    assert!(!arm(&s, "manual").auto_login.load(Ordering::Relaxed));
+    assert!(!arm(&s, "manual").auto_login());
     assert_eq!(
         s.operation(login).unwrap().outcome("manual"),
         Some(&Outcome::Pending),
@@ -763,12 +759,7 @@ fn offline_start_and_stop_settle_through_poll() {
     let op = s
         .start_script(
             "alice",
-            ScriptStart::Load {
-                js,
-                shape,
-                bag: None,
-                siblings: Vec::new(),
-            },
+            ScriptStart::load(js, shape, None, Vec::new()),
             Some("file:looping".into()),
         )
         .unwrap();
@@ -802,7 +793,7 @@ fn offline_start_and_stop_settle_through_poll() {
     );
     let resume = s.toggle_pause("alice");
     assert_eq!(
-        s.operation(resume).unwrap().action,
+        s.operation(resume).unwrap().action(),
         ActionKind::ScriptResume
     );
 
@@ -829,12 +820,7 @@ fn a_start_refused_by_the_host_is_an_error_not_an_operation() {
     let mut s = session("start-refused", &[]);
     let refused = s.start_script(
         "ghost",
-        ScriptStart::Load {
-            js: String::new(),
-            shape: script::LoadShape::Reject,
-            bag: None,
-            siblings: Vec::new(),
-        },
+        ScriptStart::load(String::new(), script::LoadShape::Reject, None, Vec::new()),
         None,
     );
     assert_eq!(
@@ -871,21 +857,21 @@ fn transitions_report_each_change_once() {
     assert_eq!(
         s.transitions()
             .iter()
-            .map(|t| t.transition.clone())
+            .map(|t| t.transition())
             .collect::<Vec<_>>(),
-        [Transition::Ingame, Transition::Scene(2)]
+        [&Transition::Ingame, &Transition::scene(2)]
     );
 }
 
 /// Rows of `slot`'s ring in the shared store (tests use unique slot names:
 /// the store is process-wide).
 fn slot_log(slot: &str) -> Vec<(Source, Level, String)> {
-    let mut view = crate::log::LogView::new(crate::log::LogScope::Slot(slot.into()));
-    view.edit_filter(|f| f.min_level = Level::Debug);
+    let mut view = crate::log::LogView::new(crate::log::LogScope::slot(slot));
+    view.edit_filter(|f| f.set_min_level(Level::Debug));
     crate::log::global().refresh(&mut view);
     view.rows()
         .iter()
-        .map(|e| (e.source, e.level, e.message.to_string()))
+        .map(|e| (e.source(), e.level(), e.message().to_string()))
         .collect()
 }
 
@@ -905,7 +891,7 @@ fn durable_assignment_logs_identity_availability_and_skips_parameter_saves() {
     let mut profile = s.vault().unwrap().get(name).unwrap().clone();
     profile.settings.script_assignment = Some(assignment("one"));
     let first = s
-        .save_profile_with_log_action(profile, ArmMirror::None, "script", "assignment")
+        .save_profile_with_log_action(profile, ArmMirror::none(), "script", "assignment")
         .unwrap();
     s.flush_writes();
     assert_eq!(
@@ -925,12 +911,12 @@ fn durable_assignment_logs_identity_availability_and_skips_parameter_saves() {
         .settings
         .script_settings
         .insert("compiled:one".into(), serde_json::Map::new());
-    s.save_profile_with_log_action(parameters, ArmMirror::None, "script", "parameter edit")
+    s.save_profile_with_log_action(parameters, ArmMirror::none(), "script", "parameter edit")
         .unwrap();
     s.flush_writes();
 
     let unchanged = s.vault().unwrap().get(name).unwrap().clone();
-    s.save_profile_with_log_action(unchanged, ArmMirror::None, "script", "assignment")
+    s.save_profile_with_log_action(unchanged, ArmMirror::none(), "script", "assignment")
         .unwrap();
     s.flush_writes();
     assert_eq!(slot_log(name).len(), 1);
@@ -940,7 +926,7 @@ fn durable_assignment_logs_identity_availability_and_skips_parameter_saves() {
     saved_assignment.unavailable = Some("missing".into());
     unavailable.settings.script_assignment = Some(saved_assignment);
     let second = s
-        .save_profile_with_log_action(unavailable, ArmMirror::None, "script", "unavailable")
+        .save_profile_with_log_action(unavailable, ArmMirror::none(), "script", "unavailable")
         .unwrap();
     s.flush_writes();
     assert_eq!(
@@ -969,21 +955,21 @@ fn assignment_logs_only_the_final_value_and_owner_of_a_coalesced_commit() {
 
     let mut transient = s.vault().unwrap().get(cancelled_profile).unwrap().clone();
     transient.settings.script_assignment = Some(assignment("never-durable"));
-    s.save_profile_with_log_action(transient, ArmMirror::None, "script", "assignment")
+    s.save_profile_with_log_action(transient, ArmMirror::none(), "script", "assignment")
         .unwrap();
     let mut restored = s.vault().unwrap().get(cancelled_profile).unwrap().clone();
     restored.settings.script_assignment = None;
-    s.save_profile_with_log_action(restored, ArmMirror::None, "script", "parameter edit")
+    s.save_profile_with_log_action(restored, ArmMirror::none(), "script", "parameter edit")
         .unwrap();
 
     let mut intermediate = s.vault().unwrap().get(final_profile).unwrap().clone();
     intermediate.settings.script_assignment = Some(assignment("intermediate"));
-    s.save_profile_with_log_action(intermediate, ArmMirror::None, "script", "assignment")
+    s.save_profile_with_log_action(intermediate, ArmMirror::none(), "script", "assignment")
         .unwrap();
     let mut final_value = s.vault().unwrap().get(final_profile).unwrap().clone();
     final_value.settings.script_assignment = Some(assignment("final"));
     let final_op = s
-        .save_profile_with_log_action(final_value, ArmMirror::None, "script", "Start")
+        .save_profile_with_log_action(final_value, ArmMirror::none(), "script", "Start")
         .unwrap();
 
     drop(held);
@@ -1016,7 +1002,7 @@ fn assignment_logs_ignore_rename_without_assignment_change() {
     s.start(vault, empty_play());
     let mut renamed = s.vault().unwrap().get(old_name).unwrap().clone();
     renamed.username = new_name.into();
-    s.rename_profile(old_name, renamed, ArmMirror::None, "profile")
+    s.rename_profile(old_name, renamed, ArmMirror::none(), "profile")
         .unwrap();
     s.flush_writes();
 
@@ -1039,14 +1025,14 @@ fn coalesced_assignment_log_uses_last_assignment_change_not_parameter_edit() {
     let mut profile = s.vault().unwrap().get(name).unwrap().clone();
     profile.settings.script_assignment = Some(assignment("assigned"));
     let assign_op = s
-        .save_profile_with_log_action(profile, ArmMirror::None, "script", "Assign")
+        .save_profile_with_log_action(profile, ArmMirror::none(), "script", "Assign")
         .unwrap();
     let mut parameters = s.vault().unwrap().get(name).unwrap().clone();
     parameters
         .settings
         .script_settings
         .insert("compiled:assigned".into(), serde_json::Map::new());
-    s.save_profile_with_log_action(parameters, ArmMirror::None, "script", "parameter edit")
+    s.save_profile_with_log_action(parameters, ArmMirror::none(), "script", "parameter edit")
         .unwrap();
 
     drop(held);
@@ -1078,7 +1064,7 @@ fn dropping_session_logs_a_durable_assignment_without_polling() {
         let mut s = session("assignment-log-drop", &[(name, 1, false)]);
         let mut profile = s.vault().unwrap().get(name).unwrap().clone();
         profile.settings.script_assignment = Some(assignment("final"));
-        s.save_profile_with_log_action(profile, ArmMirror::None, "script", "Assign")
+        s.save_profile_with_log_action(profile, ArmMirror::none(), "script", "Assign")
             .unwrap()
     };
     assert_eq!(
@@ -1101,7 +1087,7 @@ fn failed_assignment_save_does_not_log_a_mutation() {
     let blocked = block_writes(&vault_path("assignment-log-failed"));
     let mut profile = s.vault().unwrap().get(name).unwrap().clone();
     profile.settings.script_assignment = Some(assignment("failed"));
-    s.save_profile_with_log_action(profile, ArmMirror::None, "script", "assignment")
+    s.save_profile_with_log_action(profile, ArmMirror::none(), "script", "assignment")
         .unwrap();
     s.flush_writes();
     unblock_writes(blocked);
@@ -1122,14 +1108,14 @@ fn lines_recorded_by_the_poll_carry_the_slots_current_tick() {
     .unwrap();
     push_status(&s, row("logtick-gus"));
     s.poll();
-    let mut view = crate::log::LogView::new(crate::log::LogScope::Slot("logtick-gus".into()));
+    let mut view = crate::log::LogView::new(crate::log::LogScope::slot("logtick-gus"));
     crate::log::global().refresh(&mut view);
     let up = view
         .rows()
         .iter()
-        .find(|e| &*e.message == "slot up")
+        .find(|e| e.message() == "slot up")
         .unwrap();
-    assert_eq!(up.tick, Some(4242));
+    assert_eq!(up.tick(), Some(4242));
 }
 
 #[test]
@@ -1196,12 +1182,7 @@ fn script_lines_reach_the_slot_log_through_the_poll() {
     let card = library.load(&path).unwrap();
     s.start_script(
         "logpoll-carol",
-        ScriptStart::Load {
-            js: card.js,
-            shape: card.shape,
-            bag: None,
-            siblings: Vec::new(),
-        },
+        ScriptStart::load(card.js, card.shape, None, Vec::new()),
         Some("file:broken".into()),
     )
     .unwrap();
@@ -1274,7 +1255,7 @@ fn a_profile_write_is_queued_and_the_arm_follows_only_once_it_is_durable() {
         "the edit is staged in memory at once"
     );
     assert!(
-        !alice.auto_login.load(Ordering::Relaxed),
+        !alice.auto_login(),
         "the running slot changes only after the write is durable"
     );
     assert_eq!(
@@ -1286,7 +1267,7 @@ fn a_profile_write_is_queued_and_the_arm_follows_only_once_it_is_durable() {
         s.operation(op).unwrap().outcome("alice"),
         Some(&Outcome::Completed)
     );
-    assert!(alice.auto_login.load(Ordering::Relaxed));
+    assert!(alice.auto_login());
     let disk = Vault::unlock(&vault_path("write-queued"), "test-passphrase-01").unwrap();
     assert!(disk.get("alice").unwrap().settings.auto_login);
 }
@@ -1308,6 +1289,44 @@ fn consecutive_writes_land_in_order_with_the_last_one_on_disk() {
 }
 
 #[test]
+fn random_event_policy_persists_and_mirrors_after_durable_write() {
+    let mut s = session("random-event-policy", &[("alice", 1, false)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    let alice = arm(&s, "alice");
+    let op = s
+        .set_random_event_policy("alice", "River Troll", vault::RandomEventPolicy::Fight)
+        .unwrap();
+    assert!(
+        alice.random_event_policies.lock().unwrap().is_empty(),
+        "a running slot changes only after the profile write is durable"
+    );
+
+    s.flush_writes();
+    let saved = Vault::unlock(&vault_path("random-event-policy"), "test-passphrase-01").unwrap();
+    assert_eq!(
+        saved
+            .get("alice")
+            .unwrap()
+            .settings
+            .random_event_policy("river troll"),
+        vault::RandomEventPolicy::Fight
+    );
+    assert_eq!(
+        alice
+            .random_event_policies
+            .lock()
+            .unwrap()
+            .get("river troll"),
+        Some(&vault::RandomEventPolicy::Fight)
+    );
+    assert_eq!(
+        s.operation(op).unwrap().outcome("alice"),
+        Some(&Outcome::Completed)
+    );
+}
+
+#[test]
 fn a_failed_write_is_reported_restores_the_durable_value_and_leaves_the_arm() {
     let mut s = session("write-fail", &[("alice", 1, false)]);
     let mut surface = Recorder::default();
@@ -1324,16 +1343,12 @@ fn a_failed_write_is_reported_restores_the_durable_value_and_leaves_the_arm() {
 
     assert!(matches!(
         s.operation(op).unwrap().outcome("alice"),
-        Some(Outcome::Failed(_))
+        Some(o) if o.is_failed()
     ));
     let failures = s.take_write_failures();
     assert_eq!(failures.len(), 1);
     assert_eq!(
-        (
-            failures[0].op,
-            failures[0].target.as_str(),
-            failures[0].label
-        ),
+        (failures[0].op(), failures[0].target(), failures[0].label()),
         (op, "alice", "random"),
         "{failures:?}"
     );
@@ -1361,12 +1376,7 @@ fn stop_scripts_drops_a_start_queued_behind_a_reap() {
     let mut surface = Recorder::default();
     s.load("alice", &mut surface);
     let (js, shape) = looping_bot(&iso.dir);
-    let load = |js: &str| ScriptStart::Load {
-        js: js.to_string(),
-        shape,
-        bag: None,
-        siblings: Vec::new(),
-    };
+    let load = |js: &str| ScriptStart::load(js.to_string(), shape, None, Vec::new());
     s.start_script("alice", load(&js), None).unwrap();
     settle_start(&mut s);
     // Reload shape: Stop, then a replacement Start queued behind the reap.
@@ -1428,7 +1438,7 @@ fn a_write_replaced_in_the_same_commit_is_cancelled_and_its_mirror_never_runs() 
         Some(&Outcome::Completed)
     );
     assert!(
-        !alice.auto_login.load(Ordering::Relaxed),
+        !alice.auto_login(),
         "the slot never observes the superseded value"
     );
     let disk = Vault::unlock(&vault_path("write-coalesce"), "test-passphrase-01").unwrap();
@@ -1441,7 +1451,7 @@ fn coalesced_edits_of_different_settings_all_reach_the_running_slot() {
     let mut surface = Recorder::default();
     s.load("alice", &mut surface);
     let alice = arm(&s, "alice");
-    assert!(alice.auto_login.load(Ordering::Relaxed));
+    assert!(alice.auto_login());
     assert!(alice.random_events.load(Ordering::Relaxed));
     let gate = s.write_gate();
     let held = gate.lock().unwrap();
@@ -1461,13 +1471,18 @@ fn coalesced_edits_of_different_settings_all_reach_the_running_slot() {
     assert!(!saved.random_events && !saved.lamp_auto);
     assert_eq!(saved.lamp_skill, "Prayer");
     assert!(
-        !alice.auto_login.load(Ordering::Relaxed),
+        !alice.auto_login(),
         "the auto-login edit saved in the same commit reaches the slot"
     );
     assert!(!alice.random_events.load(Ordering::Relaxed));
     assert!(!alice.lamp_auto.load(Ordering::Relaxed));
     assert_eq!(*alice.lamp_skill.lock().unwrap(), "Prayer");
-    let outcome = |op| s.operation(op).unwrap().outcome("alice").cloned();
+    let outcome = |op| {
+        s.operation(op)
+            .unwrap()
+            .outcome("alice")
+            .map(|o| o.duplicate())
+    };
     assert_eq!(outcome(auto), Some(Outcome::Completed));
     assert_eq!(
         outcome(magic),
@@ -1485,7 +1500,7 @@ fn a_rename_is_one_transaction_and_a_failed_one_restores_both_names() {
     let blocked = block_writes(&vault_path("rename-fail"));
 
     let op = s
-        .rename_profile("alice", renamed.clone(), ArmMirror::None, "credentials")
+        .rename_profile("alice", renamed.clone(), ArmMirror::none(), "credentials")
         .unwrap();
     assert!(s.vault().unwrap().get("alice").is_none(), "staged at once");
     s.flush_writes();
@@ -1493,7 +1508,7 @@ fn a_rename_is_one_transaction_and_a_failed_one_restores_both_names() {
 
     assert!(matches!(
         s.operation(op).unwrap().outcome("alicia"),
-        Some(Outcome::Failed(_))
+        Some(o) if o.is_failed()
     ));
     assert!(
         s.vault().unwrap().get("alice").is_some(),
@@ -1507,7 +1522,7 @@ fn a_rename_is_one_transaction_and_a_failed_one_restores_both_names() {
     assert!(disk.get("alice").is_some() && disk.get("alicia").is_none());
 
     let op = s
-        .rename_profile("alice", renamed, ArmMirror::None, "credentials")
+        .rename_profile("alice", renamed, ArmMirror::none(), "credentials")
         .unwrap();
     s.flush_writes();
     assert_eq!(
@@ -1532,7 +1547,7 @@ fn a_rename_onto_an_existing_username_is_refused_and_writes_nothing() {
     onto.password = "typed".into();
 
     let error = s
-        .rename_profile("aindniK", onto, ArmMirror::None, "credentials")
+        .rename_profile("aindniK", onto, ArmMirror::none(), "credentials")
         .unwrap_err();
     assert_eq!(error, "credentials: a profile named Hans already exists");
     s.flush_writes();
@@ -1563,7 +1578,7 @@ fn a_new_profile_with_an_existing_username_is_refused_and_writes_nothing() {
     };
 
     let error = s
-        .create_profile(fresh.clone(), ArmMirror::None, "credentials")
+        .create_profile(fresh.clone(), ArmMirror::none(), "credentials")
         .unwrap_err();
     assert_eq!(error, "credentials: a profile named Hans already exists");
     s.flush_writes();
@@ -1578,7 +1593,7 @@ fn a_new_profile_with_an_existing_username_is_refused_and_writes_nothing() {
         username: "bob".into(),
         ..fresh
     };
-    s.create_profile(bob, ArmMirror::None, "credentials")
+    s.create_profile(bob, ArmMirror::none(), "credentials")
         .unwrap();
     s.flush_writes();
     let disk = Vault::unlock(&vault_path("create-collide"), "test-passphrase-01").unwrap();
@@ -1742,7 +1757,7 @@ fn on_a_failed_commit_a_superseded_write_is_cancelled_and_only_the_final_one_fai
     );
     assert!(matches!(
         s.operation(off).unwrap().outcome("alice"),
-        Some(Outcome::Failed(_))
+        Some(o) if o.is_failed()
     ));
     assert_eq!(s.take_write_failures().len(), 1, "one failure reported");
     let saved = s.vault().unwrap().get("alice").unwrap();
@@ -1763,7 +1778,7 @@ fn a_parked_profile_spawns_from_its_durable_row_while_an_edit_is_saving() {
 
     // Slow write: Log in before it settles uses the durable row.
     let held = gate.lock().unwrap();
-    s.save_profile(edited.clone(), ArmMirror::Remember(None), "credentials")
+    s.save_profile(edited.clone(), ArmMirror::remember(None), "credentials")
         .unwrap();
     assert!(
         !s.profile_saving("alice"),
@@ -1798,7 +1813,7 @@ fn a_parked_profile_spawns_from_its_durable_row_while_an_edit_is_saving() {
     assert!(Arc::ptr_eq(&arm(&s, "alice"), &alice));
 
     // The write succeeds: the post-write mirror hands Play the new row.
-    s.save_profile(edited, ArmMirror::Remember(None), "credentials")
+    s.save_profile(edited, ArmMirror::remember(None), "credentials")
         .unwrap();
     s.flush_writes();
     assert_eq!(s.durable_profile("alice").unwrap().password, "new-pass");
@@ -1884,9 +1899,22 @@ use crate::{FormNotice, FormSettled, ProfileFormSave};
 fn outcomes(settled: &[FormSettled]) -> Vec<(&'static str, String, bool)> {
     settled
         .iter()
-        .map(|s| match s {
-            FormSettled::Saved(s) => ("saved", s.record.destination.clone(), s.same_form),
-            FormSettled::Failed(f) => ("failed", f.record.destination.clone(), f.same_form),
+        .map(|s| {
+            if let Some(saved) = s.as_saved() {
+                (
+                    "saved",
+                    saved.record().destination().to_string(),
+                    saved.same_form(),
+                )
+            } else if let Some(failed) = s.as_failed() {
+                (
+                    "failed",
+                    failed.record().destination().to_string(),
+                    failed.same_form(),
+                )
+            } else {
+                panic!("unexpected settled save: {s:?}")
+            }
         })
         .collect()
 }
@@ -1906,7 +1934,7 @@ fn form_saves_alice(
 ) -> OperationId {
     let draft = alice_with(s, password);
     let op = s
-        .save_profile(draft, ArmMirror::None, "credentials")
+        .save_profile(draft, ArmMirror::none(), "credentials")
         .unwrap();
     form.submitted(s, op, Some("alice"), "alice");
     op
@@ -1932,7 +1960,7 @@ fn a_write_failing_after_it_was_queued_shows_in_the_form_it_came_from() {
     let failures = s.take_write_failures();
     assert_eq!(failures.len(), 1);
     assert_eq!(
-        (failures[0].op, failures[0].target.as_str()),
+        (failures[0].op(), failures[0].target()),
         (op, "alice"),
         "the failure names its operation and profile"
     );
@@ -1942,7 +1970,7 @@ fn a_write_failing_after_it_was_queued_shows_in_the_form_it_came_from() {
     );
     assert_eq!(
         form.notice(),
-        Some(&FormNotice::Failed(failures[0].to_string())),
+        Some(&FormNotice::failed(failures[0].to_string())),
         "the form shows the banner's text"
     );
     assert!(!form.saving(&s), "a failed save can be retried");
@@ -1995,7 +2023,10 @@ fn a_failed_save_hands_back_the_draft_that_did_not_land() {
     // what the save carried.
     s.set_auto_login("alice", true).unwrap();
     assert_eq!(
-        s.saves_in_flight().iter().map(|r| r.op).collect::<Vec<_>>(),
+        s.saves_in_flight()
+            .iter()
+            .map(|r| r.op())
+            .collect::<Vec<_>>(),
         [op],
         "the session's record of the save is all that says it is in flight"
     );
@@ -2006,16 +2037,20 @@ fn a_failed_save_hands_back_the_draft_that_did_not_land() {
 
     assert!(s.saves_in_flight().is_empty());
     let settled = form.settle(&mut s);
-    let [FormSettled::Failed(failed)] = settled.as_slice() else {
+    let [failed] = settled.as_slice() else {
         panic!("one failed save, got {settled:?}");
     };
-    assert_eq!(failed.record.op, op);
-    assert_eq!(failed.record.source.as_deref(), Some("alice"));
-    assert_eq!(failed.record.destination, "alice");
+    let Some(failed) = failed.as_failed() else {
+        panic!("one failed save, got {settled:?}");
+    };
+    assert_eq!(failed.record().op(), op);
+    assert_eq!(failed.record().source(), Some("alice"));
+    assert_eq!(failed.record().destination(), "alice");
     let mut expected = alice_with(&s, "typed");
     expected.settings.auto_login = false;
     assert_eq!(
-        failed.record.draft, expected,
+        failed.record().draft(),
+        &expected,
         "the typed draft as submitted, not the restored row or a later edit"
     );
     assert_eq!(s.vault().unwrap().get("alice").unwrap().password, "pw");
@@ -2167,11 +2202,11 @@ fn a_superseded_save_settles_with_the_commit_it_was_written_in() {
             );
             let failures = s.take_write_failures();
             assert_eq!(
-                failures.iter().map(|f| f.op).collect::<Vec<_>>(),
+                failures.iter().map(|f| f.op()).collect::<Vec<_>>(),
                 [second],
                 "one report, by the write that owns the row"
             );
-            assert!(matches!(form.notice(), Some(FormNotice::Failed(_))));
+            assert!(form.notice().is_some_and(FormNotice::is_failed));
         } else {
             assert_eq!(
                 settled,
@@ -2181,10 +2216,7 @@ fn a_superseded_save_settles_with_the_commit_it_was_written_in() {
                 ],
                 "the superseded save is durable inside the later one's row"
             );
-            assert_eq!(
-                form.notice(),
-                Some(&FormNotice::Saved("Saved alice.".into()))
-            );
+            assert_eq!(form.notice(), Some(&FormNotice::saved("Saved alice.")));
             let disk = Vault::unlock(&vault_path(&test), "test-passphrase-01").unwrap();
             assert_eq!(disk.get("alice").unwrap().password, "second");
         }
@@ -2231,7 +2263,7 @@ fn a_delete_that_fails_after_a_queued_save_reports_once_and_restores_the_profile
     assert_eq!(
         failures
             .iter()
-            .map(|f| (f.op, f.target.as_str()))
+            .map(|f| (f.op(), f.target()))
             .collect::<Vec<_>>(),
         [(delete, "alice")]
     );
@@ -2269,7 +2301,7 @@ fn memory_status_is_none_without_a_recorded_login() {
 }
 
 #[test]
-fn memory_relog_parks_then_logs_back_in_through_the_fifo_path() {
+fn memory_relog_posts_one_atomic_intent_and_waits_for_owner_session() {
     let mut s = session("mem-relog", &[("alice", 1, true)]);
     let mut surface = Recorder::default();
     s.load("alice", &mut surface);
@@ -2293,27 +2325,34 @@ fn memory_relog_parks_then_logs_back_in_through_the_fifo_path() {
         s.operation(relog).unwrap().outcome("alice"),
         Some(&Outcome::Pending)
     );
-    assert!(arm(&s, "alice").login_latched(), "logout latches first");
-    assert!(arm(&s, "alice").wants_logout());
+    assert!(
+        !arm(&s, "alice").login_latched(),
+        "RelogNow must not latch Logout"
+    );
+    assert!(
+        !arm(&s, "alice").wants_logout(),
+        "no owner session to log out"
+    );
+    assert!(
+        arm(&s, "alice").wants_login(),
+        "RelogNow arms the login half"
+    );
     assert!(
         s.memory_status("alice").unwrap().relog_pending,
         "the poll must see the armed relog"
     );
 
-    // The worker parks on the title after its clean logout.
+    // An offline status alone does not mint an owner session.
     {
         let mut rows = s.play().unwrap().statuses.lock().unwrap();
         rows[0].connected = false;
         rows[0].ingame = false;
-        rows[0].login_latched = true;
+        rows[0].login_latched = false;
     }
     s.poll();
 
     let alice = arm(&s, "alice");
-    assert!(
-        alice.wants_login(),
-        "the poll re-arms the login once parked"
-    );
+    assert!(alice.wants_login(), "the owner retained login through exit");
     assert!(!alice.login_latched());
     assert!(
         s.memory_status("alice").unwrap().relog_pending,
@@ -2321,26 +2360,31 @@ fn memory_relog_parks_then_logs_back_in_through_the_fifo_path() {
     );
     assert!(
         s.memory_status("alice").unwrap().differs(),
-        "re-arming cannot claim the login succeeded"
+        "an offline status cannot claim the login succeeded"
     );
     publish_alice_login(&mut s, false);
     assert!(
-        !s.memory_status("alice").unwrap().relog_pending,
-        "the successful login handshake settles the relog"
+        s.memory_status("alice").unwrap().relog_pending,
+        "a status row without a new owner SessionKey cannot settle the relog"
     );
     assert!(
         !s.memory_status("alice").unwrap().differs(),
-        "the worker-published successful handshake settles the notice"
+        "the reported handshake memory mode is still reflected"
     );
-    let last = s
-        .fleet_view()
-        .row("alice")
-        .expect("member row")
-        .last_op
-        .as_ref()
-        .expect("a reported operation");
-    assert_eq!(last.action, ActionKind::Login);
-    assert_eq!(last.outcome, Outcome::Completed);
+}
+
+#[test]
+fn completed_relog_clears_the_pending_notice_after_new_owner_session() {
+    let (mut s, mut surface) = memory_ingame_toggled("mem-relog-complete");
+    let alice = arm(&s, "alice");
+    alice.complete_login_for_test();
+    let previous = alice.session_key().unwrap();
+    s.request_memory_relog("alice", &mut surface);
+    assert!(s.memory_status("alice").unwrap().relog_pending);
+    alice.complete_login_for_test();
+    assert!(alice.session_key().unwrap().epoch() > previous.epoch());
+    publish_alice_login(&mut s, false);
+    assert!(!s.memory_status("alice").unwrap().relog_pending);
 }
 
 #[test]
@@ -2398,12 +2442,12 @@ fn a_failed_memory_write_resets_the_armed_handshake() {
 
     assert!(matches!(
         s.operation(op).unwrap().outcome("alice"),
-        Some(Outcome::Failed(_))
+        Some(o) if o.is_failed()
     ));
     assert!(s
         .take_write_failures()
         .iter()
-        .any(|failure| failure.label == "memory"));
+        .any(|failure| failure.label() == "memory"));
     assert!(
         s.vault().unwrap().get("alice").unwrap().settings.lowmem,
         "the staged edit is rolled back to the durable value"
@@ -2432,12 +2476,7 @@ fn memory_relog_warns_while_a_script_runs() {
     let (js, shape) = looping_bot(&iso.dir);
     s.start_script(
         "alice",
-        ScriptStart::Load {
-            js,
-            shape,
-            bag: None,
-            siblings: Vec::new(),
-        },
+        ScriptStart::load(js, shape, None, Vec::new()),
         Some("file:looping".into()),
     )
     .unwrap();
@@ -2609,11 +2648,7 @@ impl SlotSurface for MemoryOverrideSurface {
         retained: Option<u32>,
     ) -> SlotAttach<u32> {
         profile.settings.lowmem = false;
-        SlotAttach {
-            io: retained.unwrap_or_default(),
-            input: None,
-            mailbox: None,
-        }
+        SlotAttach::new(retained.unwrap_or_default(), None, None)
     }
 
     fn lifetime_reset(&mut self, _name: &str) {}
@@ -2638,12 +2673,12 @@ fn session_memory_override_is_the_effective_mode_not_a_permanent_notice() {
 
 fn capacity_log() -> Vec<(Level, String)> {
     let mut view = crate::log::LogView::new(crate::log::LogScope::Process);
-    view.edit_filter(|f| f.min_level = Level::Debug);
+    view.edit_filter(|f| f.set_min_level(Level::Debug));
     crate::log::global().refresh(&mut view);
     view.rows()
         .iter()
-        .filter(|e| e.message.starts_with("Host "))
-        .map(|e| (e.level, e.message.to_string()))
+        .filter(|e| e.message().starts_with("Host "))
+        .map(|e| (e.level(), e.message().to_string()))
         .collect()
 }
 

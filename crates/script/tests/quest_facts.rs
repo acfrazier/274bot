@@ -363,7 +363,7 @@ fn probe(src: &str, revision: ClientRevision) -> serde_json::Value {
 
 fn data_without_family() -> std::sync::Arc<api::game_data::SelectedGameData> {
     let raw = r#"{
-        "schema_version": 4,
+        "schema_version": 5,
         "revision": 274,
         "provenance": {
             "cache_identity": {"cache_id": "x"},

@@ -6,15 +6,33 @@ use super::compile::{self, CompileError};
 use super::path::PathDocument;
 use super::queue::{ReleaseIndex, ReleasePath, ReleasePathStatus};
 use api::game_data::SelectedGameData;
+use api::gather_methods::GatherCatalog;
+use api::identity::WorkIdentity;
 use api::quest_facts::QuestCatalog;
 use api::selected::{ClientRevision, FamilyPreparation};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fs::{File, ReadDir};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 
 pub const MAX_PATH_BYTES: u64 = 1024 * 1024;
-const MAX_ROWS: usize = 256;
+
+/// Maximum raw bytes from successfully validated folder documents retained
+/// in one registry snapshot.
+///
+/// This is the document-byte contribution to the cooperative job's result
+/// reservation; other registry rows, diagnostics, and report bytes are
+/// additional bounded result state.
+pub const MAX_RETAINED_FOLDER_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
+/// Maximum source bytes read for any single index or Path document.
+pub const MAX_REGISTRY_FILE_BYTES: usize = MAX_PATH_BYTES as usize;
+/// Maximum rows in the combined release registry and scanned file candidates.
+pub const MAX_REGISTRY_ROWS: usize = 256;
+/// Maximum candidates retained after adding every validated index entry.
+pub const MAX_REGISTRY_CANDIDATES: usize = 2 * MAX_REGISTRY_ROWS;
+/// Maximum observed entries in the optional folder before scanning fails closed.
+pub const MAX_FOLDER_ENTRIES: usize = 4096;
 const MAX_DIAGNOSTIC_LINES: usize = 32;
 const MAX_LISTED_DIAGNOSTICS: usize = MAX_DIAGNOSTIC_LINES - 1;
 
@@ -154,36 +172,32 @@ pub(super) fn bundled_in(index: &ReleaseIndex, id: &str) -> bool {
         })
 }
 
-fn bundled_rows() -> &'static [PathRow] {
-    static ROWS: LazyLock<Vec<PathRow>> = LazyLock::new(|| {
-        BUNDLED_INDEX
-            .paths
-            .iter()
-            .map(|entry| {
-                let display = entry.name.clone().unwrap_or_else(|| {
-                    let document: PathDocument = serde_json::from_slice(
-                        bundled_path(&entry.id).expect("bundled roster document"),
-                    )
-                    .expect("bundled Path document");
-                    document.display_name
-                });
-                let mut label = entry
-                    .unavailable
-                    .as_ref()
-                    .map_or_else(|| display.clone(), |reason| format!("{display} — {reason}"));
-                if entry.status == Some(ReleasePathStatus::Draft) {
-                    label.push_str(" [draft]");
-                }
-                PathRow {
-                    id: entry.id.clone(),
-                    label,
-                    unavailable: entry.unavailable.clone(),
-                    source: PathSource::Bundled,
-                    status: entry.status,
-                }
-            })
-            .collect()
+fn bundled_row(entry: &ReleasePath) -> PathRow {
+    let display = entry.name.clone().unwrap_or_else(|| {
+        let document: PathDocument =
+            serde_json::from_slice(bundled_path(&entry.id).expect("bundled roster document"))
+                .expect("bundled Path document");
+        document.display_name
     });
+    let mut label = entry
+        .unavailable
+        .as_ref()
+        .map_or_else(|| display.clone(), |reason| format!("{display} — {reason}"));
+    if entry.status == Some(ReleasePathStatus::Draft) {
+        label.push_str(" [draft]");
+    }
+    PathRow {
+        id: entry.id.clone(),
+        label,
+        unavailable: entry.unavailable.clone(),
+        source: PathSource::Bundled,
+        status: entry.status,
+    }
+}
+
+fn bundled_rows() -> &'static [PathRow] {
+    static ROWS: LazyLock<Vec<PathRow>> =
+        LazyLock::new(|| BUNDLED_INDEX.paths.iter().map(bundled_row).collect());
     &ROWS
 }
 
@@ -214,12 +228,71 @@ pub fn source() -> FolderSource {
         .source
         .clone()
 }
+
+/// Capture the setting a worker will prepare. A disabled folder needs no
+/// path clone; publication still rejects a later enable or source change.
+pub fn source_for_preparation() -> FolderSource {
+    let state = STATE.lock().unwrap_or_else(|error| error.into_inner());
+    if state.source.enabled {
+        state.source.clone()
+    } else {
+        FolderSource::default()
+    }
+}
+
 pub fn snapshot() -> PathRegistry {
     STATE
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .snapshot
         .clone()
+}
+
+/// A prepared Path snapshot holds no registry lock and publishes nothing.
+/// Its exact source is checked again when the current WorkAdmission ticket
+/// consumes the result; a stale/cancelled worker cannot replace the registry.
+pub struct PreparedRegistry {
+    source: FolderSource,
+    registry: PathRegistry,
+}
+
+impl PreparedRegistry {
+    pub fn registry(&self) -> &PathRegistry {
+        &self.registry
+    }
+}
+
+/// Publish only the exact current, successfully consumed worker ticket and
+/// only while the source is still the source that was prepared.
+pub fn commit_snapshot(
+    prepared: PreparedRegistry,
+    completed: WorkIdentity,
+    current: WorkIdentity,
+) -> Result<PathRegistry, CompileError> {
+    if completed != current {
+        return Err(CompileError::code("stale-preparation")
+            .with_detail("Path preparation no longer belongs to the current reload"));
+    }
+    commit_prepared(prepared)
+}
+
+fn commit_prepared(prepared: PreparedRegistry) -> Result<PathRegistry, CompileError> {
+    let PreparedRegistry { source, registry } = prepared;
+    let mut state = STATE.lock().unwrap_or_else(|error| error.into_inner());
+    if state.source != source && (source.enabled || state.source.enabled) {
+        return Err(CompileError::code("stale-folder-source")
+            .with_detail("Path folder setting changed during Reload; reload again"));
+    }
+    state.snapshot = registry.clone();
+    drop(state);
+    for diagnostic in registry.diagnostics() {
+        api::host_log!(
+            api::hostlog::Category::Lifecycle,
+            api::hostlog::Level::Warn,
+            "Quester Path validation: {diagnostic}"
+        );
+    }
+    Ok(registry)
 }
 
 /// Called for Reload and every Start. Disabled reads never clone the folder path.
@@ -242,30 +315,17 @@ pub(super) fn reload_with_catalog(
         }
         state.source.clone()
     };
-    let catalog;
-    let quests = if let Some(quests) = provided {
-        quests
+    let mut preparation = if let Some(quests) = provided {
+        RegistryPreparation::from_refs(source, selected, quests)?
     } else {
-        catalog = QuestCatalog::from_identity(selected.quest_identity())
-            .map_err(|error| CompileError::code("quest-facts").with_detail(format!("{error:?}")))?;
-        &catalog
+        RegistryPreparation::from_refs_without_catalog(source, selected)?
     };
-    let registry = PathRegistry::load(&source, selected, quests, worker)?;
-    let mut state = STATE.lock().unwrap_or_else(|error| error.into_inner());
-    if state.source != source {
-        return Err(CompileError::code("stale-folder-source")
-            .with_detail("Path folder setting changed during Reload; reload again"));
-    }
-    state.snapshot = registry.clone();
-    drop(state);
-    for diagnostic in registry.diagnostics() {
-        api::host_log!(
-            api::hostlog::Category::Lifecycle,
-            api::hostlog::Level::Warn,
-            "Quester Path validation: {diagnostic}"
-        );
-    }
-    Ok(registry)
+    let prepared = loop {
+        if let Some(prepared) = preparation.step(worker)? {
+            break prepared;
+        }
+    };
+    commit_prepared(prepared)
 }
 
 /// Owned bytes are shared with a run, never copied per bot.
@@ -341,7 +401,13 @@ impl PathRegistry {
         let bytes = self
             .bytes(id)
             .ok_or_else(|| CompileError::code("unavailable-path"))?;
-        compile::compile_path(bytes.as_ref(), selected, quests, worker)
+        compile::compile_path(
+            bytes.as_ref(),
+            selected,
+            quests,
+            worker,
+            &crate::local_state::OperatorLoadouts::absent(),
+        )
     }
     pub fn report(&self) -> Option<&Arc<str>> {
         match self {
@@ -370,244 +436,932 @@ impl PathRegistry {
         quests: &QuestCatalog,
         worker: &mut FamilyPreparation,
     ) -> Result<Self, CompileError> {
-        if !source.enabled {
-            return Ok(Self::Bundled);
+        let mut preparation = RegistryPreparation::from_refs(source.clone(), selected, quests)?;
+        loop {
+            if let Some(prepared) = preparation.step(worker)? {
+                return Ok(prepared.registry);
+            }
         }
-        if selected
-            .selected_pin()
-            .map_err(|error| CompileError::code("missing-pin").with_detail(format!("{error:?}")))?
-            .revision
-            != ClientRevision::R289
-        {
-            return Err(CompileError::code("unsupported-revision")
-                .with_detail("Folder Paths support revision 289 only"));
+    }
+}
+
+/// The bounded unit that the next cooperative registry call will perform.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RegistryPreparationPhase {
+    BuildQuestCatalog,
+    CheckPin,
+    ScanFolder,
+    ReadIndex,
+    ParseIndex,
+    MergeIndex,
+    CollectCandidates,
+    OrderCandidates,
+    BuildBaseIndex,
+    PrepareDocument,
+    ReadDocument,
+    ParseDocument,
+    PrepareGatheringFamily,
+    CompileDocument,
+    BuildBaseRows,
+    ReduceRows,
+    BuildReport,
+    Complete,
+}
+
+/// Observable bounded progress and raw document retention.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RegistryPreparationProgress {
+    pub phase: RegistryPreparationPhase,
+    pub completed_documents: usize,
+    pub total_documents: Option<usize>,
+    /// Successful folder-document bytes retained in the eventual snapshot.
+    pub retained_document_bytes: usize,
+    /// Bytes read for the current index or Path file, when one is in progress.
+    pub pending_file_bytes: usize,
+}
+
+enum SelectedOwner<'a> {
+    Borrowed(&'a SelectedGameData),
+    Shared(Arc<SelectedGameData>),
+}
+impl SelectedOwner<'_> {
+    fn get(&self) -> &SelectedGameData {
+        match self {
+            Self::Borrowed(value) => value,
+            Self::Shared(value) => value,
         }
-        let mut diagnostics = Diagnostics::default();
-        let mut candidates = BTreeMap::new();
-        let mut omitted_candidates = 0;
-        let mut omitted_indexed = HashSet::new();
-        match std::fs::read_dir(&source.folder) {
-            Ok(entries) => {
-                for entry in entries {
-                    let entry = match entry {
-                        Ok(entry) => entry,
+    }
+}
+
+enum QuestOwner<'a> {
+    Borrowed(&'a QuestCatalog),
+    Shared(Arc<QuestCatalog>),
+    Deferred,
+}
+impl QuestOwner<'_> {
+    fn get(&self) -> &QuestCatalog {
+        match self {
+            Self::Borrowed(value) => value,
+            Self::Shared(value) => value,
+            Self::Deferred => unreachable!("quest catalog is built before document compilation"),
+        }
+    }
+}
+
+struct PendingDocument {
+    id: String,
+    path: PathBuf,
+    bundled: bool,
+    draft: ReleasePath,
+    authored_unavailable: Option<String>,
+    reader: Option<BoundedRead>,
+    bytes: Option<Arc<Vec<u8>>>,
+    document: Option<PathDocument>,
+    gathering: Option<Arc<GatherCatalog>>,
+}
+
+/// A resumable folder-registry reducer. The source and selected owners are
+/// captured once; each call performs one scan, read, parse, compile, or
+/// reduction unit and retains bounded state for the next call.
+pub struct RegistryPreparation<'a> {
+    source: FolderSource,
+    selected: SelectedOwner<'a>,
+    quests: QuestOwner<'a>,
+    phase: RegistryPreparationPhase,
+    registry: Option<PathRegistry>,
+    scan_started: bool,
+    scanned_entries: usize,
+    entries: Option<ReadDir>,
+    candidates: BTreeMap<String, PathBuf>,
+    omitted_candidates: usize,
+    omitted_indexed: HashSet<String>,
+    diagnostics: Diagnostics,
+    final_diagnostics: Vec<PathDiagnostic>,
+    diagnostic_count: usize,
+    index_opened: bool,
+    index_reader: Option<BoundedRead>,
+    index_bytes: Option<Vec<u8>>,
+    folder_index: Option<ReleaseIndex>,
+    index_row_position: usize,
+    candidate_ids: Vec<String>,
+    candidate_copy_position: usize,
+    candidate_position: usize,
+    ordered: Vec<String>,
+    total_documents: Option<usize>,
+    document_position: usize,
+    completed_documents: usize,
+    index: Option<ReleaseIndex>,
+    base_index_position: usize,
+    documents: HashMap<String, FolderDocument>,
+    base_row_position: usize,
+    retained_document_bytes: usize,
+    pending: Option<PendingDocument>,
+    rows: Vec<PathRow>,
+    row_position: usize,
+    report: String,
+    report_position: usize,
+}
+
+impl RegistryPreparation<'static> {
+    /// Capture an explicit folder source and shared immutable input owners.
+    pub fn from_source(
+        source: FolderSource,
+        selected: Arc<SelectedGameData>,
+        quests: Arc<QuestCatalog>,
+    ) -> Result<Self, CompileError> {
+        Ok(Self::new(
+            source,
+            SelectedOwner::Shared(selected),
+            QuestOwner::Shared(quests),
+        ))
+    }
+
+    /// Capture an explicit source and defer quest-catalog construction to a
+    /// cooperative step.
+    pub fn from_source_without_catalog(
+        source: FolderSource,
+        selected: Arc<SelectedGameData>,
+    ) -> Result<Self, CompileError> {
+        Ok(Self::new(
+            source,
+            SelectedOwner::Shared(selected),
+            QuestOwner::Deferred,
+        ))
+    }
+
+    /// Capture the process-current folder source once, before the first step.
+    pub fn from_current_source(
+        selected: Arc<SelectedGameData>,
+        quests: Arc<QuestCatalog>,
+    ) -> Result<Self, CompileError> {
+        Self::from_source(source(), selected, quests)
+    }
+
+    /// Capture the process-current folder source and selected owner. No
+    /// filesystem I/O or quest-catalog decoding occurs before `step`.
+    pub fn from_current(selected: Arc<SelectedGameData>) -> Result<Self, CompileError> {
+        Self::from_source_without_catalog(source(), selected)
+    }
+}
+
+impl<'a> RegistryPreparation<'a> {
+    fn from_refs(
+        source: FolderSource,
+        selected: &'a SelectedGameData,
+        quests: &'a QuestCatalog,
+    ) -> Result<Self, CompileError> {
+        Ok(Self::new(
+            source,
+            SelectedOwner::Borrowed(selected),
+            QuestOwner::Borrowed(quests),
+        ))
+    }
+
+    fn from_refs_without_catalog(
+        source: FolderSource,
+        selected: &'a SelectedGameData,
+    ) -> Result<Self, CompileError> {
+        Ok(Self::new(
+            source,
+            SelectedOwner::Borrowed(selected),
+            QuestOwner::Deferred,
+        ))
+    }
+
+    fn new(source: FolderSource, selected: SelectedOwner<'a>, quests: QuestOwner<'a>) -> Self {
+        let source = if source.enabled {
+            source
+        } else {
+            FolderSource::default()
+        };
+        let enabled = source.enabled;
+        let phase = if !enabled {
+            RegistryPreparationPhase::Complete
+        } else if matches!(&quests, QuestOwner::Deferred) {
+            RegistryPreparationPhase::BuildQuestCatalog
+        } else {
+            RegistryPreparationPhase::CheckPin
+        };
+        Self {
+            source,
+            selected,
+            quests,
+            phase,
+            registry: (!enabled).then_some(PathRegistry::Bundled),
+            scan_started: false,
+            scanned_entries: 0,
+            entries: None,
+            candidates: BTreeMap::new(),
+            omitted_candidates: 0,
+            omitted_indexed: HashSet::new(),
+            diagnostics: Diagnostics::default(),
+            final_diagnostics: Vec::new(),
+            diagnostic_count: 0,
+            index_opened: false,
+            index_reader: None,
+            index_bytes: None,
+            folder_index: None,
+            index_row_position: 0,
+            candidate_ids: Vec::new(),
+            candidate_copy_position: 0,
+            candidate_position: 0,
+            ordered: Vec::new(),
+            total_documents: None,
+            document_position: 0,
+            completed_documents: 0,
+            index: None,
+            documents: HashMap::new(),
+            retained_document_bytes: 0,
+            pending: None,
+            base_index_position: 0,
+            base_row_position: 0,
+            rows: Vec::new(),
+            row_position: 0,
+            report: String::new(),
+            report_position: 0,
+        }
+    }
+
+    /// Report the next bounded unit before calling [`Self::step`].
+    pub fn phase(&self) -> RegistryPreparationPhase {
+        self.phase
+    }
+
+    /// Progress suitable for WorkAdmission progress publication.
+    pub fn progress(&self) -> RegistryPreparationProgress {
+        RegistryPreparationProgress {
+            phase: self.phase,
+            completed_documents: self.completed_documents,
+            total_documents: self.total_documents,
+            retained_document_bytes: self.retained_document_bytes,
+            pending_file_bytes: self
+                .index_reader
+                .as_ref()
+                .map_or(0, BoundedRead::len)
+                .max(self.index_bytes.as_ref().map_or(0, Vec::len))
+                .max(
+                    self.pending
+                        .as_ref()
+                        .and_then(|pending| pending.reader.as_ref())
+                        .map_or_else(
+                            || {
+                                self.pending
+                                    .as_ref()
+                                    .and_then(|pending| pending.bytes.as_ref())
+                                    .map_or(0, |bytes| bytes.len())
+                            },
+                            BoundedRead::len,
+                        ),
+                ),
+        }
+    }
+
+    /// Perform one bounded preparation unit. `Some` is the unpublished
+    /// snapshot; the caller must still pass it through `commit_snapshot`.
+    pub fn step(
+        &mut self,
+        worker: &mut FamilyPreparation,
+    ) -> Result<Option<PreparedRegistry>, CompileError> {
+        use RegistryPreparationPhase as Phase;
+        match self.phase {
+            Phase::BuildQuestCatalog => {
+                let quests = QuestCatalog::from_identity(self.selected.get().quest_identity())
+                    .map_err(|error| {
+                        CompileError::code("quest-facts").with_detail(format!("{error:?}"))
+                    })?;
+                self.quests = QuestOwner::Shared(Arc::new(quests));
+                self.phase = Phase::CheckPin;
+            }
+            Phase::CheckPin => {
+                let revision = self
+                    .selected
+                    .get()
+                    .selected_pin()
+                    .map_err(|error| {
+                        CompileError::code("missing-pin").with_detail(format!("{error:?}"))
+                    })?
+                    .revision;
+                if revision != ClientRevision::R289 {
+                    return Err(CompileError::code("unsupported-revision")
+                        .with_detail("Folder Paths support revision 289 only"));
+                }
+                self.phase = Phase::ScanFolder;
+            }
+            Phase::ScanFolder => {
+                if !self.scan_started {
+                    self.scan_started = true;
+                    match std::fs::read_dir(&self.source.folder) {
+                        Ok(entries) => self.entries = Some(entries),
                         Err(error) => {
-                            diagnostics.push(|| {
-                                diagnostic(&source.folder, "read-folder", error.to_string())
-                            });
-                            continue;
+                            let folder = self.source.folder.clone();
+                            self.diagnostics
+                                .push(|| diagnostic(&folder, "read-folder", error.to_string()));
+                            self.finish_scan();
                         }
-                    };
-                    let path = entry.path();
-                    if path.extension().is_none_or(|extension| extension != "json")
-                        || path.file_name().is_some_and(|name| name == "index.json")
-                    {
-                        continue;
                     }
-                    let Some(id) = path
-                        .file_stem()
-                        .and_then(|stem| stem.to_str())
-                        .map(str::to_owned)
-                    else {
-                        diagnostics.push(|| {
-                            diagnostic(&path, "invalid-filename", "Path filename must be UTF-8")
-                        });
-                        continue;
-                    };
-                    if !valid_id(&id) {
-                        diagnostics.push(|| {
-                            diagnostic(
-                                &path,
-                                "invalid-filename",
-                                "Use a quest id containing letters, digits, '-' or '_'",
-                            )
-                        });
-                        continue;
+                    return Ok(None);
+                }
+                let next = self.entries.as_mut().and_then(|entries| entries.next());
+                if next.is_some() {
+                    if self.scanned_entries == MAX_FOLDER_ENTRIES {
+                        return Err(CompileError::code("too-many-folder-entries").with_detail(
+                            format!("Folder contains more than {MAX_FOLDER_ENTRIES} entries"),
+                        ));
                     }
-                    insert_candidate(&mut candidates, &id, path, &mut omitted_candidates);
+                    self.scanned_entries += 1;
+                }
+                match next {
+                    Some(Ok(entry)) => {
+                        let path = entry.path();
+                        if path.extension().is_none_or(|extension| extension != "json")
+                            || path.file_name().is_some_and(|name| name == "index.json")
+                        {
+                            return Ok(None);
+                        }
+                        let Some(id) = path
+                            .file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .map(str::to_owned)
+                        else {
+                            self.diagnostics.push(|| {
+                                diagnostic(&path, "invalid-filename", "Path filename must be UTF-8")
+                            });
+                            return Ok(None);
+                        };
+                        if !valid_id(&id) {
+                            self.diagnostics.push(|| {
+                                diagnostic(
+                                    &path,
+                                    "invalid-filename",
+                                    "Use a quest id containing letters, digits, '-' or '_'",
+                                )
+                            });
+                            return Ok(None);
+                        }
+                        insert_candidate(
+                            &mut self.candidates,
+                            &id,
+                            path,
+                            &mut self.omitted_candidates,
+                        );
+                    }
+                    Some(Err(error)) => {
+                        let folder = self.source.folder.clone();
+                        self.diagnostics
+                            .push(|| diagnostic(&folder, "read-folder", error.to_string()));
+                    }
+                    None => self.finish_scan(),
                 }
             }
-            Err(error) => {
-                diagnostics.push(|| diagnostic(&source.folder, "read-folder", error.to_string()));
+            Phase::ReadIndex => {
+                if !self.index_opened {
+                    self.index_opened = true;
+                    let path = self.source.folder.join("index.json");
+                    if !path.exists() {
+                        self.phase = Phase::MergeIndex;
+                        return Ok(None);
+                    }
+                    match open_bounded(&path) {
+                        Ok(reader) => self.index_reader = Some(reader),
+                        Err(error) => {
+                            self.push_index_diagnostic(error);
+                            self.phase = Phase::MergeIndex;
+                        }
+                    }
+                    return Ok(None);
+                }
+                let Some(result) = self.index_reader.as_mut().map(BoundedRead::read_chunk) else {
+                    self.phase = Phase::MergeIndex;
+                    return Ok(None);
+                };
+                match result {
+                    Ok(Some(bytes)) => {
+                        self.index_reader = None;
+                        self.index_bytes = Some(bytes);
+                        self.phase = Phase::ParseIndex;
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        self.index_reader = None;
+                        self.push_index_diagnostic(error);
+                        self.phase = Phase::MergeIndex;
+                    }
+                }
+            }
+            Phase::ParseIndex => {
+                let bytes = self.index_bytes.take().expect("index bytes were read");
+                let parsed = serde_json::from_slice::<ReleaseIndex>(&bytes)
+                    .map_err(|error| {
+                        CompileError::code("invalid-index").with_detail(error.to_string())
+                    })
+                    .and_then(|index| {
+                        super::queue::validate_index(&index).map_err(|error| {
+                            CompileError::code("invalid-index").with_detail(error.to_string())
+                        })?;
+                        Ok(index)
+                    });
+                match parsed {
+                    Ok(index) => self.folder_index = Some(index),
+                    Err(error) => self.push_index_diagnostic(error),
+                }
+                self.phase = Phase::MergeIndex;
+            }
+            Phase::MergeIndex => {
+                let Some((id, file)) = self
+                    .folder_index
+                    .as_ref()
+                    .and_then(|index| index.paths.get(self.index_row_position))
+                    .map(|row| (row.id.clone(), row.file.clone()))
+                else {
+                    self.candidate_ids = Vec::with_capacity(self.candidates.len());
+                    self.phase = Phase::CollectCandidates;
+                    return Ok(None);
+                };
+                self.index_row_position += 1;
+                if !valid_id(&id)
+                    || file
+                        .as_deref()
+                        .is_some_and(|file| file != format!("{id}.json"))
+                {
+                    let path = self.source.folder.join("index.json");
+                    self.diagnostics.push(|| {
+                        diagnostic(
+                            &path,
+                            "invalid-index-row",
+                            format!("{id} must use <id>.json in this folder"),
+                        )
+                    });
+                    return Ok(None);
+                }
+                self.ordered.push(id.clone());
+                if let Some(file) = file {
+                    let path = self.source.folder.join(file);
+                    if !self.candidates.contains_key(&id) {
+                        if self.omitted_candidates > 0 && path.is_file() {
+                            self.omitted_indexed.insert(id);
+                        } else {
+                            if self.candidates.len() >= MAX_REGISTRY_CANDIDATES {
+                                return Err(CompileError::code("registry-candidate-limit")
+                                    .with_detail("Folder registry candidate bound exceeded"));
+                            }
+                            self.candidates.insert(id, path);
+                        }
+                    }
+                }
+            }
+            Phase::CollectCandidates => {
+                let id = self
+                    .candidates
+                    .iter()
+                    .nth(self.candidate_copy_position)
+                    .map(|(id, _)| id.clone());
+                if let Some(id) = id {
+                    self.candidate_ids.push(id);
+                    self.candidate_copy_position += 1;
+                } else {
+                    self.phase = Phase::OrderCandidates;
+                }
+            }
+            Phase::OrderCandidates => {
+                let Some(id) = self.candidate_ids.get(self.candidate_position) else {
+                    self.total_documents = Some(self.ordered.len());
+                    self.index = Some(ReleaseIndex {
+                        schema: BUNDLED_INDEX.schema,
+                        paths: Vec::with_capacity(MAX_REGISTRY_ROWS),
+                    });
+                    self.base_index_position = 0;
+                    self.phase = Phase::BuildBaseIndex;
+                    return Ok(None);
+                };
+                if !self.ordered.contains(id) {
+                    self.ordered.push(id.clone());
+                }
+                self.candidate_position += 1;
+            }
+            Phase::BuildBaseIndex => {
+                let Some(row) = BUNDLED_INDEX.paths.get(self.base_index_position) else {
+                    self.phase = Phase::PrepareDocument;
+                    return Ok(None);
+                };
+                self.index
+                    .as_mut()
+                    .expect("combined index is initialized")
+                    .paths
+                    .push(row.clone());
+                self.base_index_position += 1;
+            }
+            Phase::PrepareDocument => {
+                let Some(id) = self.ordered.get(self.document_position).cloned() else {
+                    let (diagnostics, count) =
+                        std::mem::take(&mut self.diagnostics).finish(&self.source.folder);
+                    self.final_diagnostics = diagnostics;
+                    self.diagnostic_count = count;
+                    self.rows = Vec::with_capacity(BUNDLED_INDEX.paths.len());
+                    self.base_row_position = 0;
+                    self.phase = Phase::BuildBaseRows;
+                    return Ok(None);
+                };
+                let index = self.index.as_ref().expect("combined index is prepared");
+                let bundled = index.paths.iter().any(|row| row.id == id);
+                if !bundled && index.paths.len() >= MAX_REGISTRY_ROWS {
+                    let path = self.source.folder.join(format!("{id}.json"));
+                    self.diagnostics.push(|| {
+                        diagnostic(
+                            &path,
+                            "too-many-paths",
+                            "Combined registry contains more than 256 rows",
+                        )
+                    });
+                    self.document_position += 1;
+                    self.completed_documents += 1;
+                    return Ok(None);
+                }
+                let authored = self
+                    .folder_index
+                    .as_ref()
+                    .and_then(|index| index.paths.iter().find(|row| row.id == id))
+                    .cloned();
+                let mut draft = ReleasePath {
+                    id: id.clone(),
+                    file: Some(format!("{id}.json")),
+                    name: None,
+                    unavailable: None,
+                    status: authored.as_ref().and_then(|row| row.status),
+                };
+                if self.omitted_indexed.contains(&id) {
+                    if !bundled {
+                        draft.name = Some(
+                            authored
+                                .as_ref()
+                                .and_then(|row| row.name.clone())
+                                .unwrap_or_else(|| id.clone()),
+                        );
+                        draft.unavailable =
+                            Some("Omitted by the 256-file filename-sorted cap".into());
+                        self.index
+                            .as_mut()
+                            .expect("combined index is prepared")
+                            .paths
+                            .push(draft);
+                    }
+                    self.document_position += 1;
+                    self.completed_documents += 1;
+                    return Ok(None);
+                }
+                if let Some(row) = authored
+                    .as_ref()
+                    .filter(|row| row.file.is_none() && !self.candidates.contains_key(&id))
+                    .cloned()
+                {
+                    if !bundled {
+                        self.index
+                            .as_mut()
+                            .expect("combined index is prepared")
+                            .paths
+                            .push(row);
+                    }
+                    self.document_position += 1;
+                    self.completed_documents += 1;
+                    return Ok(None);
+                }
+                let path = self
+                    .candidates
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_else(|| self.source.folder.join(format!("{id}.json")));
+                self.pending = Some(PendingDocument {
+                    id,
+                    path,
+                    bundled,
+                    draft,
+                    authored_unavailable: authored.and_then(|row| row.unavailable),
+                    reader: None,
+                    bytes: None,
+                    document: None,
+                    gathering: None,
+                });
+                self.phase = Phase::ReadDocument;
+            }
+            Phase::BuildBaseRows => {
+                if let Some(entry) = BUNDLED_INDEX.paths.get(self.base_row_position) {
+                    self.rows.push(bundled_row(entry));
+                    self.base_row_position += 1;
+                } else {
+                    self.phase = Phase::ReduceRows;
+                }
+            }
+            Phase::ReadDocument => {
+                let needs_open = self
+                    .pending
+                    .as_ref()
+                    .is_some_and(|pending| pending.reader.is_none() && pending.bytes.is_none());
+                if needs_open {
+                    let path = self
+                        .pending
+                        .as_ref()
+                        .expect("document is selected")
+                        .path
+                        .clone();
+                    match open_bounded(&path) {
+                        Ok(reader) => {
+                            self.pending.as_mut().expect("document is selected").reader =
+                                Some(reader);
+                        }
+                        Err(error) => self.finish_document(Err(error))?,
+                    }
+                    return Ok(None);
+                }
+                let result = self
+                    .pending
+                    .as_mut()
+                    .expect("document is selected")
+                    .reader
+                    .as_mut()
+                    .expect("document reader is open")
+                    .read_chunk();
+                match result {
+                    Ok(Some(bytes)) => {
+                        let pending = self.pending.as_mut().expect("document is selected");
+                        pending.reader = None;
+                        pending.bytes = Some(Arc::new(bytes));
+                        self.phase = Phase::ParseDocument;
+                    }
+                    Ok(None) => {}
+                    Err(error) => self.finish_document(Err(error))?,
+                }
+            }
+            Phase::ParseDocument => {
+                let pending = self.pending.as_mut().expect("document is selected");
+                let bytes = Arc::clone(pending.bytes.as_ref().expect("document bytes were read"));
+                let document = serde_json::from_slice::<PathDocument>(bytes.as_slice())
+                    .map_err(|error| {
+                        CompileError::code("invalid-json").with_detail(error.to_string())
+                    })
+                    .and_then(|document| {
+                        if document.id.0.as_ref() != pending.id {
+                            Err(CompileError::code("path-id-mismatch")
+                                .with_path(document.id.clone())
+                                .with_detail(format!(
+                                    "Filename id {:?} differs from document id",
+                                    pending.id
+                                )))
+                        } else {
+                            Ok(document)
+                        }
+                    });
+                match document {
+                    Ok(document) => {
+                        let needs_gathering = document_uses_gathering(&document);
+                        self.pending
+                            .as_mut()
+                            .expect("document is selected")
+                            .document = Some(document);
+                        self.phase = if needs_gathering {
+                            Phase::PrepareGatheringFamily
+                        } else {
+                            Phase::CompileDocument
+                        };
+                    }
+                    Err(error) => self.finish_document(Err(error))?,
+                }
+            }
+            Phase::PrepareGatheringFamily => {
+                let result = {
+                    let pending = self.pending.as_ref().expect("document is selected");
+                    compile::prepare_gathering(
+                        pending.document.as_ref().expect("document was parsed"),
+                        self.selected.get(),
+                        worker,
+                    )
+                };
+                match result {
+                    Ok(gathering) => {
+                        self.pending
+                            .as_mut()
+                            .expect("document is selected")
+                            .gathering = gathering;
+                        self.phase = Phase::CompileDocument;
+                    }
+                    Err(error) => self.finish_document(Err(error))?,
+                }
+            }
+            Phase::CompileDocument => {
+                let result = {
+                    let pending = self.pending.as_mut().expect("document is selected");
+                    let bytes = pending.bytes.as_ref().expect("document bytes were read");
+                    let document = pending.document.as_ref().expect("document was parsed");
+                    let gathering = pending.gathering.clone();
+                    let digest = compile::digest_bytes(bytes.as_slice());
+                    // Validation judges the document's own content: operator loadout rows
+                    // only override a compiled kit by name at a slot's compile, so none
+                    // are consulted here.
+                    let operator = crate::local_state::OperatorLoadouts::absent();
+                    if let Some(partner) = &document.partner {
+                        partner.roles.iter().try_for_each(|role| {
+                            compile::compile_uncached(
+                                document,
+                                digest,
+                                self.selected.get(),
+                                self.quests.get(),
+                                gathering.clone(),
+                                Some(role.gang),
+                                &operator,
+                            )
+                            .map(|_| ())
+                            .map_err(|mut error| {
+                                let detail = format!(
+                                    "gang {:?}: {}",
+                                    role.gang,
+                                    error.detail.as_deref().unwrap_or("Path validation failed")
+                                );
+                                error.role.get_or_insert_with(|| role.id.clone());
+                                error.with_detail(detail)
+                            })
+                        })
+                    } else {
+                        compile::compile_uncached(
+                            document,
+                            digest,
+                            self.selected.get(),
+                            self.quests.get(),
+                            gathering,
+                            None,
+                            &operator,
+                        )
+                        .map(|_| ())
+                    }
+                };
+                match result {
+                    Ok(()) => {
+                        let pending = self.pending.as_mut().expect("document is selected");
+                        let document = pending.document.as_mut().expect("document was parsed");
+                        let folder_document = FolderDocument {
+                            bytes: Arc::clone(
+                                pending.bytes.as_ref().expect("document bytes were read"),
+                            ),
+                            display: std::mem::take(&mut document.display_name),
+                        };
+                        self.finish_document(Ok(folder_document))?;
+                    }
+                    Err(error) => self.finish_document(Err(error))?,
+                }
+            }
+            Phase::ReduceRows => {
+                let index = self.index.as_ref().expect("combined index is prepared");
+                let Some(entry) = index.paths.get(self.row_position) else {
+                    self.report = format!(
+                        "Reload Paths: {} folder documents, {} registry rows, {} validation errors ({})",
+                        self.documents.len(),
+                        index.paths.len(),
+                        self.diagnostic_count,
+                        self.source.folder.display()
+                    );
+                    self.phase = Phase::BuildReport;
+                    return Ok(None);
+                };
+                let display = self
+                    .documents
+                    .get(&entry.id)
+                    .map(|document| document.display.as_str())
+                    .or(entry.name.as_deref())
+                    .unwrap_or(&entry.id);
+                let source = classify_source(&entry.id, index, &self.documents);
+                self.row_position += 1;
+                if source == PathSource::Bundled && entry.unavailable.is_none() {
+                    return Ok(None);
+                }
+                let mut label = if source == PathSource::Bundled {
+                    display.to_owned()
+                } else {
+                    format!("{display} [{}]", source.label())
+                };
+                if let Some(reason) = &entry.unavailable {
+                    label.push_str(&format!(" — {reason}"));
+                }
+                if entry.status == Some(ReleasePathStatus::Draft) && source != PathSource::Draft {
+                    label.push_str(" [draft]");
+                }
+                let row = PathRow {
+                    id: entry.id.clone(),
+                    label,
+                    unavailable: entry.unavailable.clone(),
+                    source,
+                    status: entry.status,
+                };
+                if let Some(position) = self.rows.iter().position(|row| row.id == entry.id) {
+                    self.rows[position] = row;
+                } else {
+                    self.rows.push(row);
+                }
+            }
+            Phase::BuildReport => {
+                if let Some(issue) = self.final_diagnostics.get(self.report_position) {
+                    self.report.push('\n');
+                    self.report.push_str(&issue.to_string());
+                    self.report_position += 1;
+                } else {
+                    let index = self.index.take().expect("combined index is prepared");
+                    self.registry = Some(PathRegistry::Folder(Arc::new(FolderPaths {
+                        index,
+                        documents: std::mem::take(&mut self.documents),
+                        rows: std::mem::take(&mut self.rows),
+                        diagnostics: std::mem::take(&mut self.final_diagnostics),
+                        report: Some(std::mem::take(&mut self.report).into()),
+                    })));
+                    self.phase = Phase::Complete;
+                }
+            }
+            Phase::Complete => {
+                let registry = self.registry.take().ok_or_else(|| {
+                    CompileError::code("preparation-complete")
+                        .with_detail("Path registry preparation was already consumed")
+                })?;
+                return Ok(Some(PreparedRegistry {
+                    source: self.source.clone(),
+                    registry,
+                }));
             }
         }
-        if omitted_candidates > 0 {
-            diagnostics.push(|| {
+        Ok(None)
+    }
+
+    fn finish_scan(&mut self) {
+        self.entries = None;
+        if self.omitted_candidates > 0 {
+            let omitted = self.omitted_candidates;
+            let folder = self.source.folder.clone();
+            self.diagnostics.push(|| {
                 diagnostic(
-                    &source.folder,
+                    &folder,
                     "too-many-paths",
                     format!(
-                        "{} more filename-sorted Path files omitted after the 256-file cap",
-                        omitted_candidates
+                        "{omitted} more filename-sorted Path files omitted after the 256-file cap"
                     ),
                 )
             });
         }
-        let folder_index = read_index(&source.folder.join("index.json"), &mut diagnostics);
-        let mut ordered = Vec::new();
-        if let Some(index) = &folder_index {
-            for row in &index.paths {
-                if !valid_id(&row.id)
-                    || row
-                        .file
-                        .as_deref()
-                        .is_some_and(|file| file != format!("{}.json", row.id))
-                {
-                    diagnostics.push(|| {
-                        diagnostic(
-                            &source.folder.join("index.json"),
-                            "invalid-index-row",
-                            format!("{} must use <id>.json in this folder", row.id),
-                        )
-                    });
-                    continue;
+        self.phase = RegistryPreparationPhase::ReadIndex;
+    }
+
+    fn push_index_diagnostic(&mut self, error: CompileError) {
+        let path = self.source.folder.join("index.json");
+        self.diagnostics
+            .push(|| PathDiagnostic { file: path, error });
+    }
+
+    fn finish_document(
+        &mut self,
+        result: Result<FolderDocument, CompileError>,
+    ) -> Result<(), CompileError> {
+        let mut pending = self.pending.take().expect("document is selected");
+        match result {
+            Ok(document) => {
+                let retained = self
+                    .retained_document_bytes
+                    .checked_add(document.bytes.len())
+                    .filter(|bytes| *bytes <= MAX_RETAINED_FOLDER_DOCUMENT_BYTES)
+                    .ok_or_else(|| {
+                        CompileError::code("registry-retention-limit").with_detail(format!(
+                            "Folder documents exceed the {}-byte retained registry bound",
+                            MAX_RETAINED_FOLDER_DOCUMENT_BYTES
+                        ))
+                    })?;
+                self.retained_document_bytes = retained;
+                if let Some(reason) = pending.authored_unavailable.as_ref() {
+                    pending.draft.name = Some(document.display.clone());
+                    pending.draft.unavailable = Some(reason.clone());
                 }
-                ordered.push(row.id.clone());
-                if let Some(file) = &row.file {
-                    let path = source.folder.join(file);
-                    if !candidates.contains_key(&row.id) {
-                        if omitted_candidates > 0 && path.is_file() {
-                            omitted_indexed.insert(row.id.clone());
-                        } else {
-                            candidates.insert(row.id.clone(), path);
-                        }
-                    }
-                }
+                self.documents.insert(pending.id.clone(), document);
             }
-        }
-        for id in candidates.keys() {
-            if !ordered.contains(id) {
-                ordered.push(id.clone());
-            }
-        }
-        let mut index = BUNDLED_INDEX.clone();
-        let mut documents = HashMap::new();
-        for id in ordered {
-            let bundled = index.paths.iter().position(|row| row.id == id);
-            if bundled.is_none() && index.paths.len() >= MAX_ROWS {
-                diagnostics.push(|| {
-                    diagnostic(
-                        &source.folder.join(format!("{id}.json")),
-                        "too-many-paths",
-                        "Combined registry contains more than 256 rows",
-                    )
-                });
-                continue;
-            }
-            let authored = folder_index
-                .as_ref()
-                .and_then(|index| index.paths.iter().find(|row| row.id == id));
-            let mut draft = ReleasePath {
-                id: id.clone(),
-                file: Some(format!("{id}.json")),
-                name: None,
-                unavailable: None,
-                status: authored.and_then(|row| row.status),
-            };
-            if omitted_indexed.contains(&id) {
-                if bundled.is_none() {
-                    draft.name = Some(
-                        authored
+            Err(error) => {
+                let issue = PathDiagnostic {
+                    file: pending.path,
+                    error,
+                };
+                if !pending.bundled {
+                    pending.draft.name = Some(
+                        self.folder_index
+                            .as_ref()
+                            .and_then(|index| index.paths.iter().find(|row| row.id == pending.id))
                             .and_then(|row| row.name.clone())
-                            .unwrap_or_else(|| id.clone()),
+                            .unwrap_or_else(|| pending.id.clone()),
                     );
-                    draft.unavailable = Some("Omitted by the 256-file filename-sorted cap".into());
-                    index.paths.push(draft);
+                    pending.draft.unavailable = Some(issue.to_string());
                 }
-                continue;
-            }
-            if let Some(row) =
-                authored.filter(|row| row.file.is_none() && !candidates.contains_key(&id))
-            {
-                if bundled.is_none() {
-                    index.paths.push(row.clone());
-                }
-                continue;
-            }
-            let path = candidates
-                .get(&id)
-                .cloned()
-                .unwrap_or_else(|| source.folder.join(format!("{id}.json")));
-            let result = read_document(&path, &id, selected, quests, worker);
-            match result {
-                Ok(document) => {
-                    if let Some(reason) = authored.and_then(|row| row.unavailable.as_ref()) {
-                        draft.name = Some(document.display.clone());
-                        draft.unavailable = Some(reason.clone());
-                    }
-                    documents.insert(id.clone(), document);
-                }
-                Err(error) => {
-                    let issue = PathDiagnostic { file: path, error };
-                    if bundled.is_none() {
-                        draft.name = Some(
-                            authored
-                                .and_then(|row| row.name.clone())
-                                .unwrap_or_else(|| id.clone()),
-                        );
-                        draft.unavailable = Some(issue.to_string());
-                    }
-                    diagnostics.push(move || issue);
-                }
-            }
-            if bundled.is_none() {
-                index.paths.push(draft);
+                self.diagnostics.push(move || issue);
             }
         }
-        let (diagnostics, diagnostic_count) = diagnostics.finish(&source.folder);
-        let mut rows = bundled_rows().to_vec();
-        for entry in &index.paths {
-            let display = documents
-                .get(&entry.id)
-                .map(|document| document.display.as_str())
-                .or(entry.name.as_deref())
-                .unwrap_or(&entry.id);
-            let source = classify_source(&entry.id, &index, &documents);
-            if source == PathSource::Bundled && entry.unavailable.is_none() {
-                continue;
-            }
-            let mut label = if source == PathSource::Bundled {
-                display.to_owned()
-            } else {
-                format!("{display} [{}]", source.label())
-            };
-            if let Some(reason) = &entry.unavailable {
-                label.push_str(&format!(" — {reason}"));
-            }
-            if entry.status == Some(ReleasePathStatus::Draft) && source != PathSource::Draft {
-                label.push_str(" [draft]");
-            }
-            let row = PathRow {
-                id: entry.id.clone(),
-                label,
-                unavailable: entry.unavailable.clone(),
-                source,
-                status: entry.status,
-            };
-            if let Some(position) = rows.iter().position(|row| row.id == entry.id) {
-                rows[position] = row;
-            } else {
-                rows.push(row);
-            }
+        if !pending.bundled {
+            self.index
+                .as_mut()
+                .expect("combined index is prepared")
+                .paths
+                .push(pending.draft);
         }
-        let mut report = format!(
-            "Reload Paths: {} folder documents, {} registry rows, {} validation errors ({})",
-            documents.len(),
-            index.paths.len(),
-            diagnostic_count,
-            source.folder.display()
-        );
-        for issue in &diagnostics {
-            report.push('\n');
-            report.push_str(&issue.to_string());
-        }
-        Ok(Self::Folder(Arc::new(FolderPaths {
-            index,
-            documents,
-            rows,
-            diagnostics,
-            report: Some(report.into()),
-        })))
+        self.document_position += 1;
+        self.completed_documents += 1;
+        self.phase = RegistryPreparationPhase::PrepareDocument;
+        Ok(())
     }
 }
 
@@ -654,7 +1408,7 @@ fn insert_candidate(
     if candidates.contains_key(id) {
         return;
     }
-    if candidates.len() < MAX_ROWS {
+    if candidates.len() < MAX_REGISTRY_ROWS {
         candidates.insert(id.to_owned(), path);
         return;
     }
@@ -690,9 +1444,11 @@ fn open_nonblocking(path: &Path) -> io::Result<std::fs::File> {
     options.open(path)
 }
 
+#[cfg(test)]
 fn read_bounded(path: &Path) -> Result<Vec<u8>, CompileError> {
     read_bounded_with_open(path, open_nonblocking)
 }
+#[cfg(test)]
 fn read_bounded_with_open(
     path: &Path,
     open_file: impl FnOnce(&Path) -> io::Result<std::fs::File>,
@@ -717,72 +1473,70 @@ fn read_bounded_with_open(
     }
     Ok(bytes)
 }
-fn read_index(path: &Path, diagnostics: &mut Diagnostics) -> Option<ReleaseIndex> {
-    if !path.exists() {
-        return None;
+const FILE_READ_CHUNK_BYTES: usize = 64 * 1024;
+
+struct BoundedRead {
+    file: File,
+    bytes: Vec<u8>,
+}
+
+impl BoundedRead {
+    fn len(&self) -> usize {
+        self.bytes.len()
     }
-    let result = read_bounded(path).and_then(|bytes| {
-        let index: ReleaseIndex = serde_json::from_slice(&bytes)
-            .map_err(|error| CompileError::code("invalid-index").with_detail(error.to_string()))?;
-        super::queue::validate_index(&index)
-            .map_err(|error| CompileError::code("invalid-index").with_detail(error.to_string()))?;
-        Ok(index)
-    });
-    match result {
-        Ok(index) => Some(index),
-        Err(error) => {
-            diagnostics.push(move || PathDiagnostic {
-                file: path.to_owned(),
-                error,
-            });
-            None
+
+    /// Read at most one fixed-size chunk. `Some` means EOF and transfers the
+    /// bounded bytes; `None` means another cooperative read unit is required.
+    fn read_chunk(&mut self) -> Result<Option<Vec<u8>>, CompileError> {
+        let mut chunk = [0_u8; FILE_READ_CHUNK_BYTES];
+        let remaining = MAX_REGISTRY_FILE_BYTES + 1 - self.bytes.len();
+        let limit = remaining.min(FILE_READ_CHUNK_BYTES);
+        let count = self
+            .file
+            .read(&mut chunk[..limit])
+            .map_err(|error| CompileError::code("read-file").with_detail(error.to_string()))?;
+        if count == 0 {
+            return Ok(Some(std::mem::take(&mut self.bytes)));
         }
+        self.bytes.extend_from_slice(&chunk[..count]);
+        if self.bytes.len() > MAX_REGISTRY_FILE_BYTES {
+            return Err(CompileError::code("file-too-large").with_detail("Path file exceeds 1 MiB"));
+        }
+        Ok(None)
     }
 }
-fn read_document(
-    file: &Path,
-    id: &str,
-    selected: &SelectedGameData,
-    quests: &QuestCatalog,
-    worker: &mut FamilyPreparation,
-) -> Result<FolderDocument, CompileError> {
-    let bytes = read_bounded(file)?;
-    let document: PathDocument = serde_json::from_slice(&bytes)
-        .map_err(|error| CompileError::code("invalid-json").with_detail(error.to_string()))?;
-    if document.id.0.as_ref() != id {
-        return Err(CompileError::code("path-id-mismatch")
-            .with_path(document.id)
-            .with_detail(format!("Filename id {id:?} differs from document id")));
+
+fn open_bounded(path: &Path) -> Result<BoundedRead, CompileError> {
+    let file = open_nonblocking(path)
+        .map_err(|error| CompileError::code("read-file").with_detail(error.to_string()))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| CompileError::code("read-file").with_detail(error.to_string()))?;
+    if !metadata.is_file() {
+        return Err(CompileError::code("not-a-file").with_detail("Path must be a regular file"));
     }
-    // Revalidate every file, including one whose digest is already in the active cache.
-    let gathering = compile::prepare_gathering(&document, selected, worker)?;
-    let digest = compile::digest_bytes(&bytes);
-    if let Some(partner) = &document.partner {
-        for role in &partner.roles {
-            compile::compile_uncached(
-                &document,
-                digest,
-                selected,
-                quests,
-                gathering.clone(),
-                Some(role.gang),
-            )
-            .map_err(|mut error| {
-                let detail = format!(
-                    "gang {:?}: {}",
-                    role.gang,
-                    error.detail.as_deref().unwrap_or("Path validation failed")
-                );
-                error.role.get_or_insert_with(|| role.id.clone());
-                error.with_detail(detail)
-            })?;
-        }
-    } else {
-        compile::compile_uncached(&document, digest, selected, quests, gathering, None)?;
+    if metadata.len() > MAX_PATH_BYTES {
+        return Err(CompileError::code("file-too-large").with_detail("Path file exceeds 1 MiB"));
     }
-    Ok(FolderDocument {
-        bytes: Arc::new(bytes),
-        display: document.display_name,
+    Ok(BoundedRead {
+        file,
+        bytes: Vec::with_capacity(metadata.len() as usize),
+    })
+}
+
+fn document_uses_gathering(document: &PathDocument) -> bool {
+    document.roles.iter().any(|role| {
+        role.prelude
+            .iter()
+            .chain(role.sequences.iter().flat_map(|sequence| &sequence.steps))
+            .chain(role.progress_reader.iter())
+            .any(|step| step.kind == "gather")
+    }) || document.quest.as_ref().is_some_and(|header| {
+        header
+            .acquire
+            .values()
+            .flatten()
+            .any(|step| step.kind == "gather")
     })
 }
 
@@ -838,6 +1592,277 @@ mod tests {
         .unwrap()
         .join()
         .unwrap();
+    }
+
+    fn cooperative_registry(
+        preparation: &mut RegistryPreparation<'_>,
+        worker: &mut FamilyPreparation,
+        phases: &mut std::collections::HashSet<RegistryPreparationPhase>,
+    ) -> PreparedRegistry {
+        loop {
+            phases.insert(preparation.phase());
+            assert!(
+                preparation.progress().pending_file_bytes <= MAX_REGISTRY_FILE_BYTES,
+                "the cooperative reader exceeded its per-file retention ceiling"
+            );
+            if let Some(prepared) = preparation.step(worker).unwrap() {
+                return prepared;
+            }
+        }
+    }
+
+    fn prepare_current_registry(
+        selected: Arc<SelectedGameData>,
+        revision: u64,
+        barriers: Option<(Arc<std::sync::Barrier>, Arc<std::sync::Barrier>)>,
+    ) -> crate::preparation::PreparedTask<Result<PreparedRegistry, CompileError>> {
+        use crate::preparation::CooperativePreparationStep as Step;
+        let mut preparation = RegistryPreparation::from_current(selected).unwrap();
+        let mut completed = 0_u32;
+        let input = crate::preparation::PreparationInput::new(
+            revision,
+            4096,
+            4 * 1024 * 1024,
+            32 * 1024 * 1024,
+        )
+        .unwrap()
+        .with_quester_registry_actions();
+        crate::preparation::submit_cooperative(
+            crate::preparation::PreparationKind::Catalogue,
+            api::identity::Scope::Process,
+            input,
+            move |worker| {
+                completed += 1;
+                match preparation.step(worker) {
+                    Ok(None) => Step::Continue {
+                        completed,
+                        total: None,
+                    },
+                    Ok(Some(candidate)) => {
+                        if let Some((checkpoint, proceed)) = &barriers {
+                            checkpoint.wait();
+                            proceed.wait();
+                        }
+                        Step::Complete {
+                            output: Ok(candidate),
+                            completed,
+                            total: Some(completed),
+                        }
+                    }
+                    Err(error) => Step::Complete {
+                        output: Err(error),
+                        completed,
+                        total: Some(completed),
+                    },
+                }
+            },
+        )
+        .unwrap()
+    }
+
+    /// Timings for a full-size admitted document's individual registry
+    /// actions. Run in release with `--nocapture` when revisiting the worker
+    /// slice policy; every filesystem read and parse still runs off-pump.
+    #[test]
+    fn quester_registry_policy_timing() {
+        let folder = Folder::new();
+        folder.cook("cook", "release policy timing");
+        let document = folder.0.join("cook.json");
+        let mut bytes = std::fs::read(&document).unwrap();
+        bytes.resize(MAX_REGISTRY_FILE_BYTES, b' ');
+        std::fs::write(document, bytes).unwrap();
+        std::fs::write(
+            folder.0.join("index.json"),
+            r#"{"schema":1,"paths":[{"id":"cook","file":"cook.json"}]}"#,
+        )
+        .unwrap();
+        with_data(move |selected, quests, worker| {
+            let mut preparation =
+                RegistryPreparation::from_source(folder.source(true), selected, Arc::new(quests))
+                    .unwrap();
+            let mut maximum = std::time::Duration::ZERO;
+            let mut phase = RegistryPreparationPhase::CheckPin;
+            loop {
+                let current = preparation.phase();
+                let started = std::time::Instant::now();
+                let completed = preparation.step(worker).unwrap().is_some();
+                let elapsed = started.elapsed();
+                if elapsed > maximum {
+                    maximum = elapsed;
+                    phase = current;
+                }
+                if completed {
+                    break;
+                }
+            }
+            eprintln!(
+                "QUESTER_REGISTRY_POLICY bytes={MAX_REGISTRY_FILE_BYTES} max_phase={phase:?} max_action={maximum:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn cooperative_reload_matches_filesystem_after_edit_and_keeps_diagnostics() {
+        with_data(|selected, quests, worker| {
+            let folder = Folder::new();
+            folder.cook("cook", "before cooperative preparation");
+            std::fs::write(folder.0.join("invalid-draft.json"), b"not JSON").unwrap();
+            std::fs::write(
+                folder.0.join("index.json"),
+                r#"{"schema":1,"paths":[{"id":"missing-draft","file":"missing-draft.json"},{"id":"offline-draft","name":"Offline Path","unavailable":"server has not released it"}]}"#,
+            )
+            .unwrap();
+
+            let source = folder.source(true);
+            let mut preparation = RegistryPreparation::from_source(
+                source.clone(),
+                Arc::clone(&selected),
+                Arc::new(QuestCatalog::from_identity(selected.quest_identity()).unwrap()),
+            )
+            .unwrap();
+            assert_eq!(preparation.phase(), RegistryPreparationPhase::CheckPin);
+            assert!(preparation.step(worker).unwrap().is_none());
+
+            // The source path is captured, while files are read by the staged
+            // worker. An edit after construction is therefore observed.
+            folder.cook("cook", "edited after cooperative preparation began");
+            let synchronous = PathRegistry::load(&source, &selected, &quests, worker).unwrap();
+            let mut phases = std::collections::HashSet::new();
+            let prepared = cooperative_registry(&mut preparation, worker, &mut phases);
+            let cooperative = prepared.registry();
+
+            assert_eq!(prepared.source, source);
+            assert!(phases.contains(&RegistryPreparationPhase::ScanFolder));
+            assert!(phases.contains(&RegistryPreparationPhase::ReadIndex));
+            assert!(phases.contains(&RegistryPreparationPhase::ParseIndex));
+            assert!(phases.contains(&RegistryPreparationPhase::ParseDocument));
+            assert!(phases.contains(&RegistryPreparationPhase::CompileDocument));
+            assert_eq!(synchronous.ids(), cooperative.ids());
+            let rows = |registry: &PathRegistry| {
+                registry
+                    .rows()
+                    .iter()
+                    .map(|row| {
+                        (
+                            row.id.clone(),
+                            row.label.clone(),
+                            row.unavailable.clone(),
+                            row.source,
+                            row.status,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(rows(&synchronous), rows(cooperative));
+            let diagnostics = |registry: &PathRegistry| {
+                registry
+                    .diagnostics()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(diagnostics(&synchronous), diagnostics(cooperative));
+            assert_eq!(
+                synchronous.report().map(|report| report.as_ref()),
+                cooperative.report().map(|report| report.as_ref())
+            );
+            assert_eq!(
+                synchronous.bytes("cook").unwrap().as_ref(),
+                cooperative.bytes("cook").unwrap().as_ref()
+            );
+            let invalid = cooperative
+                .rows()
+                .iter()
+                .find(|row| row.id == "invalid-draft")
+                .unwrap();
+            assert_eq!(invalid.source, PathSource::Draft);
+            assert!(invalid
+                .unavailable
+                .as_deref()
+                .unwrap()
+                .contains("invalid-json"));
+            let missing = cooperative
+                .rows()
+                .iter()
+                .find(|row| row.id == "missing-draft")
+                .unwrap();
+            assert!(missing
+                .unavailable
+                .as_deref()
+                .unwrap()
+                .contains("read-file"));
+            let offline = cooperative
+                .rows()
+                .iter()
+                .find(|row| row.id == "offline-draft")
+                .unwrap();
+            assert_eq!(
+                offline.unavailable.as_deref(),
+                Some("server has not released it")
+            );
+            assert!(cooperative.bytes("offline-draft").is_none());
+        });
+    }
+
+    #[test]
+    fn cooperative_reload_fails_closed_at_retained_document_limit() {
+        with_data(|selected, quests, _worker| {
+            let folder = Folder::new();
+            let mut preparation =
+                RegistryPreparation::from_refs(folder.source(true), &selected, &quests).unwrap();
+            preparation.index = Some(BUNDLED_INDEX.clone());
+            preparation.retained_document_bytes = MAX_RETAINED_FOLDER_DOCUMENT_BYTES;
+            preparation.pending = Some(PendingDocument {
+                id: "bounded-draft".into(),
+                path: folder.0.join("bounded-draft.json"),
+                bundled: false,
+                draft: ReleasePath {
+                    id: "bounded-draft".into(),
+                    file: Some("bounded-draft.json".into()),
+                    name: None,
+                    unavailable: None,
+                    status: None,
+                },
+                authored_unavailable: None,
+                reader: None,
+                bytes: None,
+                document: None,
+                gathering: None,
+            });
+
+            let error = preparation
+                .finish_document(Ok(FolderDocument {
+                    bytes: Arc::new(vec![0]),
+                    display: "Bounded draft".into(),
+                }))
+                .unwrap_err();
+            assert_eq!(error.code.as_ref(), "registry-retention-limit");
+        });
+    }
+
+    #[test]
+    fn cooperative_scan_fails_closed_after_bounded_directory_entries() {
+        with_data(|selected, quests, worker| {
+            let folder = Folder::new();
+            for number in 0..=MAX_FOLDER_ENTRIES {
+                std::fs::write(folder.0.join(format!("ignored-{number:04}.txt")), b"").unwrap();
+            }
+            let mut preparation = RegistryPreparation::from_source(
+                folder.source(true),
+                Arc::clone(&selected),
+                Arc::new(quests),
+            )
+            .unwrap();
+
+            let error = loop {
+                match preparation.step(worker) {
+                    Ok(None) => {}
+                    Ok(Some(_)) => panic!("over-limit folder unexpectedly prepared"),
+                    Err(error) => break error,
+                }
+            };
+            assert_eq!(error.code.as_ref(), "too-many-folder-entries");
+        });
     }
 
     #[test]
@@ -1075,7 +2100,7 @@ mod tests {
     fn candidates_are_sorted_before_the_256_file_cap() {
         let mut candidates = BTreeMap::new();
         let mut omitted = 0;
-        for number in (0..MAX_ROWS + 4).rev() {
+        for number in (0..MAX_REGISTRY_ROWS + 4).rev() {
             let id = format!("draft-{number:03}");
             insert_candidate(
                 &mut candidates,
@@ -1204,5 +2229,51 @@ mod tests {
                 panic!("reading the FIFO blocked; the Path loader must open with O_NONBLOCK");
             }
         }
+    }
+    #[test]
+    fn stale_or_cancelled_work_preparation_never_publishes_a_path_snapshot() {
+        use api::identity::{Cancellation, Scope};
+        use std::sync::Barrier;
+
+        let folder = Folder::new();
+        folder.cook("stale-publish-draft", "unpublished");
+        set_source(folder.source(true));
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let stale = prepare_current_registry(Arc::clone(&selected), 1, None);
+        let completed = stale.identity();
+        let prepared = stale.join().unwrap().unwrap();
+        let wrong_current = crate::work_admission::WorkService::shared()
+            .unwrap()
+            .lock()
+            .mint_identity(Scope::Process, None)
+            .unwrap();
+        assert_ne!(completed, wrong_current);
+        assert!(commit_snapshot(prepared, completed, wrong_current).is_err());
+        assert!(snapshot()
+            .rows()
+            .iter()
+            .all(|row| row.id != "stale-publish-draft"));
+
+        let checkpoint = Arc::new(Barrier::new(2));
+        let proceed = Arc::new(Barrier::new(2));
+        let mut cancelled = prepare_current_registry(
+            Arc::clone(&selected),
+            2,
+            Some((Arc::clone(&checkpoint), Arc::clone(&proceed))),
+        );
+        checkpoint.wait();
+        cancelled.cancel(Cancellation::Superseded);
+        proceed.wait();
+        assert!(matches!(
+            cancelled.join(),
+            Err(crate::preparation::PreparationError::Cancelled(
+                Cancellation::Superseded
+            ))
+        ));
+        assert!(snapshot()
+            .rows()
+            .iter()
+            .all(|row| row.id != "stale-publish-draft"));
+        set_source(FolderSource::default());
     }
 }

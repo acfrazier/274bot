@@ -2,6 +2,20 @@ use super::*;
 
 use api::hostlog::{Category, Level};
 const LOST_TOOL_BOUND_MS: u64 = 12_000;
+/// Hostile cleanup runs every 20 NPC ticks. NPC processing precedes player
+/// movement, and the angry plant's death script delays deletion one tick:
+/// allow those two phases when an escaped NPC is outside the client view
+/// (`antimacro.npc:130,1009`; `World.ts:340-408`;
+/// `macro_event_triffid.rs2:51-55`).
+const EVADE_CLEANUP_TICKS: u8 = 22;
+/// Final failure budget: the normal hostile spawn's 1000-tick lifetime plus
+/// two observation ticks (`macro_events.rs2:36`; `macro_event_dryad.rs2:10`).
+/// Missing/disengaged actors can need this long. Engaged actors inside chase
+/// range have a shorter no-distance-progress budget below. Neither rule proves
+/// despawn: the angry plant extends its lifetime (`macro_event_triffid.rs2:35`).
+const EVADE_GIVE_UP_TICKS: u16 = 1_002;
+/// NPC packets use the preferred 15-tile radius (`info.ts:310`, `build.ts:57`).
+const NPC_VIEW_RADIUS: i32 = 15;
 
 /// The chrome contract both views bind (guardian spec `RandomStatus`):
 /// published every tick on the slot status row.
@@ -10,6 +24,8 @@ pub struct RandomStatus {
     /// The detected event; `None` when the snapshot shows nothing.
     pub kind: Option<RandomKind>,
     pub name: Option<String>,
+    /// An owned event pending handling. Detect-only events still publish
+    /// kind/name, but cannot freeze scripts through their pending signal.
     pub ours: bool,
     /// A dialog handle is in flight (the host is talking it through).
     pub handling: bool,
@@ -37,6 +53,13 @@ impl Default for RandomStatus {
         }
     }
 }
+/// Per-frame inputs that change independently of a slot's static profile.
+pub struct GuardianLiveContext<'a> {
+    /// Live per-event choices; the profile arm updates this map.
+    pub event_policies: &'a BTreeMap<String, RandomEventPolicy>,
+    /// Stats from the bound client revision; missing data must not guess.
+    pub game_data: Option<&'a SelectedGameData>,
+}
 /// One explicit ownership-probe machine. Identity-scoped rejected actors are
 /// retained separately so they cannot shadow a different probe candidate.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -62,6 +85,46 @@ impl PlantProbe {
             Self::AwaitingResponse { actor, .. } | Self::Authenticated { actor, .. } => Some(actor),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EvadeSighting {
+    index: usize,
+    npc_type: Option<usize>,
+    tile: (i32, i32),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EvadeState {
+    index: usize,
+    npc_type: Option<usize>,
+    name: String,
+    /// Selected content's NPC `maxrange`, not a guessed flee ring.
+    maxrange: Option<i32>,
+    /// Clear both chase (`maxrange+1`) and wandering cleanup (`range>3`).
+    flee_distance: i32,
+    /// Earliest scene sighting, before the delayed spawn acquires its target.
+    /// If observation starts late, ongoing targeting overrides this estimate.
+    start_tile: (i32, i32),
+    /// Latest actor position distinguishes view-edge removal from despawn.
+    last_tile: (i32, i32),
+    /// Outside-range targeted ticks; one NPC phase can trail player movement.
+    outside_ticks: u8,
+    /// Consecutive stationary ticks outside chase range with no actor in view.
+    missing_ticks: u8,
+    /// Fresh observations since ownership; never reset by view flicker.
+    elapsed_ticks: u16,
+    /// Greatest observed distance from the spawn anchor during this attempt.
+    furthest_distance: i32,
+    /// Consecutive fresh ticks without a new maximum while engaged in range.
+    no_progress_ticks: u16,
+    /// Detect-only after the give-up limit, until this actor is removed.
+    gave_up: bool,
+    flee_target: Option<(i32, i32)>,
+    fallback_distance: Option<i32>,
+    fallback_exhausted: bool,
+    has_fled: bool,
+    policy_logged: bool,
 }
 /// Per-slot random-event guardian state.
 pub struct Guardian {
@@ -95,6 +158,12 @@ pub struct Guardian {
     /// Evade: the tile the flee started from — the walk-back target once
     /// the threat despawns (rs2b0t).
     flee_from: Option<(i32, i32)>,
+    /// Identity and chase-range latch for the current hostile event NPC.
+    evade: Option<EvadeState>,
+    /// First scene positions survive the spawn's delayed targeting/movement.
+    evade_starts: Vec<EvadeSighting>,
+    /// Stop forced Ent chopping and hold until the tree reverts.
+    ent: ent::EntGuard,
     /// Lost-tool: the handle was worn, so the reattached tool is re-wielded.
     tool_was_worn: bool,
     /// Lost-tool: the handle's base tool name (the handle name minus the
@@ -188,6 +257,9 @@ impl Guardian {
             acting: false,
             acting_kind: RandomKind::Dialog,
             flee_from: None,
+            evade: None,
+            evade_starts: Vec::new(),
+            ent: ent::EntGuard::new(),
             tool_was_worn: false,
             tool_handle_base: None,
             tool_deadline_ms: None,
@@ -225,14 +297,39 @@ impl Guardian {
     /// A wrong-talk chat line bins that NPC slot for 45 s. Toggle off:
     /// never act, never hold, still detect+publish. `knock` is the
     /// rising-edge `on_random` arm: once per detected event (kind+name
-    /// signature), when the caller supplies it, the script's claim is
-    /// recorded and gates act + hold (`Host` claims act and hold; a
-    /// `Handle` claim lets the script run untouched).
+    /// signature), when the caller supplies it. The script's claim normally
+    /// gates act + hold (`Host` claims both; `Handle` leaves the script
+    /// available); stored Fight/Ignore are forced to Guardian Flee until
+    /// their script-layer handlers exist.
     pub fn tick<D: Driver>(
         &mut self,
         driver: &mut D,
         snap: &GameSnapshot,
         settings: &ProfileSettings,
+        now_ms: u64,
+        knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
+    ) -> RandomStatus {
+        self.tick_with_live_policies(
+            driver,
+            snap,
+            settings,
+            &GuardianLiveContext {
+                event_policies: &settings.random_event_policies,
+                game_data: None,
+            },
+            now_ms,
+            knock,
+        )
+    }
+
+    /// Host-play supplies the live policy map and selected content through
+    /// this context, without copying either into the static profile.
+    pub fn tick_with_live_policies<D: Driver>(
+        &mut self,
+        driver: &mut D,
+        snap: &GameSnapshot,
+        settings: &ProfileSettings,
+        context: &GuardianLiveContext<'_>,
         now_ms: u64,
         knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
     ) -> RandomStatus {
@@ -247,6 +344,9 @@ impl Guardian {
             self.plant_ignored.clear();
         }
         self.gear_loss.observe(snap, now_ms);
+        if fresh {
+            self.observe_evade_starts(snap, active);
+        }
         let mut ev = detect_ignoring_plants(
             snap,
             now_ms,
@@ -255,6 +355,7 @@ impl Guardian {
             Some(&self.gear_loss),
         );
         self.pin_plant_event(snap, &mut ev);
+        self.refresh_evade(snap, &mut ev, context.game_data, fresh);
 
         if fresh && active {
             // Fresh chat only: a stale wrong-talk line must not re-bin a
@@ -332,6 +433,40 @@ impl Guardian {
                 };
             }
         }
+        let unsupported_policy = ev.as_ref().and_then(|event| {
+            if event.kind != RandomKind::Evade {
+                return None;
+            }
+            let policy = context
+                .event_policies
+                .get(&event.name)
+                .copied()
+                .unwrap_or_default();
+            (policy != RandomEventPolicy::Flee).then_some((
+                event.npc_index?,
+                event.name.as_str(),
+                policy,
+            ))
+        });
+        if let Some((index, name, policy)) = unsupported_policy {
+            // Fight/Ignore have no script-layer arm yet. Keep the Guardian in
+            // control so compiled scripts do not freeze behind `ours`.
+            self.claim = RandomClaim::Host;
+            if let Some(state) = self
+                .evade
+                .as_mut()
+                .filter(|state| state.index == index && state.name.eq_ignore_ascii_case(name))
+            {
+                if !state.policy_logged {
+                    api::host_log!(
+                        Category::RandomEvent,
+                        Level::Info,
+                        "evade: stored {policy:?} policy for {name} is unavailable; treating it as Flee"
+                    );
+                    state.policy_logged = true;
+                }
+            }
+        }
         if !has_lost_tool(snap) || !settings.random_events {
             self.tool_deadline_ms = None;
             self.tool_stalled = false;
@@ -377,6 +512,14 @@ impl Guardian {
         let inert_trap =
             on_trap_square && (!settings.random_events || (on_maze && self.maze_stalled));
 
+        let ent_hold = self.ent.tick(
+            driver,
+            snap,
+            context.game_data,
+            active && settings.random_events && self.claim == RandomClaim::Host,
+            fresh,
+        );
+
         if fresh
             && active
             && settings.random_events
@@ -384,6 +527,7 @@ impl Guardian {
             && !inert_lamp
             && !inert_tool
             && !inert_trap
+            && !ent_hold
         {
             let plant_before_act = self.plant.clone();
             let ignored_before_act = self.plant_ignored.len();
@@ -422,9 +566,10 @@ impl Guardian {
         RandomStatus {
             kind: ev.as_ref().map(|e| e.kind),
             name: ev.as_ref().map(|e| e.name.clone()),
-            // Inert leftover lamp still detects for the status row, but
-            // must not publish ours — EventSignal.pending is hold OR ours.
-            ours: !inert_lamp
+            // Detection alone must not latch pending work: both native
+            // eligibility and EventSignal.pending use hold OR ours.
+            ours: settings.random_events
+                && !inert_lamp
                 && !inert_tool
                 && !inert_trap
                 && ev.as_ref().map(|e| e.ours).unwrap_or(false),
@@ -434,11 +579,238 @@ impl Guardian {
                 && !inert_trap
                 && (self.in_flight
                     || self.acting
+                    || ent_hold
                     || ev.as_ref().is_some_and(|e| is_trapped(e.kind))),
             toggle: settings.random_events,
             claim: self.claim,
             cooldown,
         }
+    }
+
+    /// Remember hostile spawn sightings even before they target this player.
+    /// Dryads delay one tick between `npc_add` and `opplayer2`
+    /// (`macro_event_dryad.rs2:10-18`); the engine's immutable chase anchor is
+    /// constructor `startX/startZ`, not the later targeting tile
+    /// (`Npc.ts:77-85,661-670`). A late sighting is only a route estimate:
+    /// it can never overrule a still-targeting actor.
+    fn observe_evade_starts(&mut self, snap: &GameSnapshot, active: bool) {
+        if !active {
+            self.evade_starts.clear();
+            return;
+        }
+        self.evade_starts.retain(|seen| {
+            snap.npcs()
+                .iter()
+                .any(|npc| npc.index == seen.index && npc.r#type == seen.npc_type)
+        });
+        for npc in snap.npcs().iter().filter(|npc| is_evade_npc(npc)) {
+            if !self
+                .evade_starts
+                .iter()
+                .any(|seen| seen.index == npc.index && seen.npc_type == npc.r#type)
+            {
+                self.evade_starts.push(EvadeSighting {
+                    index: npc.index,
+                    npc_type: npc.r#type,
+                    tile: (npc.tile.x, npc.tile.z),
+                });
+            }
+        }
+    }
+
+    /// Retain the exact macro-event actor through its cleanup interval.
+    /// Missing beyond view keeps fleeing and counts stationary outside-chase
+    /// ticks, even short of the full flee ring. Give up sooner if an engaged
+    /// actor can still hit a bot that makes no outward distance progress.
+    fn refresh_evade(
+        &mut self,
+        snap: &GameSnapshot,
+        ev: &mut Option<DetectedRandom>,
+        game_data: Option<&SelectedGameData>,
+        fresh: bool,
+    ) {
+        if let Some(mut state) = self.evade.take() {
+            let actor = snap.npcs().iter().find(|npc| npc.index == state.index);
+            let same_actor =
+                actor.is_some_and(|npc| npc.r#type == state.npc_type && is_evade_npc(npc));
+            let engaged = actor.is_some_and(|npc| {
+                event_npc_targets_player(npc, snap.self_slot())
+                    || (npc.target.is_none() && npc.in_combat)
+            });
+            let player = snap.tile().map(|(x, z, _)| (x, z));
+            let outside = player.is_some_and(|player| {
+                state
+                    .maxrange
+                    .is_some_and(|range| outside_chase_range(player, state.start_tile, range))
+            });
+            let moving = snap
+                .local_player()
+                .is_some_and(|local| local.player.actor.moving);
+            // An NPC can take two movement steps between observations
+            // (PathingEntity.ts:135-152). Only a removal comfortably inside
+            // its latest view position is immediate despawn evidence.
+            let beyond_view =
+                player.is_some_and(|player| cheb(player, state.last_tile) > NPC_VIEW_RADIUS - 2);
+            let other_event = ev.as_ref().is_some_and(|event| {
+                event.kind != RandomKind::Evade
+                    || event.npc_index != Some(state.index)
+                    || !event.name.eq_ignore_ascii_case(&state.name)
+            });
+            let retain = if same_actor {
+                state.last_tile = actor
+                    .map(|npc| (npc.tile.x, npc.tile.z))
+                    .expect("same actor is visible");
+                state.missing_ticks = 0;
+                if fresh {
+                    state.outside_ticks = if outside && engaged {
+                        state.outside_ticks.saturating_add(1)
+                    } else {
+                        0
+                    };
+                }
+                true
+            } else if actor.is_none() && state.has_fled && beyond_view {
+                if fresh {
+                    state.missing_ticks = if outside && !moving {
+                        state.missing_ticks.saturating_add(1)
+                    } else {
+                        0
+                    };
+                }
+                if state.missing_ticks >= EVADE_CLEANUP_TICKS {
+                    if !other_event {
+                        *ev = None;
+                    }
+                    return;
+                }
+                true
+            } else {
+                // Missing inside the view, or a changed slot, is observed removal.
+                false
+            };
+            if retain {
+                if fresh {
+                    state.elapsed_ticks = state.elapsed_ticks.saturating_add(1);
+                    if let Some(distance) = player.map(|tile| cheb(tile, state.start_tile)) {
+                        if distance > state.furthest_distance {
+                            state.furthest_distance = distance;
+                            state.no_progress_ticks = 0;
+                        } else if same_actor && engaged && !outside && state.maxrange.is_some() {
+                            state.no_progress_ticks = state.no_progress_ticks.saturating_add(1);
+                        } else {
+                            state.no_progress_ticks = 0;
+                        }
+                    } else {
+                        state.no_progress_ticks = 0;
+                    }
+                }
+                // An outward route advances 1-2 tiles per tick
+                // (PathingEntity.ts:135-152). Allow every fallback ring one
+                // fresh try plus two movement observations, but never count
+                // accepted walks that leave the bot on its own tile as progress.
+                let stalled =
+                    i32::from(state.no_progress_ticks) >= state.flee_distance.saturating_add(2);
+                if (stalled || state.elapsed_ticks >= EVADE_GIVE_UP_TICKS) && !state.gave_up {
+                    state.gave_up = true;
+                    if self.acting_kind == RandomKind::Evade {
+                        self.acting = false;
+                        self.flee_from = None;
+                    }
+                    api::host_log!(
+                        Category::RandomEvent,
+                        Level::Warn,
+                        "evade: {} reached the escape attempt limit; returning control to the script",
+                        state.name
+                    );
+                }
+                // A retained former attacker must not replace a newly
+                // detected box, trap or dialog. Keep its original deadline.
+                if other_event {
+                    if ev
+                        .as_ref()
+                        .is_some_and(|event| event.kind != RandomKind::Evade)
+                    {
+                        self.evade = Some(state);
+                        return;
+                    }
+                } else {
+                    *ev = Some(DetectedRandom {
+                        kind: RandomKind::Evade,
+                        name: state.name.clone(),
+                        ours: state.maxrange.is_some() && !state.gave_up,
+                        npc_index: Some(state.index),
+                    });
+                    self.evade = Some(state);
+                    return;
+                }
+            }
+        }
+
+        let Some(event) = ev.as_ref().filter(|event| event.kind == RandomKind::Evade) else {
+            return;
+        };
+        let Some(index) = event.npc_index else {
+            return;
+        };
+        let Some(npc) = snap.npcs().iter().find(|npc| npc.index == index) else {
+            return;
+        };
+        if !event_npc_targets_player(npc, snap.self_slot()) {
+            return;
+        }
+        let content = npc
+            .r#type
+            .and_then(|id| i32::try_from(id).ok())
+            .and_then(|id| game_data?.npc_name(id));
+        let maxrange = content.map(|row| row.maxrange);
+        // Wandering stays within wanderrange of startX/startZ (Npc.ts:705-728).
+        // Hostile deletion needs NPC-player distance >3 (macro_events.rs2:168).
+        let flee_distance = content
+            .map(|row| {
+                row.maxrange
+                    .max(0)
+                    .saturating_add(2)
+                    .max(row.wanderrange.max(0).saturating_add(4))
+            })
+            .unwrap_or(0);
+        let start_tile = self
+            .evade_starts
+            .iter()
+            .find(|seen| seen.index == index && seen.npc_type == npc.r#type)
+            .map(|seen| seen.tile)
+            .unwrap_or((npc.tile.x, npc.tile.z));
+        let state = EvadeState {
+            index,
+            npc_type: npc.r#type,
+            name: event.name.clone(),
+            maxrange,
+            flee_distance,
+            start_tile,
+            last_tile: (npc.tile.x, npc.tile.z),
+            outside_ticks: 0,
+            missing_ticks: 0,
+            elapsed_ticks: 0,
+            furthest_distance: snap.tile().map_or(0, |(x, z, _)| cheb((x, z), start_tile)),
+            no_progress_ticks: 0,
+            gave_up: false,
+            flee_target: None,
+            fallback_distance: None,
+            fallback_exhausted: false,
+            has_fled: false,
+            policy_logged: false,
+        };
+        if state.maxrange.is_none() {
+            api::host_log!(
+                Category::RandomEvent,
+                Level::Warn,
+                "evade: no selected content range for {}; not fleeing",
+                state.name
+            );
+            if let Some(event) = ev.as_mut() {
+                event.ours = false;
+            }
+        }
+        self.evade = Some(state);
     }
 
     fn clear_plant(&mut self) {
@@ -629,19 +1001,36 @@ impl Guardian {
         }
         let Some(ev) = ev else {
             if self.acting {
-                self.resolve(driver, snap);
+                self.resolve(
+                    driver,
+                    snap,
+                    self.acting_kind == RandomKind::Evade && self.evade.is_none(),
+                );
             }
             return;
         };
         if !ev.ours && ev.kind != RandomKind::Pick {
             if self.acting {
-                self.resolve(driver, snap);
+                self.resolve(
+                    driver,
+                    snap,
+                    self.acting_kind == RandomKind::Evade && self.evade.is_none(),
+                );
             }
             return;
         }
         if self.acting {
-            if ev.kind != self.acting_kind {
-                self.resolve(driver, snap);
+            let same_evade = self.acting_kind != RandomKind::Evade
+                || self
+                    .evade
+                    .as_ref()
+                    .is_some_and(|state| ev.npc_index == Some(state.index));
+            if ev.kind != self.acting_kind || !same_evade {
+                self.resolve(
+                    driver,
+                    snap,
+                    self.acting_kind == RandomKind::Evade && self.evade.is_none(),
+                );
             } else {
                 self.step_act(driver, snap, settings, ev, now_ms);
             }
@@ -710,11 +1099,13 @@ impl Guardian {
     /// the in-flight latch and finish the kind's tail work — the evade
     /// walk-back toward the pre-flee tile, and the lost-tool re-wield of
     /// a handle that was worn.
-    fn resolve<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot) {
-        if self.acting_kind == RandomKind::Evade {
+    fn resolve<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot, walk_back: bool) {
+        if self.acting_kind == RandomKind::Evade && walk_back {
             if let Some((fx, fz)) = self.flee_from.take() {
                 walk(driver, fx, fz);
             }
+        } else if self.acting_kind == RandomKind::Evade {
+            self.flee_from = None;
         }
         // Content handles omit the tier: "Axe handle" can restore "Rune axe".
         // Re-wield only a formerly worn tool; Gatherer also validates its gates.
@@ -935,22 +1326,103 @@ impl Guardian {
         }
     }
 
-    /// Flee the hostile guardian: walk the first walkable `fleeCandidates`
-    /// ring tile (farthest from the threat first) every tick the threat
-    /// stays. The walk-back after despawn lives in [`Guardian::resolve`].
-    fn step_evade<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot, ev: &DetectedRandom) {
-        let Some(index) = ev.npc_index else {
+    /// Clear `maxrange+1` targeting and every `wanderrange` tile by >3 for
+    /// the content's cleanup timer. Late-anchor targeting feedback after
+    /// the next NPC phase requires another outward step, not a finished latch.
+    /// Blocked exact routes retain the existing nearest/nearer-ring fallback.
+    fn step_evade<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot, _ev: &DetectedRandom) {
+        let Some((
+            index,
+            maxrange,
+            flee_distance,
+            start_tile,
+            outside_ticks,
+            sent,
+            fallback_exhausted,
+        )) = self.evade.as_ref().map(|state| {
+            (
+                state.index,
+                state.maxrange,
+                state.flee_distance,
+                state.start_tile,
+                state.outside_ticks,
+                state.flee_target.is_some(),
+                state.fallback_exhausted,
+            )
+        })
+        else {
             self.acting = false;
             return;
         };
-        let Some(npc) = npc_by_index(snap.npcs(), index) else {
-            self.acting = false;
+        if fallback_exhausted {
+            return;
+        }
+        let Some((px, pz, _)) = snap.tile() else {
             return;
         };
-        for (x, z) in flee_candidates((npc.tile.x, npc.tile.z)) {
-            if walk(driver, x, z) {
-                break;
+        let player = (px, pz);
+        let Some(maxrange) = maxrange else {
+            return;
+        };
+        let npc = npc_by_index(snap.npcs(), index);
+        let engaged = npc.is_some_and(|npc| {
+            event_npc_targets_player(npc, snap.self_slot())
+                || (npc.target.is_none() && npc.in_combat)
+        });
+        let reached_flee = cheb(player, start_tile) >= flee_distance;
+        if engaged
+            && outside_chase_range(player, start_tile, maxrange)
+            && reached_flee
+            && outside_ticks < 2
+        {
+            return;
+        }
+        if !engaged
+            && npc.map_or(reached_flee, |npc| {
+                cheb(player, (npc.tile.x, npc.tile.z)) > 3
+            })
+        {
+            return;
+        }
+        let moving = snap
+            .local_player()
+            .is_some_and(|local| local.player.actor.moving);
+        if sent {
+            if moving {
+                return;
             }
+            if let Some(state) = self.evade.as_mut() {
+                state.flee_target = None;
+                state.fallback_distance = None;
+                state.fallback_exhausted = false;
+            }
+        }
+        let distance = flee_distance.max(cheb(player, start_tile).saturating_add(1));
+        let state = self.evade.as_mut().expect("latched evade state");
+        if state.fallback_distance.is_none() {
+            for (x, z) in flee_candidates_away(start_tile, player, distance) {
+                if walk(driver, x, z) {
+                    state.flee_target = Some((x, z));
+                    state.has_fled = true;
+                    return;
+                }
+            }
+            state.fallback_distance = Some(distance);
+        }
+        let fallback_distance = state.fallback_distance.expect("fallback ring is set");
+        for (x, z) in flee_candidates_away(start_tile, player, fallback_distance) {
+            if walk_nearest(driver, x, z) {
+                state.flee_target = Some((x, z));
+                state.fallback_distance = None;
+                state.has_fled = true;
+                return;
+            }
+        }
+        if fallback_distance > 1 {
+            state.fallback_distance = Some(fallback_distance - 1);
+        } else {
+            state.fallback_distance = None;
+            state.fallback_exhausted = true;
         }
     }
 
@@ -1399,7 +1871,7 @@ impl Guardian {
     }
 
     /// Content reattachment is held-on-held only: take the head first.
-    /// Failure releases the script to replace the missing tool at a bank.
+    /// Transient refusals retry from the next fresh snapshot within the bound.
     fn step_lost_tool<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot, now_ms: u64) {
         if self
             .tool_deadline_ms
@@ -1445,7 +1917,7 @@ impl Guardian {
             return;
         }
         let mut ix = Interactions::new(snap, driver);
-        let result = if handle_worn.is_some() {
+        let _ = if handle_worn.is_some() {
             ix.interact(
                 OpTarget::Item(handle),
                 ActionSpec::Label("Remove".to_string()),
@@ -1458,10 +1930,6 @@ impl Guardian {
                 ActionSpec::Label("Take".to_string()),
             )
         };
-        if matches!(result, SendResult::Refused { .. }) {
-            self.tool_stalled = true;
-            self.acting = false;
-        }
     }
 
     /// The handle lifts when the chat is fully closed and the in-flight

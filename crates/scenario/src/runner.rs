@@ -17,7 +17,10 @@ use nav::world::NavWorld;
 
 use crate::evidence::Evidence;
 use crate::proof::Proof;
-use crate::{Scenario, StepKind, SustainWhen, Wait};
+use crate::random_episode::{Frame, RandomEventEpisode, Verdict};
+#[cfg(test)]
+use crate::Wait;
+use crate::{Scenario, StepKind, SustainWhen};
 
 /// The runner's pollable status (the UI and the headless test read it).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +47,7 @@ enum Phase {
 enum TerminalOutcome {
     Pass,
     Fail(String),
+    Unavailable(String),
 }
 
 struct TerminalCleanup {
@@ -417,12 +421,17 @@ pub struct ScenarioRunner {
     /// Baseline for the current [`Proof::FreshStatXpGain`] step only. Cleared
     /// at every step and session boundary so prior work cannot satisfy it.
     fresh_xp_baseline: Option<(i32, i32)>,
-    /// Chat-sequence baseline for the current [`Proof::FreshTutorial`] step
-    /// only. Latched when the step begins (the post-relog snapshot, before
-    /// the reseed send goes out) and cleared at every step and session
-    /// boundary, so a chat line latched before the relog cannot satisfy the
-    /// post-relog reseed wait.
-    fresh_tutorial_baseline: Option<i32>,
+    /// Chat-sequence baseline for the current [`Proof::FreshTutorial`] or
+    /// [`Proof::FreshChat`] step only. Latched when the step begins (the
+    /// post-relog snapshot, before the reseed or getvar send goes out) and
+    /// cleared at every step and session boundary, so a chat line latched
+    /// before the relog cannot satisfy the post-relog wait.
+    fresh_chat_baseline: Option<i32>,
+    /// Latched per step for [`Proof::VisitedWithin`]: set once the player
+    /// stands inside the proof's rectangle on an observed tick of the current
+    /// step. Cleared at every step and session boundary, like the chat
+    /// baseline above.
+    visited_within: bool,
     /// Native host-hold + snapshot facts for the current lamp witness step.
     /// This is deliberately not part of [`GameSnapshot`].
     lamp_episode: Option<LampEpisodeObservation>,
@@ -430,6 +439,9 @@ pub struct ScenarioRunner {
     maze_episode: Option<MazeEpisodeObservation>,
     /// At most one catch-less stall session may be followed by a bank retry.
     stall_combat: Option<StallCombatObservation>,
+    /// Random-event Guardian episode, armed by an
+    /// [`StepKind::ObserveRandomEvent`] step and kept for the terminal receipt.
+    random_event: Option<RandomEventEpisode>,
     /// Host-fed Sherlock protect-window oracle, armed when the scenario names it.
     protect_window: Option<ProtectWindowObservation>,
     /// StartScript has begun: paint published before it cannot belong to
@@ -534,10 +546,12 @@ impl ScenarioRunner {
             evidence: None,
             xp_baselines: Vec::new(),
             fresh_xp_baseline: None,
-            fresh_tutorial_baseline: None,
+            fresh_chat_baseline: None,
+            visited_within: false,
             lamp_episode: None,
             maze_episode: None,
             stall_combat: None,
+            random_event: None,
             protect_window: None,
             script_started: false,
             receipt_prefixes,
@@ -810,7 +824,7 @@ impl ScenarioRunner {
     pub fn status(&self) -> RunnerStatus {
         match self.phase {
             Phase::Done => match self.evidence.as_ref().map(|e| e.outcome) {
-                Some("FAIL") => RunnerStatus::Failed(
+                Some("FAIL" | "UNAVAILABLE") => RunnerStatus::Failed(
                     self.evidence
                         .as_ref()
                         .and_then(|e| e.message.clone())
@@ -861,12 +875,13 @@ impl ScenarioRunner {
         }
         if !self.snapshot.ingame() {
             self.fresh_xp_baseline = None;
-            self.fresh_tutorial_baseline = None;
+            self.fresh_chat_baseline = None;
+            self.visited_within = false;
             self.lamp_episode = None;
             self.maze_episode = None;
         }
         self.retry_xp_baselines();
-        self.retry_tutorial_baseline();
+        self.retry_chat_baseline();
         // Scene-settle tracking: the wall-clock instant the scene first
         // held `scene_state == 2`; any drop below 2 (a tele's rebuild)
         // resets it.
@@ -963,6 +978,7 @@ impl ScenarioRunner {
                 if let Some(window) = self.protect_window.as_mut() {
                     window.observe(&self.snapshot);
                 }
+                self.observe_visited();
             }
             if let Some(message) = self
                 .protect_window
@@ -994,7 +1010,24 @@ impl ScenarioRunner {
                     return;
                 }
             };
-            let native_episode_holds = self.observe_lamp_redemption(hold).unwrap_or(true)
+            let random_event_holds = match self.observe_random_event(client, hold) {
+                Verdict::Pending => false,
+                Verdict::Pass => true,
+                Verdict::Fail(message) => {
+                    self.finish_fail(&format!(
+                        "step {} ({}): {message}",
+                        self.step + 1,
+                        self.current_step().name
+                    ));
+                    return;
+                }
+                Verdict::Unavailable(message) => {
+                    self.finish_unavailable(&message);
+                    return;
+                }
+            };
+            let native_episode_holds = random_event_holds
+                && self.observe_lamp_redemption(hold).unwrap_or(true)
                 && self.observe_maze_completion(hold).unwrap_or(true)
                 && stall_combat_holds;
             let arm_holds = match &self.current_step().kind {
@@ -1041,6 +1074,14 @@ impl ScenarioRunner {
                     .or_else(|| {
                         self.stall_combat
                             .map(|state| format!("{} [stall_combat={state:?}]", arm.name()))
+                    })
+                    .or_else(|| {
+                        matches!(
+                            self.current_step().kind,
+                            StepKind::ObserveRandomEvent { .. }
+                        )
+                        .then(|| self.random_event.as_ref().map(RandomEventEpisode::summary))
+                        .flatten()
                     })
                     .unwrap_or_else(|| arm.name());
                 self.finish_fail(&format!(
@@ -1112,8 +1153,9 @@ impl ScenarioRunner {
         self.traveller.clear();
         self.route = None;
         self.fresh_xp_baseline = None;
-        self.fresh_tutorial_baseline = None;
-        self.capture_tutorial_baseline(self.current_step().wait.arm);
+        self.fresh_chat_baseline = None;
+        self.visited_within = false;
+        self.capture_chat_baseline(self.current_step().wait.arm);
         self.lamp_episode = match self.current_step().kind {
             StepKind::ObserveLampRedemption { reward_stat, .. } => Some(LampEpisodeObservation {
                 reward_baseline: self.stat_xp(reward_stat),
@@ -1141,6 +1183,13 @@ impl ScenarioRunner {
             StepKind::ObserveStallCombat { .. }
         )
         .then_some(StallCombatObservation::FirstSession);
+        if let StepKind::ObserveRandomEvent { cell } = self.current_step().kind {
+            // The cells run on the 289 engine (`tools/engine-patches/289`);
+            // missing content data leaves the evade range unknown, which the
+            // oracle reports instead of guessing.
+            let data = api::game_data::for_revision(client::io::ClientRevision::R289).ok();
+            self.random_event = Some(RandomEventEpisode::new(cell).with_game_data(data));
+        }
         if matches!(self.current_step().kind, StepKind::StopScript) {
             self.script_idle = false;
             self.script_started = false;
@@ -1193,10 +1242,17 @@ impl ScenarioRunner {
                 }
                 None => Proof::WorldSpeedChanged { ms }.check(&self.snapshot, None),
             },
-            Proof::FreshTutorial => match self.fresh_tutorial_baseline {
+            Proof::FreshTutorial => match self.fresh_chat_baseline {
                 Some(baseline) => crate::tutorial::tutorial_confirmed(&self.snapshot, baseline),
                 None => false,
             },
+            Proof::FreshChat { needle } => match self.fresh_chat_baseline {
+                Some(baseline) => {
+                    crate::proof::fresh_chat_contains(&self.snapshot, baseline, needle)
+                }
+                None => false,
+            },
+            Proof::VisitedWithin { .. } => self.visited_within,
             other => other.check_with_xp_context(
                 &self.snapshot,
                 self.obj_names.as_deref(),
@@ -1459,28 +1515,51 @@ impl ScenarioRunner {
         }
     }
 
-    /// Latch the post-relog chat baseline for a [`Proof::FreshTutorial`]
-    /// step: the newest chat `sequence` in the step-start snapshot, before
-    /// the reseed send goes out. A stale pre-relog `1000` line at or below
-    /// this sequence cannot satisfy the wait.
-    fn capture_tutorial_baseline(&mut self, proof: Proof) {
-        if !matches!(proof, Proof::FreshTutorial) {
+    /// Latch the post-relog chat baseline for a [`Proof::FreshTutorial`] or
+    /// [`Proof::FreshChat`] step: the newest chat `sequence` in the step-start
+    /// snapshot, before the reseed or getvar send goes out. A stale line at or
+    /// below this sequence cannot satisfy the wait.
+    fn capture_chat_baseline(&mut self, proof: Proof) {
+        if !matches!(proof, Proof::FreshTutorial | Proof::FreshChat { .. }) {
             return;
         }
-        if self.fresh_tutorial_baseline.is_some() {
+        if self.fresh_chat_baseline.is_some() {
             return;
         }
-        self.fresh_tutorial_baseline = Some(crate::tutorial::chat_baseline(&self.snapshot));
+        self.fresh_chat_baseline = Some(crate::tutorial::chat_baseline(&self.snapshot));
     }
 
-    fn retry_tutorial_baseline(&mut self) {
+    /// Latch [`Proof::VisitedWithin`] for the current step: the first observed
+    /// tick on which the player stands inside the proof's rectangle sets it.
+    /// Runs on every dirty tick before the step's arm is evaluated.
+    fn observe_visited(&mut self) {
+        if self.visited_within {
+            return;
+        }
+        let Proof::VisitedWithin {
+            min_x,
+            max_x,
+            min_z,
+            max_z,
+            level,
+        } = self.current_step().wait.arm
+        else {
+            return;
+        };
+        if crate::proof::visited_within_contains(&self.snapshot, min_x, max_x, min_z, max_z, level)
+        {
+            self.visited_within = true;
+        }
+    }
+
+    fn retry_chat_baseline(&mut self) {
         if !matches!(self.phase, Phase::Running) {
             return;
         }
         if !self.snapshot.ingame() {
             return;
         }
-        self.capture_tutorial_baseline(self.current_step().wait.arm);
+        self.capture_chat_baseline(self.current_step().wait.arm);
     }
 
     fn fire_poll_sustains(&self, client: &mut Client) {
@@ -1578,7 +1657,8 @@ impl ScenarioRunner {
             | StepKind::StopScript
             | StepKind::Await { .. }
             | StepKind::ObserveLampRedemption { .. }
-            | StepKind::ObserveStallCombat { .. } => Ok(()),
+            | StepKind::ObserveStallCombat { .. }
+            | StepKind::ObserveRandomEvent { .. } => Ok(()),
             StepKind::Relog => {
                 self.relog_session.get_or_insert(client.gens.session);
                 if client.ingame && !self.relog_logout_sent {
@@ -1759,6 +1839,45 @@ impl ScenarioRunner {
         self.record_fail(msg);
     }
 
+    /// The cell needs an engine test patch this engine lacks: end the run
+    /// as UNAVAILABLE (reported as a failed status) naming the patch.
+    fn finish_unavailable(&mut self, msg: &str) {
+        if matches!(self.phase, Phase::Cleaning) {
+            return;
+        }
+        if let Some(speed_ms) = self.scenario.settings.teardown_world_speed_ms {
+            self.begin_terminal_cleanup(speed_ms, TerminalOutcome::Unavailable(msg.to_owned()));
+            return;
+        }
+        self.record_terminal("UNAVAILABLE", msg);
+    }
+
+    /// Feed the current frame to the armed random-event episode and send
+    /// its trigger when it asks for one. Steps without an episode pass.
+    fn observe_random_event(&mut self, client: &mut Client, hold: bool) -> Verdict {
+        if !matches!(
+            self.current_step().kind,
+            StepKind::ObserveRandomEvent { .. }
+        ) {
+            return Verdict::Pass;
+        }
+        let Some(episode) = self.random_event.as_mut() else {
+            return Verdict::Pass;
+        };
+        let frame = Frame::from_snapshot(
+            &self.snapshot,
+            episode.cell(),
+            hold,
+            self.obj_names.as_deref(),
+        );
+        if let Some(command) = episode.next_send(&frame) {
+            if !cheat(client, &command).is_sent() {
+                return Verdict::Fail(format!("driver rejected `{command}`"));
+            }
+        }
+        episode.observe(frame)
+    }
+
     fn begin_terminal_cleanup(&mut self, speed_ms: u32, outcome: TerminalOutcome) {
         self.phase = Phase::Cleaning;
         self.terminal_cleanup = Some(TerminalCleanup {
@@ -1807,7 +1926,7 @@ impl ScenarioRunner {
             Some(TerminalOutcome::Pass) => {
                 format!("could not restore world speed to 600ms: {reason}")
             }
-            Some(TerminalOutcome::Fail(original)) => {
+            Some(TerminalOutcome::Fail(original) | TerminalOutcome::Unavailable(original)) => {
                 format!("{original}; additionally could not restore world speed to 600ms: {reason}")
             }
             None => format!("could not restore world speed to 600ms: {reason}"),
@@ -1819,6 +1938,7 @@ impl ScenarioRunner {
         match outcome {
             TerminalOutcome::Pass => self.record_pass(),
             TerminalOutcome::Fail(message) => self.record_fail(&message),
+            TerminalOutcome::Unavailable(message) => self.record_terminal("UNAVAILABLE", &message),
         }
     }
 
@@ -1851,15 +1971,20 @@ impl ScenarioRunner {
             .protect_window
             .as_ref()
             .map(ProtectWindowObservation::evidence);
+        evidence.random_event = self.random_event.as_ref().map(RandomEventEpisode::receipt);
         self.evidence = Some(evidence);
     }
 
     fn record_fail(&mut self, msg: &str) {
+        self.record_terminal("FAIL", msg);
+    }
+
+    fn record_terminal(&mut self, outcome: &'static str, msg: &str) {
         self.phase = Phase::Done;
         self.fire_terminal_shot();
         let mut evidence = Evidence::terminal(
             self.scenario.name,
-            "FAIL",
+            outcome,
             self.current_predicate_name(),
             Some(msg.to_string()),
             self.total_ticks,
@@ -1872,6 +1997,7 @@ impl ScenarioRunner {
             .protect_window
             .as_ref()
             .map(ProtectWindowObservation::evidence);
+        evidence.random_event = self.random_event.as_ref().map(RandomEventEpisode::receipt);
         self.evidence = Some(evidence);
     }
 }
@@ -1924,7 +2050,7 @@ fn tile_distance(a: WorldTile, b: WorldTile) -> i32 {
 
 /// A `Wait` helper so tests can build steps without importing the field
 /// order.
-#[allow(dead_code)]
+#[cfg(test)]
 fn wait(arm: Proof, budget_ticks: u32) -> Wait {
     Wait { arm, budget_ticks }
 }

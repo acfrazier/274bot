@@ -2,68 +2,75 @@
 //! §1.2–§1.4).
 //!
 //! `Play` owns one `Arc<RwLock<BankMemory>>` per account; the slot thread is
-//! the only writer. The hint file is resolved once, on the spawning thread,
-//! and handed in beside the `Arc`, so the slot thread never resolves `HOME`
-//! and a test's thread-local `IsolatedEnv` pin covers every save.
+//! the only writer. The account's hint identity on the process local-state
+//! service ([`SlotHintPort`], T5.2) is resolved once, on the spawning
+//! thread, and handed in beside the `Arc`, so the slot thread never
+//! resolves a root.
 //!
 //! Lock discipline (§1.2): an idle frame takes one read guard to see nothing
 //! is due; a write guard is taken only on the frames the open bank moved or
 //! closed, for the relog decision at the session boundary, and for the two
 //! short bookkeeping steps around hint I/O. **No guard is ever held across
-//! file I/O, and no file I/O runs on the slot pump**: a load reads and
-//! checks the file first and applies the rows under a short re-lock that
-//! re-checks the §1.4 precedence; a save takes its document under a read
-//! guard and submits it to the process's one hint writer ([`HintWriter`]),
-//! which publishes it while the pump goes on with the next frame. The
-//! writer hands the outcome back to the submitting slot and the slot
-//! thread marks the published generation saved on its next frame.
-//! `Play::bank_rows` therefore never waits on the disk, and neither does
-//! the owning bot's frame. The compiled script tick borrows the memory
-//! through a read guard the observer holds for the tick alone
-//! (`script_observe.rs`).
+//! file I/O, and no file I/O runs on the slot pump**: a load asks the state
+//! service for a readback of the account's current file (bounded, on the
+//! service's writer thread) and applies the rows under a short re-lock that
+//! re-checks the §1.4 precedence; a save submits the rows to the service
+//! under a read guard — nonblocking, so the pump goes on with the next
+//! frame — and the slot thread observes the settlement on a later frame and
+//! marks the published generation saved. `Play::bank_rows` therefore never
+//! waits on the disk, and neither does the owning bot's frame. The compiled
+//! script tick borrows the memory through a read guard the observer holds
+//! for the tick alone (`script_observe.rs`).
 //!
-//! The writer is owned by the process, not by any slot (REVIEW-S2-R3
-//! H1-R3): one lazily started `bank-hint-writer` thread serves every hint
-//! path, keeps the newest published generation per path for the life of
-//! the process, and never writes a document whose generation is not newer
-//! than that. A slot that leaves past its exit bound leaves nothing
-//! behind: its document stays queued under the same path, a successor's
-//! newer one replaces it, and a stale one — whichever slot sent it — is
-//! dropped, never written over a newer file. Every document the writer
-//! takes for a path is a numbered attempt, so a leaving slot waits for
-//! its own attempt, not for the generation it carries: an earlier
-//! attempt's failure at the same generation never releases a fresh retry
-//! (REVIEW-S2-R4 H2-R4).
+//! Chronology (REVIEW-S2-R3 H1-R3, REVIEW-S2-R4 H2-R4), kept over the
+//! service: the service keeps at most one hint queued per account behind
+//! the one in flight, a newer submission replacing a queued older one
+//! (which settles `Cancelled(Superseded)`); the submission is made under
+//! the memory's read guard, so two slots sharing one account submit in
+//! generation order and the service's per-account FIFO is the memory's own
+//! order; the same bytes this service already made durable settle as
+//! durable without a write. Only a durable commit marks a generation saved
+//! (§21 §4.3): a superseded request marks nothing (the request that
+//! replaced it settles the generation, and if it fails the memory is still
+//! dirty for the next save point), and a settlement the service no longer
+//! holds is dropped with the memory left dirty. A leaving slot waits for
+//! its own request, not for the generation it carries: an earlier failure
+//! at the same generation never stands in for a retry still in flight, and
+//! a superseded exit save waits for the request that replaced it to become
+//! durable.
 //!
 //! `Play` keys the memories by the account's login identity
-//! ([`memory_key`]), the identity the hint path carries, so every spelling
-//! the client logs in as one account shares one memory and one generation
-//! counter, as it shares one file (REVIEW-S2-R4 H1-R4).
+//! ([`memory_key`]), the identity the hint identity carries, so every
+//! spelling the client logs in as one account shares one memory and one
+//! generation counter, as it shares one file (REVIEW-S2-R4 H1-R4).
 
 use std::borrow::Cow;
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::mpsc;
-use std::sync::{Arc, LazyLock};
-use std::thread;
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use api::bank_memory::{BankMemory, FrameEvent};
 use api::host_log;
 use api::hostlog::{Category, Level};
+use api::identity::{Cancellation, DurableTimestamp, RequestId, Settlement};
+use api::local_state::{
+    BankHint, DomainEdit, DomainIdentity, ErrorCode, LocalStatePort, SubmitReceipt, WriteSettlement,
+};
 use api::snapshot::GameSnapshot;
-use parking_lot::{Condvar, Mutex, RwLock};
-use script::bank_hints::{account_component, HintError, HintFile, PendingSave};
+use parking_lot::{Mutex, RwLock};
+use script::bank_hints::account_component;
+
+use super::local_state::{Durability, LocalStateService, RequestState};
 
 /// One account's memory, shared by `Play` (UI reads) and its slot thread.
 pub(crate) type SharedBankMemory = Arc<RwLock<BankMemory>>;
 
 /// The key `Play.bank_memories` holds an account's memory under: the
 /// login identity the client decodes the typed name to
-/// ([`account_component`]), the identity the hint path carries, so
+/// ([`account_component`]), the identity the hint identity carries, so
 /// `Alice Smith` and `alice_smith` — one account to the server and one
-/// file to the writer — are one memory with one generation counter, and
-/// the writer's per-path chronology is the memory's own. A name that is
+/// file to the service — are one memory with one generation counter, and
+/// the service's per-account chronology is the memory's own. A name that is
 /// not a login name (refused by the decoder: no hint, no file) is keyed
 /// by its typed spelling, which no identity can equal — an identity is at
 /// most twelve lowercase letters, digits and underscores starting and
@@ -87,19 +94,39 @@ pub(crate) fn planner_rows(memory: Option<&RwLock<BankMemory>>) -> nav::bank_fet
     })
 }
 
-/// How long a leaving slot waits for the writer to settle what it queued
+/// How long a leaving slot waits for the service to settle what it queued
 /// (§1.4: slot exit is a save point, and `Play` joins the slot thread
 /// before the process exits). Past it the slot leaves with one hostlog
-/// line; the document stays queued and the writer finishes on its own
+/// line; the document stays queued and the service finishes on its own
 /// unless the process exits first.
 const EXIT_SAVE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// A test's stand-in for `HintFile::write`: the publication step, run on
-/// the writer thread with no guard held, which a test can stall or fail.
-/// Carried by the slot's submissions, so two slots under test in one
-/// process stall or fail their own publications only.
-#[cfg(test)]
-type Publish = Arc<dyn Fn(&HintFile, &PendingSave) -> Result<(), HintError> + Send + Sync>;
+/// How long the session boundary waits for the service to read the
+/// account's current hint file: the disk read the boundary did itself
+/// before, now bounded. Past it the memory stays `Unknown` with one line,
+/// and login is unaffected.
+const LOAD_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The account's hint identity on the process state service: what the
+/// spawning thread resolves and the slot thread loads and saves through.
+pub(crate) struct SlotHintPort {
+    service: Arc<LocalStateService>,
+    identity: DomainIdentity,
+}
+
+impl SlotHintPort {
+    pub(crate) fn new(service: Arc<LocalStateService>, identity: DomainIdentity) -> Self {
+        Self { service, identity }
+    }
+
+    /// The file the identity spells, for log lines.
+    fn path(&self) -> PathBuf {
+        self.service.root().bank_hint_file(
+            self.identity.account().profile(),
+            self.identity.account().account(),
+        )
+    }
+}
 
 pub(crate) struct SlotBankMemory {
     memory: SharedBankMemory,
@@ -108,345 +135,103 @@ pub(crate) struct SlotBankMemory {
     hint: Option<SlotHint>,
 }
 
-/// The slot's side of hint publication: its file, and the channel the
-/// writer answers its submissions on. The slot thread, the memory's only
-/// writer, applies each answer ([`BankMemory::mark_saved`]) and logs it.
+/// The slot's side of hint publication: its port, and the requests it
+/// submitted and has not yet applied. The slot thread, the memory's only
+/// writer, applies each settlement ([`BankMemory::mark_saved`]) and logs it.
 struct SlotHint {
-    file: Arc<HintFile>,
-    done: mpsc::Receiver<Published>,
-    done_tx: mpsc::Sender<Published>,
-    #[cfg(test)]
-    publish: Option<Publish>,
-    /// What this slot last submitted: what a test settles on.
-    #[cfg(test)]
-    submitted: std::cell::Cell<Submission>,
+    port: SlotHintPort,
+    path: PathBuf,
+    /// Submitted, unsettled requests: at most one in flight and one queued
+    /// per account at the service, so this stays tiny.
+    pending: Mutex<Vec<Pending>>,
 }
 
-/// The process's one hint writer: a `bank-hint-writer` thread started by
-/// the first save point and kept for the life of the process, with one
-/// entry per hint path it has ever been handed. A save point submits a
-/// document under its path; a newer generation replaces a queued older
-/// one, so at most one document per path waits behind the one in flight.
-/// The thread takes the queued document of any path, writes it (atomic
-/// replace, fsync) only if its generation is newer than the path's
-/// published generation, records what it published, and answers the
-/// submitting slot. The published generation outlives every slot, so a
-/// document a departed slot left queued, or a stale one a later slot
-/// submits, can never put older rows over newer ones. Each document
-/// queued under a path is an attempt, numbered in submission order; the
-/// writer settles attempts, not generations, so a leaving slot waits for
-/// its own attempt and an earlier failure at the same generation never
-/// stands in for a retry still in flight.
-static WRITER: LazyLock<HintWriter> = LazyLock::new(HintWriter::default);
-
-#[derive(Default)]
-struct HintWriter {
-    state: Mutex<WriterState>,
-    /// Signalled on every submission: the writer thread parks on it while
-    /// no path has a document queued.
-    wake: Condvar,
-    /// Signalled whenever a path's `settled` attempt moved: a leaving
-    /// slot waits on it for its own attempt.
-    settled: Condvar,
-}
-
-#[derive(Default)]
-struct WriterState {
-    /// One entry per hint path submitted in this process, kept so the
-    /// published generation survives the slot that wrote it. Bounded by
-    /// the accounts the process has played.
-    paths: HashMap<PathBuf, PathState>,
-    /// The `bank-hint-writer` thread is running.
-    started: bool,
-}
-
-struct PathState {
-    /// The newest submitted document not yet taken by the writer thread.
-    pending: Option<Queued>,
-    /// How many attempts this path has queued: the next one's number.
-    attempts: u64,
-    /// The generation of the newest document written to the path; `0`
-    /// before any. Only the writer thread raises it, and only on a write
-    /// that succeeded.
-    published: u64,
-    /// The newest attempt the writer thread has finished with — written,
-    /// failed or dropped as stale; `0` before any. A leaving slot's wait
-    /// ends when this reaches its own attempt: its document, or the newer
-    /// one that replaced it in the queue, has been dealt with.
-    settled: u64,
-}
-
-/// A document in a path's queue, under the attempt number it was given.
-struct Queued {
-    attempt: u64,
-    job: Job,
-}
-
-/// What a save point handed the writer: the attempt the slot's exit wait
-/// follows, and the generation its answer is read against.
+/// What a save point handed the service: the request the slot's exit wait
+/// follows, and the generation its settlement is read against.
 #[derive(Clone, Copy)]
-struct Submission {
-    attempt: u64,
-    generation: u64,
-}
-
-struct Job {
-    file: Arc<HintFile>,
-    document: PendingSave,
-    why: &'static str,
-    /// The submitting slot's channel; a slot that has left dropped its end.
-    done: mpsc::Sender<Published>,
-    #[cfg(test)]
-    publish: Option<Publish>,
-}
-
-/// One submission's outcome, handed back to the slot that submitted it.
-struct Published {
+struct Pending {
+    request: RequestId,
     generation: u64,
     rows: usize,
     why: &'static str,
-    outcome: Outcome,
 }
 
-enum Outcome {
-    /// The document was written.
-    Saved,
-    /// The document was not written: a generation at least as new, `by`,
-    /// was already on disk when the writer took it.
-    Superseded {
-        by: u64,
-    },
-    Failed(HintError),
+/// What a save point did.
+enum Saved {
+    /// Nothing unsaved (or no hint port to save through).
+    Clean,
+    /// Submitted; the settlement is applied on a later frame.
+    Submitted(Pending),
+    /// Refused by the service (one line already logged); the rows stay
+    /// pending.
+    Refused(ErrorCode),
 }
-
-impl Job {
-    #[cfg(not(test))]
-    fn publish(&self) -> Result<(), HintError> {
-        self.file.write(&self.document)
-    }
-
-    #[cfg(test)]
-    fn publish(&self) -> Result<(), HintError> {
-        match &self.publish {
-            Some(publish) => publish(&self.file, &self.document),
-            None => self.file.write(&self.document),
-        }
-    }
-}
-
-impl HintWriter {
-    /// Queue `job` under its path as the path's next attempt, replacing a
-    /// queued document of the same or an older generation, and start the
-    /// writer thread if it is not running. The attempt the submitting
-    /// slot's exit wait follows: the job's own, or — when a newer
-    /// generation is already queued, so this document is never needed —
-    /// the queued one's, whose settlement covers it. `None` on a spawn
-    /// failure: the document is dropped with one hostlog line and the
-    /// memory stays dirty for the next save point.
-    fn submit(&self, job: Job) -> Option<u64> {
-        let mut state = self.state.lock();
-        if !state.started {
-            let spawned = thread::Builder::new()
-                .name("bank-hint-writer".into())
-                .spawn(|| WRITER.run());
-            match spawned {
-                Ok(_) => {
-                    state.started = true;
-                    #[cfg(test)]
-                    THREADS_SPAWNED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                }
-                Err(error) => {
-                    drop(state);
-                    host_log!(
-                        Category::BankOp,
-                        Level::Warn,
-                        "bank hints: save failed why={} path={}: writer thread: {error}",
-                        job.why,
-                        job.file.path().display()
-                    );
-                    return None;
-                }
-            }
-        }
-        let generation = job.document.generation();
-        let attempt = match state.paths.get_mut(job.file.path()) {
-            Some(path) => match &path.pending {
-                // A queued newer document stays; this older one is never
-                // needed (its slot's exit wait ends with the newer one).
-                Some(queued) if queued.job.document.generation() > generation => queued.attempt,
-                _ => {
-                    path.attempts += 1;
-                    path.pending = Some(Queued {
-                        attempt: path.attempts,
-                        job,
-                    });
-                    path.attempts
-                }
-            },
-            None => {
-                state.paths.insert(
-                    job.file.path().to_path_buf(),
-                    PathState {
-                        pending: Some(Queued { attempt: 1, job }),
-                        attempts: 1,
-                        published: 0,
-                        settled: 0,
-                    },
-                );
-                1
-            }
-        };
-        drop(state);
-        self.wake.notify_one();
-        Some(attempt)
-    }
-
-    /// Wait until the writer has finished with `attempt` for `path` — or
-    /// a later attempt, the only kind that can overtake it (a queued
-    /// document is replaced only by a newer one) — or a generation at
-    /// least `generation` is on disk, or `timeout` passes. `None` on
-    /// timeout; otherwise whether `generation` or a newer one is on disk.
-    fn wait_settled(
-        &self,
-        path: &Path,
-        attempt: u64,
-        generation: u64,
-        timeout: Duration,
-    ) -> Option<bool> {
-        let deadline = Instant::now() + timeout;
-        let mut state = self.state.lock();
-        loop {
-            // Every path a slot waits on was submitted to, so it is known.
-            let known = state.paths.get(path)?;
-            if known.settled >= attempt || known.published >= generation {
-                return Some(known.published >= generation);
-            }
-            if self.settled.wait_until(&mut state, deadline).timed_out() {
-                return None;
-            }
-        }
-    }
-
-    /// The writer thread, for the life of the process: take the queued
-    /// document of any path, publish it off every lock if it is newer than
-    /// what the path holds, answer the slot, record the outcome, and park
-    /// when nothing is queued.
-    fn run(&self) {
-        loop {
-            let (attempt, job, published) = {
-                let mut state = self.state.lock();
-                let queued = loop {
-                    match state
-                        .paths
-                        .values_mut()
-                        .find_map(|path| path.pending.take())
-                    {
-                        Some(queued) => break queued,
-                        None => self.wake.wait(&mut state),
-                    }
-                };
-                let published = state.paths[queued.job.file.path()].published;
-                (queued.attempt, queued.job, published)
-            };
-            let generation = job.document.generation();
-            let outcome = if generation > published {
-                match job.publish() {
-                    Ok(()) => Outcome::Saved,
-                    Err(error) => Outcome::Failed(error),
-                }
-            } else {
-                Outcome::Superseded { by: published }
-            };
-            let saved = matches!(outcome, Outcome::Saved);
-            // The answer is in the slot's channel before the path settles,
-            // so a slot woken by `settled` finds it there. A slot that left
-            // past its exit wait has dropped the receiver: the file is
-            // written all the same, the log line is lost.
-            let _ = job.done.send(Published {
-                generation,
-                rows: job.document.rows(),
-                why: job.why,
-                outcome,
-            });
-            {
-                let mut state = self.state.lock();
-                let path = state
-                    .paths
-                    .get_mut(job.file.path())
-                    .expect("a taken document's path is known");
-                if saved {
-                    path.published = generation;
-                }
-                path.settled = path.settled.max(attempt);
-            }
-            self.settled.notify_all();
-        }
-    }
-}
-
-/// How many times the writer thread was started in this process: at most
-/// once, whatever slots came and went.
-#[cfg(test)]
-static THREADS_SPAWNED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 impl SlotHint {
-    fn new(file: HintFile) -> Self {
-        let (done_tx, done) = mpsc::channel();
+    fn new(port: SlotHintPort) -> Self {
+        let path = port.path();
         Self {
-            file: Arc::new(file),
-            done,
-            done_tx,
-            #[cfg(test)]
-            publish: None,
-            #[cfg(test)]
-            submitted: std::cell::Cell::new(Submission {
-                attempt: 0,
-                generation: 0,
-            }),
+            port,
+            path,
+            pending: Mutex::new(Vec::new()),
         }
     }
 
-    fn file(&self) -> &HintFile {
-        &self.file
+    /// Submit the memory's rows to the service under the caller's read
+    /// guard (so submissions follow generation order), answered through
+    /// the service's per-account settlements. The pending list is held
+    /// across the submission, so an accepted request is listed before
+    /// anyone can look. A refusal is logged here.
+    fn submit(&self, memory: &BankMemory, why: &'static str) -> Saved {
+        let observed_at = memory.observed_at().map_or(0, |at| at.unix_secs);
+        let hint = match BankHint::try_new(
+            self.port.identity.clone(),
+            None,
+            memory.rows().to_vec(),
+            DurableTimestamp::from_unix_seconds(observed_at),
+        ) {
+            Ok(hint) => hint,
+            Err(code) => {
+                self.refused(why, code);
+                return Saved::Refused(code);
+            }
+        };
+        let mut pending = self.pending.lock();
+        match self.port.service.submit(DomainEdit::Bank(hint)) {
+            SubmitReceipt::Accepted { request } => {
+                let submitted = Pending {
+                    request,
+                    generation: memory.generation(),
+                    rows: memory.rows().len(),
+                    why,
+                };
+                pending.push(submitted);
+                Saved::Submitted(submitted)
+            }
+            SubmitReceipt::Refused(code) => {
+                drop(pending);
+                self.refused(why, code);
+                Saved::Refused(code)
+            }
+        }
     }
 
-    /// Submit `document` to the process's writer under this slot's path,
-    /// answered on this slot's channel. What was submitted, or `None` when
-    /// the writer dropped it (a failure already logged).
-    fn submit(&self, document: PendingSave, why: &'static str) -> Option<Submission> {
-        let generation = document.generation();
-        let attempt = WRITER.submit(Job {
-            file: Arc::clone(&self.file),
-            document,
-            why,
-            done: self.done_tx.clone(),
-            #[cfg(test)]
-            publish: self.publish.clone(),
-        })?;
-        let submission = Submission {
-            attempt,
-            generation,
-        };
-        #[cfg(test)]
-        self.submitted.set(submission);
-        Some(submission)
+    fn refused(&self, why: &'static str, code: ErrorCode) {
+        host_log!(
+            Category::BankOp,
+            Level::Warn,
+            "bank hints: save refused why={why} path={}: {code}",
+            self.path.display()
+        );
     }
 }
 
 impl SlotBankMemory {
-    pub(crate) fn new(memory: SharedBankMemory, hint: Option<HintFile>) -> Self {
+    pub(crate) fn new(memory: SharedBankMemory, hint: Option<SlotHintPort>) -> Self {
         Self {
             memory,
             hint: hint.map(SlotHint::new),
         }
-    }
-
-    /// Publish this slot's documents through `publish` instead of
-    /// `HintFile::write`.
-    #[cfg(test)]
-    fn with_publish(mut self, publish: Publish) -> Self {
-        self.hint.as_mut().expect("a slot with a hint file").publish = Some(publish);
-        self
     }
 
     /// The shared memory: the observer takes its read guard for the
@@ -455,8 +240,8 @@ impl SlotBankMemory {
         &self.memory
     }
 
-    /// After `publish_snapshot`, every frame (§1.3): apply what the writer
-    /// published since the last frame, mirror a loaded bank whose packets
+    /// After `publish_snapshot`, every frame (§1.3): apply what the service
+    /// settled since the last frame, mirror a loaded bank whose packets
     /// moved, and queue the hint on the close edge.
     pub(crate) fn observe_frame(&self, snapshot: &GameSnapshot) {
         self.apply_published();
@@ -506,21 +291,32 @@ impl SlotBankMemory {
         let Some(hint) = &self.hint else {
             return;
         };
-        // The file is read and checked with no guard held: a slow disk
-        // stalls this slot's boundary, never a UI read.
-        let loaded = match hint.file().load() {
-            Ok(Some(loaded)) => loaded,
+        // The file is read and checked on the service's writer thread with
+        // no guard held: a slow disk stalls this slot's boundary, bounded,
+        // never a UI read.
+        let lease = match hint
+            .port
+            .service
+            .readback_lease(&hint.port.identity, LOAD_TIMEOUT)
+        {
+            Ok(Some(lease)) => lease,
             Ok(None) => return,
-            Err(error) => {
+            Err(code) => {
                 host_log!(
                     Category::BankOp,
                     Level::Warn,
-                    "bank hints: load rejected path={}: {error}",
-                    hint.file().path().display()
+                    "bank hints: load rejected path={}: {code}",
+                    hint.path.display()
                 );
                 return;
             }
         };
+        let rows = lease
+            .snapshot()
+            .as_bank_hints()
+            .map(<[(i32, i32)]>::to_vec)
+            .unwrap_or_default();
+        let observed_at_unix = lease.at().unix_seconds();
         let applied = {
             let mut memory = self.memory.write();
             // The §1.4 precedence, re-checked under the guard: a memory
@@ -528,25 +324,22 @@ impl SlotBankMemory {
             if memory.known() {
                 return;
             }
-            loaded.apply(&mut memory).map(|()| {
-                (
-                    memory.rows().len(),
-                    memory.observed_at().map_or(0, |at| at.unix_secs),
-                )
-            })
+            memory
+                .load_hint(rows, observed_at_unix)
+                .map(|()| memory.rows().len())
         };
         match applied {
-            Ok((rows, observed_at_unix)) => host_log!(
+            Ok(rows) => host_log!(
                 Category::BankOp,
                 Level::Info,
                 "bank hints: loaded rows={rows} observed_at_unix={observed_at_unix} path={}",
-                hint.file().path().display()
+                hint.path.display()
             ),
             Err(error) => host_log!(
                 Category::BankOp,
                 Level::Warn,
-                "bank hints: load rejected path={}: {error}",
-                hint.file().path().display()
+                "bank hints: load rejected path={}: rows: {error}",
+                hint.path.display()
             ),
         }
     }
@@ -558,120 +351,185 @@ impl SlotBankMemory {
         self.save("session end");
     }
 
-    /// Apply every answer the writer sent since the last frame. One
-    /// `try_recv` per frame; nothing is allocated when nothing was
-    /// answered.
+    /// Apply every settlement the service reached since the last frame.
+    /// One lookup per unsettled request; nothing is allocated when nothing
+    /// was submitted.
     fn apply_published(&self) {
         let Some(hint) = &self.hint else {
             return;
         };
-        while let Ok(published) = hint.done.try_recv() {
-            self.apply(hint, published);
+        // The settled requests are taken out under the pending lock and
+        // applied after it is released: the memory's write guard is never
+        // taken under it.
+        let settled = {
+            let mut pending = hint.pending.lock();
+            if pending.is_empty() {
+                return;
+            }
+            let mut settled = Vec::new();
+            let mut index = 0;
+            while index < pending.len() {
+                match hint.port.service.request_state(pending[index].request) {
+                    RequestState::Pending => index += 1,
+                    RequestState::Settled(settlement) => {
+                        settled.push((pending.swap_remove(index), Some(settlement)));
+                    }
+                    RequestState::Forgotten => settled.push((pending.swap_remove(index), None)),
+                }
+            }
+            settled
+        };
+        for (done, settlement) in settled {
+            match settlement {
+                Some(settlement) => self.apply(hint, done, settlement),
+                None => host_log!(
+                    Category::BankOp,
+                    Level::Warn,
+                    "bank hints: the service no longer holds the outcome of the save why={} \
+                     generation={}; the rows stay pending for the next save point path={}",
+                    done.why,
+                    done.generation,
+                    hint.path.display()
+                ),
+            }
         }
     }
 
-    /// Apply one answer: a document written, or superseded on disk by a
-    /// newer generation, marks its generation saved under a short write
-    /// guard (an observation newer than the document stays pending); a
-    /// failure leaves the memory dirty for the next save point.
-    fn apply(&self, hint: &SlotHint, published: Published) {
-        match published.outcome {
-            Outcome::Saved => {
-                self.memory.write().mark_saved(published.generation);
+    /// Apply one settlement: only a durable write marks its generation
+    /// saved, under a short write guard (an observation newer than the
+    /// document stays pending). A superseded request marks nothing: the
+    /// request that replaced it settles the generation, whichever slot sent
+    /// it, and a failure leaves the memory dirty for the next save point.
+    fn apply(&self, hint: &SlotHint, pending: Pending, settlement: WriteSettlement) {
+        match settlement {
+            Settlement::Completed(receipt) => {
+                self.memory.write().mark_saved(pending.generation);
                 host_log!(
                     Category::BankOp,
                     Level::Info,
-                    "bank hints: saved rows={} why={} path={}",
-                    published.rows,
-                    published.why,
-                    hint.file().path().display()
+                    "bank hints: saved rows={} why={} version={} path={}",
+                    pending.rows,
+                    pending.why,
+                    receipt.version(),
+                    hint.path.display()
                 );
             }
-            Outcome::Superseded { by } => {
-                self.memory.write().mark_saved(published.generation);
-                host_log!(
-                    Category::BankOp,
-                    Level::Info,
-                    "bank hints: superseded generation={} by={by} why={} path={}",
-                    published.generation,
-                    published.why,
-                    hint.file().path().display()
-                );
-            }
-            Outcome::Failed(error) => host_log!(
+            Settlement::Cancelled(Cancellation::Superseded) => host_log!(
+                Category::BankOp,
+                Level::Info,
+                "bank hints: superseded generation={} why={}; the newer request settles it path={}",
+                pending.generation,
+                pending.why,
+                hint.path.display()
+            ),
+            Settlement::Cancelled(reason) => host_log!(
                 Category::BankOp,
                 Level::Warn,
-                "bank hints: save failed why={} path={}: {error}",
-                published.why,
-                hint.file().path().display()
+                "bank hints: save cancelled ({reason:?}) why={} path={}",
+                pending.why,
+                hint.path.display()
+            ),
+            Settlement::Failed(code) => host_log!(
+                Category::BankOp,
+                Level::Warn,
+                "bank hints: save failed why={} path={}: {code}",
+                pending.why,
+                hint.path.display()
             ),
         }
     }
 
-    /// A save point: submit the memory's unsaved rows, if any. What was
-    /// submitted, or `None` when nothing was (nothing pending, or a
-    /// failure already logged).
-    fn save(&self, why: &'static str) -> Option<Submission> {
-        let hint = self.hint.as_ref()?;
-        // A publication that already finished is applied first, so a clean
+    /// A save point: submit the memory's unsaved rows, if any.
+    fn save(&self, why: &'static str) -> Saved {
+        let Some(hint) = &self.hint else {
+            return Saved::Clean;
+        };
+        // A settlement that already landed is applied first, so a clean
         // memory is not queued again.
         self.apply_published();
-        // The document is taken under a read guard (a UI read runs beside
-        // it) that ends with this block; the publication holds no guard
-        // and runs on the writer thread.
-        let pending = {
-            let memory = self.memory.read();
-            hint.file().pending_save(&memory)
+        // The rows are taken and submitted under one read guard (a UI read
+        // runs beside it): the submission is nonblocking, and holding the
+        // guard across it keeps submissions in generation order when two
+        // slots share the account.
+        let memory = self.memory.read();
+        if !memory.dirty() {
+            return Saved::Clean;
+        }
+        hint.submit(&memory, why)
+    }
+
+    /// The slot thread is leaving: submit what is pending and wait until
+    /// that request — or, when a newer document of the account replaced
+    /// it, the request that did, whichever slot sent it — is durable,
+    /// bounded by `timeout`. A store the service had to read again (cold)
+    /// is read within the same bound and the rows submitted once more.
+    /// `true` when the rows the slot last observed, or newer ones, were
+    /// durable before it left.
+    fn finish_within(&self, timeout: Duration) -> bool {
+        let Some(hint) = &self.hint else {
+            return true;
         };
-        match pending {
-            Ok(Some(document)) => hint.submit(document, why),
-            Ok(None) => None,
-            Err(error) => {
+        let deadline = Instant::now() + timeout;
+        let mut hydrated = false;
+        let pending = loop {
+            match self.save("slot exit") {
+                Saved::Clean => return true,
+                Saved::Submitted(pending) => break pending,
+                Saved::Refused(ErrorCode::NotReady { .. }) if !hydrated => {
+                    hydrated = true;
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    if hint
+                        .port
+                        .service
+                        .readback_lease(&hint.port.identity, left)
+                        .is_err()
+                    {
+                        return false;
+                    }
+                }
+                Saved::Refused(_) => return false,
+            }
+        };
+        let left = deadline.saturating_duration_since(Instant::now());
+        let durable = hint.port.service.wait_durable(pending.request, left);
+        self.apply_published();
+        match durable {
+            Durability::Durable(_) => true,
+            Durability::Pending => {
                 host_log!(
                     Category::BankOp,
                     Level::Warn,
-                    "bank hints: save failed why={why} path={}: {error}",
-                    hint.file().path().display()
+                    "bank hints: slot exit left a save in flight after {}s path={}",
+                    timeout.as_secs(),
+                    hint.path.display()
                 );
-                None
+                false
+            }
+            Durability::NotDurable(settlement) => {
+                host_log!(
+                    Category::BankOp,
+                    Level::Warn,
+                    "bank hints: slot exit save did not reach the disk ({settlement:?}) path={}",
+                    hint.path.display()
+                );
+                false
+            }
+            Durability::Forgotten => {
+                host_log!(
+                    Category::BankOp,
+                    Level::Warn,
+                    "bank hints: slot exit save outcome is no longer held path={}",
+                    hint.path.display()
+                );
+                false
             }
         }
-    }
-
-    /// The slot thread is leaving: submit what is pending and wait for the
-    /// writer to finish with that attempt — or with a newer document for
-    /// the path, whichever slot sent it — bounded by `timeout`. `true`
-    /// when the rows the slot last observed, or newer ones, were on disk
-    /// before it left. An earlier attempt's failure at the same
-    /// generation does not end the wait: this attempt is its own.
-    fn finish_within(&self, timeout: Duration) -> bool {
-        let Some(submission) = self.save("slot exit") else {
-            return true;
-        };
-        let hint = self.hint.as_ref().expect("a submission came from a hint");
-        let settled = WRITER.wait_settled(
-            hint.file().path(),
-            submission.attempt,
-            submission.generation,
-            timeout,
-        );
-        if settled.is_none() {
-            host_log!(
-                Category::BankOp,
-                Level::Warn,
-                "bank hints: slot exit left a save in flight after {}s path={}",
-                timeout.as_secs(),
-                hint.file().path().display()
-            );
-        }
-        self.apply_published();
-        settled == Some(true)
     }
 }
 
 /// Saves the slot's pending observations when the slot thread leaves,
 /// however it leaves (a Stop while parked at the title never reaches the
-/// session boundary), and waits for the writer, bounded by
+/// session boundary), and waits for the service, bounded by
 /// [`EXIT_SAVE_TIMEOUT`].
 pub(crate) struct ExitSave<'a>(pub(crate) &'a SlotBankMemory);
 
@@ -690,7 +548,14 @@ fn unix_now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Instant;
+
     use api::bank_memory::Origin;
+    use api::identity::{Cancellation, Settlement};
+    use api::local_state::{AccountKey, ContentScope, DomainIdentity, LocalStateDomain};
     use api::snapshot::{ItemActionFamily, ItemContainer, ItemView};
     use api::ItemDefView;
     use parking_lot::RwLockReadGuard;
@@ -698,78 +563,120 @@ mod tests {
 
     const COINS: i32 = 995;
     const BANK_COM: i32 = 5292;
+    const PROFILE: &str = "local-289";
+    const CONTENT: &str = "test-content";
+    const WAIT: Duration = Duration::from_secs(60);
 
     impl SlotBankMemory {
-        /// The test's view of the memory.
         fn read(&self) -> RwLockReadGuard<'_, BankMemory> {
             self.memory.read()
         }
+    }
+
+    struct TestState {
+        scratch: IsolatedEnv,
+        service: Arc<LocalStateService>,
+        identity: DomainIdentity,
+    }
+
+    impl TestState {
+        fn new(label: &str) -> Self {
+            let scratch = IsolatedEnv::enter(label);
+            let service = LocalStateService::open(
+                super::super::local_state::StateRoot::new(scratch.home.join(".274bot")),
+                &[
+                    LocalStateDomain::BankHints,
+                    LocalStateDomain::LoadoutsReferences,
+                ],
+                Arc::new(api::identity::RequestIdMinter::new()),
+            );
+            // Letting the writer drain past load stalls: dropping the last
+            // handle abandons queued writes past this bound, and the drop
+            // test below queues behind a held write on purpose.
+            service.set_shutdown_timeout(Duration::from_secs(60));
+            let identity = identity("alice");
+            assert_eq!(service.readback_lease(&identity, WAIT).unwrap(), None);
+            Self {
+                scratch,
+                service,
+                identity,
+            }
+        }
+
+        fn slot(&self, memory: SharedBankMemory) -> SlotBankMemory {
+            SlotBankMemory::new(
+                memory,
+                Some(SlotHintPort::new(
+                    Arc::clone(&self.service),
+                    self.identity.clone(),
+                )),
+            )
+        }
 
         fn hint_path(&self) -> std::path::PathBuf {
-            self.hint.as_ref().unwrap().file().path().to_path_buf()
-        }
-
-        /// What this slot last submitted.
-        fn submission(&self) -> Submission {
-            self.hint.as_ref().unwrap().submitted.get()
-        }
-
-        /// The generation this slot last submitted.
-        fn submitted(&self) -> u64 {
-            self.submission().generation
-        }
-
-        /// Let the writer finish with what this slot last submitted, then
-        /// apply its answers: what the slot's next frames would do, without
-        /// waiting for them.
-        fn settle(&self) {
-            let Submission {
-                attempt,
-                generation,
-            } = self.submission();
-            assert!(
-                WRITER
-                    .wait_settled(
-                        &self.hint_path(),
-                        attempt,
-                        generation,
-                        Duration::from_secs(10)
-                    )
-                    .is_some(),
-                "the writer finished with attempt {attempt} (generation {generation})"
-            );
-            self.apply_published();
+            self.service.root().bank_hint_file(PROFILE, "alice")
         }
     }
 
-    /// A publication the test holds at the door: each call reports in on
-    /// `entered` and waits for one `release` before writing for real.
+    fn identity(username: &str) -> DomainIdentity {
+        DomainIdentity::new(
+            LocalStateDomain::BankHints,
+            AccountKey::try_new(PROFILE, username).unwrap(),
+            ContentScope::try_new(client::io::ClientRevision::R289, CONTENT).unwrap(),
+        )
+    }
+
     struct Gate {
-        entered: mpsc::Receiver<u64>,
+        entered: mpsc::Receiver<Vec<(i32, i32)>>,
         release: mpsc::Sender<()>,
     }
 
-    fn gated_publish() -> (Publish, Gate) {
+    fn gated_writer(service: &LocalStateService) -> Gate {
         let (entered_tx, entered) = mpsc::channel();
         let (release, release_rx) = mpsc::channel::<()>();
         let release_rx = std::sync::Mutex::new(release_rx);
-        let publish: Publish = Arc::new(move |hint: &HintFile, document: &PendingSave| {
-            entered_tx.send(document.generation()).unwrap();
-            // A dropped gate (the test is over) lets the writer go.
+        service.set_write_hook(Arc::new(move |path, bytes| {
+            let document: serde_json::Value = serde_json::from_slice(bytes)
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            let rows: Vec<(i32, i32)> = serde_json::from_value(document["rows"].clone())
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            entered_tx
+                .send(rows)
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
             let _ = release_rx.lock().unwrap().recv();
-            hint.write(document)
-        });
-        (publish, Gate { entered, release })
+            vault::write_private_file(path, bytes)
+        }));
+        Gate { entered, release }
     }
 
-    /// A gated slot over `memory` at the test's pinned `alice` hint path:
-    /// what a restart of the slot constructs (`play_slots.rs` keeps the
-    /// account's memory and resolves the same file again).
-    fn gated_slot_over(memory: &SharedBankMemory) -> (SlotBankMemory, Gate) {
-        let hint = HintFile::for_account("local-289", "alice").unwrap();
-        let (publish, gate) = gated_publish();
-        let slot = SlotBankMemory::new(Arc::clone(memory), Some(hint)).with_publish(publish);
-        (slot, gate)
+    fn pending(slot: &SlotBankMemory) -> Vec<Pending> {
+        slot.hint
+            .as_ref()
+            .expect("test slot has a hint port")
+            .pending
+            .lock()
+            .clone()
+    }
+
+    fn last_request(slot: &SlotBankMemory) -> Pending {
+        *pending(slot).last().expect("slot has submitted a request")
+    }
+
+    /// `request`'s settlement, waiting for it.
+    fn settled(service: &LocalStateService, request: RequestId) -> WriteSettlement {
+        match service.wait_request(request, WAIT) {
+            RequestState::Settled(settlement) => settlement,
+            other => panic!(
+                "service did not settle request {}: {other:?}",
+                request.get()
+            ),
+        }
+    }
+
+    fn settle(slot: &SlotBankMemory, service: &LocalStateService) -> WriteSettlement {
+        let settled = settled(service, last_request(slot).request);
+        slot.apply_published();
+        settled
     }
 
     fn open_bank(snapshot: &mut GameSnapshot, generation: u64, coins: i32) {
@@ -810,13 +717,17 @@ mod tests {
         }
     }
 
-    fn slot_with_hint() -> (IsolatedEnv, SlotBankMemory) {
-        let scratch = IsolatedEnv::enter("bank-hints");
-        let hint = HintFile::for_account("local-289", "alice").unwrap();
-        (
-            scratch,
-            SlotBankMemory::new(Arc::new(RwLock::new(BankMemory::default())), Some(hint)),
-        )
+    fn write_hint(state: &TestState, account: &str, rows: &[(i32, i32)], at: u64) {
+        let path = state.service.root().bank_hint_file(PROFILE, account);
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "schema_version": super::super::local_state::HINT_SCHEMA_VERSION,
+            "profile": PROFILE,
+            "account": account,
+            "observed_at_unix": at,
+            "rows": rows,
+        }))
+        .unwrap();
+        vault::write_private_file(&path, &bytes).unwrap();
     }
 
     fn offline_play() -> crate::Play {
@@ -835,19 +746,15 @@ mod tests {
         )
     }
 
-    /// P2: the close-edge tick returns while the publication is still
-    /// stalled on the writer thread, the pump's next frames return too,
-    /// the UI read goes through, a newer observation taken meanwhile stays
-    /// pending, and the next save point publishes it. The writer is held
-    /// until the test releases it, so a pump that waited on the disk would
-    /// hang here, not pass.
+    /// A close never waits for the publication: memory and UI reads proceed
+    /// while the process local-state writer is held.
     #[test]
     fn the_close_edge_tick_returns_while_the_writer_is_stalled() {
-        let (_scratch, slot) = slot_with_hint();
-        let path = slot.hint_path();
-        let memory = Arc::clone(&slot.memory);
-        let (publish, gate) = gated_publish();
-        let slot = slot.with_publish(publish);
+        let state = TestState::new("bank-hints-close-stalled");
+        let memory: SharedBankMemory = Arc::default();
+        let slot = state.slot(Arc::clone(&memory));
+        let path = state.hint_path();
+        let gate = gated_writer(&state.service);
         let mut play = offline_play();
         play.bank_memories
             .insert("alice".into(), Arc::clone(&memory));
@@ -859,21 +766,16 @@ mod tests {
         let close_tick = Instant::now();
         slot.observe_frame(&snapshot);
         let close_tick = close_tick.elapsed();
-        // The writer is inside the publication and stays there until
-        // `release`; the close tick has already returned.
-        assert_eq!(gate.entered.recv().unwrap(), 1);
+        assert_eq!(gate.entered.recv_timeout(WAIT).unwrap(), vec![(COINS, 50)]);
         assert!(!path.exists(), "nothing is published yet");
-        println!("close-edge tick with the writer stalled: {close_tick:?}");
         assert!(
             close_tick < Duration::from_secs(1),
             "the close tick waited on the writer: {close_tick:?}"
         );
-        // The pump goes on: idle closed frames return at once.
         for _ in 0..3 {
             slot.observe_frame(&snapshot);
         }
 
-        // The UI read is available right now: no guard spans the I/O.
         let rows = memory
             .try_read()
             .expect("a reader is never blocked by a save in flight");
@@ -883,10 +785,6 @@ mod tests {
         let ui = play.bank_rows("alice");
         assert_eq!((ui.origin, ui.rows), (Origin::Session, vec![(COINS, 50)]));
 
-        // A newer observation lands while the older document is in flight
-        // (the slot thread is the only writer, so only a test can do this):
-        // the write guard is free, and the publication must not mark it
-        // saved.
         let mut newer = GameSnapshot::new();
         open_bank(&mut newer, 2, 43);
         memory
@@ -895,37 +793,37 @@ mod tests {
             .track(&newer, 2);
 
         gate.release.send(()).unwrap();
-        slot.settle();
+        assert!(matches!(
+            settle(&slot, &state.service),
+            Settlement::Completed(_)
+        ));
         let raw = rows_on_disk(&path);
-        assert!(
-            raw.contains(&format!("\"rows\":[[{COINS},50]]")),
-            "the document taken under the guard was published: {raw}"
-        );
+        assert!(raw.contains(&format!("\"rows\":[[{COINS},50]]")), "{raw}");
         assert!(
             slot.read().dirty(),
             "the newer observation is still pending"
         );
         assert_eq!(slot.read().rows(), &[(COINS, 43)]);
 
-        // The next save point publishes the newer rows.
         slot.session_ended();
-        assert_eq!(gate.entered.recv().unwrap(), 2);
+        assert_eq!(gate.entered.recv_timeout(WAIT).unwrap(), vec![(COINS, 43)]);
         gate.release.send(()).unwrap();
-        slot.settle();
+        assert!(matches!(
+            settle(&slot, &state.service),
+            Settlement::Completed(_)
+        ));
         assert!(!slot.read().dirty());
-        let raw = rows_on_disk(&path);
-        assert!(raw.contains(&format!("\"rows\":[[{COINS},43]]")), "{raw}");
+        assert!(rows_on_disk(&path).contains(&format!("\"rows\":[[{COINS},43]]")));
     }
 
-    /// P2: two quick closes publish in generation order, and a close that
-    /// lands while an older document is still queued (not yet taken by the
-    /// writer) supersedes it: the older rows are never written.
+    /// The service holds at most one queued hint per account, replacing
+    /// generations 3 with 4 while generation 2 is in flight.
     #[test]
     fn quick_closes_publish_in_order_and_a_queued_document_is_superseded() {
-        let (_scratch, slot) = slot_with_hint();
-        let path = slot.hint_path();
-        let (publish, gate) = gated_publish();
-        let slot = slot.with_publish(publish);
+        let state = TestState::new("bank-hints-quick-closes");
+        let slot = state.slot(Arc::default());
+        let path = state.hint_path();
+        let gate = gated_writer(&state.service);
         let mut snapshot = GameSnapshot::new();
         let mut open_and_close = |generation: u64, coins: i32| {
             open_bank(&mut snapshot, generation, coins);
@@ -934,25 +832,23 @@ mod tests {
             slot.observe_frame(&snapshot);
         };
 
-        // Generation 1 is taken by the writer and held at the door.
         open_and_close(1, 50);
-        assert_eq!(gate.entered.recv().unwrap(), 1);
-        // Generation 2 closes while 1 is in flight: queued behind it.
+        assert_eq!(gate.entered.recv_timeout(WAIT).unwrap(), vec![(COINS, 50)]);
         open_and_close(2, 43);
         assert!(!path.exists(), "nothing is published yet");
         gate.release.send(()).unwrap();
-        // The writer takes 2 next, in order, and is held again.
-        assert_eq!(gate.entered.recv().unwrap(), 2);
+        assert_eq!(gate.entered.recv_timeout(WAIT).unwrap(), vec![(COINS, 43)]);
         assert!(rows_on_disk(&path).contains(&format!("[[{COINS},50]]")));
-        // Generations 3 and 4 close while 2 is in flight: 4 replaces the
-        // queued 3, which is never written.
         open_and_close(3, 7);
         open_and_close(4, 9);
         gate.release.send(()).unwrap();
-        assert_eq!(gate.entered.recv().unwrap(), 4);
+        assert_eq!(gate.entered.recv_timeout(WAIT).unwrap(), vec![(COINS, 9)]);
         assert!(rows_on_disk(&path).contains(&format!("[[{COINS},43]]")));
         gate.release.send(()).unwrap();
-        slot.settle();
+        assert!(matches!(
+            settle(&slot, &state.service),
+            Settlement::Completed(_)
+        ));
         assert!(
             gate.entered.try_recv().is_err(),
             "generation 3 was superseded, not published"
@@ -963,73 +859,48 @@ mod tests {
         assert!(raw.contains(&format!("\"rows\":[[{COINS},9]]")), "{raw}");
     }
 
-    /// P2: the slot thread's exit waits for the writer, so the rows the
-    /// session observed last are on disk, behind the close's document
-    /// already in flight, when the thread is joined.
     #[test]
     fn the_exit_save_reaches_the_disk_before_the_slot_leaves() {
-        let (_scratch, slot) = slot_with_hint();
-        let path = slot.hint_path();
-        let (entered_tx, entered) = mpsc::channel();
-        let slot = slot.with_publish(Arc::new(move |hint: &HintFile, document: &PendingSave| {
-            entered_tx.send(document.generation()).unwrap();
-            // A slow disk.
-            thread::sleep(Duration::from_millis(100));
-            hint.write(document)
-        }));
+        let state = TestState::new("bank-hints-exit-save");
+        let slot = Arc::new(state.slot(Arc::default()));
+        let path = state.hint_path();
+        let gate = gated_writer(&state.service);
         let mut snapshot = GameSnapshot::new();
         open_bank(&mut snapshot, 1, 50);
         slot.observe_frame(&snapshot);
         close_bank(&mut snapshot, 1);
         slot.observe_frame(&snapshot);
-        // The close's document is in flight (taken, not merely queued, so
-        // the exit's document queues behind it rather than replacing it).
-        assert_eq!(entered.recv().unwrap(), 1);
-        // The bank is open again when the slot leaves: the exit save
-        // carries these rows.
+        assert_eq!(gate.entered.recv_timeout(WAIT).unwrap(), vec![(COINS, 50)]);
         open_bank(&mut snapshot, 2, 43);
         slot.observe_frame(&snapshot);
         assert!(slot.read().dirty());
 
-        let left = Instant::now();
-        drop(ExitSave(&slot));
-        let waited = left.elapsed();
-        assert_eq!(
-            entered.recv().unwrap(),
-            2,
-            "the exit's document was published after the close's"
-        );
-        assert!(entered.try_recv().is_err(), "nothing else was published");
-        assert!(
-            waited >= Duration::from_millis(100),
-            "the exit waited for its own publication: {waited:?}"
-        );
+        let exiting = Arc::clone(&slot);
+        let exit = thread::spawn(move || drop(ExitSave(&exiting)));
+        gate.release.send(()).unwrap();
+        assert_eq!(gate.entered.recv_timeout(WAIT).unwrap(), vec![(COINS, 43)]);
+        assert!(!exit.is_finished(), "exit waits for its own queued request");
+        gate.release.send(()).unwrap();
+        exit.join().unwrap();
         assert!(
             !slot.read().dirty(),
-            "the exit save was published and applied before the slot left"
+            "the exit save was applied before leaving"
         );
-        let raw = rows_on_disk(&path);
-        assert!(raw.contains(&format!("\"rows\":[[{COINS},43]]")), "{raw}");
+        assert!(rows_on_disk(&path).contains(&format!("\"rows\":[[{COINS},43]]")));
     }
 
-    /// P2: a writer stalled past the exit bound does not hold the slot
-    /// thread; the slot leaves with the save still in flight (and one
-    /// hostlog line), and the writer finishes on its own. The exit's
-    /// document carries the generation already in flight, so once that one
-    /// is on disk the writer drops the exit's as stale instead of writing
-    /// it again.
     #[test]
     fn the_exit_wait_is_bounded_when_the_writer_stalls() {
-        let (_scratch, slot) = slot_with_hint();
-        let path = slot.hint_path();
-        let (publish, gate) = gated_publish();
-        let slot = slot.with_publish(publish);
+        let state = TestState::new("bank-hints-exit-bounded");
+        let slot = state.slot(Arc::default());
+        let path = state.hint_path();
+        let gate = gated_writer(&state.service);
         let mut snapshot = GameSnapshot::new();
         open_bank(&mut snapshot, 1, 50);
         slot.observe_frame(&snapshot);
         close_bank(&mut snapshot, 1);
         slot.observe_frame(&snapshot);
-        assert_eq!(gate.entered.recv().unwrap(), 1);
+        assert_eq!(gate.entered.recv_timeout(WAIT).unwrap(), vec![(COINS, 50)]);
 
         let left = Instant::now();
         assert!(
@@ -1044,117 +915,138 @@ mod tests {
         assert!(slot.read().dirty(), "nothing was published yet");
         assert!(!path.exists());
 
-        // The writer finishes once the disk answers: the stalled close
-        // document is written, the exit's one (the same generation) is
-        // superseded by it, and the answers clear the memory.
         gate.release.send(()).unwrap();
-        slot.settle();
+        assert!(matches!(
+            settle(&slot, &state.service),
+            Settlement::Completed(_)
+        ));
         assert!(!slot.read().dirty());
         assert!(rows_on_disk(&path).contains(&format!("[[{COINS},50]]")));
         assert!(
             gate.entered.try_recv().is_err(),
-            "the exit's stale document was never written"
+            "an identical exit document was settled without another write"
         );
     }
 
-    /// A failed publication leaves the rows pending and the memory readable.
     #[test]
     fn a_failed_save_keeps_the_rows_pending_for_the_next_save_point() {
-        let (_scratch, slot) = slot_with_hint();
-        let path = slot.hint_path();
-        let slot = slot.with_publish(Arc::new(|_, _| {
-            Err(HintError::Io(std::io::Error::other("disk full")))
+        let state = TestState::new("bank-hints-failed-save");
+        let slot = state.slot(Arc::default());
+        let path = state.hint_path();
+        let failed = Arc::new(AtomicBool::new(false));
+        let failed_once = Arc::clone(&failed);
+        state.service.set_write_hook(Arc::new(move |path, bytes| {
+            if !failed_once.swap(true, Ordering::SeqCst) {
+                return Err(std::io::Error::other("disk full"));
+            }
+            vault::write_private_file(path, bytes)
         }));
         let mut snapshot = GameSnapshot::new();
         open_bank(&mut snapshot, 1, 50);
         slot.observe_frame(&snapshot);
         close_bank(&mut snapshot, 1);
         slot.observe_frame(&snapshot);
-        slot.settle();
+        let first = last_request(&slot).request;
+        assert!(matches!(
+            settled(&state.service, first),
+            Settlement::Failed(ErrorCode::Failed {
+                reason: api::local_state::FailureReason::Io,
+                ..
+            })
+        ));
+        slot.apply_published();
         assert!(
             slot.read().dirty(),
             "a failed write leaves the memory dirty"
         );
         assert!(!path.exists());
-        // Nothing is left locked behind the failure.
-        assert!(slot.memory().try_write().is_some());
-        // The next save point tries again.
+        assert!(
+            slot.memory().try_write().is_some(),
+            "failure releases the lock"
+        );
+
         slot.session_ended();
-        slot.settle();
-        assert!(slot.read().dirty());
-        assert!(!path.exists());
+        assert!(matches!(
+            settle(&slot, &state.service),
+            Settlement::Completed(_)
+        ));
+        assert!(!slot.read().dirty(), "the next save point reaches disk");
+        assert!(rows_on_disk(&path).contains(&format!("[[{COINS},50]]")));
     }
 
-    /// H2-R4: the reviewer's failed-then-retried exit. The first
-    /// publication of generation 1 fails: the exit wait returns at once,
-    /// well under its bound, the memory stays dirty, no file. The next
-    /// exit save retries the same generation and that publication is held
-    /// at the door: the wait follows this attempt, not the earlier
-    /// failure's settlement at the same generation, so it runs to its
-    /// bound with the memory dirty and no file; released, the retry is
-    /// published and its answer clears the memory.
     #[test]
     fn an_exit_retry_at_the_same_generation_waits_for_its_own_attempt() {
-        let (_scratch, slot) = slot_with_hint();
-        let path = slot.hint_path();
-        let (gated, gate) = gated_publish();
-        let failed = std::sync::atomic::AtomicBool::new(false);
-        let slot = slot.with_publish(Arc::new(move |hint: &HintFile, document: &PendingSave| {
-            // The first publication fails; the rest are held, then real.
-            if !failed.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                return Err(HintError::Io(std::io::Error::other("disk full")));
+        let state = TestState::new("bank-hints-exit-retry");
+        let slot = Arc::new(state.slot(Arc::default()));
+        let path = state.hint_path();
+        let (entered_tx, entered) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel::<()>();
+        let release_rx = std::sync::Mutex::new(release_rx);
+        let failed = Arc::new(AtomicBool::new(false));
+        let failed_once = Arc::clone(&failed);
+        state.service.set_write_hook(Arc::new(move |path, bytes| {
+            if !failed_once.swap(true, Ordering::SeqCst) {
+                return Err(std::io::Error::other("disk full"));
             }
-            gated(hint, document)
+            let document: serde_json::Value = serde_json::from_slice(bytes)
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            let rows: Vec<(i32, i32)> = serde_json::from_value(document["rows"].clone())
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            entered_tx
+                .send(rows)
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            let _ = release_rx.lock().unwrap().recv();
+            vault::write_private_file(path, bytes)
         }));
         let mut snapshot = GameSnapshot::new();
         open_bank(&mut snapshot, 1, 17);
         slot.observe_frame(&snapshot);
 
-        // The bank is open when the slot leaves: the exit carries
-        // generation 1, and its publication fails.
         let left = Instant::now();
         drop(ExitSave(&slot));
         let waited = left.elapsed();
-        assert_eq!(slot.submitted(), 1);
-        // Settled by the failure, not by the bound: well under the exit
-        // wait. Half the bound keeps the distinction without a wall-clock
-        // threshold that a loaded machine can miss.
         assert!(
             waited < EXIT_SAVE_TIMEOUT / 2,
-            "a failed publication settles the exit before its bound: {waited:?}"
+            "the failed publication settles the exit before its bound: {waited:?}"
         );
         assert!(slot.read().dirty(), "the failed rows stay pending");
         assert!(!path.exists());
 
-        // The retry: the same generation, held at the door. The exit wait
-        // must not take the earlier failure's settlement for its own.
-        let left = Instant::now();
-        assert!(
-            !slot.finish_within(Duration::from_millis(300)),
-            "the held retry is reported, not waited out"
+        let retrying = Arc::clone(&slot);
+        let retry = thread::spawn(move || retrying.finish_within(WAIT));
+        assert_eq!(entered.recv_timeout(WAIT).unwrap(), vec![(COINS, 17)]);
+        let retry_request = last_request(&slot).request;
+        assert_eq!(
+            state
+                .service
+                .wait_request(retry_request, Duration::from_millis(100)),
+            RequestState::Pending,
+            "the earlier failure cannot settle the held retry"
         );
-        let waited = left.elapsed();
-        assert_eq!(gate.entered.recv().unwrap(), 1, "the retry is in flight");
         assert!(
-            (Duration::from_millis(300)..Duration::from_secs(5)).contains(&waited),
-            "the exit waited for its own attempt: {waited:?}"
+            !retry.is_finished(),
+            "the retry is still held at publication"
         );
-        assert!(slot.read().dirty(), "the retry is still held");
+        assert!(slot.read().dirty(), "the held retry remains pending");
         assert!(!path.exists());
 
-        gate.release.send(()).unwrap();
-        slot.settle();
+        release.send(()).unwrap();
+        assert!(retry.join().unwrap());
         assert!(!slot.read().dirty(), "the retry was published and applied");
         let raw = rows_on_disk(&path);
         assert!(raw.contains(&format!("\"rows\":[[{COINS},17]]")), "{raw}");
-        assert!(gate.entered.try_recv().is_err(), "published once");
+        assert!(
+            entered.try_recv().is_err(),
+            "the successful retry wrote once"
+        );
     }
 
     #[test]
     fn fixture_open_withdraw_close_saves_once_into_the_pinned_home() {
-        let (scratch, slot) = slot_with_hint();
-        let path = slot.hint_path();
-        assert!(path.starts_with(&scratch.home));
+        let state = TestState::new("bank-hints-fixture");
+        let slot = state.slot(Arc::default());
+        let path = state.hint_path();
+        assert!(path.starts_with(&state.scratch.home));
         let mut snapshot = GameSnapshot::new();
         slot.session_started();
         assert!(!slot.read().known(), "no file yet: Unknown");
@@ -1165,21 +1057,21 @@ mod tests {
         assert_eq!(slot.read().rows(), &[(COINS, 50)]);
         assert!(!path.exists(), "no save while the bank is open");
 
-        // The withdraw moves the live rows: the memory follows.
         open_bank(&mut snapshot, 2, 43);
         slot.observe_frame(&snapshot);
         assert_eq!(slot.read().rows(), &[(COINS, 43)]);
 
         close_bank(&mut snapshot, 2);
         slot.observe_frame(&snapshot);
-        slot.settle();
+        assert!(matches!(
+            settle(&slot, &state.service),
+            Settlement::Completed(_)
+        ));
         assert!(!slot.read().dirty(), "the close saved");
         let raw = rows_on_disk(&path);
         assert!(raw.contains(&format!("\"rows\":[[{COINS},43]]")), "{raw}");
-        // Anything written after the close would replace this sentinel.
         std::fs::write(&path, "sentinel").unwrap();
 
-        // Idle closed frames and the session end write nothing more.
         for _ in 0..3 {
             slot.observe_frame(&snapshot);
         }
@@ -1194,7 +1086,8 @@ mod tests {
 
     #[test]
     fn idle_frames_take_no_write_and_allocate_nothing() {
-        let (_scratch, slot) = slot_with_hint();
+        let state = TestState::new("bank-hints-idle");
+        let slot = state.slot(Arc::default());
         let mut snapshot = GameSnapshot::new();
         open_bank(&mut snapshot, 1, 50);
         slot.observe_frame(&snapshot);
@@ -1206,9 +1099,10 @@ mod tests {
         assert_eq!(open.bytes_total, 0, "an open idle frame allocates nothing");
         close_bank(&mut snapshot, 1);
         slot.observe_frame(&snapshot);
-        // The close's publication is applied; the frames after it see an
-        // empty hand-back channel, which is the steady state.
-        slot.settle();
+        assert!(matches!(
+            settle(&slot, &state.service),
+            Settlement::Completed(_)
+        ));
         let closed = allocation_counter::measure(|| {
             for _ in 0..1_000 {
                 slot.observe_frame(&snapshot);
@@ -1223,24 +1117,15 @@ mod tests {
 
     #[test]
     fn boundary_precedence_keeps_a_known_memory_and_loads_an_unknown_one() {
-        let (_scratch, slot) = slot_with_hint();
-        let hint = slot.hint.as_ref().unwrap().file().clone();
-        // A file on disk the slot did not write this session.
-        let mut on_disk = BankMemory::default();
+        let state = TestState::new("bank-hints-boundary");
+        let slot = state.slot(Arc::default());
+        write_hint(&state, "alice", &[(COINS, 7)], 100);
         let mut snapshot = GameSnapshot::new();
-        snapshot.seed_bank_observation(BANK_COM, 1, Some(vec![bank_row(COINS, 7, 0)]), Vec::new());
-        on_disk.track(&snapshot, 1);
-        hint.write(&hint.pending_save(&on_disk).unwrap().unwrap())
-            .unwrap();
-
-        // Unknown at the boundary: the file is loaded, origin Hint.
         slot.session_started();
         assert_eq!(slot.read().origin(), Origin::Hint);
         assert_eq!(slot.read().rows(), &[(COINS, 7)]);
 
-        // This session sees different rows; a relog keeps them and never
-        // re-reads the file.
-        snapshot.seed_bank_observation(BANK_COM, 2, Some(vec![bank_row(COINS, 99, 0)]), Vec::new());
+        snapshot.seed_bank_observation(BANK_COM, 1, Some(vec![bank_row(COINS, 99, 0)]), Vec::new());
         slot.observe_frame(&snapshot);
         assert_eq!(slot.read().origin(), Origin::Session);
         let generation = slot.read().generation();
@@ -1250,16 +1135,20 @@ mod tests {
         assert!(slot.read().generation() > generation);
         assert!(slot.read().dirty(), "the unsaved session is still pending");
         slot.session_ended();
-        slot.settle();
+        assert!(matches!(
+            settle(&slot, &state.service),
+            Settlement::Completed(_)
+        ));
         assert!(!slot.read().dirty());
-        let raw = std::fs::read_to_string(hint.path()).unwrap();
+        let raw = rows_on_disk(&state.hint_path());
         assert!(raw.contains(&format!("[[{COINS},99]]")), "{raw}");
     }
 
     #[test]
     fn a_rejected_file_leaves_the_memory_unknown_and_login_unaffected() {
-        let (_scratch, slot) = slot_with_hint();
-        let path = slot.hint_path();
+        let state = TestState::new("bank-hints-rejected");
+        let slot = state.slot(Arc::default());
+        let path = state.hint_path();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "{\"schema_version\":7}").unwrap();
         slot.session_started();
@@ -1307,16 +1196,10 @@ mod tests {
         assert_eq!(play.bank_rows("alice").origin, Origin::Hint);
     }
 
-    /// M1-R3: a name the server would refuse at login (raw length over
-    /// twelve) gets no hint file at all; the slot's memory starts Unknown
-    /// and stays so across the boundary, and no file appears under the
-    /// pinned home for the session's observations.
     #[test]
     fn an_invalid_login_name_gets_no_hint_and_stays_unknown() {
-        let scratch = IsolatedEnv::enter("bank-hints");
-        let hint = HintFile::for_account("local-289", "ab3456789xyz1");
-        assert!(matches!(&hint, Err(HintError::UnsafeAccount(name)) if name == "ab3456789xyz1"));
-        // What `play_slots.rs` constructs after its one warning line.
+        let scratch = IsolatedEnv::enter("bank-hints-invalid-name");
+        assert!(AccountKey::try_new(PROFILE, "ab3456789xyz1").is_err());
         let slot = SlotBankMemory::new(Arc::new(RwLock::new(BankMemory::default())), None);
         slot.session_started();
         assert!(!slot.read().known(), "no file to load: Unknown");
@@ -1335,39 +1218,39 @@ mod tests {
         );
     }
 
-    /// H1-R4: the reviewer's alias case. `Alice Smith` and `alice_smith`
-    /// are one login identity, so `Play` keys them to one memory with one
-    /// generation counter ([`memory_key`]), as the writer keys them to one
-    /// file. A slot under the first spelling publishes generation 5 (50
-    /// coins); a slot under the second, over that memory, relogs and
-    /// observes newer rows (7 coins) at a higher generation; the file and
-    /// the memory both end at the newest observation, and
-    /// `Play::bank_rows` answers it for either spelling. (Two memories
-    /// would have left the second spelling's at generation 2, superseded
-    /// by 5 on disk and falsely marked saved over the older rows.)
     #[test]
     fn alias_spellings_share_one_memory_and_one_generation_counter() {
-        let _scratch = IsolatedEnv::enter("bank-hints");
+        let state = TestState::new("bank-hints-alias");
         let mut play = offline_play();
-        // What `try_spawn_slot` constructs for each spelling.
-        let mut slot_for = |typed: &str| {
-            let memory = Arc::clone(
-                play.bank_memories
-                    .entry(memory_key(typed).into_owned())
-                    .or_default(),
-            );
-            let hint = HintFile::for_account("local-289", typed).unwrap();
-            SlotBankMemory::new(memory, Some(hint))
+        let (first, second) = {
+            let mut slot_for = |typed: &str| {
+                let memory = Arc::clone(
+                    play.bank_memories
+                        .entry(memory_key(typed).into_owned())
+                        .or_default(),
+                );
+                let port = SlotHintPort::new(Arc::clone(&state.service), identity(typed));
+                SlotBankMemory::new(memory, Some(port))
+            };
+            (slot_for("Alice Smith"), slot_for("alice_smith"))
         };
-        let first = slot_for("Alice Smith");
-        let second = slot_for("alice_smith");
         assert_eq!(play.bank_memories.len(), 1, "one memory for both spellings");
         assert!(Arc::ptr_eq(&first.memory, &second.memory));
-        let path = first.hint_path();
-        assert_eq!(second.hint_path(), path, "one file for both spellings");
+        let first_identity = &first.hint.as_ref().unwrap().port.identity;
+        let second_identity = &second.hint.as_ref().unwrap().port.identity;
+        let path = state.service.root().bank_hint_file(
+            first_identity.account().profile(),
+            first_identity.account().account(),
+        );
+        assert_eq!(
+            state.service.root().bank_hint_file(
+                second_identity.account().profile(),
+                second_identity.account().account(),
+            ),
+            path,
+            "both spellings resolve to one service file"
+        );
 
-        // Under the first spelling: five observations and a close put
-        // generation 5, 50 coins, on disk.
         let mut snapshot = GameSnapshot::new();
         first.session_started();
         for (generation, coins) in [(1, 10), (2, 20), (3, 30), (4, 40), (5, 50)] {
@@ -1376,15 +1259,15 @@ mod tests {
         }
         close_bank(&mut snapshot, 5);
         first.observe_frame(&snapshot);
-        assert_eq!(first.submitted(), 5);
-        first.settle();
+        assert_eq!(last_request(&first).generation, 5);
+        assert!(matches!(
+            settle(&first, &state.service),
+            Settlement::Completed(_)
+        ));
         assert!(!first.read().dirty());
         assert!(rows_on_disk(&path).contains(&format!("\"rows\":[[{COINS},50]]")));
         drop(ExitSave(&first));
 
-        // Under the second spelling: the boundary keeps the known memory (a
-        // relog, generation 6; the file is not read), and the session
-        // observes newer rows at generation 7.
         second.session_started();
         assert_eq!(second.read().origin(), Origin::Hint);
         assert_eq!(second.read().rows(), &[(COINS, 50)]);
@@ -1393,18 +1276,17 @@ mod tests {
         second.observe_frame(&snapshot);
         close_bank(&mut snapshot, 6);
         second.observe_frame(&snapshot);
-        assert_eq!(second.submitted(), 7);
-        second.settle();
+        assert_eq!(last_request(&second).generation, 7);
+        assert!(matches!(
+            settle(&second, &state.service),
+            Settlement::Completed(_)
+        ));
         assert!(
             !second.read().dirty(),
             "the newest observation was published"
         );
         let raw = rows_on_disk(&path);
-        assert!(
-            raw.contains(&format!("\"rows\":[[{COINS},7]]")),
-            "the file ends at the newest observation: {raw}"
-        );
-        // Either spelling reads the one memory.
+        assert!(raw.contains(&format!("\"rows\":[[{COINS},7]]")), "{raw}");
         for typed in ["Alice Smith", "alice_smith", " alice smith"] {
             let rows = play.bank_rows(typed);
             assert_eq!(
@@ -1415,17 +1297,11 @@ mod tests {
         }
     }
 
-    /// H1-R4: the memory key is the login identity for a login name and
-    /// the typed spelling for a refused one, which no identity equals; a
-    /// refused name's memory is found under that spelling and shared with
-    /// no other.
     #[test]
     fn the_memory_key_is_the_login_identity_or_the_refused_spelling() {
         assert_eq!(memory_key("Alice Smith"), "alice_smith");
         assert_eq!(memory_key(" alice smith"), "alice_smith");
         assert_eq!(memory_key("_ab3456789xy"), "ab3456789xy");
-        // Refused as typed: thirteen raw bytes (the surrounding-space
-        // spelling too), no letter or digit, a byte outside the alphabet.
         for refused in [
             "ab3456789xyz1",
             "_alice_smith_",
@@ -1455,136 +1331,97 @@ mod tests {
         );
     }
 
-    /// H1-R3: the reviewer's restart-after-timeout case. Three slots in a
-    /// row leave past their exit bound with a save queued (the first one
-    /// in flight, held at the door); a successor over the same account
-    /// memory publishes generation N; the departed slots' documents never
-    /// reach the file (the in-flight one lands first, in order; the queued
-    /// ones are replaced), a late older document can never put the file
-    /// below N, and no writer thread was started per slot.
     #[test]
     fn restarts_after_a_timed_out_exit_keep_order_and_one_writer_thread() {
-        let _scratch = IsolatedEnv::enter("bank-hints");
+        let state = TestState::new("bank-hints-restart-order");
         let memory: SharedBankMemory = Arc::default();
         let mut snapshot = GameSnapshot::new();
+        let gate = gated_writer(&state.service);
 
-        // Slot 1 closes the bank (generation 1, taken and held) and leaves
-        // past a 100 ms bound with that save in flight.
-        let (slot1, gate1) = gated_slot_over(&memory);
-        let path = slot1.hint_path();
+        let slot1 = Arc::new(state.slot(Arc::clone(&memory)));
         open_bank(&mut snapshot, 1, 50);
         slot1.observe_frame(&snapshot);
         close_bank(&mut snapshot, 1);
         slot1.observe_frame(&snapshot);
-        assert_eq!(gate1.entered.recv().unwrap(), 1);
+        assert_eq!(gate.entered.recv_timeout(WAIT).unwrap(), vec![(COINS, 50)]);
+        let first_request = pending(&slot1)[0].request;
         assert!(!slot1.finish_within(Duration::from_millis(100)));
-        assert_eq!(slot1.submitted(), 1);
-        drop(slot1);
+        let slot1_duplicate = pending(&slot1).last().unwrap().request;
 
-        // Slots 2 and 3 restart over the same memory (a relog bumps the
-        // generation and keeps the unsaved rows), each leaving past its
-        // bound with its exit document queued; 3's replaces 2's.
-        let (slot2, gate2) = gated_slot_over(&memory);
+        let slot2 = Arc::new(state.slot(Arc::clone(&memory)));
         slot2.session_started();
         assert!(!slot2.finish_within(Duration::from_millis(100)));
-        assert_eq!(slot2.submitted(), 2);
-        drop(slot2);
-        let (slot3, gate3) = gated_slot_over(&memory);
+        let slot2_request = last_request(&slot2).request;
+        let slot3 = Arc::new(state.slot(Arc::clone(&memory)));
         slot3.session_started();
         assert!(!slot3.finish_within(Duration::from_millis(100)));
-        assert_eq!(slot3.submitted(), 3);
-        drop(slot3);
-        assert!(!path.exists(), "the first publication is still held");
+        let slot3_request = last_request(&slot3).request;
+        assert!(!state.hint_path().exists(), "the first publication is held");
 
-        // The successor observes new rows and closes: generation 5 (4 was
-        // its relog) replaces the queued 3.
-        let (successor, gate_n) = gated_slot_over(&memory);
+        let successor = Arc::new(state.slot(Arc::clone(&memory)));
         successor.session_started();
         open_bank(&mut snapshot, 2, 43);
         successor.observe_frame(&snapshot);
         close_bank(&mut snapshot, 2);
         successor.observe_frame(&snapshot);
-        let n = successor.submitted();
-        assert_eq!(n, 5);
+        let newest = last_request(&successor);
+        assert_eq!(newest.generation, 5);
+        // The writer-thread counter was process-global; the service now owns it.
+        // Recreated slots share this same service instead of starting writers.
+        for other in [&slot1, &slot2, &slot3, &successor] {
+            assert!(Arc::ptr_eq(
+                &state.service,
+                &other.hint.as_ref().unwrap().port.service
+            ));
+        }
 
-        // The disk answers: slot 1's document lands first (it was in
-        // flight), then the newest queued one, N; nothing in between.
-        gate1.release.send(()).unwrap();
-        assert_eq!(gate_n.entered.recv().unwrap(), n);
-        assert!(rows_on_disk(&path).contains(&format!("[[{COINS},50]]")));
-        gate_n.release.send(()).unwrap();
-        successor.settle();
-        assert!(!successor.read().dirty(), "N was published and applied");
-        assert!(rows_on_disk(&path).contains(&format!("[[{COINS},43]]")));
-        assert!(
-            gate2.entered.try_recv().is_err(),
-            "slot 2's document was replaced"
-        );
-        assert!(
-            gate3.entered.try_recv().is_err(),
-            "slot 3's document was replaced"
-        );
-        assert!(gate1.entered.try_recv().is_err(), "slot 1 published once");
-
-        // A late older document for the same path — whichever slot sends
-        // it — is dropped as stale, never written over N, and its sender
-        // is told so.
-        let older: SharedBankMemory = Arc::default();
-        let mut older_snapshot = GameSnapshot::new();
-        open_bank(&mut older_snapshot, 1, 7);
-        older.write().track(&older_snapshot, 1);
-        open_bank(&mut older_snapshot, 2, 9);
-        older.write().track(&older_snapshot, 1);
-        assert_eq!(older.read().generation(), 2);
-        let (late, late_gate) = gated_slot_over(&older);
-        late.session_ended();
-        assert_eq!(late.submitted(), 2);
-        // An exit wait on that attempt would end at once: N, newer, is on
-        // disk for the path.
-        let stale = late.submission();
+        gate.release.send(()).unwrap();
+        assert_eq!(gate.entered.recv_timeout(WAIT).unwrap(), vec![(COINS, 43)]);
+        assert!(matches!(
+            settled(&state.service, first_request),
+            Settlement::Completed(_)
+        ));
         assert_eq!(
-            WRITER.wait_settled(&path, stale.attempt, stale.generation, Duration::ZERO),
-            Some(true)
+            state.service.observe(slot1_duplicate),
+            Some(Settlement::Cancelled(Cancellation::Superseded))
         );
-        // The writer takes the stale document, writes nothing, and answers
-        // its sender (which may already have left; this one is still here).
-        let hint = late.hint.as_ref().unwrap();
-        let answer = hint.done.recv_timeout(Duration::from_secs(10)).unwrap();
-        assert_eq!(answer.generation, 2);
-        assert!(matches!(answer.outcome, Outcome::Superseded { by } if by == n));
-        late.apply(hint, answer);
-        assert!(
-            late_gate.entered.try_recv().is_err(),
-            "the stale document was never written"
-        );
-        assert!(
-            rows_on_disk(&path).contains(&format!("[[{COINS},43]]")),
-            "the file stays at N"
-        );
-        assert!(!late.read().dirty(), "the sender was answered: superseded");
-
         assert_eq!(
-            THREADS_SPAWNED.load(std::sync::atomic::Ordering::SeqCst),
-            1,
-            "one writer thread for the process, however many slots came and went"
+            state.service.observe(slot2_request),
+            Some(Settlement::Cancelled(Cancellation::Superseded))
         );
+        assert_eq!(
+            state.service.observe(slot3_request),
+            Some(Settlement::Cancelled(Cancellation::Superseded))
+        );
+        gate.release.send(()).unwrap();
+        assert!(matches!(
+            settle(&successor, &state.service),
+            Settlement::Completed(_)
+        ));
+        assert!(!successor.read().dirty(), "the newest document was applied");
+        assert!(rows_on_disk(&state.hint_path()).contains(&format!("[[{COINS},43]]")));
+        assert!(
+            gate.entered.try_recv().is_err(),
+            "only held and newest were written"
+        );
+        assert!(matches!(
+            state.service.wait_durable(slot1_duplicate, WAIT),
+            Durability::Durable(receipt) if receipt.request() == Some(newest.request)
+        ));
     }
 
-    /// H1-R3: a burst of save points while the writer is held queues one
-    /// document, the newest; releasing the writer publishes exactly that
-    /// one after the held one, in order, and starts no further thread.
     #[test]
     fn a_burst_of_closes_publishes_the_newest_once_in_order() {
-        let (_scratch, slot) = slot_with_hint();
-        let path = slot.hint_path();
-        let (publish, gate) = gated_publish();
-        let slot = slot.with_publish(publish);
+        let state = TestState::new("bank-hints-burst");
+        let slot = state.slot(Arc::default());
+        let path = state.hint_path();
+        let gate = gated_writer(&state.service);
         let mut snapshot = GameSnapshot::new();
         open_bank(&mut snapshot, 1, 50);
         slot.observe_frame(&snapshot);
         close_bank(&mut snapshot, 1);
         slot.observe_frame(&snapshot);
-        assert_eq!(gate.entered.recv().unwrap(), 1);
+        assert_eq!(gate.entered.recv_timeout(WAIT).unwrap(), vec![(COINS, 50)]);
 
         let burst = 1_000u64;
         for generation in 2..=burst + 1 {
@@ -1597,8 +1434,8 @@ mod tests {
             close_bank(&mut snapshot, generation);
             slot.observe_frame(&snapshot);
         }
-        let newest = slot.submitted();
-        assert_eq!(newest, burst + 1);
+        let newest = last_request(&slot);
+        assert_eq!(newest.generation, burst + 1);
         assert!(
             !path.exists(),
             "nothing is published while the writer is held"
@@ -1606,26 +1443,28 @@ mod tests {
 
         gate.release.send(()).unwrap();
         assert_eq!(
-            gate.entered.recv().unwrap(),
-            newest,
-            "the newest, right after the held one"
+            gate.entered.recv_timeout(WAIT).unwrap(),
+            vec![(COINS, i32::try_from(burst + 1).unwrap())],
+            "the newest document is queued directly after the held one"
         );
         assert!(rows_on_disk(&path).contains(&format!("[[{COINS},50]]")));
         gate.release.send(()).unwrap();
-        slot.settle();
+        assert!(matches!(
+            settle(&slot, &state.service),
+            Settlement::Completed(_)
+        ));
         assert!(
             gate.entered.try_recv().is_err(),
-            "the other {} were superseded",
+            "the other {} requests were superseded",
             burst - 1
         );
         assert!(!slot.read().dirty());
-        assert_eq!(slot.read().generation(), newest);
+        assert_eq!(slot.read().generation(), newest.generation);
         let raw = rows_on_disk(&path);
         assert!(
             raw.contains(&format!("\"rows\":[[{COINS},{}]]", burst + 1)),
             "{raw}"
         );
-        assert_eq!(THREADS_SPAWNED.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -1633,16 +1472,254 @@ mod tests {
         use std::mem::size_of;
         let memory = size_of::<BankMemory>();
         let cell = size_of::<RwLock<BankMemory>>();
-        let hint = size_of::<HintFile>();
+        let port = size_of::<SlotHintPort>();
         let slot_hint = size_of::<SlotHint>();
         let slot = size_of::<SlotBankMemory>();
         println!(
-            "per-bot bank memory: BankMemory={memory}B RwLock<BankMemory>={cell}B (Arc inner +16B) \
-             HintFile={hint}B (Arc'd) SlotHint={slot_hint}B SlotBankMemory={slot}B; rows heap = \
-             8B x bank_size once loaded; one bank-hint-writer thread per process plus one \
-             map entry per hint path"
+            "per-bot bank memory: BankMemory={memory}B RwLock<BankMemory>={cell}B \
+             SlotHintPort={port}B SlotHint={slot_hint}B SlotBankMemory={slot}B; \
+             rows heap = 8B x bank_size once loaded; local-state writer is shared by service"
         );
         assert!(memory <= 96, "BankMemory is {memory} bytes");
-        assert!(slot <= 128, "SlotBankMemory is {slot} bytes");
+        assert!(
+            slot <= 160,
+            "SlotBankMemory is {slot} bytes with its service identity"
+        );
+    }
+
+    /// A writer whose first publication is held until released and whose
+    /// second publication fails; later ones go through.
+    fn held_then_failing_writer(service: &LocalStateService) -> Gate {
+        let (entered_tx, entered) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel::<()>();
+        let release_rx = std::sync::Mutex::new(release_rx);
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        service.set_write_hook(Arc::new(move |path, bytes| {
+            match calls.fetch_add(1, Ordering::SeqCst) {
+                0 => {
+                    let document: serde_json::Value = serde_json::from_slice(bytes)
+                        .map_err(|error| std::io::Error::other(error.to_string()))?;
+                    let rows: Vec<(i32, i32)> = serde_json::from_value(document["rows"].clone())
+                        .map_err(|error| std::io::Error::other(error.to_string()))?;
+                    let _ = entered_tx.send(rows);
+                    let _ = release_rx.lock().unwrap().recv();
+                    vault::write_private_file(path, bytes)
+                }
+                1 => Err(std::io::Error::other("disk full")),
+                _ => vault::write_private_file(path, bytes),
+            }
+        }));
+        Gate { entered, release }
+    }
+
+    /// r2 item 3 (sol P1, grok High): close queues generation G, session
+    /// end queues G again and supersedes it; the supersession marks
+    /// nothing, the replacement fails, and G stays dirty until a durable
+    /// commit: the exit save writes it.
+    #[test]
+    fn a_superseded_save_marks_nothing_and_a_failed_replacement_stays_dirty() {
+        let state = TestState::new("bank-hints-superseded-then-failed");
+        let slot = state.slot(Arc::default());
+        let path = state.hint_path();
+        let gate = held_then_failing_writer(&state.service);
+        let mut snapshot = GameSnapshot::new();
+        open_bank(&mut snapshot, 1, 50);
+        slot.observe_frame(&snapshot);
+        close_bank(&mut snapshot, 1);
+        slot.observe_frame(&snapshot);
+        assert_eq!(gate.entered.recv_timeout(WAIT).unwrap(), vec![(COINS, 50)]);
+
+        open_bank(&mut snapshot, 2, 64);
+        slot.observe_frame(&snapshot);
+        close_bank(&mut snapshot, 2);
+        slot.observe_frame(&snapshot);
+        let close = last_request(&slot);
+        slot.session_ended();
+        let session_end = last_request(&slot);
+        assert_eq!(close.generation, session_end.generation, "one generation G");
+        assert_ne!(close.request, session_end.request);
+        slot.observe_frame(&snapshot);
+        assert!(
+            slot.read().dirty(),
+            "the supersession of the close is not a durable commit of G"
+        );
+
+        gate.release.send(()).unwrap();
+        assert!(matches!(
+            settle(&slot, &state.service),
+            Settlement::Failed(ErrorCode::Failed { .. })
+        ));
+        assert!(
+            slot.read().dirty(),
+            "the failed replacement leaves G dirty for the next save point"
+        );
+        assert!(
+            slot.finish_within(WAIT),
+            "the exit save writes G and reports it on disk"
+        );
+        assert!(!slot.read().dirty());
+        let raw = rows_on_disk(&path);
+        assert!(raw.contains(&format!("\"rows\":[[{COINS},64]]")), "{raw}");
+    }
+
+    /// r2 item 3: a slot whose exit save another slot's newer hint replaced
+    /// waits for that replacement, and a replacement that fails is reported
+    /// as not on disk (it used to read as saved once the store was quiet).
+    #[test]
+    fn an_exit_superseded_by_a_failing_replacement_is_not_reported_saved() {
+        let state = TestState::new("bank-hints-exit-replacement-fails");
+        let memory: SharedBankMemory = Arc::default();
+        let leaving = Arc::new(state.slot(Arc::clone(&memory)));
+        let staying = state.slot(Arc::clone(&memory));
+        let gate = held_then_failing_writer(&state.service);
+        let mut snapshot = GameSnapshot::new();
+        open_bank(&mut snapshot, 1, 50);
+        leaving.observe_frame(&snapshot);
+        close_bank(&mut snapshot, 1);
+        leaving.observe_frame(&snapshot);
+        assert_eq!(gate.entered.recv_timeout(WAIT).unwrap(), vec![(COINS, 50)]);
+        open_bank(&mut snapshot, 2, 43);
+        leaving.observe_frame(&snapshot);
+
+        let exiting = Arc::clone(&leaving);
+        let exit = thread::spawn(move || exiting.finish_within(WAIT));
+        let deadline = Instant::now() + WAIT;
+        while pending(&leaving).len() < 2 {
+            assert!(Instant::now() < deadline, "the exit save was not submitted");
+            thread::yield_now();
+        }
+        open_bank(&mut snapshot, 3, 41);
+        staying.observe_frame(&snapshot);
+        close_bank(&mut snapshot, 3);
+        staying.observe_frame(&snapshot);
+        gate.release.send(()).unwrap();
+        assert!(
+            !exit.join().unwrap(),
+            "the replacement failed: the leaving slot's rows are not on disk"
+        );
+        assert!(memory.read().dirty());
+    }
+
+    /// r2 item 2 (grok probe): a save queued when the slot leaves and the
+    /// last service handle is dropped is finished by the service, not
+    /// cancelled.
+    #[test]
+    fn a_save_still_queued_when_the_slot_and_service_go_is_finished() {
+        let state = TestState::new("bank-hints-exit-then-drop");
+        let slot = state.slot(Arc::default());
+        let path = state.hint_path();
+        let bob = identity("bob");
+        assert_eq!(state.service.readback_lease(&bob, WAIT).unwrap(), None);
+        let bob_path = state.service.root().bank_hint_file(PROFILE, "bob");
+        let (entered_tx, entered) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel::<()>();
+        let release_rx = std::sync::Mutex::new(release_rx);
+        state.service.set_write_hook(Arc::new(move |path, bytes| {
+            if path == bob_path {
+                let _ = entered_tx.send(());
+                let _ = release_rx.lock().unwrap().recv();
+            }
+            vault::write_private_file(path, bytes)
+        }));
+        let hint = BankHint::try_new(
+            bob,
+            None,
+            vec![(COINS, 1)],
+            DurableTimestamp::from_unix_seconds(1),
+        )
+        .unwrap();
+        assert!(state
+            .service
+            .submit(DomainEdit::Bank(hint))
+            .request()
+            .is_some());
+        entered.recv_timeout(WAIT).unwrap();
+
+        let mut snapshot = GameSnapshot::new();
+        open_bank(&mut snapshot, 1, 64);
+        slot.observe_frame(&snapshot);
+        close_bank(&mut snapshot, 1);
+        slot.observe_frame(&snapshot);
+        slot.session_ended();
+        assert!(
+            !slot.finish_within(Duration::from_millis(200)),
+            "the held writer is reported, not waited out"
+        );
+        assert!(slot.read().dirty());
+
+        let TestState {
+            scratch: _scratch,
+            service,
+            ..
+        } = state;
+        drop(slot);
+        let releaser = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(200));
+            let _ = release.send(());
+        });
+        drop(service);
+        releaser.join().unwrap();
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("the queued save was dropped: {error}"));
+        assert!(raw.contains(&format!("\"rows\":[[{COINS},64]]")), "{raw}");
+    }
+
+    /// r2 item 8 (sol P1): a settlement the service no longer holds is
+    /// dropped from the slot's pending list (never pending forever) and
+    /// the rows stay dirty for the next save point.
+    #[test]
+    fn a_settlement_the_service_forgot_is_dropped_and_the_rows_stay_pending() {
+        let state = TestState::new("bank-hints-forgotten");
+        let slot = state.slot(Arc::default());
+        // Hundreds of writes follow; what this checks is not durability, so
+        // they are plain unsynced writes with no directory flushes.
+        state.service.set_write_hook(Arc::new(|path, bytes| {
+            std::fs::create_dir_all(path.parent().expect("a hint has a directory"))?;
+            std::fs::write(path, bytes)
+        }));
+        state.service.set_sync_hook(Arc::new(|_| Ok(())));
+        let mut snapshot = GameSnapshot::new();
+        open_bank(&mut snapshot, 1, 50);
+        slot.observe_frame(&snapshot);
+        close_bank(&mut snapshot, 1);
+        slot.observe_frame(&snapshot);
+        let forgotten = last_request(&slot).request;
+        assert!(matches!(
+            settled(&state.service, forgotten),
+            Settlement::Completed(_)
+        ));
+        // Before the slot reads it, newer settlements of the account push it
+        // out of what the service keeps.
+        for count in 0..300 {
+            let hint = BankHint::try_new(
+                state.identity.clone(),
+                None,
+                vec![(COINS, 1000 + count)],
+                DurableTimestamp::from_unix_seconds(2),
+            )
+            .unwrap();
+            let request = state
+                .service
+                .submit(DomainEdit::Bank(hint))
+                .request()
+                .expect("accepted");
+            assert!(matches!(
+                settled(&state.service, request),
+                Settlement::Completed(_)
+            ));
+        }
+        slot.observe_frame(&snapshot);
+        assert!(
+            pending(&slot).is_empty(),
+            "a forgotten settlement is not pending forever"
+        );
+        assert!(slot.read().dirty(), "its outcome is unknown: still dirty");
+        slot.session_ended();
+        assert!(matches!(
+            settle(&slot, &state.service),
+            Settlement::Completed(_)
+        ));
+        assert!(!slot.read().dirty());
+        assert!(rows_on_disk(&state.hint_path()).contains(&format!("\"rows\":[[{COINS},50]]")));
     }
 }

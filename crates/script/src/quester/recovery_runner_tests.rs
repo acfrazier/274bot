@@ -26,27 +26,46 @@ fn snapshot() -> GameSnapshot {
 }
 
 fn start(slot: &mut crate::SlotScript) {
-    slot.start_compiled(
-        "alice",
-        CompiledId("Quester"),
-        Arc::new(serde_json::from_value(serde_json::json!({"quests": ["cook"]})).unwrap()),
-        api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
-        Arc::default(),
-    )
-    .unwrap();
-    settle(slot);
+    // Other parallel tests can update the process-global Path folder. A
+    // rejected preparation really is stale; retry against its new source,
+    // exactly as the diagnostic requests, instead of assuming test isolation.
+    for attempt in 0..16 {
+        slot.start_compiled(
+            "alice",
+            CompiledId("Quester"),
+            Arc::new(serde_json::from_value(serde_json::json!({"quests": ["cook"]})).unwrap()),
+            api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+            Arc::default(),
+        )
+        .unwrap();
+        match settle_result(slot) {
+            Ok(()) => return,
+            Err(crate::native::StartError::Unavailable(reason))
+                if reason.starts_with("stale-folder-source:") && attempt < 15 =>
+            {
+                std::thread::yield_now();
+            }
+            Err(error) => panic!("Quester Start failed: {error:?}"),
+        }
+    }
+    unreachable!("the final retry returns or panics");
 }
 
 fn settle(slot: &mut crate::SlotScript) {
+    settle_result(slot).unwrap_or_else(|error| panic!("Quester Start failed: {error:?}"));
+}
+
+fn settle_result(slot: &mut crate::SlotScript) -> Result<(), crate::native::StartError> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match slot.poll_start() {
-            crate::StartPoll::Settled(crate::StartOutcome::Ready) => break,
-            crate::StartPoll::NotOwed if slot.state() == crate::RunState::Running => break,
+            crate::StartPoll::Settled(crate::StartOutcome::Ready) => return Ok(()),
+            crate::StartPoll::NotOwed if slot.state() == crate::RunState::Running => return Ok(()),
             crate::StartPoll::Pending | crate::StartPoll::NotOwed => {
                 assert!(Instant::now() < deadline, "Quester preparation stalled");
                 std::thread::yield_now();
             }
+            crate::StartPoll::Settled(crate::StartOutcome::Rejected(error)) => return Err(error),
             result => panic!("Quester Start failed: {result:?}"),
         }
     }

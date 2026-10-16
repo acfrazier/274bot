@@ -1,9 +1,12 @@
 // Rust owns opening precedence, reachable selection and the bank-trip
 // continuation. JavaScript only maps the catalog names and await plumbing.
 import { runMachine } from '../../shim/_kernel.js';
+import { Bank } from './Bank.js';
 
 const notImpl = (name, reason) =>
     new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
+
+export const NEARBY_BANK_RADIUS = globalThis.__rs2b0t_resolve_bank_open_route('nearbyRadius');
 
 // Rust owns the published list and predicate. These are thin mappings so
 // catalog callers keep their names and optional observed object id.
@@ -12,12 +15,31 @@ export const COMMON_BANK_LOOT = Object.freeze(
 );
 
 export const RANDOM_EVENT_CASKET_ID =
-    globalThis.__rs2b0t_host?.content?.random_event_casket_id ?? -1;
+    globalThis.__rs2b0t_selected_facts('random-event-casket');
 
 export function matchesCommonBankLoot(name, id = -1) {
     return globalThis.rustyscript.functions.__rs2b0t_matches_common_bank_loot(
         String(name ?? ''),
         Number.isSafeInteger(id) ? id : -1,
+    );
+}
+
+export function isDisposableGatherJunk(name, id = -1) {
+    return globalThis.rustyscript.functions.__rs2b0t_is_disposable_gather_junk(
+        String(name ?? ''),
+        Number.isSafeInteger(id) ? id : -1,
+    );
+}
+
+export function shouldBankNow(strategy, state) {
+    return globalThis.rustyscript.functions.__rs2b0t_should_bank_now(
+        strategy,
+        {
+            lootCount: Number(state.lootCount),
+            itemsThreshold: Number(state.itemsThreshold),
+            minutesSinceLastBank: Number(state.minutesSinceLastBank),
+            minutesThreshold: Number(state.minutesThreshold),
+        },
     );
 }
 
@@ -51,14 +73,7 @@ export const PERIODIC_BANK_SETTINGS = {
 };
 
 export function parseBankStrategy(label) {
-    const n = String(label || '')
-        .trim()
-        .toLowerCase();
-    if (n === 'off') return 'off';
-    if (n === 'loot count') return 'loot';
-    if (n === 'time') return 'time';
-    if (n === 'either') return 'either';
-    return 'off';
+    return globalThis.__rs2b0t_periodic_bank_rules('parseBankStrategy', label);
 }
 
 // Rust picks the destination's banker conversation over its object
@@ -87,6 +102,11 @@ export async function openBankAccess(dest, fallback, log) {
         { log: typeof log === 'function' ? log : undefined },
     );
     return out.kind === 'done' && out.value === true;
+}
+
+export async function waitBankReady(log) {
+    await Bank.waitReady(undefined, log);
+    return Bank.isOpen();
 }
 
 export const Banking = new Proxy(
@@ -136,3 +156,21 @@ export const Banking = new Proxy(
         },
     },
 );
+export async function purgePackAtBank() {
+    throw notImpl('purgePackAtBank', 'multi-step bank transaction');
+}
+
+export async function withdrawCoins() {
+    throw notImpl('withdrawCoins', 'multi-step bank transaction');
+}
+
+export async function bankPace() {
+    throw notImpl('bankPace', 'randomized pacing is not carried');
+}
+
+export function bankPaceTicks() {
+    throw notImpl('bankPaceTicks', 'randomized pacing is not carried');
+}
+export function resolveBankOpenRoute(input) {
+    return globalThis.__rs2b0t_resolve_bank_open_route(input);
+}

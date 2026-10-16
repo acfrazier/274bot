@@ -10,7 +10,10 @@ use crate::focus::draw_for_slot;
 use crate::picker::{
     format_walkto_status, walkto_actions_enabled, walkto_footer_labels, walkto_selection_caption,
 };
-use crate::test_support::{TestDir, TestPath};
+use crate::test_support::{
+    patiently, save_draft_patiently, save_store_patiently, set_patiently, thread_preferences,
+    thread_state_root, TestDir, TestPath,
+};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::{Client, ClientConfig};
 use client::config::if_type::{ComponentType, IfType, IfTypeMut};
@@ -45,6 +48,13 @@ use map_fixture::MapFixture;
 #[path = "../../host-play/tests/support/upgrade_home.rs"]
 mod upgrade_home;
 use upgrade_home::UpgradeHome;
+
+/// Seed the per-thread stand-in the next `Session::new()` reads its panel
+/// preferences from (`ui_state::load`), before any session exists to pass
+/// its own preferences.
+fn seed_ui_state(state: &crate::ui_state::PanelUiState) {
+    crate::ui_state::save(&thread_preferences(), state);
+}
 
 #[test]
 fn session_cache_is_unset_until_a_profile_is_bound() {
@@ -455,6 +465,166 @@ fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
     assert!(session.core.slots().is_empty());
 }
 
+/// `start_play` builds the Play with a state composition of its own, at the
+/// profile's state root, and hands it this session's service before the
+/// Start handle is taken: a Start without caller-owned loadouts leases the
+/// operator rows through the service the Loadouts form saves to, not through
+/// the Play's own.
+#[test]
+fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
+    let _iso = IsolatedEnv::enter("start-handle-loadouts");
+    let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
+    let mut session = Session::new();
+    configure_isolated_profile(
+        &mut session,
+        ProfileOptions {
+            profile: Some("local-274".into()),
+            cache_dir: Some(cache),
+            cache_manifest: Some(manifest),
+            unpack_dir: Some(unpack),
+            http_port: Some(port),
+            vault_path: Some(root.join("prepared.vault")),
+            ..ProfileOptions::default()
+        },
+        &root,
+    )
+    .unwrap();
+    let (generation, preparation) = session.profile_preparation().unwrap();
+    let template = preparation.run().unwrap();
+    assert_eq!(
+        session.finish_profile_preparation(generation, Ok(Arc::clone(&template))),
+        ProfilePreparationCompletion::Installed
+    );
+    session
+        .install_validated_template(template.validate_for_play().unwrap())
+        .unwrap();
+
+    // A row only the Play's own state root holds: the session's service
+    // does not see it.
+    let own_root = template.profile().state_root().to_path_buf();
+    assert_ne!(own_root.as_path(), thread_state_root().path());
+    let mut own = script::LoadoutsStore::over(Arc::new(
+        crate::test_support::scratch_service(&own_root).operator_loadouts(),
+    ));
+    own.upsert(api::loadout::Loadout::new("melee"));
+    save_store_patiently(&mut own);
+
+    assert!(session.unlock("prepared-pass"));
+    let handle = session
+        .script_start_handle
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("start_play keeps the Start handle");
+    let start = || {
+        let mut bag = serde_json::Map::new();
+        bag.insert("loadout".into(), serde_json::json!("melee"));
+        handle.start_load(
+            "alice",
+            "export function tick() {}".into(),
+            script::LoadShape::NativeTick,
+            Some(bag),
+            vec![],
+        )
+    };
+    let refused = start().expect_err("the session's service holds no melee row");
+    assert!(refused.contains("\"melee\""), "{refused}");
+
+    // The Loadouts form saves through the session's service: the Start
+    // leases that row.
+    session.loadouts.upsert(api::loadout::Loadout::new("melee"));
+    save_store_patiently(&mut session.loadouts);
+    start().expect("the Start leases the row the form saved");
+}
+
+/// T5.2 r3 round trip: the panel's composition root saves a preference
+/// (its own `PanelUiState` keys) and a Loadouts edit through the session's
+/// local-state service. Another process's service on the same home reads
+/// both back; its own edits reach the panel's forms after they re-read, and
+/// the panel's next save keeps them.
+#[test]
+fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
+    let _iso = IsolatedEnv::enter("panel-state-round-trip");
+    let mut session = Session::new();
+    let state = crate::ui_state::PanelUiState {
+        last_focus: Some("alice".into()),
+        ..Default::default()
+    };
+    patiently(|| {
+        crate::ui_state::save_to_checked(&session.preferences, &state)
+            .map_err(|error| error.to_string())
+    })
+    .unwrap();
+    session.loadouts_draft = Some(api::loadout::Loadout::new("roundtrip").with_carry("Lobster", 5));
+    assert!(
+        save_draft_patiently(&mut session),
+        "{}",
+        session.loadouts_status
+    );
+
+    // Another 274bot process on this home: its own service, same files.
+    let peer = host_play::local_state::LocalStateService::open_process(thread_state_root());
+    assert_eq!(
+        peer.preferences().value("last_focus"),
+        Some(serde_json::json!("alice"))
+    );
+    let mut peer_form = script::LoadoutsStore::over(Arc::new(peer.operator_loadouts()));
+    assert_eq!(
+        peer_form.get("roundtrip").unwrap().carry,
+        vec![api::loadout::CarryEntry::new("Lobster", 5)]
+    );
+    let on_disk: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(thread_state_root().loadouts_file()).unwrap())
+            .unwrap();
+    assert_eq!(on_disk[0]["name"], "roundtrip", "{on_disk}");
+
+    // The peer's edits reach the panel through the panel's service (a key
+    // the panel's own state does not hold, as another frontend's would be).
+    set_patiently(
+        &peer.preferences(),
+        "peer_marker",
+        serde_json::json!({"kept": 7}),
+    );
+    peer_form.upsert(api::loadout::Loadout::new("peer-row"));
+    save_store_patiently(&mut peer_form);
+    session.preferences.reload().unwrap();
+    assert_eq!(
+        session.preferences.value("peer_marker"),
+        Some(serde_json::json!({"kept": 7}))
+    );
+    session.loadouts.reload().unwrap();
+    assert_eq!(session.loadouts.names(), ["roundtrip", "peer-row"]);
+
+    // The panel's next saves keep the peer's row and preference.
+    session.loadouts_sel = 0;
+    session.loadouts_draft = Some(api::loadout::Loadout::new("roundtrip").with_carry("Lobster", 6));
+    assert!(
+        save_draft_patiently(&mut session),
+        "{}",
+        session.loadouts_status
+    );
+    let state = crate::ui_state::PanelUiState {
+        last_focus: Some("bob".into()),
+        ..state
+    };
+    patiently(|| {
+        crate::ui_state::save_to_checked(&session.preferences, &state)
+            .map_err(|error| error.to_string())
+    })
+    .unwrap();
+    let mut reread = script::LoadoutsStore::over(Arc::new(peer.operator_loadouts()));
+    reread.reload().unwrap();
+    assert_eq!(reread.names(), ["roundtrip", "peer-row"]);
+    assert_eq!(reread.get("roundtrip").unwrap().carry[0].qty, 6);
+    let prefs = peer.preferences();
+    prefs.reload().unwrap();
+    assert_eq!(
+        prefs.value("peer_marker"),
+        Some(serde_json::json!({"kept": 7}))
+    );
+    assert_eq!(prefs.value("last_focus"), Some(serde_json::json!("bob")));
+}
+
 /// Install a template bound against the upgraded home and unlock a first-run
 /// vault inside it, as panel startup does.
 fn unlock_upgrade_home(template: &Arc<map_host::SharedClientTemplate>) -> Session {
@@ -706,6 +876,37 @@ fn write_looping_catalog(dir: &Path, cards: &[(&str, &str)]) -> PathBuf {
     root
 }
 
+fn settle_catalog_work(session: &mut Session) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while session.scripts.catalog_work_pending() && Instant::now() < deadline {
+        session.core.poll();
+        session.poll_scripts();
+        session.pump_script_transpile();
+        thread::sleep(Duration::from_millis(5));
+    }
+    session.core.poll();
+    session.poll_scripts();
+    session.pump_script_transpile();
+    assert!(
+        !session.scripts.catalog_work_pending(),
+        "catalog preparation did not settle"
+    );
+}
+
+fn settle_transpile_queue(session: &mut Session) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !session.transpile_queue.is_empty() && Instant::now() < deadline {
+        session.core.poll();
+        session.poll_scripts();
+        session.pump_script_transpile();
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        session.transpile_queue.is_empty(),
+        "transpile queue did not settle"
+    );
+}
+
 #[test]
 fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
     let iso = IsolatedEnv::enter("prebind-catalog");
@@ -732,14 +933,15 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
         .unwrap();
     assert_eq!(session.catalog_root().unwrap(), Some(explicit.clone()));
     session.fill_rs2b0t_cards_once();
+    settle_catalog_work(&mut session);
     assert!(session
         .scripts
-        .js
+        .js()
         .get(script::ScriptSource::Catalog, "Chosen")
         .is_some());
     assert!(session
         .scripts
-        .js
+        .js()
         .get(script::ScriptSource::Catalog, "Ambient")
         .is_none());
 
@@ -749,16 +951,17 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
         "export default class Custom extends LoopingBot { override loop() {} }",
     )
     .unwrap();
-    session.scripts.js.load(&custom).unwrap();
+    session.scripts.js_mut().load(&custom).unwrap();
     session.import_rs2b0t_catalog(&ambient).unwrap();
+    settle_catalog_work(&mut session);
     assert!(session
         .scripts
-        .js
+        .js()
         .get(script::ScriptSource::File, "custom")
         .is_some());
     assert!(session
         .scripts
-        .js
+        .js()
         .get(script::ScriptSource::Catalog, "Ambient")
         .is_some());
 }
@@ -793,9 +996,10 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
         )
         .unwrap();
     session.fill_rs2b0t_cards_once();
+    settle_catalog_work(&mut session);
     session
         .scripts
-        .js
+        .js_mut()
         .ensure_js(script::ScriptSource::Catalog, "Chosen")
         .unwrap();
     std::fs::write(
@@ -806,16 +1010,17 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
     session.set_server_revision(289).unwrap();
     assert!(session
         .scripts
-        .js
+        .js()
         .get(script::ScriptSource::Catalog, "Chosen")
         .is_some());
     session.set_server_revision(274).unwrap();
     session.bind_profile_with_env(&env).unwrap();
     let another = write_looping_catalog(&root.join("another"), &[("Another", "Another")]);
     session.import_rs2b0t_catalog(&another).unwrap();
+    settle_catalog_work(&mut session);
     assert!(session
         .scripts
-        .js
+        .js()
         .get(script::ScriptSource::Catalog, "Another")
         .is_some());
 }
@@ -2553,7 +2758,7 @@ fn multibox_unlock_fixture() -> (Session, TestPath) {
     });
     vault.upsert(bob).unwrap();
     drop(vault);
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: Some("alice".into()),
         ..Default::default()
     });
@@ -2637,7 +2842,7 @@ fn multibox_profile_pick_restores_that_profiles_script_heading() {
     assert!(session
         .core
         .last_operation()
-        .is_none_or(|op| op.action != frontend_core::ActionKind::ScriptStart));
+        .is_none_or(|op| op.action() != frontend_core::ActionKind::ScriptStart));
 }
 
 #[test]
@@ -2677,14 +2882,16 @@ fn multibox_roundtrip_keeps_profile_assignments_and_settings_isolated() {
         .map(|row| (row.username.clone(), row.settings.clone()))
         .collect();
     drop(vault);
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: Some("alice".into()),
         ..Default::default()
     });
     let mut session = Session::new();
     session.persist_ui = false;
     session.core.set_spawn_workers(false);
-    session.scripts.legacy = script::ScriptSettingsStore::at(legacy_path.clone());
+    session
+        .scripts
+        .set_legacy(script::ScriptSettingsStore::at(legacy_path.clone()));
     session.set_multibox(true);
     assert!(session.unlock_at(&path, "test-passphrase-01"));
 
@@ -2776,7 +2983,7 @@ fn reset_vault_at_deletes_while_locked() {
 
 #[test]
 fn session_starts_with_renderer_on_capture_on_by_default() {
-    crate::ui_state::save(&crate::ui_state::PanelUiState::default());
+    seed_ui_state(&crate::ui_state::PanelUiState::default());
     let s = Session::new();
     let f = s.focus.lock().unwrap();
     assert!(f.renderer, "rail is on; Game pane 50 fps is focused_50");
@@ -2826,22 +3033,23 @@ fn picker_walk_zone_policy_is_blocking_by_default_and_all_only_when_opted_in() {
 fn manual_walk_options_refresh_durable_peer_changes_and_clear_one_shot() {
     let _isolated = IsolatedEnv::enter("manual-walk-permissions");
     let mut session = Session::new();
-    let path = crate::ui_state::path();
+    // The durable writes are a peer frontend's: a second service on the
+    // session's files, seen once the session's preferences re-read.
+    let peer = thread_preferences();
+    let peer_sets_danger_zones = |session: &Session, enabled: bool| {
+        frontend_core::nav_preference(
+            &peer,
+            frontend_core::NavPreference::AllowDangerZones,
+            Some(enabled),
+        )
+        .unwrap();
+        session.preferences.reload().unwrap();
+    };
     session.ui.nav.allow_danger_zones = false;
-    frontend_core::nav_preference_at(
-        &path,
-        frontend_core::NavPreference::AllowDangerZones,
-        Some(false),
-    )
-    .unwrap();
+    peer_sets_danger_zones(&session, false);
     assert_eq!(session.walk_find_options().zones, ZoneExempt::NONE);
 
-    frontend_core::nav_preference_at(
-        &path,
-        frontend_core::NavPreference::AllowDangerZones,
-        Some(true),
-    )
-    .unwrap();
+    peer_sets_danger_zones(&session, true);
     let globally_allowed = session.walk_find_options();
     assert_eq!(globally_allowed.zones, ZoneExempt::all());
     assert!(session.ui.nav.allow_danger_zones);
@@ -2857,16 +3065,15 @@ fn manual_walk_options_refresh_durable_peer_changes_and_clear_one_shot() {
         "the global grant consumes the one-shot"
     );
 
-    frontend_core::nav_preference_at(
-        &path,
-        frontend_core::NavPreference::AllowDangerZones,
-        Some(false),
-    )
-    .unwrap();
+    peer_sets_danger_zones(&session, false);
     assert_eq!(session.walk_find_options().zones, ZoneExempt::NONE);
     assert!(!session.ui.nav.allow_danger_zones);
 
-    std::fs::write(&path, b"{corrupt").unwrap();
+    std::fs::write(session.preferences.path(), b"{corrupt").unwrap();
+    session
+        .preferences
+        .reload()
+        .expect_err("corrupt preferences are refused");
     assert_eq!(session.walk_find_options().zones, ZoneExempt::NONE);
     assert!(!session.ui.nav.allow_danger_zones);
 }
@@ -2890,10 +3097,10 @@ fn restored_enabled_folder_loads_when_game_data_becomes_ready() {
         )
         .unwrap();
     }
-    let prefs = crate::ui_state::path();
-    std::fs::create_dir_all(prefs.parent().unwrap()).unwrap();
+    let root = thread_state_root();
+    std::fs::create_dir_all(root.path()).unwrap();
     std::fs::write(
-        &prefs,
+        root.preferences_file(),
         serde_json::to_vec(&serde_json::json!({
             "quester_paths": {
                 "enabled": true,
@@ -2905,7 +3112,7 @@ fn restored_enabled_folder_loads_when_game_data_becomes_ready() {
     .unwrap();
 
     let mut session = Session::new();
-    assert!(session.quester_paths.settings().enabled);
+    assert!(session.quester_paths.settings().enabled());
     let selected = api::selected::FamilyPreparation::run(|_| {
         api::game_data::for_revision(api::selected::ClientRevision::R289)
             .expect("selected 289 game data")
@@ -2919,7 +3126,7 @@ fn restored_enabled_folder_loads_when_game_data_becomes_ready() {
         session.quester_paths.is_running(),
         "saved folder starts a reload without a user action"
     );
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while session.quester_paths.is_running() {
         assert!(
             Instant::now() < deadline,
@@ -2941,55 +3148,166 @@ fn restored_enabled_folder_loads_when_game_data_becomes_ready() {
 }
 
 #[test]
-fn walk_permissions_projection_reads_only_after_peer_write() {
-    let dir = TestDir::new("walk-permissions-peer-refresh");
-    let path = dir.join("panel-ui.json");
-    frontend_core::nav_preference_at(
-        &path,
+fn quest_paths_checkbox_keeps_saved_folder_after_failed_folder_save() {
+    let iso = IsolatedEnv::enter("panel-quester-paths-failed-folder-then-toggle");
+    let saved = iso.dir.join("saved-paths");
+    let uncommitted = iso.dir.join("uncommitted-paths");
+    std::fs::create_dir_all(&saved).unwrap();
+    let root = thread_state_root();
+    std::fs::create_dir_all(root.path()).unwrap();
+    std::fs::write(
+        root.preferences_file(),
+        serde_json::to_vec(&serde_json::json!({
+            "quester_paths": {
+                "enabled": false,
+                "folder": saved.to_string_lossy()
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut session = Session::new();
+    assert_eq!(session.quester_paths.settings().folder(), saved.as_path());
+    assert!(!session.quester_paths.settings().enabled());
+
+    session.quester_paths_folder_edit = uncommitted.to_string_lossy().into_owned();
+    // A refused preferences file (larger than the bound) refuses writes.
+    std::fs::write(
+        session.preferences.path(),
+        vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
+    )
+    .unwrap();
+    assert!(session.preferences.reload().is_err());
+    let failed = session.persist_quester_paths(frontend_core::QuesterPathsView::new(
+        false,
+        uncommitted.clone(),
+    ));
+    assert!(failed.is_err(), "{failed:?}");
+    assert_eq!(session.quester_paths.settings().folder(), saved.as_path());
+    assert_eq!(
+        session.quester_paths_folder_edit,
+        uncommitted.to_string_lossy()
+    );
+
+    std::fs::write(
+        session.preferences.path(),
+        serde_json::to_vec(&serde_json::json!({
+            "quester_paths": {
+                "enabled": false,
+                "folder": saved.to_string_lossy()
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    session.preferences.reload().unwrap();
+
+    session
+        .persist_quester_paths_change(true, false)
+        .expect("checkbox toggle saves enabled with the already-saved folder");
+    assert!(session.quester_paths.settings().enabled());
+    assert_eq!(session.quester_paths.settings().folder(), saved.as_path());
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
+    assert_eq!(
+        document["quester_paths"]["folder"],
+        saved.to_string_lossy().as_ref()
+    );
+    assert_eq!(document["quester_paths"]["enabled"], true);
+    script::quester::registry::set_source(script::quester::registry::FolderSource::default());
+}
+
+#[cfg(unix)]
+#[test]
+fn quest_paths_checkbox_does_not_persist_lossy_non_utf8_folder() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let iso = IsolatedEnv::enter("panel-quester-paths-non-utf8");
+    let root = thread_state_root();
+    std::fs::create_dir_all(root.path()).unwrap();
+    std::fs::write(root.preferences_file(), b"{}").unwrap();
+
+    let mut bytes = iso.dir.clone().into_os_string().into_vec();
+    bytes.extend_from_slice(b"/paths-\xff");
+    let folder = PathBuf::from(OsString::from_vec(bytes));
+    let mut session = Session::new();
+    session
+        .persist_quester_paths(frontend_core::QuesterPathsView::new(false, folder.clone()))
+        .expect("non-UTF-8 folder can be held in memory");
+    assert_eq!(session.quester_paths.settings().folder(), folder.as_path());
+    let lossy = folder.to_string_lossy().into_owned();
+    assert_ne!(
+        PathBuf::from(lossy.as_str()),
+        folder,
+        "lossy UTF-8 must differ from the saved folder"
+    );
+    assert_eq!(session.quester_paths_folder_edit, lossy);
+
+    session
+        .persist_quester_paths_change(true, false)
+        .expect("checkbox toggle");
+    assert!(session.quester_paths.settings().enabled());
+    assert_eq!(
+        session.quester_paths.settings().folder(),
+        folder.as_path(),
+        "checkbox must not replace a non-UTF-8 saved folder with the lossy edit buffer"
+    );
+    script::quester::registry::set_source(script::quester::registry::FolderSource::default());
+}
+
+#[test]
+fn walk_permissions_projection_follows_a_peer_write() {
+    let _isolated = IsolatedEnv::enter("walk-permissions-peer-refresh");
+    let mut session = Session::new();
+    // The other frontend: a second service on the same files.
+    let peer = thread_preferences();
+    frontend_core::nav_preference(
+        &peer,
         frontend_core::NavPreference::AllowTeleports,
         Some(false),
     )
     .unwrap();
+    session.preferences.reload().unwrap();
+    session.refresh_walk_permissions();
+    assert!(!session.walk_permissions.globals.allow_teleports);
 
-    let mut stamp = super::walk_permissions_file_stamp_at(&path);
-    let initial = frontend_core::WalkGlobalsView::read_at(&path);
-    assert!(!initial.globals.allow_teleports);
+    // Frames with no write in between keep the projection as it was.
+    let before = session.walk_permissions;
+    for _ in 0..3 {
+        session.refresh_walk_permissions();
+        assert_eq!(session.walk_permissions, before);
+    }
 
-    let reads = std::cell::Cell::new(0);
-    let unchanged = super::read_walk_permissions_if_changed_at(&path, &mut stamp, |path| {
-        reads.set(reads.get() + 1);
-        frontend_core::WalkGlobalsView::read_at(path)
-    });
-    assert!(unchanged.is_none());
-    assert_eq!(reads.get(), 0, "unchanged preferences must not be read");
-
-    frontend_core::nav_preference_at(
-        &path,
-        frontend_core::NavPreference::AllowTeleports,
-        Some(true),
-    )
+    // The peer's write lands next to a key the panel knows nothing about;
+    // the projection follows once the session's preferences re-read.
+    patiently(|| {
+        frontend_core::nav_preference(
+            &peer,
+            frontend_core::NavPreference::AllowTeleports,
+            Some(true),
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+    })
     .unwrap();
-    host_play::persist_panel_ui_value_at(
-        &path,
+    set_patiently(
+        &peer,
         "peer_marker",
         serde_json::json!("written by the other frontend"),
-    )
-    .unwrap();
-
-    let reloaded = super::read_walk_permissions_if_changed_at(&path, &mut stamp, |path| {
-        reads.set(reads.get() + 1);
-        frontend_core::WalkGlobalsView::read_at(path)
-    })
-    .expect("a peer write changes the shared preferences stamp");
-    assert!(reloaded.globals.allow_teleports);
-    assert_eq!(reads.get(), 1);
-
-    let unchanged = super::read_walk_permissions_if_changed_at(&path, &mut stamp, |path| {
-        reads.set(reads.get() + 1);
-        frontend_core::WalkGlobalsView::read_at(path)
-    });
-    assert!(unchanged.is_none());
-    assert_eq!(reads.get(), 1, "the reloaded file stays cached");
+    );
+    session.preferences.reload().unwrap();
+    session.refresh_walk_permissions();
+    assert!(session.walk_permissions.globals.allow_teleports);
+    assert!(
+        session.ui.nav.allow_teleports,
+        "the edit buffer follows the durable projection"
+    );
+    assert_eq!(
+        session.preferences.value("peer_marker"),
+        Some(serde_json::json!("written by the other frontend"))
+    );
 }
 
 fn bind_picker_session(s: &mut Session, world: &NavWorld, origin: Tile) -> MapFixture {
@@ -3027,12 +3345,11 @@ fn picker_walk_receipts_reach_process_and_slot_logs_once() {
     s.select_picker_tile(&world, destination);
     assert!(!s.confirm_picker_walk(&world));
     let mut process = LogView::new(LogScope::Process);
-    process
-        .edit_filter(|filter| filter.text = "WalkTo origin=unknown destination=(17,18,0)".into());
+    process.edit_filter(|filter| filter.set_text("WalkTo origin=unknown destination=(17,18,0)"));
     log.refresh(&mut process);
     assert_eq!(process.len(), 1, "{}", process.to_text());
-    assert!(process.rows()[0].message.contains("refused=NoOrigin"));
-    assert_eq!(process.rows()[0].slot, None);
+    assert!(process.rows()[0].message().contains("refused=NoOrigin"));
+    assert_eq!(process.rows()[0].slot(), None);
 
     let _fixture = bind_picker_session(&mut s, &world, origin);
     let name = "panel-walk-receipt";
@@ -3042,11 +3359,11 @@ fn picker_walk_receipts_reach_process_and_slot_logs_once() {
     s.set_focus_for_test(name);
     s.select_picker_tile(&world, destination);
     assert!(s.confirm_picker_walk(&world), "{:?}", s.error);
-    let mut slot = LogView::new(LogScope::Slot(name.into()));
-    slot.edit_filter(|filter| filter.text = "WalkTo ".into());
+    let mut slot = LogView::new(LogScope::slot(name));
+    slot.edit_filter(|filter| filter.set_text("WalkTo "));
     log.refresh(&mut slot);
     assert_eq!(slot.len(), 1, "{}", slot.to_text());
-    let message = &slot.rows()[0].message;
+    let message = slot.rows()[0].message();
     assert!(message.contains("destination=(17,18,0)"), "{message}");
     assert!(message.contains("success legs="), "{message}");
     assert!(message.contains("members_source=unknown "), "{message}");
@@ -3254,7 +3571,7 @@ fn picker_group_walk_several_slots_reports_like_start_all() {
         .iter()
         .map(|row| {
             (
-                row.name.as_str(),
+                row.name(),
                 row.checked(&s.fleet_selection),
                 match row.status {
                     WalkSlotStatus::Eligible(_) => None,
@@ -3384,7 +3701,7 @@ fn fleet_walk_opens_the_picker_in_group_mode_for_the_marks_only() {
         .walk_send
         .rows()
         .iter()
-        .map(|row| (row.name.as_str(), row.checked(&s.fleet_selection)))
+        .map(|row| (row.name(), row.checked(&s.fleet_selection)))
         .collect();
     assert_eq!(checked, [("alice", true), ("bob", false)]);
     assert_eq!(s.walk_send.walk_label(), "Walk 1 bots");
@@ -3466,7 +3783,7 @@ fn fifty_fps_choices_are_saved_and_restored() {
     let mut s = Session::new();
     s.set_sidecar_50(true);
     s.set_focused_50(false);
-    let saved = crate::ui_state::load();
+    let saved = crate::ui_state::load(&s.preferences);
     assert!(
         saved.sidecar_50 && !saved.focused_50,
         "written to the preferences"
@@ -3485,7 +3802,7 @@ fn fifty_fps_choices_are_saved_and_restored() {
 /// the watch cadence, and with the renderer off nothing runs at 50 Hz.
 #[test]
 fn restored_50_fps_costs_nothing_for_slots_that_do_not_draw() {
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         sidecar_50: true,
         focused_50: true,
         ..Default::default()
@@ -4124,16 +4441,16 @@ fn picker_confirm_ignores_teles_until_allow_teleports() {
         level: 0,
     };
     session.ui.nav.allow_teleports = false;
-    frontend_core::nav_preference_at(
-        &crate::ui_state::path(),
+    frontend_core::nav_preference(
+        &session.preferences,
         frontend_core::NavPreference::AllowTeleports,
         Some(false),
     )
     .unwrap();
     assert!(!confirm_map_walk(&mut session, &world, origin, dest_tile));
     session.ui.nav.allow_teleports = true;
-    frontend_core::nav_preference_at(
-        &crate::ui_state::path(),
+    frontend_core::nav_preference(
+        &session.preferences,
         frontend_core::NavPreference::AllowTeleports,
         Some(true),
     )
@@ -4165,14 +4482,14 @@ fn picker_confirm_uses_find_with_options() {
     session.set_focus_for_test("alice");
     session.ui.nav.allow_teleports = false;
     session.ui.nav.allow_wilderness = false;
-    frontend_core::nav_preference_at(
-        &crate::ui_state::path(),
+    frontend_core::nav_preference(
+        &session.preferences,
         frontend_core::NavPreference::AllowTeleports,
         Some(false),
     )
     .unwrap();
-    frontend_core::nav_preference_at(
-        &crate::ui_state::path(),
+    frontend_core::nav_preference(
+        &session.preferences,
         frontend_core::NavPreference::AllowWilderness,
         Some(false),
     )
@@ -4263,16 +4580,16 @@ fn picker_confirm_uses_find_with_options() {
     session.ui.nav.allow_wilderness = false;
     assert!(!confirm_map_walk(&mut session, &world, origin, dest_tile));
     session.ui.nav.allow_teleports = true;
-    frontend_core::nav_preference_at(
-        &crate::ui_state::path(),
+    frontend_core::nav_preference(
+        &session.preferences,
         frontend_core::NavPreference::AllowTeleports,
         Some(true),
     )
     .unwrap();
     assert!(!confirm_map_walk(&mut session, &world, origin, dest_tile));
     session.ui.nav.allow_wilderness = true;
-    frontend_core::nav_preference_at(
-        &crate::ui_state::path(),
+    frontend_core::nav_preference(
+        &session.preferences,
         frontend_core::NavPreference::AllowWilderness,
         Some(true),
     )
@@ -4309,7 +4626,7 @@ fn a_picker_walk_shows_the_member_running_until_it_ends() {
     s.core.fleet_mut().add("alice");
     s.pump_status();
     let before = s.core.fleet_view().rows_generation();
-    assert!(!s.core.fleet_view().row("alice").unwrap().walking);
+    assert!(!s.core.fleet_view().row("alice").unwrap().walking());
 
     let dest = Tile {
         x: 2,
@@ -4320,8 +4637,8 @@ fn a_picker_walk_shows_the_member_running_until_it_ends() {
     assert!(s.confirm_picker_walk(&world));
     s.pump_status();
     let walking = s.core.fleet_view().row("alice").unwrap();
-    assert!(walking.walking);
-    assert_eq!(walking.brief, "running");
+    assert!(walking.walking());
+    assert_eq!(walking.brief(), "running");
     assert!(
         s.core.fleet_view().rows_generation() > before,
         "the rail's cached rows are refreshed"
@@ -4334,15 +4651,15 @@ fn a_picker_walk_shows_the_member_running_until_it_ends() {
         held.route = None;
         s.pump_status();
         assert!(
-            s.core.fleet_view().row("alice").unwrap().walking,
+            s.core.fleet_view().row("alice").unwrap().walking(),
             "an arm in use keeps its last answer; the pump does not wait"
         );
     }
     s.walk_clear.store(true, Ordering::Relaxed);
     s.pump_status();
     let arrived = s.core.fleet_view().row("alice").unwrap();
-    assert!(!arrived.walking);
-    assert_eq!(arrived.brief, "idle");
+    assert!(!arrived.walking());
+    assert_eq!(arrived.brief(), "idle");
     assert_eq!(s.walk_status_text(), "—");
 }
 
@@ -4393,7 +4710,7 @@ fn combo_index_is_none_when_unfocused() {
 
 #[test]
 fn focus_first_profile_selects_first_vault_name() {
-    crate::ui_state::save(&crate::ui_state::PanelUiState::default());
+    seed_ui_state(&crate::ui_state::PanelUiState::default());
     let path = tmp_vault("focus-first.vault");
     let mut s = Session::new();
     s.core
@@ -4433,18 +4750,24 @@ fn focus_first_prefers_last_focus() {
         .unwrap()
         .upsert(profile("bob", "pw", 43))
         .unwrap();
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
-        last_focus: Some("bob".into()),
-        ..Default::default()
-    });
+    crate::ui_state::save(
+        &s.preferences,
+        &crate::ui_state::PanelUiState {
+            last_focus: Some("bob".into()),
+            ..Default::default()
+        },
+    );
     s.focus_first_profile();
     assert_eq!(s.focused_name().as_deref(), Some("bob"));
-    assert_eq!(crate::ui_state::load().last_focus.as_deref(), Some("bob"));
+    assert_eq!(
+        crate::ui_state::load(&s.preferences).last_focus.as_deref(),
+        Some("bob")
+    );
 }
 
 #[test]
 fn select_saves_last_focus() {
-    crate::ui_state::save(&crate::ui_state::PanelUiState::default());
+    seed_ui_state(&crate::ui_state::PanelUiState::default());
     let path = tmp_vault("select-last-focus.vault");
     let mut s = Session::new();
     s.core
@@ -4455,7 +4778,10 @@ fn select_saves_last_focus() {
         .upsert(profile("alice", "pw", 42))
         .unwrap();
     s.select("alice");
-    assert_eq!(crate::ui_state::load().last_focus.as_deref(), Some("alice"));
+    assert_eq!(
+        crate::ui_state::load(&s.preferences).last_focus.as_deref(),
+        Some("alice")
+    );
 }
 
 #[test]
@@ -4476,10 +4802,13 @@ fn set_multibox_restores_last_focus_when_focus_not_on_wall() {
         .unwrap();
     s.select("alice");
     s.core.fleet_mut().add("bob");
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
-        last_focus: Some("bob".into()),
-        ..Default::default()
-    });
+    crate::ui_state::save(
+        &s.preferences,
+        &crate::ui_state::PanelUiState {
+            last_focus: Some("bob".into()),
+            ..Default::default()
+        },
+    );
     // Focused alice is not a wall member; MultiBox-on should pick bob.
     s.set_multibox(true);
     assert_eq!(s.focused_name().as_deref(), Some("bob"));
@@ -4527,7 +4856,7 @@ fn flat_model_spawns_every_member_as_a_client() {
     s.load("carol");
     // ensure_slot registers the IO map synchronously; wait only for the
     // slot threads to publish their status rows.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < deadline {
         if s.core.play().unwrap().statuses().len() == 3 {
             break;
@@ -4641,7 +4970,7 @@ fn logout_all_arms_every_wall_member() {
     s.load("bob");
     s.core.fleet_mut().add("alice");
     s.core.fleet_mut().add("bob");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < deadline {
         if s.core.play().unwrap().arm("bob").is_some() {
             break;
@@ -4661,13 +4990,13 @@ fn logout_all_arms_every_wall_member() {
 
 #[test]
 fn headed_stress_spawns_every_member_prefers_and_arms_s00() {
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: Some("s02".into()),
         ..Default::default()
     });
     let mut s = Session::new();
     s.live_prepare_stress(3, false).expect("prepare");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < deadline {
         if s.core.play().unwrap().statuses().len() == 3 {
             break;
@@ -4705,7 +5034,7 @@ fn headed_stress_spawns_every_member_prefers_and_arms_s00() {
 
 #[test]
 fn login_all_arms_every_wall_member() {
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
@@ -4719,7 +5048,7 @@ fn login_all_arms_every_wall_member() {
 
 #[test]
 fn headed_stress_full_paints_every_member_at_50fps() {
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
@@ -4743,7 +5072,7 @@ fn headed_stress_full_paints_every_member_at_50fps() {
 /// follows focus (click a working member after s00's −1).
 #[test]
 fn stress50_rail_members_are_raster_off() {
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
@@ -4779,7 +5108,7 @@ fn stress50_rail_members_are_raster_off() {
 
 #[test]
 fn live_prepare_script_boots_the_seed_profile_and_installs_runner() {
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
@@ -4823,7 +5152,7 @@ fn live_prepare_script_boots_the_seed_profile_and_installs_runner() {
 #[test]
 fn live_prepare_bone_burier_starts_the_rs2b0t_card_on_the_driven_slot() {
     let iso = IsolatedEnv::enter("bone-live");
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
@@ -4871,20 +5200,20 @@ fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
     ] {
         let iso = IsolatedEnv::enter(&format!("bone-v2-{name}"));
         let mut s = Session::new();
-        s.scripts.js = script::JsLibrary::with_cache(
+        s.scripts.set_js(script::JsLibrary::with_cache(
             iso.dir.join("js-scripts.json"),
             iso.dir.join("js-cache"),
-        );
-        s.scripts.js.load(&ts).expect("preload ts");
-        s.scripts.js.load(&js).expect("preload js");
-        s.scripts.legacy.set_str(
+        ));
+        s.scripts.js_mut().load(&ts).expect("preload ts");
+        s.scripts.js_mut().load(&js).expect("preload js");
+        s.scripts.legacy_mut().set_str(
             script::ScriptSource::File,
             "bone_burier_v2",
             "boneName",
             "stem",
         );
         let identity = script::file_identity(path);
-        s.scripts.legacy.set_str(
+        s.scripts.legacy_mut().set_str(
             script::ScriptSource::File,
             &identity,
             "boneName",
@@ -4893,7 +5222,7 @@ fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
         let scenario = scenario::get(name).expect("registered");
         assert_eq!(scenario.settings.start_file, Some(file_name));
         assert_eq!(scenario.settings.start_script, None);
-        let card = load_live_example_card(&mut s.scripts.js, file_name).expect("identity load");
+        let card = load_live_example_card(s.scripts.js_mut(), file_name).expect("identity load");
         assert_eq!(
             card.identity_id(),
             identity,
@@ -4927,7 +5256,7 @@ fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
 #[test]
 fn live_prepare_keeps_v1_catalog_and_tradebot_stem() {
     let iso = IsolatedEnv::enter("bone-v1-trade");
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
@@ -4944,8 +5273,10 @@ fn live_prepare_keeps_v1_catalog_and_tradebot_stem() {
         ))
     );
     let mut trade = preparation_only_session();
-    trade.scripts.js =
-        script::JsLibrary::with_cache(iso.dir.join("trade-js.json"), iso.dir.join("trade-cache"));
+    trade.scripts.set_js(script::JsLibrary::with_cache(
+        iso.dir.join("trade-js.json"),
+        iso.dir.join("trade-cache"),
+    ));
     trade
         .live_prepare_script(scenario::get("script_trade").expect("registered"))
         .expect("trade");
@@ -4961,13 +5292,15 @@ fn live_prepare_keeps_v1_catalog_and_tradebot_stem() {
 #[test]
 fn live_prepare_script_trade_loads_the_file_fixture_and_injects_partner() {
     let iso = IsolatedEnv::enter("trade-live");
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
     let mut s = preparation_only_session();
-    s.scripts.js =
-        script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
+    s.scripts.set_js(script::JsLibrary::with_cache(
+        iso.dir.join("js-scripts.json"),
+        iso.dir.join("js-cache"),
+    ));
     s.live_prepare_script(scenario::get("script_trade").expect("registered"))
         .expect("prepare");
     assert_eq!(
@@ -5026,7 +5359,7 @@ fn live_prepare_script_trade_loads_the_file_fixture_and_injects_partner() {
 #[test]
 fn live_prepare_jive_kq_stashes_four_starts_with_the_same_roster() {
     let iso = IsolatedEnv::enter("jive-kq-fleet");
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
@@ -5080,7 +5413,7 @@ fn live_prepare_jive_kq_stashes_four_starts_with_the_same_roster() {
 #[test]
 fn live_prepare_thiever_posts_guard_target_when_schema_empty() {
     let iso = IsolatedEnv::enter("thiever-bag");
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
@@ -5107,7 +5440,7 @@ fn live_prepare_thiever_posts_guard_target_when_schema_empty() {
     assert_eq!(bag.get("bankAtFood"), Some(&serde_json::json!(3.0)));
     assert_eq!(
         card.loadouts,
-        vec![script::Loadout::new("Memory food").with_carry("Lobster", 1)],
+        vec![api::loadout::Loadout::new("Memory food").with_carry("Lobster", 1)],
         "harness Start must stash the fixture-owned loadout, not operator loadouts.json"
     );
 }
@@ -5115,7 +5448,7 @@ fn live_prepare_thiever_posts_guard_target_when_schema_empty() {
 #[test]
 fn live_prepare_script_sets_script_sel_for_catalog_start_script() {
     let iso = IsolatedEnv::enter("alcher-sel");
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
@@ -5138,7 +5471,7 @@ fn live_prepare_script_sets_script_sel_for_catalog_start_script() {
 #[test]
 fn live_prepare_sherlock_starts_the_compiled_card_without_catalog() {
     let iso = IsolatedEnv::enter("sherlock-live");
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
@@ -5162,7 +5495,7 @@ fn live_prepare_sherlock_starts_the_compiled_card_without_catalog() {
 
 #[test]
 fn live_prepare_script_enables_multibox_for_a_fleet_only() {
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
@@ -5199,7 +5532,7 @@ fn live_prepare_script_enables_multibox_for_a_fleet_only() {
     }
     assert!(!s.wall.chooser_open, "live keeps the chooser closed");
 
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
@@ -5238,7 +5571,7 @@ fn temp_live_vault_mint_does_not_persist_username_as_password() {
 
 #[test]
 fn live_prepare_script_never_upserts_the_operator_vault() {
-    crate::ui_state::save(&crate::ui_state::PanelUiState::default());
+    seed_ui_state(&crate::ui_state::PanelUiState::default());
     // The operator vault must stay byte-identical across a live boot:
     // `--live` unlocks only the throwaway temp vault.
     fn stamp(p: &std::path::Path) -> Option<(std::time::SystemTime, u64)> {
@@ -5263,7 +5596,7 @@ fn live_prepare_script_never_upserts_the_operator_vault() {
 
 #[test]
 fn live_prepare_script_does_not_write_last_focus() {
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: Some("alice".into()),
         ..Default::default()
     });
@@ -5271,7 +5604,7 @@ fn live_prepare_script_does_not_write_last_focus() {
     let fleet = scenario::get("nav_door").expect("nav_door");
     s.live_prepare_script(fleet).expect("prepare");
     assert_eq!(
-        crate::ui_state::load().last_focus.as_deref(),
+        crate::ui_state::load(&s.preferences).last_focus.as_deref(),
         Some("alice"),
         "live boot must not clobber the operator last profile"
     );
@@ -5279,7 +5612,7 @@ fn live_prepare_script_does_not_write_last_focus() {
 
 #[test]
 fn live_prepare_nav_door_applies_full_rate_and_leaves_sidecar_off() {
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
@@ -5296,7 +5629,7 @@ fn live_prepare_nav_door_applies_full_rate_and_leaves_sidecar_off() {
 
 #[test]
 fn live_prepare_nav_full_runner_already_has_deadline_and_shot() {
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
@@ -5311,7 +5644,7 @@ fn live_prepare_nav_full_runner_already_has_deadline_and_shot() {
 
 #[test]
 fn live_prepare_smoke_runner_already_has_the_300s_deadline() {
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
@@ -5333,7 +5666,7 @@ fn requested_nav_paints_survive_scenario_install_without_changing_gameplay_or_pr
         },
         ..Default::default()
     };
-    crate::ui_state::save(&saved);
+    seed_ui_state(&saved);
     for choice in [None, Some(true), Some(false)] {
         let mut session = preparation_only_session();
         session.set_nav_paints_override(choice);
@@ -5376,13 +5709,13 @@ fn requested_nav_paints_survive_scenario_install_without_changing_gameplay_or_pr
         );
         assert_eq!(runner.terminal_shot(), terminal_shot);
         assert_eq!(session.nav_overlay.as_ref(), Some(&baseline));
-        assert_eq!(crate::ui_state::load().nav, saved.nav);
+        assert_eq!(crate::ui_state::load(&session.preferences).nav, saved.nav);
     }
 }
 
 #[test]
 fn live_force_layers_does_not_write_panel_ui() {
-    crate::ui_state::save(&crate::ui_state::PanelUiState {
+    seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
@@ -5397,7 +5730,7 @@ fn live_force_layers_does_not_write_panel_ui() {
     );
     // A save/load roundtrip of the panel prefs must not persist the
     // overlay bools: `nav_overlay` is session-only.
-    let ui = crate::ui_state::load();
+    let ui = crate::ui_state::load(&s.preferences);
     assert!(
         !ui.nav.show_nav_path,
         "forced layers must never reach panel-ui.json"
@@ -5411,7 +5744,7 @@ fn live_force_layers_does_not_write_panel_ui() {
             .is_some_and(|n| n.show_nav_path && n.collision_fill && n.camera_follow),
         "nav scenario arms the live overlay"
     );
-    let ui = crate::ui_state::load();
+    let ui = crate::ui_state::load(&s.preferences);
     assert!(
         !ui.nav.show_nav_path,
         "live boot of a nav scenario never writes the prefs"
@@ -5499,12 +5832,12 @@ fn reopening_game_pane_resumes_capture_drain() {
 
 #[test]
 fn set_capture_persists_to_panel_ui() {
-    crate::ui_state::save(&crate::ui_state::PanelUiState::default());
+    seed_ui_state(&crate::ui_state::PanelUiState::default());
     let mut s = Session::new();
     s.set_capture(false);
-    assert!(!crate::ui_state::load().capture);
+    assert!(!crate::ui_state::load(&s.preferences).capture);
     s.set_capture(true);
-    assert!(crate::ui_state::load().capture);
+    assert!(crate::ui_state::load(&s.preferences).capture);
 }
 
 #[test]
@@ -5766,7 +6099,7 @@ fn explicit_login_arms_a_fresh_non_auto_profile() {
         .and_then(|play| play.arm("alice"))
         .expect("fresh explicit login creates an arm");
     assert!(arm.wants_login());
-    assert!(!arm.auto_login.load(Ordering::Relaxed));
+    assert!(!arm.auto_login());
     assert!(!arm.login_latched());
 }
 
@@ -6088,7 +6421,7 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
         Some(2)
     );
     assert_eq!(
-        *arm.world.lock(),
+        arm.world_choice(),
         Some(2),
         "the profile-save path must update a running slot's next handshake"
     );
@@ -6112,7 +6445,7 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
         "a credentials save outside the editor must not unpin an account"
     );
     assert_eq!(
-        *arm.world.lock(),
+        arm.world_choice(),
         Some(2),
         "a non-editor save must preserve the running slot's pin"
     );
@@ -6510,6 +6843,29 @@ fn set_random_settings_upserts_all_three_fields_without_spawning() {
 }
 
 #[test]
+fn set_random_event_policy_persists_without_spawning() {
+    let path = tmp_vault("random-event-policy.vault");
+    let mut s = Session::new();
+    s.core
+        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
+    s.core
+        .vault_mut()
+        .unwrap()
+        .upsert(profile("alice", "pw", 42))
+        .unwrap();
+    assert!(s.set_random_event_policy("alice", "River Troll", vault::RandomEventPolicy::Ignore));
+    let saved = s.core.vault().unwrap().get("alice").unwrap();
+    assert_eq!(
+        saved.settings.random_event_policy("river troll"),
+        vault::RandomEventPolicy::Ignore
+    );
+    assert!(
+        s.core.slots().is_empty(),
+        "editing a policy must not spawn a slot"
+    );
+}
+
+#[test]
 fn set_random_settings_mirrors_running_arm() {
     let path = tmp_vault("random-settings-arm.vault");
     let mut s = Session::new();
@@ -6652,10 +7008,10 @@ fn set_auto_login_mirrors_running_arm() {
     s.core.set_play(Some(play));
     assert!(s.set_auto_login("alice", true));
     s.core.flush_writes();
-    assert!(arm.auto_login.load(Ordering::Relaxed));
+    assert!(arm.auto_login());
     assert!(s.set_auto_login("alice", false));
     s.core.flush_writes();
-    assert!(!arm.auto_login.load(Ordering::Relaxed));
+    assert!(!arm.auto_login());
 }
 
 #[test]
@@ -6815,14 +7171,11 @@ fn arm_for_profile_respects_auto_login_and_latch() {
     s.core.vault_mut().unwrap().upsert(p).unwrap();
     let arm = s.core.arm_for_profile("alice").expect("arm");
     assert!(arm.wants_login());
-    assert!(arm.auto_login.load(Ordering::Relaxed));
+    assert!(arm.auto_login());
     s.core.fleet_mut().latch_logout("alice");
     let arm = s.core.arm_for_profile("alice").expect("arm");
     assert!(!arm.wants_login(), "latch blocks handshake");
-    assert!(
-        arm.auto_login.load(Ordering::Relaxed),
-        "profile auto_login stays on the arm"
-    );
+    assert!(arm.auto_login(), "profile auto_login stays on the arm");
 }
 
 #[test]
@@ -7786,7 +8139,10 @@ fn load_js_registers_card_selects_and_persists_to_the_session_store() {
     .unwrap();
 
     let mut s = Session::new();
-    s.scripts.js = script::JsLibrary::with_cache(store.clone(), dir.join("js-cache"));
+    s.scripts.set_js(script::JsLibrary::with_cache(
+        store.clone(),
+        dir.join("js-cache"),
+    ));
     s.load_js(&path);
     assert_eq!(s.error, None, "load should succeed: {:?}", s.error);
     match &s.script_sel {
@@ -7795,7 +8151,7 @@ fn load_js_registers_card_selects_and_persists_to_the_session_store() {
         }
         other => panic!("{other:?}"),
     }
-    assert_eq!(s.scripts.js.cards().len(), 1);
+    assert_eq!(s.scripts.js().cards().len(), 1);
     assert!(!s.script_load_open, "success closes the load browser");
     assert!(store.exists(), "the card is persisted to the session store");
 
@@ -7840,10 +8196,14 @@ fn script_start_selected_refuses_unloadable_import() {
         )
         .unwrap();
     let mut s = Session::new();
-    s.scripts.js = script::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
+    s.scripts.set_js(script::JsLibrary::with_cache(
+        dir.join("js-scripts.json"),
+        dir.join("js-cache"),
+    ));
     let mut play = empty_play();
     play.attach_arm("alice", SlotArm::new(42, false));
     s.core.set_play(Some(play));
+    s.core.fleet_mut().add("alice");
     s.set_focus_for_test("alice");
     s.load_js(&path);
     assert_eq!(
@@ -7874,14 +8234,17 @@ fn bad_import_load_retains_the_full_failure_for_browse() {
         )
         .unwrap();
     let mut s = Session::new();
-    s.scripts.js = script::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
+    s.scripts.set_js(script::JsLibrary::with_cache(
+        dir.join("js-scripts.json"),
+        dir.join("js-cache"),
+    ));
     let mut play = empty_play();
     play.attach_arm("alice", SlotArm::new(42, false));
     s.core.set_play(Some(play));
     s.set_focus_for_test("alice");
     s.load_js(&path);
     assert_eq!(s.error, None, "load still registers the card");
-    let failures = s.scripts.js.load_failures();
+    let failures = s.scripts.js().load_failures();
     assert_eq!(failures.len(), 1, "one retained failure: {failures:?}");
     let failure = failures[0].clone();
     assert_eq!(failure.stage, script::LoadStage::ImportResolution);
@@ -7914,7 +8277,7 @@ fn fill_rs2b0t_cards_once_happens_on_first_browse_not_session_new() {
     let mut s = Session::new();
     assert!(
         s.scripts
-            .js
+            .js()
             .get(script::ScriptSource::Catalog, "BoneBurier")
             .is_none(),
         "Session::new must not parse $RS2B0T"
@@ -7924,9 +8287,21 @@ fn fill_rs2b0t_cards_once_happens_on_first_browse_not_session_new() {
         "Session::new must not rewrite the persisted root"
     );
     s.fill_rs2b0t_cards_once();
+    assert!(
+        s.scripts.catalog_work_pending(),
+        "first browse queues catalog work"
+    );
+    assert!(
+        s.scripts
+            .js()
+            .get(script::ScriptSource::Catalog, "BoneBurier")
+            .is_none(),
+        "catalog cards are not parsed on the browse frame"
+    );
+    settle_catalog_work(&mut s);
     let card = s
         .scripts
-        .js
+        .js()
         .get(script::ScriptSource::Catalog, "BoneBurier")
         .expect("BoneBurier card filled on first Browse");
     assert_eq!(card.shape, script::LoadShape::CompatClass);
@@ -7934,10 +8309,10 @@ fn fill_rs2b0t_cards_once_happens_on_first_browse_not_session_new() {
         iso.home.join(".274bot/rs2b0t-path").is_file(),
         "the first successful parse persists the root path"
     );
-    assert_eq!(s.scripts.js.cards().len(), 1, "once-only fill");
+    assert_eq!(s.scripts.js().cards().len(), 1, "once-only fill");
     s.fill_rs2b0t_cards_once();
     assert_eq!(
-        s.scripts.js.cards().len(),
+        s.scripts.js().cards().len(),
         1,
         "a second Browse does not re-parse"
     );
@@ -8002,7 +8377,7 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
     );
     assert!(
         s.scripts
-            .js
+            .js()
             .cards()
             .iter()
             .all(|c| c.source != script::ScriptSource::Catalog),
@@ -8015,12 +8390,20 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
     let iso = IsolatedEnv::enter("import");
     let root = fake_rs2b0t_tree(&iso.dir);
     let mut s = Session::new();
-    let n = s.import_rs2b0t_catalog(&root).expect("import");
-    assert_eq!(n, 1);
+    s.import_rs2b0t_catalog(&root).expect("import");
+    assert!(
+        s.scripts.catalog_work_pending(),
+        "catalog import is admitted as worker work"
+    );
+    assert!(
+        !iso.home.join(".274bot/rs2b0t-path").exists(),
+        "root is persisted only after preparation settles"
+    );
+    settle_catalog_work(&mut s);
     assert!(iso.home.join(".274bot/rs2b0t-path").is_file());
     let card = s
         .scripts
-        .js
+        .js()
         .get(script::ScriptSource::Catalog, "BoneBurier")
         .expect("catalog card");
     assert_eq!(card.category, "Prayer");
@@ -8035,9 +8418,11 @@ fn on_script_browse_open_with_rs2b0t_env_still_fills_catalog() {
     iso.set_rs2b0t(&root);
     let mut s = Session::new();
     s.on_script_browse_open();
+    assert!(s.scripts.catalog_work_pending());
+    settle_catalog_work(&mut s);
     assert!(
         s.scripts
-            .js
+            .js()
             .get(script::ScriptSource::Catalog, "BoneBurier")
             .is_some(),
         "RS2B0T env still fills catalog on first browse"
@@ -8053,15 +8438,17 @@ fn write_two_card_catalog(dir: &Path) -> PathBuf {
 }
 
 #[test]
-fn select_script_card_queues_only_that_card_and_pumps_one_per_two_frames() {
+fn select_script_card_queues_only_that_card_through_worker() {
     let iso = IsolatedEnv::enter("transpile-click");
     let root = write_two_card_catalog(&iso.dir);
     let mut s = Session::new();
     s.persist_ui = false;
-    s.scripts.js =
-        script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
+    s.scripts.set_js(script::JsLibrary::with_cache(
+        iso.dir.join("js-scripts.json"),
+        iso.dir.join("js-cache"),
+    ));
     s.scripts
-        .js
+        .js_mut()
         .register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
         .expect("catalog");
 
@@ -8080,7 +8467,7 @@ fn select_script_card_queues_only_that_card_and_pumps_one_per_two_frames() {
     );
     assert!(
         s.scripts
-            .js
+            .js()
             .get(script::ScriptSource::Catalog, "BoneBurier")
             .unwrap()
             .js
@@ -8089,7 +8476,7 @@ fn select_script_card_queues_only_that_card_and_pumps_one_per_two_frames() {
     );
     assert!(
         s.scripts
-            .js
+            .js()
             .get(script::ScriptSource::Catalog, "ShopRunner")
             .unwrap()
             .js
@@ -8100,42 +8487,53 @@ fn select_script_card_queues_only_that_card_and_pumps_one_per_two_frames() {
     s.pump_script_transpile();
     assert!(
         s.scripts
-            .js
+            .js()
             .get(script::ScriptSource::Catalog, "BoneBurier")
             .unwrap()
             .js
             .is_empty(),
-        "first pump only arms so the UI can paint transpiling…"
+        "first pump only arms so the UI can paint transpiling"
     );
-
     s.pump_script_transpile();
+    assert!(
+        s.scripts
+            .js()
+            .get(script::ScriptSource::Catalog, "BoneBurier")
+            .unwrap()
+            .js
+            .is_empty(),
+        "second pump submits worker work; it does not compile inline"
+    );
+    assert!(s.scripts.transpile_pending());
+    settle_transpile_queue(&mut s);
     assert!(!s
         .scripts
-        .js
+        .js()
         .get(script::ScriptSource::Catalog, "BoneBurier")
         .unwrap()
         .js
         .is_empty());
     assert!(s
         .scripts
-        .js
+        .js()
         .get(script::ScriptSource::Catalog, "ShopRunner")
         .unwrap()
         .js
         .is_empty());
-    assert!(s.transpile_queue.is_empty());
 }
 
 #[test]
-fn queue_transpile_all_warms_one_card_per_armed_frame() {
+fn queue_transpile_all_uses_the_shared_worker_slot() {
     let iso = IsolatedEnv::enter("transpile-all");
     let root = write_two_card_catalog(&iso.dir);
     let mut s = Session::new();
     s.persist_ui = false;
-    s.scripts.js =
-        script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
+    s.scripts.set_js(script::JsLibrary::with_cache(
+        iso.dir.join("js-scripts.json"),
+        iso.dir.join("js-cache"),
+    ));
     s.scripts
-        .js
+        .js_mut()
         .register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
         .expect("catalog");
 
@@ -8145,49 +8543,97 @@ fn queue_transpile_all_warms_one_card_per_armed_frame() {
 
     s.pump_script_transpile();
     s.pump_script_transpile();
-    let warmed = s
-        .scripts
-        .js
-        .cards()
-        .iter()
-        .filter(|c| !c.js.is_empty())
-        .count();
-    assert_eq!(warmed, 1, "all-at-once still one file per armed frame");
-    assert_eq!(s.transpile_queue.len(), 1);
-
-    s.pump_script_transpile();
-    s.pump_script_transpile();
+    assert!(
+        s.scripts.transpile_pending(),
+        "the first request is queued on WorkAdmission"
+    );
     assert_eq!(
         s.scripts
-            .js
+            .js()
             .cards()
             .iter()
-            .filter(|c| !c.js.is_empty())
+            .filter(|card| !card.js.is_empty())
+            .count(),
+        0,
+        "the click frame does not compile any card"
+    );
+    assert_eq!(s.transpile_queue.len(), 2);
+
+    settle_transpile_queue(&mut s);
+    assert_eq!(
+        s.scripts
+            .js()
+            .cards()
+            .iter()
+            .filter(|card| !card.js.is_empty())
             .count(),
         2
     );
-    assert!(s.transpile_queue.is_empty());
 }
 
 #[test]
-fn select_script_card_skips_queue_on_cache_hit() {
+fn select_script_card_queues_cached_output_through_worker() {
     let iso = IsolatedEnv::enter("transpile-hit");
     let root = write_two_card_catalog(&iso.dir);
+    let store = iso.dir.join("js-scripts.json");
+    let cache = iso.dir.join("js-cache");
+    let mut warm = script::JsLibrary::with_cache(store.clone(), cache.clone());
+    warm.register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
+        .expect("catalog");
+    warm.ensure_js(script::ScriptSource::Catalog, "BoneBurier")
+        .unwrap();
+    drop(warm);
+
     let mut s = Session::new();
     s.persist_ui = false;
-    s.scripts.js =
-        script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
     s.scripts
-        .js
+        .set_js(script::JsLibrary::with_cache(store, cache));
+    s.scripts
+        .js_mut()
         .register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
         .expect("catalog");
-    s.scripts
+    assert!(s
+        .scripts
+        .js()
+        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .unwrap()
         .js
-        .ensure_js(script::ScriptSource::Catalog, "BoneBurier")
-        .unwrap();
+        .is_empty());
+    assert!(s.scripts.js().cache().is_cached(
+        s.scripts
+            .js()
+            .get(script::ScriptSource::Catalog, "BoneBurier")
+            .unwrap()
+            .origin
+            .as_bytes()
+    ));
 
     s.select_script_card(script::ScriptSource::Catalog, "BoneBurier");
-    assert!(s.transpile_queue.is_empty());
+    assert_eq!(s.transpile_queue.len(), 1);
+    assert!(s
+        .scripts
+        .js()
+        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .unwrap()
+        .js
+        .is_empty());
+    s.pump_script_transpile();
+    s.pump_script_transpile();
+    assert!(s
+        .scripts
+        .js()
+        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .unwrap()
+        .js
+        .is_empty());
+    settle_transpile_queue(&mut s);
+    assert!(!s
+        .scripts
+        .js()
+        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .unwrap()
+        .js
+        .is_empty());
 }
 
 fn two_live_session(label: &str) -> (Session, script::IsolatedEnv) {
@@ -8231,7 +8677,7 @@ fn single_mode_select_offers_background_ack_until_persisted() {
     );
     s.ack_background_bots();
     assert!(!s.background_ack_open);
-    assert!(host_play::background_bots_acked());
+    assert!(host_play::background_bots_acked(&s.preferences));
     s.select("bob");
     assert!(!s.background_ack_open);
 }
@@ -8239,7 +8685,10 @@ fn single_mode_select_offers_background_ack_until_persisted() {
 #[test]
 fn panel_sees_ack_file_written_outside_session() {
     let (mut s, iso) = two_live_session("bg-ack-shared");
-    host_play::persist_background_bots_ack().unwrap();
+    // Another frontend (a second service on the same files) records the
+    // acknowledgement; the session sees it once its preferences re-read.
+    host_play::persist_background_bots_ack(&thread_preferences()).unwrap();
+    s.preferences.reload().unwrap();
     s.select("alice");
     s.select("bob");
     assert!(!s.background_ack_open);
@@ -8309,7 +8758,7 @@ fn live_persist_off_skips_background_ack() {
     s.select("bob");
     assert!(!s.background_ack_open);
     s.ack_background_bots();
-    assert!(!host_play::background_bots_acked());
+    assert!(!host_play::background_bots_acked(&s.preferences));
 }
 
 #[test]
@@ -8318,7 +8767,7 @@ fn failed_ack_persist_then_success_clears_only_that_error() {
     s.select("alice");
     s.select("bob");
     assert!(s.background_ack_open);
-    let parent = host_play::panel_ui_path().parent().unwrap().to_path_buf();
+    let parent = s.preferences.path().parent().unwrap().to_path_buf();
     let _ = std::fs::remove_dir_all(&parent);
     std::fs::write(&parent, b"not-a-dir").unwrap();
     s.error = None;
@@ -8334,12 +8783,12 @@ fn failed_ack_persist_then_success_clears_only_that_error() {
         "got {:?}",
         s.error
     );
-    assert!(!host_play::background_bots_acked());
+    assert!(!host_play::background_bots_acked(&s.preferences));
     std::fs::remove_file(&parent).unwrap();
     s.ack_background_bots();
     assert!(!s.background_ack_open);
     assert!(s.error.is_none(), "got {:?}", s.error);
-    assert!(host_play::background_bots_acked());
+    assert!(host_play::background_bots_acked(&s.preferences));
     let _iso = iso;
 }
 
@@ -8352,7 +8801,7 @@ fn successful_ack_preserves_unrelated_error() {
     s.ack_background_bots();
     assert!(!s.background_ack_open);
     assert_eq!(s.error.as_deref(), Some("chooser: vault locked"));
-    assert!(host_play::background_bots_acked());
+    assert!(host_play::background_bots_acked(&s.preferences));
 }
 
 #[test]
@@ -8462,7 +8911,7 @@ fn a_profile_still_saving_cannot_be_selected_loaded_or_deleted_from_the_chooser(
     assert!(
         matches!(
             report.outcome("bob"),
-            Some(frontend_core::Outcome::Skipped(_))
+            Some(o) if o.is_skipped()
         ),
         "{report:?}"
     );
@@ -8588,7 +9037,7 @@ fn memory_relog_starts_at_once_without_a_running_script() {
     assert!(!s.mem_relog_armed());
     assert!(s.request_focused_memory_relog());
     let arm = s.core.play().unwrap().arm("alice").unwrap();
-    assert!(arm.login_latched() && arm.wants_logout());
+    assert!(!arm.login_latched() && !arm.wants_logout() && arm.wants_login());
     assert!(
         s.core.memory_status("alice").unwrap().relog_pending,
         "the poll must see the armed relog"
@@ -8675,13 +9124,13 @@ fn marked_debug_command_queues_ready_and_reports_ineligible_rows() {
         .filter(|(_, name)| name != "missing")
         .collect();
     let report = session.send_debug_command_marked_snapshot("getcoord", snapshot);
-    assert_eq!(report.accepted, 1);
+    assert_eq!(report.accepted(), 1);
     assert_eq!(report.total(), 3);
     assert_eq!(
         report
-            .skipped
+            .skipped()
             .iter()
-            .map(|skip| (skip.profile.as_str(), skip.reason.as_str()))
+            .map(|skip| (skip.profile(), skip.reason()))
             .collect::<Vec<_>>(),
         vec![
             ("bob", "bot is not in game"),

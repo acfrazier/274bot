@@ -9,11 +9,12 @@ use host_play::{InstancePermit, Play, PlayOptions, SlotStatus};
 use vault::{Profile, ProfileSettings, Vault};
 
 use super::{
-    assign_and_restart_marked, assign_marked, login_marked, logout_marked,
-    prepare_apply_settings_marked, restart_scope,
+    assign_and_restart_marked, assign_marked, combined_bulk_scope, login_marked, logout_marked,
+    marked_availability, prepare_apply_settings_marked, restart_scope, BulkScope, MarkedAction,
+    MarkedBlock, RestartScope,
 };
 use crate::scripts::Scripts;
-use crate::selection::{start_marked, MarkedSelection, ProfileIdentity};
+use crate::selection::{marked_startable, start_marked, MarkedSelection, ProfileIdentity};
 use crate::session::OperatorSession;
 use crate::surface::HeadlessSurface;
 
@@ -87,7 +88,7 @@ impl Fixture {
     fn card_src(&mut self, file: &str, src: &str) -> (script::JsCard, script::ScriptSel) {
         let path = self.dir.join(file);
         std::fs::write(&path, src).unwrap();
-        let card = self.scripts.js.load(&path).unwrap();
+        let card = self.scripts.js_mut().load(&path).unwrap();
         let sel = script::ScriptSel::Loaded(card.source, card.identity_id());
         (card, sel)
     }
@@ -413,9 +414,8 @@ fn apply_settings_to_marked_copies_only_to_marked_same_card_members() {
     // bob and dave take the copy; carol is on another card and frank is not
     // loaded (both marked, so both are named); erin is unmarked.
     let marked = marks(&[2, 3, 4, 6]);
-    let scope = prepare_apply_settings_marked(&marked, &f.core, &mut f.scripts, "alice", &sel)
-        .unwrap()
-        .clone();
+    let scope =
+        prepare_apply_settings_marked(&marked, &f.core, &mut f.scripts, "alice", &sel).unwrap();
     assert_eq!(scope.targets, ["bob", "dave"]);
     assert_eq!(
         scope.skipped,
@@ -516,7 +516,7 @@ fn apply_settings_to_marked_prepare_and_cancel_write_nothing() {
     f.assign("alice", &card);
     f.assign("bob", &card);
     f.scripts
-        .legacy
+        .legacy_mut()
         .set_str(card.source, &card.name, "target", "Guard");
     let key = card.identity_key();
     let in_vault = |f: &Fixture, name: &str| {
@@ -534,14 +534,20 @@ fn apply_settings_to_marked_prepare_and_cancel_write_nothing() {
     let vault_file = f.dir.join("vault");
     let before = std::fs::read(&vault_file).unwrap();
 
-    let scope = prepare_apply_settings_marked(&marks(&[2]), &f.core, &mut f.scripts, "alice", &sel)
-        .unwrap()
-        .clone();
+    let (targets, target_override) = {
+        let scope =
+            prepare_apply_settings_marked(&marks(&[2]), &f.core, &mut f.scripts, "alice", &sel)
+                .unwrap();
+        (
+            scope.targets.clone(),
+            scope.overrides.get("target").cloned(),
+        )
+    };
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
-    assert_eq!(scope.targets, ["bob"]);
+    assert_eq!(targets, ["bob"]);
     assert_eq!(
-        scope.overrides.get("target"),
+        target_override.as_ref(),
         Some(&serde_json::json!("Guard")),
         "the frozen bag is what the first read would migrate"
     );
@@ -618,9 +624,8 @@ fn apply_to_marked_assigns_unassigned_and_says_so() {
     f.scripts.poll(&mut f.core);
 
     let marked = marks(&[1, 2, 4]);
-    let scope = prepare_apply_settings_marked(&marked, &f.core, &mut f.scripts, "alice", &sel)
-        .unwrap()
-        .clone();
+    let scope =
+        prepare_apply_settings_marked(&marked, &f.core, &mut f.scripts, "alice", &sel).unwrap();
     assert_eq!(scope.targets, ["bob", "dave"]);
     assert_eq!(scope.assigning, ["bob"]);
     let prompt = scope.prompt();
@@ -798,4 +803,110 @@ fn operator_apply_assign_start_does_not_start_on_defaults() {
         "Start after Apply consumes the copied Knight bag"
     );
     assert!(Scripts::assignment(&f.core, "carol").is_none());
+}
+
+#[test]
+fn marked_gating_checks_marks_before_card() {
+    use MarkedAction as A;
+    use MarkedBlock as B;
+    let avail = |action, marked, card, focused| marked_availability(action, marked, card, focused);
+    assert_eq!(avail(A::Assign, 0, false, false), Err(B::NothingMarked));
+    assert_eq!(avail(A::Assign, 2, false, false), Err(B::NoCard));
+    assert_eq!(avail(A::AssignAndRestart, 2, true, false), Ok(()));
+    assert_eq!(
+        avail(A::Start, 1, false, false),
+        Ok(()),
+        "Start falls back to saved scripts"
+    );
+    assert_eq!(avail(A::Start, 0, true, true), Err(B::NothingMarked));
+    assert_eq!(avail(A::Stop, 1, false, false), Ok(()));
+    assert_eq!(avail(A::Login, 1, false, false), Ok(()));
+    assert_eq!(avail(A::Logout, 0, false, false), Err(B::NothingMarked));
+    assert_eq!(avail(A::Walk, 1, false, false), Ok(()));
+    assert_eq!(avail(A::Walk, 0, false, false), Err(B::NothingMarked));
+    assert_eq!(
+        avail(A::ApplySettings, 0, false, false),
+        Err(B::NothingMarked)
+    );
+    assert_eq!(
+        avail(A::ApplySettings, 1, false, false),
+        Err(B::NoFocusedBot)
+    );
+    assert_eq!(avail(A::ApplySettings, 1, false, true), Err(B::NoCard));
+    assert_eq!(avail(A::ApplySettings, 1, true, true), Ok(()));
+}
+
+#[test]
+fn combined_scope_is_marked_only_when_marks_exist() {
+    let mut selection = MarkedSelection::default();
+    assert_eq!(combined_bulk_scope(&selection), BulkScope::All);
+    selection.set(ProfileIdentity::uid(1), true);
+    assert_eq!(combined_bulk_scope(&selection), BulkScope::Marked);
+}
+
+#[test]
+fn restart_scope_prompt_names_interrupted_and_starting() {
+    assert_eq!(
+        RestartScope::default().prompt_lines(),
+        ["No loaded marked bot to start the card on."]
+    );
+    let rows = [
+        crate::views::FleetRow::fixture("alice", crate::views::Phase::Ready, Some(301), None),
+        crate::views::FleetRow::fixture("bob", crate::views::Phase::Ready, Some(301), None),
+    ];
+    let scope = RestartScope::from_rows(["alice", "bob", "carol"], &rows);
+    assert_eq!(
+        scope.prompt_lines(),
+        ["Start the card on 3 idle bots: alice, bob, carol"],
+        "idle fixture rows and an unprojected name all count as starting"
+    );
+}
+
+#[test]
+fn restart_scope_prompt_bounds_each_list_and_counts_the_rest() {
+    let names: Vec<String> = (0..23).map(|i| format!("bot{i:02}")).collect();
+    let mut rows: Vec<crate::views::FleetRow> = names
+        .iter()
+        .map(|name| {
+            crate::views::FleetRow::fixture(name, crate::views::Phase::Ready, Some(301), None)
+        })
+        .collect();
+    for row in rows.iter_mut().take(20) {
+        row.set_script(script::RunState::Running);
+    }
+    let scope = RestartScope::from_rows(names.iter().map(String::as_str), &rows);
+    assert_eq!(
+        scope.prompt_lines(),
+        [
+            "Stop and restart 20 running bots: bot00, bot01, bot02, bot03, bot04, bot05 +14 more",
+            "Start the card on 3 idle bots: bot20, bot21, bot22",
+        ],
+        "each list names six bots at most and counts every other bot"
+    );
+}
+
+#[test]
+fn marked_startable_follows_card_then_saved_assignment() {
+    let mut f = fixture("startable", &["alice", "bob"], 2);
+    let (card, sel) = f.card("looper.ts");
+    let mut marks = MarkedSelection::default();
+    marks.set(ProfileIdentity::uid(1), true);
+    marks.set(ProfileIdentity::uid(2), true);
+    assert!(
+        marked_startable(&marks, &f.core, Some(&sel)),
+        "a card starts any mark"
+    );
+    assert!(
+        !marked_startable(&marks, &f.core, None),
+        "no card and no saved assignment starts nothing"
+    );
+    f.assign("bob", &card);
+    assert!(
+        marked_startable(&marks, &f.core, None),
+        "one marked saved assignment is enough"
+    );
+    assert!(
+        !marked_startable(&MarkedSelection::default(), &f.core, Some(&sel)),
+        "nothing marked starts nothing"
+    );
 }

@@ -30,6 +30,7 @@ pub mod log_pane;
 pub mod map;
 pub mod overlay;
 pub mod palette;
+pub mod profile_import;
 pub mod script_params;
 pub mod script_shape;
 pub mod settings;

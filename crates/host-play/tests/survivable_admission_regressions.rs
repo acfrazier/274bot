@@ -110,30 +110,45 @@ fn probe_gated_default_is_never_for_every_preference_source() {
     const { assert!(!NET_AVAILABLE) };
     let dir = std::env::temp_dir().join(format!("review-s2b-probe-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let write = |name: &str, body: &str| {
-        let path = dir.join(name);
-        std::fs::write(&path, body).unwrap();
-        path
+    // Each source is one state root's shared preferences, read through the
+    // process service as every admission reads them.
+    let read = |name: &str, body: Option<&str>| {
+        let root = dir.join(name);
+        std::fs::create_dir_all(&root).unwrap();
+        if let Some(body) = body {
+            std::fs::write(root.join("panel-ui.json"), body).unwrap();
+        }
+        let service = host_play::local_state::LocalStateService::open_process(
+            host_play::local_state::StateRoot::new(root),
+        );
+        WalkGlobals::read(&service.preferences())
     };
-    let absent = dir.join("absent.json");
-    let old = write("old.json", r#"{"nav":{"allow_danger_zones":false}}"#);
-    let empty_nav = write("empty-nav.json", r#"{"nav":{}}"#);
-    let no_nav = write("no-nav.json", r#"{"unrelated":1}"#);
-    let explicit = write(
-        "explicit.json",
-        r#"{"nav":{"allow_danger_zones":false,"survivable_routing":true}}"#,
-    );
-    let malformed = write("malformed.json", "{nav:");
     let sources = [
         ("default", WalkGlobals::default()),
-        ("absent", WalkGlobals::read_at(&absent).unwrap()),
-        ("old", WalkGlobals::read_at(&old).unwrap()),
-        ("empty-nav", WalkGlobals::read_at(&empty_nav).unwrap()),
-        ("no-nav", WalkGlobals::read_at(&no_nav).unwrap()),
-        ("explicit", WalkGlobals::read_at(&explicit).unwrap()),
+        ("absent", read("absent", None).unwrap()),
+        (
+            "old",
+            read("old", Some(r#"{"nav":{"allow_danger_zones":false}}"#)).unwrap(),
+        ),
+        (
+            "empty-nav",
+            read("empty-nav", Some(r#"{"nav":{}}"#)).unwrap(),
+        ),
+        (
+            "no-nav",
+            read("no-nav", Some(r#"{"unrelated":1}"#)).unwrap(),
+        ),
+        (
+            "explicit",
+            read(
+                "explicit",
+                Some(r#"{"nav":{"allow_danger_zones":false,"survivable_routing":true}}"#),
+            )
+            .unwrap(),
+        ),
         (
             "malformed",
-            WalkGlobals::read_at(&malformed).unwrap_or_else(|_| WalkGlobals::fail_closed()),
+            read("malformed", Some("{nav:")).unwrap_or_else(|_| WalkGlobals::fail_closed()),
         ),
     ];
     for (name, globals) in sources {
@@ -423,8 +438,8 @@ fn find_through(world: &NavWorld, from: WorldTile, to: WorldTile) -> Route {
 fn ice_r(world: &NavWorld) -> i32 {
     let combat =
         CombatTables::build(api::game_data::for_revision(ClientRevision::R289).unwrap()).unwrap();
-    let risks = RiskTables::build(world.graph.zones.as_ref().unwrap(), &combat);
-    i32::from(risks.kind(0).unwrap().r)
+    let ice = world.graph.zones.as_ref().unwrap().kinds()[0].npc_id;
+    i32::from(RiskTables::build(&combat).npc(ice).unwrap().r)
 }
 
 /// R3 M-A (reviewer probe `fringe_origin_walk_into_acquisition_set_is_unjudged`):

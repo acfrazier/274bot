@@ -1,8 +1,9 @@
 //! The last-seen whole bank of one account (design-bank-snapshot §1.3–§1.5).
 //!
 //! The host owns one memory per account and fills it from the open bank
-//! through [`BankMemory::track`]; the hint file (`script::bank_hints`)
-//! fills it at login through [`BankMemory::load_hint`]. Rows are
+//! through [`BankMemory::track`]; the account's persisted hint (the
+//! `bank-hints` domain of the process local-state service, `host-play`'s
+//! `local_state`) fills it at login through [`BankMemory::load_hint`]. Rows are
 //! `(obj id, count)` pairs sorted by id, unique, unnoted, every count
 //! positive, so a count is a binary search and never a copy. A memory that
 //! was never filled is `Unknown`: `count` answers `None`, never an observed
@@ -38,8 +39,8 @@ pub struct ObservedAt {
 /// Why [`BankMemory::load_hint`] refused a row set (design-bank-snapshot
 /// §1.4): the rows must be at most [`MAX_HINT_ROWS`], every count positive,
 /// and the ids strictly increasing, or `count`'s binary search is wrong.
-/// File-level rejects (schema, identity, unsafe account, io) are
-/// `script::bank_hints::HintError`, which wraps this.
+/// File-level rejects (schema, identity, io) are the state service's own;
+/// the neutral projection is `local_state::ValidationReason`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HintRowsError {
     TooManyRows,
@@ -58,6 +59,8 @@ impl std::fmt::Display for HintRowsError {
         })
     }
 }
+
+impl std::error::Error for HintRowsError {}
 
 /// What one frame did to the memory ([`BankMemory::track`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -302,7 +305,7 @@ fn fold_sorted(rows: &mut Vec<(i32, i32)>) {
 }
 
 /// The §1.4 row rules a hint file must already satisfy.
-fn check_hint_rows(rows: &[(i32, i32)]) -> Result<(), HintRowsError> {
+pub(crate) fn check_hint_rows(rows: &[(i32, i32)]) -> Result<(), HintRowsError> {
     if rows.len() > MAX_HINT_ROWS {
         return Err(HintRowsError::TooManyRows);
     }
@@ -322,9 +325,9 @@ fn check_hint_rows(rows: &[(i32, i32)]) -> Result<(), HintRowsError> {
 /// The account a name logs in as, by the client's own decoder:
 /// `JString.toRawUsername(JString.toUserhash(name))`. `None` when the hash
 /// spells no account at all (it is zero: no letter or digit). The bank hint
-/// file is keyed by this identity (`script::bank_hints::account_component`);
-/// it lives here because `api` is the crate that maps onto `client`, so
-/// `script` stays client-free.
+/// file is keyed by this identity (`local_state::AccountKey`); it lives
+/// here because `api` is the crate that maps onto `client`, so `script`
+/// stays client-free.
 pub fn login_identity(name: &str) -> Option<String> {
     let hash = client::util::JString::to_userhash(name);
     (hash != 0).then(|| client::util::JString::to_raw_username(hash as i64))

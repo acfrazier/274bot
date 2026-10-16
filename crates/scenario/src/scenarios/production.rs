@@ -4,6 +4,7 @@ mod chickens;
 pub(crate) use chickens::*;
 mod thiever;
 pub(crate) use thiever::thiever_diagonal_door_trap_scenario;
+pub(crate) use thiever::thiever_guard_no_bank_scenario;
 pub(crate) use thiever::thiever_scenario;
 pub use thiever::thiever_sustained_scenario;
 mod alcher;
@@ -52,6 +53,8 @@ mod leather;
 pub(crate) use leather::*;
 mod firemaking;
 pub(crate) use firemaking::*;
+mod flour_collector;
+pub(crate) use flour_collector::*;
 
 pub(crate) const STRENGTH_STAT: i32 = 2;
 
@@ -271,7 +274,7 @@ pub(super) const CATHERBY_BANK: WorldTile = WorldTile {
     z: 3441,
     level: 0,
 };
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) const DRAYNOR_BANK: WorldTile = WorldTile {
     x: 3093,
     z: 3243,

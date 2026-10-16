@@ -96,7 +96,7 @@ fn probe(src: &str, revision: ClientRevision) -> serde_json::Value {
 /// Selected data that never bound a pin (no engine/content commits), so no gathering family can be admitted.
 fn data_without_family() -> std::sync::Arc<api::game_data::SelectedGameData> {
     let raw = r#"{
-        "schema_version": 4,
+        "schema_version": 5,
         "revision": 274,
         "provenance": {
             "cache_identity": {"cache_id": "x"},
@@ -152,8 +152,8 @@ export function tick(api) {
 }
 "#;
     for revision in [ClientRevision::R274, ClientRevision::R289] {
-        let value = probe(src, revision);
         let catalog = catalog(revision);
+        let value = probe(src, revision);
         let methods = |skill| api::gather_methods::gather_methods(Some(&catalog), skill).unwrap();
         let resource = |name| api::gather_methods::gather_resource(Some(&catalog), name).unwrap();
         // Whole results cross into JS without losing a null, a number or an unknown/partial marker.
@@ -416,8 +416,8 @@ export function tick(api) {
 }
 "#;
     for revision in [ClientRevision::R274, ClientRevision::R289] {
-        let value = probe(src, revision);
         let catalog = catalog(revision);
+        let value = probe(src, revision);
         let placements = |resource, region: [i32; 5], after: Option<&str>, limit| {
             let region = api::gather_methods::SceneRegionInput {
                 min_x: region[0],

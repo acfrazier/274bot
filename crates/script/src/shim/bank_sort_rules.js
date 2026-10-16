@@ -1,11 +1,9 @@
-import { notImpl } from '../../shim/_kernel.js';
+export const CATEGORY_ORDER = globalThis.__rs2b0t_bank_sort_category_order();
 
-export const CATEGORY_ORDER = [];
-
-export function categoryOf() {
-    throw notImpl('bankSortRules.categoryOf');
+export function categoryOf(item) {
+    return globalThis.__rs2b0t_bank_sort_category_of(item);
 }
 
-export function isUnmatched() {
-    throw notImpl('bankSortRules.isUnmatched');
+export function isUnmatched(item) {
+    return globalThis.__rs2b0t_bank_sort_is_unmatched(item);
 }

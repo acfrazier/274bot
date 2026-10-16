@@ -15,7 +15,7 @@ const GATHERER_START: WorldTile = WorldTile {
 const BRONZE_AXE_ID: i32 = 1351;
 const NORMAL_TREE_ID: i32 = 1276;
 const WOODCUTTING_STAT_ID: i32 = 8;
-const GATHERER_START_INJECT: &[ScriptSettingInject] = &[
+pub(crate) const GATHERER_START_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "skill",
         value: ScriptInjectValue::Str("Woodcutting"),
@@ -149,7 +149,7 @@ pub(crate) fn gatherer_scenario() -> Scenario {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use api::selected::{EntityId, FamilyPreparation, Knowledge};
+    use api::selected::{EntityId, Knowledge};
     use client::io::ClientRevision;
     use std::sync::Arc;
 
@@ -195,11 +195,24 @@ mod tests {
         );
 
         let data = Arc::clone(&selected);
-        let catalog = FamilyPreparation::run(move |worker| data.prepare_gathering(worker))
-            .expect("worker")
-            .join()
-            .expect("worker panicked")
-            .expect("the gathering family prepares");
+        let input = script::preparation::PreparationInput::new(
+            289,
+            std::mem::size_of::<Arc<api::game_data::SelectedGameData>>(),
+            2 * 1024 * 1024,
+            2 * 1024 * 1024,
+        )
+        .unwrap()
+        .with_gathering_family_decode();
+        let catalog = script::preparation::submit(
+            script::preparation::PreparationKind::Profile,
+            api::identity::Scope::Process,
+            input,
+            move |worker| data.prepare_gathering(worker),
+        )
+        .expect("admit the real gathering family")
+        .join()
+        .expect("worker settles")
+        .expect("the gathering family prepares");
         let method = catalog
             .method("woodcutting.normal")
             .expect("the normal woodcutting method is published");

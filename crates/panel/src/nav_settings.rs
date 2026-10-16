@@ -4,7 +4,7 @@
 ///
 /// `#[serde(default)]`: a prefs file written before a field existed (e.g.
 /// `allow_wilderness`) still loads, with missing fields filled from
-/// [`Default`] — otherwise `load_at` would fail the whole `PanelUiState`
+/// [`Default`] — otherwise `load_from` would fail the whole `PanelUiState`
 /// deserialize and wipe focus/collapsed/colors.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -101,8 +101,11 @@ impl NavSettings {
         self.survivable_routing = globals.survivable_routing;
     }
 
-    pub fn refresh_walk_globals_at(&mut self, path: &std::path::Path) -> std::io::Result<()> {
-        let view = frontend_core::WalkGlobalsView::read_at(path);
+    pub fn refresh_walk_globals(
+        &mut self,
+        preferences: &host_play::local_state::Preferences,
+    ) -> std::io::Result<()> {
+        let view = frontend_core::WalkGlobalsView::read(preferences);
         self.allow_teleports = view.globals.allow_teleports;
         self.allow_wilderness = view.globals.allow_wilderness;
         self.allow_bank_fetch = view.globals.allow_bank_fetch;

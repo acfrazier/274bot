@@ -13,8 +13,8 @@ use super::{
     parse_live_args, progress_channel, request_clean_stop_capture, request_native_failure_capture,
     runner_config, script_failure_scenario, smoke_settled, smoke_should_fire, startup_progress,
     status_value_visible, Boot, LiveBoot, LiveHarness, LiveNull, LiveScript, LiveSmoke, LiveStress,
-    PanelState, ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture,
-    StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
+    PanelState, ProfilePrepareJob, ProfilePreparePending, ProgressPhase, RunMode, ShotStatus,
+    SoakCapture, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
     SMOKE_DEADLINE, SMOKE_SETTLE,
 };
 use crate::log_pane::log_follow_bottom;
@@ -201,9 +201,11 @@ fn empty_walk_queue_and_modal_values_are_not_status_rows() {
 fn status_rows_render_only_meaningful_values_for_the_selected_phase() {
     let _guard = crate::test_support::imgui_context_guard();
     let mut logged_out = frontend_core::SlotDetail::default();
-    logged_out.row.phase = frontend_core::Phase::LoggedOut;
-    logged_out.state = "logged out".into();
-    logged_out.modal = 7;
+    logged_out
+        .row_mut()
+        .set_phase(frontend_core::Phase::LoggedOut);
+    logged_out.set_state("logged out");
+    logged_out.set_modal(7);
     let hidden = draw_status_detail(&logged_out, "—", "lowmem");
     assert!(
         !hidden.contains("walk"),
@@ -220,9 +222,9 @@ fn status_rows_render_only_meaningful_values_for_the_selected_phase() {
     assert!(hidden.contains("state") && hidden.contains("logged out"));
 
     let mut ready = frontend_core::SlotDetail::default();
-    ready.row.phase = frontend_core::Phase::Ready;
-    ready.state = "ingame scene 2".into();
-    ready.modal = 0;
+    ready.row_mut().set_phase(frontend_core::Phase::Ready);
+    ready.set_state("ingame scene 2");
+    ready.set_modal(0);
     let shown = draw_status_detail(&ready, "2659 3292 0", "lowmem");
     assert!(shown.contains("walk") && shown.contains("2659 3292 0"));
     assert!(shown.contains("modals") && shown.contains("0"));
@@ -260,9 +262,9 @@ fn a_parked_quester_shows_its_phase_and_reason_on_the_status_card() {
         failure: None,
     };
     let mut parked = frontend_core::SlotDetail::default();
-    parked.row.phase = frontend_core::Phase::Ready;
-    parked.row.script = script::RunState::Running;
-    parked.state = "ingame scene 2".into();
+    parked.row_mut().set_phase(frontend_core::Phase::Ready);
+    parked.row_mut().set_script(script::RunState::Running);
+    parked.set_state("ingame scene 2");
     let parked = parked.with_native_status(Some(Arc::new(status)));
     let shown = draw_status_detail(&parked, "—", "lowmem");
     assert!(
@@ -680,7 +682,7 @@ fn the_passphrase_is_only_ever_read_from_stdin_never_an_argument() {
     }
 }
 
-fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
+fn startup_profile_inputs() -> (TestDir, host_play::ProfileOptions, ProfileEnvironment) {
     let (root, cache, manifest, unpack, port) = runtime_checked_fixture(274);
     let options = host_play::ProfileOptions {
         profile: Some("local-274".into()),
@@ -700,6 +702,89 @@ fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..ProfileEnvironment::default()
     };
+    (root, options, env)
+}
+
+fn profile_prepare_task(
+    generation: u64,
+    result: Result<Arc<SharedClientTemplate>, String>,
+) -> script::preparation::PreparedTask<Result<Arc<SharedClientTemplate>, String>> {
+    let result_bytes = std::mem::size_of_val(&result)
+        + match &result {
+            Ok(_) => 0,
+            Err(error) => error.capacity(),
+        };
+    let input = script::preparation::PreparationInput::new(generation, 0, 0, result_bytes).unwrap();
+    script::preparation::submit(
+        script::preparation::PreparationKind::Profile,
+        api::identity::Scope::Process,
+        input,
+        move |_| result,
+    )
+    .unwrap()
+}
+
+fn wait_for_preparation<R: Send + 'static>(task: &script::preparation::PreparedTask<R>) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !task.is_finished() {
+        assert!(
+            Instant::now() < deadline,
+            "WorkAdmission preparation did not settle"
+        );
+        thread::yield_now();
+    }
+}
+
+// Both saturation fixtures hold terminal WorkAdmission receipts. Running them
+// together would let one test release the other's "Full" condition mid-assertion.
+static ADMISSION_FIXTURE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn saturate_work_admission() -> Vec<script::preparation::PreparedTask<()>> {
+    let input = script::preparation::PreparationInput::new(1, 0, 0, 0).unwrap();
+    let mut tasks = Vec::new();
+    loop {
+        match script::preparation::submit(
+            script::preparation::PreparationKind::Profile,
+            api::identity::Scope::Process,
+            input,
+            |_| (),
+        ) {
+            Ok(task) => {
+                tasks.push(task);
+                assert!(
+                    tasks.len() <= 64,
+                    "WorkAdmission accepted more jobs than its fixed bound"
+                );
+            }
+            Err(script::preparation::PreparationError::Refused(
+                api::work::SubmissionRefusal::Full,
+            )) => break,
+            Err(error) => panic!("could not occupy WorkAdmission: {error}"),
+        }
+    }
+    for task in &tasks {
+        wait_for_preparation(task);
+    }
+    tasks
+}
+
+fn settle_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        drive_startup(state, startup);
+        if !startup.in_flight() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "panel startup did not settle through WorkAdmission"
+        );
+        thread::yield_now();
+    }
+}
+
+fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
+    let (root, options, env) = startup_profile_inputs();
     let template = options
         .resolve_with_env(None, &env)
         .unwrap()
@@ -711,41 +796,22 @@ fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
         .configure_profile_with_env(options, env)
         .unwrap();
     let generation = state.session.profile_generation();
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    sender.send(Ok(template)).unwrap();
-    let (_, progress) = progress_channel(host_play::progress::ProfileProgress::steps(
-        host_play::progress::ProfileProgressStage::LoadingGameData,
-        4,
-        4,
-    ));
-    let startup = StartupPreparation {
-        prepare: Some(ProfilePrepareJob {
-            generation,
-            receiver,
-            progress,
-        }),
-        validate: None,
-        pending_boot: Some(boot),
-        failed_generation: None,
-    };
+    state
+        .session
+        .finish_profile_preparation(generation, Ok(template));
+    assert!(state.session.profile_bound());
+    let startup = StartupPreparation::new(Some(boot));
     (state, startup, root)
 }
 
 #[test]
-fn normal_unlock_waits_for_worker_validation_then_uses_prepared_profile() {
+fn normal_unlock_waits_for_work_admission_validation_then_uses_prepared_profile() {
     let (mut state, mut startup, _root) = prepared_startup(Boot::Unlock {
         pass: "prepared-pass".into(),
     });
     drive_startup(&mut state, &mut startup);
-    let mut validation = startup.validate.take().expect("final validation worker");
-    let result = validation
-        .receiver
-        .recv_timeout(Duration::from_secs(2))
-        .expect("final validation completion");
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    sender.send(result).unwrap();
-    validation.receiver = receiver;
-    startup.validate = Some(validation);
+    let validation = startup.validate.as_ref().expect("final validation job");
+    wait_for_preparation(&validation.task);
     drive_startup(&mut state, &mut startup);
     assert!(state.session.profile_bound());
     assert!(state.session.core.vault().is_some());
@@ -759,23 +825,89 @@ fn live_boot_stays_deferred_while_final_validation_is_in_flight() {
     let (mut state, mut startup, _root) = prepared_startup(Boot::Live(LiveBoot::Smoke));
     drive_startup(&mut state, &mut startup);
     assert!(state.session.profile_bound());
-    let validation = startup.validate.take().expect("final validation worker");
+    let validation = startup.validate.take().expect("final validation job");
     assert!(state.session.profile_preparing());
     assert!(state.session.core.vault().is_none());
     assert!(state.session.core.play().is_none());
     assert!(state.session.core.slots().is_empty());
-    assert!(validation
-        .receiver
-        .recv_timeout(Duration::from_secs(2))
-        .unwrap()
-        .is_ok());
+    wait_for_preparation(&validation.task);
+    assert!(validation.task.join().unwrap().is_ok());
     assert!(matches!(validation.boot, Boot::Live(LiveBoot::Smoke)));
+}
+
+#[test]
+fn profile_selection_retries_after_work_admission_is_full() {
+    let _fixture = ADMISSION_FIXTURE.lock().unwrap();
+    let (_root, options, env) = startup_profile_inputs();
+    let mut state = PanelState::default();
+    state
+        .session
+        .configure_profile_with_env(options, env)
+        .unwrap();
+    let generation = state.session.profile_generation();
+    let mut startup = StartupPreparation::new(None);
+    let full = saturate_work_admission();
+
+    drive_startup(&mut state, &mut startup);
+    assert!(
+        startup.prepare.is_none(),
+        "Full must not start another worker"
+    );
+    assert!(
+        startup.prepare_pending.is_some(),
+        "the captured demand is retained"
+    );
+    assert!(state.session.profile_preparing());
+    assert!(state.session.error.is_none());
+    assert!(startup_progress(&startup, generation).is_some());
+
+    drop(full);
+    settle_startup(&mut state, &mut startup);
+    assert!(state.session.profile_bound());
+    assert!(state.session.error.is_none());
+    assert!(startup_progress(&startup, generation).is_none());
+}
+
+#[test]
+fn profile_validation_retries_after_work_admission_is_full() {
+    let _fixture = ADMISSION_FIXTURE.lock().unwrap();
+    let (mut state, mut startup, _root) = prepared_startup(Boot::Unlock {
+        pass: "prepared-pass".into(),
+    });
+    let generation = state.session.profile_generation();
+    let full = saturate_work_admission();
+
+    drive_startup(&mut state, &mut startup);
+    assert!(
+        startup.validate.is_none(),
+        "Full must not start another worker"
+    );
+    assert!(
+        startup.validate_pending.is_some(),
+        "the validation boot and template stay captured"
+    );
+    assert!(state.session.profile_preparing());
+    assert!(startup_progress(&startup, generation).is_some());
+
+    drop(full);
+    settle_startup(&mut state, &mut startup);
+    assert!(state.session.core.vault().is_some());
+    assert!(state.session.core.play().is_some());
+    assert!(state.session.core.slots().is_empty());
+    assert!(startup_progress(&startup, generation).is_none());
 }
 
 #[test]
 fn startup_progress_is_latest_only_and_generation_scoped() {
     use host_play::progress::{ProfileProgress, ProfileProgressStage};
 
+    let (_root, options, env) = startup_profile_inputs();
+    let mut state = PanelState::default();
+    state
+        .session
+        .configure_profile_with_env(options, env)
+        .unwrap();
+    let (generation, preparation) = state.session.profile_preparation().unwrap();
     let (observer, progress) = progress_channel(ProfileProgress::steps(
         ProfileProgressStage::CheckingGameFiles,
         0,
@@ -791,25 +923,25 @@ fn startup_progress_is_latest_only_and_generation_scoped() {
         1024,
         4096,
     ));
-    let (_sender, receiver) = std::sync::mpsc::sync_channel(1);
     let mut startup = StartupPreparation::new(None);
-    startup.prepare = Some(ProfilePrepareJob {
-        generation: 7,
-        receiver,
+    startup.prepare_pending = Some(ProfilePreparePending {
+        generation,
+        preparation: Arc::new(preparation),
+        observer,
         progress,
     });
 
-    let current = startup_progress(&startup, 7).expect("matching generation progress");
+    let current = startup_progress(&startup, generation).expect("matching generation progress");
     assert_eq!(current.phase, ProgressPhase::Preparing);
     assert_eq!(current.progress.completed, 1024);
     assert_eq!(current.progress.total, 4096);
     assert!(
-        startup_progress(&startup, 8).is_none(),
+        startup_progress(&startup, generation.wrapping_add(1)).is_none(),
         "stale work is hidden"
     );
-    startup.prepare = None;
+    startup.prepare_pending = None;
     assert!(
-        startup_progress(&startup, 7).is_none(),
+        startup_progress(&startup, generation).is_none(),
         "completion clears it"
     );
 }
@@ -837,10 +969,8 @@ fn preparation_failure_clears_progress_with_partial_session_state_absent() {
         )
         .unwrap();
     let generation = state.session.profile_generation();
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    sender
-        .send(Err("fixture preparation failed".into()))
-        .unwrap();
+    let task = profile_prepare_task(generation, Err("fixture preparation failed".into()));
+    wait_for_preparation(&task);
     let (_, progress) = progress_channel(ProfileProgress::steps(
         ProfileProgressStage::CheckingGameFiles,
         3,
@@ -849,10 +979,12 @@ fn preparation_failure_clears_progress_with_partial_session_state_absent() {
     let mut startup = StartupPreparation {
         prepare: Some(ProfilePrepareJob {
             generation,
-            receiver,
+            task,
             progress,
         }),
+        prepare_pending: None,
         validate: None,
+        validate_pending: None,
         pending_boot: Some(Boot::Unlock {
             pass: "not-used".into(),
         }),
@@ -919,19 +1051,20 @@ fn log_follow_bottom_sticks_at_end_and_releases_when_scrolled_up() {
 #[test]
 fn legacy_log_detached_is_ignored_without_losing_other_preferences() {
     let dir = TestDir::new("legacy-log-ui-state");
-    let path = dir.join("panel-ui.json");
+    let preferences = crate::test_support::scratch_service(&dir).preferences();
     std::fs::write(
-        &path,
+        preferences.path(),
         r#"{"last_focus":"alice","collapsed":{"alice":{"status":false}},"capture":false,"log_detached":true}"#,
     )
     .unwrap();
+    preferences.reload().unwrap();
 
-    let loaded = crate::ui_state::load_at(&path);
+    let loaded = crate::ui_state::load_from(&preferences);
     assert_eq!(loaded.last_focus.as_deref(), Some("alice"));
     assert!(!loaded.collapsed["alice"]["status"]);
     assert!(!loaded.capture);
 
-    crate::ui_state::save(&loaded);
+    crate::ui_state::save(&preferences, &loaded);
     let session = crate::session::Session::new();
     assert!(!session.log_window_open);
     assert_eq!(session.ui.last_focus.as_deref(), Some("alice"));
@@ -946,10 +1079,10 @@ fn edit_parameters_enabled_for_operator_bag() {
 
 #[test]
 fn loadout_combo_lists_store_names() {
-    use script::{resolve_setting_options, Loadout, LoadoutsStore, SettingDef};
+    use api::loadout::Loadout;
+    use script::{resolve_setting_options, LoadoutsStore, SettingDef};
 
-    let dir = TestDir::new("loadout-combo");
-    let mut store = LoadoutsStore::at(dir.join("loadouts.json"));
+    let mut store = LoadoutsStore::default();
     store.upsert(Loadout::new("guard"));
     store.upsert(Loadout::new("stall"));
     let def = SettingDef {
@@ -997,7 +1130,7 @@ fn hop_label_px_writes_clamp_to_8_28() {
 
 #[test]
 fn apply_only_render_selected_warns_before_unchecking() {
-    // Checking "only render selected" on is immediate, no dialog.
+    // Checking "only render focused" on is immediate, no dialog.
     assert_eq!(
         apply_only_render_selected(false, true, false),
         (true, false)
@@ -2941,6 +3074,7 @@ fn native_failure_receipt_uses_inner_scenario_identity() {
         chat: Vec::new(),
         receipt: None,
         protect_window: None,
+        random_event: None,
         scene: 2,
     };
     assert_eq!(
@@ -3812,12 +3946,14 @@ fn browse_file_card_without_desc_does_not_assert_on_endchild() {
     )
     .unwrap();
     let mut s = crate::session::Session::new();
-    s.scripts.js =
-        script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
+    s.scripts.set_js(script::JsLibrary::with_cache(
+        iso.dir.join("js-scripts.json"),
+        iso.dir.join("js-cache"),
+    ));
     s.load_js(&path);
     assert_eq!(s.error, None, "load: {:?}", s.error);
     assert_eq!(
-        s.scripts.js.cards()[0].description,
+        s.scripts.js().cards()[0].description,
         "",
         "File cards have no registry description — this is the abort path"
     );
@@ -4186,6 +4322,10 @@ enum At {
     List,
     /// The Discard / Keep editing prompt.
     SwitchPrompt,
+    /// The editor pane's scrolling body (the import's path field).
+    Editor,
+    /// A popup the window opened in its own scope.
+    Popup(&'static str),
 }
 
 /// The Profiles item `label`, whose id lives `at` (`form` is the edit
@@ -4234,6 +4374,17 @@ fn profiles_item(
                     id(super::PROFILE_EDIT_SWITCH_POPUP, profiles_id)
                 ));
                 (prompt, (*prompt).ID)
+            }
+            At::Editor => {
+                let editor = window(&format!(
+                    "Profiles/##profiles-editor_{:08X}",
+                    id("##profiles-editor", profiles_id)
+                ));
+                (editor, (*editor).ID)
+            }
+            At::Popup(popup) => {
+                let popup = window(&format!("##Popup_{:08x}", id(popup, profiles_id)));
+                (popup, (*popup).ID)
             }
         };
         (window, id(label, seed))
@@ -4559,6 +4710,71 @@ impl ProfilesUi {
         self.ctx.io_mut().add_input_character(c);
         self.frame();
         self.frame()
+    }
+
+    /// Type `text` into the text field `label` (its id lives `at`): a mouse
+    /// click on the field, then the characters as the keyboard sends them.
+    fn type_into(&mut self, at: At, label: &str, text: &str) -> Shown {
+        let (field, _) = self.item_rect(at, label);
+        self.click_at(rect_center(field));
+        assert!(self.ctx.io().want_text_input(), "{label} has the keyboard");
+        for c in text.chars() {
+            self.ctx.io_mut().add_input_character(c);
+        }
+        self.frame();
+        self.frame()
+    }
+
+    /// One frame; how far the Profiles window itself could scroll, and
+    /// whether its list and editor regions were drawn as their own windows.
+    fn window_scroll(&mut self) -> (f32, bool, bool) {
+        self.frame();
+        let found = |name: &str| {
+            let name = std::ffi::CString::new(name).unwrap();
+            // SAFETY: the context is bound by `with_bound_context` below.
+            unsafe { !dear_imgui_rs::sys::igFindWindowByName(name.as_ptr()).is_null() }
+        };
+        self.session.pump_status();
+        self.ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new(self.display_size, 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let window_pos = self.window_pos;
+        let window_size = self.window_size;
+        let shown = {
+            let ui = self.ctx.frame();
+            ui.with_bound_context(|| pin_profiles_geometry_at(window_pos, window_size));
+            super::chooser_window(ui, &mut self.session, None);
+            ui.with_bound_context(|| {
+                // SAFETY: the context is bound; the window was just drawn.
+                let profiles = unsafe {
+                    let profiles = dear_imgui_rs::sys::igFindWindowByName(c"Profiles".as_ptr());
+                    assert!(!profiles.is_null(), "Profiles was drawn");
+                    &*profiles
+                };
+                let child = |label: &str| {
+                    let id = {
+                        let label = std::ffi::CString::new(label).unwrap();
+                        // SAFETY: the context is bound.
+                        unsafe {
+                            dear_imgui_rs::sys::igGetIDWithSeed_Str(
+                                label.as_ptr(),
+                                std::ptr::null(),
+                                profiles.ID,
+                            )
+                        }
+                    };
+                    found(&format!("Profiles/{label}_{id:08X}"))
+                };
+                (
+                    profiles.ScrollMax.y,
+                    child("##profiles-list"),
+                    child("##profiles-editor"),
+                )
+            })
+        };
+        self.ctx.render();
+        shown
     }
 
     /// The main panel's banner line (hidden behind Profiles in the default
@@ -5679,7 +5895,7 @@ fn open_render_all_warning(
 
 /// "Don't show again" is disabled until "I understand" is ticked, and then
 /// does what OK does and saves the acknowledgement: the next launch applies
-/// an unchecked "only render selected" at once, with no dialog.
+/// an unchecked "only render focused" at once, with no dialog.
 #[test]
 fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
     let _guard = crate::test_support::imgui_context_guard();
@@ -5688,7 +5904,7 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
     let mut session = crate::session::Session::new();
     assert!(
         session.focus.lock().unwrap().only_render_selected,
-        "only render selected starts on"
+        "only render focused starts on"
     );
     let [understood, _ok, _cancel, dont_show] = open_render_all_warning(&mut ctx, &mut session);
 
@@ -5710,7 +5926,7 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
         "it does what OK does"
     );
     assert!(
-        crate::ui_state::load().render_all_warning_ack,
+        crate::ui_state::load(&session.preferences).render_all_warning_ack,
         "the choice is written to the preferences"
     );
 
@@ -5747,7 +5963,7 @@ fn render_all_ok_applies_for_this_launch_only() {
     assert!(!session.wall.render_all_warn_open);
     assert!(!session.focus.lock().unwrap().only_render_selected);
     assert!(!session.ui.render_all_warning_ack);
-    assert!(!crate::ui_state::load().render_all_warning_ack);
+    assert!(!crate::ui_state::load(&session.preferences).render_all_warning_ack);
 
     let mut next = crate::session::Session::new();
     assert!(next.focus.lock().unwrap().only_render_selected);
@@ -5889,17 +6105,20 @@ fn fleet_sort_is_a_full_width_drop_down_that_stores_the_pick() {
     let mut choices = Vec::new();
     for _ in 0..8 {
         choices = fleet_frame(&mut ctx, &mut session, size, rect_centre(combo), false).sort_choices;
-        if choices.len() == crate::fleet::FleetSort::ALL.len() {
+        if choices.len() == frontend_core::FleetOrder::PANEL_CHOICES.len() {
             break;
         }
     }
-    assert_eq!(choices.len(), crate::fleet::FleetSort::ALL.len());
-    assert_eq!(session.fleet_sort, crate::fleet::FleetSort::Name);
+    assert_eq!(
+        choices.len(),
+        frontend_core::FleetOrder::PANEL_CHOICES.len()
+    );
+    assert_eq!(session.fleet_sort, frontend_core::FleetOrder::Name);
     let status = rect_centre(choices[1]);
     for pressed in [false, false, true, false] {
         fleet_frame(&mut ctx, &mut session, size, status, pressed);
     }
-    assert_eq!(session.fleet_sort, crate::fleet::FleetSort::Status);
+    assert_eq!(session.fleet_sort, frontend_core::FleetOrder::Status);
 }
 
 /// The Send window opens inside the screen and, for a short list, shows every
@@ -5968,6 +6187,209 @@ fn walk_send_window_opens_on_screen_and_fits_its_list() {
                 size[1] >= display[1] * 0.5,
                 "{label}: the window is sized to show much of the list, got {}",
                 size[1]
+            );
+        }
+    }
+}
+
+// ---- Profiles: the rs2b0t import and the split editor pane ------------------
+
+/// An rs2b0t export (generic names and passwords) with one new account and
+/// one the vault already holds.
+fn write_rs2b0t_export(dir: &std::path::Path) -> PathBuf {
+    let path = dir.join("rs2b0t-profiles.json");
+    std::fs::write(
+        &path,
+        r#"{"kind":"rs2b0t-multibox-profiles","v":1,"profiles":[{"username":"importone","password":"generic-pass-1","world":2},{"username":"alice","password":"generic-pass-2"}],"tabs":[],"activeTab":"Main"}"#,
+    )
+    .unwrap();
+    path
+}
+
+/// Open the import and preview `export` through the Profiles controls.
+fn preview_rs2b0t_export(ui: &mut ProfilesUi, export: &std::path::Path) -> Shown {
+    ui.click(At::Window, "Import from rs2b0t…");
+    ui.type_into(
+        At::Editor,
+        "##rs2b0t-import-path",
+        &export.display().to_string(),
+    );
+    ui.click(At::Window, "Preview")
+}
+
+/// The import runs path → preview → Import → report → delete through the
+/// Profiles window's own controls: the preview writes nothing, Import
+/// writes the new account and keeps the existing one (Skip), and the
+/// export file goes only through the confirm.
+#[test]
+fn the_profiles_import_runs_from_its_path_to_deleting_the_export() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new("profiles-import-flow", &[("alice", "apass", 42)]);
+    let export = write_rs2b0t_export(&ui.dir);
+    let preview = preview_rs2b0t_export(&mut ui, &export);
+    assert_eq!(
+        ui.session.profile_import.stage(),
+        frontend_core::rs2b0t_import::Stage::Preview,
+        "{}",
+        preview.text
+    );
+    assert!(preview.has("importone"), "{}", preview.text);
+    assert_eq!(ui.disk(), [row("alice", 42, "apass")], "the preview wrote");
+
+    ui.click(At::Window, "Import");
+    ui.finish_writes();
+    ui.frame();
+    let report = ui.frame();
+    let disk = ui.disk();
+    assert_eq!(disk.len(), 2, "{disk:?}");
+    assert_eq!(disk[0], row("alice", 42, "apass"), "Skip kept alice");
+    assert_eq!(
+        (disk[1].0.as_str(), disk[1].2.as_str()),
+        ("importone", "generic-pass-1")
+    );
+    assert!(
+        !preview.has("generic-pass") && !report.has("generic-pass"),
+        "a password showed"
+    );
+    assert!(export.exists(), "deleted without asking");
+
+    ui.click(At::Window, "Delete export file…");
+    ui.click(At::Popup(super::IMPORT_DELETE_POPUP), "I understand");
+    ui.click(At::Popup(super::IMPORT_DELETE_POPUP), "Delete");
+    assert!(!export.exists(), "the confirmed delete");
+    ui.click(At::Window, "Done##rs2b0t-import");
+    assert!(!ui.session.profile_import_open);
+    assert!(ui.session.profile_import.is_fresh());
+}
+
+/// Import over a form with unsaved edits asks Discard / Keep editing
+/// first; Keep editing stays on the form, Discard opens the import.
+#[test]
+fn opening_the_import_over_unsaved_edits_asks_first() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new("profiles-import-dirty", &[("alice", "apass", 42)]);
+    ui.click(At::List, "Edit##edit-alice");
+    ui.type_char('x');
+    assert!(ui.session.edit_dirty());
+    ui.click(At::Window, "Import from rs2b0t…");
+    assert!(ui.session.pending_edit_switch.is_some(), "the prompt asks");
+    assert!(!ui.session.profile_import_open);
+
+    let kept = ui.click(At::SwitchPrompt, "Keep editing");
+    assert!(kept.has("Editing alice"), "{}", kept.text);
+    assert!(!ui.session.profile_import_open);
+    assert!(ui.session.edit_dirty(), "the draft stays");
+
+    ui.click(At::Window, "Import from rs2b0t…");
+    let discarded = ui.click(At::SwitchPrompt, "Discard");
+    assert!(ui.session.profile_import_open);
+    assert_eq!(ui.session.chooser_edit, None);
+    assert!(!discarded.has("Editing alice"), "{}", discarded.text);
+
+    // A clean form gives the pane to the import at once.
+    ui.click(At::Window, "Cancel##rs2b0t-import");
+    ui.click(At::List, "Edit##edit-alice");
+    ui.click(At::Window, "Import from rs2b0t…");
+    assert!(ui.session.pending_edit_switch.is_none());
+    assert!(ui.session.profile_import_open);
+    assert_eq!(ui.session.chooser_edit, None);
+}
+
+/// Edit over an import preview drops the preview, which wrote nothing.
+#[test]
+fn opening_an_edit_drops_an_import_preview() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new("profiles-import-edit", &[("alice", "apass", 42)]);
+    let export = write_rs2b0t_export(&ui.dir);
+    preview_rs2b0t_export(&mut ui, &export);
+    assert_eq!(
+        ui.session.profile_import.stage(),
+        frontend_core::rs2b0t_import::Stage::Preview
+    );
+    let editing = ui.click(At::List, "Edit##edit-alice");
+    assert!(editing.has("Editing alice"), "{}", editing.text);
+    assert!(!ui.session.profile_import_open);
+    assert!(
+        ui.session.profile_import.is_fresh(),
+        "the preview is dropped"
+    );
+    assert_eq!(ui.disk(), [row("alice", 42, "apass")]);
+}
+
+/// While the import's writes are being saved the editor pane keeps its
+/// report: Edit and New profile wait, and work once the writes settle.
+#[test]
+fn an_import_being_saved_keeps_the_editor_pane() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new("profiles-import-writing", &[("alice", "apass", 42)]);
+    let export = write_rs2b0t_export(&ui.dir);
+    preview_rs2b0t_export(&mut ui, &export);
+    let gate = ui.session.core.write_gate();
+    let hold = gate.lock().unwrap();
+    ui.click(At::Window, "Import");
+    assert!(ui.session.import_writing());
+    ui.click(At::List, "Edit##edit-alice");
+    ui.click(At::Window, "New profile");
+    ui.session.begin_edit_profile(Some("alice"));
+    assert!(ui.session.profile_import_open, "the report stays");
+    assert_eq!(ui.session.chooser_edit, None);
+    drop(hold);
+    ui.finish_writes();
+    ui.frame();
+    ui.frame();
+    assert!(!ui.session.import_writing());
+    let editing = ui.click(At::List, "Edit##edit-alice");
+    assert!(editing.has("Editing alice"), "{}", editing.text);
+    assert!(!ui.session.profile_import_open);
+}
+
+/// Docked at 330 px the editor pane sits under the list; in a wide window
+/// beside it. Either way the window itself never scrolls (the list and the
+/// editor pane each scroll on their own), and with a long list Save and
+/// Close stay wholly in view.
+#[test]
+fn profiles_list_and_editor_split_by_width_and_scroll_on_their_own() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let names: Vec<String> = (0..40).map(|i| format!("prof{i:02}")).collect();
+    let profiles: Vec<(&str, &str, i32)> = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| (name.as_str(), "pass", 100 + i as i32))
+        .collect();
+    for (label, size, beside) in [
+        ("profiles-split-docked", [PANEL_WIDTH, 580.0], false),
+        ("profiles-split-wide", [700.0, 580.0], true),
+    ] {
+        let mut ui = ProfilesUi::with_geometry(label, &profiles, [1008.0, 580.0], [0.0, 0.0], size);
+        ui.click(At::List, "Edit##edit-prof00");
+        let (scroll, list, editor) = ui.window_scroll();
+        assert_eq!(scroll, 0.0, "{label}: the window scrolls");
+        assert!(list && editor, "{label}: list {list}, editor {editor}");
+        let (edit, _) = ui.item_rect(At::List, "Edit##edit-prof00");
+        let (save, _) = ui.item_rect(At::Form, "Save");
+        if beside {
+            assert!(
+                save[0][0] >= edit[1][0],
+                "{label}: Save {save:?}, Edit {edit:?}"
+            );
+        } else {
+            assert!(
+                save[0][1] >= edit[1][1],
+                "{label}: Save {save:?}, Edit {edit:?}"
+            );
+        }
+        for (at, item) in [
+            (At::Form, "Save"),
+            (At::Form, "Cancel"),
+            (At::Window, "Close"),
+        ] {
+            let (rect, visible) = ui.item_rect(at, item);
+            assert!(
+                rect[0][0] >= visible[0][0]
+                    && rect[0][1] >= visible[0][1]
+                    && rect[1][0] <= visible[1][0]
+                    && rect[1][1] <= visible[1][1],
+                "{label}: {item} at {rect:?} is not wholly in {visible:?}"
             );
         }
     }

@@ -228,6 +228,7 @@ mod tests {
                 Arc::new(bag),
                 selected,
                 Arc::default(),
+                None,
             )
         })
         .unwrap()

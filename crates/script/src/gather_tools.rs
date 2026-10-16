@@ -1,10 +1,9 @@
 //! Native gather-tool selection over the `api::gather_tools` rows.
 //!
 //! Pickaxe use is gated by the mining `levelrequire` row; axes have no
-//! woodcutting use gate. Bronze is the tutorial wield path with no Attack
-//! gate and unknown names cannot wield. The identity/use/wield rows stay in
-//! `api::gather_tools` as selected-revision facts — selection policy lives
-//! here, not in the JS shim.
+//! woodcutting use gate. The identity/use/wield rows stay in `api::gather_tools`
+//! as selected-revision facts; the `Tools` compat surface defaults unknown
+//! attack levels to 1, while selection policy lives here rather than in JS.
 //!
 //! The rs2b0t `Tools` exports that take caller callbacks (`bestAxe`,
 //! `bestPickaxe`, …) are one native call each (`load::tools_v8`): that helper
@@ -101,23 +100,20 @@ pub fn best_axe(level: i32, mut available: impl FnMut(&str) -> bool) -> Option<&
     ))
 }
 
-/// The Attack gate for an exact tool name: `None` for an unknown name,
-/// `Some(None)` for a tool with no wield gate (bronze), else the level.
-pub fn wield_gate(name: &str) -> Option<Option<i32>> {
-    let name = name.trim();
-    AXES.iter()
-        .chain(PICKAXES)
-        .find(|tool| tool.name == name)
-        .map(|tool| tool.wield_attack)
+/// Attack requirement from the frozen `Tools.toolAttackLevel` table.
+/// Matching is ASCII-case-insensitive; unknown tools default to level 1.
+pub fn tool_attack_level(name: &str) -> i32 {
+    PICKAXES
+        .iter()
+        .chain(AXES)
+        .find(|tool| tool.name.eq_ignore_ascii_case(name))
+        .and_then(|tool| tool.wield_attack)
+        .unwrap_or(1)
 }
 
-/// Unknown names are unavailable. Bronze tutorial path has no Attack gate.
+/// Frozen `canWieldTool`: compare Attack against `toolAttackLevel`.
 pub fn can_wield_tool(name: &str, attack: i32) -> bool {
-    match wield_gate(name) {
-        None => false,
-        Some(None) => true,
-        Some(Some(need)) => attack >= need,
-    }
+    attack >= tool_attack_level(name)
 }
 
 #[cfg(test)]
@@ -195,17 +191,18 @@ mod tests {
     }
 
     #[test]
-    fn can_wield_is_attack_gate_and_unknown_is_unavailable() {
+    fn can_wield_uses_case_insensitive_attack_level_with_default() {
         assert!(!can_wield_tool("Steel pickaxe", 1));
         assert!(can_wield_tool("Steel pickaxe", 5));
         assert!(!can_wield_tool("Steel axe", 1));
         assert!(can_wield_tool("Steel axe", 5));
-        assert!(can_wield_tool("Bronze pickaxe", 0));
-        assert!(can_wield_tool("Bronze axe", 0));
+        assert!(!can_wield_tool("Bronze pickaxe", 0));
+        assert!(can_wield_tool("Bronze pickaxe", 1));
         assert!(can_wield_tool("Black axe", 10));
         assert!(!can_wield_tool("Black axe", 9));
-        assert!(!can_wield_tool("Dragon pickaxe", 99));
-        assert!(!can_wield_tool("", 99));
-        assert!(!can_wield_tool("steel pickaxe", 99));
+        assert_eq!(tool_attack_level("steel pickaxe"), 5);
+        assert_eq!(tool_attack_level("Dragon pickaxe"), 1);
+        assert!(can_wield_tool("Dragon pickaxe", 1));
+        assert!(!can_wield_tool("", 0));
     }
 }

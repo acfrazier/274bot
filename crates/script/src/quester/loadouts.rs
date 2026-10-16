@@ -1,5 +1,7 @@
 //! Read-only operator/Path loadout overlay and conservative owned-tier fills.
-use crate::loadouts_store::Loadout;
+//! The operator rows come from the slot's local-state lease
+//! ([`crate::local_state::OperatorLoadouts`]); nothing here opens a store.
+use api::loadout::Loadout;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -29,11 +31,6 @@ impl<'a> LoadoutRef<'a> {
 impl LoadoutOverlay {
     pub fn new(store: Arc<[Loadout]>, compiled: Arc<[Loadout]>) -> Self {
         Self { store, compiled }
-    }
-
-    pub fn from_default_store(compiled: Arc<[Loadout]>) -> Self {
-        let store = crate::loadouts_store::LoadoutsStore::with_default_path().snapshot();
-        Self::new(Arc::from(store), compiled)
     }
 
     /// Resolve an exact case-sensitive name across operator and compiled rows,

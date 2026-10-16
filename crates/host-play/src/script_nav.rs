@@ -99,7 +99,8 @@ impl ScriptRouteExclusions {
 pub(crate) struct NavBot {
     /// Shared session globals, attached before a production slot starts.
     pub(crate) walk_globals: Option<Arc<Mutex<super::WalkGlobals>>>,
-    pub(crate) walk_globals_store: Option<Arc<std::path::PathBuf>>,
+    /// The shared preferences each admission reads the globals from.
+    pub(crate) walk_globals_store: Option<super::local_state::Preferences>,
     /// The compiled instance's effective Start/config revision, never a draft.
     /// `None` identifies isolate walks, which keep their existing option wiring.
     pub(crate) native_permissions: Option<script::native::WalkPermissions>,
@@ -1785,8 +1786,9 @@ fn spawn_route_worker(
                     let (admitted, _) = pending.request.calculate_admitted();
                     let route_ticks = match &admitted.outcome {
                         RouteOutcome::Routed(route) | RouteOutcome::BankSession { route, .. } => {
-                            script::combat::risk::RoutePath::new(route)
+                            nav::producer::route_view(&*pending.request.world, route)
                                 .ok()
+                                .and_then(|view| script::combat::risk::RoutePath::new(view).ok())
                                 .and_then(|path| u32::try_from(path.ticks()).ok())
                                 .unwrap_or(0)
                         }
@@ -2580,6 +2582,29 @@ impl NavBot {
         }
         use api::selected::Truth;
         let end = match outcome {
+            nav::traveller::TravelOutcome::Stalled {
+                at,
+                aiming,
+                why,
+                tries,
+            } => Some(script::native::WalkEnd::Stalled(Arc::new(
+                script::native::WalkStall {
+                    at: *at,
+                    aiming: *aiming,
+                    why: match why {
+                        nav::traveller::HopFailure::Expired => {
+                            script::native::WalkStallReason::Expired
+                        }
+                        nav::traveller::HopFailure::Dropped => {
+                            script::native::WalkStallReason::Dropped
+                        }
+                        nav::traveller::HopFailure::EndBlocked => {
+                            script::native::WalkStallReason::EndBlocked
+                        }
+                    },
+                    tries: *tries,
+                },
+            ))),
             nav::traveller::TravelOutcome::Refused { .. } => Some(script::native::WalkEnd::Refused),
             nav::traveller::TravelOutcome::Blocked { .. } => Some(script::native::WalkEnd::Blocked),
             nav::traveller::TravelOutcome::EvidenceUnproven {
@@ -2600,8 +2625,10 @@ impl NavBot {
             .as_ref()
             .is_some_and(|owner| owner.live() && owner.request_id().get() == self.walk_request_id)
         {
-            self.walk_outcome_detail =
-                Some(Arc::from(format!("native follow failed: {outcome:?}")));
+            self.walk_outcome_detail = match outcome {
+                nav::traveller::TravelOutcome::Stalled { .. } => None,
+                _ => Some(Arc::from(format!("native follow failed: {outcome:?}"))),
+            };
         }
     }
 
@@ -3150,6 +3177,10 @@ fn end_route_follow(nav: &mut NavBot) {
         nav.route_basis = None;
     }
 }
+
+#[cfg(test)]
+#[path = "script_nav_facade_tests.rs"]
+mod facade_tests;
 
 #[cfg(test)]
 mod diagnostic_tests {

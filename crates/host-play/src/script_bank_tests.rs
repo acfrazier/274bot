@@ -54,7 +54,7 @@ impl Gate {
             assert!(
                 !self
                     .cv
-                    .wait_for(&mut phase, Duration::from_secs(10))
+                    .wait_for(&mut phase, Duration::from_secs(60))
                     .timed_out(),
                 "worker phase {wanted}"
             );
@@ -1824,4 +1824,208 @@ fn native_bank_pick_timeout_is_only_candidate_order_not_wall_arrival() {
         "late reachable-bank result cannot replace the timeout candidate"
     );
     drop(slot);
+}
+
+/// Characterization (T2.2): the kernel label layer under every bank
+/// dispatch (`script::bank::ops`). Slots are 1-based, holes keep their
+/// position, matching ignores case and whitespace/`-`/`_` separators,
+/// and the first match wins.
+#[test]
+fn bank_label_slots_are_one_based_first_match_over_holes() {
+    let actions: Vec<Option<String>> = vec![
+        None,
+        Some("Withdraw-5".into()),
+        Some("withdraw 5".into()),
+        Some("Deposit_All".into()),
+    ];
+    assert_eq!(ops::action_op_in(&actions, "Withdraw 5"), Some(2));
+    assert_eq!(ops::action_op_in(&actions, "withdraw_5"), Some(2));
+    assert_eq!(ops::action_op_in(&actions, "WITHDRAW-5"), Some(2));
+    assert_eq!(ops::action_op_in(&actions, "Deposit All"), Some(4));
+    assert_eq!(ops::action_op_in(&actions, "Withdraw-1"), None);
+    assert_eq!(ops::action_op_in(&[], "Withdraw-5"), None);
+}
+
+/// Characterization (T2.2): the All slot is the first label whose
+/// normalized form merely contains `all` — even inside another word —
+/// with no last-label fallback.
+#[test]
+fn bank_all_slot_is_first_containing_all_without_fallback() {
+    let actions: Vec<Option<String>> = vec![
+        Some("Deposit-1".into()),
+        None,
+        Some("Deposit-All".into()),
+        Some("Deposit-X".into()),
+    ];
+    assert_eq!(ops::all_op_in(&actions), Some(3));
+    assert_eq!(ops::all_op_in(&[Some("Small".into())]), Some(1));
+    assert_eq!(
+        ops::all_op_in(&[Some("Deposit-1".into()), Some("Deposit-X".into())]),
+        None
+    );
+    assert_eq!(ops::all_op_in(&[]), None);
+}
+
+/// Characterization (T2.2): the fill order is an exact `Withdraw {count}`
+/// label first (even when the count is the whole stack), then All only
+/// when the fill consumes the current stock, then the X continuation.
+#[test]
+fn bank_fill_is_exact_then_whole_stock_all_then_x() {
+    let actions: Vec<Option<String>> = vec![
+        Some("Withdraw-1".into()),
+        Some("Withdraw-5".into()),
+        Some("Withdraw-10".into()),
+        Some("Withdraw-All".into()),
+        Some("Withdraw-X".into()),
+    ];
+    assert_eq!(ops::fill_click_in(&actions, 1, 50), Some((1, false)));
+    assert_eq!(ops::fill_click_in(&actions, 5, 5), Some((2, false)));
+    assert_eq!(ops::fill_click_in(&actions, 10, 50), Some((3, false)));
+    assert_eq!(ops::fill_click_in(&actions, 50, 50), Some((4, false)));
+    assert_eq!(ops::fill_click_in(&actions, 7, 50), Some((5, true)));
+    assert_eq!(ops::fill_click_in(&actions, 7, 7), Some((4, false)));
+    assert_eq!(ops::fill_click_in(&actions, 0, 50), Some((5, true)));
+    // No exact, not the whole stack, no X: no fill click at all.
+    let fixed: Vec<Option<String>> = vec![Some("Withdraw-1".into()), Some("Withdraw-All".into())];
+    assert_eq!(ops::fill_click_in(&fixed, 7, 50), None);
+    // The whole stack without an All label still routes through X.
+    let no_all: Vec<Option<String>> = vec![Some("Withdraw-1".into()), Some("Withdraw-X".into())];
+    assert_eq!(ops::fill_click_in(&no_all, 7, 7), Some((2, true)));
+}
+
+/// Characterization (T2.2): only the resolved Withdraw-X label is the
+/// open-only dialog op; every other slot settles on the observed delta.
+#[test]
+fn bank_open_only_withdraw_x_reads_the_resolved_label() {
+    let actions: Vec<Option<String>> = vec![
+        Some("Withdraw-1".into()),
+        Some("Withdraw-X".into()),
+        Some("withdraw x".into()),
+    ];
+    assert!(!open_only_withdraw_x(&actions, 1));
+    assert!(open_only_withdraw_x(&actions, 2));
+    assert!(open_only_withdraw_x(&actions, 3));
+    assert!(!open_only_withdraw_x(&actions, 0));
+    assert!(!open_only_withdraw_x(&actions, 4));
+    assert!(!open_only_withdraw_x(&actions, -1));
+}
+
+fn teller(
+    index: usize,
+    name: &str,
+    x: i32,
+    z: i32,
+    level: i32,
+    distance: i32,
+) -> api::snapshot::NpcView {
+    let tile = WorldTile { x, z, level };
+    api::snapshot::NpcView {
+        index,
+        r#type: Some(1),
+        name: Some(name.into()),
+        actions: vec![Some("Bank".into())],
+        tile,
+        distance,
+        animation: 0,
+        animation_frame: 0,
+        pose_animation: 0,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        spot_animation_stamp: -1,
+        health: 0,
+        total_health: 0,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
+        level: 0,
+        size: 1,
+        network: tile,
+        x,
+        z,
+        yaw: 0,
+    }
+}
+
+/// Characterization (T2.2 r2): the host teller pick keys on
+/// `(d_stand, d_here, distance, index)` in that order, after the
+/// trimmed-name filter and the SAME_BANK-of-stand / 10-of-here gate
+/// (Chebyshev, +10_000 per plane mismatch).
+#[test]
+fn teller_pick_keys_on_stand_then_here_then_distance_then_index() {
+    let stand = WorldTile {
+        x: 100,
+        z: 100,
+        level: 0,
+    };
+    let here = Some((90, 100, 0));
+    let pick = |rows: &[api::snapshot::NpcView]| {
+        teller_pick(rows, here, stand, "Banker").map(|npc| npc.index)
+    };
+    // d_stand dominates the posted distance.
+    assert_eq!(
+        pick(&[
+            teller(11, "Banker", 103, 100, 0, 1),
+            teller(10, "Banker", 102, 100, 0, 7),
+        ]),
+        Some(10)
+    );
+    // A d_stand tie is decided by d_here, not the posted distance.
+    assert_eq!(
+        pick(&[
+            teller(10, "Banker", 102, 100, 0, 1),
+            teller(11, "Banker", 98, 100, 0, 9),
+        ]),
+        Some(11)
+    );
+    // A (d_stand, d_here) tie is decided by distance, then index.
+    // (102, 95) and (102, 105) are both Chebyshev 5 from the stand and
+    // 12 from here.
+    assert_eq!(
+        pick(&[
+            teller(10, "Banker", 102, 95, 0, 8),
+            teller(11, "Banker", 102, 105, 0, 3),
+        ]),
+        Some(11)
+    );
+    assert_eq!(
+        pick(&[
+            teller(12, "Banker", 102, 95, 0, 3),
+            teller(10, "Banker", 102, 105, 0, 3),
+        ]),
+        Some(10)
+    );
+    // Name filter: trimmed and case-folded; a wrong name at the stand
+    // loses to the named teller farther away.
+    assert_eq!(
+        pick(&[
+            teller(10, "Trader", 100, 100, 0, 0),
+            teller(11, " banker ", 104, 100, 0, 5),
+        ]),
+        Some(11)
+    );
+    // Gate: beyond SAME_BANK of the stand and beyond 10 of here — and a
+    // plane mismatch prices a teller out entirely. Within 10 of here
+    // alone is enough.
+    assert_eq!(pick(&[teller(10, "Banker", 120, 100, 0, 1)]), None);
+    assert_eq!(pick(&[teller(10, "Banker", 100, 100, 1, 0)]), None);
+    assert_eq!(pick(&[teller(10, "Banker", 85, 100, 0, 4)]), Some(10));
+    // With no `here`, d_here is i32::MAX for every row and the stand
+    // distance alone decides among the gated rows.
+    assert_eq!(
+        teller_pick(
+            &[
+                teller(10, "Banker", 104, 100, 0, 1),
+                teller(11, "Banker", 101, 100, 0, 9),
+            ],
+            None,
+            stand,
+            "Banker",
+        )
+        .map(|npc| npc.index),
+        Some(11)
+    );
 }

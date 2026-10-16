@@ -13,6 +13,7 @@ pub mod external_loader;
 pub mod fd_limit;
 pub mod live_gate;
 pub mod live_start;
+pub mod local_state;
 pub mod login_readiness;
 pub mod map_bind;
 pub mod map_cache;
@@ -67,6 +68,8 @@ pub use host::{RandomClaim, RandomStatus};
 #[cfg(test)]
 use parking_lot::Mutex as QueueMutex;
 mod debug_replies;
+#[cfg(test)]
+mod gatherer_recovery_live;
 mod instance_lock;
 #[cfg(any(test, feature = "live-probe"))]
 mod manual_click_live_probe;
@@ -102,7 +105,7 @@ pub use walk_arm::{
 };
 pub use walk_permissions::{DangerLevel, WalkGlobals, NET_AVAILABLE};
 mod play_scripts;
-pub use play_scripts::{ScriptNavPaint, ScriptStartHandle};
+pub use play_scripts::{PreparedScriptConfig, ScriptNavPaint, ScriptStartHandle};
 mod play_slots;
 #[cfg(test)]
 use api::snapshot::{GameSnapshot, WorldTile};
@@ -135,9 +138,9 @@ pub use play_bootstrap::{
 };
 #[cfg(test)]
 use play_login::{
-    apply_queue_wait, configure_slot_world, drop_queue_place, enqueue_queue_place,
-    granted_permit_may_start_login, granted_permit_world_is_current, login_retry_wait,
-    on_login_success, permit_wait_cancelled, plan_login_retry, publish_login_latched_from_arm,
+    apply_queue_wait, capture_login_authorization, configure_slot_world, drop_queue_place,
+    enqueue_queue_place, granted_permit_world_is_current, login_retry_wait, on_login_success,
+    permit_wait_cancelled, plan_login_retry, publish_login_latched_from_arm,
     refresh_slot_world_preference, server_hold, should_handshake, tick_flags, wait_for_permit,
     wait_for_transfer_response, GrantedReservation, PermitWait, WorldChoice,
     UNEXPECTED_LOGOUT_THRESHOLD, UNEXPECTED_LOGOUT_WINDOW,
@@ -166,9 +169,7 @@ use play_wires::dispatch_wires;
 pub use play_wires::{CheatRefusal, WireCmd};
 pub use resource_view::{
     background_bot_count, background_bots_ack_error, background_bots_acked,
-    clear_background_bots_ack_error, panel_ui_path, panel_ui_value, panel_ui_value_at,
-    persist_background_bots_ack, persist_panel_ui_value, persist_panel_ui_value_at,
-    update_panel_ui_at, LiveSlot,
+    clear_background_bots_ack_error, persist_background_bots_ack, LiveSlot,
 };
 pub use rss::{count_tcp_to, current_resident_bytes, parse_lsof_established, sample_process};
 pub use scatter::{scatter_tile_for, tele_args};
@@ -291,7 +292,9 @@ pub struct Play {
     pause_script_on_manual_walk_abort: Arc<std::sync::atomic::AtomicBool>,
     /// One coherent global permission snapshot, shared by every slot admission.
     walk_globals: Arc<Mutex<WalkGlobals>>,
-    walk_globals_store: Option<Arc<std::path::PathBuf>>,
+    /// The shared preferences the globals are read from at each admission,
+    /// when a frontend bound them.
+    walk_globals_store: Option<local_state::Preferences>,
     /// Host-scope nav world (collision + transport graph) baked from the
     /// pack at construction (see [`default_pack_path`]); `None` when no
     /// pack loads, and `ctx.walk` then refuses to arm.
@@ -303,6 +306,10 @@ pub struct Play {
     /// Host-capacity registry: each slot thread registers its own record
     /// once and writes only that record per service.
     capacity: Arc<host::CapacityMonitor>,
+    /// The process local-state service and the identities this Play's
+    /// slots read and write under (T5.2); `None` for the legacy direct
+    /// connection, which has no launch profile.
+    local_state: Option<Arc<local_state::StateComposition>>,
 }
 
 impl Play {
@@ -316,20 +323,45 @@ impl Play {
         *self.walk_globals.lock().unwrap() = globals;
     }
 
-    /// Bind the durable store for cross-process rereads at each admission.
-    pub fn set_walk_globals_store(&mut self, path: std::path::PathBuf) {
-        let path = Arc::new(path);
+    /// Bind the shared preferences every admission reads the globals from,
+    /// so a write by either frontend (or a peer process) applies.
+    pub fn set_walk_globals_store(&mut self, preferences: local_state::Preferences) {
         for bot in self.navs.lock().unwrap().values_mut() {
-            bot.walk_globals_store = Some(Arc::clone(&path));
+            bot.walk_globals_store = Some(preferences.clone());
         }
-        self.walk_globals_store = Some(path);
+        self.walk_globals_store = Some(preferences);
     }
 
     pub fn walk_globals(&self) -> WalkGlobals {
         self.walk_globals_store.as_ref().map_or_else(
             || *self.walk_globals.lock().unwrap(),
-            |path| WalkGlobals::read_at(path).unwrap_or_else(|_| WalkGlobals::fail_closed()),
+            |preferences| {
+                WalkGlobals::read(preferences).unwrap_or_else(|_| WalkGlobals::fail_closed())
+            },
         )
+    }
+
+    /// Use the process local-state service the composition root opened
+    /// (a frontend's), in place of the one this Play opened for itself, so
+    /// one process has one writer for its state files. Before any slot is
+    /// spawned; the legacy direct connection opens no state and is left
+    /// as it is.
+    pub fn adopt_local_state(&mut self, service: Arc<local_state::LocalStateService>) {
+        if let Some(composition) = self.local_state.as_mut() {
+            if Arc::ptr_eq(composition.service(), &service) {
+                return;
+            }
+            if composition.service().root() != service.root() {
+                api::host_log!(
+                    api::hostlog::Category::Lifecycle,
+                    api::hostlog::Level::Warn,
+                    "local state: the composition's root {} replaces this Play's {}",
+                    service.root().path().display(),
+                    composition.service().root().path().display()
+                );
+            }
+            *composition = Arc::new(composition.with_service(service));
+        }
     }
 
     /// Changes only owner pausing, never movement detection or cancellation.
@@ -487,14 +519,19 @@ impl Play {
         let Some(arm) = self.arms.get(name) else {
             return;
         };
-        let mut q = self.queue.lock();
-        q.prefer_owner(arm.queue_owner);
-        publish_queue_place(
-            &q,
-            &mut lock_statuses(&self.statuses),
-            name,
-            arm.queue_owner,
-        );
+        let event = {
+            let mut q = self.queue.lock();
+            q.prefer_owner(arm.queue_owner);
+            publish_queue_place(
+                &q,
+                &mut lock_statuses(&self.statuses),
+                name,
+                arm.queue_owner,
+            )
+        };
+        if let Some(event) = event {
+            arm.publish_queued(event);
+        }
     }
 
     /// Snapshot of the worker-owned login FIFO (front first).
@@ -564,6 +601,8 @@ mod bank_memory_live;
 mod bank_npc_live;
 #[cfg(test)]
 mod gather_bait_live;
+#[cfg(test)]
+mod gather_held_live;
 #[cfg(test)]
 mod gather_return_live;
 #[cfg(test)]

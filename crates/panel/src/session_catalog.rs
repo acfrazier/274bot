@@ -27,9 +27,8 @@ impl Session {
     /// exactly once per session. `$RS2B0T` (or the persisted root path) is
     /// read only here — never in [`Session::new`] — so boot and unit tests
     /// that merely construct a `Session` do not parse a real catalog or
-    /// rewrite `~/.274bot/rs2b0t-path`. No V8 here: sources are read and
-    /// classified only; the isolate is spawned on Start. Transpile is
-    /// [`JsLibrary::ensure_js`] on first click / Start / Transpile all.
+    /// rewrite `~/.274bot/rs2b0t-path`. Source scanning and card preparation
+    /// use WorkAdmission rather than the panel frame.
     pub fn fill_rs2b0t_cards_once(&mut self) {
         if self.scripts.catalog_filled() {
             return;
@@ -44,7 +43,7 @@ impl Session {
         script::default_rs2b0t_import_file()
     }
 
-    fn rs2b0t_path_file(&self) -> PathBuf {
+    pub(crate) fn rs2b0t_path_file(&self) -> PathBuf {
         script::default_rs2b0t_path_file()
     }
 
@@ -62,12 +61,7 @@ impl Session {
             }
         };
         if let Some(root) = selected {
-            let path_file = self.rs2b0t_path_file();
-            if let Err(e) = self.scripts.register_catalog(&root, &path_file) {
-                if host::debug_enabled() {
-                    eprintln!("[panel] $RS2B0T registry: {e}");
-                }
-            }
+            self.scripts.fill_catalog_once(Some(&root));
             return;
         }
         self.scripts.mark_catalog_filled();
@@ -97,23 +91,17 @@ impl Session {
     }
 
     /// Import catalog cards from a clone root that contains
-    /// `src/bot/scripts/index.ts`. Persists `rs2b0t-path` and clears defer.
-    pub fn import_rs2b0t_catalog(&mut self, root: &Path) -> Result<usize, String> {
+    /// `src/bot/scripts/index.ts`. Preparation runs through WorkAdmission;
+    /// the picker closes and the root is persisted when the result settles.
+    pub fn import_rs2b0t_catalog(&mut self, root: &Path) -> Result<(), String> {
         if !crate::script_picker::rs2b0t_root_has_index(root) {
             return Err(format!(
                 "no catalog at {}",
                 script::registry_index_path(root).display()
             ));
         }
-        let path_file = self.rs2b0t_path_file();
-        let n = self.scripts.register_catalog(root, &path_file)?;
-        let _ = script::clear_rs2b0t_import_at(&self.rs2b0t_import_file());
-        self.ui.script_catalog_last_dir = Some(root.to_path_buf());
-        if self.persist_ui {
-            crate::ui_state::save(&self.ui);
-        }
-        self.rs2b0t_catalog_open = false;
-        Ok(n)
+        self.scripts
+            .request_catalog_import(root, &self.rs2b0t_path_file())
     }
 
     /// The card currently at the front of the warmup queue, if any.
@@ -140,10 +128,10 @@ impl Session {
         self.select_script_selection(script::ScriptSel::Loaded(source, name.into()));
     }
 
-    /// Operator opted into warming every unwarmed card. Still one
-    /// `ensure_js` per armed frame — never a catalog-wide click.
+    /// Operator opted into warming every unwarmed card. Each card is
+    /// prepared through the shared WorkAdmission worker.
     pub fn queue_transpile_all(&mut self) {
-        let need = self.scripts.js.cards_needing_transpile();
+        let need = self.scripts.js().cards_needing_transpile();
         if need.is_empty() {
             return;
         }
@@ -160,23 +148,59 @@ impl Session {
         }
     }
 
-    /// First call after enqueue only arms (so the frame can paint
-    /// `transpiling…`). The next call runs one `ensure_js`, then arms
-    /// again if the queue still has work.
+    fn settle_catalog_import(&mut self) {
+        let Some((root, result)) = self.scripts.take_catalog_import_result() else {
+            return;
+        };
+        match result {
+            Ok(_) => {
+                let _ = script::clear_rs2b0t_import_at(&self.rs2b0t_import_file());
+                self.ui.script_catalog_last_dir = Some(root);
+                if self.persist_ui {
+                    crate::ui_state::save(&self.preferences, &self.ui);
+                }
+                self.rs2b0t_catalog_open = false;
+                self.error = None;
+            }
+            Err(error) => self.error = Some(error),
+        }
+    }
+
+    /// Advance one queue request and collect any completed preparation.
+    /// Submission Full is retained by `Scripts` and retried from its frame
+    /// poll; no card compilation runs on this UI thread.
     pub fn pump_script_transpile(&mut self) {
-        if self.transpile_armed {
-            if let Some((source, name)) = self.transpile_queue.pop_front() {
-                match self.scripts.js.ensure_js(source, &name) {
+        self.settle_catalog_import();
+        if let Some((source, name, result)) = self.scripts.take_transpile_result() {
+            if let Some(index) =
+                self.transpile_queue
+                    .iter()
+                    .position(|(queued_source, queued_name)| {
+                        *queued_source == source && queued_name == &name
+                    })
+            {
+                self.transpile_queue.remove(index);
+                match result {
                     Ok(()) => {
-                        if self.scripts.js.load_failures().is_empty() {
+                        if self.scripts.js().load_failures().is_empty() {
                             self.error = None;
                         }
                         self.transpile_done = self.transpile_done.saturating_add(1);
                     }
-                    Err(e) => self.error = Some(format!("transpile {name}: {e}")),
+                    Err(error) => self.error = Some(format!("transpile {name}: {error}")),
                 }
             }
+        }
+        if self.transpile_armed {
             self.transpile_armed = false;
+            if !self.scripts.transpile_pending() {
+                if let Some((source, name)) = self.transpile_queue.front().cloned() {
+                    if let Err(error) = self.scripts.request_transpile(source, &name) {
+                        self.transpile_queue.pop_front();
+                        self.error = Some(format!("transpile {name}: {error}"));
+                    }
+                }
+            }
         }
         if !self.transpile_queue.is_empty() {
             self.transpile_armed = true;
@@ -192,16 +216,9 @@ impl Session {
         name: String,
         to_front: bool,
     ) {
-        if self.scripts.js.js_is_ready(source, &name) {
-            return;
-        }
-        let Some(card) = self.scripts.js.get(source, &name) else {
-            return;
-        };
-        if self.scripts.js.cache().is_cached(card.origin.as_bytes()) {
-            if let Err(e) = self.scripts.js.ensure_js(source, &name) {
-                self.error = Some(format!("transpile {name}: {e}"));
-            }
+        if self.scripts.js().js_is_ready(source, &name)
+            || self.scripts.js().get(source, &name).is_none()
+        {
             return;
         }
         if let Some(idx) = self
@@ -232,7 +249,7 @@ impl Session {
         &self,
         card: &script::JsCard,
     ) -> Result<Vec<(String, String)>, String> {
-        host_play::live_start::card_siblings(&self.scripts.js, card)
+        host_play::live_start::card_siblings(self.scripts.js(), card)
     }
 
     /// Load a local JS/TS file into the library (registers a picker card,
@@ -243,7 +260,7 @@ impl Session {
             self.error = Some(format!("script: not a file: {}", path.display()));
             return;
         }
-        match self.scripts.js.load(path) {
+        match self.scripts.js_mut().load(path) {
             Ok(card) => {
                 self.error = None;
                 let sel = script::ScriptSel::Loaded(card.source, card.identity_id());
@@ -254,7 +271,7 @@ impl Session {
                 if let Some(parent) = path.parent() {
                     self.ui.script_load_last_dir = Some(parent.to_path_buf());
                     if self.persist_ui {
-                        crate::ui_state::save(&self.ui);
+                        crate::ui_state::save(&self.preferences, &self.ui);
                     }
                 }
                 self.script_load_open = false;

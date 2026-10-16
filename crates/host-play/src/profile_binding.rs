@@ -215,6 +215,9 @@ impl ProfileSelection {
     pub fn vault_path(&self) -> &Path {
         &self.vault_path
     }
+    pub fn state_root(&self) -> &Path {
+        &self.state_root
+    }
     pub fn catalog_root(&self) -> Option<&Path> {
         self.catalog_root.as_deref()
     }
@@ -631,6 +634,7 @@ impl ProfileSelection {
             #[cfg(feature = "debug-catalog")]
             debug_engine_dir: self.engine_dir.clone(),
             vault_path: self.vault_path.clone(),
+            state_root: self.state_root.clone(),
             catalog_root: self.catalog_root.clone(),
             world_members: self.world_members.clone(),
             public_worlds: self.public_worlds.clone(),
@@ -828,6 +832,7 @@ impl ProfileSelection {
                 if !manifest_path.exists() {
                     if self.revision() == ClientRevision::R274 && content_id.is_none() {
                         let world = world_result?;
+                        bind_nav_identity(&world, &nav_hash)?;
                         let (zone_count, zone_npc_count) = nav_zone_counts(&world);
                         let identity = NavManifest {
                             revision,
@@ -875,6 +880,7 @@ impl ProfileSelection {
             }
         };
         let world = world_result?;
+        bind_nav_identity(&world, &identity.nav_sha256)?;
         if origin.is_bundled() && identity.reach_sha256.is_none() {
             return Err("bundled navigation reach identity is missing".into());
         }
@@ -1126,6 +1132,17 @@ fn decode_nav_world(
         1,
     ));
     Ok(Arc::new(world))
+}
+
+/// Record the verified pack digest as the loaded world's one facade identity
+/// (`nav::producer::bind`), before the world is published to `Play`: every
+/// collision, zone and route view the slots are served carries it.
+fn bind_nav_identity(world: &Arc<NavWorld>, nav_sha256: &str) -> Result<(), String> {
+    let digest = nav::map::identity::Digest::from_hex(nav_sha256)
+        .map_err(|error| format!("navigation identity {nav_sha256}: {error}"))?;
+    nav::producer::bind(world, nav::contract::PackDigest::from_bytes(digest.0))
+        .map(drop)
+        .map_err(|error| format!("navigation lease identity: {error}"))
 }
 
 #[cfg(test)]

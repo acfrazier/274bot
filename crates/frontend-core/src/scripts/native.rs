@@ -22,16 +22,51 @@ pub enum NativeCommand {
     Resume,
     Stop,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct NativeTarget {
-    pub profile: String,
-    pub run: RunKey,
+    pub(crate) profile: String,
+    pub(crate) run: RunKey,
 }
+
+impl NativeTarget {
+    /// Profile this native command targets.
+    pub fn profile(&self) -> &str {
+        &self.profile
+    }
+
+    /// Run key this native command targets.
+    pub fn run(&self) -> RunKey {
+        self.run
+    }
+}
+
 pub struct NativeDetail {
-    pub lifecycle: RunState,
-    pub status: Option<Arc<ScriptStatus>>,
-    pub paint: Option<Arc<ScriptPaint>>,
-    pub terminal: Option<ScriptLifecycleReceipt>,
+    pub(crate) lifecycle: RunState,
+    pub(crate) status: Option<Arc<ScriptStatus>>,
+    pub(crate) paint: Option<Arc<ScriptPaint>>,
+    pub(crate) terminal: Option<ScriptLifecycleReceipt>,
+}
+
+impl NativeDetail {
+    /// Script lifecycle on this slot.
+    pub fn lifecycle(&self) -> RunState {
+        self.lifecycle
+    }
+
+    /// Native status, when present.
+    pub fn status(&self) -> Option<&ScriptStatus> {
+        self.status.as_deref()
+    }
+
+    /// Native paint, when present.
+    pub fn paint(&self) -> Option<&ScriptPaint> {
+        self.paint.as_deref()
+    }
+
+    /// Terminal receipt, when the run has ended.
+    pub fn terminal(&self) -> Option<&ScriptLifecycleReceipt> {
+        self.terminal.as_ref()
+    }
 }
 
 impl Scripts {
@@ -55,7 +90,20 @@ impl Scripts {
             })
         {
             match vault::CompiledSettingsRecord::view(entry) {
-                Err(reason) => return SchemaView::Unavailable(reason),
+                Err(error) => {
+                    return SchemaView::Unavailable(match error {
+                        vault::VaultError::InvalidCompiledSettingsEnvelope => {
+                            "invalid compiled settings envelope"
+                        }
+                        vault::VaultError::InvalidCompiledSettingsSchemaVersion => {
+                            "invalid compiled settings schema version"
+                        }
+                        vault::VaultError::CompiledSettingsValuesNotObject => {
+                            "compiled settings values must be an object"
+                        }
+                        _ => "compiled settings are unavailable",
+                    });
+                }
                 Ok((version, _)) if version != card.schema_version => {
                     return SchemaView::Unavailable(
                         "saved compiled settings schema is unsupported",
@@ -191,12 +239,7 @@ impl Scripts {
         let result = self.upsert_profile_settings(
             core,
             profile,
-            ArmMirror::NativeSettings {
-                id,
-                bag,
-                live,
-                assign: assignment.is_some(),
-            },
+            ArmMirror::native_settings(id, bag, live, assignment.is_some()),
             log_action,
             |settings| {
                 if let Some(assignment) = assignment {
@@ -288,7 +331,8 @@ fn compiled_values(
     else {
         return Ok(Map::new());
     };
-    let (version, values) = vault::CompiledSettingsRecord::view(entry)?;
+    let (version, values) =
+        vault::CompiledSettingsRecord::view(entry).map_err(|error| error.to_string())?;
     if version != card.schema_version {
         return Err(format!(
             "compiled schema {version} unavailable for {} (supported {})",

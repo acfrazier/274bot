@@ -52,12 +52,14 @@ mod keep_list;
 pub mod load;
 pub mod loadout_plan;
 pub mod loadouts_store;
+pub mod local_state;
 mod module_imports;
 pub mod native;
 pub mod native_bank;
 pub mod native_equipment;
 pub mod native_production;
 pub mod native_shop;
+pub mod preparation;
 pub mod quester;
 /// Pure ranged supply predicate (`rangeSupplyEmpty`).
 pub mod ranged;
@@ -70,6 +72,7 @@ mod shop_open;
 pub mod slot;
 pub mod trade_screen;
 pub mod watchdog;
+pub mod work_admission;
 
 pub use ctx::{CompiledTick, DetectedRandom, FindOptions, RandomClaim, ScriptCtx};
 #[cfg(feature = "load")]
@@ -95,9 +98,9 @@ pub use load::{
 #[cfg(feature = "load")]
 pub use load::{resolve_sibling_modules, JsLibrary};
 pub use loadouts_store::{
-    copy_equipment_preserving_supplies, default_loadouts_path, resolve_setting_options,
-    resolve_setting_options_with_labels, unique_loadout_name, worn_slot_label, CarryEntry, Loadout,
-    LoadoutsStore, ResolvedSettingOptions, WORN_SLOTS, WORN_SLOT_LAYOUT,
+    copy_equipment_preserving_supplies, resolve_setting_options,
+    resolve_setting_options_with_labels, unique_loadout_name, worn_slot_label, LoadoutsBacking,
+    LoadoutsBaseline, LoadoutsSaveError, LoadoutsStore, ResolvedSettingOptions, WORN_SLOT_LAYOUT,
 };
 pub use registry::{compiled_card, compiled_cards, compiled_id, is_whale, CompiledId};
 pub use rs2b0t_registry::{
@@ -124,7 +127,10 @@ pub use watchdog::{
 };
 
 #[cfg(feature = "load")]
-pub use load::{bootstrap_v8_platform, transpile_ts, LoadIsolate, LoadIsolateError, Ready};
+pub use load::{
+    bootstrap_v8_platform, transpile_ts, LoadIsolate, LoadIsolateError, Ready, ValidationBatch,
+    ValidationError,
+};
 
 #[cfg(feature = "load")]
 mod anchor_return;
@@ -192,8 +198,6 @@ mod machine;
 /// Frozen market catalog facts over the selected revision's items.
 #[cfg(feature = "load")]
 mod market_catalog;
-// The frozen JS pick helpers are reached only through the `load` isolate.
-#[cfg_attr(not(feature = "load"), allow(dead_code))]
 mod melee_weapons;
 #[cfg(feature = "load")]
 mod modals;
