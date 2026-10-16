@@ -188,9 +188,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - On Windows, giving the rs2b0t import a folder instead of the exported
   file now says it is not a regular file, as on Linux and macOS, instead of
   "cannot read …: Access is denied".
+- The first launch downloads the game cache faster. It keeps ten requests
+  to the update server in flight for the whole download, and it reads each
+  answer as soon as it arrives.
 
 ### Fixed during development
 
+- The first launch's game cache download no longer switches off background
+  work on slower connections, and "Preparing cache snapshot" now shows how
+  far the download has got.
 - One slow disk write no longer leaves script cards, the script catalogue or
   profiles stopped until 274bot restarts.
 

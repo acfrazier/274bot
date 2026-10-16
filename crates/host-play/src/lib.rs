@@ -34,7 +34,8 @@ pub use nav_identity::{
 };
 pub use profile::{
     parse_profile_args, parse_revision, GameDataStatus, ProfileClass, ProfileOptions,
-    ProfileSelection, ServerProfile, WorldMembersFact, WorldMembersSource,
+    ProfileSelection, ServerProfile, TemplatePreparation, TemplateStep, WorldMembersFact,
+    WorldMembersSource, TEMPLATE_STEP_WAIT,
 };
 pub use servers::{proposed_vault, LaunchProfile, LaunchTransport, LaunchWorld, LoginKey, Servers};
 
