@@ -2689,3 +2689,40 @@ fn trailing_data_matches_legacy_decoder_acceptance() {
         "new decoder accept/reject behavior differs from legacy: {mismatches:?}"
     );
 }
+
+/// A ring upload that becomes ready in the same frame whose terrain sync
+/// filled the last slot must not push the slot count past TEXTURE_CAP:
+/// `pump_decode` sets `pending_upload` after `sync_terrain` has run, and
+/// `upload_pending` runs next.
+#[test]
+fn ring_upload_at_the_texture_cap_is_dropped_not_slotted() {
+    let world = open_world(3, 3);
+    let keys = (0..=TEXTURE_CAP as i32).map(|x| lod0(x, 0));
+    let mut map = WalkMapRenderer::new();
+    map.bind_fixtures(FixtureStore::with_keys(keys).expect("fixtures"));
+    map.note_open();
+    let full = grid_view(0, 0, TEXTURE_CAP as i32, 1, 0, 0);
+    for _ in 0..TEXTURE_CAP {
+        sync_test_view(&mut map, &world, full);
+    }
+    assert_eq!(map.slot_keys().len(), TEXTURE_CAP);
+
+    let ring = lod0(TEXTURE_CAP as i32, 0);
+    map.pending_upload = Some((
+        map.generation(),
+        map.identity(),
+        ring,
+        vec![0u8; TILE_RGBA_BYTES],
+    ));
+    let mut no_gpu: Option<&mut dyn FrameGpu> = None;
+    map.upload_pending(&mut no_gpu);
+    assert_eq!(
+        map.slot_keys().len(),
+        TEXTURE_CAP,
+        "a ring upload at the cap must be dropped, not slotted"
+    );
+    assert!(
+        !map.slot_keys().contains(&ring),
+        "the ring tile must not take a slot past the cap"
+    );
+}
