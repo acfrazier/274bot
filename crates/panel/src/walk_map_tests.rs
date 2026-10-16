@@ -1452,6 +1452,19 @@ fn unreadable_ring_tile_is_not_read_again_in_a_settled_view() {
         map.tile_warn_count, 1,
         "a key that cannot be read is warned once per bound cache"
     );
+
+    // A different cache with the same unreadable key warns for it again.
+    let (images, _rebound) =
+        ready_images_with_tiles(image_identity_with(0xc5), &[visible, ring], &[ring]);
+    map.bind_ready_images(images);
+    for _ in 0..16 {
+        sync_test_view(&mut map, &world, view);
+    }
+    assert!(map.slot_keys().contains(&ring));
+    assert_eq!(
+        map.tile_warn_count, 2,
+        "a new bound cache warns once for its own unreadable key"
+    );
 }
 
 fn test_gpu_tex(device: &wgpu::Device, id: u64) -> super::GpuTex {
