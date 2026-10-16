@@ -22,13 +22,14 @@ use crate::session::{OperatorSession, ScriptStart};
 /// operator-visible wording is unchanged; callers can now tell the
 /// failures apart without matching on text.
 ///
-/// No existing `frontend-core` or `script` error type models this surface:
-/// [`script::preparation::PreparationError`] covers admission and the
-/// worker join, and is reused below for those two sources, but the
-/// busy-state guards, the bounded library snapshot, the catalog worker's
-/// own failure strings and the library commit belong to this coordinator.
-/// `Clone` is needed: a submission failure is both retained as the async
-/// receipt and returned to the caller.
+/// The bounded library snapshot and the catalog worker's own failures are
+/// modeled in `script` ([`script::load::CatalogSnapshotError`],
+/// [`script::load::CatalogWorkerError`]) and wrapped here through `#[from]`:
+/// they cross from `script` into `frontend-core`, so the crate-boundary
+/// rule needs a `thiserror` kind on each side. [`script::preparation::PreparationError`]
+/// is likewise reused for admission and the worker join. The busy-state
+/// guards belong to this coordinator. `Clone` is needed: a submission
+/// failure is both retained as the async receipt and returned to the caller.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum CatalogError {
     /// Another root's catalog work is already queued or running.
@@ -41,24 +42,23 @@ pub enum CatalogError {
     #[error("the previous catalog import result has not been collected")]
     UncollectedImportResult,
     /// The bounded pre-submission snapshot of the library did not fit.
-    /// Carries the [`script::JsLibrary::catalog_preparation_snapshot`]
-    /// message verbatim.
-    #[error("{0}")]
-    Snapshot(String),
+    #[error(transparent)]
+    Snapshot(#[from] script::load::CatalogSnapshotError),
     /// The admission charge for the catalog job was refused.
     #[error(transparent)]
     Charge(#[from] api::work::SubmissionRefusal),
     /// WorkAdmission refused, failed, or lost the catalog job.
     #[error(transparent)]
     Preparation(#[from] script::preparation::PreparationError),
-    /// The catalog worker reported a failure (registry, source graph,
-    /// diff); carries its message verbatim.
-    #[error("{0}")]
-    Worker(String),
-    /// A prepared card could not be committed to the library; carries the
-    /// [`script::JsLibrary::commit_prepared`] message verbatim.
-    #[error("{0}")]
-    Commit(String),
+    /// The catalog worker reported a failure (registry, source graph, diff).
+    #[error(transparent)]
+    Worker(#[from] script::load::CatalogWorkerError),
+    /// A prepared catalog card could not be committed. Catalog cards never
+    /// persist (`commit_prepared` only persists `ScriptSource::File`), so a
+    /// commit failure here is an internal invariant violation, not a
+    /// distinct catalog failure kind; the message is preserved for diagnosis.
+    #[error("catalog commit invariant violated for a catalog card: {0}")]
+    UnexpectedCatalogCommit(String),
 }
 
 #[derive(Debug)]
@@ -347,13 +347,15 @@ enum PreparationJob {
     Catalog {
         epoch: u64,
         task: script::preparation::PreparedTask<
-            Result<script::load::CatalogPreparationResult, String>,
+            Result<script::load::CatalogPreparationResult, script::load::CatalogWorkerError>,
         >,
         root: PathBuf,
     },
     CatalogConfirmation {
         epoch: u64,
-        task: script::preparation::PreparedTask<Result<script::CatalogDiff, String>>,
+        task: script::preparation::PreparedTask<
+            Result<script::CatalogDiff, script::load::CatalogWorkerError>,
+        >,
         root: PathBuf,
     },
 }
@@ -387,7 +389,9 @@ enum CatalogJob {
         generation: u64,
         root: PathBuf,
         path_file: PathBuf,
-        task: script::preparation::PreparedTask<Result<script::CatalogDiff, String>>,
+        task: script::preparation::PreparedTask<
+            Result<script::CatalogDiff, script::load::CatalogWorkerError>,
+        >,
     },
     ImportPending {
         generation: u64,
@@ -400,7 +404,7 @@ enum CatalogJob {
         root: PathBuf,
         path_file: PathBuf,
         task: script::preparation::PreparedTask<
-            Result<script::load::CatalogPreparationResult, String>,
+            Result<script::load::CatalogPreparationResult, script::load::CatalogWorkerError>,
         >,
     },
 }
@@ -1034,9 +1038,11 @@ impl Scripts {
         }
         self.js.apply_catalog_diff(diff);
         for item in prepared.into_iter().chain(warmed) {
+            // Catalog cards never persist, so a commit failure here would be
+            // an internal invariant violation, not a distinct failure kind.
             self.js
                 .commit_prepared(item)
-                .map_err(CatalogError::Commit)?;
+                .map_err(CatalogError::UnexpectedCatalogCommit)?;
         }
         self.js.set_catalog_root(&root);
         self.catalog_root = Some(root.clone());
@@ -1969,12 +1975,12 @@ impl Scripts {
             },
             PreparationJob::Catalog { task, root, .. } => match task.join() {
                 Ok(Ok(result)) => self.complete_catalog_preparation(core, root, result),
-                Ok(Err(error)) => self.fail_reload("Refresh catalog", error),
+                Ok(Err(error)) => self.fail_reload("Refresh catalog", error.to_string()),
                 Err(error) => self.fail_reload("Refresh catalog", error.to_string()),
             },
             PreparationJob::CatalogConfirmation { task, root, .. } => match task.join() {
                 Ok(Ok(diff)) => self.complete_catalog_confirmation(core, root, diff),
-                Ok(Err(error)) => self.fail_reload("Refresh catalog", error),
+                Ok(Err(error)) => self.fail_reload("Refresh catalog", error.to_string()),
                 Err(error) => self.fail_reload("Refresh catalog", error.to_string()),
             },
         }
@@ -2548,7 +2554,7 @@ impl Scripts {
             let snapshot = match self.js.catalog_preparation_snapshot(root) {
                 Ok(snapshot) => Arc::new(snapshot),
                 Err(error) => {
-                    self.fail_reload("Refresh catalog", error);
+                    self.fail_reload("Refresh catalog", error.to_string());
                     return Vec::new();
                 }
             };
@@ -2569,7 +2575,7 @@ impl Scripts {
         let snapshot = match self.js.catalog_preparation_snapshot(root) {
             Ok(snapshot) => Arc::new(snapshot),
             Err(error) => {
-                self.fail_reload("Refresh catalog", error);
+                self.fail_reload("Refresh catalog", error.to_string());
                 return Vec::new();
             }
         };

@@ -8,6 +8,9 @@ pub use catalog::{
     CatalogApplyReport, CatalogDiff, CatalogPreparationResult, CatalogPreparationSnapshot,
 };
 
+#[cfg(feature = "load")]
+pub use catalog::{CatalogSnapshotError, CatalogWorkerError};
+
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "load")]
