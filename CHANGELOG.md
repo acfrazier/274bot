@@ -30,11 +30,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   A wait whose walk was not delivered requests a fresh walk through the new
   session's seat and still settles on arrival. During a guardian hold, all
   walk terminals free their slots after resume. A held seat keeps one
-  pending batch with a fixed row limit: up to 16 walk releases, 17 Stop or
-  run-policy controls and 141 other lifecycle rows. Wait enqueue and settle
-  facts become two counters, and the watchdog applies their net count after
-  resume. Repeated rows, repeated progress stamps and rows above a limit are
-  discarded and counted.
+  pending batch and discards only gameplay. Every walk release (up to 16
+  handles), Gather Stop and Combat Stop is kept; a repeated release of the
+  same target and id is kept once. The run policy, camera yaw, recovery
+  anchor reply and progress stamps keep their newest value, so the host
+  applies the value the script set last. Wait enqueue and settle facts fold
+  into one exact summary that gives the watchdog the same wait count as the
+  events in order. BroadcastChannel opens, closes and posts, and route
+  inspections, stay in order. When that batch is full, only later
+  BroadcastChannel posts are refused: the script's channel gets one
+  `messageerror` with the reason, and each refused post is counted.
 - A saturated script tick keeps its release and control rows ahead of gameplay.
   It dispatches the first 141 other rows in their original order, drops the
   excess, and reports one overflow diagnostic instead of failing the batch.

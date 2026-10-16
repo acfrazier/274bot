@@ -97,15 +97,60 @@ fn seat_walk_id(req: &crate::shim::InteractReq, owner: Option<RequestId>) -> Opt
     }
 }
 
-/// Most distinct Stop and run-policy rows that one guardian-held batch keeps:
-/// one Stop for each live operation and one policy row.
-#[cfg(feature = "load")]
-const HELD_CONTROL_ROWS: usize =
-    api::script_contract::MAX_LIVE + api::script_contract::MAX_RUN_POLICY;
-/// Most non-wait lifecycle rows that one guardian-held batch keeps: the
-/// gameplay/lifecycle capacity of one encoded seat batch.
+/// Most non-reserved rows that the one folded guardian-held batch carries:
+/// the gameplay/lifecycle capacity of one seat take (§28.5 line 179). After
+/// resume the seat moves at most this many such rows in one take and drops
+/// the rest (`GameplaySeat::take`). The fold refuses `ChannelPost` rows, and
+/// no other row, to stay within it.
 #[cfg(feature = "load")]
 const HELD_LIFECYCLE_ROWS: usize = api::script_contract::MAX_ENCODED_GAMEPLAY;
+
+/// Lifecycle rows of which the host applies only the latest value. The fold
+/// keeps one row for each key: the newest, at the first row's position.
+#[cfg(feature = "load")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HeldReplacement {
+    /// `script_interact.rs` writes the last `SetCameraYaw` of a drain.
+    CameraYaw,
+    /// `feed_watchdog` keeps the last anchor reply of a drain.
+    RecoveryAnchor,
+    /// The host keeps the highest acknowledged inspect sequence. The
+    /// isolate acknowledges only an advanced sequence, so the last is highest.
+    InspectAck,
+    /// The host ignores an isolate-sent `ChannelMessage`.
+    ChannelMessage,
+    /// The host ignores an isolate-sent `ChannelStatus`.
+    ChannelStatus,
+    /// Stamps both watchdog clocks with the host frame time.
+    NoteProgress,
+    /// Stamps the scheduler clock with the host frame time.
+    LoopSettled,
+}
+
+#[cfg(feature = "load")]
+impl HeldReplacement {
+    const KEYS: usize = 7;
+
+    fn of(req: &crate::shim::InteractReq) -> Option<Self> {
+        use crate::shim::InteractReq;
+        Some(match req {
+            InteractReq::SetCameraYaw { .. } => Self::CameraYaw,
+            InteractReq::RecoveryAnchor { .. } | InteractReq::RecoveryAnchorNone => {
+                Self::RecoveryAnchor
+            }
+            InteractReq::InspectAck { .. } => Self::InspectAck,
+            InteractReq::ChannelMessage { .. } => Self::ChannelMessage,
+            InteractReq::ChannelStatus { .. } => Self::ChannelStatus,
+            InteractReq::NoteProgress => Self::NoteProgress,
+            InteractReq::LoopSettled => Self::LoopSettled,
+            _ => return None,
+        })
+    }
+}
+
+/// Status sent to a script whose BroadcastChannel post the hold refused.
+#[cfg(feature = "load")]
+const HELD_CHANNEL_POST_REFUSED: &str = "BroadcastChannel post dropped while the session was held";
 
 fn seat_interact_class(
     req: &crate::shim::InteractReq,
@@ -324,6 +369,10 @@ pub struct SlotScript {
     /// consumed by the host's lifecycle drain rather than the game driver.
     #[cfg(feature = "load")]
     seat_lifecycle: Vec<crate::shim::InteractReq>,
+    /// Channels that already received the held-post refusal status in the
+    /// current hold. Cleared when the folded batch is consumed after resume.
+    #[cfg(feature = "load")]
+    held_channel_refusals: Vec<u64>,
     #[cfg(feature = "load")]
     api: Option<Box<api_seat::ApiSeat>>,
     retained: Option<Arc<std::sync::Mutex<RetainedMemory>>>,
@@ -470,6 +519,8 @@ impl SlotScript {
             held_walk_terminals: Vec::new(),
             #[cfg(feature = "load")]
             seat_lifecycle: Vec::new(),
+            #[cfg(feature = "load")]
+            held_channel_refusals: Vec::new(),
             #[cfg(feature = "load")]
             api: None,
             retained: None,
@@ -759,6 +810,8 @@ impl SlotScript {
         self.seat_interact_delivery.clear();
         #[cfg(feature = "load")]
         self.seat_lifecycle.clear();
+        #[cfg(feature = "load")]
+        self.held_channel_refusals.clear();
     }
 
     fn arm_compiled_seat(&mut self, run: api::selected::RunKey, card: crate::CompiledId) {
@@ -1417,6 +1470,8 @@ impl SlotScript {
         #[cfg(feature = "load")]
         self.seat_lifecycle.clear();
         #[cfg(feature = "load")]
+        self.held_channel_refusals.clear();
+        #[cfg(feature = "load")]
         self.teardown_api(reason);
         self.native_runtime.revoke();
         self.retained = None;
@@ -1574,6 +1629,8 @@ impl SlotScript {
         }
         #[cfg(feature = "load")]
         self.seat_lifecycle.clear();
+        #[cfg(feature = "load")]
+        self.held_channel_refusals.clear();
         self.seat_fence.revoke();
         #[cfg(feature = "load")]
         self.api_session_boundary(reconnect);
@@ -2798,66 +2855,70 @@ impl SlotScript {
         };
         // The isolate repeats unacknowledged starts, cancels, mirror revokes,
         // machine events and terminal watermarks. The newest batch supersedes
-        // those pages. Rows are different: the fold carries each release,
-        // control and lifecycle row once, keeps wait facts as two counters,
-        // and counts every row that it does not carry.
-        let same_row = |a: &crate::isolate_fb::SeatInteractDecoded,
-                        b: &crate::isolate_fb::SeatInteractDecoded| {
-            a.lineage == b.lineage && a.mirror_owner == b.mirror_owner && a.request == b.request
-        };
-        let mut releases = Vec::with_capacity(api::script_contract::MAX_WALK_RELEASES);
+        // those pages. `SessionHeld` discards gameplay only (§28.4), so the
+        // fold bounds the other rows by exact summaries:
+        // - Releases are never dropped. A repeated release of the same target
+        //   and id is idempotent and is carried once. Walk releases keep the
+        //   16-handle reservation (§28.5).
+        // - Replacements keep the newest value of each key.
+        // - Wait facts fold into one exact `HeldWaitFacts` summary.
+        // - Channel and inspect rows stay in one ordered lane. Only a
+        //   `ChannelPost` that does not fit one seat take is refused; the
+        //   sender gets a channel status and the refusal is counted.
+        use crate::shim::InteractReq;
+        let mut releases: Vec<crate::isolate_fb::SeatInteractDecoded> = Vec::new();
+        let mut walk_releases = 0;
         let mut lifecycle: Vec<crate::isolate_fb::SeatInteractDecoded> = Vec::new();
-        let mut controls: Vec<crate::isolate_fb::SeatInteractDecoded> = Vec::new();
+        let mut lane_rows = 0;
+        let mut policy = None;
         let mut waits = crate::load::HeldWaitFacts::default();
+        let mut refused_posts: Vec<u64> = Vec::new();
         let mut dropped = 0;
         for batch in batches.iter_mut().chain(std::iter::once(&mut latest)) {
-            let held = std::mem::take(&mut batch.held_waits);
-            waits.enqueued = waits.enqueued.saturating_add(held.enqueued);
-            waits.settled = waits.settled.saturating_add(held.settled);
+            waits = waits.then(std::mem::take(&mut batch.held_waits));
             for row in batch.batch.reqs.drain(..) {
+                if let Some(key) = HeldReplacement::of(&row.request) {
+                    match lifecycle
+                        .iter_mut()
+                        .find(|kept| HeldReplacement::of(&kept.request) == Some(key))
+                    {
+                        Some(kept) => *kept = row,
+                        None => lifecycle.push(row),
+                    }
+                    continue;
+                }
                 match &row.request {
-                    crate::shim::InteractReq::AbortWalk { request_id } => {
-                        if releases.iter().any(|existing: &crate::isolate_fb::SeatInteractDecoded| {
-                            matches!(&existing.request, crate::shim::InteractReq::AbortWalk { request_id: id } if id == request_id)
-                        }) || releases.len() == api::script_contract::MAX_WALK_RELEASES
-                        {
-                            dropped += 1;
-                        } else {
-                            releases.push(row);
+                    InteractReq::AbortWalk { .. }
+                    | InteractReq::GatherStop { .. }
+                    | InteractReq::CombatStop { .. } => {
+                        if releases.iter().any(|kept| kept.request == row.request) {
+                            continue;
                         }
-                    }
-                    crate::shim::InteractReq::GatherStop { .. }
-                    | crate::shim::InteractReq::CombatStop { .. }
-                    | crate::shim::InteractReq::RunPolicyOverride { .. } => {
-                        if controls.iter().any(|existing| same_row(existing, &row))
-                            || controls.len() == HELD_CONTROL_ROWS
-                        {
-                            dropped += 1;
-                        } else {
-                            controls.push(row);
+                        if matches!(row.request, InteractReq::AbortWalk { .. }) {
+                            if walk_releases == api::script_contract::MAX_WALK_RELEASES {
+                                dropped += 1;
+                                continue;
+                            }
+                            walk_releases += 1;
                         }
+                        releases.push(row);
                     }
-                    crate::shim::InteractReq::WaitEnqueued => {
-                        waits.enqueued = waits.enqueued.saturating_add(1);
-                    }
-                    crate::shim::InteractReq::WaitSettled => {
-                        waits.settled = waits.settled.saturating_add(1);
+                    InteractReq::RunPolicyOverride { .. } => policy = Some(row),
+                    InteractReq::WaitEnqueued => waits.enqueue(),
+                    InteractReq::WaitSettled => waits.settle(),
+                    InteractReq::ChannelPost { channel_id, .. }
+                        if lane_rows + HeldReplacement::KEYS >= HELD_LIFECYCLE_ROWS =>
+                    {
+                        dropped += 1;
+                        if !refused_posts.contains(channel_id) {
+                            refused_posts.push(*channel_id);
+                        }
                     }
                     _ if seat_interact_class(&row.request, row.lineage.or(row.mirror_owner)).0
                         == api::script_contract::EmissionClass::Lifecycle =>
                     {
-                        // Scheduler and progress stamps apply at the host's
-                        // frame time, so a second equal stamp adds nothing.
-                        let repeated_stamp = matches!(
-                            row.request,
-                            crate::shim::InteractReq::NoteProgress
-                                | crate::shim::InteractReq::LoopSettled
-                        ) && lifecycle.iter().any(|existing| same_row(existing, &row));
-                        if repeated_stamp || lifecycle.len() == HELD_LIFECYCLE_ROWS {
-                            dropped += 1;
-                        } else {
-                            lifecycle.push(row);
-                        }
+                        lane_rows += 1;
+                        lifecycle.push(row);
                     }
                     // Gameplay normally leaves before the fold. A row that
                     // still reaches it is discarded here, and counted.
@@ -2868,36 +2929,47 @@ impl SlotScript {
         if let Some(seat) = &mut self.seat {
             seat.count_dropped(dropped);
         }
+        self.notify_held_channel_refusals(refused_posts);
         releases.extend(lifecycle);
-        releases.extend(controls);
+        releases.extend(policy);
         latest.batch.reqs = releases;
         latest.held_waits = waits;
         vec![latest]
     }
 
-    /// Hand a held batch's folded wait counters to the watchdog lane before
-    /// the seat consumes the batch. Wait facts carry no authority and never
-    /// dispatch, so they skip the seat's row limit, as `dispatch_seat_rows`
-    /// routes them. The watchdog adds one for each enqueue and subtracts one
-    /// for each settle, so matched pairs cancel; one pair still stamps the
-    /// scheduler. The host gets the net count, not one row for each tick.
+    /// Tell each script channel whose post the hold refused, once in each
+    /// hold, through the broker's status delivery path.
     #[cfg(feature = "load")]
-    fn release_held_wait_facts(&mut self, batch: &mut crate::load::QueuedSeatBatch) {
+    fn notify_held_channel_refusals(&mut self, refused: Vec<u64>) {
+        let mut statuses = Vec::new();
+        for channel_id in refused {
+            if self.held_channel_refusals.contains(&channel_id) {
+                continue;
+            }
+            self.held_channel_refusals.push(channel_id);
+            statuses.push(crate::shim::InteractReq::ChannelStatus {
+                channel_id,
+                message: HELD_CHANNEL_POST_REFUSED.into(),
+            });
+        }
+        if !statuses.is_empty() {
+            let _ = self.post_channel_events(crate::isolate_fb::encode_interact_batch(&statuses));
+        }
+    }
+
+    /// Hand a held batch's wait summary to the watchdog lane before the seat
+    /// consumes the batch. Wait facts carry no authority and never dispatch,
+    /// so they skip the seat's row limit, as `dispatch_seat_rows` routes
+    /// them. The replay gives the watchdog count that the held facts give in
+    /// event order, for every starting count. The hold has ended, so the
+    /// channel refusal notices of the hold end too.
+    #[cfg(feature = "load")]
+    fn release_held_fold(&mut self, batch: &mut crate::load::QueuedSeatBatch) {
+        self.held_channel_refusals.clear();
         let waits = std::mem::take(&mut batch.held_waits);
-        let matched = waits.enqueued.min(waits.settled);
-        let stamp = u64::from(matched > 0);
-        let enqueued = waits.enqueued - matched + stamp;
-        let settled = waits.settled - matched + stamp;
         self.seat_lifecycle
-            .reserve(usize::try_from(enqueued + settled).unwrap_or(usize::MAX));
-        for _ in 0..enqueued {
-            self.seat_lifecycle
-                .push(crate::shim::InteractReq::WaitEnqueued);
-        }
-        for _ in 0..settled {
-            self.seat_lifecycle
-                .push(crate::shim::InteractReq::WaitSettled);
-        }
+            .reserve(usize::try_from(waits.rows()).unwrap_or(usize::MAX));
+        self.seat_lifecycle.extend(waits.replay());
     }
 
     /// A Paused guardian frame still receives isolate batches. Fold their
@@ -3025,7 +3097,7 @@ impl SlotScript {
                 carried.push(queued);
                 continue;
             }
-            self.release_held_wait_facts(&mut queued);
+            self.release_held_fold(&mut queued);
             self.consume_seat_batch(
                 queued.batch,
                 queued.observed_walk_outcome_seq,
