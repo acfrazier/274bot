@@ -1199,4 +1199,41 @@ mod tests {
         assert_eq!(take_interact_lineages(&mut runtime).unwrap().len(), 1);
         assert_eq!(take_interact_overflow(&mut runtime).unwrap(), 0);
     }
+
+    /// A Proxy nested inside a row (here a walk `avoid` entry) refuses the
+    /// whole row without running a trap, and the refusal is counted. A plain
+    /// nested value in the same push is still admitted.
+    #[test]
+    fn interact_append_refuses_a_proxy_nested_inside_a_row() {
+        let mut runtime = gated_runtime();
+        let result: serde_json::Value = eval(
+            &mut runtime,
+            r#"(() => {
+                const rows = [];
+                let traps = 0;
+                const nested = new Proxy({ minX: 1, maxX: 2 }, {
+                    ownKeys(target) { traps += 1; return Reflect.ownKeys(target); },
+                    getOwnPropertyDescriptor(target, key) {
+                        traps += 1;
+                        return Reflect.getOwnPropertyDescriptor(target, key);
+                    },
+                    get(target, key) { traps += 1; return Reflect.get(target, key); },
+                });
+                globalThis.__rs2b0t_push_interact_rows(rows, [
+                    { op: 'walk-to', x: 1, z: 1, level: 0, avoid: [nested] },
+                    { op: 'walk-to', x: 2, z: 2, level: 0, avoid: [{ minX: 1, maxX: 2 }] },
+                ]);
+                return { traps, total: rows.length, x: rows.length === 1 ? rows[0].x : null };
+            })()"#,
+        )
+        .unwrap();
+        assert_eq!(result["traps"], 0, "a nested Proxy trap ran: {result}");
+        assert_eq!(
+            result["total"], 1,
+            "the nested Proxy row is refused: {result}"
+        );
+        assert_eq!(result["x"], 2, "the plain row is kept: {result}");
+        assert_eq!(take_interact_lineages(&mut runtime).unwrap().len(), 1);
+        assert_eq!(take_interact_overflow(&mut runtime).unwrap(), 1);
+    }
 }

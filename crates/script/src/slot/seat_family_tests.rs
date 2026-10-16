@@ -957,6 +957,7 @@ fn held_batch_compaction_retains_earlier_release_and_newest_controls() {
         observed_walk_outcome_seq: 7,
         batch: decoded(Vec::new(), vec![row(release.clone())]),
         machine_events: Vec::new(),
+        held_waits: crate::load::HeldWaitFacts::default(),
     };
     let mut newer_batch = decoded(
         vec![start_input(&slot, 822, NativeKind::Gather)],
@@ -968,6 +969,7 @@ fn held_batch_compaction_retains_earlier_release_and_newest_controls() {
         observed_walk_outcome_seq: 8,
         batch: newer_batch,
         machine_events: Vec::new(),
+        held_waits: crate::load::HeldWaitFacts::default(),
     };
     let mut compacted = slot.compact_held_seat_batches(vec![older, newer]);
     assert_eq!(compacted.len(), 1);
@@ -1004,6 +1006,7 @@ fn review_lifecycle_batch(slot: &SlotScript) -> crate::load::QueuedSeatBatch {
             ],
         ),
         machine_events: Vec::new(),
+        held_waits: crate::load::HeldWaitFacts::default(),
     }
 }
 
@@ -1029,18 +1032,134 @@ fn repeated_held_lifecycle_pages_fold_without_losing_distinct_controls() {
     batches.push(newer);
     let mut compacted = slot.compact_held_seat_batches(batches);
     assert_eq!(compacted.len(), 1);
-    let kept = compacted.pop().unwrap().batch.reqs;
+    let kept = compacted.pop().unwrap();
     assert_eq!(
-        kept.into_iter().map(|row| row.request).collect::<Vec<_>>(),
+        kept.held_waits,
+        crate::load::HeldWaitFacts {
+            enqueued: 40,
+            settled: 40,
+        },
+        "each repeated wait fact is counted"
+    );
+    assert_eq!(
+        kept.batch
+            .reqs
+            .into_iter()
+            .map(|row| row.request)
+            .collect::<Vec<_>>(),
         [
-            InteractReq::WaitEnqueued,
-            InteractReq::WaitSettled,
             InteractReq::GatherStop { request_id: 10 },
             InteractReq::GatherStop { request_id: 11 },
             InteractReq::RunPolicyOverride { policy: None },
         ],
-        "one repeated lifecycle page and every distinct control survive"
+        "every distinct control survives and wait facts take no rows"
     );
+    slot.stop();
+}
+
+#[test]
+fn held_lifecycle_pages_stay_row_bounded_and_counted_frame_by_frame() {
+    let mut slot = with_seat(834);
+    let row = |request| SeatInteractDecoded {
+        lineage: None,
+        mirror_owner: None,
+        request,
+    };
+    let page = |slot: &SlotScript, reqs: Vec<InteractReq>| crate::load::QueuedSeatBatch {
+        generation: slot.load.as_ref().unwrap().generation(),
+        observed_walk_outcome_seq: 0,
+        batch: decoded(Vec::new(), reqs.into_iter().map(row).collect()),
+        machine_events: Vec::new(),
+        held_waits: crate::load::HeldWaitFacts::default(),
+    };
+    slot.seat_guardian_hold(true);
+    let dropped_before = slot.seat.as_ref().unwrap().dropped();
+    let first = page(
+        &slot,
+        vec![
+            InteractReq::WaitEnqueued,
+            InteractReq::WaitSettled,
+            InteractReq::NoteProgress,
+        ],
+    );
+    slot.load
+        .as_ref()
+        .unwrap()
+        .restore_seat_batches(vec![first]);
+    let _ = slot.drain_host_interacts();
+    let mut held_rows = Vec::with_capacity(201);
+    for frame in 0..=200 {
+        // The new page arrives behind the held batch, as the isolate queues it.
+        let mut queue = slot.load.as_ref().unwrap().drain_seat_batches();
+        assert_eq!(queue.len(), 1, "frame {frame}: one held batch");
+        held_rows.push(queue[0].batch.reqs.len());
+        if frame == 200 {
+            slot.load.as_ref().unwrap().restore_seat_batches(queue);
+            break;
+        }
+        queue.push(page(
+            &slot,
+            vec![InteractReq::WaitEnqueued, InteractReq::LoopSettled],
+        ));
+        slot.load.as_ref().unwrap().restore_seat_batches(queue);
+        let _ = slot.drain_host_interacts();
+    }
+    assert!(
+        held_rows.iter().all(|&rows| rows <= 2),
+        "held rows must stay within a fixed bound of 2 for the hold: first {:?}, last {:?}",
+        &held_rows[..3],
+        held_rows.last()
+    );
+    let mut held = slot.load.as_ref().unwrap().drain_seat_batches();
+    assert_eq!(held.len(), 1);
+    let batch = held.pop().unwrap();
+    assert_eq!(
+        batch
+            .batch
+            .reqs
+            .iter()
+            .map(|row| row.request.clone())
+            .collect::<Vec<_>>(),
+        [InteractReq::NoteProgress, InteractReq::LoopSettled],
+        "one row for each distinct stamp"
+    );
+    assert_eq!(
+        batch.held_waits,
+        crate::load::HeldWaitFacts {
+            enqueued: 201,
+            settled: 1,
+        },
+        "every held wait fact is counted"
+    );
+    assert_eq!(
+        slot.seat.as_ref().unwrap().dropped() - dropped_before,
+        199,
+        "each repeated stamp that the fold discards is counted"
+    );
+    slot.load
+        .as_ref()
+        .unwrap()
+        .restore_seat_batches(vec![batch]);
+    slot.seat_guardian_hold(false);
+    let _ = slot.drain_host_interacts();
+    let lifecycle = std::mem::take(&mut slot.seat_lifecycle);
+    let enqueued = lifecycle
+        .iter()
+        .filter(|req| matches!(req, InteractReq::WaitEnqueued))
+        .count();
+    let settled = lifecycle
+        .iter()
+        .filter(|req| matches!(req, InteractReq::WaitSettled))
+        .count();
+    assert_eq!(
+        enqueued - settled,
+        200,
+        "the host applies the net of 201 enqueues and 1 settle: {lifecycle:?}"
+    );
+    assert!(settled >= 1, "a matched pair still stamps the scheduler");
+    assert!(lifecycle.contains(&InteractReq::NoteProgress));
+    assert!(lifecycle.contains(&InteractReq::LoopSettled));
+    assert!(slot.load.as_ref().unwrap().drain_seat_batches().is_empty());
     slot.stop();
 }
 

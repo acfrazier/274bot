@@ -122,8 +122,9 @@ pub(crate) use isolate::GameplayFactory;
 pub(crate) use isolate::TickOutcome;
 #[cfg(feature = "load")]
 pub use isolate::{
-    isolate_capacity_status, IsolateCapacityStatus, LoadIsolate, LoadIsolateError, QueuedInteract,
-    QueuedSeatBatch, Ready, ScriptStopReceipt, TeardownProof, ValidationBatch, ValidationError,
+    isolate_capacity_status, HeldWaitFacts, IsolateCapacityStatus, LoadIsolate, LoadIsolateError,
+    QueuedInteract, QueuedSeatBatch, Ready, ScriptStopReceipt, TeardownProof, ValidationBatch,
+    ValidationError,
 };
 #[cfg(feature = "load")]
 pub use platform::bootstrap_v8_platform;
