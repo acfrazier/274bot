@@ -3213,9 +3213,7 @@ fn slot_loop_does_not_count_a_send_blocked_on_the_peer() {
         loop {
             send_start_rx.recv().unwrap();
             if send_done_rx.recv_timeout(stall).is_ok()
-                || send_done_rx
-                    .recv_timeout(Duration::from_millis(50))
-                    .is_ok()
+                || send_done_rx.recv_timeout(Duration::from_millis(50)).is_ok()
             {
                 continue;
             }
