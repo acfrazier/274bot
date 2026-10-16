@@ -96,6 +96,8 @@ struct GpuTex {
 
 struct TerrainSlot {
     key: TileKey,
+    identity: ImageIdentity,
+    last_visible: Option<u64>,
     gpu: Option<GpuTex>,
 }
 
@@ -128,6 +130,7 @@ pub struct WalkMapRenderer {
     pending_upload: Option<(u64, ImageIdentity, TileKey, Vec<u8>)>,
     decode: WalkMapDecodeController,
     tex_pool: Vec<GpuTex>,
+    visible_clock: u64,
     #[cfg(test)]
     test_sync_decode: bool,
     pub show_basemap: bool,
@@ -198,6 +201,7 @@ impl WalkMapRenderer {
             pending_upload: None,
             decode: WalkMapDecodeController::new(),
             tex_pool: Vec::new(),
+            visible_clock: 0,
             #[cfg(test)]
             test_sync_decode: true,
             show_basemap: true,
@@ -735,6 +739,14 @@ impl WalkMapRenderer {
         if vis != self.last_vis && self.phase == MapPhase::Error {
             self.phase = MapPhase::Pending;
         }
+        let identity = self.identity();
+        retain_context(
+            &mut self.slots,
+            identity,
+            vis.map(|tiles| (tiles.plane, tiles.lod)),
+            &mut self.tex_pool,
+            gpu,
+        );
         let Some(vis) = vis else {
             self.last_vis = None;
             self.pending_upload = None;
@@ -743,15 +755,24 @@ impl WalkMapRenderer {
             return;
         };
         self.last_vis = Some(vis);
+        self.visible_clock = self.visible_clock.wrapping_add(1);
+        for slot in &mut self.slots {
+            if slot.identity == identity && vis_contains(vis, slot.key) {
+                slot.last_visible = Some(self.visible_clock);
+            }
+        }
         if !self.show_basemap || !self.has_terrain() {
             self.pending_upload = None;
             self.decode.discard_pending();
             self.decode.cancel_active();
             return;
         }
-        retain_visible(&mut self.slots, vis, &mut self.tex_pool, gpu);
-        if let Some((_, _, key, _)) = &self.pending_upload {
-            if !vis_contains(vis, *key) {
+        if let Some((generation, image, key, _)) = &self.pending_upload {
+            let current = *generation == self.generation
+                && *image == identity
+                && prefetch_contains(vis, *key);
+            let visible_miss = has_missing_visible(&self.slots, vis);
+            if !current || (!vis_contains(vis, *key) && visible_miss) {
                 self.pending_upload = None;
             }
         }
@@ -759,53 +780,45 @@ impl WalkMapRenderer {
     }
 
     fn request_missing(&mut self, vis: VisibleTiles) {
-        if self.pending_upload.is_some() {
-            return;
-        }
         let generation = self.generation;
         let identity = self.identity();
-        if self
-            .decode
-            .pending_request()
-            .is_some_and(|(gen, image, key)| {
-                gen != generation || image != identity || !vis_contains(vis, key)
-            })
-        {
+        let active = self.decode.active_request();
+        let pending = self.decode.pending_request();
+
+        if pending.is_some_and(|(gen, image, key)| {
+            gen != generation
+                || image != identity
+                || !prefetch_contains(vis, key)
+                || (!vis_contains(vis, key) && self.slots.len() >= TEXTURE_CAP)
+        }) {
             self.decode.discard_pending();
         }
-        if let Some((gen, image, key)) = self.decode.active_request() {
+        if let Some((gen, image, key)) = active {
             if self.decode.is_requested(gen, image, key)
-                && (gen != generation || image != identity || !vis_contains(vis, key))
+                && (gen != generation
+                    || image != identity
+                    || !prefetch_contains(vis, key)
+                    || (!vis_contains(vis, key) && self.slots.len() >= TEXTURE_CAP))
             {
                 self.decode.cancel_active();
             }
         }
-        if let Some((gen, image, key)) = self.decode.pending_request() {
-            if gen == generation && image == identity && vis_contains(vis, key) {
-                if let Err(error) = self.decode.retry_pending() {
-                    self.phase = MapPhase::Error;
-                    self.status = format!("tile decode failed: {error}");
-                }
+
+        if let Some((gen, image, key, _)) = &self.pending_upload {
+            if *gen == generation
+                && *image == identity
+                && (vis_contains(vis, *key) || !has_missing_visible(&self.slots, vis))
+            {
                 return;
             }
         }
-        if self
-            .decode
-            .active_request()
-            .is_some_and(|(gen, image, key)| {
-                self.decode.is_requested(gen, image, key)
-                    && gen == generation
-                    && image == identity
-                    && vis_contains(vis, key)
-            })
-        {
-            return;
-        }
-        if self.slots.len() >= TEXTURE_CAP {
-            return;
-        }
+
         for key in vis.keys() {
-            if self.slots.iter().any(|slot| slot.key == key) {
+            if self
+                .slots
+                .iter()
+                .any(|slot| slot.identity == identity && slot.key == key)
+            {
                 continue;
             }
             let png = if let Some(ready) = self.ready.as_deref() {
@@ -816,6 +829,15 @@ impl WalkMapRenderer {
             let Some(png) = png else {
                 continue;
             };
+            if self.decode.is_requested(generation, identity, key) {
+                if self.decode.pending_request() == Some((generation, identity, key)) {
+                    if let Err(error) = self.decode.retry_pending() {
+                        self.phase = MapPhase::Error;
+                        self.status = format!("tile decode failed: {error}");
+                    }
+                }
+                return;
+            }
             #[cfg(test)]
             if self.test_sync_decode {
                 match decode_checked(&png) {
@@ -833,7 +855,106 @@ impl WalkMapRenderer {
             }
             return;
         }
+
+        if self
+            .decode
+            .pending_request()
+            .is_some_and(|(gen, image, key)| {
+                gen == generation && image == identity && vis_contains(vis, key)
+            })
+        {
+            if let Err(error) = self.decode.retry_pending() {
+                self.phase = MapPhase::Error;
+                self.status = format!("tile decode failed: {error}");
+            }
+            return;
+        }
+        if self
+            .decode
+            .active_request()
+            .is_some_and(|(gen, image, key)| {
+                self.decode.is_requested(gen, image, key)
+                    && gen == generation
+                    && image == identity
+                    && vis_contains(vis, key)
+            })
+        {
+            return;
+        }
+
+        if self.slots.len() >= TEXTURE_CAP {
+            return;
+        }
+        if self
+            .decode
+            .pending_request()
+            .is_some_and(|(gen, image, key)| {
+                gen == generation && image == identity && prefetch_contains(vis, key)
+            })
+        {
+            if let Err(error) = self.decode.retry_pending() {
+                self.phase = MapPhase::Error;
+                self.status = format!("tile decode failed: {error}");
+            }
+            return;
+        }
+        if self
+            .decode
+            .active_request()
+            .is_some_and(|(gen, image, key)| {
+                self.decode.is_requested(gen, image, key)
+                    && gen == generation
+                    && image == identity
+                    && prefetch_contains(vis, key)
+            })
+        {
+            return;
+        }
+
+        for x in vis.min_x.saturating_sub(1)..=vis.max_x.saturating_add(1) {
+            for z in vis.min_z.saturating_sub(1)..=vis.max_z.saturating_add(1) {
+                let key = TileKey {
+                    plane: vis.plane,
+                    lod: vis.lod,
+                    x,
+                    z,
+                };
+                if vis_contains(vis, key)
+                    || self
+                        .slots
+                        .iter()
+                        .any(|slot| slot.identity == identity && slot.key == key)
+                {
+                    continue;
+                }
+                let png = if let Some(ready) = self.ready.as_deref() {
+                    ready.read_tile_arc(key).ok().flatten()
+                } else {
+                    self.fixtures.get_arc(key)
+                };
+                let Some(png) = png else {
+                    continue;
+                };
+                #[cfg(test)]
+                if self.test_sync_decode {
+                    match decode_checked(&png) {
+                        Ok(rgba) => self.pending_upload = Some((generation, identity, key, rgba)),
+                        Err(error) => {
+                            self.phase = MapPhase::Error;
+                            self.status = format!("tile decode failed: {error}");
+                        }
+                    }
+                    return;
+                }
+                if let Err(error) = self.decode.request(generation, identity, key, png) {
+                    self.phase = MapPhase::Error;
+                    self.status = format!("tile decode failed: {error}");
+                }
+                return;
+            }
+        }
     }
+
     fn pump_decode(&mut self) {
         let request = self
             .decode
@@ -872,27 +993,53 @@ impl WalkMapRenderer {
             if gen != self.generation || !self.open || identity != self.identity() {
                 continue;
             }
-            if self.slots.iter().any(|s| s.key == key) {
+            if self
+                .slots
+                .iter()
+                .any(|slot| slot.key == key && slot.identity == identity)
+            {
                 continue;
             }
-            if self.last_vis.is_some_and(|vis| !vis_contains(vis, key)) {
+            let visible = self.last_vis.is_some_and(|vis| vis_contains(vis, key));
+            if !self.last_vis.is_some_and(|vis| prefetch_contains(vis, key)) {
                 continue;
             }
-            if self.slots.len() >= TEXTURE_CAP {
-                break;
+            if !visible
+                && self
+                    .last_vis
+                    .is_some_and(|vis| has_missing_visible(&self.slots, vis))
+            {
+                continue;
             }
+            if visible {
+                if let Some(vis) = self.last_vis {
+                    if !make_room_for_visible(&mut self.slots, vis, &mut self.tex_pool, gpu) {
+                        continue;
+                    }
+                }
+            } else if self.slots.len() >= TEXTURE_CAP {
+                continue;
+            }
+            let last_visible = visible.then_some(self.visible_clock);
             match gpu.as_mut() {
                 Some(g) => {
                     if let Some(gpu_tex) = upload_tile(*g, &mut self.tex_pool, &rgba) {
                         self.slots.push(TerrainSlot {
                             key,
+                            identity,
+                            last_visible,
                             gpu: Some(gpu_tex),
                         });
                         uploaded += 1;
                     }
                 }
                 None => {
-                    self.slots.push(TerrainSlot { key, gpu: None });
+                    self.slots.push(TerrainSlot {
+                        key,
+                        identity,
+                        last_visible,
+                        gpu: None,
+                    });
                     uploaded += 1;
                 }
             }
@@ -1037,25 +1184,71 @@ fn vis_contains(vis: VisibleTiles, key: TileKey) -> bool {
         && key.z <= vis.max_z
 }
 
-fn retain_visible(
+fn prefetch_contains(vis: VisibleTiles, key: TileKey) -> bool {
+    key.plane == vis.plane
+        && key.lod == vis.lod
+        && key.x >= vis.min_x.saturating_sub(1)
+        && key.x <= vis.max_x.saturating_add(1)
+        && key.z >= vis.min_z.saturating_sub(1)
+        && key.z <= vis.max_z.saturating_add(1)
+}
+
+fn has_missing_visible(slots: &[TerrainSlot], vis: VisibleTiles) -> bool {
+    vis.keys()
+        .any(|key| !slots.iter().any(|slot| slot.key == key))
+}
+
+fn recycle_texture(texture: GpuTex, pool: &mut Vec<GpuTex>, gpu: &mut Option<&mut dyn FrameGpu>) {
+    if pool.len() < TEXTURE_CAP {
+        pool.push(texture);
+    } else if let Some(gpu) = gpu.as_mut() {
+        gpu.unregister_texture(texture.tex_id);
+    }
+}
+
+fn retain_context(
+    slots: &mut Vec<TerrainSlot>,
+    identity: ImageIdentity,
+    context: Option<(u8, u8)>,
+    pool: &mut Vec<GpuTex>,
+    gpu: &mut Option<&mut dyn FrameGpu>,
+) {
+    slots.retain_mut(|slot| {
+        if slot.identity == identity
+            && context.is_none_or(|(plane, lod)| slot.key.plane == plane && slot.key.lod == lod)
+        {
+            return true;
+        }
+        if let Some(texture) = slot.gpu.take() {
+            recycle_texture(texture, pool, gpu);
+        }
+        false
+    });
+}
+
+fn make_room_for_visible(
     slots: &mut Vec<TerrainSlot>,
     vis: VisibleTiles,
     pool: &mut Vec<GpuTex>,
     gpu: &mut Option<&mut dyn FrameGpu>,
-) {
-    let mut kept = Vec::with_capacity(slots.len());
-    for slot in slots.drain(..) {
-        if vis_contains(vis, slot.key) {
-            kept.push(slot);
-        } else if let Some(tex) = slot.gpu {
-            if pool.len() < TEXTURE_CAP {
-                pool.push(tex);
-            } else if let Some(g) = gpu.as_mut() {
-                g.unregister_texture(tex.tex_id);
-            }
-        }
+) -> bool {
+    if slots.len() < TEXTURE_CAP {
+        return true;
     }
-    *slots = kept;
+    let oldest = slots
+        .iter()
+        .enumerate()
+        .filter(|(_, slot)| !vis_contains(vis, slot.key))
+        .min_by_key(|(_, slot)| slot.last_visible.unwrap_or(0))
+        .map(|(index, _)| index);
+    let Some(oldest) = oldest else {
+        return false;
+    };
+    let mut evicted = slots.swap_remove(oldest);
+    if let Some(texture) = evicted.gpu.take() {
+        recycle_texture(texture, pool, gpu);
+    }
+    true
 }
 
 fn select_visible(view: View) -> Option<VisibleTiles> {
