@@ -3,7 +3,9 @@
 use std::fmt;
 use std::sync::Arc;
 
-use api::identity::{Cancellation, IdentityError, PublishSequence, Scope, Settlement};
+use api::identity::{
+    Cancellation, IdentityError, PublishSequence, Scope, Settlement, WorkIdentity,
+};
 use api::process_condition::{ProcessConditions, UnavailableTerminal};
 use api::work::{
     CooperativeViolation, InputRevision, JobError, JobSettlement, LedgerError, SubmissionRefusal,
@@ -58,7 +60,9 @@ impl WorkFamilySpec for DecodeSpec {
 }
 
 struct ActiveDecode {
-    ticket: WorkTicket<DecodeSpec>,
+    // WorkTicket has a function-pointer marker, so store its identity and
+    // revision. Rebuild the exact typed ticket for each service call.
+    identity: WorkIdentity,
     generation: u64,
     revision: InputRevision,
     image: ImageIdentity,
@@ -235,7 +239,7 @@ impl WalkMapDecodeController {
             }
         }
         let active = self.active.as_ref()?;
-        let ticket = active.ticket;
+        let ticket = WorkTicket::<DecodeSpec>::new(active.identity, active.revision);
         let shared = match WorkService::shared() {
             Ok(shared) => shared,
             Err(error) => return Some(Err(WalkMapDecodeError::ServiceStart(error))),
@@ -355,7 +359,7 @@ impl WalkMapDecodeController {
             .active
             .as_ref()
             .filter(|active| !active.stale)
-            .map(|active| active.ticket);
+            .map(|active| WorkTicket::<DecodeSpec>::new(active.identity, active.revision));
         if let Some(ticket) = ticket {
             if let Ok(shared) = WorkService::shared() {
                 let _ = shared.lock().cancel(ticket, Cancellation::Superseded);
@@ -385,9 +389,10 @@ impl WalkMapDecodeController {
             active.stale = true;
             match WorkService::shared() {
                 Ok(shared) => {
-                    let _ = shared
-                        .lock()
-                        .abandon(active.ticket, Cancellation::ScopeInvalidated);
+                    let _ = shared.lock().abandon(
+                        WorkTicket::<DecodeSpec>::new(active.identity, active.revision),
+                        Cancellation::ScopeInvalidated,
+                    );
                     #[cfg(feature = "test-support")]
                     self.release_ticket_for_test();
                 }
@@ -451,9 +456,9 @@ impl WalkMapDecodeController {
             Ok(ticket) => {
                 let pending = self.pending.take().expect("accepted pending demand");
                 self.active = Some(ActiveDecode {
-                    ticket,
+                    identity: ticket.identity(),
                     generation: pending.generation,
-                    revision: pending.revision,
+                    revision: ticket.revision(),
                     image: pending.image,
                     key: pending.key,
                     png_bytes: pending.png.len(),
@@ -492,9 +497,10 @@ impl WalkMapDecodeController {
         let stale = active.stale;
         match WorkService::shared() {
             Ok(shared) => {
-                let _ = shared
-                    .lock()
-                    .abandon(active.ticket, Cancellation::ScopeInvalidated);
+                let _ = shared.lock().abandon(
+                    WorkTicket::<DecodeSpec>::new(active.identity, active.revision),
+                    Cancellation::ScopeInvalidated,
+                );
                 #[cfg(feature = "test-support")]
                 self.release_ticket_for_test();
             }
@@ -673,11 +679,8 @@ mod tests {
         controller
             .request(7, identity, old_key, png(0x11))
             .expect("submit old tile");
-        let old_ticket = controller
-            .active
-            .as_ref()
-            .expect("accepted old tile")
-            .ticket;
+        let active = controller.active.as_ref().expect("accepted old tile");
+        let old_ticket = WorkTicket::<DecodeSpec>::new(active.identity, active.revision);
 
         controller
             .request(7, identity, new_key, png(0x22))
@@ -708,7 +711,8 @@ mod tests {
         controller
             .request(8, identity, tile, png(0x33))
             .expect("submit tile");
-        let ticket = controller.active.as_ref().expect("accepted tile").ticket;
+        let active = controller.active.as_ref().expect("accepted tile");
+        let ticket = WorkTicket::<DecodeSpec>::new(active.identity, active.revision);
 
         controller.cancel_active();
         assert!(controller.has_active(), "the stale ticket stays in custody");
@@ -737,11 +741,8 @@ mod tests {
         controller
             .request(9, identity, old_key, png(0x44))
             .expect("submit old tile");
-        let old_ticket = controller
-            .active
-            .as_ref()
-            .expect("accepted old tile")
-            .ticket;
+        let active = controller.active.as_ref().expect("accepted old tile");
+        let old_ticket = WorkTicket::<DecodeSpec>::new(active.identity, active.revision);
         controller
             .request(9, identity, discarded_key, png(0x55))
             .expect("retain replacement tile");
