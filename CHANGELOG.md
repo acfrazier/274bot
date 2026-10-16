@@ -186,6 +186,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   profiles stopped until 274bot restarts.
 - Windows now recovers damaged panel preferences and repairs duplicate loadout
   names after preserving the original file in a flushed copy.
+- Windows now promptly cancels blocked login transport I/O when a login attempt
+  ends.
 
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 
