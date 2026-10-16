@@ -132,11 +132,15 @@ pub struct WalkMapRenderer {
     decode: WalkMapDecodeController,
     tex_pool: Vec<GpuTex>,
     pending_unregister: Vec<TextureId>,
+    /// Listed tiles of the bound cache that could not be read, each warned once.
+    unreadable_warned: HashSet<TileKey>,
     visible_clock: u64,
     #[cfg(test)]
     test_sync_decode: bool,
     #[cfg(test)]
     tile_read_count: usize,
+    #[cfg(test)]
+    tile_warn_count: usize,
     pub show_basemap: bool,
     pub show_grid: bool,
     pub show_reach: bool,
@@ -206,11 +210,14 @@ impl WalkMapRenderer {
             decode: WalkMapDecodeController::new(),
             tex_pool: Vec::new(),
             pending_unregister: Vec::new(),
+            unreadable_warned: HashSet::new(),
             visible_clock: 0,
             #[cfg(test)]
             test_sync_decode: true,
             #[cfg(test)]
             tile_read_count: 0,
+            #[cfg(test)]
+            tile_warn_count: 0,
             show_basemap: true,
             show_grid: false,
             show_reach: false,
@@ -268,6 +275,7 @@ impl WalkMapRenderer {
                     self.pending_unregister.push(texture.tex_id);
                 }
             }
+            self.unreadable_warned.clear();
             self.pending_upload = None;
             self.decode.invalidate();
         }
@@ -781,6 +789,7 @@ impl WalkMapRenderer {
             identity,
             vis.map(|tiles| (tiles.plane, tiles.lod)),
             &mut self.tex_pool,
+            &mut self.pending_unregister,
             gpu,
         );
         let Some(vis) = vis else {
@@ -848,6 +857,8 @@ impl WalkMapRenderer {
                 return;
             }
         }
+        // A visible decode that is already pending or running owns the
+        // visible demand: wait for it, and do not read any PNG again.
         if let Some((gen, image, key)) = self.decode.pending_request() {
             if gen == generation && image == identity && vis_contains(vis, key) {
                 if let Err(error) = self.decode.retry_pending() {
@@ -878,22 +889,16 @@ impl WalkMapRenderer {
             {
                 continue;
             }
-            if self.decode.is_requested(generation, identity, key) {
-                if self.decode.pending_request() == Some((generation, identity, key)) {
-                    if let Err(error) = self.decode.retry_pending() {
-                        self.phase = MapPhase::Error;
-                        self.status = format!("tile decode failed: {error}");
-                    }
-                }
-                return;
-            }
             let png = match self.read_tile_png(key) {
                 Ok(Some(png)) => png,
                 Ok(None) => {
                     self.remember_no_art(identity, key, true, vis, gpu);
                     continue;
                 }
-                Err(_) => continue,
+                Err(error) => {
+                    self.remember_unreadable(identity, key, true, vis, gpu, &error);
+                    continue;
+                }
             };
             #[cfg(test)]
             if self.test_sync_decode {
@@ -967,7 +972,10 @@ impl WalkMapRenderer {
                         self.remember_no_art(identity, key, false, vis, gpu);
                         continue;
                     }
-                    Err(_) => continue,
+                    Err(error) => {
+                        self.remember_unreadable(identity, key, false, vis, gpu, &error);
+                        continue;
+                    }
                 };
                 #[cfg(test)]
                 if self.test_sync_decode {
@@ -1012,7 +1020,14 @@ impl WalkMapRenderer {
         gpu: &mut Option<&mut dyn FrameGpu>,
     ) {
         if self.slots.len() >= TEXTURE_CAP
-            && (!visible || !make_room_for_visible(&mut self.slots, vis, &mut self.tex_pool, gpu))
+            && (!visible
+                || !make_room_for_visible(
+                    &mut self.slots,
+                    vis,
+                    &mut self.tex_pool,
+                    &mut self.pending_unregister,
+                    gpu,
+                ))
         {
             return;
         }
@@ -1023,6 +1038,37 @@ impl WalkMapRenderer {
             no_art: true,
             gpu: None,
         });
+    }
+
+    /// A listed tile whose file cannot be read gets the same per-identity
+    /// record as a tile without art, so it is not read again every frame.
+    /// Each key is warned once per bound cache.
+    fn remember_unreadable(
+        &mut self,
+        identity: ImageIdentity,
+        key: TileKey,
+        visible: bool,
+        vis: VisibleTiles,
+        gpu: &mut Option<&mut dyn FrameGpu>,
+        error: &host_play::map_cache::MapCacheError,
+    ) {
+        if self.unreadable_warned.insert(key) {
+            api::host_log!(
+                stderr;
+                api::hostlog::Category::Lifecycle,
+                api::hostlog::Level::Warn,
+                "walk map: tile plane {} lod {} ({}, {}) cannot be read: {error}",
+                key.plane,
+                key.lod,
+                key.x,
+                key.z
+            );
+            #[cfg(test)]
+            {
+                self.tile_warn_count += 1;
+            }
+        }
+        self.remember_no_art(identity, key, visible, vis, gpu);
     }
 
     fn pump_decode(&mut self) {
@@ -1083,7 +1129,13 @@ impl WalkMapRenderer {
             }
             if visible {
                 if let Some(vis) = self.last_vis {
-                    if !make_room_for_visible(&mut self.slots, vis, &mut self.tex_pool, gpu) {
+                    if !make_room_for_visible(
+                        &mut self.slots,
+                        vis,
+                        &mut self.tex_pool,
+                        &mut self.pending_unregister,
+                        gpu,
+                    ) {
                         continue;
                     }
                 }
@@ -1278,11 +1330,16 @@ fn flush_pending_unregister(pending: &mut Vec<TextureId>, gpu: &mut Option<&mut 
     }
 }
 
-fn recycle_texture(texture: GpuTex, pool: &mut Vec<GpuTex>, gpu: &mut Option<&mut dyn FrameGpu>) {
+fn recycle_texture(
+    texture: GpuTex,
+    pool: &mut Vec<GpuTex>,
+    pending: &mut Vec<TextureId>,
+    gpu: &mut Option<&mut dyn FrameGpu>,
+) {
     if pool.len() < TEXTURE_CAP {
         pool.push(texture);
-    } else if let Some(gpu) = gpu.as_mut() {
-        gpu.unregister_texture(texture.tex_id);
+    } else {
+        unregister_or_queue(texture.tex_id, gpu, pending);
     }
 }
 
@@ -1291,6 +1348,7 @@ fn retain_context(
     identity: ImageIdentity,
     context: Option<(u8, u8)>,
     pool: &mut Vec<GpuTex>,
+    pending: &mut Vec<TextureId>,
     gpu: &mut Option<&mut dyn FrameGpu>,
 ) {
     slots.retain_mut(|slot| {
@@ -1300,7 +1358,7 @@ fn retain_context(
             return true;
         }
         if let Some(texture) = slot.gpu.take() {
-            recycle_texture(texture, pool, gpu);
+            recycle_texture(texture, pool, pending, gpu);
         }
         false
     });
@@ -1310,6 +1368,7 @@ fn make_room_for_visible(
     slots: &mut Vec<TerrainSlot>,
     vis: VisibleTiles,
     pool: &mut Vec<GpuTex>,
+    pending: &mut Vec<TextureId>,
     gpu: &mut Option<&mut dyn FrameGpu>,
 ) -> bool {
     if slots.len() < TEXTURE_CAP {
@@ -1326,7 +1385,7 @@ fn make_room_for_visible(
     };
     let mut evicted = slots.swap_remove(oldest);
     if let Some(texture) = evicted.gpu.take() {
-        recycle_texture(texture, pool, gpu);
+        recycle_texture(texture, pool, pending, gpu);
     }
     true
 }

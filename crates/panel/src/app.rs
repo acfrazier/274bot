@@ -6546,7 +6546,6 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     let live_failure = Arc::new(Mutex::new(None));
     let live_failure_frame = Arc::clone(&live_failure);
     let frame_running = Rc::clone(&running);
-    let shutdown_running = Rc::clone(&running);
     let result = window::run(
         cfg,
         amber_style,
@@ -6554,11 +6553,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
             client::render::backend::inject_device(device.clone(), queue.clone());
             *os_window_init.lock().unwrap() = Some(Arc::clone(window));
         },
-        move |gpu| {
-            if let Some((state, _)) = shutdown_running.borrow_mut().as_mut() {
-                state.walk_map.release(Some(gpu));
-            }
-        },
+        panel_gpu_shutdown(Rc::clone(&running)),
         Arc::clone(&shot_state),
         move |ui, gpu| {
             let _profile_draw = client::profiling::UI_DRAW.start();
@@ -6614,6 +6609,18 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     );
     let failure = live_failure.lock().unwrap().take();
     finish_panel_run(result, failure)
+}
+
+/// The window's GPU shutdown hook: release the walk map's textures while
+/// the renderer that registered them is still live.
+fn panel_gpu_shutdown(
+    running: Rc<RefCell<Option<(PanelState, StartupPreparation)>>>,
+) -> impl FnMut(&mut Gpu) + 'static {
+    move |gpu| {
+        if let Some((state, _)) = running.borrow_mut().as_mut() {
+            state.walk_map.release(Some(gpu));
+        }
+    }
 }
 
 /// Whole-window shots (the 377 harness pattern): write completed captures
@@ -7143,3 +7150,7 @@ mod tests;
 #[cfg(test)]
 #[path = "app_window_tests.rs"]
 mod window_tests;
+
+#[cfg(test)]
+#[path = "app_teardown_tests.rs"]
+mod teardown_tests;
