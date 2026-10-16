@@ -10,13 +10,14 @@
 //! logout bounded by [`SLOT_REMOVE_TIMEOUT`], and workers are joined only
 //! once finished.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use api::host_log;
 use api::hostlog::{Category, Level, Source};
+use api::identity::SessionKey;
 use host::{CapacityEval, FrameBuf, SlotInput};
 use host_play::{InstancePermit, Play, SlotArm, SlotStatus, WalkArms};
 use vault::{Profile, ProfileSettings, RandomEventPolicy, Vault, VaultChange};
@@ -589,10 +590,8 @@ pub struct OperatorSession<Io> {
     views: Views,
     /// Start-all / marked-Start places fed into the single row derivation.
     start_places: HashMap<String, QueuePlace>,
-    /// Slots whose operator-requested Relog-now is still in its logout half.
-    mem_relog: HashSet<String>,
-    /// Slots whose Relog-now has parked and queued its automatic login half.
-    mem_relog_login: HashSet<String>,
+    /// Operator Relog-nows pending a different owner-authorized session.
+    mem_relog: HashMap<String, Option<SessionKey>>,
     /// Operation outcomes taken by the last poll (reused buffer).
     op_changes: Vec<OpChange>,
     /// Reused buffer for operation log lines.
@@ -670,8 +669,7 @@ impl<Io> OperatorSession<Io> {
             bypass_asset_startup: false,
             views: Views::default(),
             start_places: HashMap::new(),
-            mem_relog: HashSet::new(),
-            mem_relog_login: HashSet::new(),
+            mem_relog: HashMap::new(),
             op_changes: Vec::new(),
             op_line: String::new(),
             resources: Resources::default(),
@@ -766,7 +764,6 @@ impl<Io> OperatorSession<Io> {
     pub fn close_play(&mut self) {
         self.deferred.clear();
         self.mem_relog.clear();
-        self.mem_relog_login.clear();
         self.play = None;
     }
 
@@ -1235,12 +1232,9 @@ impl<Io> OperatorSession<Io> {
         name: &str,
         surface: &mut S,
     ) -> Result<(), String> {
-        // A manual login supersedes either half of any Relog-now for the
-        // slot. The server-mode baseline changes only when the worker
-        // publishes a successful handshake; arming intent here must not hide
-        // the notice.
+        // A manual Login supersedes the pending Relog-now; the worker still
+        // owns the applied server-mode observation.
         self.mem_relog.remove(name);
-        self.mem_relog_login.remove(name);
         if let Some(arm) = self.play.as_ref().and_then(|play| play.arm(name)) {
             arm.arm_explicit_login();
             return Ok(());
@@ -1307,10 +1301,8 @@ impl<Io> OperatorSession<Io> {
     }
 
     fn logout_member(&mut self, op: OperationId, name: &str) {
-        // An explicit user Logout/Logout-all always outranks a pending
-        // Relog-now; once parked, no automatic login half may fire.
+        // An explicit Logout supersedes the owner's Relog-now login half.
         self.mem_relog.remove(name);
-        self.mem_relog_login.remove(name);
         self.fleet.latch_logout(name);
         self.operations.cancel_pending(ActionKind::Login, name);
         self.operations.cancel_pending(ActionKind::Logout, name);
@@ -1347,7 +1339,7 @@ impl<Io> OperatorSession<Io> {
         Some(MemoryNotice {
             login_lowmem: status.login_lowmem?,
             desired_lowmem: self.memory_mode(name)?,
-            relog_pending: self.mem_relog.contains(name) || self.mem_relog_login.contains(name),
+            relog_pending: self.mem_relog.contains_key(name),
             connected: status.connected,
             login_applies_memory: self
                 .play
@@ -1391,81 +1383,44 @@ impl<Io> OperatorSession<Io> {
         Ok(op)
     }
 
-    /// Relog-now for a memory-mode switch: log out through the normal path
-    /// and re-arm the login once the poll sees the slot parked, so the new
-    /// mode goes through the login FIFO like any operator login. A slot
-    /// with no worker logs straight back in. Never automatic: only the
-    /// operator's Relog action calls this.
+    /// Post one Relog-now row. The owner holds its login half across the
+    /// current session exit; the frontend only tracks the originating
+    /// session for the operator's pending notice.
     pub fn request_memory_relog<S: SlotSurface<Io = Io>>(
         &mut self,
         name: &str,
         surface: &mut S,
     ) -> OperationId {
-        if self.play.as_ref().and_then(|play| play.arm(name)).is_none() {
+        let Some(arm) = self.play.as_ref().and_then(|play| play.arm(name)) else {
             return self.login(name, surface);
-        }
+        };
         let op = self.operations.open(ActionKind::Logout);
-        self.logout_member(op, name);
-        self.mem_relog.insert(name.to_string());
-        self.mem_relog_login.remove(name);
+        let previous = arm.session_key();
+        arm.request_relog();
+        self.mem_relog.insert(name.to_string(), previous);
+        self.operations.cancel_pending(ActionKind::Logout, name);
+        self.operations.set(op, name, Outcome::Pending);
         if let Some(play) = self.play.as_ref() {
             play.wake(name);
         }
         op
     }
 
-    /// Fire the login half of operator Relog-nows whose logout has parked:
-    /// the slot sits latched on the title, so re-arming logs it back in
-    /// through the login FIFO. The relog stays pending until that login
-    /// succeeds. Runs in the poll, never on the caller.
-    fn complete_memory_relogs(&mut self) {
-        if self.mem_relog.is_empty() || self.play.is_none() {
-            return;
-        }
-        let ready: Vec<String> = self
-            .mem_relog
-            .iter()
-            .filter(|name| {
-                self.statuses
-                    .iter()
-                    .find(|s| &s.username == *name)
-                    .is_some_and(|s| s.login_latched && !s.connected)
-            })
-            .cloned()
-            .collect();
-        for name in ready {
-            let Some(arm) = self.play.as_ref().and_then(|play| play.arm(&name)) else {
-                continue;
-            };
-            arm.arm_explicit_login();
-            self.fleet.clear_latch(&name);
-            self.mem_relog.remove(&name);
-            self.mem_relog_login.insert(name.clone());
-            self.operations.cancel_pending(ActionKind::Logout, &name);
-            self.operations.cancel_pending(ActionKind::Login, &name);
-            let op = self.operations.open(ActionKind::Login);
-            self.operations.set(op, &name, Outcome::Pending);
-            if let Some(play) = self.play.as_ref() {
-                play.wake(&name);
-            }
-        }
-    }
-
-    /// Settle Relog-now's visible queued state after the login half reaches
-    /// the game or stops on a terminal login error. While it remains queued,
-    /// another Relog action must not be offered.
     fn finish_memory_relogs(&mut self) {
         let statuses = &self.statuses;
         let play = self.play.as_ref();
-        self.mem_relog_login.retain(|name| {
+        self.mem_relog.retain(|name, previous| {
             let logged_in = statuses
                 .iter()
                 .find(|status| status.username == *name)
                 .is_some_and(|status| status.ingame);
-            let failed = play
-                .and_then(|play| play.arm(name))
-                .is_some_and(|arm| arm.login_held_by_error());
-            !logged_in && !failed
+            let arm = play.and_then(|play| play.arm(name));
+            let failed = arm.as_ref().is_some_and(|arm| arm.login_held_by_error());
+            let new_session = arm
+                .as_ref()
+                .and_then(|arm| arm.session_key())
+                .is_some_and(|current| Some(current) != *previous);
+            !((logged_in && new_session) || failed || arm.is_none())
         });
     }
 
@@ -1510,7 +1465,6 @@ impl<Io> OperatorSession<Io> {
         self.operations.cancel_pending(ActionKind::Login, name);
         self.deferred.remove(name);
         self.mem_relog.remove(name);
-        self.mem_relog_login.remove(name);
         let connected = self
             .play
             .as_ref()
@@ -1603,9 +1557,6 @@ impl<Io> OperatorSession<Io> {
             self.poll_starts();
             record_transitions(&self.statuses, &self.polled, &mut self.transitions);
             std::mem::swap(&mut self.statuses, &mut self.polled);
-            // Parked Relog-nows re-arm here so their login half is logged
-            // and settled like any operator command this poll.
-            self.complete_memory_relogs();
             self.finish_memory_relogs();
             self.log_poll();
             self.settle_operations();
@@ -1860,12 +1811,9 @@ impl<Io> OperatorSession<Io> {
             let Some(spawn) = self.deferred.remove(&name) else {
                 continue;
             };
-            // A fresh lifetime handshakes on its own: any Relog-now
-            // sequencing for the previous lifetime is moot (its baseline
-            // is recorded below; a still-unsettled toggle stays visible
-            // until it settles and the slot logs in again).
+            // A replacement worker has its own mailbox and session; the
+            // previous lifetime's pending notice cannot follow it.
             self.mem_relog.remove(&name);
-            self.mem_relog_login.remove(&name);
             self.old_lifetime_retired(&name);
             // Deleted while it waited: nothing to spawn.
             let Some(mut profile) = self.durable_profile(&name).cloned() else {

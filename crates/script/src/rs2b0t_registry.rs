@@ -161,7 +161,7 @@ impl RegistryIndex {
         Ok(Self { imports, registers })
     }
 
-    #[cfg(any(feature = "load", test))]
+    #[cfg(feature = "load")]
     pub(crate) fn registrations(&self) -> Result<Vec<RegistryCard>, String> {
         self.cards_with_sources(&HashMap::new())
     }

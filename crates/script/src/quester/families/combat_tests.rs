@@ -1139,6 +1139,7 @@ fn with_step_context_at_walk_seq<R>(
     })
 }
 
+#[cfg(feature = "load")]
 fn publish_walk_outcome(seq: u64, cancel_reason: crate::isolate_fb::WalkCancelReason) {
     crate::observed::replace(seq, true, |post| {
         post.walk_outcome(crate::observed::WalkOutcome {
@@ -2447,6 +2448,7 @@ fn target_gone_walk_user_input_parks_without_reengaging() {
     assert!(run.action.is_none());
 }
 
+#[cfg(feature = "load")]
 #[test]
 fn manual_movement_baseline_covers_return_and_loot_sublegs() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
