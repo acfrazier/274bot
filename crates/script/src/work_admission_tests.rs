@@ -1408,6 +1408,48 @@ fn stalled_worker_publishes_unavailable_before_return_without_releasing_credit()
     assert_eq!(shared.lock().health(), Some(condition));
 }
 
+#[test]
+fn slow_step_returns_after_ten_seconds_without_latching_outage() {
+    let clock = Arc::new(ManualClock::new());
+    let shared = new_service(Arc::clone(&clock));
+    let conditions = conditions(&shared);
+    let input = TestInput {
+        charge: WorkCharge::new(4, 8, 16, 1),
+    };
+    let trace = Arc::new(Mutex::new(Vec::new()));
+    let (entered_tx, entered_rx) = mpsc::sync_channel(0);
+    let (release_tx, release_rx) = mpsc::sync_channel(0);
+    let ticket = submit(
+        &shared,
+        &input,
+        QueueJob::new(10, Arc::clone(&trace), 0, Some((entered_tx, release_rx))),
+        &conditions,
+    );
+    entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("worker enters the slow step");
+
+    clock.advance(Duration::from_secs(10));
+    let health_during_slow_step = {
+        let service = shared.lock();
+        service.observe_health();
+        service.health()
+    };
+
+    release_tx.send(()).expect("release the slow step");
+    WorkService::wait_terminal(&shared, &ticket).expect("slow step completes normally");
+    let settlement = shared
+        .lock()
+        .consume(&ticket)
+        .expect("consume completed slow step");
+    wait_for_jobs(&shared, 0);
+
+    assert!(health_during_slow_step.is_none());
+    assert!(shared.lock().health().is_none());
+    assert_eq!(settlement, Settlement::Completed(10));
+    assert_eq!(*trace.lock(), [10]);
+}
+
 fn wait_for_shutdown_start(shared: &Arc<Mutex<WorkService>>) {
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
