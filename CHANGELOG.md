@@ -55,12 +55,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   counted twice, and protected items remain protected. Gatherer keeps unbankable
   items and continues gathering whenever the pack still has space after depositing,
   including tool-fetch and supply-only trips that deposit nothing. A pack filled
-  by supply withdrawals reports that no gathering space remains. Both scripts
-  report a full bank or full item stack. Quester still refuses unbankable deposits.
-  Real Strange boxes keep replicating into freed slots through their content
-  timers (`content/scripts/macro events/scripts/general/macro_event_strange_box.rs2:25-73,319-321`).
-  With event handling disabled, unsolved boxes eventually fill the pack and
-  Gatherer stops with the unbankable-item reason.
+  by actual supply withdrawals reports that no gathering space remains. Both
+  scripts report a full bank or full item stack. Quester still refuses
+  unbankable deposits.
+  Unsolved Strange boxes multiply over time and their stacks spread into freed
+  inventory slots. With event handling disabled, if no supply withdrawals fill
+  the pack first, Gatherer stops with the unbankable-item reason once the boxes
+  fill it.
 
 ### Saved state
 

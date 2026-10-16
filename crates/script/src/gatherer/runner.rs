@@ -250,8 +250,11 @@ struct GatherScratch {
     /// do not consume this bound.
     return_recovery_actions: u8,
     return_recovery_pending: bool,
+    /// Whether this trip found an item at Deposit that engine content forbids banking.
     /// Retained across action restarts until the next trip begins.
     kept_unbankable: bool,
+    /// A non-empty supply withdrawal completed during this trip.
+    withdrew_supplies: bool,
 }
 
 pub struct Gatherer {
@@ -402,6 +405,7 @@ impl Gatherer {
         self.scratch.bank_close_attempts = 0;
         self.scratch.withdrawals = None;
         self.scratch.kept_unbankable = false;
+        self.scratch.withdrew_supplies = false;
         self.scratch.return_recovery_actions = 0;
         self.scratch.return_recovery_pending = false;
         self.supply_missing = None;
@@ -730,10 +734,16 @@ impl Gatherer {
                     if self.scratch.kept_unbankable
                         && tick.cx.snapshot().stock().pack_full() == Some(true)
                     {
-                        self.fail(
-                            "inventory-blocked",
-                            "supply withdrawals filled the inventory; no space remains for gathering",
-                        );
+                        if self.scratch.withdrew_supplies {
+                            self.fail(
+                                "inventory-blocked",
+                                "supply withdrawals filled the inventory; no space remains for gathering",
+                            );
+                        } else {
+                            self.deposit_failure(ActionError::BankDeposit(
+                                crate::bank::ops::DepositFailure::Unbankable,
+                            ));
+                        }
                         return;
                     }
                     self.advance_trip(TripStep::Return);
@@ -1739,6 +1749,7 @@ impl Gatherer {
             Active::Withdraw(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Withdraw(handle),
                 Poll::Ready(Ok(true)) => {
+                    self.scratch.withdrew_supplies = true;
                     self.scratch.withdrawals = None;
                     if let Some(item) = self.supply_missing.take() {
                         self.fail("supply-missing", format!("supply-missing:{item}"));
@@ -3022,6 +3033,71 @@ mod tests {
                 self.prepared.supply.bait.as_ref().unwrap().name
             )
         }
+    }
+
+    /// Reviewer probe (GATHERER-HELD-FOREVER-REVIEW-R3): a supply-only bait
+    /// trip with a held Strange box stack and free slots deposits nothing and
+    /// must continue to Withdraw, then withdraw the bait.
+    #[test]
+    fn review_probe_supply_only_trip_with_strange_box_continues() {
+        use crate::quester::families::tests::{def, with_tick};
+        use api::snapshot::{ItemActionFamily, ItemContainer};
+        let fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        gatherer.needs_validate = false;
+        gatherer.tool = ToolState {
+            id: 307,
+            worn: false,
+        };
+        let bait = fixture.prepared.supply.bait.clone().unwrap();
+        let mut snapshot = fixture.snapshot;
+        let mut pack = snapshot.inventory().to_vec();
+        pack.push(ItemView {
+            def: def(3062, "Strange box"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 1,
+            count: 28,
+            actions: Vec::new(),
+            component_id: 3214,
+        });
+        snapshot.seed_inventory(pack, 28);
+        let banked_bait = ItemView {
+            def: def(bait.id, &bait.name),
+            container: ItemContainer::Bank,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 20,
+            actions: vec![Some("Withdraw-1".into())],
+            component_id: 3214,
+        };
+        snapshot.seed_bank_observation(1, 1, Some(vec![banked_bait]), Vec::new());
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let verdict = SupplyPlan::plan(
+                &gatherer.prepared,
+                tick.cx.snapshot().stats().unwrap().value,
+                tick.cx.snapshot().stock(),
+            );
+            assert!(
+                matches!(verdict, SupplyVerdict::Trip(_) | SupplyVerdict::TripToLearn),
+                "bait is due: {verdict:?}"
+            );
+            assert!(gatherer.admit_supply(verdict));
+        });
+        gatherer.trip = TripStep::Deposit;
+        with_tick(&snapshot, &mut ledger, 2, |tick| gatherer.begin_trip(tick));
+        with_tick(&snapshot, &mut ledger, 3, |tick| gatherer.poll_active(tick));
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+        assert_eq!(gatherer.trip, TripStep::Withdraw);
+        with_tick(&snapshot, &mut ledger, 4, |tick| gatherer.begin_trip(tick));
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+        assert!(matches!(gatherer.active, Active::Withdraw(_)));
+        let withdrawals = gatherer.scratch.withdrawals.as_ref().unwrap();
+        assert!(
+            withdrawals.iter().any(|row| row.id == bait.id),
+            "{withdrawals:?}"
+        );
     }
 
     #[test]

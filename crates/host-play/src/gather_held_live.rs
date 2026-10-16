@@ -27,7 +27,11 @@ const SHARK: i32 = 383;
 // increment after the shark deposit proves real fishing resumed, without
 // assuming which chance outcome the engine picks.
 const BASS: i32 = 363;
-const BOUND: Duration = Duration::from_secs(90);
+// A level-99 shark roll succeeds with probability 41/256 (~16%) every 5 ticks
+// (`PlayerOps.ts:591-599`, `fishing.struct:61-65`), so 45 consecutive misses
+// have probability (215/256)^45 ≈ 0.04%. At 600 ms/tick, 45 rolls take 135 s;
+// the measured bank trip takes about 45 s, so allow 180 s overall.
+const BOUND: Duration = Duration::from_secs(180);
 const SEED: &[&str] = &[
     "setstat fishing 99",
     "setstat defence 99",
@@ -230,7 +234,7 @@ fn live_gatherer_disabled_events_strange_boxes_engine_a() {
                 && count(snapshot.inventory(), SHARK) == 26
         },
         &[HARPOON, BOX, SHARK, BASS],
-        serde_json::json!({"request": "GATHERER-HELD-FOREVER-R2", "seed": SEED, "settings": bag}),
+        serde_json::json!({"request": "GATHERER-HELD-FOREVER-R4", "seed": SEED, "settings": bag}),
         |_| true,
         evidence_dir.clone(),
     )));
@@ -379,7 +383,7 @@ fn live_gatherer_disabled_events_strange_boxes_engine_a() {
     std::fs::write(
         evidence_dir.join("receipt.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
-            "request": "GATHERER-HELD-FOREVER-R2", "account": account, "engine": "127.0.0.1:44594",
+            "request": "GATHERER-HELD-FOREVER-R4", "account": account, "engine": "127.0.0.1:44594",
             "seed": SEED, "settings": bag, "random_events_enabled": false,
             "passed": passed, "bank_opened": obs.bank_opened, "sharks_banked": obs.sharks_banked,
             "deposit_tick": obs.deposit_tick, "deposit_elapsed_ms": obs.deposit_elapsed_ms,
