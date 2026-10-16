@@ -21296,6 +21296,7 @@ struct ReconnectRig {
     /// The Play's BroadcastChannel broker and alice's slot handle on it.
     broker: script_channels::ChannelBroker,
     channels: script_channels::SlotChannels,
+    ready_session: std::cell::Cell<api::identity::SessionKey>,
 }
 
 type ArmedWalk = (
@@ -21321,6 +21322,11 @@ impl ReconnectRig {
         snap.rebuild(&client);
         let broker = script_channels::ChannelBroker::default();
         let channels = broker.slot("alice");
+        let ready_session = {
+            let slot = script_slot(&scripts, "alice").expect("bound Load slot");
+            let slot = slot.lock().unwrap();
+            api::identity::SessionKey::first(slot.slot_key_for_test().expect("slot key"))
+        };
         Self {
             scripts,
             cheats: Arc::new(Mutex::new(HashMap::new())),
@@ -21332,6 +21338,7 @@ impl ReconnectRig {
             here,
             broker,
             channels,
+            ready_session: std::cell::Cell::new(ready_session),
         }
     }
 
@@ -21359,6 +21366,13 @@ impl ReconnectRig {
     }
 
     fn frame_dirty(&mut self, tick: u64, tick_edge: bool, dirty: bool) {
+        // The full Play loop aligns its seat with the F0 ready gate before
+        // dispatch. This rig drives script_observe directly, so provide that
+        // independent session key here rather than using the slot's work epoch.
+        self.slot()
+            .lock()
+            .unwrap()
+            .align_seat_session(Some(self.ready_session.get()));
         script_observe_cached_with_channels(
             &mut self.client,
             "alice",
@@ -21463,6 +21477,10 @@ impl ReconnectRig {
     }
 
     fn boundary(&self, reconnect: bool) {
+        if reconnect {
+            self.ready_session
+                .set(self.ready_session.get().next().expect("relog session"));
+        }
         reset_slot_session_work(
             "alice",
             &self.scripts,
@@ -22239,22 +22257,95 @@ fn a_reconnect_re_arms_the_held_script_walk_on_the_relogged_session() {
     rig.slot().lock().unwrap().stop();
 }
 
-/// A walk row queued before a kept reconnect is stale gameplay. It cannot
-/// leave the new session through the host without fresh seat admission.
+/// A stale queued walk cannot cross a kept reconnect. The original wait
+/// requests a new seat walk and settles after the host observes arrival.
 #[test]
 fn an_undispatched_walk_before_drop_is_discarded_at_relog() {
     let mut rig = ReconnectRig::new(40, 40);
-    // The posting frame only: the tick queues the walk, nothing drains it.
     rig.frame(1, true);
     assert_eq!(rig.armed(), (0, None));
 
     rig.boundary(true);
-    rig.frames(2);
-    rig.frames(3);
-    assert_eq!(rig.armed(), (0, None), "the stale walk cannot re-arm");
     assert!(
         rig.walks().is_empty(),
         "the stale row never reaches the host"
+    );
+    rig.frames(2);
+    rig.frames(3);
+    let (request_id, requested) = rig.armed();
+    assert_ne!(request_id, 0, "the wait re-arms through the new seat");
+    assert_eq!(requested, walk_dest(40, 40));
+    assert_eq!(
+        rig.walks(),
+        vec![(request_id, 40, 40)],
+        "only the fresh walk reaches the host"
+    );
+    assert_eq!(
+        rig.slot().lock().unwrap().probe("__rs_ok").unwrap(),
+        serde_json::Value::Null
+    );
+    rig.here = (40, 40, 0);
+    rig.frames(4);
+    rig.frames(5);
+    assert_eq!(
+        rig.slot().lock().unwrap().probe("__rs_ok").unwrap(),
+        true,
+        "the same wait settles at its destination"
+    );
+    rig.slot().lock().unwrap().stop();
+}
+
+/// A prior route generation can publish a terminal after a new route reused
+/// the same request id. Only a terminal from the current arm frees its slot.
+#[test]
+fn stale_route_generation_does_not_free_rearmed_walk_release() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    let (request_id, _) = rig.armed();
+    assert_ne!(request_id, 0);
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .seat_probe()
+            .unwrap()
+            .reserved_releases,
+        1
+    );
+    {
+        let mut navs = rig.navs.lock().unwrap();
+        let bot = navs.get_mut("alice").unwrap();
+        bot.walk_outcome_seq += 1;
+        bot.walk_outcome_request_id = request_id;
+        bot.walk_outcome_generation = bot.route_generation.wrapping_add(1);
+    }
+    rig.frame(2, false);
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .seat_probe()
+            .unwrap()
+            .reserved_releases,
+        1,
+        "the stale terminal cannot free the rearmed route's release"
+    );
+    {
+        let mut navs = rig.navs.lock().unwrap();
+        let bot = navs.get_mut("alice").unwrap();
+        bot.walk_outcome_seq += 1;
+        bot.walk_outcome_generation = bot.route_generation;
+    }
+    rig.frame(3, false);
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .seat_probe()
+            .unwrap()
+            .reserved_releases,
+        0,
+        "a terminal from the armed generation does free the release"
     );
     rig.slot().lock().unwrap().stop();
 }

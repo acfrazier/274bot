@@ -285,6 +285,17 @@ impl<R> GameplaySeat<R> {
         !self.queued.is_empty() || !self.in_flight.is_empty()
     }
 
+    /// Walks still in seat custody, before a kept reset drops their gameplay.
+    /// A host that had not dispatched them must tell the owning wait to make
+    /// a new request after relog, rather than let it time out.
+    pub fn undelivered_walk_ids(&self) -> impl Iterator<Item = RequestId> + '_ {
+        self.queued
+            .iter()
+            .chain(&self.in_flight)
+            .filter(|row| row.class == EmissionClass::Gameplay)
+            .filter_map(|row| row.walk)
+    }
+
     pub fn late_controls(&self) -> u64 {
         self.late_controls
     }

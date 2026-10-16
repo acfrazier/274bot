@@ -308,8 +308,8 @@ pub struct SlotScript {
     guardian_held: bool,
     /// A missing host session also freezes the shared seat.
     seat_session_held: bool,
-    /// Physical Walk terminal deferred until guardian hold lifts.
-    held_walk_terminal: Option<RequestId>,
+    /// Physical Walk terminals deferred until guardian hold lifts.
+    held_walk_terminals: Vec<RequestId>,
     /// Watchdog facts already filtered and dispatched by the owner seat,
     /// consumed by the host's lifecycle drain rather than the game driver.
     #[cfg(feature = "load")]
@@ -457,7 +457,7 @@ impl SlotScript {
             seat_interact_delivery: Vec::new(),
             guardian_held: false,
             seat_session_held: false,
-            held_walk_terminal: None,
+            held_walk_terminals: Vec::new(),
             #[cfg(feature = "load")]
             seat_lifecycle: Vec::new(),
             #[cfg(feature = "load")]
@@ -620,11 +620,15 @@ impl SlotScript {
         if self.guardian_held || self.seat_session_held {
             return;
         }
-        let Some(id) = self.held_walk_terminal.take() else {
+        if self.held_walk_terminals.is_empty() {
             return;
-        };
+        }
         if let Some(seat) = &mut self.seat {
-            seat.walk_terminal(id);
+            for id in self.held_walk_terminals.drain(..) {
+                seat.walk_terminal(id);
+            }
+        } else {
+            self.held_walk_terminals.clear();
         }
     }
 
@@ -737,7 +741,7 @@ impl SlotScript {
         let mut seat = GameplaySeat::new(run);
         seat.hold(self.guardian_held || self.seat_session_held);
         self.seat = Some(Box::new(seat));
-        self.held_walk_terminal = None;
+        self.held_walk_terminals.clear();
         self.seat_compiled_owner = None;
         self.seat_delivery.clear();
         self.seat_native_delivery.clear();
@@ -1390,7 +1394,7 @@ impl SlotScript {
         self.preparing = None;
         self.pending_compiled_start = None;
         self.pending_compiled_restart = false;
-        self.held_walk_terminal = None;
+        self.held_walk_terminals.clear();
         if let Some(mut seat) = self.seat.take() {
             seat.stop();
         }
@@ -1511,6 +1515,30 @@ impl SlotScript {
         self.native_runtime.revoke();
         self.native_runtime.clock.observe(Instant::now(), false);
         self.on_is_up(false);
+        #[cfg(feature = "load")]
+        let discarded_walks = if reconnect {
+            let seat_walks = self
+                .seat
+                .as_ref()
+                .into_iter()
+                .flat_map(|seat| seat.undelivered_walk_ids().map(|id| id.get()));
+            let delivered_walks = self
+                .seat_interact_delivery
+                .iter()
+                .filter_map(|queued| seat_walk_id(&queued.req, None).map(|id| id.get()));
+            let mut ids = Vec::with_capacity(api::script_contract::MAX_WALK_RELEASES);
+            for id in seat_walks.chain(delivered_walks) {
+                if ids.len() == api::script_contract::MAX_WALK_RELEASES {
+                    break;
+                }
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+            ids
+        } else {
+            Vec::new()
+        };
         // The same run continues in a new session: evidence, owners and
         // receipts stamped before the boundary cannot meet a fence after it.
         if let Some(run) = self.compiled.as_mut() {
@@ -1563,6 +1591,11 @@ impl SlotScript {
                 } else {
                     isolate.reset_session_work(Some(execution))
                 };
+                if held {
+                    for token in &discarded_walks {
+                        isolate.rearm_host_discarded_walk(*token);
+                    }
+                }
                 self.active_tick_error_generation = carried_error.then_some(generation);
             } else {
                 self.active_tick_error_generation = None;
@@ -2160,7 +2193,11 @@ impl SlotScript {
             };
             if let Some(id) = id {
                 if self.guardian_held {
-                    self.held_walk_terminal = Some(id);
+                    if !self.held_walk_terminals.contains(&id)
+                        && self.held_walk_terminals.len() < api::script_contract::MAX_WALK_RELEASES
+                    {
+                        self.held_walk_terminals.push(id);
+                    }
                 } else if let Some(seat) = &mut self.seat {
                     seat.walk_terminal(id);
                 }
@@ -2380,7 +2417,11 @@ impl SlotScript {
             // already armed a newer route.
             if let Some(id) = native_walk_id(request_id) {
                 if self.guardian_held {
-                    self.held_walk_terminal = Some(id);
+                    if !self.held_walk_terminals.contains(&id)
+                        && self.held_walk_terminals.len() < api::script_contract::MAX_WALK_RELEASES
+                    {
+                        self.held_walk_terminals.push(id);
+                    }
                 } else if let Some(seat) = &mut self.seat {
                     seat.walk_terminal(id);
                 }
@@ -2746,15 +2787,22 @@ impl SlotScript {
             return batches;
         };
         // The isolate repeats unacknowledged starts, cancels, mirror revokes,
-        // machine events and terminal watermarks. Its newest batch therefore
-        // supersedes the older control pages. Interaction releases are the
-        // exception: a later producer tick need not repeat a queued AbortWalk.
+        // machine events and terminal watermarks. The newest batch supersedes
+        // those pages. Distinct interaction controls and lifecycle rows do not
+        // get that treatment: an older Stop or wait fact may not recur.
+        let same_row = |a: &crate::isolate_fb::SeatInteractDecoded,
+                        b: &crate::isolate_fb::SeatInteractDecoded| {
+            a.lineage == b.lineage && a.mirror_owner == b.mirror_owner && a.request == b.request
+        };
         let mut releases = Vec::with_capacity(api::script_contract::MAX_WALK_RELEASES);
-        let mut stop_gather = None;
-        let mut stop_combat = None;
-        let mut policy = None;
+        let mut lifecycle = Vec::new();
+        let mut batch_lifecycle = Vec::new();
+        let mut prior_lifecycle_start = 0;
+        let mut prior_lifecycle_len = 0;
+        let mut controls = Vec::new();
         let mut dropped = 0;
         for batch in batches.iter_mut().chain(std::iter::once(&mut latest)) {
+            batch_lifecycle.clear();
             for row in batch.batch.reqs.drain(..) {
                 match &row.request {
                     crate::shim::InteractReq::AbortWalk { request_id } => {
@@ -2769,19 +2817,42 @@ impl SlotScript {
                             releases.push(row);
                         }
                     }
-                    crate::shim::InteractReq::GatherStop { .. } => stop_gather = Some(row),
-                    crate::shim::InteractReq::CombatStop { .. } => stop_combat = Some(row),
-                    crate::shim::InteractReq::RunPolicyOverride { .. } => policy = Some(row),
+                    crate::shim::InteractReq::GatherStop { .. }
+                    | crate::shim::InteractReq::CombatStop { .. }
+                    | crate::shim::InteractReq::RunPolicyOverride { .. } => {
+                        if !controls.iter().any(|existing| same_row(existing, &row)) {
+                            controls.push(row);
+                        }
+                    }
+                    _ if seat_interact_class(&row.request, row.lineage.or(row.mirror_owner)).0
+                        == api::script_contract::EmissionClass::Lifecycle =>
+                    {
+                        batch_lifecycle.push(row);
+                    }
                     _ => {}
                 }
+            }
+            // A held producer may re-state the same page every tick. Keep
+            // duplicates *within* one page (two waits mean two events), but
+            // fold an identical repeated page instead of growing by tick.
+            if !batch_lifecycle.is_empty()
+                && (prior_lifecycle_len != batch_lifecycle.len()
+                    || !lifecycle
+                        [prior_lifecycle_start..prior_lifecycle_start + prior_lifecycle_len]
+                        .iter()
+                        .zip(&batch_lifecycle)
+                        .all(|(a, b)| same_row(a, b)))
+            {
+                prior_lifecycle_start = lifecycle.len();
+                prior_lifecycle_len = batch_lifecycle.len();
+                lifecycle.append(&mut batch_lifecycle);
             }
         }
         if let Some(seat) = &mut self.seat {
             seat.count_dropped(dropped);
         }
-        releases.extend(stop_gather);
-        releases.extend(stop_combat);
-        releases.extend(policy);
+        releases.extend(lifecycle);
+        releases.extend(controls);
         latest.batch.reqs = releases;
         vec![latest]
     }

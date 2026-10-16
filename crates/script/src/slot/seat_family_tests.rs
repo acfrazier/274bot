@@ -986,3 +986,127 @@ fn held_batch_compaction_retains_earlier_release_and_newest_controls() {
     );
     slot.stop();
 }
+
+fn review_lifecycle_batch(slot: &SlotScript) -> crate::load::QueuedSeatBatch {
+    let row = |request| SeatInteractDecoded {
+        lineage: None,
+        mirror_owner: None,
+        request,
+    };
+    crate::load::QueuedSeatBatch {
+        generation: slot.load.as_ref().unwrap().generation(),
+        observed_walk_outcome_seq: 0,
+        batch: decoded(
+            Vec::new(),
+            vec![
+                row(InteractReq::WaitEnqueued),
+                row(InteractReq::WaitSettled),
+            ],
+        ),
+        machine_events: Vec::new(),
+    }
+}
+
+#[test]
+fn repeated_held_lifecycle_pages_fold_without_losing_distinct_controls() {
+    let mut slot = with_seat(833);
+    let row = |request| SeatInteractDecoded {
+        lineage: None,
+        mirror_owner: None,
+        request,
+    };
+    let mut older = review_lifecycle_batch(&slot);
+    older.batch.reqs = vec![row(InteractReq::GatherStop { request_id: 10 })];
+    let mut batches = vec![older];
+    for _ in 0..40 {
+        batches.push(review_lifecycle_batch(&slot));
+    }
+    let mut newer = review_lifecycle_batch(&slot);
+    newer.batch.reqs = vec![
+        row(InteractReq::GatherStop { request_id: 11 }),
+        row(InteractReq::RunPolicyOverride { policy: None }),
+    ];
+    batches.push(newer);
+    let mut compacted = slot.compact_held_seat_batches(batches);
+    assert_eq!(compacted.len(), 1);
+    let kept = compacted.pop().unwrap().batch.reqs;
+    assert_eq!(
+        kept.into_iter().map(|row| row.request).collect::<Vec<_>>(),
+        [
+            InteractReq::WaitEnqueued,
+            InteractReq::WaitSettled,
+            InteractReq::GatherStop { request_id: 10 },
+            InteractReq::GatherStop { request_id: 11 },
+            InteractReq::RunPolicyOverride { policy: None },
+        ],
+        "one repeated lifecycle page and every distinct control survive"
+    );
+    slot.stop();
+}
+
+#[test]
+fn guardian_hold_keeps_lifecycle_rows_until_resume() {
+    let mut slot = with_seat(831);
+    let control = review_lifecycle_batch(&slot);
+    slot.load
+        .as_ref()
+        .unwrap()
+        .restore_seat_batches(vec![control]);
+    let _ = slot.drain_host_interacts();
+    assert_eq!(
+        std::mem::take(&mut slot.seat_lifecycle),
+        vec![InteractReq::WaitEnqueued, InteractReq::WaitSettled],
+        "the same lifecycle page reaches the host without a hold"
+    );
+    slot.seat_guardian_hold(true);
+    let batch = review_lifecycle_batch(&slot);
+    slot.load
+        .as_ref()
+        .unwrap()
+        .restore_seat_batches(vec![batch]);
+    let _ = slot.drain_host_interacts();
+    assert!(slot.seat_lifecycle.is_empty());
+    slot.seat_guardian_hold(false);
+    let _ = slot.drain_host_interacts();
+    assert_eq!(
+        std::mem::take(&mut slot.seat_lifecycle),
+        vec![InteractReq::WaitEnqueued, InteractReq::WaitSettled],
+        "lifecycle rows survive a guardian hold"
+    );
+    slot.stop();
+}
+
+#[test]
+fn three_walk_terminals_during_guardian_hold_free_all_slots() {
+    let mut slot = with_seat(832);
+    let effect = || {
+        SeatEffect::Interact(crate::load::QueuedInteract {
+            req: InteractReq::Held {
+                name: "Logs".into(),
+                action: "Drop".into(),
+                slot: Some(0),
+                target_item_id: None,
+            },
+            observed_walk_outcome_seq: 0,
+        })
+    };
+    let seat = slot.seat.as_mut().unwrap();
+    for raw in 40..43 {
+        seat.push_walk(effect(), EmissionSource::Root, id(raw))
+            .unwrap();
+    }
+    slot.dispatch_seat_rows();
+    assert_eq!(slot.seat.as_ref().unwrap().reserved_releases(), 3);
+    slot.seat_guardian_hold(true);
+    for (seq, raw) in (1..=3).zip(40..43) {
+        slot.observe_walk_outcome(seq, Some(SeatWalkTerminal::Load(id(raw))));
+    }
+    assert_eq!(slot.seat.as_ref().unwrap().reserved_releases(), 3);
+    slot.seat_guardian_hold(false);
+    assert_eq!(
+        slot.seat.as_ref().unwrap().reserved_releases(),
+        0,
+        "all deferred terminals free their slots after resume"
+    );
+    slot.stop();
+}

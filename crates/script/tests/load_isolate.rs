@@ -2091,9 +2091,9 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-// M7: a queued interact row no request variant accepts — or no serde read
-// at all — is logged under its tick; its valid siblings and the tick's wait
-// facts still reach the host.
+// M7: accepted malformed rows are logged under their tick; primitives that
+// the V8 append gate refuses never reach this decoder. Valid siblings and the
+// tick's wait facts still reach the host.
 #[test]
 fn malformed_interact_rows_are_logged_not_dropped_silently() {
     let src = "export function tick(api) { const h = globalThis.__rs2b0t_host; \
@@ -2117,19 +2117,12 @@ fn malformed_interact_rows_are_logged_not_dropped_silently() {
     );
     let logs = iso.drain_logs();
     assert_eq!(
-        logs[..4],
+        logs,
         [
             "tick 1: dropped malformed interact row: op \"no-such-op\"",
-            "tick 1: dropped malformed interact row: a number",
-            "tick 1: dropped malformed interact row: bytes",
             "tick 1: dropped malformed interact row: an object without a string op",
-        ],
-        "{logs:?}"
-    );
-    assert_eq!(logs.len(), 5, "{logs:?}");
-    assert!(
-        logs[4].starts_with("tick 1: dropped malformed interact row: unreadable ("),
-        "{logs:?}"
+            "tick 1: dropped malformed interact row: an object without a string op",
+        ]
     );
     iso.join();
 }
