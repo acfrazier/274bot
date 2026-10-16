@@ -1450,6 +1450,185 @@ fn slow_step_returns_after_ten_seconds_without_latching_outage() {
     assert_eq!(*trace.lock(), [10]);
 }
 
+#[test]
+fn stalled_worker_latches_at_exact_stall_limit() {
+    let clock = Arc::new(ManualClock::new());
+    let shared = new_service(Arc::clone(&clock));
+    let conditions = conditions(&shared);
+    let input = TestInput {
+        charge: WorkCharge::new(4, 8, 16, 1),
+    };
+    let (entered_tx, entered_rx) = mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = mpsc::sync_channel(0);
+    let (drop_entered_tx, drop_entered_rx) = mpsc::sync_channel(0);
+    let (drop_resume_tx, drop_resume_rx) = mpsc::sync_channel(0);
+    let ticket = submit(
+        &shared,
+        &input,
+        StrandedJob {
+            entered: entered_tx,
+            resume: resume_rx,
+            drop_entered: drop_entered_tx,
+            drop_resume: drop_resume_rx,
+        },
+        &conditions,
+    );
+    entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("worker enters the non-returning step");
+
+    clock.advance(WORKER_STALL_LIMIT);
+    shared.lock().observe_health();
+    let condition = shared.lock().health();
+    let outage_terminal = if let Some(condition) = condition {
+        WorkService::wait_terminal(&shared, &ticket).expect("outage settles the ticket");
+        let terminal = shared
+            .lock()
+            .consume(&ticket)
+            .expect("consume outage terminal");
+        matches!(
+            terminal,
+            Settlement::Failed(JobError::Unavailable(terminal))
+                if terminal.condition() == condition
+        )
+    } else {
+        false
+    };
+
+    resume_tx.send(()).expect("release the stalled step");
+    drop_entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("job cleanup waits before worker-return accounting");
+    drop_resume_tx
+        .send(())
+        .expect("allow worker-return accounting");
+    if condition.is_none() {
+        WorkService::wait_terminal(&shared, &ticket).expect("worker returns after release");
+        assert_eq!(
+            shared
+                .lock()
+                .consume(&ticket)
+                .expect("consume completed ticket"),
+            Settlement::Completed(9)
+        );
+    }
+    wait_for_jobs(&shared, 0);
+
+    assert!(
+        condition.is_some(),
+        "the worker outage must latch at the exact stall limit"
+    );
+    assert!(outage_terminal, "the latch must settle the accepted ticket");
+}
+
+#[test]
+fn wait_terminal_detects_stalled_worker_within_recheck_interval() {
+    let clock = Arc::new(ManualClock::new());
+    let shared = new_service(Arc::clone(&clock));
+    let conditions = conditions(&shared);
+    let input = TestInput {
+        charge: WorkCharge::new(4, 8, 16, 1),
+    };
+    let (entered_tx, entered_rx) = mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = mpsc::sync_channel(0);
+    let (drop_entered_tx, drop_entered_rx) = mpsc::sync_channel(0);
+    let (drop_resume_tx, drop_resume_rx) = mpsc::sync_channel(0);
+    let ticket = submit(
+        &shared,
+        &input,
+        StrandedJob {
+            entered: entered_tx,
+            resume: resume_rx,
+            drop_entered: drop_entered_tx,
+            drop_resume: drop_resume_rx,
+        },
+        &conditions,
+    );
+    entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("worker enters the non-returning step");
+
+    let (wait_entered_tx, wait_entered_rx) = mpsc::channel();
+    shared
+        .lock()
+        .shared
+        .notifier
+        .hook_next_wait(wait_entered_tx);
+    let waiter_ticket = WorkTicket::<TestSpec>::new(ticket.identity(), ticket.revision());
+    let (wait_tx, wait_rx) = mpsc::channel();
+    let waiter_shared = Arc::clone(&shared);
+    let waiter = std::thread::spawn(move || {
+        let result = WorkService::wait_terminal(&waiter_shared, &waiter_ticket);
+        let _ = wait_tx.send(result);
+    });
+    let wait_hook_received = wait_entered_rx.recv_timeout(Duration::from_secs(2)).is_ok();
+    let waiter_parked = if wait_hook_received {
+        let notifier = Arc::clone(&shared.lock().shared.notifier);
+        let _gate = notifier.gate.lock();
+        true
+    } else {
+        false
+    };
+
+    // The fake clock jumps to the 60-second boundary while the caller waits.
+    // One second for the recheck plus 500 ms of margin is the full time budget.
+    let detection_bound = Duration::from_millis(1_500);
+    let detection_started = Instant::now();
+    clock.advance(WORKER_STALL_LIMIT);
+    let wait_result = wait_rx.recv_timeout(detection_bound);
+    let detected = matches!(wait_result, Ok(Ok(())));
+    let detection_elapsed = detection_started.elapsed();
+    let condition = shared.lock().health();
+    let outage_terminal = if let Some(condition) = condition {
+        let terminal = shared
+            .lock()
+            .consume(&ticket)
+            .expect("consume outage terminal");
+        matches!(
+            terminal,
+            Settlement::Failed(JobError::Unavailable(terminal))
+                if terminal.condition() == condition
+        )
+    } else {
+        false
+    };
+
+    resume_tx.send(()).expect("release the stalled step");
+    drop_entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("job cleanup waits before worker-return accounting");
+    drop_resume_tx
+        .send(())
+        .expect("allow worker-return accounting");
+    if condition.is_none() {
+        WorkService::wait_terminal(&shared, &ticket).expect("worker returns after release");
+        assert_eq!(
+            shared
+                .lock()
+                .consume(&ticket)
+                .expect("consume completed ticket"),
+            Settlement::Completed(9)
+        );
+    }
+    wait_for_jobs(&shared, 0);
+    waiter.join().expect("waiter thread joins");
+
+    assert!(waiter_parked, "wait_terminal reaches its timed wait");
+    assert!(
+        detected,
+        "wait_terminal must detect the outage within the recheck interval"
+    );
+    assert!(
+        detection_elapsed <= detection_bound,
+        "outage detection took {detection_elapsed:?}, over {detection_bound:?}"
+    );
+    assert!(condition.is_some(), "the service must latch the outage");
+    assert!(
+        outage_terminal,
+        "the outage must settle the accepted ticket"
+    );
+}
+
 fn wait_for_shutdown_start(shared: &Arc<Mutex<WorkService>>) {
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {

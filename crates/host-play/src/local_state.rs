@@ -135,9 +135,9 @@ const SETTLED_PER_STORE: usize = 8;
 /// synchronous file read the Start did before, now on the writer thread.
 pub const START_LEASE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// How long dropping the service waits for the writer to finish the writes
-/// it accepted. Exit waits only while accepted writes are outstanding.
-/// Losing one of those saves is worse than a slower exit.
+/// How long dropping the service waits for the writer to finish accepted writes
+/// and any readback already in progress. Exit waits while the writer runs.
+/// Losing a save is worse than a slower exit.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// A test's stand-in for the file publication step: run on the writer
