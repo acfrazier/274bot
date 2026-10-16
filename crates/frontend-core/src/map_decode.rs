@@ -43,6 +43,7 @@ impl WorkFamilySpec for DecodeSpec {
             .png
             .len()
             .saturating_add(WALK_MAP_DECODE_INPUT_OVERHEAD);
+        // This charge bounds each accepted decode job's PNG input, scratch, and RGBA result.
         WorkCharge::new(
             input_bytes,
             WALK_MAP_DECODE_SCRATCH_LIMIT,
@@ -143,6 +144,8 @@ pub struct WalkMapDecodeController {
     latest: Option<(u64, InputRevision, ImageIdentity, TileKey)>,
     next_revision: u64,
     full_capacity: Option<PublishSequence>,
+    #[cfg(feature = "test-support")]
+    held_ticket_count: usize,
 }
 
 impl WalkMapDecodeController {
@@ -155,6 +158,8 @@ impl WalkMapDecodeController {
             latest: None,
             next_revision: 1,
             full_capacity: None,
+            #[cfg(feature = "test-support")]
+            held_ticket_count: 0,
         }
     }
 
@@ -252,6 +257,8 @@ impl WalkMapDecodeController {
             Err(error) => return self.finish_ledger_error(error),
         };
         let active = self.active.take()?;
+        #[cfg(feature = "test-support")]
+        self.release_ticket_for_test();
         self.full_capacity = None;
         let current = !active.stale
             && self.context == Some((active.generation, active.image))
@@ -312,6 +319,20 @@ impl WalkMapDecodeController {
     pub fn has_active(&self) -> bool {
         self.active.is_some()
     }
+    /// Number of accepted tickets still in this controller's custody.
+    #[cfg(feature = "test-support")]
+    pub fn held_ticket_count_for_test(&self) -> usize {
+        self.held_ticket_count
+    }
+
+    #[cfg(feature = "test-support")]
+    fn release_ticket_for_test(&mut self) {
+        assert!(
+            self.held_ticket_count > 0,
+            "controller released an untracked decode ticket"
+        );
+        self.held_ticket_count -= 1;
+    }
 
     /// Whether this controller owns accepted or pending decode work.
     pub fn is_busy(&self) -> bool {
@@ -367,6 +388,8 @@ impl WalkMapDecodeController {
                     let _ = shared
                         .lock()
                         .abandon(active.ticket, Cancellation::ScopeInvalidated);
+                    #[cfg(feature = "test-support")]
+                    self.release_ticket_for_test();
                 }
                 Err(_) => self.active = Some(active),
             }
@@ -436,6 +459,10 @@ impl WalkMapDecodeController {
                     png_bytes: pending.png.len(),
                     stale: false,
                 });
+                #[cfg(feature = "test-support")]
+                {
+                    self.held_ticket_count += 1;
+                }
                 self.full_capacity = None;
                 Ok(())
             }
@@ -468,6 +495,8 @@ impl WalkMapDecodeController {
                 let _ = shared
                     .lock()
                     .abandon(active.ticket, Cancellation::ScopeInvalidated);
+                #[cfg(feature = "test-support")]
+                self.release_ticket_for_test();
             }
             Err(_) => {
                 self.active = Some(active);
@@ -522,7 +551,9 @@ mod tests {
     static DECODE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn decode_test_lock() -> MutexGuard<'static, ()> {
-        DECODE_TEST_LOCK.lock().expect("decode test lock")
+        DECODE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn image() -> ImageIdentity {

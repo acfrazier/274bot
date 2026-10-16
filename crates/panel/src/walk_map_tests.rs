@@ -1663,11 +1663,6 @@ fn ancillary_text_and_icc_preserve_legacy_pixels() {
     assert!(!controller.is_busy());
 }
 
-#[test]
-fn decode_staging_cap_is_the_computed_real_bound() {
-    assert_eq!(super::DECODE_STAGING_CAP, 1_839_120);
-}
-
 fn async_test_turn(map: &mut WalkMapRenderer, world: &NavWorld, view: View) {
     map.test_sync(
         None,
@@ -1771,16 +1766,14 @@ fn renderer_background_decode_pans_refills_and_releases_every_owner() {
     assert_eq!(settle_renderer(&mut map, &world, near), near_expected);
     wait_for_decode_service_capacity_zero();
 
-    let mut max_jobs = 0;
+    let mut max_held_tickets = 0;
     for turn in 0..400 {
         async_test_turn(&mut map, &world, if turn % 2 == 0 { near } else { far });
-        let jobs = decode_service_capacity().jobs();
-        max_jobs = max_jobs.max(jobs);
-        assert!(map.counters().decode_staging_bytes <= super::DECODE_STAGING_CAP);
+        max_held_tickets = max_held_tickets.max(map.decode.held_ticket_count_for_test());
     }
     assert!(
-        max_jobs <= 1,
-        "one renderer retains at most one accepted job"
+        max_held_tickets <= 1,
+        "one renderer retains at most one accepted ticket, saw {max_held_tickets}"
     );
     assert_eq!(settle_renderer(&mut map, &world, far), far_expected);
     assert!(
@@ -1819,32 +1812,116 @@ fn renderer_background_decode_pans_refills_and_releases_every_owner() {
     wait_for_decode_service_capacity_zero();
 }
 
-fn insert_damaged_text_chunk_before_iend(png: &mut Vec<u8>) {
-    assert!(png.len() >= 12, "PNG has a terminal IEND chunk");
-    let iend = png.len() - 12;
-    assert_eq!(&png[iend + 4..iend + 8], b"IEND");
-    let damaged_chunk = [
-        0, 0, 0, 1, // one payload byte
-        b't', b'E', b'X', b't', b'x', 0, 0, 0, 0, // intentionally invalid CRC
-    ];
-    png.splice(iend..iend, damaged_chunk);
+fn png_chunk(kind: &[u8; 4], payload: &[u8], valid_crc: bool) -> Vec<u8> {
+    let mut chunk = (payload.len() as u32).to_be_bytes().to_vec();
+    chunk.extend_from_slice(kind);
+    chunk.extend_from_slice(payload);
+    let crc = if valid_crc {
+        let mut crc = 0xffff_ffffu32;
+        for byte in kind.iter().chain(payload) {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ 0xedb8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    } else {
+        0
+    };
+    chunk.extend_from_slice(&crc.to_be_bytes());
+    chunk
 }
 
 #[test]
-fn trailing_damaged_chunk_keeps_legacy_decoder_acceptance() {
+fn trailing_data_matches_legacy_decoder_acceptance() {
     let _work_service_guard = decode_service_test_lock();
     wait_for_decode_service_capacity_zero();
     let key = lod0(63, 60);
     let identity = super::fixtures::image_identity();
-    let mut png = encode_tile(key).expect("valid producer tile");
-    insert_damaged_text_chunk_before_iend(&mut png);
-    let expected = decode_tile(&png).expect("legacy decoder ignores later damaged chunk");
-
-    let mut controller = WalkMapDecodeController::new();
-    controller
-        .request(12, identity, key, Arc::from(png))
-        .expect("submit damaged-trailing tile");
-    let result = wait_for_decode(&mut controller);
-    assert_eq!(result.into_rgba(), expected);
-    assert!(!controller.is_busy());
+    let base = encode_tile(key).expect("valid producer tile");
+    let iend = base.len() - 12;
+    assert_eq!(&base[iend + 4..iend + 8], b"IEND");
+    let with_before_iend = |extra: Vec<u8>| {
+        let mut png = base.clone();
+        png.splice(iend..iend, extra);
+        png
+    };
+    let mut truncated_trailing_chunk = base[..iend].to_vec();
+    truncated_trailing_chunk.extend_from_slice(&100u32.to_be_bytes());
+    truncated_trailing_chunk.extend_from_slice(b"tEXt");
+    truncated_trailing_chunk.extend_from_slice(b"partial");
+    let cases = [
+        (
+            "damaged tEXt CRC",
+            with_before_iend(png_chunk(b"tEXt", b"x", false)),
+        ),
+        (
+            "damaged ancillary CRC",
+            with_before_iend(png_chunk(b"prIv", b"x", false)),
+        ),
+        (
+            "unknown critical chunk after IDAT",
+            with_before_iend(png_chunk(b"QQQQ", b"x", true)),
+        ),
+        (
+            "trailing IDAT after another chunk",
+            with_before_iend(
+                [
+                    png_chunk(b"prIv", b"x", true),
+                    png_chunk(b"IDAT", b"x", true),
+                ]
+                .concat(),
+            ),
+        ),
+        (
+            "truncated trailing chunk without IEND",
+            truncated_trailing_chunk,
+        ),
+        ("no IEND", base[..iend].to_vec()),
+    ];
+    let mut mismatches = Vec::new();
+    for (index, (label, png)) in cases.into_iter().enumerate() {
+        let legacy = decode_tile(&png);
+        let mut controller = WalkMapDecodeController::new();
+        controller
+            .request(12 + index as u64, identity, key, Arc::from(png))
+            .expect("submit trailing-data variant");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let decoded = loop {
+            match controller.poll() {
+                Some(result) => break result,
+                None => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "{label}: background decode did not settle"
+                    );
+                    std::thread::yield_now();
+                }
+            }
+        };
+        let legacy_accepted = legacy.is_ok();
+        let new_accepted = decoded.is_ok();
+        if legacy_accepted != new_accepted {
+            mismatches.push(format!(
+                "{label}: legacy={legacy_accepted}, new={new_accepted}"
+            ));
+        }
+        if let (Ok(expected), Ok(result)) = (legacy, decoded) {
+            assert_eq!(
+                result.into_rgba(),
+                expected,
+                "{label}: decoded pixels differ"
+            );
+        }
+        assert!(!controller.is_busy());
+    }
+    wait_for_decode_service_capacity_zero();
+    assert!(
+        mismatches.is_empty(),
+        "new decoder accept/reject behavior differs from legacy: {mismatches:?}"
+    );
 }

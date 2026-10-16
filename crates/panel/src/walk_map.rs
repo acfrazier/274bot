@@ -57,9 +57,6 @@ pub const MAX_SYMBOLS: usize = 256;
 pub const MAX_LABELS: usize = 32;
 #[cfg(test)]
 const DECODE_LIMIT_BYTES: usize = 512 * 1024;
-// Worst case: active (512 KiB PNG + 266,256-byte RGBA = 790,544), pending
-// (524,288 bytes), and newly offered PNG (524,288 bytes): 1,839,120 bytes.
-const DECODE_STAGING_CAP: usize = (512 * 1024 + TILE_RGBA_BYTES) + 2 * 512 * 1024;
 const MAX_ROUTE_SEGMENTS: usize = 512;
 pub const CACHE_UNBOUND: &str = "map imagery unavailable — cache not bound";
 pub const REACH_UNAVAILABLE: &str = "reach unavailable";
@@ -814,9 +811,6 @@ impl WalkMapRenderer {
             let Some(png) = png else {
                 continue;
             };
-            if self.decode.staging_bytes().saturating_add(png.len()) > DECODE_STAGING_CAP {
-                continue;
-            }
             #[cfg(test)]
             if self.test_sync_decode {
                 match decode_checked(&png) {
