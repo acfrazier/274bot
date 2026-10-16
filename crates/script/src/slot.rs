@@ -107,7 +107,8 @@ fn seat_walk_id(req: &crate::shim::InteractReq, owner: Option<RequestId>) -> Opt
 const HELD_LIFECYCLE_ROWS: usize = api::script_contract::MAX_ENCODED_GAMEPLAY;
 
 /// Lifecycle rows of which the host applies only the latest value. The fold
-/// keeps one row for each key: the newest, at the first row's position.
+/// keeps one row for each key, the newest, and appends these rows after the
+/// ordered lane.
 #[cfg(feature = "load")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HeldReplacement {
@@ -190,6 +191,39 @@ fn seat_reserved_row(req: &crate::shim::InteractReq) -> bool {
             | crate::shim::InteractReq::CombatStop { .. }
             | crate::shim::InteractReq::RunPolicyOverride { .. }
     )
+}
+
+/// A second guardian hold folds over a retained batch whose pages still
+/// wait, and whose controls the seat has not applied. Keep those controls
+/// ahead of the newer batch's controls, in order. A newer control equal to
+/// a kept one is the isolate's repeat and is carried once. The watermark is
+/// the higher of the two, which the seat's monotone watermark gives when
+/// it applies both in order. Rows fold as for every held batch.
+#[cfg(feature = "load")]
+fn carry_waiting_controls(
+    waiting: &mut crate::load::QueuedSeatBatch,
+    newer: &mut crate::load::QueuedSeatBatch,
+) {
+    fn ahead<T: PartialEq>(newer: &mut Vec<T>, waiting: &mut Vec<T>) {
+        let later = std::mem::replace(newer, std::mem::take(waiting));
+        for control in later {
+            if !newer.contains(&control) {
+                newer.push(control);
+            }
+        }
+    }
+    newer.batch.consumed_terminal_seq = newer
+        .batch
+        .consumed_terminal_seq
+        .max(waiting.batch.consumed_terminal_seq);
+    ahead(&mut newer.batch.starts, &mut waiting.batch.starts);
+    ahead(&mut newer.batch.decisions, &mut waiting.batch.decisions);
+    ahead(&mut newer.batch.cancels, &mut waiting.batch.cancels);
+    ahead(
+        &mut newer.batch.mirror_revokes,
+        &mut waiting.batch.mirror_revokes,
+    );
+    ahead(&mut newer.machine_events, &mut waiting.machine_events);
 }
 
 #[cfg(feature = "load")]
@@ -2911,8 +2945,11 @@ impl SlotScript {
         };
         // The isolate repeats unacknowledged starts, cancels, mirror revokes,
         // machine events and terminal watermarks. The newest batch supersedes
-        // those pages. `SessionHeld` discards gameplay only (§28.4), so the
-        // fold bounds the other rows by exact summaries:
+        // those pages. A retained batch that still waits for its pages
+        // (`held_fold`) is different: the seat has not applied its controls,
+        // so they stay first, in order (`carry_waiting_controls`).
+        // `SessionHeld` discards gameplay only (§28.4), so the fold bounds
+        // the other rows by exact summaries:
         // - Releases are never dropped. A repeated release of the same target
         //   and id is idempotent and is carried once. Walk releases keep the
         //   16-handle reservation (§28.5).
@@ -2925,6 +2962,9 @@ impl SlotScript {
         // replacements. Resume pages it into the seat
         // (`consume_held_fold`), so the replacements land after the lane.
         use crate::shim::InteractReq;
+        for waiting in batches.iter_mut().rev().filter(|batch| batch.held_fold) {
+            carry_waiting_controls(waiting, &mut latest);
+        }
         let mut releases: Vec<crate::isolate_fb::SeatInteractDecoded> = Vec::new();
         let mut walk_releases = 0;
         let mut lane: Vec<crate::isolate_fb::SeatInteractDecoded> = Vec::new();
@@ -3000,11 +3040,22 @@ impl SlotScript {
     /// Hand the retained guardian-hold batch to the seat in pages. A page
     /// holds no more non-reserved rows than the next `take` moves (§28.5
     /// line 179), so `take` clears none of them. Releases and the policy
-    /// row lead the folded batch and go with the first page. The
-    /// replacements close it and go with the last page, after the lane.
-    /// The seat takes and dispatches each page before the next is pushed.
-    /// The batch's controls apply with the last page, after all of its
-    /// rows are pushed, as for one batch.
+    /// row lead the folded batch, and they go to the seat with the first
+    /// page whatever the room: `take` moves reserved rows before its 141
+    /// other rows, so they never cause its clear, and a release that frees
+    /// a walk slot is never withheld behind a queue that waits for that
+    /// slot (§28.5 lines 177-183). The replacements close the batch and go
+    /// with the last page, after the lane. The seat takes and dispatches
+    /// each page before the next is pushed. The batch's controls apply
+    /// with the last page, after all of its rows are pushed, as for one
+    /// batch.
+    ///
+    /// An early page's take also moves rows that already wait in the seat,
+    /// before the batch's controls apply. The retained rows are lifecycle
+    /// and release rows, whose dispatch does not read those controls.
+    /// Native gameplay captured before this drain relies on the host's
+    /// final authority fence (`authority.live()` in
+    /// `host-play/src/script_observe.rs`), which runs after the drain.
     ///
     /// Returns the rest of the batch when the seat has no room for its
     /// next page in this frame. The caller keeps it, and every later batch
@@ -3037,17 +3088,22 @@ impl SlotScript {
                 .rev()
                 .take_while(|row| HeldReplacement::of(&row.request).is_some())
                 .count();
+            // Every reserved row goes with this page; only the non-reserved
+            // rows wait for room. The fold puts all reserved rows first.
             let page = room.min(unreserved - replacements);
-            if page == 0 {
-                return Some(queued);
-            }
             let mut cut = 0;
             let mut paged = 0;
-            while paged < page {
-                if !seat_reserved_row(&rows[cut].request) {
+            while let Some(row) = rows.get(cut) {
+                if !seat_reserved_row(&row.request) {
+                    if paged == page {
+                        break;
+                    }
                     paged += 1;
                 }
                 cut += 1;
+            }
+            if cut == 0 {
+                return Some(queued);
             }
             self.push_seat_rows(
                 queued.batch.reqs.drain(..cut),

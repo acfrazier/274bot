@@ -44,7 +44,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   one take (141 rows besides releases and the policy), so no kept open,
   close, inspection or newest value is lost however long the hold was. The
   newest values arrive after the ordered rows, and actions that the script
-  makes after the hold wait behind the remaining pages.
+  makes after the hold wait behind the remaining pages. Kept releases go to
+  the seat with the first page even when the seat queue is full, so a walk
+  abort that frees a release slot is never held back. A new hold while
+  pages still wait keeps the waiting batch's cancels, starts and other
+  controls, which apply after its last page.
 - A saturated script tick keeps its release and control rows ahead of gameplay.
   It dispatches the first 141 other rows in their original order, drops the
   excess, and reports one overflow diagnostic instead of failing the batch.
