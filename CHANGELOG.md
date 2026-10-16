@@ -133,8 +133,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 - The architecture check refuses candidate Cargo configuration files without
   ASCII case distinctions, including files in vendored trees and symlinks.
-  Vendored workspace membership lists must resolve to protected package manifests.
-  New members need an operator policy commit.
+  Every client `Cargo.toml` is now an exact protected input in `274bot-arch`.
+  Added, removed, or changed manifests need an operator commit to update the pin.
+  This replaces interpretation of vendored workspace membership and inheritance.
+  Fork pointer changes with byte-identical manifests need no pin update.
   The check covers default-feature and optional activation for every protected
   package, even packages outside named configurations.
   Baseline updates use the branch after it merges current `dev`.

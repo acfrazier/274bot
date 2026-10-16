@@ -59,19 +59,31 @@ It resolves `optional`, `workspace = true` aliases, `path`, and `package`
 renames, plus path `[patch]` and `[replace]` entries. It does not compile
 candidate code or parse `.rs` with regex.
 
-Membership uses explicit `workspace.members` paths plus a root `[package]`
-when present (Cargo's implicit root member). Workspace `members`,
-`default-members`, and `exclude` entries must resolve to protected manifests,
-including entries in the vendored client workspace. Globs fail closed.
+Product membership uses explicit `workspace.members` paths plus a root `[package]`
+when present (Cargo's implicit root member). Product workspace `members`,
+`default-members`, and `exclude` entries must resolve to protected manifests.
+Product member globs fail closed.
 Every non-member path
 package must have a canonical manifest binding in protected
 `policy.toml` `[workspace.path_packages]`. Unlisted path packages and symlink
 substitutions are refused. Every listed manifest is scanned, even when unused.
 Edges from listed packages need ordinary protected allowances.
 
+Every `Cargo.toml` below `vendor/fr-client-rust/` is pinned in protected
+`274bot-arch/vendor-manifests.json`. One digest covers the sorted path and exact-byte pairs.
+The digest is identity data for a protected input, like policy data, not bookkeeping.
+The checker names every added, removed, or changed manifest and requires an operator commit to update the pin.
+It does not interpret the client workspace's members, exclusions, globs, or inheritance.
+The pinned set has no `workspace = true` dependencies, and such dependencies are refused.
+A fork pointer change with byte-identical manifests needs no pin update.
+Print the digest with `python3 -B vendor_manifests.py /path/to/274bot` from the arch repository.
+Generate a reviewed replacement with
+`python3 -B vendor_manifests.py --emit-pin /path/to/274bot > vendor-manifests.json`.
+
 The checker refuses `.cargo/config` and `.cargo/config.toml` anywhere in the
 candidate tree, including vendored trees and symlinks. Directory and file names
 are matched without ASCII case distinctions. These files can override the graph.
+Unicode look-alike names are outside this refusal because Cargo on Linux does not read them.
 Dependency aliases are tracked by package name, not by alias or version.
 Default-feature and dev-dependency activation is checked for every protected
 member and listed path package, even when no named configuration reaches it.
@@ -176,8 +188,8 @@ claim that `e2e` owns those crates' production behavior.
 For a new edge, kind, migration, optional-dependency activation, vendored path
 package, or checker change, follow [Changing a boundary](#changing-a-boundary).
 Include the regenerated baseline in the same arch commit as the protected
-rule change. Purely local features without optional or cross-crate activation
-need no operator commit. Ownership, inventory, and foreign-type rows remain
+rule change. Outside the pinned client manifests, purely local features without
+optional or cross-crate activation need no operator commit. Ownership, inventory, and foreign-type rows remain
 ordinary product diffs. Do not add a second hidden graph.
 
 ## Cargo features
