@@ -108,9 +108,11 @@ foreach ($group in Get-LocalGroup) {
 }
 
 # 2. NTFS.
-& icacls.exe $Night /inheritance:r /grant:r "${Owner}:(OI)(CI)F" 'SYSTEM:(OI)(CI)F' 'Administrators:(OI)(CI)F' /T /C /Q | Out-Null
+# Set on the two folders only. Windows passes the inheritable entries down, so the
+# children keep inherited entries only and -Undo's /reset returns them to C:\'s.
+& icacls.exe $Night /inheritance:r /grant:r "${Owner}:(OI)(CI)F" 'SYSTEM:(OI)(CI)F' 'Administrators:(OI)(CI)F' /C /Q | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "icacls on $Night failed" }
-& icacls.exe $Runs /grant "${User}:(OI)(CI)RX" /T /C /Q | Out-Null
+& icacls.exe $Runs /grant "${User}:(OI)(CI)RX" /C /Q | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "icacls on $Runs failed" }
 
 # 4. Keys (before sshd starts accepting the account).
