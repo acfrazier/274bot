@@ -194,6 +194,30 @@
       "reason": "F0 baseline seam classification."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/map_decode.rs|WalkMapDecodeController",
+      "path": "crates/frontend-core/src/map_decode.rs",
+      "symbol": "WalkMapDecodeController",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T5.W(walk-map-decode) owns the active WorkTicket and pending PNG demand; all controller fields are private."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/map_decode.rs|WalkMapDecodeError",
+      "path": "crates/frontend-core/src/map_decode.rs",
+      "symbol": "WalkMapDecodeError",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T5.W(walk-map-decode) exposes typed Copy/scalar decode and admission failures without heap-owned sources."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/map_decode.rs|WalkMapDecodeResult",
+      "path": "crates/frontend-core/src/map_decode.rs",
+      "symbol": "WalkMapDecodeResult",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T5.W(walk-map-decode) transfers the decoded RGBA allocation once to its renderer."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/marked.rs|BulkScope",
       "path": "crates/frontend-core/src/marked.rs",
       "symbol": "BulkScope",

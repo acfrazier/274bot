@@ -896,8 +896,19 @@ fn ready_images_distinguish_unlisted_art_from_a_damaged_listed_tile() {
             .unwrap(),
         None
     );
+    assert!(image
+        .read_tile_arc(TileKey {
+            x: 55,
+            ..tile_key()
+        })
+        .unwrap()
+        .is_none());
     assert!(matches!(
         image.read_tile_into(tile_key(), &mut buffer),
+        Err(MapError::Io(_))
+    ));
+    assert!(matches!(
+        image.read_tile_arc(tile_key()),
         Err(MapError::Io(_))
     ));
     let tile = ready.join(tile_key().relative_path().unwrap());
@@ -907,11 +918,23 @@ fn ready_images_distinguish_unlisted_art_from_a_damaged_listed_tile() {
         image.read_tile_into(tile_key(), &mut buffer).unwrap(),
         Some(TILE_RGBA_BYTES)
     );
+    let shared = image.read_tile_arc(tile_key()).unwrap().unwrap();
+    assert_eq!(&*shared, png.as_slice());
+    assert!(std::sync::Arc::ptr_eq(
+        &shared,
+        &std::sync::Arc::clone(&shared)
+    ));
+    std::fs::write(&tile, &png[..png.len() - 1]).unwrap();
+    assert!(image.read_tile_arc(tile_key()).is_err());
     let mut corrupt = png;
     corrupt[20] ^= 1;
     std::fs::write(&tile, &corrupt).unwrap();
     assert!(matches!(
         image.read_tile_into(tile_key(), &mut buffer),
+        Err(MapError::Digest)
+    ));
+    assert!(matches!(
+        image.read_tile_arc(tile_key()),
         Err(MapError::Digest)
     ));
 }
