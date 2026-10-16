@@ -143,13 +143,16 @@ cargo test --manifest-path vendor/fr-client-rust/Cargo.toml --workspace
 
 # Crate-graph ownership (local Python 3.11+ minimum; CI pins 3.14.8). Does
 # not replace fmt/clippy/test. The checker and the graph-creating policy
-# live in operator-owned `274bot-arch` `main`; `run.sh` fetches them into a
-# bare-Git cache (`ARCH_CACHE_DIR`, default
+# live in operator-owned `274bot-arch` `main`; `run.sh` is a
+# local-convenience-only runner — CI does not use it and never executes a
+# candidate-tree script. Locally it fetches the rules into a bare-Git cache
+# (`ARCH_CACHE_DIR`, default
 # `${XDG_CACHE_HOME:-$HOME/.cache}/274bot-arch`) and runs them against a
 # tree (`--root`, default the product root), reading the fine data
 # (`tools/architecture/ownership.json`, `inventories.json`,
-# `foreign_types.json`) from the checked tree. `ARCH_REPO` takes a URL
-# (always `main`) or a local clone (its local `HEAD`, for pre-push proof).
+# `foreign_types.json`) from the checked tree. `ARCH_REPO` is a local-only
+# override taking a URL (always `main`) or a local clone (its local `HEAD`,
+# for pre-push proof); CI has no `ARCH_REPO` override.
 tools/architecture/run.sh
 tools/architecture/run.sh --root /path/to/tree
 ```
@@ -159,9 +162,16 @@ Crate edges are an explicit allowlist: the protected
 in the operator-owned [`274bot-arch`](https://github.com/acfrazier/274bot-arch)
 repo (workspace members, edges/kinds/migrations, configuration
 feature/activation — see [docs/architecture.md](docs/architecture.md)).
-Edge-policy changes are proposed as a patch or branch bundle for the
-operator to push; agents cannot push that repo. Ownership, inventory, and
-foreign-type rows are ordinary product diffs, reviewed like code. New reverse
+An operator commit in protected `274bot-arch` is required for a new crate
+edge (including a new target cfg or cross-crate feature request), an edge kind,
+a migration, an optional-dependency activation, a vendored path package, or a checker change: the operator edits `policy.toml`
+where needed and regenerates `graph-provenance.json` in the same arch commit
+(`python3 -B check.py --emit-provenance-baseline /path/to/candidate >
+graph-provenance.json`), then publishes first. Propose the edit as a patch
+or branch bundle for the operator to push; agents cannot push that repo.
+Purely local features with no optional dependency or cross-crate edge, and
+ownership/inventory/foreign-type rows, need no operator commit. These fine-data
+rows are ordinary product diffs, reviewed like code. New reverse
 or convenience dependencies, workspace aliases, target tables, and unknown
 workspace members fail closed. Optional-only allows do
 not accept a required target dependency. Membership is the explicit
@@ -173,9 +183,16 @@ GitHub Actions runs the same two manifests after installing ALSA + X11
 headers (`libasound2-dev` — panel pulls client `audio` / cpal), plus the
 feature-gated test lanes (script `load` and V8-free `--no-default-features`,
 host `performance-profile`, host-play/panel/tui `memory-profile`, host-play
-`memory-profile-no-alloc`, panel `render-diagnostics`) and the architecture
-check (fetched from `274bot-arch` `main` and run against the candidate;
-no Rust toolchain). `path-schema`, `live-harness` and `test-support` are
+`memory-profile-no-alloc`, panel `render-diagnostics`) and the inline
+architecture check: the step itself runs `git clone --depth 1 --branch main
+https://github.com/acfrazier/274bot-arch.git "$RUNNER_TEMP/274bot-arch"`,
+verifies the rust-analyzer binary (SHA-256
+`fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49`,
+`rust-analyzer 0.3.3081-standalone`), then runs `python3 -B
+"$checker_root/check.py" --self-test` and `python3 -B
+"$checker_root/check.py" --root "$GITHUB_WORKSPACE"`. It never executes a
+candidate-tree script (including `tools/architecture/run.sh`) and has no
+`ARCH_REPO` override. `path-schema`, `live-harness` and `test-support` are
 exercised through the workspace test lane's feature unification; no CI lane
 runs `LIVE=1` tests. Independent test commands run as parallel matrix lanes;
 the required `test` status aggregates every lane. It is still a **subset**:

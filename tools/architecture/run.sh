@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Fetch the operator-owned checker. Candidate trees supply source data, not rules.
+# Local convenience runner only; CI does not use this script. CI inlines the
+# clone plus parser-pin plus check.py steps in .github/workflows/ci.yml and
+# never executes a candidate-tree script. Candidate trees supply source data,
+# not rules.
 set -euo pipefail
 
 product_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
