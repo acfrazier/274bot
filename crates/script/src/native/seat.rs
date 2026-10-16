@@ -134,6 +134,9 @@ struct SeatRow<R> {
     pending_owner: Option<RequestId>,
     proof: EmissionProof,
     boundary: AuthorityBoundary,
+    /// Push-time gameplay foreground; a root row cannot gain authority
+    /// merely because that foreground ends before Take/Dispatch.
+    foreground_at_push: Option<RequestId>,
     release: Option<api::script_contract::Release>,
     reserved_policy: bool,
     walk: Option<RequestId>,
@@ -602,8 +605,7 @@ impl<R> GameplaySeat<R> {
     ) -> Result<(), SeatError> {
         let mut contiguous = self.mirror_revokes_consumed;
         let mut seen = [None; MAX_ENCODED_GAMEPLAY];
-        let mut count = 0;
-        for (id, seq) in revokes {
+        for (count, (id, seq)) in revokes.into_iter().enumerate() {
             if id.namespace() != RequestNamespace::Isolate
                 || seq == 0
                 || count == MAX_ENCODED_GAMEPLAY
@@ -612,7 +614,6 @@ impl<R> GameplaySeat<R> {
                 return Err(SeatError::ProtocolDefect);
             }
             seen[count] = Some(id);
-            count += 1;
             if seq > contiguous {
                 contiguous = contiguous
                     .checked_add(1)
@@ -1375,6 +1376,11 @@ impl<R> GameplaySeat<R> {
                 self.dropped += 1;
             }
         }
+        let foreground_at_push = if class == EmissionClass::Gameplay {
+            self.foreground()
+        } else {
+            None
+        };
         self.queued.push_back(SeatRow {
             payload,
             class,
@@ -1387,6 +1393,7 @@ impl<R> GameplaySeat<R> {
             },
             proof,
             boundary,
+            foreground_at_push,
             release,
             reserved_policy,
             walk,
@@ -1468,7 +1475,7 @@ impl<R> GameplaySeat<R> {
                 let decision = dispatch_disposition(
                     row.class,
                     row.authority.as_ref().and_then(CapturedAuthority::session),
-                    self.foreground(),
+                    self.foreground().or(row.foreground_at_push),
                     row.witness,
                     row.proof,
                     row.boundary,
@@ -1502,7 +1509,7 @@ impl<R> GameplaySeat<R> {
             let decision = dispatch_disposition(
                 row.class,
                 row.authority.as_ref().and_then(CapturedAuthority::session),
-                foreground,
+                foreground.or(row.foreground_at_push),
                 row.witness,
                 row.proof,
                 row.boundary,

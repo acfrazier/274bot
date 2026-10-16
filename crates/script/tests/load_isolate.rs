@@ -10658,7 +10658,8 @@ export default class T extends LoopingBot {
     async loop() {
         if (globalThis.__case23Started) return;
         globalThis.__case23Started = true;
-        globalThis.__calls = { status: 0, destination: 0, common: 0, returnTo: 0, log: 0 };
+        globalThis.__calls = { status: 0, destination: 0, common: 0, returnTo: 0 };
+        globalThis.__logMessages = [];
         globalThis.__done = false;
         globalThis.__error = null;
         const task = new PeriodicBank({
@@ -10679,8 +10680,8 @@ export default class T extends LoopingBot {
                 return Promise.resolve({ x: 4001, z: 4001, level: 0 });
             },
             deposit() { return false; },
-            log() {
-                globalThis.__calls.log++;
+            log(message) {
+                globalThis.__logMessages.push(message);
                 return Promise.resolve('ignored');
             },
         });
@@ -10752,7 +10753,14 @@ export default class T extends LoopingBot {
     }
     assert_eq!(iso.probe("__done").unwrap(), true);
     assert_eq!(iso.probe("__error").unwrap(), serde_json::Value::Null);
-    assert_eq!(iso.probe("__calls").unwrap()["log"], 1);
+    assert_eq!(
+        iso.probe("__logMessages").unwrap(),
+        serde_json::json!([
+            "no usable 'Bank booth' in the scene",
+            "periodic bank: no bank reachable — will retry later",
+        ]),
+        "an unsuccessful native selection logs the fallback access failure, then PeriodicBank logs the failed run"
+    );
     iso.join();
 }
 

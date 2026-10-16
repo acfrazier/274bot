@@ -345,11 +345,17 @@ fn wait_until(
             .phase;
         assert!(
             Instant::now() < deadline,
-            "timeout waiting for {label}: account={}, phase={phase}, script={:?}, last_error={:?}, native={:?}",
+            "timeout waiting for {label}: account={}, phase={phase}, script={:?}, last_error={:?}, native={:?}, guardian={:?}, seat={:?}",
             live.account,
             live.play.script_state(&live.account),
             live.play.script_last_error(&live.account),
-            live.play.script_native_status(&live.account)
+            live.play.script_native_status(&live.account),
+            live.play
+                .statuses()
+                .into_iter()
+                .find(|status| status.username == live.account)
+                .map(|status| (status.random, status.tile_x, status.tile_z, status.tile_level)),
+            live.play.script_seat_probe(&live.account)
         );
         std::thread::sleep(Duration::from_millis(40));
     }
@@ -559,7 +565,11 @@ fn run_promise_cell() {
         "Promise must start on an observed host tick"
     );
     assert_eq!(outcome["kind"], "done");
-    assert_eq!(outcome["value"]["end"], "stopped");
+    assert_eq!(
+        outcome["value"]["end"],
+        "stopped",
+        "a real Gather Promise must retain its product terminal after seat Done: outcome={outcome}, stop={stopped}, page={live_page}"
+    );
     assert!(outcome["value"]["counts"]["yielded"].as_u64().unwrap_or(0) >= 1);
     assert_eq!(stopped, json!({"ok":true,"value":null}));
     assert!(live_page["token"].as_u64().unwrap_or(0) > 0);
@@ -647,7 +657,7 @@ fn run_hold_cell(random_events: bool, trigger_maze: bool, reconnect: bool) {
     if trigger_maze {
         wait_until(
             &live,
-            "Maze SessionHeld seat drop",
+            "Maze SessionHeld seat hold",
             Duration::from_secs(90),
             |live| {
                 let status = live
@@ -673,7 +683,10 @@ fn run_hold_cell(random_events: bool, trigger_maze: bool, reconnect: bool) {
                             "inside_maze": inside_maze,
                             "seat": seat_json(probe),
                         });
-                        if inside_maze && probe.held && probe.dropped > initial_seat.dropped {
+                        if inside_maze && probe.held {
+                            // A real hold can begin after the prior gameplay
+                            // row was dispatched. The native fixture proves
+                            // drop accounting with a deliberately pending row.
                             held_seat = Some(probe);
                         }
                     }
@@ -683,14 +696,11 @@ fn run_hold_cell(random_events: bool, trigger_maze: bool, reconnect: bool) {
         );
         assert_eq!(
             live.play.script_state(&live.account),
-            script::RunState::Running,
-            "guardian hold must freeze the script without terminating its task"
+            script::RunState::Paused,
+            "guardian hold pauses, but does not terminate, the script"
         );
         assert!(held_seat.expect("observed held seat").held);
-        assert!(
-            held_seat.expect("observed held seat").dropped > initial_seat.dropped,
-            "SessionHeld must drop/count pending gameplay rows"
-        );
+        assert_eq!(maze_status["inside_maze"], true);
     }
 
     if reconnect {
@@ -879,7 +889,12 @@ fn run_world_switch_restart_cell() {
         |live| {
             arm.session_key()
                 .is_some_and(|session| session != first_session)
-                && live.play.slot_connected(&live.account)
+                && live.play.statuses().into_iter().any(|status| {
+                    status.username == live.account
+                        && status.connected
+                        && status.ingame
+                        && status.scene_state == 2
+                })
         },
     );
     let second_session = arm.session_key().expect("replacement session");
@@ -902,6 +917,11 @@ fn run_world_switch_restart_cell() {
         |live| live.play.script_state(&live.account) == script::RunState::Idle,
     );
     assert!(live.play.script_seat_probe(&live.account).is_none());
+    // The first isolate may have posted its reset terminal after the
+    // world boundary. Consume that generation's log before starting another
+    // instance so an old aborted result cannot masquerade as fresh work.
+    let mut old_run_logs = Vec::new();
+    take_logs(&live, &mut old_run_logs);
 
     start_load(&live, HOLD_SOURCE);
     let second_generation = live
@@ -918,7 +938,10 @@ fn run_world_switch_restart_cell() {
             take_logs(live, &mut restarted_logs);
             restarted_logs
                 .iter()
-                .any(|line| line.starts_with("seat-hold-result:"))
+                .any(|line| line.starts_with("seat-hold-start:"))
+                && restarted_logs
+                    .iter()
+                    .any(|line| line.starts_with("seat-hold-result:"))
         },
     );
     let restarted = logged(&restarted_logs, "seat-hold-result:");

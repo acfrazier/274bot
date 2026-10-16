@@ -891,7 +891,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 let bank_memory = bank_memory.map(parking_lot::RwLock::read);
                 // Keep the real lifecycle gate stable through this callback.
                 // Its guard drops before host effect dispatch below.
-                let service_gate_guard = if slot.native_run().is_some() {
+                let service_gate_guard = if slot.native_run().is_some() || slot.load_active() {
                     service_arm.map(SlotArm::session_gate)
                 } else {
                     None
@@ -1239,7 +1239,10 @@ pub(crate) fn script_observe_cached_with_channels(
                             state.clone(),
                             bank_memory,
                             name,
-                            releases.into_iter().map(|queued| queued.req).collect(),
+                            releases
+                                .into_iter()
+                                .map(|queued| queued.req)
+                                .collect::<Vec<_>>(),
                             cache.clone(),
                             obj_names_arc.clone(),
                         );

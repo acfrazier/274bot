@@ -257,7 +257,10 @@ impl SlotScript {
         let run = RunKey {
             slot: self.incarnation,
             run: generation,
-            session: self.work_epoch,
+            session: self
+                .seat
+                .as_ref()
+                .map_or(self.work_epoch, |seat| seat.run().session),
         };
         let operator = match lease_operator_loadouts(self.local_state.as_deref()) {
             Ok(operator) => operator,
@@ -380,7 +383,7 @@ impl SlotScript {
                 .unwrap_or_else(|error| Err(format!("unavailable:{error}").into()))
             {
                 Ok(prepared) => {
-                    run.session = self.work_epoch;
+                    run.session = self.api_session_epoch();
                     seat.progress = ProgressSeat::Reading {
                         token,
                         run,

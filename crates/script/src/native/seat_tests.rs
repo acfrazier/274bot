@@ -232,7 +232,34 @@ fn seat_completion_preserves_pinned_rows_but_late_push_becomes_root() {
     let mut delivered = Vec::new();
     seat.dispatch_into(&mut delivered);
     assert_eq!(delivered, [1, 2]);
-    assert_eq!(seat.results()[0].authority_revoked, false);
+    assert!(!seat.results()[0].authority_revoked);
+}
+
+#[test]
+fn seat_root_gameplay_queued_during_foreground_stays_blocked_after_terminal() {
+    let mut seat = GameplaySeat::<u32>::new(run());
+    start(&mut seat, 1, None, NativeKind::Gather);
+    seat.push(10, EmissionClass::Gameplay, EmissionSource::Root, None)
+        .unwrap();
+    seat.push(
+        11,
+        EmissionClass::Gameplay,
+        EmissionSource::Owner(id(1)),
+        None,
+    )
+    .unwrap();
+    seat.complete(id(1), false).unwrap();
+    seat.take();
+    let mut delivered = Vec::new();
+    seat.dispatch_into(&mut delivered);
+    assert_eq!(delivered, [11], "the accepted owner lease survives Done");
+    assert_eq!(seat.dropped(), 1, "the old root cannot leak after Done");
+
+    seat.push(12, EmissionClass::Gameplay, EmissionSource::Root, None)
+        .unwrap();
+    seat.take();
+    seat.dispatch_into(&mut delivered);
+    assert_eq!(delivered, [11, 12], "a new root is unowned after Done");
 }
 
 #[test]

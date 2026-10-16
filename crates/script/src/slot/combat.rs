@@ -162,7 +162,10 @@ impl SlotScript {
         let run = RunKey {
             slot: self.incarnation,
             run: generation,
-            session: self.work_epoch,
+            session: self
+                .seat
+                .as_ref()
+                .map_or(self.work_epoch, |seat| seat.run().session),
         };
         let cell = SettleCell::default();
         let prepared = prepare_combat(run, Arc::clone(&selected), Arc::clone(request), &cell);
@@ -297,7 +300,7 @@ impl SlotScript {
             };
             match job.join() {
                 Ok(mut run) => {
-                    run.rekey_session(self.work_epoch);
+                    run.rekey_session(self.api_session_epoch());
                     seat.combat_page = Some(running_page(token, None));
                     seat.combat = CombatSeat::Running {
                         token,
@@ -334,10 +337,13 @@ impl SlotScript {
                 &mut self.native_runtime,
                 None,
                 self.local_state.as_deref(),
-                None,
-                self.seat
-                    .as_mut()
-                    .map(|seat| seat.as_mut() as &mut dyn crate::native::SeatPromptPort),
+                crate::slot::compiled::SeatTickPorts {
+                    authority: None,
+                    prompt: self
+                        .seat
+                        .as_mut()
+                        .map(|seat| seat.as_mut() as &mut dyn crate::native::SeatPromptPort),
+                },
             );
             #[cfg(feature = "load")]
             {

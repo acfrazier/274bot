@@ -511,12 +511,18 @@ fn append_seat_wait_facts(
         .saturating_add((settled as usize).saturating_sub(settle_rows))
 }
 
+type EncodedSeatBatch = (Vec<u8>, Vec<crate::machine::MachineEvent>);
+
 fn encode_seat_batch(
     ipc: &mut crate::isolate_fb::IsolateBuf,
     rows: &[(crate::shim::InteractReq, crate::machine::CapturedLineage)],
     dropped: &mut usize,
-) -> Result<Option<(Vec<u8>, Vec<crate::machine::MachineEvent>)>, String> {
-    if !crate::machine::has_pending_seat_batch() && rows.is_empty() {
+) -> Result<Option<EncodedSeatBatch>, String> {
+    let pending_stops = crate::api_session::pending_stop_intents();
+    if !crate::machine::has_pending_seat_batch()
+        && rows.is_empty()
+        && pending_stops.iter().all(Option::is_none)
+    {
         return Ok(None);
     }
     crate::machine::with_seat_batch(|carry| {
@@ -528,7 +534,11 @@ fn encode_seat_batch(
         let decisions: [crate::isolate_fb::SeatDecisionRef<'_>; 0] = [];
         let max_rows = crate::isolate_fb::MAX_SEAT_RESERVED_ROWS
             .saturating_add(crate::isolate_fb::MAX_SEAT_GAMEPLAY_ROWS);
-        let mut requests = Vec::with_capacity(rows.len().min(max_rows));
+        let mut requests = Vec::with_capacity(
+            rows.len()
+                .saturating_add(pending_stops.iter().flatten().count())
+                .min(max_rows),
+        );
         let mut walk_releases = [0u64; api::script_contract::MAX_WALK_RELEASES];
         let mut walk_release_count = 0;
         let mut gather_stop = false;
@@ -576,6 +586,18 @@ fn encode_seat_batch(
                     mirror_owner: lineage.mirror_owner,
                     request,
                 });
+            }
+        }
+
+        for (present, request) in [gather_stop, combat_stop].into_iter().zip(&pending_stops) {
+            if !present {
+                if let Some(request) = request {
+                    requests.push(crate::isolate_fb::SeatInteractRequest {
+                        lineage: None,
+                        mirror_owner: None,
+                        request,
+                    });
+                }
             }
         }
 
@@ -974,6 +996,17 @@ fn report_interrupted_execution(
     let _ = out.send(ThreadMsg::ScriptCut);
 }
 
+fn fire_tick_listeners(runtime: &mut Runtime, teardown: &Mutex<TeardownState>) {
+    let _ = call_interruptible(runtime, teardown, |runtime| {
+        runtime.call_function_immediate::<()>(
+            None,
+            "__rs2b0t_fire_tick_listeners",
+            json_args!(),
+        )?;
+        runtime.advance_event_loop(rustyscript::deno_core::PollEventLoopOptions::default())
+    });
+}
+
 /// One eligible non-v2 tick, in the phase order the isolate owns (the
 /// tick is already recorded and machines stepped): tick listeners, wait
 /// settle, `onStart` once (compat), native events once started, then
@@ -1006,20 +1039,9 @@ fn run_tick_phases(
     if let Phase::StartFailed = runner.phase {
         runner.phase = Phase::Idle;
     }
-    // BotHost tick listeners, before any wait settles this tick. Absent
-    // when the card never loaded BotHost.
-    if machines_halted(teardown) {
-        return Ok(());
-    }
-    let listener = call_interruptible(runtime, teardown, |runtime| {
-        runtime.call_function_immediate::<()>(
-            None,
-            "__rs2b0t_fire_tick_listeners",
-            json_args!(),
-        )?;
-        runtime.advance_event_loop(rustyscript::deno_core::PollEventLoopOptions::default())
-    });
-    let _ = listener;
+    // BotHost tick listeners run before waits. Cards without BotHost keep
+    // their optional listener entry behavior.
+    fire_tick_listeners(runtime, teardown);
     if machines_halted(teardown) {
         return Ok(());
     }
@@ -1389,10 +1411,13 @@ fn tick_loop(
                 // blob is logged, never fatal.
                 match crate::isolate_fb::Snapshot::from_bytes(&bytes.bytes) {
                     Ok(snap) => {
+                        // A native terminal may share this snapshot with
+                        // its family's final page. Make the page visible
+                        // before the seat settles the JS promise.
+                        crate::observed::apply(&snap);
                         if let Err(error) = crate::machine::on_snapshot(&snap) {
                             let _ = out.send(ThreadMsg::Log(format!("seat page: {error}")));
                         }
-                        crate::observed::apply(&snap);
                         super::reach_query::apply(&snap);
                         crate::walk_wait::on_snapshot(&snap);
                         crate::inspect_wait::on_snapshot(&snap);
@@ -1897,9 +1922,18 @@ fn tick_loop(
                         runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n))
                     })
                 } else if v2_native {
-                    let pumped = call_interruptible(&mut runtime, &teardown, |runtime| {
-                        runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n))
-                    });
+                    fire_tick_listeners(&mut runtime, &teardown);
+                    let pumped = if machines_halted(&teardown) {
+                        Ok(())
+                    } else {
+                        call_interruptible(&mut runtime, &teardown, |runtime| {
+                            runtime.call_function_immediate::<()>(
+                                None,
+                                "__rs2b0t_pump",
+                                json_args!(n),
+                            )
+                        })
+                    };
                     // Do not re-enter tick while a previous returned
                     // Promise is pending. Snapshot posts still merge;
                     // this only skips tick.
@@ -2199,6 +2233,10 @@ fn tick_loop(
                     });
                 }
             }
+            IsolateCmd::AlignExecution(owner_execution) => {
+                execution = Some(owner_execution);
+                crate::machine::set_execution(execution);
+            }
             IsolateCmd::ResetSession {
                 keep_work,
                 generation: reset_generation,
@@ -2426,31 +2464,15 @@ fn tick_loop(
                 if !pause_interrupted
                     && generation == work_generation.load(std::sync::atomic::Ordering::Acquire)
                 {
-                    if execution.is_some() {
-                        let rows = [(req, crate::machine::CapturedLineage::default())];
-                        let mut dropped = 0;
-                        match encode_seat_batch(&mut ipc, &rows, &mut dropped) {
-                            Ok(Some((bytes, machine_events))) => {
-                                let _ = out.send(ThreadMsg::SeatBatch {
-                                    bytes,
-                                    generation,
-                                    observed_walk_outcome_seq,
-                                    machine_events,
-                                });
-                            }
-                            Ok(None) => {}
-                            Err(error) => {
-                                let _ = out.send(ThreadMsg::Log(format!("seat interact: {error}")));
-                            }
-                        }
-                        log_seat_interact_drops(&out, dropped);
-                    } else {
-                        let _ = out.send(ThreadMsg::Interact {
-                            bytes: ipc.encode_interact_batch(&[req]),
-                            generation,
-                            observed_walk_outcome_seq,
-                        });
-                    }
+                    // The host requested this watchdog sample. Deliver it
+                    // through the generation-fenced lifecycle path even
+                    // while gameplay is held by SamplingAnchor. A seat
+                    // batch here would be discarded by the gameplay hold.
+                    let _ = out.send(ThreadMsg::Interact {
+                        bytes: ipc.encode_interact_batch(&[req]),
+                        generation,
+                        observed_walk_outcome_seq,
+                    });
                 }
                 let _ = out.send(ThreadMsg::InFlightDone {
                     generation,

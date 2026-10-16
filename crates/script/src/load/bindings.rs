@@ -728,6 +728,8 @@ pub(super) fn wire_runtime(
         .map_err(|e| format!("register canvas onpaint done: {e}"))?;
     super::lineage_v8::eval::<()>(runtime, crate::shim::PRELUDE)
         .map_err(|e| format!("shim: {e}"))?;
+    super::lineage_v8::eval::<()>(runtime, INTERACT_CAPTURE_SCRIPT)
+        .map_err(|e| format!("interact capture: {e}"))?;
     super::run_policy_v8::install(runtime).map_err(|e| format!("run-policy v8: {e}"))?;
     super::recovery_hints_v8::install(runtime).map_err(|e| format!("recovery hints v8: {e}"))?;
     super::buyout_plan::install(runtime).map_err(|e| format!("buyout plan: {e}"))?;
@@ -836,57 +838,9 @@ return Promise.resolve(r).then(() => null, (e) => String((e && e.message) || e))
 };
 "#;
 
-/// Explicit v2 wrapper: public NativeApi only. Does not grow shim policy.
-/// Snapshot is a Proxy over the host-owned materialized object (no freeze,
-/// no per-tick deep copy). request enqueues onto the existing interact drain
-/// and returns void. Async single-flight is observed by the Rust isolate.
-const NATIVE_V2_MAIN: &str = r#"
-import { tick } from './bot.js';
-import { machineNow, runMachine } from '../../shim/_kernel.js';
-const SNAPSHOT_KEYS = new Set([
-  'ingame','here','inv','inv_size','stats','bank','bank_side','bank_open','bank_loaded',
-  'bank_generation','bank_snapshot_generation','banks','nearest_booth','bank_approaches','count_dialog_open',
-  'puzzle_board','puzzle_board_generation',
-  'withdraw_x_result_seq','withdraw_x_result','withdraw_load_result_seq','withdraw_load_result',
-  'bank_op_result_seq','bank_op_result',  'walk_outcome_seq','walk_outcome_generation',
-  'walk_outcome_failed','walk_outcome_x','walk_outcome_z','walk_outcome_level',
-  'walk_outcome_radius','walk_outcome_allow_teleports','walk_outcome_request_id',
-  'walk_outcome_cancel_reason','user_move_intent_seq',
-  'route_inspect_seq','route_inspect_generation','route_inspect_request_id',
-  'route_inspect_ok','route_inspect_reason','route_inspect_bank_planned',
-  'route_inspect_ticks','route_inspect_hops',
-  'route_inspect_prev_seq','route_inspect_prev_generation','route_inspect_prev_request_id',
-  'route_inspect_prev_ok','route_inspect_prev_reason','route_inspect_prev_bank_planned',
-  'route_inspect_prev_ticks','route_inspect_prev_hops',
-  'route_inspect_running_id','route_inspect_pending_id','route_inspect_accepted_id',
-  'route_inspect_replaced_id','route_inspect_replaced_prev_id',
-  'route_inspect_refused_id','route_inspect_refused_id_2','route_inspect_refused_id_3',
-  'route_inspect_unobserved','collision','npcs','self_target_kind','self_target_index','gather',
-  'combat',
-]);
-const V2_OPS = {
-  'held': ['name','action'],
-  'open-booth': ['x','z','level','id'],
-  'open-stand': ['x','z','level','kind'],
-  'close': [],
-  'set-note-mode': ['on'],
-  'deposit': ['name'],
-  'withdraw': ['name','action'],
-  'withdraw-load': ['name','bank_generation'],
-  'puzzle-move': ['id','slot','component','generation'],
-  'withdraw-x': ['name','count','bank_item_id','lands_as_id','action','bank_generation'],
-  'walk': ['x','z','level'],
-  'walk-near': ['x','z','level','radius'],
-  'walk-nearest-bank': [],
-  'inspect-route': ['from','to'],
-};
-const OPTIONAL = {
-  'open-booth': ['name','action'],
-  'open-stand': ['name','stand_op','choose'],
-  'walk': ['allow_teleports','allow_wilderness','allow_bank_fetch','request_id'],
-  'walk-near': ['allow_teleports','allow_wilderness','allow_bank_fetch','request_id'],
-  'inspect-route': ['allow_teleports','allow_wilderness','allow_bank_fetch','avoid','request_id'],
-};
+/// Bind one bounded append-only host queue before any user module runs.
+/// Compat V1 direct pushes and V2 API requests share the same CPED capture.
+const INTERACT_CAPTURE_SCRIPT: &str = r#"
 const captureInteractLineage = globalThis.__rs2b0t_capture_interact_lineage;
 const discardInteractLineage = globalThis.__rs2b0t_discard_interact_lineage;
 const interactGate = captureInteractLineage();
@@ -1014,7 +968,7 @@ let instrumentedHost;
 function host() {
   if (instrumentedHost) return instrumentedHost;
   const h = globalThis.__rs2b0t_host || (globalThis.__rs2b0t_host = { interact: [], log: [] });
-  let interact = instrumentInteractQueue(h.interact);
+  let interact = instrumentInteractQueue(h.interact ?? []);
   Object.defineProperty(h, 'interact', {
     configurable: true,
     enumerable: true,
@@ -1041,6 +995,65 @@ function host() {
   return h;
 }
 host();
+Object.defineProperty(globalThis, '__rs2b0t_seat_host', {
+  value: host,
+  writable: false,
+  configurable: false,
+});
+"#;
+
+/// Explicit v2 wrapper: public NativeApi only. Does not grow shim policy.
+/// Snapshot is a Proxy over the host-owned materialized object (no freeze,
+/// no per-tick deep copy). request enqueues onto the existing interact drain
+/// and returns void. Async single-flight is observed by the Rust isolate.
+const NATIVE_V2_MAIN: &str = r#"
+import { tick } from './bot.js';
+import { machineNow, runMachine } from '../../shim/_kernel.js';
+const SNAPSHOT_KEYS = new Set([
+  'ingame','here','inv','inv_size','stats','bank','bank_side','bank_open','bank_loaded',
+  'bank_generation','bank_snapshot_generation','banks','nearest_booth','bank_approaches','count_dialog_open',
+  'puzzle_board','puzzle_board_generation',
+  'withdraw_x_result_seq','withdraw_x_result','withdraw_load_result_seq','withdraw_load_result',
+  'bank_op_result_seq','bank_op_result',  'walk_outcome_seq','walk_outcome_generation',
+  'walk_outcome_failed','walk_outcome_x','walk_outcome_z','walk_outcome_level',
+  'walk_outcome_radius','walk_outcome_allow_teleports','walk_outcome_request_id',
+  'walk_outcome_cancel_reason','user_move_intent_seq',
+  'route_inspect_seq','route_inspect_generation','route_inspect_request_id',
+  'route_inspect_ok','route_inspect_reason','route_inspect_bank_planned',
+  'route_inspect_ticks','route_inspect_hops',
+  'route_inspect_prev_seq','route_inspect_prev_generation','route_inspect_prev_request_id',
+  'route_inspect_prev_ok','route_inspect_prev_reason','route_inspect_prev_bank_planned',
+  'route_inspect_prev_ticks','route_inspect_prev_hops',
+  'route_inspect_running_id','route_inspect_pending_id','route_inspect_accepted_id',
+  'route_inspect_replaced_id','route_inspect_replaced_prev_id',
+  'route_inspect_refused_id','route_inspect_refused_id_2','route_inspect_refused_id_3',
+  'route_inspect_unobserved','collision','npcs','self_target_kind','self_target_index','gather',
+  'combat',
+]);
+const V2_OPS = {
+  'held': ['name','action'],
+  'open-booth': ['x','z','level','id'],
+  'open-stand': ['x','z','level','kind'],
+  'close': [],
+  'set-note-mode': ['on'],
+  'deposit': ['name'],
+  'withdraw': ['name','action'],
+  'withdraw-load': ['name','bank_generation'],
+  'puzzle-move': ['id','slot','component','generation'],
+  'withdraw-x': ['name','count','bank_item_id','lands_as_id','action','bank_generation'],
+  'walk': ['x','z','level'],
+  'walk-near': ['x','z','level','radius'],
+  'walk-nearest-bank': [],
+  'inspect-route': ['from','to'],
+};
+const OPTIONAL = {
+  'open-booth': ['name','action'],
+  'open-stand': ['name','stand_op','choose'],
+  'walk': ['allow_teleports','allow_wilderness','allow_bank_fetch','request_id'],
+  'walk-near': ['allow_teleports','allow_wilderness','allow_bank_fetch','request_id'],
+  'inspect-route': ['allow_teleports','allow_wilderness','allow_bank_fetch','avoid','request_id'],
+};
+const host = globalThis.__rs2b0t_seat_host;
 const snapshotRootCache = new WeakMap();
 const snapshotNestedCache = new WeakMap();
 function readOnlyView(value, root) {
@@ -1136,9 +1149,7 @@ function enqueueRequest(op) {
     delete row.from;
     delete row.to;
   }
-  const h = host();
-  const interact = h.interact ?? (h.interact = []);
-  interact.push(row);
+  host().interact.push(row);
 }
 const api = {
   get tick() { return host().tick || 0; },
@@ -1646,9 +1657,7 @@ api.cellRun = (site, hooks) => huntRun('hunt-cell', site, hooks);
 api.bankRun = (site, opts, hooks) => huntRun('hunt-bank', site && { ...site, ...(opts || {}) }, hooks);
 function recordSettlement(generation) {
   if (generation !== lifecycleGeneration) return;
-  const h = host();
-  const interact = h.interact ?? (h.interact = []);
-  interact.push({ op: 'loop-settled' });
+  host().interact.push({ op: 'loop-settled' });
 }
 globalThis.__rs_tick = (n) => {
   api.tick = n;

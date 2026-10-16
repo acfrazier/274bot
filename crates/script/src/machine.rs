@@ -1008,6 +1008,9 @@ struct Row {
     native_kind: Option<native::request::NativeKind>,
     /// The seat acknowledged this start as live.
     admitted: bool,
+    /// Local-parent cancellation has been carried; only the seat terminal
+    /// may settle this native child's JS promise.
+    awaiting_seat_terminal: bool,
     /// A revoked owner retains its token so late pushes fail closed.
     authority_revoked: bool,
     /// Current truthful phase reported for this request.
@@ -1191,7 +1194,7 @@ impl Host {
         let takeover = self.takeover_seq();
         self.rows
             .iter()
-            .filter(|row| row.walking_operation)
+            .filter(|row| row.walking_operation && !row.awaiting_seat_terminal)
             .map(|row| row.intent_baseline)
             .chain(
                 self.stepping
@@ -1520,8 +1523,12 @@ impl Host {
                 continue;
             };
             let mut row = self.rows.remove(position);
+            if row.awaiting_seat_terminal {
+                self.rows.push(row);
+                continue;
+            }
             self.remember_revoked(&row);
-            if let Some(id) = RequestId::isolate(row.handle).ok() {
+            if let Ok(id) = RequestId::isolate(row.handle) {
                 if row.native_kind.is_some() {
                     self.queue_cancel(id, CallbackCancelReason::ParentAborted);
                 } else {
@@ -1533,14 +1540,20 @@ impl Host {
             }
             row.machine.abort(AbortReason::ParentAborted);
             self.free_completed_walk(row.handle);
-            self.settled
-                .push((row.handle, Outcome::Aborted(AbortReason::ParentAborted)));
+            if row.native_kind.is_some() {
+                row.authority_revoked = true;
+                row.awaiting_seat_terminal = true;
+                self.rows.push(row);
+            } else {
+                self.settled
+                    .push((row.handle, Outcome::Aborted(AbortReason::ParentAborted)));
+            }
         }
     }
 
     fn revoke_row(&mut self, row: &Row, reason: AbortReason, at: usize) {
         self.remember_revoked(row);
-        if let Some(id) = RequestId::isolate(row.handle).ok() {
+        if let Ok(id) = RequestId::isolate(row.handle) {
             if row.native_kind.is_some() {
                 if !row.admitted || reason == AbortReason::ParentAborted {
                     self.queue_cancel(id, CallbackCancelReason::ParentAborted);
@@ -1563,7 +1576,7 @@ impl Host {
         match &outcome {
             Outcome::Done(_) if row.manual_walk_event_sent => {
                 self.remember_revoked(row);
-                if let Some(id) = RequestId::isolate(row.handle).ok() {
+                if let Ok(id) = RequestId::isolate(row.handle) {
                     if row.native_kind.is_some() {
                         self.queue_machine_event(id, MachineEventKind::ManualWalk, row.admitted);
                     } else {
@@ -1607,6 +1620,10 @@ impl Host {
     fn abort_superseded(&mut self, at: usize) {
         let mut i = 0;
         while i < self.rows.len() {
+            if self.rows[i].native_kind.is_some() {
+                i += 1;
+                continue;
+            }
             if self.superseded(&self.rows[i]) {
                 let mut row = self.rows.remove(i);
                 if let Some(op) = release_op(&*row.machine) {
@@ -1764,7 +1781,51 @@ fn settle_seat_result(host: &mut Host, id: RequestId, outcome: Outcome) {
     else {
         return;
     };
+    let native_kind = host.rows[position].native_kind;
+    // The seat's Done/Failed is an authority receipt, not the product
+    // family's result. A Gather or Combat terminal can reach the seat page
+    // before its detailed family page. Leave the machine row pending until
+    // that page arrives; an absent page must not settle its JS Promise with
+    // the seat's deliberately empty value.
+    let product_result = if matches!(&outcome, Outcome::Done(_) | Outcome::Failed(_)) {
+        crate::observed::with(|scene| {
+            let page = scene.since_login();
+            match native_kind {
+                Some(native::request::NativeKind::Gather) => page
+                    .api_gather_outcome()
+                    .filter(|terminal| terminal.request_id == id.get())
+                    .map(|terminal| terminal.end.clone().into()),
+                Some(native::request::NativeKind::Combat) => page
+                    .api_combat_outcome()
+                    .filter(|terminal| terminal.request_id == id.get())
+                    .map(|terminal| terminal.end.clone().into()),
+                Some(native::request::NativeKind::QuestProgress) => page
+                    .api_progress()
+                    .filter(|terminal| {
+                        terminal.token() == id.get()
+                            && !matches!(
+                                terminal,
+                                crate::api_progress::ProgressPage::Reading { .. }
+                            )
+                    })
+                    .cloned()
+                    .map(Into::into),
+                _ => None,
+            }
+        })
+    } else {
+        None
+    };
+    if matches!(
+        native_kind,
+        Some(native::request::NativeKind::Gather | native::request::NativeKind::Combat)
+    ) && matches!(&outcome, Outcome::Done(_) | Outcome::Failed(_))
+        && product_result.is_none()
+    {
+        return;
+    }
     let mut row = host.rows.remove(position);
+    let outcome = product_result.map_or(outcome, Outcome::Done);
     let abort_reason = match &outcome {
         Outcome::Aborted(reason) => Some(*reason),
         _ => None,
@@ -2040,24 +2101,23 @@ fn begin_row<F: Family>(handle: Handle, args: Value, hooks: Vec<Hook>, at: usize
                     machine.abort(AbortReason::Reset);
                     return Started::Refused("native seat start carry is full".into());
                 }
-                let lineage = if native_kind.is_some() {
+                let lineage = if let Some(kind) = native_kind {
                     let Some(id) = owner_id else {
                         machine.abort(AbortReason::Reset);
                         return Started::Refused("native seat request identity exhausted".into());
                     };
-                    let payload =
-                        match seat_start_payload(native_kind.expect("checked"), id, &mut ops) {
-                            Ok(payload) => payload,
-                            Err(reason) => {
-                                machine.abort(AbortReason::Reset);
-                                return Started::Refused(reason);
-                            }
-                        };
+                    let payload = match seat_start_payload(kind, id, &mut ops) {
+                        Ok(payload) => payload,
+                        Err(reason) => {
+                            machine.abort(AbortReason::Reset);
+                            return Started::Refused(reason);
+                        }
+                    };
                     host.pending_starts.push(PendingSeatStart {
                         id,
                         parent: context.seat_parent,
                         local_parent: context.local_parent,
-                        kind: native_kind.expect("checked"),
+                        kind,
                         args: payload,
                     });
                     CapturedLineage {
@@ -2096,6 +2156,7 @@ fn begin_row<F: Family>(handle: Handle, args: Value, hooks: Vec<Hook>, at: usize
                     parent_row: context.parent_row,
                     native_kind,
                     admitted: native_kind.is_none(),
+                    awaiting_seat_terminal: false,
                     authority_revoked: false,
                     phase: native::NativePhase::Preparing,
                     manual_walk_event_sent: false,
@@ -2254,6 +2315,9 @@ fn pass(js: &mut impl Js, pass: Pass) {
     // recovery anchor, this tick's own JS); step ops land after them.
     let mut at = js.queue_len();
     rows.retain_mut(|row| {
+        if row.awaiting_seat_terminal {
+            return true;
+        }
         if row.native_kind.is_some() && !row.admitted {
             return true;
         }
@@ -2275,7 +2339,7 @@ fn pass(js: &mut impl Js, pass: Pass) {
                 row.last_snapshot = Some(snapshot);
             }
         }
-        if HOST.with(|host| host.borrow().superseded(row)) {
+        if row.native_kind.is_none() && HOST.with(|host| host.borrow().superseded(row)) {
             if let Some(op) = release_op(&*row.machine) {
                 HOST.with(|host| host.borrow_mut().place(at, vec![op], row.capture()));
             }
@@ -2473,8 +2537,9 @@ fn drive_inner(row: &mut Row, js: &mut impl Js, at: &mut usize, snapshot: bool) 
                         return Some(Outcome::Aborted(AbortReason::Terminated));
                     }
                 }
-                // The callback started a newer row of this exclusive family.
-                if HOST.with(|host| host.borrow().superseded(row)) {
+                // Local exclusivity still supersedes in the callback turn;
+                // native replacement waits for the seat's projected admission.
+                if row.native_kind.is_none() && HOST.with(|host| host.borrow().superseded(row)) {
                     row.machine.abort(AbortReason::Superseded);
                     return Some(Outcome::Aborted(AbortReason::Superseded));
                 }
@@ -3429,6 +3494,63 @@ pub(crate) mod tests {
         assert_eq!(SOLO_ABORTS.with(|c| c.get()), Some(AbortReason::Superseded));
         assert_eq!(take(new), Take::Pending);
         assert_eq!(take(other), Take::Pending);
+    }
+
+    #[test]
+    fn native_exclusive_replacement_waits_for_seat_admission_and_result() {
+        on_reset();
+        set_execution(Some(ExecutionId::first(api::selected::RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        })));
+        let old = running(start(
+            "quest-progress",
+            json!({"quest": "first"}),
+            vec![],
+            0,
+        ));
+        let replacement = running(start(
+            "quest-progress",
+            json!({"quest": "second"}),
+            vec![],
+            0,
+        ));
+        assert_eq!(take(old), Take::Pending);
+        assert_eq!(take(replacement), Take::Pending);
+
+        let replacement_id = RequestId::isolate(replacement).unwrap();
+        HOST.with(|host| {
+            settle_seat_result(
+                &mut host.borrow_mut(),
+                replacement_id,
+                Outcome::Refused("Busy".into()),
+            );
+        });
+        assert_eq!(
+            take(replacement),
+            Take::Settled(Outcome::Refused("Busy".into()))
+        );
+        assert_eq!(
+            take(old),
+            Take::Pending,
+            "a refused replacement does not supersede its admitted predecessor"
+        );
+
+        let old_id = RequestId::isolate(old).unwrap();
+        HOST.with(|host| {
+            settle_seat_result(
+                &mut host.borrow_mut(),
+                old_id,
+                Outcome::Aborted(AbortReason::Superseded),
+            );
+        });
+        assert_eq!(
+            take(old),
+            Take::Settled(Outcome::Aborted(AbortReason::Superseded))
+        );
+        on_reset();
+        set_execution(None);
     }
 
     #[test]

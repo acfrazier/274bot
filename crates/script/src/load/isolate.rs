@@ -160,6 +160,9 @@ enum IsolateCmd {
         /// The slot-owned RunKey for the new connection/session.
         execution: Option<api::identity::ExecutionId>,
     },
+    /// The F0 owner is ready after a kept boundary: re-stamp pending starts
+    /// with its session without resetting the isolate's retained work.
+    AlignExecution(api::identity::ExecutionId),
     /// Latch manual movement before a queued Pause, even if the snapshot is pending.
     ManualWalkTakeover(u64),
     /// The host's FlatBuffer snapshot blob (schema: `crates/script/
@@ -1290,6 +1293,12 @@ impl LoadIsolate {
         if let Some(lease) = &self.compat_journal {
             lease.revoke();
         }
+    }
+
+    /// Re-key the pending machine starts after the real host session gate
+    /// admits a kept Load run. This command is ordered before the next tick.
+    pub(crate) fn align_execution(&self, execution: api::identity::ExecutionId) {
+        self.send(IsolateCmd::AlignExecution(execution));
     }
 
     fn reset_session(&self, keep_work: bool, execution: Option<api::identity::ExecutionId>) -> u64 {

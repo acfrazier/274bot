@@ -14,16 +14,30 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   is live reports busy, including under Hunt. A child started from a Session
   hook can still run. A fifth concurrent independent operation reports busy
   instead of silently losing its gameplay actions.
+  A seat-refused replacement leaves the previous awaited operation running
+  until its own terminal result arrives.
 - Stops and walk releases keep their place through a random-event hold and
   bypass a session's gameplay foreground. Gameplay emitted while the guardian
   holds the script is discarded, never replayed after the event. Actions
   accepted before an ordinary operation completes retain their authority;
-  cancelling the operation still invalidates its queued actions.
+  cancelling the operation still invalidates its queued actions. A non-kept
+  Stop or removal drops the old seat before a new run starts.
+  A Gatherer or combat Stop also survives a lost Start batch during a kept
+  reconnect; an interrupted Hunt safespot walk asks the seat for a fresh walk
+  in the new session instead of replaying the old click.
 - A saturated script tick keeps its release and control rows ahead of gameplay.
   It dispatches the first 141 other rows in their original order, drops the
   excess, and reports one overflow diagnostic instead of failing the batch.
-- Repeated JavaScript progress and interaction calls now append to the guarded
-  queue without resetting a nonempty batch. The seat still bounds each tick.
+- Compat cards and native V2 scripts now capture the first and subsequent
+  JavaScript interactions in one guarded queue. Machine actions keep their
+  order relative to queued script actions. The seat still bounds each tick.
+- Native V2 tick listeners run before waits resume on each eligible tick.
+  Their requests retain the root seat context.
+- A quest progress refusal retains its detailed result when its final page
+  and failed seat terminal arrive in the same snapshot.
+- Gatherer and combat Promises wait for the family's detailed terminal after
+  the seat ends their authority, rather than resolving with an empty result.
+  A watchdog recovery-anchor reply also arrives while gameplay is held.
 - Async walk wait and progress facts admitted by the seat reach the watchdog
   rather than the game-action dispatcher, including after a kept reconnect.
 - Per-slot diagnostics expose dropped seat actions and late control copies as
