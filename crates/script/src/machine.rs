@@ -916,12 +916,8 @@ struct SteppingRow {
     walking: bool,
     baseline: u64,
     lineage: CapturedLineage,
-    parent_row: Option<Handle>,
     seat_parent: Option<RequestId>,
     native_kind: Option<native::request::NativeKind>,
-    admitted: bool,
-    phase: native::NativePhase,
-    manual_walk_event_sent: bool,
     authority_revoked: bool,
 }
 
@@ -956,15 +952,6 @@ impl SteppingRow {
             },
             parent_revoked: self.authority_revoked,
             history_expired: false,
-        }
-    }
-    fn revoked_record(self) -> LocalRevocation {
-        let mut context = self.start_context();
-        context.parent_revoked = true;
-        LocalRevocation {
-            handle: self.handle,
-            lineage: self.capture(),
-            context,
         }
     }
 }
@@ -1087,12 +1074,8 @@ impl Row {
             walking: self.walking_operation,
             baseline: self.intent_baseline,
             lineage: self.capture(),
-            parent_row: self.parent_row,
             seat_parent: self.seat_parent,
             native_kind: self.native_kind,
-            admitted: self.admitted,
-            phase: self.phase,
-            manual_walk_event_sent: self.manual_walk_event_sent,
             authority_revoked: self.authority_revoked,
         }
     }
@@ -1367,7 +1350,7 @@ impl Host {
     }
 
     fn set_phase(&mut self, row: &mut Row, phase: native::NativePhase) {
-        if row.phase == phase {
+        if row.phase == phase || row.phase == native::NativePhase::Blocked {
             return;
         }
         row.phase = phase;
@@ -1444,18 +1427,6 @@ impl Host {
         }
     }
 
-    fn reserve_walk_release(&mut self, id: Handle) -> bool {
-        if self.walk_releases.iter().any(|slot| slot.id == id) {
-            return true;
-        }
-        if self.walk_releases.len() >= MAX_WALK_RELEASES {
-            return false;
-        }
-        self.walk_releases
-            .push(WalkReleaseReservation { id, queued: false });
-        true
-    }
-
     fn free_completed_walk(&mut self, id: Handle) {
         if self
             .walk_releases
@@ -1467,9 +1438,9 @@ impl Host {
         self.walk_releases.retain(|slot| slot.id != id);
     }
 
-    fn mark_walk_releases_encoded(&mut self, ids: &[Handle]) {
+    fn mark_walk_release_encoded(&mut self, id: Handle) {
         self.walk_releases
-            .retain(|slot| !slot.queued || !ids.contains(&slot.id));
+            .retain(|slot| slot.id != id || !slot.queued);
     }
 
     fn queue_cancel(&mut self, of: RequestId, reason: CallbackCancelReason) {
@@ -2149,13 +2120,9 @@ impl Drop for BeginGuard {
     }
 }
 
-/// Start `family` with JS `args` and its held `hooks` (one per
-/// [`Family::CALLBACKS`] name); `at` is the JS interact queue length.
+#[cfg(test)]
 pub(crate) fn start(family: &str, args: Value, hooks: Vec<Hook>, at: usize) -> Started {
-    let parent = START_CONTEXT
-        .with(Cell::get)
-        .and_then(|context| context.parent_row);
-    start_with_parent(family, args, hooks, at, parent)
+    start_with_parent(family, args, hooks, at, None)
 }
 
 pub(crate) fn start_with_parent(
@@ -2450,7 +2417,15 @@ fn drive_inner(row: &mut Row, js: &mut impl Js, at: &mut usize, snapshot: bool) 
         }
         HOST.with(|host| host.borrow_mut().place(*at, ops, row.capture()));
         match step {
-            Step::Wait => return None,
+            Step::Wait => {
+                if row.native_kind.is_some() {
+                    HOST.with(|host| {
+                        host.borrow_mut()
+                            .set_phase(row, native::NativePhase::Waiting);
+                    });
+                }
+                return None;
+            }
             Step::Done(value) => return Some(Outcome::Done(value)),
             Step::Fail(thrown) => {
                 if let Some(op) = release_op(&*row.machine) {
@@ -2464,13 +2439,33 @@ fn drive_inner(row: &mut Row, js: &mut impl Js, at: &mut usize, snapshot: bool) 
                 row.calls += 1;
                 *at = js.queue_len();
                 match called {
-                    Called::Settled(reply) => row.reply = Some(reply),
+                    Called::Settled(reply) => {
+                        row.reply = Some(reply);
+                        if row.native_kind.is_some() {
+                            HOST.with(|host| {
+                                host.borrow_mut()
+                                    .set_phase(row, native::NativePhase::Working);
+                            });
+                        }
+                    }
                     Called::Pending(pending) if !row.sync_hooks.contains(&call.hook) => {
-                        row.pending = Some(pending)
+                        row.pending = Some(pending);
+                        if row.native_kind.is_some() {
+                            HOST.with(|host| {
+                                host.borrow_mut()
+                                    .set_phase(row, native::NativePhase::Waiting);
+                            });
+                        }
                     }
                     // A frozen synchronous call sees the promise object.
                     Called::Pending(_) => {
-                        row.reply = Some(Reply::Value(Value::Object(Default::default())))
+                        row.reply = Some(Reply::Value(Value::Object(Default::default())));
+                        if row.native_kind.is_some() {
+                            HOST.with(|host| {
+                                host.borrow_mut()
+                                    .set_phase(row, native::NativePhase::Working);
+                            });
+                        }
                     }
                     Called::Terminated => {
                         TERMINATED.with(|flag| flag.set(true));
@@ -2508,7 +2503,26 @@ pub(crate) fn merge_ops(rows: Vec<MaybeInteractReq>) -> Vec<InteractReq> {
         }
     }
     out.extend(ops.map(|op| op.request));
+    HOST.with(|host| {
+        let mut host = host.borrow_mut();
+        for request in &out {
+            if let InteractReq::AbortWalk { request_id } = request {
+                host.mark_walk_release_encoded(*request_id);
+            }
+        }
+    });
     out
+}
+
+fn survives_revocation(request: &InteractReq, lineage: CapturedLineage) -> bool {
+    !lineage.dropped
+        || !request.is_game()
+        || matches!(
+            request,
+            InteractReq::AbortWalk { .. }
+                | InteractReq::GatherStop { .. }
+                | InteractReq::CombatStop { .. }
+        )
 }
 
 pub(crate) fn merge_ops_with_lineage(
@@ -2529,20 +2543,28 @@ pub(crate) fn merge_ops_with_lineage(
     for (index, (row, lineage)) in rows.into_iter().zip(lineages).enumerate() {
         while ops.peek().is_some_and(|op| op.at <= index) {
             let op = ops.next().expect("peeked placed op");
-            if !op.lineage.dropped {
+            if survives_revocation(&op.request, op.lineage) {
                 out.push((op.request, op.lineage));
             }
         }
         if let MaybeInteractReq::Req(request) = row {
-            if !lineage.dropped {
+            if survives_revocation(&request, lineage) {
                 out.push((request, lineage));
             }
         }
     }
     out.extend(
-        ops.filter(|op| !op.lineage.dropped)
+        ops.filter(|op| survives_revocation(&op.request, op.lineage))
             .map(|op| (op.request, op.lineage)),
     );
+    HOST.with(|host| {
+        let mut host = host.borrow_mut();
+        for (request, _) in &out {
+            if let InteractReq::AbortWalk { request_id } = request {
+                host.mark_walk_release_encoded(*request_id);
+            }
+        }
+    });
     Ok(out)
 }
 
@@ -2576,9 +2598,50 @@ pub(crate) fn on_manual_walk_takeover(seq: u64) {
     TAKEOVER_SEQ.with(|watermark| watermark.set(watermark.get().max(seq)));
     HOST.with(|host| {
         let mut host = host.borrow_mut();
-        for row in &mut host.rows {
-            if row.carries_walk_baseline && row.intent_baseline < seq {
-                row.rebaseline_on_resume = false;
+        let mut index = 0;
+        while index < host.rows.len() {
+            let event = {
+                let row = &mut host.rows[index];
+                if row.carries_walk_baseline && row.intent_baseline < seq {
+                    row.rebaseline_on_resume = false;
+                    if row.walking_operation && !row.manual_walk_event_sent {
+                        row.manual_walk_event_sent = true;
+                        row.authority_revoked = true;
+                        Some((
+                            row.handle,
+                            RequestId::isolate(row.handle).ok(),
+                            row.native_kind.is_some(),
+                            row.admitted,
+                        ))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
+            if let Some((handle, id, native, admitted)) = event {
+                if let Some(id) = id {
+                    for op in &mut host.ops {
+                        if op.lineage.lineage == Some(id) || op.lineage.mirror_owner == Some(id) {
+                            op.lineage.dropped = true;
+                        }
+                    }
+                    if native {
+                        host.queue_machine_event(id, MachineEventKind::ManualWalk, admitted);
+                    } else {
+                        host.queue_mirror_revoke(id);
+                    }
+                }
+                host.revoke_descendants(handle, 0);
+                index = host
+                    .rows
+                    .iter()
+                    .position(|row| row.handle == handle)
+                    .expect("manual walking owner remains live")
+                    + 1;
+            } else {
+                index += 1;
             }
         }
         host.publish_walking();
@@ -2734,6 +2797,7 @@ pub(crate) mod tests {
     impl Family for Walker {
         const NAME: &'static str = "walker";
         const EXCLUSIVE: bool = true;
+        const WALKING_OPERATION: bool = true;
         type Args = ProbeArgs;
         type Output = Value;
 
@@ -2900,7 +2964,13 @@ pub(crate) mod tests {
         type Output = Value;
 
         fn begin(_args: Value, _cx: &mut Cx<'_>) -> Begin<Self> {
-            let inner = start("probe", json!({ "button": 1, "steps": 1 }), Vec::new(), 0);
+            let inner = start_with_parent(
+                "probe",
+                json!({ "button": 1, "steps": 1 }),
+                Vec::new(),
+                0,
+                None,
+            );
             Begin::Done(json!(format!("{inner:?}")))
         }
 
@@ -3430,6 +3500,100 @@ pub(crate) mod tests {
         fn claimed(&mut self) -> bool {
             self.claim_at.is_some_and(|at| self.calls >= at)
         }
+    }
+
+    #[test]
+    fn manual_takeover_replays_a_real_walk_event_and_replaces_its_phase() {
+        on_reset();
+        let execution = ExecutionId::first(api::selected::RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        });
+        set_execution(Some(execution));
+        let handle = running(begin("walker", json!({ "button": 7, "steps": 5 })));
+        let id = RequestId::isolate(handle).expect("machine request identity");
+        HOST.with(|host| {
+            let mut host = host.borrow_mut();
+            let row = host
+                .rows
+                .iter_mut()
+                .find(|row| row.handle == handle)
+                .unwrap();
+            row.native_kind = Some(native::request::NativeKind::Walk);
+            row.admitted = true;
+            row.intent_baseline = 0;
+        });
+        let child = running(start_with_parent(
+            "probe",
+            json!({ "button": 8, "steps": 5 }),
+            Vec::new(),
+            0,
+            Some(handle),
+        ));
+        step(&mut Inliner::new());
+        HOST.with(|host| {
+            assert_eq!(
+                machine_events_for_batch(&host.borrow()),
+                vec![MachineEvent {
+                    id,
+                    kind: MachineEventKind::Phase(native::NativePhase::Waiting),
+                    admitted: true,
+                }]
+            );
+        });
+        on_manual_walk_takeover(1);
+        on_manual_walk_takeover(2);
+        assert_eq!(
+            take(child),
+            Take::Settled(Outcome::Aborted(AbortReason::ParentAborted)),
+            "the hybrid descendant settles before the walking owner"
+        );
+        HOST.with(|host| {
+            let host = host.borrow();
+            assert!(host.rows.iter().any(|row| {
+                row.handle == handle && row.manual_walk_event_sent && row.authority_revoked
+            }));
+            assert!(
+                host.ops.iter().any(|op| {
+                    op.lineage.dropped && matches!(op.request, InteractReq::IfButton { .. })
+                }),
+                "the owner-scoped gameplay is marked revoked before host drain"
+            );
+            assert_eq!(
+                machine_events_for_batch(&host),
+                vec![MachineEvent {
+                    id,
+                    kind: MachineEventKind::ManualWalk,
+                    admitted: true,
+                }],
+                "the manual takeover revokes once, before the walk settles"
+            );
+        });
+        let lineage = HOST.with(|host| {
+            host.borrow()
+                .rows
+                .iter()
+                .find(|row| row.handle == handle)
+                .unwrap()
+                .capture()
+        });
+        HOST.with(|host| {
+            host.borrow_mut()
+                .place(0, vec![InteractReq::AbortWalk { request_id: 7 }], lineage);
+        });
+        let controls = merge_ops_with_lineage(Vec::new(), Vec::new()).unwrap();
+        assert_eq!(
+            controls.into_iter().map(|(req, _)| req).collect::<Vec<_>>(),
+            vec![
+                InteractReq::IfButton { component_id: 7 },
+                InteractReq::AbortWalk { request_id: 7 },
+            ],
+            "the pre-start root action survives; revoked owner gameplay drops and the physical release remains"
+        );
+        on_reset();
+        on_stop();
+        set_execution(None);
     }
 
     #[test]

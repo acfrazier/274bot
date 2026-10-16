@@ -139,10 +139,17 @@ struct SeatRow<R> {
     walk: Option<RequestId>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WalkReleaseState {
+    Reserved,
+    Armed,
+    Queued,
+}
+
 #[derive(Clone, Copy)]
 struct WalkReleaseSlot {
     id: RequestId,
-    queued: bool,
+    state: WalkReleaseState,
 }
 
 /// One bounded forest, terminal ledger, history and row queue. The row type is
@@ -265,11 +272,9 @@ impl<R> GameplaySeat<R> {
 
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn reserved_releases(&self) -> usize {
-        self.queued
-            .iter()
-            .chain(&self.in_flight)
-            .filter(|row| row.release.is_some())
-            .count()
+        self.walk_releases.iter().flatten().count()
+            + self.gather_release as usize
+            + self.combat_release as usize
     }
 
     pub fn held(&self) -> bool {
@@ -302,18 +307,21 @@ impl<R> GameplaySeat<R> {
         let Some(slot) = self.walk_releases.iter_mut().find(|slot| slot.is_none()) else {
             return false;
         };
-        *slot = Some(WalkReleaseSlot { id, queued: false });
+        *slot = Some(WalkReleaseSlot {
+            id,
+            state: WalkReleaseState::Reserved,
+        });
         true
     }
 
     /// A filtered row never armed its drive. Keep an already-queued release,
     /// but free an otherwise unused physical reservation for a later walk.
     pub(crate) fn discard_unarmed_walk(&mut self, id: RequestId) {
-        if let Some(slot) = self
-            .walk_releases
-            .iter_mut()
-            .find(|slot| slot.is_some_and(|armed| armed.id == id && !armed.queued))
-        {
+        if let Some(slot) = self.walk_releases.iter_mut().find(|slot| {
+            slot.is_some_and(|reserved| {
+                reserved.id == id && reserved.state == WalkReleaseState::Reserved
+            })
+        }) {
             *slot = None;
         }
     }
@@ -1043,6 +1051,9 @@ impl<R> GameplaySeat<R> {
             }
             parent_entry.depth + 1
         } else {
+            // Admission is ordered: a Session may start beside existing
+            // capability roots, but any live Session blocks a new root,
+            // including a Capability under Hunt's non-filtering foreground.
             if self.session().is_some() {
                 return self.refuse(id, Refusal::Busy);
             }
@@ -1220,10 +1231,11 @@ impl<R> GameplaySeat<R> {
                 )
             }
             EmissionSource::Owner(owner)
-                if self
-                    .results
-                    .iter()
-                    .any(|result| result.id == owner && !result.authority_revoked) =>
+                if self.results.iter().any(|result| {
+                    result.id == owner
+                        && matches!(result.outcome, SeatTerminal::Done | SeatTerminal::Failed)
+                        && !result.authority_revoked
+                }) =>
             {
                 // A new post-completion push is a root action. Rows emitted
                 // before a same-batch terminal pinned their lease at ingress.
@@ -1395,16 +1407,19 @@ impl<R> GameplaySeat<R> {
                     .flatten()
                     .find(|slot| slot.id == id)
                 {
-                    if slot.queued {
+                    if slot.state == WalkReleaseState::Queued {
                         return Ok(false);
                     }
-                    slot.queued = true;
+                    slot.state = WalkReleaseState::Queued;
                     return Ok(true);
                 }
                 let Some(slot) = self.walk_releases.iter_mut().find(|slot| slot.is_none()) else {
                     return Err(SeatError::Capacity);
                 };
-                *slot = Some(WalkReleaseSlot { id, queued: true });
+                *slot = Some(WalkReleaseSlot {
+                    id,
+                    state: WalkReleaseState::Queued,
+                });
             }
             Release::GatherStop if self.gather_release => return Ok(false),
             Release::GatherStop => self.gather_release = true,
@@ -1494,6 +1509,14 @@ impl<R> GameplaySeat<R> {
                 false,
             );
             if decision == DispatchDisposition::Dispatch {
+                if let Some(id) = row.walk {
+                    self.walk_releases
+                        .iter_mut()
+                        .flatten()
+                        .find(|slot| slot.id == id)
+                        .expect("walk release reserved before dispatch")
+                        .state = WalkReleaseState::Armed;
+                }
                 if let Some(release) = row.release {
                     releases[release_count] = Some(release);
                     release_count += 1;
@@ -1502,11 +1525,11 @@ impl<R> GameplaySeat<R> {
             } else {
                 self.dropped += 1;
                 if let Some(id) = row.walk {
-                    if let Some(slot) = self
-                        .walk_releases
-                        .iter_mut()
-                        .find(|slot| slot.is_some_and(|armed| armed.id == id && !armed.queued))
-                    {
+                    if let Some(slot) = self.walk_releases.iter_mut().find(|slot| {
+                        slot.is_some_and(|reserved| {
+                            reserved.id == id && reserved.state == WalkReleaseState::Reserved
+                        })
+                    }) {
                         *slot = None;
                     }
                 }
@@ -1530,23 +1553,15 @@ impl<R> GameplaySeat<R> {
 
     fn drop_gameplay(&mut self) {
         let before = self.queued.len() + self.in_flight.len();
-        for row in self.queued.iter().chain(&self.in_flight) {
-            if row.class == EmissionClass::Gameplay {
-                if let Some(id) = row.walk {
-                    if let Some(slot) = self
-                        .walk_releases
-                        .iter_mut()
-                        .find(|slot| slot.is_some_and(|armed| armed.id == id && !armed.queued))
-                    {
-                        *slot = None;
-                    }
-                }
-            }
-        }
         self.queued
             .retain(|row| row.class != EmissionClass::Gameplay);
         self.in_flight
             .retain(|row| row.class != EmissionClass::Gameplay);
+        for slot in &mut self.walk_releases {
+            if slot.is_some_and(|reserved| reserved.state == WalkReleaseState::Reserved) {
+                *slot = None;
+            }
+        }
         self.dropped += (before - self.queued.len() - self.in_flight.len()) as u64;
     }
 
@@ -1566,13 +1581,8 @@ impl<R> GameplaySeat<R> {
     pub fn reconnect(&mut self, session: u64) {
         self.run.session = session;
         self.drop_gameplay();
-        // A prior session's drive cannot remain armed. Only a release already
-        // queued for encoding retains its reservation across reconnect.
-        for slot in &mut self.walk_releases {
-            if slot.is_some_and(|armed| !armed.queued) {
-                *slot = None;
-            }
-        }
+        // Dropping gameplay clears unarmed drives; queued releases retain
+        // their reservations across the kept reconnect.
     }
 
     /// Non-kept reset settles locally in the adapters. No seat result survives.

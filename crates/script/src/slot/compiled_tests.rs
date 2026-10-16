@@ -870,40 +870,37 @@ fn gatherer_slot(incarnation: u64) -> SlotScript {
     slot
 }
 
+fn take_gatherer_drop_actions(slot: &mut SlotScript) -> Vec<crate::native::HostAction> {
+    let mut actions = Vec::with_capacity(5);
+    while let Some(action) = slot.take_native_action() {
+        assert!(
+            matches!(
+                &action.effect,
+                crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
+                    action,
+                    slot: Some(_),
+                    ..
+                }) if action == "Drop"
+            ),
+            "full inventory must enter disposal before gathering"
+        );
+        assert!(action.authority().live());
+        actions.push(action);
+    }
+    actions
+}
+
 fn queue_gatherer_drop(
     slot: &mut SlotScript,
     snapshot: &api::snapshot::GameSnapshot,
     first_tick: u32,
-) -> (u32, Vec<crate::native::HostAuthority>) {
+) -> (u32, Vec<crate::native::HostAction>) {
     for tick in first_tick..first_tick + 16 {
         gatherer_tick(slot, snapshot, tick);
         if slot.has_native_actions() {
-            let ledger = slot.native_runtime.ledger.as_ref().unwrap();
-            let authorities = ledger
-                .outbox
-                .iter()
-                .map(|action| {
-                    assert!(
-                        matches!(
-                            &action.effect,
-                            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
-                                action,
-                                slot: Some(_),
-                                ..
-                            }) if action == "Drop"
-                        ),
-                        "full inventory must enter disposal before gathering"
-                    );
-                    action.authority()
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(
-                authorities.len(),
-                5,
-                "the full pack queues one five-drop batch"
-            );
-            assert!(authorities.iter().all(crate::native::HostAuthority::live));
-            return (tick, authorities);
+            let actions = take_gatherer_drop_actions(slot);
+            assert_eq!(actions.len(), 5, "the full pack queues one five-drop batch");
+            return (tick, actions);
         }
     }
     panic!(
@@ -990,7 +987,7 @@ fn gatherer_slot_stop_pause_and_watchdog_revoke_every_undrained_drop() {
     let snapshot = gatherer_snapshot();
     for boundary in 0..3 {
         let mut slot = gatherer_slot(80 + boundary);
-        let (tick, authorities) = queue_gatherer_drop(&mut slot, &snapshot, 1);
+        let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
         let old_run = slot.native_run().unwrap();
         match boundary {
             0 => slot.stop(),
@@ -998,7 +995,7 @@ fn gatherer_slot_stop_pause_and_watchdog_revoke_every_undrained_drop() {
             2 => restart_and_settle(&mut slot, Instant::now()),
             _ => unreachable!(),
         }
-        assert!(authorities.iter().all(|authority| !authority.live()));
+        assert!(actions.iter().all(|action| !action.authority().live()));
         assert!(
             slot.take_native_action().is_none(),
             "old queued drops must never drain"
@@ -1013,10 +1010,10 @@ fn gatherer_slot_stop_pause_and_watchdog_revoke_every_undrained_drop() {
             assert_ne!(slot.native_run().unwrap(), old_run);
         }
         let (_, fresh) = queue_gatherer_drop(&mut slot, &snapshot, tick + 1);
-        assert!(fresh.iter().all(crate::native::HostAuthority::live));
-        assert!(authorities.iter().all(|authority| !authority.live()));
+        assert!(fresh.iter().all(|action| action.authority().live()));
+        assert!(actions.iter().all(|action| !action.authority().live()));
         slot.stop();
-        assert!(fresh.iter().all(|authority| !authority.live()));
+        assert!(fresh.iter().all(|action| !action.authority().live()));
     }
 }
 
@@ -1024,18 +1021,20 @@ fn gatherer_slot_stop_pause_and_watchdog_revoke_every_undrained_drop() {
 fn gatherer_session_change_replans_drop_from_observation_not_old_authority() {
     let snapshot = gatherer_snapshot();
     let mut slot = gatherer_slot(84);
-    let (tick, authorities) = queue_gatherer_drop(&mut slot, &snapshot, 1);
+    let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
     let old_run = slot.native_run().unwrap();
     slot.reconnect_session_work();
     slot.on_is_up(true);
-    assert!(authorities.iter().all(|authority| !authority.live()));
+    assert!(actions.iter().all(|action| !action.authority().live()));
     assert!(slot.take_native_action().is_none());
     let (_, fresh) = queue_gatherer_drop(&mut slot, &snapshot, tick + 1);
     let new_run = slot.native_run().unwrap();
     assert_eq!((new_run.slot, new_run.run), (old_run.slot, old_run.run));
     assert_ne!(new_run.session, old_run.session);
-    assert!(fresh.iter().all(|authority| authority.run() == new_run));
-    assert!(authorities.iter().all(|authority| !authority.live()));
+    assert!(fresh
+        .iter()
+        .all(|action| action.authority().run() == new_run));
+    assert!(actions.iter().all(|action| !action.authority().live()));
     slot.stop();
 }
 
@@ -1043,7 +1042,7 @@ fn gatherer_session_change_replans_drop_from_observation_not_old_authority() {
 fn gatherer_stop_policy_death_cancels_undrained_drop() {
     let mut snapshot = gatherer_snapshot();
     let mut slot = gatherer_slot(85);
-    let (tick, authorities) = queue_gatherer_drop(&mut slot, &snapshot, 1);
+    let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
     snapshot.seed_chat_lines(vec![api::snapshot::ChatLineView {
         type_: 0,
         username: None,
@@ -1051,7 +1050,7 @@ fn gatherer_stop_policy_death_cancels_undrained_drop() {
         sequence: 1,
     }]);
     gatherer_tick(&mut slot, &snapshot, tick + 1);
-    assert!(authorities.iter().all(|authority| !authority.live()));
+    assert!(actions.iter().all(|action| !action.authority().live()));
     assert!(slot.take_native_action().is_none());
     let status = slot.native_status().unwrap();
     assert_eq!(status.phase, NativePhase::Blocked);
@@ -1124,30 +1123,10 @@ fn gatherer_active_gather_allocates_nothing_on_one_thousand_unchanged_polls() {
 fn gatherer_delayed_drops_replan_after_two_ticks_without_assuming_progress() {
     let snapshot = gatherer_snapshot();
     let mut slot = gatherer_slot(87);
-    let (tick, _) = queue_gatherer_drop(&mut slot, &snapshot, 1);
+    let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
     let mut sent_slots = Vec::new();
-    while let Some(action) = slot.take_native_action() {
-        if let crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
-            slot: Some(index),
-            ..
-        }) = &action.effect
-        {
-            sent_slots.push(*index);
-        }
-        let authority = action.authority();
-        slot.complete_native_interaction(
-            &authority,
-            crate::native::InteractionReceipt {
-                request_id: action.request_id.get(),
-                evidence: EvidenceStamp {
-                    run: authority.run(),
-                    tick: u64::from(tick),
-                    sequence: u64::from(tick),
-                },
-                accepted: true,
-                chat_since: 0,
-            },
-        );
+    for action in actions {
+        sent_slots.push(complete_gatherer_drop(&mut slot, action, tick, None));
     }
     gatherer_tick(&mut slot, &snapshot, tick + 1);
     assert!(
@@ -1173,31 +1152,53 @@ fn gatherer_delayed_drops_replan_after_two_ticks_without_assuming_progress() {
     slot.stop();
 }
 
+fn complete_gatherer_drop(
+    slot: &mut SlotScript,
+    action: crate::native::HostAction,
+    tick: u32,
+    refused_slot: Option<i32>,
+) -> i32 {
+    let index = match &action.effect {
+        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
+            slot: Some(index),
+            ..
+        }) => *index,
+        _ => panic!("expected slot-exact drop"),
+    };
+    let authority = action.authority();
+    slot.complete_native_interaction(
+        &authority,
+        crate::native::InteractionReceipt {
+            request_id: action.request_id.get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick: u64::from(tick),
+                sequence: u64::from(tick),
+            },
+            accepted: refused_slot != Some(index),
+            chat_since: 0,
+        },
+    );
+    index
+}
+
+fn accept_gatherer_drop_actions(
+    slot: &mut SlotScript,
+    actions: Vec<crate::native::HostAction>,
+    tick: u32,
+    refused_slot: Option<i32>,
+) -> Vec<i32> {
+    let mut slots = Vec::with_capacity(actions.len());
+    for action in actions {
+        slots.push(complete_gatherer_drop(slot, action, tick, refused_slot));
+    }
+    slots
+}
+
 fn accept_gatherer_drops(slot: &mut SlotScript, tick: u32, refused_slot: Option<i32>) -> Vec<i32> {
     let mut slots = Vec::new();
     while let Some(action) = slot.take_native_action() {
-        let crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
-            slot: Some(index),
-            ..
-        }) = &action.effect
-        else {
-            panic!("expected slot-exact drop")
-        };
-        slots.push(*index);
-        let authority = action.authority();
-        slot.complete_native_interaction(
-            &authority,
-            crate::native::InteractionReceipt {
-                request_id: action.request_id.get(),
-                evidence: EvidenceStamp {
-                    run: authority.run(),
-                    tick: u64::from(tick),
-                    sequence: u64::from(tick),
-                },
-                accepted: refused_slot != Some(*index),
-                chat_since: 0,
-            },
-        );
+        slots.push(complete_gatherer_drop(slot, action, tick, refused_slot));
     }
     slots
 }
@@ -1206,9 +1207,9 @@ fn accept_gatherer_drops(slot: &mut SlotScript, tick: u32, refused_slot: Option<
 fn gatherer_rejected_drop_replans_only_its_slot_then_observes_late_settlement() {
     let mut snapshot = gatherer_snapshot();
     let mut slot = gatherer_slot(88);
-    let (tick, _) = queue_gatherer_drop(&mut slot, &snapshot, 1);
+    let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
     assert_eq!(
-        accept_gatherer_drops(&mut slot, tick, Some(2)),
+        accept_gatherer_drop_actions(&mut slot, actions, tick, Some(2)),
         [0, 1, 2, 3, 4]
     );
     gatherer_tick(&mut slot, &snapshot, tick + 1);
@@ -1233,9 +1234,9 @@ fn gatherer_rejected_drop_replans_only_its_slot_then_observes_late_settlement() 
 fn gatherer_three_unsettled_rounds_block_without_counting_dispatch_as_progress() {
     let snapshot = gatherer_snapshot();
     let mut slot = gatherer_slot(89);
-    let (tick, _) = queue_gatherer_drop(&mut slot, &snapshot, 1);
+    let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
     assert_eq!(
-        accept_gatherer_drops(&mut slot, tick, None),
+        accept_gatherer_drop_actions(&mut slot, actions, tick, None),
         [0, 1, 2, 3, 4]
     );
     for round in 1..=2 {
@@ -1415,22 +1416,60 @@ fn gatherer_exclusive_heap_stays_inside_the_eight_kib_target() {
         .join()
         .unwrap()
     }
+    fn seat_delivery_bytes(slot: &SlotScript) -> usize {
+        slot.seat_delivery.capacity() * std::mem::size_of::<SeatEffect>()
+            + slot.seat_native_delivery.capacity()
+                * std::mem::size_of::<crate::native::HostAction>()
+    }
     let snapshot = gatherer_snapshot();
     let (cold_prepared, cold) = measure_prepared();
     let mut warm = gatherer_slot(92);
+    let mut shared_slot = None;
+    let shared_seat = allocation_counter::measure(|| {
+        let mut slot = SlotScript::new();
+        slot.bind_incarnation(94);
+        slot.arm_compiled_seat(
+            RunKey {
+                slot: 94,
+                run: 1,
+                session: 0,
+            },
+            crate::CompiledId("Gatherer"),
+        );
+        shared_slot = Some(slot);
+    });
     let (prepared, preparation) = measure_prepared();
     let prepare_bytes = preparation.bytes_current;
     let mut measured = None;
     let main = allocation_counter::measure(|| {
         let mut slot = gatherer_slot(93);
-        let (tick, _) = queue_gatherer_drop(&mut slot, &snapshot, 1);
-        accept_gatherer_drops(&mut slot, tick, None);
+        let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
+        accept_gatherer_drop_actions(&mut slot, actions, tick, None);
         measured = Some(slot);
     });
-    // Preparation runs on its own thread; count its retained allocation
-    // separately from the real slot's instance, ledger, status and paint.
-    let exclusive = prepare_bytes + main.bytes_current;
-    println!("Gatherer exclusive heap: prepared={prepare_bytes}, slot={main:?}, total={exclusive}");
+    // Keep the historical pre-seat family bound: exclude the measured
+    // SlotScript/I-seat baseline and the shared seat delivery buffers that
+    // grow only when this five-action native batch is dispatched.
+    assert!(
+        shared_seat.bytes_current > 0,
+        "shared slot seat baseline is measured"
+    );
+    let delivery_bytes = i64::try_from(
+        seat_delivery_bytes(measured.as_ref().unwrap())
+            .checked_sub(seat_delivery_bytes(shared_slot.as_ref().unwrap()))
+            .expect("the active seat includes its shared delivery buffers"),
+    )
+    .expect("bounded seat delivery capacity fits the signed allocation counter");
+    let slot_family_bytes = main
+        .bytes_current
+        .checked_sub(shared_seat.bytes_current)
+        .and_then(|remaining| remaining.checked_sub(delivery_bytes))
+        .expect("the measured Gatherer slot includes its shared seat and delivery baseline");
+    let exclusive = prepare_bytes + slot_family_bytes;
+    println!(
+        "Gatherer exclusive heap: shared slot/seat={}B, shared delivery={delivery_bytes}B, prepared={prepare_bytes}, slot={main:?}, total={exclusive}",
+        shared_seat.bytes_current
+    );
     println!(
         "Gatherer preparation: first={cold:?}, cached={preparation:?}, shared_delta={}, worker_transient_peak={}",
         cold.bytes_current - prepare_bytes,
@@ -1444,13 +1483,17 @@ fn gatherer_exclusive_heap_stays_inside_the_eight_kib_target() {
     warm.stop();
     drop(prepared);
     drop(cold_prepared);
+    drop(shared_slot);
 }
 
 #[cfg(feature = "load")]
 mod api_gather_seat {
     use super::*;
     use crate::api_gather::{GatherEnd, GatherPhase};
+    use crate::isolate_fb::{DecodedSeatBatch, SeatInteractDecoded, SeatStartArgs, SeatStartInput};
+    use crate::native::request::NativeKind;
     use crate::shim::InteractReq;
+    use api::identity::RequestId;
 
     fn load_slot(incarnation: u64, data: bool) -> SlotScript {
         let mut slot = SlotScript::new();
@@ -1470,22 +1513,118 @@ mod api_gather_seat {
         slot
     }
 
-    fn run(slot: &mut SlotScript, token: u64) {
+    fn request_id(token: u64) -> RequestId {
+        RequestId::isolate(token).expect("test request id")
+    }
+
+    fn run_in_seat_with_settings(slot: &mut SlotScript, token: u64, settings: SettingsBag) {
+        let run = slot.seat.as_ref().expect("Load slot seat").run();
+        slot.consume_seat_batch(
+            DecodedSeatBatch {
+                consumed_terminal_seq: 0,
+                starts: vec![SeatStartInput {
+                    id: request_id(token),
+                    parent: None,
+                    run: run.run,
+                    session: run.session,
+                    kind: NativeKind::Gather,
+                    args: SeatStartArgs::Gather(settings),
+                }],
+                decisions: Vec::new(),
+                cancels: Vec::new(),
+                mirror_revokes: Vec::new(),
+                reqs: Vec::new(),
+            },
+            0,
+            &[],
+        );
+    }
+
+    fn gather_settings() -> SettingsBag {
         let mut settings = SettingsBag::new();
         settings.insert("disposition".into(), serde_json::json!("Power"));
         settings.insert("deathPolicy".into(), serde_json::json!("Stop"));
+        settings
+    }
+
+    fn run(slot: &mut SlotScript, token: u64) {
         slot.consume_api_control(&InteractReq::GatherRun {
             request_id: token,
-            settings: Arc::new(settings),
+            settings: Arc::new(gather_settings()),
         });
+    }
+
+    fn run_in_seat(slot: &mut SlotScript, token: u64) {
+        run_in_seat_with_settings(slot, token, gather_settings());
     }
 
     fn stop(slot: &mut SlotScript, token: u64) {
         slot.consume_api_control(&InteractReq::GatherStop { request_id: token });
     }
 
+    fn queue_stop_in_seat(slot: &mut SlotScript, token: u64) {
+        slot.consume_seat_batch(
+            DecodedSeatBatch {
+                consumed_terminal_seq: 0,
+                starts: Vec::new(),
+                decisions: Vec::new(),
+                cancels: Vec::new(),
+                mirror_revokes: Vec::new(),
+                reqs: vec![SeatInteractDecoded {
+                    lineage: Some(request_id(token)),
+                    mirror_owner: None,
+                    request: InteractReq::GatherStop { request_id: token },
+                }],
+            },
+            0,
+            &[],
+        );
+    }
+
+    fn stop_in_seat(slot: &mut SlotScript, token: u64) {
+        queue_stop_in_seat(slot, token);
+        let (_, rows, _) = slot.drain_host_interacts();
+        assert!(
+            rows.is_empty(),
+            "typed GatherStop is consumed as a reserved control"
+        );
+    }
     fn poll(slot: &mut SlotScript, snapshot: &api::snapshot::GameSnapshot, tick: u64, hold: bool) {
         slot.tick_api(&mut ScriptCtx {
+            driver: &mut NullDriver::default(),
+            tick,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: Some(snapshot),
+            obj_names: None,
+            compiled: crate::CompiledTick {
+                hold,
+                ..Default::default()
+            },
+        });
+    }
+    // Match the native seat portion of SlotScript::on_game_tick while
+    // excluding the independent Load-isolate JS tick command queue.
+    fn poll_native_api_seat(
+        slot: &mut SlotScript,
+        snapshot: &api::snapshot::GameSnapshot,
+        tick: u64,
+        hold: bool,
+    ) {
+        poll(slot, snapshot, tick, hold);
+        slot.capture_native_seat_rows();
+        slot.settle_api_seat_terminals();
+    }
+
+    fn poll_through_slot(
+        slot: &mut SlotScript,
+        snapshot: &api::snapshot::GameSnapshot,
+        tick: u64,
+        hold: bool,
+    ) {
+        slot.on_game_tick(&mut ScriptCtx {
             driver: &mut NullDriver::default(),
             tick,
             here: None,
@@ -1619,41 +1758,35 @@ mod api_gather_seat {
     fn api_stop_revokes_five_undrained_native_drops_and_preserves_last_published_counts() {
         let snapshot = gatherer_snapshot();
         let mut slot = load_slot(202, true);
-        run(&mut slot, 202);
+        run_in_seat(&mut slot, 202);
         installed(&mut slot, &snapshot);
-        let mut authorities = Vec::new();
+        let mut actions = Vec::new();
         for tick in 2..18 {
-            poll(&mut slot, &snapshot, tick, false);
+            poll_through_slot(&mut slot, &snapshot, tick, false);
             if slot.has_native_actions() {
-                authorities = slot
-                    .native_runtime
-                    .ledger
-                    .as_ref()
-                    .unwrap()
-                    .outbox
-                    .iter()
-                    .map(|action| action.authority())
-                    .collect();
+                actions = take_gatherer_drop_actions(&mut slot);
                 break;
             }
         }
-        assert_eq!(authorities.len(), 5, "one bounded native drop batch");
+        assert_eq!(actions.len(), 5, "one bounded native drop batch");
+        assert!(
+            actions.iter().all(|action| action.authority().live()),
+            "captured drops are live before Stop"
+        );
         let published = crate::slot::api_seat::counts(slot.native_status().as_deref());
         let policy_override = api::run_policy::RunPolicyOverride {
             run_auto: None,
             energy_min: Some(api::run_policy::RunEnergyMin::Floor(77)),
         };
+        queue_stop_in_seat(&mut slot, 202);
+        assert!(
+            slot.api_owns_foreground(),
+            "the typed Stop retains the live foreground until its host drain"
+        );
         slot.restore_interacts(vec![
-            InteractReq::Held {
-                name: "Logs".into(),
-                action: "Drop".into(),
-                slot: None,
-                target_item_id: None,
-            },
             InteractReq::RunPolicyOverride {
                 policy: Some(policy_override),
             },
-            InteractReq::GatherStop { request_id: 202 },
             InteractReq::InspectAck {
                 seq: 9,
                 generation: 7,
@@ -1663,8 +1796,8 @@ mod api_gather_seat {
         let (policy, rows, owned) = slot.drain_host_interacts();
         assert_eq!(policy, Some(Some(policy_override)));
         assert!(
-            owned,
-            "Stop retains ownership for its whole admission batch"
+            !owned,
+            "the typed Stop releases the foreground after its host drain"
         );
         assert_eq!(
             rows.into_iter()
@@ -1677,9 +1810,9 @@ mod api_gather_seat {
                 },
                 InteractReq::SetCameraYaw { yaw: 777 },
             ],
-            "the Stop edge drops game work but preserves host-local work"
+            "the typed Stop preserves unrelated host-local work"
         );
-        assert!(authorities.iter().all(|authority| !authority.live()));
+        assert!(actions.iter().all(|action| !action.authority().live()));
         assert!(
             slot.take_native_action().is_none(),
             "Stop before Driver drain sends no packets"
@@ -1702,10 +1835,10 @@ mod api_gather_seat {
     fn reconnect_rekeys_actual_card_revokes_old_action_and_reposts_terminal() {
         let snapshot = gatherer_snapshot();
         let mut slot = load_slot(203, true);
-        run(&mut slot, 203);
+        run_in_seat(&mut slot, 203);
         installed(&mut slot, &snapshot);
         for tick in 2..18 {
-            poll(&mut slot, &snapshot, tick, false);
+            poll_through_slot(&mut slot, &snapshot, tick, false);
             if slot.has_native_actions() {
                 break;
             }
@@ -1714,17 +1847,26 @@ mod api_gather_seat {
             .take_native_action()
             .expect("native Gatherer action")
             .authority();
+        assert!(
+            old.live(),
+            "captured Gatherer action is live before reconnect"
+        );
         let previous = old.run();
         assert!(slot.reconnect_session_work());
         assert!(slot.api_owns_foreground());
-        assert!(!old.live());
         slot.on_is_up(true);
-        poll(&mut slot, &snapshot, 20, false);
+        let rekeyed_session = slot
+            .native_status()
+            .expect("rekeyed Gatherer status")
+            .run
+            .session_key();
+        slot.align_seat_session(rekeyed_session);
+        poll_through_slot(&mut slot, &snapshot, 20, false);
         let next = slot.native_status().unwrap().run;
         assert_eq!(next.slot, previous.slot);
         assert_eq!(next.run, previous.run);
         assert_ne!(next.session, previous.session);
-        stop(&mut slot, 203);
+        stop_in_seat(&mut slot, 203);
         assert!(slot.reconnect_session_work());
         let page = slot.api.as_ref().unwrap();
         assert!(page.page.is_none());
@@ -1894,11 +2036,11 @@ mod api_gather_seat {
         .unwrap()
         .join()
         .unwrap();
-        let dispatched = allocation_counter::measure(|| run(&mut slot, 209));
+        let dispatched = allocation_counter::measure(|| run_in_seat(&mut slot, 209));
         let installed_heap = allocation_counter::measure(|| installed(&mut slot, &snapshot));
         let polled = allocation_counter::measure(|| {
             for tick in 2..18 {
-                poll(&mut slot, &snapshot, tick, false);
+                poll_native_api_seat(&mut slot, &snapshot, tick, false);
                 if slot.has_native_actions() {
                     break;
                 }
@@ -1921,7 +2063,7 @@ mod api_gather_seat {
             (0..=8192).contains(&exclusive),
             "exclusive API seat exceeds 8KiB"
         );
-        let stopped = allocation_counter::measure(|| stop(&mut slot, 209));
+        let stopped = allocation_counter::measure(|| stop_in_seat(&mut slot, 209));
         println!("API gather post-Stop retained={}B (exclusive live + Stop delta), Stop={stopped:?}, worker transient_peak={}B", exclusive + stopped.bytes_current, i128::from(worker.bytes_max) - i128::from(worker.bytes_current));
         assert!(!slot.api_owns_foreground());
         // A second session uses the retained ledger and an animated observation
@@ -1930,11 +2072,11 @@ mod api_gather_seat {
         let mut player = snapshot.local_player().unwrap().clone();
         player.player.actor.animation = 879;
         snapshot.seed_local_player(player);
-        run(&mut slot, 211);
+        run_in_seat(&mut slot, 211);
         installed(&mut slot, &snapshot);
         let mut first = None;
         for tick in 20..36 {
-            poll(&mut slot, &snapshot, tick, false);
+            poll_through_slot(&mut slot, &snapshot, tick, false);
             if let Some(action) = slot.take_native_action() {
                 let authority = action.authority();
                 slot.complete_native_interaction(
@@ -1955,16 +2097,20 @@ mod api_gather_seat {
             }
         }
         let first = first.expect("live Gatherer click");
-        poll(&mut slot, &snapshot, first, false);
+        poll_through_slot(&mut slot, &snapshot, first, false);
         let page = Arc::clone(slot.api.as_ref().unwrap().page.as_ref().unwrap());
         let steady = allocation_counter::measure(|| {
             for tick in first + 1..first + 1001 {
-                poll(&mut slot, &snapshot, tick, false);
+                poll_native_api_seat(&mut slot, &snapshot, tick, false);
             }
         });
         assert_eq!(
             steady.count_total, 0,
-            "1,000 unchanged Load-seat native polls allocate nothing"
+            "1,000 unchanged native API-seat polls allocate nothing"
+        );
+        assert!(
+            !slot.has_native_actions(),
+            "unchanged native polls emit no actions"
         );
         assert!(
             Arc::ptr_eq(&page, slot.api.as_ref().unwrap().page.as_ref().unwrap()),

@@ -133,7 +133,7 @@ pub struct QueuedSeatBatch {
     /// Decoded typed controls and gameplay rows.
     pub batch: crate::isolate_fb::DecodedSeatBatch,
     /// Local machine phases and terminals from this same producer turn.
-    pub machine_events: Vec<crate::machine::MachineEvent>,
+    pub(crate) machine_events: Vec<crate::machine::MachineEvent>,
 }
 
 impl std::borrow::Borrow<crate::shim::InteractReq> for QueuedInteract {

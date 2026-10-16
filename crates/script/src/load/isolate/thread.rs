@@ -1128,8 +1128,9 @@ return String((e && (e.message || e.stack)) || e);
 }, globalThis.__rs2b0t_take_tick_output = function (facts) {
   const h = globalThis.__rs2b0t_host;
   if (!h) return { interact: [], queue: null, waitEnqueues: 0, waitSettles: 0 };
-  const rows = h.interact;
-  h.interact = [];
+  const takeRows = globalThis.__rs2b0t_take_interact_rows;
+  const rows = typeof takeRows === 'function' ? takeRows() : h.interact;
+  if (typeof takeRows !== 'function') h.interact = [];
   let e = 0, s = 0;
   if (facts) {
     e = Math.max(0, h.waitEnqueues | 0);

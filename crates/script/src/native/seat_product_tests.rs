@@ -261,8 +261,8 @@ fn fixture_05_forest_root_and_depth_bounds() {
     assert_eq!(
         full.start(fixture_stamp(18, Some(3)), NativeKind::Clue, false)
             .unwrap(),
-        Admission::Refused(Refusal::Busy),
-        "a seventeenth live entry with no projected replacement is refused"
+        Admission::Refused(Refusal::ParentBusy),
+        "the started-child slot takes precedence over the full-seat bound"
     );
     assert_eq!(full.live().len(), MAX_LIVE);
 

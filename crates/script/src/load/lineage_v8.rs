@@ -529,13 +529,6 @@ pub(crate) fn eval<T: DeserializeOwned>(
     enter_root(runtime, |runtime| runtime.eval(expression))
 }
 
-pub(crate) fn advance_event_loop(
-    runtime: &mut Runtime,
-    options: rustyscript::deno_core::PollEventLoopOptions,
-) -> Result<bool, Error> {
-    enter_root(runtime, |runtime| runtime.advance_event_loop(options))
-}
-
 pub(crate) fn block_on_event_loop(
     runtime: &mut Runtime,
     options: rustyscript::deno_core::PollEventLoopOptions,

@@ -27,23 +27,23 @@ globalThis.BroadcastChannel = class BroadcastChannel {
         this._id = globalThis.__rs2b0t_channel_next++;
         globalThis.__rs2b0t_channels.set(this._id, this);
         const h = globalThis.__rs2b0t_host;
-        h.interact = h.interact || [];
-        h.interact.push({ op: 'channel-open', channel_id: this._id, name: this.name });
+        const interact = h.interact ?? (h.interact = []);
+        interact.push({ op: 'channel-open', channel_id: this._id, name: this.name });
     }
     postMessage(value) {
         if (this._closed) throw new Error('BroadcastChannel is closed');
         const data = globalThis.rustyscript.functions.__rs2b0t_channel_encode(value);
         const h = globalThis.__rs2b0t_host;
-        h.interact = h.interact || [];
-        h.interact.push({ op: 'channel-post', channel_id: this._id, name: this.name, data });
+        const interact = h.interact ?? (h.interact = []);
+        interact.push({ op: 'channel-post', channel_id: this._id, name: this.name, data });
     }
     close() {
         if (this._closed) return;
         this._closed = true;
         globalThis.__rs2b0t_channels.delete(this._id);
         const h = globalThis.__rs2b0t_host;
-        h.interact = h.interact || [];
-        h.interact.push({ op: 'channel-close', channel_id: this._id, name: this.name });
+        const interact = h.interact ?? (h.interact = []);
+        interact.push({ op: 'channel-close', channel_id: this._id, name: this.name });
     }
     addEventListener(type, callback) {
         if ((type === 'message' || type === 'messageerror') && typeof callback === 'function') {
@@ -472,8 +472,8 @@ globalThis.__rs2b0t_input_canvas = {
     dispatchEvent(ev) {
         if (ev && (ev.type === 'keydown' || ev.type === 'keyup')) {
             const h = globalThis.__rs2b0t_host;
-            h.interact = h.interact || [];
-            h.interact.push({
+            const interact = h.interact ?? (h.interact = []);
+            interact.push({
                 op: 'key',
                 down: ev.type === 'keydown',
                 key: String(ev.key || ''),
@@ -483,8 +483,8 @@ globalThis.__rs2b0t_input_canvas = {
         }
         if (ev && (ev.type === 'mousedown' || ev.type === 'mouseup')) {
             const h = globalThis.__rs2b0t_host;
-            h.interact = h.interact || [];
-            h.interact.push({
+            const interact = h.interact ?? (h.interact = []);
+            interact.push({
                 op: 'mouse',
                 down: ev.type === 'mousedown',
                 x: ev.clientX,

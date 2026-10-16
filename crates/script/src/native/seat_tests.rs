@@ -58,12 +58,12 @@ fn seat_enforces_root_leaf_reservation_and_projected_replacement() {
         Admission::Refused(Refusal::Busy)
     );
     let mut seat = GameplaySeat::<u32>::new(run());
-    start(&mut seat, 1, None, NativeKind::Hunt);
-    start(&mut seat, 2, Some(1), NativeKind::Walk);
-    start(&mut seat, 3, Some(2), NativeKind::Shop);
     start(&mut seat, 4, None, NativeKind::BankNearest);
     start(&mut seat, 5, None, NativeKind::BankNearest);
     start(&mut seat, 6, None, NativeKind::BankNearest);
+    start(&mut seat, 1, None, NativeKind::Hunt);
+    start(&mut seat, 2, Some(1), NativeKind::Walk);
+    start(&mut seat, 3, Some(2), NativeKind::Shop);
     assert_eq!(
         seat.start(stamp(7, Some(1)), NativeKind::Fire, false)
             .unwrap(),
@@ -74,6 +74,44 @@ fn seat_enforces_root_leaf_reservation_and_projected_replacement() {
         seat.start(stamp(8, Some(1)), NativeKind::Fire, false)
             .unwrap(),
         Admission::Refused(Refusal::Busy)
+    );
+}
+
+#[test]
+fn seat_refused_root_never_earns_post_terminal_owner_authority() {
+    let mut seat = GameplaySeat::<u32>::new(run());
+    start(&mut seat, 1, None, NativeKind::Hunt);
+    assert_eq!(
+        seat.start(stamp(2, None), NativeKind::BankNearest, false)
+            .unwrap(),
+        Admission::Refused(Refusal::Busy)
+    );
+    assert_eq!(
+        seat.push(
+            17,
+            EmissionClass::Gameplay,
+            EmissionSource::Owner(id(2)),
+            None
+        ),
+        Err(SeatError::ProtocolDefect),
+        "a retained refusal does not turn a never-admitted owner into a root"
+    );
+    assert_eq!(seat.dropped(), 1);
+    seat.complete(id(1), false).unwrap();
+    seat.push(
+        18,
+        EmissionClass::Gameplay,
+        EmissionSource::Owner(id(1)),
+        None,
+    )
+    .unwrap();
+    seat.take();
+    let mut dispatched = Vec::new();
+    seat.dispatch_into(&mut dispatched);
+    assert_eq!(
+        dispatched,
+        [18],
+        "ordinary completion can still rebase to root"
     );
 }
 
@@ -478,15 +516,20 @@ fn seat_reset_advances_generation_floor_without_reusing_request_ids() {
     let mut next = run();
     next.session += 1;
     seat.reset(next);
-    let old = RequestStamp::new(id(1), None, None, ExecutionId::first(next)).unwrap();
+    let old = RequestStamp::new(id(1), None, None, ExecutionId::first(run())).unwrap();
     assert_eq!(
         seat.start(old, NativeKind::Shop, false).unwrap(),
-        Admission::Duplicate
+        Admission::Stale
     );
     let child = RequestStamp::new(id(2), Some(id(1)), None, ExecutionId::first(next)).unwrap();
     assert_eq!(
         seat.start(child, NativeKind::Shop, false).unwrap(),
         Admission::Refused(Refusal::HistoryExpired)
+    );
+    let fresh = RequestStamp::new(id(3), None, None, ExecutionId::first(next)).unwrap();
+    assert_eq!(
+        seat.start(fresh, NativeKind::Shop, false).unwrap(),
+        Admission::Admitted
     );
 }
 
@@ -737,20 +780,22 @@ fn run_policy_uses_reserved_row_and_coalesces_latest_at_encoder_capacity() {
 }
 
 #[test]
-fn guardian_frees_unarmed_walk_reservation_but_keeps_queued_release() {
+fn guardian_frees_unarmed_walk_reservation_but_keeps_armed_and_queued_releases() {
     let mut seat = GameplaySeat::<u32>::new(run());
     start(&mut seat, 1, None, NativeKind::Walk);
     seat.push_walk(10, EmissionSource::Owner(id(1)), id(10))
         .unwrap();
     seat.take();
+    assert_eq!(seat.reserved_releases(), 2);
     assert!(seat
         .walk_releases
         .iter()
         .flatten()
-        .any(|slot| slot.id == id(10)));
+        .any(|slot| slot.id == id(10) && slot.state == WalkReleaseState::Reserved));
     seat.hold(true);
     assert!(seat.walk_releases.iter().all(Option::is_none));
     seat.hold(false);
+    start(&mut seat, 2, None, NativeKind::Walk);
 
     seat.push_walk(20, EmissionSource::Owner(id(1)), id(20))
         .unwrap();
@@ -758,6 +803,38 @@ fn guardian_frees_unarmed_walk_reservation_but_keeps_queued_release() {
     let mut output = Vec::new();
     seat.dispatch_into(&mut output);
     assert_eq!(output, [20]);
+    assert_eq!(seat.reserved_releases(), 2);
+    assert!(seat
+        .walk_releases
+        .iter()
+        .flatten()
+        .any(|slot| slot.id == id(20) && slot.state == WalkReleaseState::Armed));
+    seat.hold(true);
+    assert!(seat
+        .walk_releases
+        .iter()
+        .flatten()
+        .any(|slot| slot.id == id(20) && slot.state == WalkReleaseState::Armed));
+    seat.hold(false);
+
+    start(&mut seat, 3, None, NativeKind::Walk);
+    assert!(seat
+        .walk_releases
+        .iter()
+        .flatten()
+        .any(|slot| slot.id == id(3) && slot.state == WalkReleaseState::Reserved));
+    seat.reconnect(1);
+    assert_eq!(seat.reserved_releases(), 1);
+    assert!(!seat
+        .walk_releases
+        .iter()
+        .flatten()
+        .any(|slot| slot.id == id(3)));
+    assert!(seat
+        .walk_releases
+        .iter()
+        .flatten()
+        .any(|slot| slot.id == id(20) && slot.state == WalkReleaseState::Armed));
     seat.push(
         21,
         EmissionClass::Release,
@@ -771,7 +848,7 @@ fn guardian_frees_unarmed_walk_reservation_but_keeps_queued_release() {
         .walk_releases
         .iter()
         .flatten()
-        .any(|slot| slot.id == id(20) && slot.queued));
+        .any(|slot| slot.id == id(20) && slot.state == WalkReleaseState::Queued));
     seat.hold(false);
     seat.take();
     seat.dispatch_into(&mut output);

@@ -94,13 +94,35 @@ fn wait_ignored_randoms(slot: &mut SlotScript, selected: &api::game_data::Select
 
 #[cfg(feature = "load")]
 fn start_api_gather_and_wait(slot: &mut SlotScript, selected: &api::game_data::SelectedGameData) {
-    slot.restore_interacts(vec![crate::shim::InteractReq::GatherRun {
-        request_id: 1,
-        settings: Arc::new(crate::native::SettingsBag::new()),
-    }]);
+    let run = slot.seat.as_ref().expect("owned load seat").run();
+    let id = api::identity::RequestId::isolate(1).expect("isolate request");
+    slot.consume_seat_batch(
+        crate::isolate_fb::DecodedSeatBatch {
+            consumed_terminal_seq: 0,
+            starts: vec![crate::isolate_fb::SeatStartInput {
+                id,
+                parent: None,
+                run: run.run,
+                session: run.session,
+                kind: crate::native::request::NativeKind::Gather,
+                args: crate::isolate_fb::SeatStartArgs::Gather(crate::native::SettingsBag::new()),
+            }],
+            decisions: Vec::new(),
+            cancels: Vec::new(),
+            mirror_revokes: Vec::new(),
+            reqs: Vec::new(),
+        },
+        0,
+        &[],
+    );
     let (policy, visible, owned) = slot.drain_host_interacts();
     assert!(policy.is_none());
-    assert!(visible.is_empty());
+    assert!(
+        visible
+            .iter()
+            .all(|row| matches!(&row.req, crate::shim::InteractReq::LoopSettled)),
+        "only LoopingBot lifecycle, not delegated gameplay, may reach host: {visible:?}"
+    );
     assert!(
         owned,
         "the Load API seat owns delegated Gatherer work: {:?}",
@@ -113,7 +135,12 @@ fn start_api_gather_and_wait(slot: &mut SlotScript, selected: &api::game_data::S
         load_tick_at(slot, selected, tick, None, false);
         tick += 1;
         let (_, visible, _) = slot.drain_host_interacts();
-        assert!(visible.is_empty());
+        assert!(
+            visible
+                .iter()
+                .all(|row| matches!(&row.req, crate::shim::InteractReq::LoopSettled)),
+            "delegated Gatherer gameplay stays in the seat: {visible:?}"
+        );
         std::thread::yield_now();
     }
     assert!(
@@ -373,18 +400,47 @@ export function tick() {
 }
 
 #[cfg(feature = "load")]
+fn align_ready_test_seat(slot: &mut SlotScript) {
+    let ready = slot.seat.as_ref().expect("load seat").run().session_key();
+    assert_eq!(
+        ready.map(api::identity::SessionKey::epoch),
+        Some(slot.work_epoch()),
+        "the test's ready session matches its new connection"
+    );
+    slot.align_seat_session(ready);
+}
+
+#[cfg(feature = "load")]
+fn run_policy_tick(slot: &mut SlotScript, tick: u64) {
+    align_ready_test_seat(slot);
+    let input = crate::isolate_fb::tests::empty_input(tick);
+    let bytes = slot.encode_snapshot_delta(&input, false);
+    assert!(slot.post_snapshot(bytes), "posted run-policy tick {tick}");
+    let mut driver = NullDriver::default();
+    let mut ctx = compiled_ctx(&mut driver, None);
+    ctx.tick = tick;
+    slot.on_game_tick(&mut ctx);
+    slot.probe("true")
+        .expect("run-policy tick settles before probe");
+}
+
+#[cfg(feature = "load")]
 fn drain_run_policy_update(slot: &mut SlotScript) -> Option<api::run_policy::RunPolicyOverride> {
-    let mut update = None;
-    for req in slot.drain_interacts() {
-        match req {
-            crate::shim::InteractReq::RunPolicyOverride { policy } => {
-                assert!(update.is_none(), "one replacement per isolate batch");
-                update = Some(policy);
-            }
-            other => panic!("unexpected run-policy sibling: {other:?}"),
-        }
-    }
-    update.expect("run-policy replacement crosses the FlatBuffer batch")
+    let (policy, requests, _) = slot.drain_host_interacts();
+    assert!(
+        requests
+            .iter()
+            .all(|row| matches!(&row.req, crate::shim::InteractReq::LoopSettled)),
+        "unexpected run-policy sibling: {requests:?}"
+    );
+    policy.unwrap_or_else(|| {
+        let logs = slot.drain_logs();
+        panic!(
+            "run-policy replacement did not cross the FlatBuffer batch; state={:?}, seat={:?}, logs={logs:?}",
+            slot.state(),
+            slot.seat.as_ref().map(|seat| seat.run())
+        )
+    })
 }
 
 #[cfg(feature = "load")]
@@ -400,11 +456,11 @@ export default class T extends LoopingBot {
 }
 "#;
     let mut slot = SlotScript::new();
+    slot.bind_incarnation(1201);
     slot.start_load(source.into(), LoadShape::CompatClass, vec![])
         .unwrap();
     wait_state(&mut slot, RunState::Running);
-    slot.load.as_ref().unwrap().on_game_tick(1);
-    slot.probe("1").expect("tick settles before probe");
+    run_policy_tick(&mut slot, 1);
     assert_eq!(
         drain_run_policy_update(&mut slot),
         Some(api::run_policy::RunPolicyOverride {
@@ -456,6 +512,7 @@ export default class T extends LoopingBot {
 }
 "#;
     let mut slot = SlotScript::new();
+    slot.bind_incarnation(1202);
     slot.start_load(source.into(), LoadShape::CompatClass, vec![])
         .unwrap();
     wait_state(&mut slot, RunState::Running);
@@ -493,9 +550,7 @@ export default class T extends LoopingBot {
         None,
     ];
     for (index, expected) in expected.into_iter().enumerate() {
-        slot.load.as_ref().unwrap().on_game_tick(index as u64 + 1);
-        slot.probe("true")
-            .expect("override tick settles before probe");
+        run_policy_tick(&mut slot, index as u64 + 1);
         assert_eq!(drain_run_policy_update(&mut slot), expected, "case {index}");
         if index == 0 {
             assert_eq!(
@@ -523,20 +578,20 @@ export default class T extends LoopingBot {
 }
 "#;
     let mut slot = SlotScript::new();
+    slot.bind_incarnation(1203);
     slot.start_load(source.into(), LoadShape::CompatClass, vec![])
         .unwrap();
     wait_state(&mut slot, RunState::Running);
-    slot.load.as_ref().unwrap().on_game_tick(1);
-    slot.probe("true").expect("override tick settles");
+    run_policy_tick(&mut slot, 1);
 
     slot.reset_session_work();
+    let (old_policy, old_requests, _) = slot.drain_host_interacts();
     assert!(
-        slot.drain_interacts().is_empty(),
+        old_policy.is_none() && old_requests.is_empty(),
         "the old connection generation stays fenced"
     );
     slot.on_is_up(true);
-    slot.load.as_ref().unwrap().on_game_tick(2);
-    slot.probe("true").expect("post-reset tick settles");
+    run_policy_tick(&mut slot, 2);
     assert_eq!(
         drain_run_policy_update(&mut slot),
         Some(api::run_policy::RunPolicyOverride {
@@ -1875,6 +1930,7 @@ export default class T extends LoopingBot {
 /// then feed the watchdog what the host drains after it.
 #[cfg(feature = "load")]
 fn held_walk_tick(slot: &mut SlotScript, n: u64, now: Instant) {
+    align_ready_test_seat(slot);
     let here = (2823, 3555, 0);
     let mut input = crate::isolate_fb::tests::empty_input(n);
     input.here = Some(crate::isolate_fb::TileInput {
@@ -1884,12 +1940,35 @@ fn held_walk_tick(slot: &mut SlotScript, n: u64, now: Instant) {
     });
     let bytes = slot.encode_snapshot_delta(&input, false);
     assert!(slot.post_snapshot(bytes));
-    let iso = slot.load.as_ref().expect("load isolate");
-    iso.on_game_tick(n);
-    iso.probe("true").unwrap();
+    let mut driver = NullDriver::default();
+    let mut ctx = compiled_ctx(&mut driver, None);
+    ctx.tick = n;
+    ctx.here = Some(here);
+    slot.on_game_tick(&mut ctx);
+    slot.load
+        .as_ref()
+        .expect("load isolate")
+        .probe("true")
+        .unwrap();
+    // The owner seat dispatches watchdog facts during the host interaction
+    // drain; none should escape toward the game driver.
+    let (_, game_rows, _) = slot.drain_host_interacts();
+    assert!(
+        game_rows.iter().all(|row| !matches!(
+            &row.req,
+            crate::shim::InteractReq::WaitEnqueued | crate::shim::InteractReq::WaitSettled
+        )),
+        "seat wait facts stay on the watchdog lane: {game_rows:?}"
+    );
     let facts = slot.drain_lifecycle();
     slot.note_game_packet_tick(now);
     slot.feed_watchdog(now, Some(here), &[], false, true, &facts);
+    assert!(
+        slot.watchdog().wait_active(),
+        "held walk tick {n} has no parked wait; lifecycle={facts:?}, ran={:?}, logs={:?}",
+        slot.probe("globalThis.__ran"),
+        slot.drain_logs()
+    );
 }
 
 /// The walk a reconnect holds is still the loop's parked wait: the watchdog
@@ -1899,6 +1978,7 @@ fn held_walk_tick(slot: &mut SlotScript, n: u64, now: Instant) {
 #[test]
 fn a_walk_held_across_a_reconnect_is_still_a_parked_wait() {
     let mut slot = SlotScript::new();
+    slot.bind_incarnation(1204);
     slot.start_load_with_loadouts(HELD_WALK.into(), LoadShape::CompatClass, vec![], &[])
         .unwrap();
     wait_state(&mut slot, RunState::Running);
@@ -1938,6 +2018,7 @@ fn a_walk_held_across_a_reconnect_is_still_a_parked_wait() {
 #[test]
 fn stop_ends_a_script_held_across_a_reconnect() {
     let mut slot = SlotScript::new();
+    slot.bind_incarnation(1205);
     slot.start_load_with_loadouts(HELD_WALK.into(), LoadShape::CompatClass, vec![], &[])
         .unwrap();
     wait_state(&mut slot, RunState::Running);
