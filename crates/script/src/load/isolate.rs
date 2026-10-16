@@ -124,22 +124,84 @@ pub struct QueuedInteract {
     /// Push-time walk outcome sequence shared by this physical batch.
     pub observed_walk_outcome_seq: u64,
 }
-/// Wait facts that a guardian-held seat batch carries as two counters. The
-/// fold keeps one counter for each event kind, so a long hold does not add
-/// one row for each held tick.
+/// Wait facts that a guardian-held seat batch carries as one exact summary.
+///
+/// The watchdog adds one for each enqueue and subtracts one, saturating at
+/// zero, for each settle, in event order (`watchdog.rs` `on_wait_enqueued`
+/// and `on_wait_settled`). Any sequence of those steps maps a starting count
+/// `c` to `max(c + d, m)` with `d <= m` and `m >= 0`. This type keeps that map
+/// in its normal form: `settles` saturating subtractions, then `enqueues`
+/// additions (`m = enqueues`, `d = enqueues - settles`). The summary has a
+/// fixed size for any hold length.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct HeldWaitFacts {
-    /// `WaitEnqueued` rows folded during the hold.
-    pub enqueued: u64,
-    /// `WaitSettled` rows folded during the hold.
-    pub settled: u64,
+    /// Leading `WaitSettled` steps (`m - d`).
+    pub settles: u64,
+    /// Trailing `WaitEnqueued` steps (`m`).
+    pub enqueues: u64,
+    /// At least one wait fact was folded. Each fact stamps the scheduler.
+    pub stamped: bool,
 }
 
 impl HeldWaitFacts {
-    /// Number of folded wait rows.
-    pub fn rows(&self) -> u64 {
-        self.enqueued.saturating_add(self.settled)
+    /// Fold one `WaitEnqueued` after the summarized facts.
+    pub fn enqueue(&mut self) {
+        self.enqueues = self.enqueues.saturating_add(1);
+        self.stamped = true;
     }
+
+    /// Fold one `WaitSettled` after the summarized facts. A settle after an
+    /// enqueue cancels it exactly: `max(x + 1 - 1, 0) = x` for `x >= 0`.
+    pub fn settle(&mut self) {
+        if self.enqueues > 0 {
+            self.enqueues -= 1;
+        } else {
+            self.settles = self.settles.saturating_add(1);
+        }
+        self.stamped = true;
+    }
+
+    /// The summary of these facts followed by `later`.
+    pub fn then(self, later: Self) -> Self {
+        let cancelled = self.enqueues.min(later.settles);
+        Self {
+            settles: self.settles.saturating_add(later.settles - cancelled),
+            enqueues: (self.enqueues - cancelled).saturating_add(later.enqueues),
+            stamped: self.stamped || later.stamped,
+        }
+    }
+
+    /// The rows that reproduce the summarized facts on the watchdog: the
+    /// settles, then the enqueues. When the facts cancel to the identity map,
+    /// one enqueue and settle pair keeps the scheduler stamp and leaves the
+    /// count unchanged.
+    pub fn replay(self) -> impl Iterator<Item = crate::shim::InteractReq> {
+        let pair = u64::from(self.stamped && self.settles == 0 && self.enqueues == 0);
+        std::iter::repeat_n(
+            crate::shim::InteractReq::WaitSettled,
+            row_count(self.settles),
+        )
+        .chain(std::iter::repeat_n(
+            crate::shim::InteractReq::WaitEnqueued,
+            row_count(self.enqueues + pair),
+        ))
+        .chain(std::iter::repeat_n(
+            crate::shim::InteractReq::WaitSettled,
+            row_count(pair),
+        ))
+    }
+
+    /// Number of rows that [`Self::replay`] yields.
+    pub fn rows(&self) -> u64 {
+        let pair = u64::from(self.stamped && self.settles == 0 && self.enqueues == 0);
+        self.settles
+            .saturating_add(self.enqueues)
+            .saturating_add(2 * pair)
+    }
+}
+
+fn row_count(rows: u64) -> usize {
+    usize::try_from(rows).unwrap_or(usize::MAX)
 }
 
 #[derive(Debug)]

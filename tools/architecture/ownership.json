@@ -4403,6 +4403,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/script/src/slot/held_fold_tests.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/script/src/slot/pending.rs",
       "owner": "T1"
     },

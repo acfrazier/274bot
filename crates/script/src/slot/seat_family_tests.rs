@@ -1036,10 +1036,11 @@ fn repeated_held_lifecycle_pages_fold_without_losing_distinct_controls() {
     assert_eq!(
         kept.held_waits,
         crate::load::HeldWaitFacts {
-            enqueued: 40,
-            settled: 40,
+            settles: 0,
+            enqueues: 0,
+            stamped: true,
         },
-        "each repeated wait fact is counted"
+        "forty enqueue/settle pairs fold to the identity map and keep the scheduler stamp"
     );
     assert_eq!(
         kept.batch
@@ -1126,15 +1127,16 @@ fn held_lifecycle_pages_stay_row_bounded_and_counted_frame_by_frame() {
     assert_eq!(
         batch.held_waits,
         crate::load::HeldWaitFacts {
-            enqueued: 201,
-            settled: 1,
+            settles: 0,
+            enqueues: 200,
+            stamped: true,
         },
-        "every held wait fact is counted"
+        "every held wait fact is in the exact summary"
     );
     assert_eq!(
         slot.seat.as_ref().unwrap().dropped() - dropped_before,
-        199,
-        "each repeated stamp that the fold discards is counted"
+        0,
+        "a repeated stamp is a replacement, not a dropped row"
     );
     slot.load
         .as_ref()
@@ -1152,11 +1154,10 @@ fn held_lifecycle_pages_stay_row_bounded_and_counted_frame_by_frame() {
         .filter(|req| matches!(req, InteractReq::WaitSettled))
         .count();
     assert_eq!(
-        enqueued - settled,
-        200,
-        "the host applies the net of 201 enqueues and 1 settle: {lifecycle:?}"
+        (enqueued, settled),
+        (200, 0),
+        "the leading enqueue/settle pair cancels exactly; 200 enqueues remain: {lifecycle:?}"
     );
-    assert!(settled >= 1, "a matched pair still stamps the scheduler");
     assert!(lifecycle.contains(&InteractReq::NoteProgress));
     assert!(lifecycle.contains(&InteractReq::LoopSettled));
     assert!(slot.load.as_ref().unwrap().drain_seat_batches().is_empty());
@@ -1229,3 +1230,6 @@ fn three_walk_terminals_during_guardian_hold_free_all_slots() {
     );
     slot.stop();
 }
+
+#[path = "held_fold_tests.rs"]
+mod held_fold_tests;
