@@ -6082,7 +6082,7 @@ fn explicit_login_arms_a_fresh_non_auto_profile() {
         .and_then(|play| play.arm("alice"))
         .expect("fresh explicit login creates an arm");
     assert!(arm.wants_login());
-    assert!(!arm.auto_login.load(Ordering::Relaxed));
+    assert!(!arm.auto_login());
     assert!(!arm.login_latched());
 }
 
@@ -6404,7 +6404,7 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
         Some(2)
     );
     assert_eq!(
-        *arm.world.lock(),
+        arm.world_choice(),
         Some(2),
         "the profile-save path must update a running slot's next handshake"
     );
@@ -6428,7 +6428,7 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
         "a credentials save outside the editor must not unpin an account"
     );
     assert_eq!(
-        *arm.world.lock(),
+        arm.world_choice(),
         Some(2),
         "a non-editor save must preserve the running slot's pin"
     );
@@ -6991,10 +6991,10 @@ fn set_auto_login_mirrors_running_arm() {
     s.core.set_play(Some(play));
     assert!(s.set_auto_login("alice", true));
     s.core.flush_writes();
-    assert!(arm.auto_login.load(Ordering::Relaxed));
+    assert!(arm.auto_login());
     assert!(s.set_auto_login("alice", false));
     s.core.flush_writes();
-    assert!(!arm.auto_login.load(Ordering::Relaxed));
+    assert!(!arm.auto_login());
 }
 
 #[test]
@@ -7154,14 +7154,11 @@ fn arm_for_profile_respects_auto_login_and_latch() {
     s.core.vault_mut().unwrap().upsert(p).unwrap();
     let arm = s.core.arm_for_profile("alice").expect("arm");
     assert!(arm.wants_login());
-    assert!(arm.auto_login.load(Ordering::Relaxed));
+    assert!(arm.auto_login());
     s.core.fleet_mut().latch_logout("alice");
     let arm = s.core.arm_for_profile("alice").expect("arm");
     assert!(!arm.wants_login(), "latch blocks handshake");
-    assert!(
-        arm.auto_login.load(Ordering::Relaxed),
-        "profile auto_login stays on the arm"
-    );
+    assert!(arm.auto_login(), "profile auto_login stays on the arm");
 }
 
 #[test]
@@ -9023,7 +9020,7 @@ fn memory_relog_starts_at_once_without_a_running_script() {
     assert!(!s.mem_relog_armed());
     assert!(s.request_focused_memory_relog());
     let arm = s.core.play().unwrap().arm("alice").unwrap();
-    assert!(arm.login_latched() && arm.wants_logout());
+    assert!(!arm.login_latched() && !arm.wants_logout() && arm.wants_login());
     assert!(
         s.core.memory_status("alice").unwrap().relog_pending,
         "the poll must see the armed relog"

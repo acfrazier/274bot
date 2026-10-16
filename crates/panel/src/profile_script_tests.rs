@@ -2434,5 +2434,11 @@ fn memory_relog_warns_before_cancelling_a_queued_start() {
         "the second click starts the relog"
     );
     assert!(s.scripts.start_queue_place(&queued).is_none());
-    assert!(s.core.play().unwrap().arm(&queued).unwrap().wants_logout());
+    let arm = s.core.play().unwrap().arm(&queued).unwrap();
+    assert!(
+        !arm.wants_logout(),
+        "an offline slot has no session to log out"
+    );
+    assert!(arm.wants_login(), "RelogNow arms the next login");
+    assert!(!arm.login_latched(), "RelogNow must not latch Logout");
 }
