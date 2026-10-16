@@ -26,10 +26,11 @@ use crate::session::{OperatorSession, ScriptStart};
 /// modeled in `script` ([`script::load::CatalogSnapshotError`],
 /// [`script::load::CatalogWorkerError`]) and wrapped here through `#[from]`:
 /// they cross from `script` into `frontend-core`, so the crate-boundary
-/// rule needs a `thiserror` kind on each side. [`script::preparation::PreparationError`]
-/// is likewise reused for admission and the worker join. The busy-state
-/// guards belong to this coordinator. `Clone` is needed: a submission
-/// failure is both retained as the async receipt and returned to the caller.
+/// rule needs a `thiserror` kind on each side. WorkAdmission admission and
+/// join failures stay on this side as their `Display` text, so no `script`
+/// preparation type crosses the seam. The busy-state guards belong to this
+/// coordinator. `Clone` is needed: a submission failure is both retained as
+/// the async receipt and returned to the caller.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum CatalogError {
     /// Another root's catalog work is already queued or running.
@@ -47,9 +48,12 @@ pub enum CatalogError {
     /// The admission charge for the catalog job was refused.
     #[error(transparent)]
     Charge(#[from] api::work::SubmissionRefusal),
-    /// WorkAdmission refused, failed, or lost the catalog job.
-    #[error(transparent)]
-    Preparation(#[from] script::preparation::PreparationError),
+    /// WorkAdmission refused, failed, or lost the catalog job. The payload
+    /// is the preparation failure's `Display` text, so no `script` error
+    /// type crosses the crate boundary. `Full` never reaches here: it is
+    /// retained as pending work and retried.
+    #[error("{0}")]
+    Preparation(String),
     /// The catalog worker reported a failure (registry, source graph, diff).
     #[error(transparent)]
     Worker(#[from] script::load::CatalogWorkerError),
@@ -59,6 +63,12 @@ pub enum CatalogError {
     /// distinct catalog failure kind; the message is preserved for diagnosis.
     #[error("catalog commit invariant violated for a catalog card: {0}")]
     UnexpectedCatalogCommit(String),
+}
+
+impl From<script::preparation::PreparationError> for CatalogError {
+    fn from(error: script::preparation::PreparationError) -> Self {
+        Self::Preparation(error.to_string())
+    }
 }
 
 #[derive(Debug)]
@@ -850,7 +860,7 @@ impl Scripts {
                         Ok(())
                     }
                     Err(error) => {
-                        let error = CatalogError::Preparation(error);
+                        let error = CatalogError::from(error);
                         self.async_work.catalog_fill_result = Some(Err(error.clone()));
                         self.show(format!("$RS2B0T registry: {error}"));
                         Err(error)
@@ -905,7 +915,7 @@ impl Scripts {
                         Ok(())
                     }
                     Err(error) => {
-                        let error = CatalogError::Preparation(error);
+                        let error = CatalogError::from(error);
                         self.async_work.catalog_import_result = Some((root, Err(error.clone())));
                         self.show(format!("Import catalog: {error}"));
                         Err(error)
@@ -978,7 +988,7 @@ impl Scripts {
                     self.async_work.catalog_fill_result = Some(Ok(()));
                 }
                 Ok(Err(error)) => self.fail_catalog_fill(CatalogError::Worker(error)),
-                Err(error) => self.fail_catalog_fill(CatalogError::Preparation(error)),
+                Err(error) => self.fail_catalog_fill(CatalogError::from(error)),
             },
             CatalogJob::ImportRunning {
                 generation,
@@ -1004,7 +1014,7 @@ impl Scripts {
                     self.async_work.catalog_import_result = Some((root, Err(error)));
                 }
                 Err(error) => {
-                    let error = CatalogError::Preparation(error);
+                    let error = CatalogError::from(error);
                     self.show(format!("Import catalog: {error}"));
                     self.async_work.catalog_import_result = Some((root, Err(error)));
                 }
