@@ -319,7 +319,10 @@ impl WorkFamily {
             Self::MapBake => {
                 "input identity + retained checkpoint receipt bytes + result map handle"
             }
-            Self::WalkMapDecode => "PNG input bytes (capped) + decoded RGBA result bytes; 0 handles after yield",
+            Self::WalkMapDecode => {
+                "PNG input bytes (capped) + 2 MiB decode scratch + decoded RGBA result bytes; \
+                 0 handles after yield"
+            }
             Self::BankPick | Self::Inspection => {
                 "request + world-lease (not copied) + result snapshot bytes"
             }

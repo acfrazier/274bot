@@ -4,6 +4,7 @@
 
 use super::{MapError, Rows, Text};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+// Keep the hashing trait distinct from the map's `Digest` newtype for checker type resolution.
 use sha2::{Digest as ShaDigest, Sha256};
 use std::fmt;
 

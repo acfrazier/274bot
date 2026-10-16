@@ -202,7 +202,7 @@ impl WalkMapDecodeController {
         });
         self.full_capacity = None;
         if self.active.is_none() {
-            if let Err(error) = self.try_submit_pending(true) {
+            if let Err(error) = self.try_submit_pending() {
                 self.pending = None;
                 self.latest = None;
                 self.full_capacity = None;
@@ -212,10 +212,9 @@ impl WalkMapDecodeController {
         Ok(())
     }
 
-    /// Retry a Full demand only after a capacity publication changed or a
-    /// later ordinary visible-demand turn explicitly permits another attempt.
-    pub fn retry_pending(&mut self, ordinary_demand: bool) -> Result<(), WalkMapDecodeError> {
-        self.try_submit_pending(ordinary_demand)
+    /// Retry a Full demand only after a capacity publication changes.
+    pub fn retry_pending(&mut self) -> Result<(), WalkMapDecodeError> {
+        self.try_submit_pending()
     }
 
     /// Poll without waiting. A completed current result is consumed exactly
@@ -223,7 +222,7 @@ impl WalkMapDecodeController {
     /// submitted.
     pub fn poll(&mut self) -> Option<Result<WalkMapDecodeResult, WalkMapDecodeError>> {
         if self.active.is_none() {
-            if let Err(error) = self.try_submit_pending(false) {
+            if let Err(error) = self.try_submit_pending() {
                 self.pending = None;
                 self.latest = None;
                 self.full_capacity = None;
@@ -388,7 +387,7 @@ impl WalkMapDecodeController {
         self.context = Some((generation, image));
     }
 
-    fn try_submit_pending(&mut self, ordinary_demand: bool) -> Result<(), WalkMapDecodeError> {
+    fn try_submit_pending(&mut self) -> Result<(), WalkMapDecodeError> {
         if self.active.is_some() || self.pending.is_none() {
             return Ok(());
         }
@@ -404,7 +403,7 @@ impl WalkMapDecodeController {
         let (sequence, submission) = {
             let mut admitted = shared.lock();
             let sequence = admitted.publications().capacity().sequence();
-            if !ordinary_demand && self.full_capacity == Some(sequence) {
+            if self.full_capacity == Some(sequence) {
                 return Ok(());
             }
             let identity = match admitted.mint_identity(Scope::Process, None) {
@@ -489,7 +488,7 @@ impl WalkMapDecodeController {
         &mut self,
     ) -> Option<Result<WalkMapDecodeResult, WalkMapDecodeError>> {
         self.full_capacity = None;
-        match self.try_submit_pending(true) {
+        match self.try_submit_pending() {
             Ok(()) => None,
             Err(error) => {
                 self.pending = None;
@@ -509,5 +508,307 @@ impl Default for WalkMapDecodeController {
 impl Drop for WalkMapDecodeController {
     fn drop(&mut self) {
         self.invalidate();
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use api::work::WorkCapacity;
+    use nav::map::identity::Digest;
+    use nav::map::spatial::TILE_PIXELS;
+    use std::sync::MutexGuard;
+    use std::time::{Duration, Instant};
+
+    static DECODE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn decode_test_lock() -> MutexGuard<'static, ()> {
+        DECODE_TEST_LOCK.lock().expect("decode test lock")
+    }
+
+    fn image() -> ImageIdentity {
+        ImageIdentity {
+            revision: 289,
+            content: Digest([0x31; 32]),
+            policy: Digest([0x42; 32]),
+        }
+    }
+
+    fn key(x: i32) -> TileKey {
+        TileKey {
+            plane: 0,
+            lod: 0,
+            x,
+            z: 50,
+        }
+    }
+
+    fn png(marker: u8) -> Arc<[u8]> {
+        let pixels = vec![marker; TILE_RGBA_BYTES];
+        let mut encoded = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut encoded, TILE_PIXELS, TILE_PIXELS);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().expect("PNG header");
+            writer.write_image_data(&pixels).expect("PNG pixels");
+        }
+        Arc::from(encoded)
+    }
+
+    fn capacity() -> WorkCapacity {
+        WorkService::shared()
+            .expect("shared work service")
+            .lock()
+            .capacity()
+    }
+
+    fn wait_for_capacity_zero() {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let current = capacity();
+            if current == WorkCapacity::EMPTY {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "decode capacity did not return to zero: {current:?}"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    fn wait_for_jobs_below(jobs: usize) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let current = capacity();
+            if current.jobs() < jobs {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "decode capacity did not fall below {jobs}: {current:?}"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    fn wait_for_terminal(ticket: &WorkTicket<DecodeSpec>) {
+        let shared = WorkService::shared().expect("shared work service");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let published = {
+                let service = shared.lock();
+                service
+                    .borrow_terminal(ticket)
+                    .expect("decode ticket remains admitted")
+                    .is_some()
+            };
+            if published {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "shared worker did not publish the decode terminal"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    fn wait_for_result(controller: &mut WalkMapDecodeController) -> WalkMapDecodeResult {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match controller.poll() {
+                Some(Ok(result)) => return result,
+                Some(Err(error)) => panic!("decode failed: {error}"),
+                None => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "shared worker did not return the decode result"
+                    );
+                    std::thread::yield_now();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn poll_discards_a_finished_stale_result_before_submitting_latest_demand() {
+        let _guard = decode_test_lock();
+        wait_for_capacity_zero();
+        let identity = image();
+        let old_key = key(50);
+        let new_key = key(51);
+        let mut controller = WalkMapDecodeController::new();
+        controller
+            .request(7, identity, old_key, png(0x11))
+            .expect("submit old tile");
+        let old_ticket = controller
+            .active
+            .as_ref()
+            .expect("accepted old tile")
+            .ticket;
+
+        controller
+            .request(7, identity, new_key, png(0x22))
+            .expect("retain new visible tile");
+        wait_for_terminal(&old_ticket);
+        assert!(controller.poll().is_none(), "stale pixels are dropped");
+        assert_eq!(
+            controller.active_request(),
+            Some((7, identity, new_key)),
+            "the latest demand is submitted after the stale terminal is consumed"
+        );
+        assert_eq!(controller.pending_request(), None);
+        let result = wait_for_result(&mut controller);
+        assert_eq!(result.key(), new_key);
+        assert_eq!(result.into_rgba(), vec![0x22; TILE_RGBA_BYTES]);
+        assert!(!controller.is_busy());
+        drop(controller);
+        wait_for_capacity_zero();
+    }
+
+    #[test]
+    fn cancel_active_fences_and_consumes_the_tile_without_returning_pixels() {
+        let _guard = decode_test_lock();
+        wait_for_capacity_zero();
+        let identity = image();
+        let tile = key(52);
+        let mut controller = WalkMapDecodeController::new();
+        controller
+            .request(8, identity, tile, png(0x33))
+            .expect("submit tile");
+        let ticket = controller.active.as_ref().expect("accepted tile").ticket;
+
+        controller.cancel_active();
+        assert!(controller.has_active(), "the stale ticket stays in custody");
+        assert!(
+            !controller.is_requested(8, identity, tile),
+            "a cancelled tile is no longer a current demand"
+        );
+        wait_for_terminal(&ticket);
+        assert!(
+            controller.poll().is_none(),
+            "cancelled pixels are discarded"
+        );
+        assert!(!controller.is_busy());
+        drop(controller);
+        wait_for_capacity_zero();
+    }
+
+    #[test]
+    fn discard_pending_prevents_stale_completion_from_resubmitting_it() {
+        let _guard = decode_test_lock();
+        wait_for_capacity_zero();
+        let identity = image();
+        let old_key = key(53);
+        let discarded_key = key(54);
+        let mut controller = WalkMapDecodeController::new();
+        controller
+            .request(9, identity, old_key, png(0x44))
+            .expect("submit old tile");
+        let old_ticket = controller
+            .active
+            .as_ref()
+            .expect("accepted old tile")
+            .ticket;
+        controller
+            .request(9, identity, discarded_key, png(0x55))
+            .expect("retain replacement tile");
+        assert_eq!(
+            controller.pending_request(),
+            Some((9, identity, discarded_key))
+        );
+
+        controller.discard_pending();
+        assert_eq!(controller.pending_request(), None);
+        wait_for_terminal(&old_ticket);
+        assert!(controller.poll().is_none());
+        assert!(
+            !controller.is_busy(),
+            "discarded demand is never resubmitted"
+        );
+        wait_for_capacity_zero();
+    }
+
+    #[test]
+    fn full_retry_waits_for_capacity_publication_then_retries_once() {
+        let _guard = decode_test_lock();
+        wait_for_capacity_zero();
+        let identity = image();
+        let shared_png = png(0x66);
+        let mut fillers = Vec::with_capacity(64);
+        for x in 0..64 {
+            let mut controller = WalkMapDecodeController::new();
+            controller
+                .request(10, identity, key(x), Arc::clone(&shared_png))
+                .expect("submit capacity filler");
+            fillers.push(controller);
+        }
+        assert_eq!(capacity().jobs(), 64, "all admission slots are retained");
+
+        let pending_key = key(100);
+        let mut pending = WalkMapDecodeController::new();
+        pending
+            .request(10, identity, pending_key, Arc::clone(&shared_png))
+            .expect("retain full demand");
+        assert!(!pending.has_active());
+        assert_eq!(pending.pending_request(), Some((10, identity, pending_key)));
+
+        let service = WorkService::shared().expect("shared work service");
+        let before = service
+            .lock()
+            .mint_identity(Scope::Process, None)
+            .expect("mint identity before gated retries")
+            .job();
+        for _ in 0..8 {
+            pending
+                .retry_pending()
+                .expect("same-sequence retry is gated");
+        }
+        let after = service
+            .lock()
+            .mint_identity(Scope::Process, None)
+            .expect("mint identity after gated retries")
+            .job();
+        assert_eq!(
+            after.get(),
+            before.get() + 1,
+            "same-sequence retries do not mint identities or submit"
+        );
+        assert!(!pending.has_active());
+
+        let released = fillers
+            .iter()
+            .position(WalkMapDecodeController::has_active)
+            .expect("at least one accepted ticket can be released");
+        drop(fillers.swap_remove(released));
+        wait_for_jobs_below(64);
+        pending
+            .retry_pending()
+            .expect("changed capacity permits retry");
+        assert!(
+            pending.has_active(),
+            "capacity publication admits the demand"
+        );
+        assert_eq!(pending.pending_request(), None);
+
+        drop(pending);
+        drop(fillers);
+        wait_for_capacity_zero();
+    }
+
+    #[test]
+    fn dropping_controller_releases_accepted_decode_charge() {
+        let _guard = decode_test_lock();
+        wait_for_capacity_zero();
+        let mut controller = WalkMapDecodeController::new();
+        controller
+            .request(11, image(), key(55), png(0x77))
+            .expect("submit tile");
+        assert!(controller.has_active());
+        assert!(capacity().jobs() > 0);
+
+        drop(controller);
+        wait_for_capacity_zero();
     }
 }

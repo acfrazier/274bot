@@ -896,6 +896,7 @@ fn settle_transpile_queue(session: &mut Session) {
 
 #[test]
 fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
+    let _work_service_guard = crate::work_service_test_lock();
     let iso = IsolatedEnv::enter("prebind-catalog");
     let explicit = write_looping_catalog(&iso.dir.join("explicit"), &[("Chosen", "Chosen")]);
     let ambient = write_looping_catalog(&iso.dir.join("ambient"), &[("Ambient", "Ambient")]);
@@ -955,6 +956,7 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
 
 #[test]
 fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
+    let _work_service_guard = crate::work_service_test_lock();
     let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
     let catalog = write_looping_catalog(&root.join("catalog"), &[("Chosen", "Chosen")]);
     let source = catalog.join("src/bot/scripts/Chosen/Chosen.ts");
@@ -8257,6 +8259,7 @@ fn fill_rs2b0t_cards_once_happens_on_first_browse_not_session_new() {
     // catalog-free: the fill is first Load/Browse only, so panel unit
     // tests that merely construct a `Session` never parse a real
     // catalog or rewrite `~/.274bot/rs2b0t-path`.
+    let _work_service_guard = crate::work_service_test_lock();
     let iso = IsolatedEnv::enter("rs2b0t-fill");
     let root = write_looping_catalog(&iso.dir, &[("BoneBurier", "BoneBurier")]);
     iso.set_rs2b0t(&root);
@@ -8373,6 +8376,7 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
 
 #[test]
 fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
+    let _work_service_guard = crate::work_service_test_lock();
     let iso = IsolatedEnv::enter("import");
     let root = fake_rs2b0t_tree(&iso.dir);
     let mut s = Session::new();
@@ -8399,6 +8403,7 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
 
 #[test]
 fn on_script_browse_open_with_rs2b0t_env_still_fills_catalog() {
+    let _work_service_guard = crate::work_service_test_lock();
     let iso = IsolatedEnv::enter("browse-env");
     let root = fake_rs2b0t_tree(&iso.dir);
     iso.set_rs2b0t(&root);
@@ -8425,6 +8430,7 @@ fn write_two_card_catalog(dir: &Path) -> PathBuf {
 
 #[test]
 fn select_script_card_queues_only_that_card_through_worker() {
+    let _work_service_guard = crate::work_service_test_lock();
     let iso = IsolatedEnv::enter("transpile-click");
     let root = write_two_card_catalog(&iso.dir);
     let mut s = Session::new();
@@ -8510,6 +8516,7 @@ fn select_script_card_queues_only_that_card_through_worker() {
 
 #[test]
 fn queue_transpile_all_uses_the_shared_worker_slot() {
+    let _work_service_guard = crate::work_service_test_lock();
     let iso = IsolatedEnv::enter("transpile-all");
     let root = write_two_card_catalog(&iso.dir);
     let mut s = Session::new();
@@ -8559,6 +8566,7 @@ fn queue_transpile_all_uses_the_shared_worker_slot() {
 
 #[test]
 fn select_script_card_queues_cached_output_through_worker() {
+    let _work_service_guard = crate::work_service_test_lock();
     let iso = IsolatedEnv::enter("transpile-hit");
     let root = write_two_card_catalog(&iso.dir);
     let store = iso.dir.join("js-scripts.json");
