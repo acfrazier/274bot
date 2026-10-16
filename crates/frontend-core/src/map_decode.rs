@@ -447,6 +447,9 @@ impl WalkMapDecodeController {
             let Some(pending) = self.pending.as_ref() else {
                 return Ok(());
             };
+            #[cfg(test)]
+            let job = tests::decode_job(Arc::clone(&pending.png));
+            #[cfg(not(test))]
             let job = WalkMapDecodeJob::new(Arc::clone(&pending.png));
             let submission =
                 admitted.try_submit::<DecodeSpec, _>(identity, pending, job, &conditions);
@@ -548,10 +551,10 @@ impl Drop for WalkMapDecodeController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use api::work::WorkCapacity;
+    use api::work::{CooperativeJob, RetainedState, StepContext, StepOutcome, WorkCapacity};
     use nav::map::identity::Digest;
     use nav::map::spatial::TILE_PIXELS;
-    use std::sync::MutexGuard;
+    use std::sync::{Arc, Condvar, Mutex, MutexGuard};
     use std::time::{Duration, Instant};
 
     static DECODE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -666,6 +669,151 @@ mod tests {
                 }
             }
         }
+    }
+    struct DecodeStepGateState {
+        entered: bool,
+        released: bool,
+    }
+
+    struct DecodeStepGate {
+        state: Mutex<DecodeStepGateState>,
+        changed: Condvar,
+    }
+
+    impl DecodeStepGate {
+        fn new() -> Self {
+            Self {
+                state: Mutex::new(DecodeStepGateState {
+                    entered: false,
+                    released: false,
+                }),
+                changed: Condvar::new(),
+            }
+        }
+
+        fn enter_and_wait(&self) {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.entered = true;
+            self.changed.notify_all();
+
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !state.released {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                let (next, timeout) = self
+                    .changed
+                    .wait_timeout(state, remaining)
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                state = next;
+                if timeout.timed_out() {
+                    break;
+                }
+            }
+        }
+
+        fn wait_until_entered(&self) {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !state.entered {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                assert!(!remaining.is_zero(), "decode worker did not enter the gate");
+                let (next, timeout) = self
+                    .changed
+                    .wait_timeout(state, remaining)
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                state = next;
+                assert!(
+                    !timeout.timed_out() || state.entered,
+                    "decode worker did not enter the gate"
+                );
+            }
+        }
+
+        fn release(&self) {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.released = true;
+            self.changed.notify_all();
+        }
+    }
+
+    static NEXT_DECODE_STEP_GATE: Mutex<Option<Arc<DecodeStepGate>>> = Mutex::new(None);
+
+    struct DecodeStepGateCleanup(Arc<DecodeStepGate>);
+
+    impl Drop for DecodeStepGateCleanup {
+        fn drop(&mut self) {
+            self.0.release();
+            let mut installed = NEXT_DECODE_STEP_GATE
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if installed
+                .as_ref()
+                .is_some_and(|gate| Arc::ptr_eq(gate, &self.0))
+            {
+                *installed = None;
+            }
+        }
+    }
+
+    pub(super) struct TestDecodeJob {
+        inner: WalkMapDecodeJob,
+        gate: Option<Arc<DecodeStepGate>>,
+    }
+
+    impl CooperativeJob for TestDecodeJob {
+        type Output = Vec<u8>;
+        type Error = WalkMapDecodeFailure;
+        type Phase = api::work::WalkMapDecodePhase;
+
+        fn step(
+            &mut self,
+            ctx: &mut StepContext<'_, Self::Phase>,
+        ) -> StepOutcome<Self::Output, Self::Error> {
+            if let Some(gate) = self.gate.take() {
+                gate.enter_and_wait();
+            }
+            self.inner.step(ctx)
+        }
+
+        fn retained(&self) -> RetainedState {
+            self.inner.retained()
+        }
+    }
+
+    pub(super) fn decode_job(png: Arc<[u8]>) -> TestDecodeJob {
+        let gate = NEXT_DECODE_STEP_GATE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        TestDecodeJob {
+            inner: WalkMapDecodeJob::new(png),
+            gate,
+        }
+    }
+
+    fn install_decode_step_gate() -> (Arc<DecodeStepGate>, DecodeStepGateCleanup) {
+        let gate = Arc::new(DecodeStepGate::new());
+        let mut installed = NEXT_DECODE_STEP_GATE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(
+            installed.is_none(),
+            "a decode step gate is already installed"
+        );
+        *installed = Some(Arc::clone(&gate));
+        drop(installed);
+        (Arc::clone(&gate), DecodeStepGateCleanup(gate))
     }
 
     #[test]
@@ -840,6 +988,120 @@ mod tests {
         assert!(controller.has_active());
         assert!(capacity().jobs() > 0);
 
+        drop(controller);
+        wait_for_capacity_zero();
+    }
+    #[test]
+    fn rebuilt_ticket_requires_exact_identity_and_revision_before_and_after_terminal() {
+        use api::work::CancelOutcome;
+
+        let _guard = decode_test_lock();
+        wait_for_capacity_zero();
+        let mut controller = WalkMapDecodeController::new();
+        controller
+            .request(12, image(), key(56), png(0x7a))
+            .expect("submit tile");
+        let active = controller.active.as_ref().expect("accepted tile");
+        let exact = WorkTicket::<DecodeSpec>::new(active.identity, active.revision);
+        let wrong_revision = WorkTicket::<DecodeSpec>::new(
+            active.identity,
+            InputRevision::new(active.revision.get() + 1),
+        );
+        let older_revision = WorkTicket::<DecodeSpec>::new(
+            active.identity,
+            InputRevision::new(active.revision.get() - 1),
+        );
+        let same_job_other_identity = WorkTicket::<DecodeSpec>::new(
+            WorkIdentity::new(
+                active.identity.job(),
+                active.identity.incarnation(),
+                active.identity.scope(),
+                Some(active.identity.job()),
+            )
+            .expect("same job id, other origin"),
+            active.revision,
+        );
+        let shared = WorkService::shared().expect("shared work service");
+        let unrelated = WorkTicket::<DecodeSpec>::new(
+            shared
+                .lock()
+                .mint_identity(Scope::Process, None)
+                .expect("mint unrelated identity"),
+            active.revision,
+        );
+        let stale = [
+            wrong_revision,
+            older_revision,
+            same_job_other_identity,
+            unrelated,
+        ];
+        let assert_stale_tickets_rejected = |tickets: &[WorkTicket<DecodeSpec>]| {
+            for ticket in tickets {
+                let mut service = shared.lock();
+                assert_eq!(
+                    service.cancel(*ticket, Cancellation::Operator),
+                    CancelOutcome::StaleIdentity
+                );
+                assert_eq!(
+                    service.abandon(*ticket, Cancellation::Operator),
+                    CancelOutcome::StaleIdentity
+                );
+                assert_eq!(
+                    service
+                        .borrow_terminal(ticket)
+                        .map(|terminal| terminal.is_some()),
+                    Err(LedgerError::StaleIdentity)
+                );
+                assert_eq!(service.consume(ticket), Err(LedgerError::StaleIdentity));
+            }
+        };
+
+        assert_stale_tickets_rejected(&stale);
+        wait_for_terminal(&exact);
+        assert_stale_tickets_rejected(&stale);
+
+        let result = wait_for_result(&mut controller);
+        assert_eq!(result.key(), key(56));
+        assert_eq!(result.into_rgba(), vec![0x7a; TILE_RGBA_BYTES]);
+        assert!(!controller.is_busy());
+        drop(controller);
+        wait_for_capacity_zero();
+    }
+
+    #[test]
+    fn cancel_active_cancels_accepted_job_before_decode_step() {
+        let _guard = decode_test_lock();
+        wait_for_capacity_zero();
+        let (gate, _cleanup) = install_decode_step_gate();
+        let mut controller = WalkMapDecodeController::new();
+        controller
+            .request(13, image(), key(57), png(0x7b))
+            .expect("submit tile");
+        let active = controller.active.as_ref().expect("accepted tile");
+        let exact = WorkTicket::<DecodeSpec>::new(active.identity, active.revision);
+
+        gate.wait_until_entered();
+        controller.cancel_active();
+        gate.release();
+        wait_for_terminal(&exact);
+        let terminal = {
+            let shared = WorkService::shared().expect("shared work service");
+            let service = shared.lock();
+            match service
+                .borrow_terminal(&exact)
+                .expect("exact ticket admitted")
+            {
+                Some(Settlement::Cancelled(reason)) => format!("Cancelled({reason:?})"),
+                Some(Settlement::Completed(_)) => String::from("Completed"),
+                Some(Settlement::Failed(error)) => format!("Failed({error:?})"),
+                None => String::from("pending"),
+            }
+        };
+        assert_eq!(terminal, "Cancelled(Superseded)");
+        assert!(
+            controller.poll().is_none(),
+            "cancelled pixels are discarded"
+        );
         drop(controller);
         wait_for_capacity_zero();
     }
