@@ -4548,8 +4548,18 @@ fn memory_relog_confirms_while_a_script_runs() {
         &mut app,
         AppAction::MemoryRelogNow("alice".into()),
     );
-    assert!(alice.login_latched(), "the confirmed relog logs out");
-    assert!(alice.wants_logout());
+    assert!(
+        !alice.login_latched(),
+        "RelogNow does not make a Logout latch"
+    );
+    assert!(
+        !alice.wants_logout(),
+        "the fixture has no owner session to leave"
+    );
+    assert!(
+        alice.wants_login(),
+        "the confirmed offline relog arms Login"
+    );
 }
 
 /// Review R3-H3: the import overlay built from a real preview of an export

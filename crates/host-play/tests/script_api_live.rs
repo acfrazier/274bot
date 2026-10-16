@@ -784,6 +784,67 @@ fn runtime_restart_cell() {
     runtime_cell(true);
 }
 
+fn owner_lifecycle_cell() {
+    let (mut play, account, fixture) = start_fixture(false);
+    let arm = play.arm(&account).expect("fixture owner arm");
+    let first = arm.session_key().expect("initial real session");
+    assert!(play.slot_connected(&account));
+
+    arm.request_logout();
+    play.wake(&account);
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |_| {
+        arm.session_key().is_none() && !play.slot_connected(&account)
+    });
+    assert!(arm.login_latched(), "operator Logout parks without relog");
+    let exit = arm.latest_lifecycle_event().expect("owner logout event");
+    assert_eq!(exit.scope(), api::identity::Scope::Session(first));
+    assert!(
+        matches!(
+            exit.payload(),
+            api::lifecycle::SessionEventOut::SessionEnded {
+                cause: api::lifecycle::SessionEndCause::ServerLogout,
+                ..
+            }
+        ),
+        "an operator Logout must retain the real server-logout cause: {exit:?}"
+    );
+    let ended = format!("{exit:?}");
+
+    arm.request_relog();
+    play.wake(&account);
+    wait_for(&play, &account, &fixture, Duration::from_secs(60), |_| {
+        arm.session_key().is_some_and(|key| key != first) && play.slot_connected(&account)
+    });
+    let second = arm.session_key().unwrap();
+    assert!(!arm.login_latched());
+
+    // The local profile has one fixed Engine A endpoint; this exercises
+    // SwitchWorld's turnover/fence, not public-world routing.
+    arm.switch_world(1);
+    play.wake(&account);
+    wait_for(&play, &account, &fixture, Duration::from_secs(60), |_| {
+        arm.session_key().is_some_and(|key| key != second) && play.slot_connected(&account)
+    });
+    let third = arm.session_key().unwrap();
+    assert_eq!(arm.world_choice(), Some(1));
+
+    play.begin_stop_slot(&account);
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |_| {
+        !play.slot_stopping(&account)
+    });
+    play.reap_stopped_slots();
+    assert!(play.arm(&account).is_none());
+    assert!(arm.stop.load(std::sync::atomic::Ordering::Acquire));
+    no_drops(&account);
+    save(
+        "owner-lifecycle-receipt.json",
+        &json!({"cell":"owner_lifecycle", "account":account,
+            "sessions":[format!("{first:?}"),format!("{second:?}"),format!("{third:?}")],
+            "operator_logout_event":ended, "operator_latch_observed":true,
+            "local_world_turnover":1, "stop_joined":true}),
+    );
+}
+
 fn start_during_catalogue_refresh_cell() {
     use api::identity::Scope;
     use script::preparation::{self, PreparationInput, PreparationKind};
@@ -997,6 +1058,7 @@ fn run_captured(cell: &str, receipt_name: &str, body: fn()) {
             | "script_runtime_load"
             | "script_runtime_restart"
             | "script_api_start_during_catalogue_refresh"
+            | "owner_lifecycle"
     ) {
         receipt["driver"] =
             json!({"trace":trace,"accepted_requests":requests,"packet_ticks":packets});
@@ -1056,6 +1118,16 @@ fn script_runtime_restart() {
         "script_runtime_restart",
         "script-runtime-restart-receipt.json",
         runtime_restart_cell,
+    );
+}
+
+#[test]
+#[ignore = "requires LIVE=1, disposable HOME/cache and Engine A"]
+fn owner_lifecycle() {
+    run_captured(
+        "owner_lifecycle",
+        "owner-lifecycle-receipt.json",
+        owner_lifecycle_cell,
     );
 }
 
