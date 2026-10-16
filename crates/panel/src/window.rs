@@ -454,7 +454,10 @@ impl<'a> Gpu<'a> {
         texture: &wgpu::Texture,
         view: &wgpu::TextureView,
     ) -> TextureId {
-        self.renderer.register_external_texture(texture, view)
+        let tex_id = self.renderer.register_external_texture(texture, view);
+        #[cfg(test)]
+        TEXTURE_LEDGER.with_borrow_mut(|ledger| ledger.registered.push(tex_id.id()));
+        tex_id
     }
 
     /// Update the view for an existing registered texture
@@ -464,8 +467,30 @@ impl<'a> Gpu<'a> {
 
     /// Unregister a previously registered texture
     pub fn unregister_texture(&mut self, tex_id: TextureId) {
+        #[cfg(test)]
+        TEXTURE_LEDGER.with_borrow_mut(|ledger| ledger.unregistered.push(tex_id.id()));
         self.renderer.unregister_texture(tex_id)
     }
+}
+
+/// Texture ids that [`Gpu`] registered and unregistered on this thread.
+#[cfg(test)]
+#[derive(Debug, Clone, Default)]
+pub(crate) struct TextureLedger {
+    pub(crate) registered: Vec<u64>,
+    pub(crate) unregistered: Vec<u64>,
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEXTURE_LEDGER: std::cell::RefCell<TextureLedger> =
+        std::cell::RefCell::new(TextureLedger::default());
+}
+
+/// A copy of this thread's [`TextureLedger`].
+#[cfg(test)]
+pub(crate) fn texture_ledger() -> TextureLedger {
+    TEXTURE_LEDGER.with_borrow(TextureLedger::clone)
 }
 
 struct ImguiState {
@@ -937,11 +962,6 @@ impl AppWindow {
 
             offscreen,
         })
-    }
-
-    fn release_gpu_resources(&mut self, release: &mut dyn FnMut(&mut Gpu)) {
-        let mut gpu = Gpu::new(&self.device, &self.queue, &mut self.imgui.renderer);
-        release(&mut gpu);
     }
 
     fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
@@ -1520,6 +1540,18 @@ struct Lifecycle {
     on_gpu_init: Option<GpuInitCallback>,
 }
 
+/// Run the owner's GPU shutdown hook with a handle on `renderer`, before
+/// the renderer drops, so that the owner can unregister its textures.
+pub(crate) fn release_renderer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut imgui_wgpu::WgpuRenderer,
+    release: &mut dyn FnMut(&mut Gpu),
+) {
+    let mut gpu = Gpu::new(device, queue, renderer);
+    release(&mut gpu);
+}
+
 struct App<F>
 where
     F: FnMut(&imgui::Ui, &mut Gpu) -> bool + 'static,
@@ -1571,7 +1603,12 @@ where
 
     fn drop_window(&mut self) {
         if let Some(mut window) = self.window.take() {
-            window.release_gpu_resources(&mut self.on_gpu_shutdown);
+            release_renderer(
+                &window.device,
+                &window.queue,
+                &mut window.imgui.renderer,
+                &mut self.on_gpu_shutdown,
+            );
         }
     }
 

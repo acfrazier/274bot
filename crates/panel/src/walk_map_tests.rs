@@ -90,6 +90,17 @@ fn ready_images_with_tile(
     identity: ImageIdentity,
     key: TileKey,
 ) -> (Arc<ReadyImages>, ReadyImageDir) {
+    ready_images_with_tiles(identity, &[key], &[])
+}
+
+/// A ready cache that lists `keys` (inside x 0..=1, z 0). Each key in
+/// `unreadable` stays listed, but its file is zeroed after the cache opens,
+/// so every read of it fails its receipt.
+fn ready_images_with_tiles(
+    identity: ImageIdentity,
+    keys: &[TileKey],
+    unreadable: &[TileKey],
+) -> (Arc<ReadyImages>, ReadyImageDir) {
     static NEXT_DIR: AtomicU64 = AtomicU64::new(1);
     let root = std::env::temp_dir().join(format!(
         "274bot-walk-map-{}-{}",
@@ -100,10 +111,23 @@ fn ready_images_with_tile(
     let directory = cache.image_dir(identity).expect("image directory");
     fs::create_dir_all(&directory).expect("image directory");
 
-    let png = encode_tile(key).expect("tile PNG");
-    let tile_path = directory.join(key.relative_path().expect("tile path"));
-    fs::create_dir_all(tile_path.parent().expect("tile parent")).expect("tile parent directory");
-    fs::write(&tile_path, &png).expect("tile file");
+    let mut receipts = Vec::new();
+    let mut files = Vec::new();
+    for &key in keys {
+        let png = encode_tile(key).expect("tile PNG");
+        let tile_path = directory.join(key.relative_path().expect("tile path"));
+        fs::create_dir_all(tile_path.parent().expect("tile parent"))
+            .expect("tile parent directory");
+        fs::write(&tile_path, &png).expect("tile file");
+        receipts.push(TileReceipt {
+            key,
+            payload: PayloadReceipt {
+                bytes: png.len() as u32,
+                sha256: Digest::of(&png),
+            },
+        });
+        files.push((key, tile_path, png.len()));
+    }
     let bounds = WorldBounds {
         west: 0,
         south: 0,
@@ -120,14 +144,7 @@ fn ready_images_with_tile(
         interior: TILE_INTERIOR,
         gutter: TILE_GUTTER,
         color: ColorFormat::Rgba8Unorm,
-        tiles: Rows::new(vec![TileReceipt {
-            key,
-            payload: PayloadReceipt {
-                bytes: png.len() as u32,
-                sha256: Digest::of(&png),
-            },
-        }])
-        .expect("tile rows"),
+        tiles: Rows::new(receipts).expect("tile rows"),
     };
     fs::write(
         directory.join("manifest.json"),
@@ -138,6 +155,11 @@ fn ready_images_with_tile(
         .open_images(identity)
         .expect("open image cache")
         .expect("ready images");
+    for (key, path, len) in files {
+        if unreadable.contains(&key) {
+            fs::write(&path, vec![0u8; len]).expect("unreadable tile file");
+        }
+    }
     (images, ReadyImageDir(root))
 }
 
@@ -1306,6 +1328,188 @@ fn running_visible_decode_does_not_read_its_png_again() {
     );
     map.release(None);
     wait_for_decode_service_capacity_zero();
+}
+
+#[test]
+fn unreadable_visible_tile_is_recorded_and_status_settles() {
+    let _work_service_guard = decode_service_test_lock();
+    wait_for_decode_service_capacity_zero();
+    let world = open_world(3, 3);
+    let visible = lod0(0, 0);
+    let ring = lod0(1, 0);
+    let (images, _directory) =
+        ready_images_with_tiles(image_identity_with(0xc3), &[visible, ring], &[visible]);
+    let mut map = WalkMapRenderer::new();
+    map.test_sync_decode = false;
+    map.note_open();
+    map.bind_ready_images(images);
+    let view = grid_view(0, 0, 1, 1, 0, 0);
+    let identity = map.identity();
+    let generation = map.generation();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut ring_requests = 0;
+    let mut was_requested = false;
+    let mut ready_turns = 0;
+
+    while Instant::now() < deadline {
+        async_test_turn(&mut map, &world, view);
+        map.update_status(view, layers_none(), None);
+        let now = map.decode.is_requested(generation, identity, ring);
+        if now && !was_requested {
+            ring_requests += 1;
+        }
+        was_requested = now;
+        if ring_requests > 1 {
+            break;
+        }
+        if map.phase() == MapPhase::Ready && map.slot_keys().contains(&ring) {
+            ready_turns += 1;
+            if ready_turns == 3 {
+                break;
+            }
+        } else {
+            ready_turns = 0;
+        }
+        std::thread::yield_now();
+    }
+
+    assert!(
+        ring_requests <= 1,
+        "an unreadable visible tile restarted the ring decode {ring_requests} times"
+    );
+    assert!(
+        map.slot_keys().contains(&visible),
+        "the unreadable visible tile must get a negative record"
+    );
+    assert!(
+        map.slot_keys().contains(&ring),
+        "the readable ring tile must load"
+    );
+    assert_eq!(
+        map.phase(),
+        MapPhase::Ready,
+        "status: {}",
+        map.status_line()
+    );
+    assert!(map.status_line().starts_with("ready"));
+    let read_count = map.tile_read_count;
+    for _ in 0..10 {
+        async_test_turn(&mut map, &world, view);
+        map.update_status(view, layers_none(), None);
+    }
+    assert_eq!(
+        map.tile_read_count, read_count,
+        "a settled view must not read the unreadable tile again"
+    );
+    assert!(!map.decode.is_busy(), "a settled view must not decode");
+    assert_eq!(map.phase(), MapPhase::Ready);
+    assert_eq!(map.tile_warn_count, 1, "one warning for the unreadable key");
+    map.release(None);
+    wait_for_decode_service_capacity_zero();
+}
+
+#[test]
+fn unreadable_ring_tile_is_not_read_again_in_a_settled_view() {
+    let world = open_world(3, 3);
+    let visible = lod0(0, 0);
+    let ring = lod0(1, 0);
+    let (images, _directory) =
+        ready_images_with_tiles(image_identity_with(0xc4), &[visible, ring], &[ring]);
+    let mut map = WalkMapRenderer::new();
+    map.note_open();
+    map.bind_ready_images(images);
+    let view = grid_view(0, 0, 1, 1, 0, 0);
+    for _ in 0..16 {
+        sync_test_view(&mut map, &world, view);
+    }
+    map.update_status(view, layers_none(), None);
+    assert!(
+        map.slot_keys().contains(&ring),
+        "the unreadable ring tile must get a negative record"
+    );
+    assert!(map.status_line().starts_with("ready"));
+    let settled = map.tile_read_count;
+    for _ in 0..10 {
+        sync_test_view(&mut map, &world, view);
+    }
+    assert_eq!(
+        map.tile_read_count - settled,
+        0,
+        "a settled view must not read any PNG again"
+    );
+    assert_eq!(map.tile_warn_count, 1, "one warning for the unreadable key");
+
+    // A plane change drops the record; coming back reads the key once more
+    // but does not warn for it again.
+    for _ in 0..4 {
+        sync_test_view(&mut map, &world, grid_view(0, 0, 1, 1, 1, 0));
+    }
+    for _ in 0..16 {
+        sync_test_view(&mut map, &world, view);
+    }
+    assert!(map.slot_keys().contains(&ring));
+    assert_eq!(
+        map.tile_warn_count, 1,
+        "a key that cannot be read is warned once per bound cache"
+    );
+}
+
+fn test_gpu_tex(device: &wgpu::Device, id: u64) -> super::GpuTex {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("274 walk map recycle test"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    super::GpuTex {
+        texture,
+        view,
+        tex_id: TextureId::new(id),
+    }
+}
+
+#[test]
+fn recycle_into_a_full_pool_unregisters_or_queues_the_texture() {
+    let Some((device, queue)) = headless_gpu() else {
+        return;
+    };
+    let mut pool: Vec<_> = (1..=TEXTURE_CAP as u64)
+        .map(|id| test_gpu_tex(&device, id))
+        .collect();
+    let mut pending = Vec::new();
+    let mut no_gpu: Option<&mut dyn FrameGpu> = None;
+    super::recycle_texture(
+        test_gpu_tex(&device, 100),
+        &mut pool,
+        &mut pending,
+        &mut no_gpu,
+    );
+    assert_eq!(pool.len(), TEXTURE_CAP);
+    assert_eq!(
+        pending,
+        vec![TextureId::new(100)],
+        "without a GPU handle the id must wait for the next GPU frame"
+    );
+
+    let mut recording = RecordingGpu::new(device.clone(), queue);
+    let mut gpu: Option<&mut dyn FrameGpu> = Some(&mut recording);
+    super::recycle_texture(
+        test_gpu_tex(&device, 101),
+        &mut pool,
+        &mut pending,
+        &mut gpu,
+    );
+    assert_eq!(pending, vec![TextureId::new(100)]);
+    assert_eq!(recording.unregistered, vec![101]);
 }
 
 #[test]

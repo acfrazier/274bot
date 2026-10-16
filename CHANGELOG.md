@@ -158,9 +158,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - WalkTo terrain tiles decode on a background worker using shared bounded work, rather
   than a separate map-decoding thread.
 - Panning the WalkTo map no longer redraws squares that you just scrolled past.
-- WalkTo treats visible squares without art as resolved, lets missing visible
-  tiles take priority over prefetch, and counts only visible terrain in its
-  loading status. Cache rebind and renderer shutdown unregister old textures.
 
 - The Fleet window's filter matches several words and world numbers, the
   same as the TUI's: every word must match a bot's name or status, and
