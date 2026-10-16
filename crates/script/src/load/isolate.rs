@@ -124,6 +124,24 @@ pub struct QueuedInteract {
     /// Push-time walk outcome sequence shared by this physical batch.
     pub observed_walk_outcome_seq: u64,
 }
+/// Wait facts that a guardian-held seat batch carries as two counters. The
+/// fold keeps one counter for each event kind, so a long hold does not add
+/// one row for each held tick.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct HeldWaitFacts {
+    /// `WaitEnqueued` rows folded during the hold.
+    pub enqueued: u64,
+    /// `WaitSettled` rows folded during the hold.
+    pub settled: u64,
+}
+
+impl HeldWaitFacts {
+    /// Number of folded wait rows.
+    pub fn rows(&self) -> u64 {
+        self.enqueued.saturating_add(self.settled)
+    }
+}
+
 #[derive(Debug)]
 pub struct QueuedSeatBatch {
     /// The isolate session-work generation that produced this batch.
@@ -134,6 +152,18 @@ pub struct QueuedSeatBatch {
     pub batch: crate::isolate_fb::DecodedSeatBatch,
     /// Local machine phases and terminals from this same producer turn.
     pub(crate) machine_events: Vec<crate::machine::MachineEvent>,
+    /// Wait facts folded out of `batch.reqs` while the seat was held.
+    pub held_waits: HeldWaitFacts,
+}
+
+impl QueuedSeatBatch {
+    /// Rows this batch carries, with each folded wait fact counted as one row.
+    pub fn rows(&self) -> usize {
+        self.batch
+            .reqs
+            .len()
+            .saturating_add(usize::try_from(self.held_waits.rows()).unwrap_or(usize::MAX))
+    }
 }
 
 impl std::borrow::Borrow<crate::shim::InteractReq> for QueuedInteract {
@@ -1715,6 +1745,7 @@ impl LoadIsolate {
                                     observed_walk_outcome_seq,
                                     batch,
                                     machine_events,
+                                    held_waits: HeldWaitFacts::default(),
                                 },
                             );
                         }

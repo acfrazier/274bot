@@ -1943,10 +1943,10 @@ export default class T extends LoopingBot {
 }
 "#;
 
-/// Post a snapshot at `here` for tick `n`, run the tick and wait for it,
-/// then feed the watchdog what the host drains after it.
+/// Post a snapshot at the held walk's tile for tick `n`, run the tick and
+/// wait for it. The host drain is left to the caller.
 #[cfg(feature = "load")]
-fn held_walk_tick(slot: &mut SlotScript, n: u64, now: Instant) {
+fn run_held_walk_tick(slot: &mut SlotScript, n: u64) -> (i32, i32, i32) {
     align_ready_test_seat(slot);
     let here = (2823, 3555, 0);
     let mut input = crate::isolate_fb::tests::empty_input(n);
@@ -1967,6 +1967,14 @@ fn held_walk_tick(slot: &mut SlotScript, n: u64, now: Instant) {
         .expect("load isolate")
         .probe("true")
         .unwrap();
+    here
+}
+
+/// Post a snapshot at `here` for tick `n`, run the tick and wait for it,
+/// then feed the watchdog what the host drains after it.
+#[cfg(feature = "load")]
+fn held_walk_tick(slot: &mut SlotScript, n: u64, now: Instant) {
+    let here = run_held_walk_tick(slot, n);
     // The owner seat dispatches watchdog facts during the host interaction
     // drain; none should escape toward the game driver.
     let (_, game_rows, _) = slot.drain_host_interacts();
@@ -2024,6 +2032,81 @@ fn a_walk_held_across_a_reconnect_is_still_a_parked_wait() {
         ),
         crate::watchdog::WatchdogAction::None,
         "no hung-loop warning while the held walk runs"
+    );
+    slot.stop();
+    wait_state(&mut slot, RunState::Idle);
+}
+
+/// A walk row that already left the isolate but is still in the slot's seat
+/// custody at a kept reconnect never reaches the host. The slot names that
+/// walk to the isolate, so the resumed wait requests a fresh walk in the new
+/// session.
+#[cfg(feature = "load")]
+#[test]
+fn a_walk_in_slot_custody_at_a_kept_reconnect_requests_a_fresh_walk() {
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(1207);
+    slot.start_load_with_loadouts(HELD_WALK.into(), LoadShape::CompatClass, vec![], &[])
+        .unwrap();
+    wait_state(&mut slot, RunState::Running);
+    allow_onstop_completion(&slot);
+    let is_walk = |req: &crate::shim::InteractReq| {
+        matches!(
+            req,
+            crate::shim::InteractReq::WalkNear {
+                x: 2820,
+                z: 3556,
+                ..
+            }
+        )
+    };
+    run_held_walk_tick(&mut slot, 1);
+    // Take the tick's batch out of the isolate into the slot's seat, but do
+    // not run the host drain that would deliver it.
+    let batches = slot.load.as_ref().unwrap().drain_seat_batches();
+    assert!(
+        batches
+            .iter()
+            .any(|queued| queued.batch.reqs.iter().any(|row| is_walk(&row.request))),
+        "the first tick emits the walk: {batches:?}"
+    );
+    for queued in batches {
+        slot.consume_seat_batch(
+            queued.batch,
+            queued.observed_walk_outcome_seq,
+            &queued.machine_events,
+        );
+    }
+    let in_custody = slot
+        .seat_interact_delivery
+        .iter()
+        .any(|queued| is_walk(&queued.req))
+        || slot
+            .seat
+            .as_ref()
+            .is_some_and(|seat| seat.undelivered_walk_ids().next().is_some());
+    assert!(
+        in_custody,
+        "the walk is in slot custody, not in the isolate"
+    );
+
+    assert!(slot.reconnect_session_work());
+    slot.on_is_up(true);
+    let (_, discarded, _) = slot.drain_host_interacts();
+    assert!(
+        !discarded.iter().any(|row| is_walk(&row.req)),
+        "the old-session walk is discarded: {discarded:?}"
+    );
+    let mut fresh = Vec::new();
+    for n in 2..=4 {
+        run_held_walk_tick(&mut slot, n);
+        let (_, rows, _) = slot.drain_host_interacts();
+        fresh.extend(rows.into_iter().filter(|row| is_walk(&row.req)));
+    }
+    assert_eq!(
+        fresh.len(),
+        1,
+        "the resumed wait requests exactly one fresh walk: {fresh:?}"
     );
     slot.stop();
     wait_state(&mut slot, RunState::Idle);

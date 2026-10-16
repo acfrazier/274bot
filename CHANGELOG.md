@@ -29,8 +29,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   do not block later actions. A kept reconnect discards old gameplay walks.
   A wait whose walk was not delivered requests a fresh walk through the new
   session's seat and still settles on arrival. During a guardian hold, all
-  walk terminals free their slots after resume. Pending batches stay bounded;
-  releases, controls and lifecycle facts remain queued.
+  walk terminals free their slots after resume. A held seat keeps one
+  pending batch with a fixed row limit: up to 16 walk releases, 17 Stop or
+  run-policy controls and 141 other lifecycle rows. Wait enqueue and settle
+  facts become two counters, and the watchdog applies their net count after
+  resume. Repeated rows, repeated progress stamps and rows above a limit are
+  discarded and counted.
 - A saturated script tick keeps its release and control rows ahead of gameplay.
   It dispatches the first 141 other rows in their original order, drops the
   excess, and reports one overflow diagnostic instead of failing the batch.

@@ -7654,6 +7654,36 @@ fn native_walk_receipt_frees_its_seat_release_before_next_tick() {
     slot.stop();
 }
 
+/// A native receipt that arrives during a guardian hold keeps its release
+/// slot reserved until the hold ends, then frees it on resume.
+#[cfg(feature = "test-hooks")]
+#[test]
+fn native_walk_receipt_during_guardian_hold_frees_its_slot_after_resume() {
+    let mut slot = mill_descent_slot();
+    let ladder = WorldTile {
+        x: 3165,
+        z: 3307,
+        level: 1,
+    };
+    slot_tick(&mut slot, &mill_frame(ladder, 1781), 10);
+    let walk = take_slot_walk(&mut slot);
+    assert_eq!(slot.seat_probe().unwrap().reserved_releases, 1);
+    slot.seat_guardian_hold(true);
+    arrive_slot_walk(&mut slot, &walk, 11);
+    assert_eq!(
+        slot.seat_probe().unwrap().reserved_releases,
+        1,
+        "the guardian hold defers the native walk terminal"
+    );
+    slot.seat_guardian_hold(false);
+    assert_eq!(
+        slot.seat_probe().unwrap().reserved_releases,
+        0,
+        "resume applies the deferred native walk terminal"
+    );
+    slot.stop();
+}
+
 /// The loc ids of every loc op the slot queued this tick.
 fn slot_loc_ops(slot: &mut crate::slot::SlotScript) -> Vec<Option<i32>> {
     std::iter::from_fn(|| slot.take_native_action())

@@ -934,11 +934,18 @@ fn run_world_switch_restart_cell() {
         |live| live.play.script_state(&live.account) == script::RunState::Idle,
     );
     assert!(live.play.script_seat_probe(&live.account).is_none());
-    // The first isolate may have posted its reset terminal after the
-    // world boundary. Consume that generation's log before starting another
-    // instance so an old aborted result cannot masquerade as fresh work.
+    // Idle is the product's signal that the first isolate retired: the slot
+    // stages that isolate's final log lines, including the reset terminal of
+    // its hold operation, before it reports Idle (`SlotScript::
+    // observe_load_lifecycle`). The log read does not block, though: while
+    // the slot pump holds the slot lock it returns nothing and keeps the
+    // lines for a later read (`Play::script_take_pending_logs`). Old lines
+    // can therefore arrive together with the fresh instance's lines, but
+    // always before them. The fresh instance logs exactly one start line;
+    // its result is the result after that line.
     let mut old_run_logs = Vec::new();
     take_logs(&live, &mut old_run_logs);
+    let old_lines_at_idle = old_run_logs.len();
 
     start_load(&live, HOLD_SOURCE);
     let second_generation = live
@@ -947,20 +954,26 @@ fn run_world_switch_restart_cell() {
         .expect("fresh Load generation");
     assert_ne!(first_generation, second_generation);
     let mut restarted_logs = Vec::new();
+    let fresh_start = |logs: &[String]| {
+        logs.iter()
+            .position(|line| line.starts_with("seat-hold-start:"))
+    };
     wait_until(
         &live,
         "post-switch fresh hold result",
         Duration::from_secs(180),
         |live| {
             take_logs(live, &mut restarted_logs);
-            restarted_logs
-                .iter()
-                .any(|line| line.starts_with("seat-hold-start:"))
-                && restarted_logs
+            fresh_start(&restarted_logs).is_some_and(|start| {
+                restarted_logs[start..]
                     .iter()
                     .any(|line| line.starts_with("seat-hold-result:"))
+            })
         },
     );
+    let start = fresh_start(&restarted_logs).expect("fresh start line");
+    let old_lines_after_idle: Vec<String> = restarted_logs.drain(..start).collect();
+    old_run_logs.extend(old_lines_after_idle.iter().cloned());
     let restarted = logged(&restarted_logs, "seat-hold-result:");
     assert_eq!(restarted["outcome"]["kind"], "done");
     assert_eq!(restarted["after"], restarted["dest"]);
@@ -986,6 +999,9 @@ fn run_world_switch_restart_cell() {
             "fresh_result":restarted,
             "fresh_seat":seat_json(fresh),
             "seat_after_second_stop":null,
+            "old_generation_lines_at_idle":old_lines_at_idle,
+            "old_generation_lines_after_idle":old_lines_after_idle,
+            "old_generation_logs":old_run_logs,
         }),
     );
 }

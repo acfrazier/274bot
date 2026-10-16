@@ -97,6 +97,16 @@ fn seat_walk_id(req: &crate::shim::InteractReq, owner: Option<RequestId>) -> Opt
     }
 }
 
+/// Most distinct Stop and run-policy rows that one guardian-held batch keeps:
+/// one Stop for each live operation and one policy row.
+#[cfg(feature = "load")]
+const HELD_CONTROL_ROWS: usize =
+    api::script_contract::MAX_LIVE + api::script_contract::MAX_RUN_POLICY;
+/// Most non-wait lifecycle rows that one guardian-held batch keeps: the
+/// gameplay/lifecycle capacity of one encoded seat batch.
+#[cfg(feature = "load")]
+const HELD_LIFECYCLE_ROWS: usize = api::script_contract::MAX_ENCODED_GAMEPLAY;
+
 fn seat_interact_class(
     req: &crate::shim::InteractReq,
     owner: Option<RequestId>,
@@ -2788,30 +2798,29 @@ impl SlotScript {
         };
         // The isolate repeats unacknowledged starts, cancels, mirror revokes,
         // machine events and terminal watermarks. The newest batch supersedes
-        // those pages. Distinct interaction controls and lifecycle rows do not
-        // get that treatment: an older Stop or wait fact may not recur.
+        // those pages. Rows are different: the fold carries each release,
+        // control and lifecycle row once, keeps wait facts as two counters,
+        // and counts every row that it does not carry.
         let same_row = |a: &crate::isolate_fb::SeatInteractDecoded,
                         b: &crate::isolate_fb::SeatInteractDecoded| {
             a.lineage == b.lineage && a.mirror_owner == b.mirror_owner && a.request == b.request
         };
         let mut releases = Vec::with_capacity(api::script_contract::MAX_WALK_RELEASES);
-        let mut lifecycle = Vec::new();
-        let mut batch_lifecycle = Vec::new();
-        let mut prior_lifecycle_start = 0;
-        let mut prior_lifecycle_len = 0;
-        let mut controls = Vec::new();
+        let mut lifecycle: Vec<crate::isolate_fb::SeatInteractDecoded> = Vec::new();
+        let mut controls: Vec<crate::isolate_fb::SeatInteractDecoded> = Vec::new();
+        let mut waits = crate::load::HeldWaitFacts::default();
         let mut dropped = 0;
         for batch in batches.iter_mut().chain(std::iter::once(&mut latest)) {
-            batch_lifecycle.clear();
+            let held = std::mem::take(&mut batch.held_waits);
+            waits.enqueued = waits.enqueued.saturating_add(held.enqueued);
+            waits.settled = waits.settled.saturating_add(held.settled);
             for row in batch.batch.reqs.drain(..) {
                 match &row.request {
                     crate::shim::InteractReq::AbortWalk { request_id } => {
                         if releases.iter().any(|existing: &crate::isolate_fb::SeatInteractDecoded| {
                             matches!(&existing.request, crate::shim::InteractReq::AbortWalk { request_id: id } if id == request_id)
-                        }) {
-                            continue;
-                        }
-                        if releases.len() == api::script_contract::MAX_WALK_RELEASES {
+                        }) || releases.len() == api::script_contract::MAX_WALK_RELEASES
+                        {
                             dropped += 1;
                         } else {
                             releases.push(row);
@@ -2820,32 +2829,40 @@ impl SlotScript {
                     crate::shim::InteractReq::GatherStop { .. }
                     | crate::shim::InteractReq::CombatStop { .. }
                     | crate::shim::InteractReq::RunPolicyOverride { .. } => {
-                        if !controls.iter().any(|existing| same_row(existing, &row)) {
+                        if controls.iter().any(|existing| same_row(existing, &row))
+                            || controls.len() == HELD_CONTROL_ROWS
+                        {
+                            dropped += 1;
+                        } else {
                             controls.push(row);
                         }
+                    }
+                    crate::shim::InteractReq::WaitEnqueued => {
+                        waits.enqueued = waits.enqueued.saturating_add(1);
+                    }
+                    crate::shim::InteractReq::WaitSettled => {
+                        waits.settled = waits.settled.saturating_add(1);
                     }
                     _ if seat_interact_class(&row.request, row.lineage.or(row.mirror_owner)).0
                         == api::script_contract::EmissionClass::Lifecycle =>
                     {
-                        batch_lifecycle.push(row);
+                        // Scheduler and progress stamps apply at the host's
+                        // frame time, so a second equal stamp adds nothing.
+                        let repeated_stamp = matches!(
+                            row.request,
+                            crate::shim::InteractReq::NoteProgress
+                                | crate::shim::InteractReq::LoopSettled
+                        ) && lifecycle.iter().any(|existing| same_row(existing, &row));
+                        if repeated_stamp || lifecycle.len() == HELD_LIFECYCLE_ROWS {
+                            dropped += 1;
+                        } else {
+                            lifecycle.push(row);
+                        }
                     }
-                    _ => {}
+                    // Gameplay normally leaves before the fold. A row that
+                    // still reaches it is discarded here, and counted.
+                    _ => dropped += 1,
                 }
-            }
-            // A held producer may re-state the same page every tick. Keep
-            // duplicates *within* one page (two waits mean two events), but
-            // fold an identical repeated page instead of growing by tick.
-            if !batch_lifecycle.is_empty()
-                && (prior_lifecycle_len != batch_lifecycle.len()
-                    || !lifecycle
-                        [prior_lifecycle_start..prior_lifecycle_start + prior_lifecycle_len]
-                        .iter()
-                        .zip(&batch_lifecycle)
-                        .all(|(a, b)| same_row(a, b)))
-            {
-                prior_lifecycle_start = lifecycle.len();
-                prior_lifecycle_len = batch_lifecycle.len();
-                lifecycle.append(&mut batch_lifecycle);
             }
         }
         if let Some(seat) = &mut self.seat {
@@ -2854,7 +2871,33 @@ impl SlotScript {
         releases.extend(lifecycle);
         releases.extend(controls);
         latest.batch.reqs = releases;
+        latest.held_waits = waits;
         vec![latest]
+    }
+
+    /// Hand a held batch's folded wait counters to the watchdog lane before
+    /// the seat consumes the batch. Wait facts carry no authority and never
+    /// dispatch, so they skip the seat's row limit, as `dispatch_seat_rows`
+    /// routes them. The watchdog adds one for each enqueue and subtracts one
+    /// for each settle, so matched pairs cancel; one pair still stamps the
+    /// scheduler. The host gets the net count, not one row for each tick.
+    #[cfg(feature = "load")]
+    fn release_held_wait_facts(&mut self, batch: &mut crate::load::QueuedSeatBatch) {
+        let waits = std::mem::take(&mut batch.held_waits);
+        let matched = waits.enqueued.min(waits.settled);
+        let stamp = u64::from(matched > 0);
+        let enqueued = waits.enqueued - matched + stamp;
+        let settled = waits.settled - matched + stamp;
+        self.seat_lifecycle
+            .reserve(usize::try_from(enqueued + settled).unwrap_or(usize::MAX));
+        for _ in 0..enqueued {
+            self.seat_lifecycle
+                .push(crate::shim::InteractReq::WaitEnqueued);
+        }
+        for _ in 0..settled {
+            self.seat_lifecycle
+                .push(crate::shim::InteractReq::WaitSettled);
+        }
     }
 
     /// A Paused guardian frame still receives isolate batches. Fold their
@@ -2885,7 +2928,7 @@ impl SlotScript {
                 self.seat
                     .as_mut()
                     .expect("held seat")
-                    .count_dropped(queued.batch.reqs.len());
+                    .count_dropped(queued.rows());
                 continue;
             }
             let before = queued.batch.reqs.len();
@@ -2935,7 +2978,7 @@ impl SlotScript {
                 self.pending_logs
                     .push("dropped stale seat batch generation".into());
                 if let Some(seat) = self.seat.as_mut() {
-                    seat.count_dropped(queued.batch.reqs.len());
+                    seat.count_dropped(queued.rows());
                 }
                 continue;
             }
@@ -2950,7 +2993,7 @@ impl SlotScript {
                 self.pending_logs
                     .push("dropped malformed seat batch run stamp".into());
                 if let Some(seat) = self.seat.as_mut() {
-                    seat.count_dropped(queued.batch.reqs.len());
+                    seat.count_dropped(queued.rows());
                 }
                 continue;
             }
@@ -2971,8 +3014,9 @@ impl SlotScript {
             }
             if self.watchdog.holds_script_actions() {
                 self.seat_held_tick();
-                let dropped = queued.batch.reqs.len();
+                let dropped = queued.rows();
                 queued.batch.reqs.clear();
+                queued.held_waits = crate::load::HeldWaitFacts::default();
                 self.seat.as_mut().expect("armed").count_dropped(dropped);
                 carried.push(queued);
                 continue;
@@ -2981,6 +3025,7 @@ impl SlotScript {
                 carried.push(queued);
                 continue;
             }
+            self.release_held_wait_facts(&mut queued);
             self.consume_seat_batch(
                 queued.batch,
                 queued.observed_walk_outcome_seq,
