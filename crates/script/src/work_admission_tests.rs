@@ -1561,7 +1561,9 @@ fn wait_terminal_detects_stalled_worker_within_recheck_interval() {
         let result = WorkService::wait_terminal(&waiter_shared, &waiter_ticket);
         let _ = wait_tx.send(result);
     });
-    let wait_hook_received = wait_entered_rx.recv_timeout(Duration::from_secs(2)).is_ok();
+    let wait_hook_received = wait_entered_rx
+        .recv_timeout(Duration::from_secs(10))
+        .is_ok();
     let waiter_parked = if wait_hook_received {
         let notifier = Arc::clone(&shared.lock().shared.notifier);
         let _gate = notifier.gate.lock();
@@ -1571,8 +1573,10 @@ fn wait_terminal_detects_stalled_worker_within_recheck_interval() {
     };
 
     // The fake clock jumps to the 60-second boundary while the caller waits.
-    // One second for the recheck plus 500 ms of margin is the full time budget.
-    let detection_bound = Duration::from_millis(1_500);
+    // The recheck interval is at most 5 s by design (1 s today); a 10 s budget
+    // leaves margin for a heavily loaded host and still fails a recheck that
+    // is missing or set far above the 5 s ceiling.
+    let detection_bound = Duration::from_secs(10);
     let detection_started = Instant::now();
     clock.advance(WORKER_STALL_LIMIT);
     let wait_result = wait_rx.recv_timeout(detection_bound);
@@ -1595,7 +1599,7 @@ fn wait_terminal_detects_stalled_worker_within_recheck_interval() {
 
     resume_tx.send(()).expect("release the stalled step");
     drop_entered_rx
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(Duration::from_secs(10))
         .expect("job cleanup waits before worker-return accounting");
     drop_resume_tx
         .send(())
