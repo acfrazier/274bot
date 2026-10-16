@@ -8,10 +8,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 ### Scripts
 
 - Script operations now share a bounded request seat across native cards and
-  JavaScript. A new top-level operation while a Gatherer, combat, quest
-  progress or Hunt session is live reports **busy**; a child started from that
-  session's hook can still run. A fifth concurrent independent operation
-  reports busy instead of silently losing its gameplay actions.
+  JavaScript. A second top-level Gatherer, combat, quest progress or Hunt
+  Session reports **busy** while one Session is live. Capability roots started
+  before a Session may coexist with it; a new Capability root while a Session
+  is live reports busy, including under Hunt. A child started from a Session
+  hook can still run. A fifth concurrent independent operation reports busy
+  instead of silently losing its gameplay actions.
 - Stops and walk releases keep their place through a random-event hold and
   bypass a session's gameplay foreground. Gameplay emitted while the guardian
   holds the script is discarded, never replayed after the event. Actions
@@ -20,6 +22,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - A saturated script tick keeps its release and control rows ahead of gameplay.
   It dispatches the first 141 other rows in their original order, drops the
   excess, and reports one overflow diagnostic instead of failing the batch.
+- Repeated JavaScript progress and interaction calls now append to the guarded
+  queue without resetting a nonempty batch. The seat still bounds each tick.
+- Async walk wait and progress facts admitted by the seat reach the watchdog
+  rather than the game-action dispatcher, including after a kept reconnect.
 - Per-slot diagnostics expose dropped seat actions and late control copies as
   read-only counters. Duplicate acknowledgements count without noisy error logs.
 

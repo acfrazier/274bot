@@ -123,9 +123,10 @@ fn frame(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64, hold: bool) 
 }
 
 /// §28.7 case 8: both Capability/Session start orders go through the real
-/// SlotScript batch consumer. Gather, Combat, and Progress own foreground;
-/// Hunt does not. A second Session root is Busy in either order. This proves
-/// the Rust slot adapter, not Hunt's JavaScript loop/listener context.
+/// SlotScript batch consumer. A Capability root admitted first can coexist
+/// with the later Session; a Session-first Capability root is Busy, including
+/// under Hunt. Gather, Combat, and Progress own foreground; Hunt does not.
+/// A second Session root is Busy in either order.
 #[test]
 fn fixture_08_slot_family_foreground_and_reverse_order_busy() {
     for (family_index, family) in [
@@ -188,6 +189,26 @@ fn fixture_08_slot_family_foreground_and_reverse_order_busy() {
                     .map(|result| result.outcome),
                 Some(SeatTerminal::Refused(api::script_contract::Refusal::Busy))
             ));
+            if session_first {
+                assert!(matches!(
+                    slot.seat
+                        .as_ref()
+                        .unwrap()
+                        .results()
+                        .iter()
+                        .find(|result| result.id == capability_id)
+                        .map(|result| result.outcome),
+                    Some(SeatTerminal::Refused(api::script_contract::Refusal::Busy))
+                ));
+            } else {
+                assert!(slot
+                    .seat
+                    .as_ref()
+                    .unwrap()
+                    .live()
+                    .iter()
+                    .any(|entry| entry.id == capability_id));
+            }
 
             match family {
                 NativeKind::Gather => assert_eq!(
@@ -213,7 +234,7 @@ fn fixture_08_slot_family_foreground_and_reverse_order_busy() {
             }
             assert_eq!(slot.api_owns_foreground(), family != NativeKind::Hunt);
             let delivered = slot.drain_interacts();
-            if family == NativeKind::Hunt {
+            if family == NativeKind::Hunt && !session_first {
                 assert_eq!(delivered, [gameplay]);
                 assert_eq!(slot.seat.as_ref().unwrap().dropped(), 0);
             } else {

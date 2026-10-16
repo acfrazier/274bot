@@ -902,7 +902,7 @@ const interactSetPrototypeOf = Reflect.setPrototypeOf;
 const interactIsArray = Array.isArray;
 const interactArrayPrototype = Array.prototype;
 const InteractProxy = Proxy;
-const interactProxies = new WeakSet();
+const interactTargets = new WeakMap();
 function interactionDataField(value, key) {
   if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
     return undefined;
@@ -922,7 +922,7 @@ function includesValue(values, value) {
 }
 function instrumentInteractQueue(rows) {
   if (!interactIsArray(rows)) return rows;
-  if (interactProxies.has(rows)) return rows;
+  if (interactTargets.has(rows)) return rows;
   if (!interactSetPrototypeOf(rows, null)) throw new TypeError('interact queue setup failed');
   let pushActive = false;
   let admittedGameplay = 0;
@@ -1007,10 +1007,12 @@ function instrumentInteractQueue(rows) {
     defineProperty() { throw new TypeError('interact queue is append-only'); },
     setPrototypeOf() { throw new TypeError('interact queue prototype is fixed'); },
   });
-  interactProxies.add(proxy);
+  interactTargets.set(proxy, rows);
   return proxy;
 }
+let instrumentedHost;
 function host() {
+  if (instrumentedHost) return instrumentedHost;
   const h = globalThis.__rs2b0t_host || (globalThis.__rs2b0t_host = { interact: [], log: [] });
   let interact = instrumentInteractQueue(h.interact);
   Object.defineProperty(h, 'interact', {
@@ -1024,6 +1026,18 @@ function host() {
       interact = instrumentInteractQueue([]);
     },
   });
+  // serde_v8 cannot deserialize a Proxy as an array. Take the real,
+  // instrumented backing array only after detaching it from the host queue.
+  Object.defineProperty(globalThis, '__rs2b0t_take_interact_rows', {
+    value() {
+      const rows = interactTargets.get(interact) ?? interact;
+      h.interact = [];
+      return rows;
+    },
+    writable: false,
+    configurable: false,
+  });
+  instrumentedHost = h;
   return h;
 }
 host();
@@ -1123,8 +1137,8 @@ function enqueueRequest(op) {
     delete row.to;
   }
   const h = host();
-  h.interact = h.interact || [];
-  h.interact.push(row);
+  const interact = h.interact ?? (h.interact = []);
+  interact.push(row);
 }
 const api = {
   get tick() { return host().tick || 0; },
@@ -1633,8 +1647,8 @@ api.bankRun = (site, opts, hooks) => huntRun('hunt-bank', site && { ...site, ...
 function recordSettlement(generation) {
   if (generation !== lifecycleGeneration) return;
   const h = host();
-  h.interact = h.interact || [];
-  h.interact.push({ op: 'loop-settled' });
+  const interact = h.interact ?? (h.interact = []);
+  interact.push({ op: 'loop-settled' });
 }
 globalThis.__rs_tick = (n) => {
   api.tick = n;

@@ -296,6 +296,10 @@ pub struct SlotScript {
     seat_native_delivery: VecDeque<crate::native::HostAction>,
     #[cfg(feature = "load")]
     seat_interact_delivery: Vec<crate::load::QueuedInteract>,
+    /// Watchdog facts already filtered and dispatched by the owner seat,
+    /// consumed by the host's lifecycle drain rather than the game driver.
+    #[cfg(feature = "load")]
+    seat_lifecycle: Vec<crate::shim::InteractReq>,
     #[cfg(feature = "load")]
     api: Option<Box<api_seat::ApiSeat>>,
     retained: Option<Arc<std::sync::Mutex<RetainedMemory>>>,
@@ -437,6 +441,8 @@ impl SlotScript {
             seat_native_delivery: VecDeque::new(),
             #[cfg(feature = "load")]
             seat_interact_delivery: Vec::new(),
+            #[cfg(feature = "load")]
+            seat_lifecycle: Vec::new(),
             #[cfg(feature = "load")]
             api: None,
             retained: None,
@@ -680,6 +686,8 @@ impl SlotScript {
         self.seat_native_delivery.clear();
         #[cfg(feature = "load")]
         self.seat_interact_delivery.clear();
+        #[cfg(feature = "load")]
+        self.seat_lifecycle.clear();
     }
 
     fn arm_compiled_seat(&mut self, run: api::selected::RunKey, card: crate::CompiledId) {
@@ -1335,6 +1343,8 @@ impl SlotScript {
         #[cfg(feature = "load")]
         self.seat_interact_delivery.clear();
         #[cfg(feature = "load")]
+        self.seat_lifecycle.clear();
+        #[cfg(feature = "load")]
         self.teardown_api(reason);
         self.native_runtime.revoke();
         self.retained = None;
@@ -1466,6 +1476,8 @@ impl SlotScript {
             #[cfg(feature = "load")]
             self.seat_interact_delivery.clear();
         }
+        #[cfg(feature = "load")]
+        self.seat_lifecycle.clear();
         self.seat_fence.revoke();
         #[cfg(feature = "load")]
         self.api_session_boundary(reconnect);
@@ -2177,6 +2189,20 @@ impl SlotScript {
             match row {
                 SeatEffect::Native(action) => self.seat_native_delivery.push_back(action),
                 #[cfg(feature = "load")]
+                SeatEffect::Interact(interact)
+                    if matches!(
+                        &interact.req,
+                        crate::shim::InteractReq::NoteProgress
+                            | crate::shim::InteractReq::LoopSettled
+                            | crate::shim::InteractReq::WaitEnqueued
+                            | crate::shim::InteractReq::WaitSettled
+                            | crate::shim::InteractReq::RecoveryAnchor { .. }
+                            | crate::shim::InteractReq::RecoveryAnchorNone
+                    ) =>
+                {
+                    self.seat_lifecycle.push(interact.req);
+                }
+                #[cfg(feature = "load")]
                 SeatEffect::Interact(interact) => self.seat_interact_delivery.push(interact),
             }
         }
@@ -2792,11 +2818,13 @@ impl SlotScript {
     }
 
     #[cfg(feature = "load")]
-    pub fn drain_lifecycle(&self) -> Vec<crate::shim::InteractReq> {
-        match &self.load {
-            Some(isolate) => isolate.drain_lifecycle(),
-            None => Vec::new(),
-        }
+    pub fn drain_lifecycle(&mut self) -> Vec<crate::shim::InteractReq> {
+        let mut facts = self
+            .load
+            .as_ref()
+            .map_or_else(Vec::new, LoadIsolate::drain_lifecycle);
+        facts.extend(self.seat_lifecycle.drain(..));
+        facts
     }
 
     #[cfg(feature = "load")]

@@ -1007,6 +1007,35 @@ fn machine_tick(iso: &LoadIsolate, n: u64) {
     let _ = iso.probe("true");
 }
 
+#[test]
+fn unbound_v2_guarded_queue_delivers_held_request() {
+    let source = r#"export const apiVersion = 2;
+export function tick(api) {
+  api.request({ op: 'held', name: 'Bones', action: 'Bury' });
+}"#;
+    let iso = LoadIsolate::spawn(source.into(), LoadShape::NativeTick, vec![]).unwrap();
+    wait_ready(&iso);
+    let snapshot = crate::isolate_fb::tests::empty_input(1);
+    iso.post_snapshot(crate::isolate_fb::encode_snapshot_with_native(
+        &snapshot,
+        crate::isolate_fb::NativeFactsInput::default(),
+    ));
+    machine_tick(&iso, 1);
+    let reqs = iso.drain_interacts();
+    assert!(
+        reqs.iter().any(|req| matches!(
+            req,
+            crate::shim::InteractReq::Held { name, action, .. }
+                if name == "Bones" && action == "Bury"
+        )),
+        "unbound native-v2 guarded queue lost Held request: {reqs:?}; logs={:?}; outcomes={:?}; queue={:?}",
+        iso.drain_logs(),
+        iso.drain_tick_outcomes(),
+        iso.probe("globalThis.__rs2b0t_host?.interact?.length")
+    );
+    iso.join();
+}
+
 fn if_button(id: i32) -> crate::shim::InteractReq {
     crate::shim::InteractReq::IfButton { component_id: id }
 }
@@ -1799,7 +1828,12 @@ fn v2_journal_read_hides_paint_until_observed_close_and_reset() {
     let lines = ["@dre@The Cook's Quest".to_owned()];
     post(2, 77, &lines);
     assert_eq!(iso.drain_interacts(), vec![InteractReq::CloseModal]);
-    assert!(iso.compat_journal_paint_hidden(Instant::now()));
+    assert!(
+        iso.compat_journal_paint_hidden(Instant::now()),
+        "paint lease was revoked after CloseModal; tick errors: {:?}; logs: {:?}",
+        iso.tick_errors.lock().unwrap(),
+        iso.drain_logs()
+    );
     post(3, 77, &lines);
     assert!(iso.drain_interacts().is_empty());
     assert!(iso.compat_journal_paint_hidden(Instant::now()));
@@ -1853,13 +1887,27 @@ fn post_execution_seat_page<'a>(
 #[test]
 fn v2_execution_seat_start_waits_for_live_ack_and_repeats_terminal_watermark() {
     use crate::api_progress::ProgressPage;
-    use crate::isolate_fb::{SeatLiveDetails, SeatStartArgs};
+    use crate::isolate_fb::{SeatInteractDecoded, SeatLiveDetails, SeatStartArgs};
     use crate::machine::MachineEventKind;
     use crate::native::request::NativeKind;
     use crate::native::{seat::SeatTerminal, NativePhase};
     use api::identity::ExecutionId;
     use api::script_contract::ChildOrigin;
     use api::selected::RunKey;
+
+    fn assert_root_loop_settled(rows: &[SeatInteractDecoded]) {
+        assert!(
+            matches!(
+                rows,
+                [SeatInteractDecoded {
+                    lineage: None,
+                    mirror_owner: None,
+                    request: crate::shim::InteractReq::LoopSettled,
+                }]
+            ),
+            "a synchronous v2 tick reports one root loop settlement: {rows:?}"
+        );
+    }
 
     let source = r#"
 export const apiVersion = 2;
@@ -1914,7 +1962,19 @@ export function tick(api) {
     ));
     assert_eq!((start.run, start.session), (28, 0));
     assert_eq!(pending[0].batch.consumed_terminal_seq, 0);
-    assert!(pending[0].batch.reqs.is_empty());
+    assert_eq!(
+        pending[0].batch.reqs.len(),
+        1,
+        "the pending Promise parks exactly one watchdog wait"
+    );
+    assert!(matches!(
+        &pending[0].batch.reqs[0],
+        crate::isolate_fb::SeatInteractDecoded {
+            lineage: None,
+            mirror_owner: None,
+            request: crate::shim::InteractReq::WaitEnqueued,
+        }
+    ));
     assert!(pending[0].machine_events.is_empty());
     assert_eq!(isolate.probe("globalThis.__questSettles").unwrap(), 0);
 
@@ -1933,7 +1993,7 @@ export function tick(api) {
     assert_eq!(retry.len(), 1);
     assert_eq!(retry[0].batch.starts.len(), 1);
     assert_eq!(retry[0].batch.starts[0].id, id);
-    assert!(retry[0].batch.reqs.is_empty());
+    assert_root_loop_settled(&retry[0].batch.reqs);
     assert_eq!(isolate.probe("globalThis.__questSettles").unwrap(), 0);
 
     let live = [crate::native::seat::SeatEntry {
@@ -2037,7 +2097,7 @@ export function tick(api) {
         );
         assert_eq!(receipt[0].batch.consumed_terminal_seq, 1);
         assert!(receipt[0].batch.starts.is_empty());
-        assert!(receipt[0].batch.reqs.is_empty());
+        assert_root_loop_settled(&receipt[0].batch.reqs);
         assert!(receipt[0].machine_events.is_empty());
     }
     assert_eq!(isolate.probe("globalThis.__questSettles").unwrap(), 1);
@@ -2052,10 +2112,19 @@ export function tick(api) {
         Some(&refused),
     );
     assert!(isolate.drain_interacts_stamped().is_empty());
-    assert!(
-        isolate.drain_seat_batches().is_empty(),
-        "the terminal watermark clears after its retained result disappears"
+    let after_retirement = isolate.drain_seat_batches();
+    assert_eq!(
+        after_retirement.len(),
+        1,
+        "the synchronous tick still reports its root loop settlement"
     );
+    assert_eq!(
+        after_retirement[0].batch.consumed_terminal_seq,
+        1,
+        "the highest consumed sequence remains monotonic on later lifecycle rows"
+    );
+    assert!(after_retirement[0].batch.starts.is_empty());
+    assert_root_loop_settled(&after_retirement[0].batch.reqs);
     isolate.join();
 }
 
@@ -2105,7 +2174,13 @@ export function tick() {
         "execution-owned rows must not leak to the legacy interact drain"
     );
     let batches = isolate.drain_seat_batches();
-    assert_eq!(batches.len(), 1, "one owner batch carries the tick output");
+    assert_eq!(
+        batches.len(),
+        1,
+        "one owner batch carries the tick output; tick errors: {:?}; logs: {:?}",
+        isolate.tick_errors.lock().unwrap(),
+        isolate.drain_logs()
+    );
     let requests = &batches[0].batch.reqs;
     assert_eq!(requests.len(), MAX_SEAT_GAMEPLAY_ROWS + 2);
     assert!(matches!(
@@ -2179,7 +2254,13 @@ export function tick() {
         None,
     );
     let first = isolate.drain_seat_batches();
-    assert_eq!(first.len(), 1);
+    assert_eq!(
+        first.len(),
+        1,
+        "initial parked wait is carried on the owner lane; tick errors: {:?}; logs: {:?}",
+        isolate.tick_errors.lock().unwrap(),
+        isolate.drain_logs()
+    );
     assert_eq!(
         first[0]
             .batch
