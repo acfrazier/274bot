@@ -137,6 +137,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   Added, removed, or changed manifests need an operator commit to update the pin.
   This replaces interpretation of vendored workspace membership and inheritance.
   Fork pointer changes with byte-identical manifests need no pin update.
+  The check now refuses `git` dependency sources in product manifests.
+  Only root patch and replacement entries that protected policy lists may
+  appear in the product root. Other entries need an operator commit first.
   The check covers default-feature and optional activation for every protected
   package, even packages outside named configurations.
   Baseline updates use the branch after it merges current `dev`.

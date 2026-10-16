@@ -38,6 +38,9 @@ Reward hacking is handled where it has been caught in practice:
    - The digest is identity data for a protected input, like policy data, not bookkeeping.
    - This replaces interpretation of the client workspace's members, exclusions, globs, and inheritance. The pinned set has no `workspace = true` dependencies.
    - Generate the replacement with `python3 -B vendor_manifests.py --emit-pin /path/to/274bot > vendor-manifests.json` in the arch repository.
+   - The checker refuses a `git` key in any dependency, target, workspace-dependency, `[patch.*]`, or `[replace]` entry. The refusal names the manifest file and the entry. The checker never reads a git crate's manifest.
+   - Only root `[patch.*]` and `[replace]` entries listed by name and path in `policy.toml` `[root_patches]` may appear in the product root. The list now holds only `dear-imgui-wgpu`. Any other entry needs an operator commit that adds it.
+   - Registry dependencies stay allowed. A crates.io crate cannot name a local path package without a root patch, and the root patch list covers that route.
 2. **The product repo holds no copy of the checker.** `tools/architecture/` keeps a small runner, `run.sh`, and the fine-grained data files. The runner fetches `274bot-arch` `main` (public, read-only) into a cache and runs it against a tree. Agents and Main use the same runner locally.
 3. **CI** has one `architecture` job on pushes and PRs:
    - it checks out the candidate;
@@ -75,3 +78,4 @@ Reward hacking is handled where it has been caught in practice:
   The GC-race fix dies with `trusted_gate.py`.
 - The checker still refuses ASCII case variants of `.cargo` configuration names, at every depth and through symlinks.
 - Unicode look-alike names are outside that refusal because Cargo on Linux does not read them.
+- A product build script can rewrite a vendored manifest on disk during a CI job, between steps. The checker reads committed manifests only. A new `build.rs` needs an ownership row, so a reviewer sees it.
