@@ -411,7 +411,10 @@ impl Vault {
 
 // Change batches are short-lived and small; boxing `Upsert` would add an
 // allocation to every profile save only to shrink this transient enum.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Upsert is transient and small; boxing it would allocate on every profile save"
+)]
 /// One profile change for [`VaultStore::commit`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum VaultChange {
@@ -1015,17 +1018,18 @@ mod tests {
     fn of_concurrent_creators_exactly_one_vault_is_made_and_it_opens_with_its_passphrase() {
         let path = tmp_path("create-race.vault");
         let start = std::sync::Arc::new(std::sync::Barrier::new(4));
-        let creators: Vec<_> = (0..4)
-            .map(|i| {
-                let (path, start) = (path.clone(), start.clone());
-                std::thread::spawn(move || {
-                    let passphrase = format!("passphrase-number-{i}");
-                    start.wait();
-                    Vault::create(&path, &passphrase).map(|_| passphrase)
-                })
-            })
-            .collect();
-        let outcomes: Vec<_> = creators.into_iter().map(|c| c.join().unwrap()).collect();
+        // Spawn every creator before joining any: the barrier needs all four
+        // racers waiting at once, so a fused spawn-join chain would deadlock.
+        let mut handles = Vec::with_capacity(4);
+        for i in 0..4 {
+            let (path, start) = (path.clone(), start.clone());
+            handles.push(std::thread::spawn(move || {
+                let passphrase = format!("passphrase-number-{i}");
+                start.wait();
+                Vault::create(&path, &passphrase).map(|_| passphrase)
+            }));
+        }
+        let outcomes: Vec<_> = handles.into_iter().map(|c| c.join().unwrap()).collect();
 
         let winners: Vec<&String> = outcomes.iter().filter_map(|o| o.as_ref().ok()).collect();
         assert_eq!(winners.len(), 1, "exactly one creator may succeed");
