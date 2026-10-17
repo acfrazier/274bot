@@ -287,6 +287,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - The first launch's game cache download no longer switches off background
   work on slower connections, and "Preparing cache snapshot" now shows how
   far the download has got.
+
+- Short route searches no longer allocate the full node-budget table.
+  Cooperative routes reserve the same maximum storage, but initialize only
+  the pages that the search uses. Small first-goal diagnostics also retain
+  demand-driven proof storage.
+- Cooperative route searches now check each work boundary once instead of
+  repeating the same clock and cancellation check between work units.
 - One slow disk write no longer leaves script cards, the script catalogue or
   profiles stopped until 274bot restarts.
 - Windows now recovers damaged panel preferences and repairs duplicate loadout

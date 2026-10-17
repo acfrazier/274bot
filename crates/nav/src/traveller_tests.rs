@@ -6392,7 +6392,7 @@ fn troll_open_door_progress_does_not_reverse_to_approach() {
             ..TravelOptions::default()
         };
         let mut run = FollowRun::start(route, &options);
-        let leg = run.legs.pop_front().unwrap();
+        let leg = run.next_leg().unwrap().into_transport();
         run.transport = Some(TransportHop {
             leg,
             to: edge.to,
@@ -6459,7 +6459,7 @@ fn troll_probes_crossing_after_open_once_the_snapshot_catches_up() {
     };
     let mut run = FollowRun::start(route, &options);
     run.transport = Some(TransportHop {
-        leg: run.legs.pop_front().unwrap(),
+        leg: run.next_leg().unwrap().into_transport(),
         to: edge.to,
         ticks_waited: 0,
         sent_tile: None,
@@ -6664,7 +6664,7 @@ fn troll_does_not_reopen_a_door_behind_the_walker() {
             ..TravelOptions::default()
         };
         let mut run = FollowRun::start(route, &options);
-        let leg = run.legs.pop_front().unwrap();
+        let leg = run.next_leg().unwrap().into_transport();
         run.transport = Some(TransportHop {
             leg,
             to: edge.to,
@@ -8320,7 +8320,7 @@ fn level_change_transport_requires_proximity_to_to() {
     };
     let mut options = TravelOptions::default();
     let mut run = FollowRun::start(route, &options);
-    let leg = run.legs.pop_front().expect("the transport leg");
+    let leg = run.next_leg().expect("the transport leg").into_transport();
     let mut rec = FollowRec::default();
     run.transport = Some(TransportHop {
         leg,
@@ -8425,7 +8425,7 @@ fn horizontal_climb_proves_translated_takeoff_without_widening_arrival() {
         },
         &options,
     );
-    let leg = run.legs.pop_front().unwrap();
+    let leg = run.next_leg().unwrap().into_transport();
     run.transport = Some(TransportHop {
         leg,
         to: baked_to,

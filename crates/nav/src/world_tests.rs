@@ -95,6 +95,37 @@ fn open_grid_derives_an_all_walkable_world() {
 }
 
 #[test]
+fn transport_name_bound_is_cached_with_selected_names() {
+    let mut world = NavWorld::from_grid(&StepGrid::fixture_door_corridor());
+    assert_eq!(world.transport_item_name_bytes_bound(), 0);
+    let ids = [31, 563, 995];
+    world.graph.edges[0].item_req = vec![(ids[0], 1), (ids[1], 1)];
+    world.graph.edges[0].consumed_req = vec![(ids[2], 1)];
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let expected = ids
+        .into_iter()
+        .filter_map(|id| data.item_by_id(id)?.name.as_ref())
+        .map(String::len)
+        .max()
+        .expect("selected fixture transport items have names");
+    world.bind_named_bank_facts(&data).unwrap();
+    assert_eq!(world.transport_item_name_bytes_bound(), expected);
+    for id in ids {
+        assert_eq!(
+            world.transport_item_name(id),
+            data.item_by_id(id).and_then(|item| item.name.as_deref())
+        );
+    }
+    assert_eq!(world.transport_item_name(i32::MIN), None);
+    let measured = allocation_counter::measure(|| {
+        for _ in 0..32 {
+            std::hint::black_box(world.transport_item_name_bytes_bound());
+        }
+    });
+    assert_eq!(measured.bytes_total, 0);
+}
+
+#[test]
 fn blocked_tiles_stamp_every_direction_mask() {
     let w = NavWorld::from_grid(&StepGrid::fixture_door_corridor());
     let door_tile = tile(2, 0, 0);

@@ -25,7 +25,7 @@ use api::settle::{arrived, Evidence, Outcome, Settle, SettleOptions};
 use api::snapshot::{GameSnapshot, LocView, NpcView, ReadContext, WidgetView, WorldTile};
 use client::dash3d::CollisionFlag;
 
-use crate::arrival::arrived as grid_arrived;
+use crate::contract::RoutePlanLease;
 use crate::essence::{
     essence_session_for_wizard, in_essence_mine, is_essence_entry_edge, EssenceSession,
     ESSENCE_MINE_EXIT_ARRIVE_RADIUS,
@@ -399,16 +399,31 @@ impl Traveller {
         self.follow_with_route(d, snapshot, || route.as_ref().clone(), options)
     }
 
-    fn follow_with_route<D: Driver>(
+    /// Follow a retained compact route plan without expanding its leg vector.
+    /// The active run retains a cheap plan handle and resolves each borrowed
+    /// leg only when it becomes current.
+    pub fn follow_plan<D: Driver>(
         &mut self,
         d: &mut D,
         snapshot: &GameSnapshot,
-        start_route: impl FnOnce() -> Route,
+        plan: RoutePlanLease,
         options: &mut TravelOptions<'_>,
+    ) -> Option<TravelOutcome> {
+        self.follow_with_start(d, snapshot, options, |options| {
+            FollowRun::start_plan(plan, options)
+        })
+    }
+
+    fn follow_with_start<'a, D: Driver>(
+        &mut self,
+        d: &mut D,
+        snapshot: &GameSnapshot,
+        options: &mut TravelOptions<'a>,
+        start_run: impl FnOnce(&TravelOptions<'a>) -> FollowRun,
     ) -> Option<TravelOutcome> {
         if self.follow.is_none() {
             self.follow_terminal_leg = None;
-            self.follow = Some(FollowRun::start(start_route(), options));
+            self.follow = Some(start_run(options));
         }
         let outcome = self
             .follow
@@ -440,6 +455,18 @@ impl Traveller {
         }
         outcome
     }
+
+    fn follow_with_route<D: Driver>(
+        &mut self,
+        d: &mut D,
+        snapshot: &GameSnapshot,
+        start_route: impl FnOnce() -> Route,
+        options: &mut TravelOptions<'_>,
+    ) -> Option<TravelOutcome> {
+        self.follow_with_start(d, snapshot, options, |options| {
+            FollowRun::start(start_route(), options)
+        })
+    }
 }
 
 impl Default for Traveller {
@@ -456,12 +483,69 @@ impl Default for Traveller {
 // before the lock. One window/recovery per route bounds this inference.
 const THIEVING_STUN_WINDOW: u32 = 11;
 
+enum RouteLegSource {
+    Legacy(VecDeque<Leg>),
+    Plan {
+        plan: RoutePlanLease,
+        next_leg: usize,
+        leg_count: usize,
+    },
+}
+
+impl RouteLegSource {
+    fn remaining_is_empty(&self) -> bool {
+        match self {
+            Self::Legacy(legs) => legs.is_empty(),
+            Self::Plan {
+                next_leg,
+                leg_count,
+                ..
+            } => next_leg >= leg_count,
+        }
+    }
+}
+
+enum FollowLeg {
+    Legacy(Leg),
+    Plan { plan: RoutePlanLease, index: usize },
+}
+
+impl FollowLeg {
+    fn walk_tiles(&self) -> Option<&[WorldTile]> {
+        match self {
+            Self::Legacy(Leg::Walk { tiles }) => Some(tiles),
+            Self::Legacy(Leg::Transport { .. }) => None,
+            Self::Plan { plan, index } => match plan.retained_leg(*index)? {
+                crate::router::CompactRouteLeg::Transport(_) => None,
+                crate::router::CompactRouteLeg::Walk(tiles) => Some(tiles),
+            },
+        }
+    }
+
+    fn into_transport(self) -> Leg {
+        match self {
+            Self::Legacy(leg @ Leg::Transport { .. }) => leg,
+            Self::Legacy(Leg::Walk { .. }) => unreachable!("walk leg routed as transport"),
+            Self::Plan { plan, index } => {
+                let leg = plan
+                    .owned_leg(index)
+                    .expect("retained route plan leg remains addressable");
+                if !matches!(leg, Leg::Transport { .. }) {
+                    unreachable!("compact route walk leg routed as transport");
+                }
+                leg
+            }
+        }
+    }
+}
+
 /// The legs still to work and current hop state. Budgets are captured at
 /// start; callbacks stay with the caller's options.
 struct FollowRun {
     stun_wait: Option<u32>,
     stun_recovery_used: bool,
-    legs: VecDeque<Leg>,
+    legs: RouteLegSource,
+    pending_leg: Option<FollowLeg>,
     /// The index (in the original route) of the leg being worked, reported
     /// in `Blocked`; grows as legs complete.
     leg_index: usize,
@@ -483,10 +567,27 @@ struct FollowRun {
 
 impl FollowRun {
     fn start(route: Route, options: &TravelOptions<'_>) -> FollowRun {
+        Self::with_legs(RouteLegSource::Legacy(route.legs.into()), options)
+    }
+
+    fn start_plan(plan: RoutePlanLease, options: &TravelOptions<'_>) -> FollowRun {
+        let leg_count = plan.leg_count();
+        Self::with_legs(
+            RouteLegSource::Plan {
+                plan,
+                next_leg: 0,
+                leg_count,
+            },
+            options,
+        )
+    }
+
+    fn with_legs(legs: RouteLegSource, options: &TravelOptions<'_>) -> FollowRun {
         FollowRun {
             stun_wait: None,
             stun_recovery_used: false,
-            legs: route.legs.into(),
+            legs,
+            pending_leg: None,
             leg_index: 0,
             hops: 0,
             max_hops: options.max_hops,
@@ -498,6 +599,34 @@ impl FollowRun {
             walk: None,
             transport: None,
         }
+    }
+
+    fn next_leg(&mut self) -> Option<FollowLeg> {
+        if let Some(leg) = self.pending_leg.take() {
+            return Some(leg);
+        }
+        match &mut self.legs {
+            RouteLegSource::Legacy(legs) => legs.pop_front().map(FollowLeg::Legacy),
+            RouteLegSource::Plan {
+                plan,
+                next_leg,
+                leg_count,
+            } => {
+                if *next_leg >= *leg_count {
+                    return None;
+                }
+                let index = *next_leg;
+                *next_leg += 1;
+                Some(FollowLeg::Plan {
+                    plan: plan.clone(),
+                    index,
+                })
+            }
+        }
+    }
+
+    fn requeue_transport(&mut self, leg: Leg) {
+        self.pending_leg = Some(FollowLeg::Legacy(leg));
     }
 
     /// One poll step: settle an active hop, or start the next leg (sending
@@ -586,46 +715,44 @@ impl FollowRun {
                 }
             }
             // No active hop: work the next leg (or finish).
-            let Some(leg) = self.legs.pop_front() else {
+            let Some(route_leg) = self.next_leg() else {
                 return Some(TravelOutcome::Arrived { at: here(snapshot) });
             };
-            match leg {
-                Leg::Walk { .. } => {
-                    let tiles = match &leg {
-                        Leg::Walk { tiles } => tiles,
-                        Leg::Transport { .. } => unreachable!("walk arm holds a walk leg"),
-                    };
-                    fire_leg(options, &leg, LegPhase::Start);
-                    // Single-tile walk legs (the `find(from == to)` shape)
-                    // carry no distance: no-op, never send.
-                    if tiles.len() <= 1 {
-                        fire_leg(options, &leg, LegPhase::Done);
-                        self.leg_index += 1;
-                        continue;
-                    }
-                    let here = here(snapshot);
-                    let hop = WalkHop {
-                        leg,
-                        cursor: 0,
-                        aim: here,
-                        aim_index: 0,
-                        sent: false,
-                        ticks_waited: 0,
-                        sent_tile: None,
-                        sent_tick: snapshot.tick(),
-                        tries: 0,
-                        stall_idle_ticks: 0,
-                        stall_idle_last_tick: None,
-                        stall_idle_at: None,
-                        end_refused_ticks: 0,
-                        end_refused_last_tick: None,
-                    };
-                    match self.send_walk_hop(d, snapshot, options, hop, here) {
-                        Poll::Watching => return None,
-                        Poll::Terminal(outcome) => return Some(outcome),
-                        Poll::LegDone => continue,
-                    }
+            if let Some(tiles) = route_leg.walk_tiles() {
+                fire_follow_leg(options, &route_leg, LegPhase::Start);
+                // Single-tile walk legs (the `find(from == to)` shape)
+                // carry no distance: no-op, never send.
+                if tiles.len() <= 1 {
+                    fire_follow_leg(options, &route_leg, LegPhase::Done);
+                    self.leg_index += 1;
+                    continue;
                 }
+                let here = here(snapshot);
+                let hop = WalkHop {
+                    leg: route_leg,
+                    cursor: 0,
+                    aim: here,
+                    aim_index: 0,
+                    sent: false,
+                    ticks_waited: 0,
+                    sent_tile: None,
+                    sent_tick: snapshot.tick(),
+                    tries: 0,
+                    stall_idle_ticks: 0,
+                    stall_idle_last_tick: None,
+                    stall_idle_at: None,
+                    end_refused_ticks: 0,
+                    end_refused_last_tick: None,
+                };
+                match self.send_walk_hop(d, snapshot, options, hop, here) {
+                    Poll::Watching => return None,
+                    Poll::Terminal(outcome) => return Some(outcome),
+                    Poll::LegDone => continue,
+                }
+            }
+            let leg = route_leg.into_transport();
+            match leg {
+                Leg::Walk { .. } => unreachable!("route transport materialized as a walk leg"),
                 Leg::Transport { .. } => {
                     let edge = match &leg {
                         Leg::Transport { edge } => edge,
@@ -681,7 +808,7 @@ impl FollowRun {
                                         detail: reason.detail(),
                                     });
                                 }
-                                self.legs.push_front(leg);
+                                self.requeue_transport(leg);
                                 return None;
                             }
                             TeleportSend::Blocked(detail) => {
@@ -763,7 +890,7 @@ impl FollowRun {
                                         ),
                                     });
                                 }
-                                self.legs.push_front(leg);
+                                self.requeue_transport(leg);
                                 return None;
                             }
                         }
@@ -790,7 +917,7 @@ impl FollowRun {
                             .settle_until
                             .is_some_and(|until| snapshot.tick() < until)
                         {
-                            self.legs.push_front(leg);
+                            self.requeue_transport(leg);
                             return None;
                         }
                         self.settle_until = None;
@@ -833,7 +960,7 @@ impl FollowRun {
                                     ),
                                 });
                             }
-                            self.legs.push_front(leg);
+                            self.requeue_transport(leg);
                             return None;
                         };
                         let to = edge.to;
@@ -888,7 +1015,7 @@ impl FollowRun {
                                 self.settle_left -= 1;
                                 self.settle_until =
                                     Some(snapshot.tick().saturating_add(SCENE_SETTLE_TICKS));
-                                self.legs.push_front(leg);
+                                self.requeue_transport(leg);
                                 return None;
                             }
                             SendResult::Refused { reason, .. } => {
@@ -998,7 +1125,7 @@ impl FollowRun {
                                     ),
                                 });
                             }
-                            self.legs.push_front(leg);
+                            self.requeue_transport(leg);
                             return None;
                         }
                     }
@@ -1071,7 +1198,7 @@ enum Poll {
 
 /// One walk-leg hop: the leg's tiles, the aim tile, and the stall clock.
 struct WalkHop {
-    leg: Leg,
+    leg: FollowLeg,
     /// Index into the leg tiles of the last cleared tile.
     cursor: usize,
     aim: WorldTile,
@@ -1108,17 +1235,16 @@ struct WalkHop {
 
 impl WalkHop {
     fn tiles(&self) -> &[WorldTile] {
-        match &self.leg {
-            Leg::Walk { tiles } => tiles,
-            Leg::Transport { .. } => unreachable!("walk hop holds a walk leg"),
-        }
+        self.leg.walk_tiles().expect("walk hop retains a walk leg")
     }
 
-    /// Reconstruct the leg for the phase callback (called only on leg
-    /// transitions).
+    /// Reconstruct the legacy callback value when a phase transition fires.
     fn leg(&self) -> Leg {
-        Leg::Walk {
-            tiles: self.tiles().to_vec(),
+        match &self.leg {
+            FollowLeg::Legacy(leg) => leg.clone(),
+            FollowLeg::Plan { plan, index } => plan
+                .owned_leg(*index)
+                .expect("retained route plan walk leg remains addressable"),
         }
     }
 }
@@ -1182,6 +1308,20 @@ struct ApproachHop {
 fn fire_leg(options: &mut TravelOptions<'_>, leg: &Leg, phase: LegPhase) {
     if let Some(cb) = options.on_leg.as_mut() {
         cb(leg, phase);
+    }
+}
+
+fn fire_follow_leg(options: &mut TravelOptions<'_>, leg: &FollowLeg, phase: LegPhase) {
+    if let Some(cb) = options.on_leg.as_mut() {
+        match leg {
+            FollowLeg::Legacy(leg) => cb(leg, phase),
+            FollowLeg::Plan { plan, index } => {
+                let leg = plan
+                    .owned_leg(*index)
+                    .expect("retained route plan leg remains addressable");
+                cb(&leg, phase);
+            }
+        }
     }
 }
 
