@@ -150,7 +150,7 @@ pub struct ImageBakeReport {
 
 /// Checkpoint lookup and durable tile-writing seam for owned image bakes.
 pub trait ImageTileSink {
-    type Error;
+    type Error: std::error::Error + 'static;
 
     /// Returns the receipt already recorded for this tile, if any.
     /// Implementations MUST release any operation-local handle before returning.
@@ -167,16 +167,14 @@ pub trait ImageTileSink {
     ) -> Result<Option<PayloadReceipt>, Self::Error>;
 }
 
-#[derive(Debug)]
-pub enum ImageBakeError<E> {
-    Native(MapError),
-    Sink(E),
-}
-
-impl<E> From<MapError> for ImageBakeError<E> {
-    fn from(error: MapError) -> Self {
-        Self::Native(error)
-    }
+#[derive(Debug, thiserror::Error)]
+pub enum ImageBakeError<E: std::error::Error + 'static> {
+    /// The native image bake failed.
+    #[error(transparent)]
+    Native(#[from] MapError),
+    /// The tile sink failed.
+    #[error("image tile sink failed: {0}")]
+    Sink(#[source] E),
 }
 
 impl ImageBakeError<MapError> {

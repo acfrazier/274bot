@@ -249,6 +249,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - Dropping a map manager releases its unconsumed terminal work reservation.
 - Cache pruning skips terrain held by a live admitted owner and removes
   unleased entries in least-recently-used order.
+
+- Request-thread map bakes continue during a background-worker outage.
+  Packaging waits for a bake to stop before it removes scratch files.
 - WalkTo terrain tiles decode on a background worker using shared bounded work, rather
   than a separate map-decoding thread.
 - Panning the WalkTo map no longer redraws squares that you just scrolled past.

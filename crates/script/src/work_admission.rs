@@ -562,7 +562,7 @@ impl WorkService {
     ) -> PublicationWaitOutcome {
         let (notifier, epoch) = {
             let service = shared.lock();
-            if service.stopping || !service.worker_available() {
+            if service.stopping {
                 return PublicationWaitOutcome::Unavailable;
             }
             let epoch = service.publication_epoch();
@@ -574,7 +574,7 @@ impl WorkService {
 
         let changed = notifier.wait_for_change(epoch, timeout);
         let service = shared.lock();
-        if service.stopping || !service.worker_available() {
+        if service.stopping {
             PublicationWaitOutcome::Unavailable
         } else if changed || service.publication_epoch() != observed {
             PublicationWaitOutcome::Changed

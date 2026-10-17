@@ -2696,8 +2696,8 @@ impl BakeWriter {
             return Ok(false);
         };
         self.validate_unit(key, payload)?;
-        // The catalogue and its checkpoint share this parent. The checkpoint's
-        // parent sync commits both renames after both file-data syncs.
+        // The manifest parent sync commits the catalogue payload rename after
+        // the payload file-data sync.
         self.write_counted(
             &self.partial.join(unit_relative_path(key)?),
             payload,
@@ -5445,7 +5445,8 @@ impl MapDemandHandle {
     }
     /// Ready without cloning the status (no allocation on a UI frame).
     pub fn is_ready(&self) -> bool {
-        self.status() == MapJobStatus::Ready
+        self.manager.reap();
+        matches!(&*self.status.lock(), MapJobStatus::Ready)
     }
     pub fn status(&self) -> MapJobStatus {
         self.manager.reap();
@@ -5576,6 +5577,32 @@ mod tests {
         assert_ne!(
             stored,
             MapBakeTicket::new(WorkTicket::new(identity, InputRevision::new(8)))
+        );
+    }
+
+    #[test]
+    fn is_ready_does_not_clone_running_status() {
+        let root = temp_root("is-ready-no-clone");
+        let manager = MapDemandManager::new(root.clone(), FixtureProducer::new(false));
+        let handle = MapDemandHandle::terminal(
+            manager,
+            descriptor(&root),
+            MapDemand::Images,
+            MapJobStatus::Running(MapProgress {
+                stage: MapStage::BakingPlane,
+                completed: 1,
+                total: 2,
+                message: "map bake progress".to_owned(),
+            }),
+        );
+        let allocations = allocation_counter::measure(|| {
+            for _ in 0..16 {
+                assert!(!handle.is_ready());
+            }
+        });
+        assert_eq!(
+            allocations.count_total, 0,
+            "checking readiness must not clone the running status"
         );
     }
 

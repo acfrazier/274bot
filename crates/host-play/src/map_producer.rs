@@ -92,7 +92,10 @@ impl MapBakeProducer for NativeMapProducer {
 
 // The enclosing trait-object Box is the only cursor allocation. Boxing this
 // variant again would add an allocation solely to reduce an unused stack size.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "boxing the variant adds an allocation solely to reduce an unused stack size"
+)]
 enum NativeCursor {
     Catalogue {
         cursor: CatalogueCursor,
