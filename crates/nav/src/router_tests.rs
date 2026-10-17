@@ -112,6 +112,41 @@ fn non_proof_goals_settle_without_a_future() {
 }
 
 #[test]
+fn pinned_reverse_admission_preserves_seen_and_queue() {
+    let collision = bake(3, 1, &[]);
+    let graph = TransportGraph::default();
+    let state = WorldState::empty();
+    let mut closure = super::drive_to_completion(super::ReverseClosure::new(super::ProofGates {
+        collision: &collision,
+        graph: &graph,
+        state: &state,
+        essence: None,
+        from: tile(0, 0, 0),
+        use_teleports: false,
+        allow_wilderness: false,
+        relax: super::Relax::Strict,
+        inventory_can_grow: false,
+        cooperative_storage: false,
+    }))
+    .unwrap();
+    for (candidate, expected) in [
+        (tile(1, 0, 0), None),
+        (tile(1, 0, 0), None),
+        (tile(0, 0, 0), Some(ReverseProof::Reachable)),
+    ] {
+        let mut future = std::pin::pin!(closure.admit(candidate));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(matches!(
+            Future::poll(future.as_mut(), &mut context),
+            std::task::Poll::Ready(Ok(actual)) if actual == expected
+        ));
+    }
+    assert_eq!(closure.seen.len(), 2);
+    assert_eq!(closure.queue.len(), 1);
+    assert_eq!(closure.queue.front(), Some(&tile(1, 0, 0)));
+}
+
+#[test]
 fn cooperative_cursor_checks_the_clock_once_per_work_boundary() {
     struct CountingClock {
         now: Instant,

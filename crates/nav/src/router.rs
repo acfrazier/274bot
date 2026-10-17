@@ -4439,7 +4439,11 @@ async fn zone_goal_proof_cooperative(
     closure.targets = targets;
     for &goal in targets {
         work_unit().await;
-        if let Some(proof) = closure.admit(goal).await? {
+        let proof = {
+            let admission = std::pin::pin!(closure.admit(goal));
+            admission.await?
+        };
+        if let Some(proof) = proof {
             return Ok(closure.report(proof));
         }
     }
@@ -7304,7 +7308,14 @@ impl<'a> FirstGoals<'a> {
         if self.preferred.accept(tile, cost) {
             return Ok(Settle::Stop);
         }
-        self.settle_fallback(tile, cost).await?;
+        // A late fallback goal counts only if its own proof lifts the budget.
+        // Other nodes need no fallback future.
+        if self.fallback.live() && self.fallback.targets.contains(&tile) {
+            if settled > self.fallback.budget {
+                self.decide_fallback(settled - 1, settled).await?;
+            }
+            self.fallback.accept(tile, cost);
+        }
         self.preferred
             .prove_to(self.gates, settled, self.reachable_budget)
             .await?;
@@ -7313,27 +7324,6 @@ impl<'a> FirstGoals<'a> {
         }
         self.decide_fallback(settled, settled).await?;
         Ok(Settle::Stop)
-    }
-
-    /// A fallback goal settling past the set's unproven budget counts only
-    /// if the set's proof showed a goal reachable within that budget;
-    /// otherwise a search over the fallback alone stopped at the budget, and
-    /// so does the set. (Settling past the preferred set's lifted budget
-    /// implies its proof decided, dropping its scratch.)
-    async fn settle_fallback(
-        &mut self,
-        tile: WorldTile,
-        cost: TargetCost,
-    ) -> Result<(), SearchCursorError> {
-        if !self.fallback.live() || !self.fallback.targets.contains(&tile) {
-            return Ok(());
-        }
-        let settled = cost.settled_at;
-        if settled > self.fallback.budget {
-            self.decide_fallback(settled - 1, settled).await?;
-        }
-        self.fallback.accept(tile, cost);
-        Ok(())
     }
 
     /// Decides the fallback set, where that needs no further settle, after
@@ -7574,7 +7564,11 @@ impl<'a> ReverseRun<'a> {
             let mut closure = ReverseClosure::new(gates).await?;
             for &seed in seeds {
                 work_unit().await;
-                if let Some(proof) = closure.admit(seed).await? {
+                let proof = {
+                    let admission = std::pin::pin!(closure.admit(seed));
+                    admission.await?
+                };
+                if let Some(proof) = proof {
                     self.report = closure.report(proof);
                     return Ok(Some(proof));
                 }
@@ -7757,7 +7751,7 @@ impl<'a> ReverseClosure<'a> {
                 && wildy_step_ok(self.graph, before, tile, self.allow_wilderness)
                 && self.zone_step_ok(before, tile).await
             {
-                if let Some(proof) = self.admit(before).await? {
+                if let Some(proof) = std::pin::pin!(self.admit(before)).await? {
                     return Ok(Some(proof));
                 }
             }
@@ -7836,7 +7830,7 @@ impl<'a> ReverseClosure<'a> {
                 {
                     continue;
                 }
-                if let Some(proof) = self.admit(takeoff).await? {
+                if let Some(proof) = std::pin::pin!(self.admit(takeoff)).await? {
                     return Ok(Some(proof));
                 }
             }
@@ -7863,7 +7857,7 @@ impl<'a> ReverseClosure<'a> {
                     && wildy_step_ok(self.graph, takeoff, to, self.allow_wilderness)
                     && self.zone_step_ok(takeoff, to).await
                 {
-                    if let Some(proof) = self.admit(takeoff).await? {
+                    if let Some(proof) = std::pin::pin!(self.admit(takeoff)).await? {
                         return Ok(Some(proof));
                     }
                 }
