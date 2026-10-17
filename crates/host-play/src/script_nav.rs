@@ -7,7 +7,7 @@ use api::bank_memory::Origin;
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, SnapshotView, WorldTile};
 use nav::arrival::ArrivalKind;
-use nav::bank_fetch::{plan_bank_fetch, planning_rows, BankRows, BankStep};
+use nav::bank_fetch::{plan_bank_fetch, planning_rows, BankFetchError, BankRows};
 use nav::router::{
     find_first_with_avoid, find_first_with_fallback_avoid, find_missing_item_reqs_with_avoid,
     AvoidRect, FallbackRoute, FindOptions, MissingReq, Route,
@@ -2083,39 +2083,23 @@ impl ScriptRouteRequest {
             ) else {
                 continue;
             };
-            let Some(plan) = plan_bank_fetch(
+            let plan = match plan_bank_fetch(
                 &missing,
                 state,
                 &planning_rows(self.bank_origin, &self.bank, &missing),
                 self.world.banks(),
                 self.from,
                 &self.world.collision,
-            ) else {
-                continue;
-            };
-            let access = plan.steps.iter().find_map(|step| match step {
-                BankStep::Walk { x, z, level } => Some(WorldTile {
-                    x: *x,
-                    z: *z,
-                    level: *level,
-                }),
-                _ => None,
-            });
-            if let Some(access) = access {
-                if let Some(keys) = nav::router::find_blocking_zones(
-                    &self.world.collision,
-                    &self.world.graph,
-                    self.from,
-                    access,
-                    strict_opts,
-                    state,
-                    self.avoid(),
-                )
-                .filter(|keys| !keys.is_empty())
-                {
-                    return Some(keys);
+                &self.world.graph,
+                self.opts,
+                self.avoid(),
+            ) {
+                Ok(plan) => plan,
+                Err(BankFetchError::Access { blocked_zones, .. }) if !blocked_zones.is_empty() => {
+                    return Some(blocked_zones);
                 }
-            }
+                Err(_) => continue,
+            };
             if let Some(keys) = nav::router::find_blocking_zones(
                 &self.world.collision,
                 &self.world.graph,

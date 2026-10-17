@@ -576,13 +576,16 @@ fn drive(client: &mut Client, live: &Mutex<Live>) {
             let (x, z, level) = here.expect("seeded player tile");
             let from = WorldTile { x, z, level };
             let state = WorldState::from_snapshot(&g.snap).with_map_members(true);
-            let Some(fetch) = plan_bank_fetch(
+            let Ok(fetch) = plan_bank_fetch(
                 &[MissingReq::WearAny { ids: vec![DAGGER] }],
                 &state,
                 &[(DAGGER, 1)],
                 world.banks(),
                 from,
                 &world.collision,
+                &world.graph,
+                FindOptions::default(),
+                &[],
             ) else {
                 g.phase = Phase::Fail(format!("leg {leg} {spec:?}: no plan from {from:?}"));
                 return;

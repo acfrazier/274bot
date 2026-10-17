@@ -1595,6 +1595,22 @@
       "owner": "T5"
     },
     {
+      "path": "crates/nav/src/bank_fetch/cursor.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/bank_fetch/cursor_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/bank_fetch/overlay.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/bank_fetch/planning.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/nav/src/bank_fetch_tests.rs",
       "owner": "T5"
     },
