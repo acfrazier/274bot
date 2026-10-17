@@ -2091,6 +2091,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/panel/src/app_teardown_tests.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/panel/src/app_tests.rs",
       "owner": "T3"
     },
@@ -5379,43 +5383,7 @@
       "owner": "T1"
     },
     {
-      "path": "tools/architecture/check.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/e2e_trusted_gate.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/graph.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/inventories.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/ownership.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/test_graph.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/test_inventories.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/test_ownership.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/test_trusted_gate.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/trusted_gate.py",
+      "path": "tools/architecture/run.sh",
       "owner": "T1"
     },
     {

@@ -5,6 +5,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ## Unreleased
 
+### Toolchain
+
+- Pinned the host and client toolchains and CI to Rust 1.98.1, including the
+  trait-object vtable fix.
+
 ### Scripts
 
 - Script operations now share a bounded request seat across native cards and
@@ -232,6 +237,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 - WalkTo terrain tiles decode on a background worker using shared bounded work, rather
   than a separate map-decoding thread.
+- Panning the WalkTo map no longer redraws squares that you just scrolled past.
 
 - The Fleet window's filter matches several words and world numbers, the
   same as the TUI's: every word must match a bot's name or status, and
@@ -262,6 +268,40 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 - One slow disk write no longer leaves script cards, the script catalogue or
   profiles stopped until 274bot restarts.
+- Windows now recovers damaged panel preferences and repairs duplicate loadout
+  names after preserving the original file in a flushed copy.
+- Windows now promptly cancels blocked login transport I/O when a login attempt
+  ends.
+### Release engineering
+
+- The architecture check refuses candidate Cargo configuration files without
+  ASCII case distinctions, including files in vendored trees and symlinks.
+  The check also refuses an ASCII case variant of `Cargo.toml`, because it
+  replaces the scanned manifest on a case-insensitive file system.
+  Every client `Cargo.toml` is now an exact protected input in `274bot-arch`.
+  Added, removed, or changed manifests need an operator commit to update the pin.
+  This replaces interpretation of vendored workspace membership and inheritance.
+  Fork pointer changes with byte-identical manifests need no pin update.
+  The check now refuses `git` dependency sources in product manifests.
+  Only root patch and replacement entries that protected policy lists may
+  appear in the product root. Other entries need an operator commit first.
+  The check covers default-feature and optional activation for every protected
+  package, even packages outside named configurations.
+  Baseline updates use the branch after it merges current `dev`.
+  Operators review removed records to retain permissions that other branches still need.
+- The architecture checker, its tests, and the crate-edge policy now live
+  in the operator-owned `274bot-arch` repo (`main`); this repo keeps the
+  local-convenience-only `tools/architecture/run.sh` runner, and CI runs
+  the check inline on pushes and PRs — cloning `274bot-arch` `main`,
+  verifying the pinned rust-analyzer binary, then running `check.py
+  --self-test` and `check.py --root` with no candidate-tree script
+  execution and no `ARCH_REPO` override. The fine data (`ownership.json`,
+  `inventories.json`, `foreign_types.json`) stays beside the runner and is
+  reviewed like code. A new crate edge, edge kind, migration,
+  optional-dependency activation, vendored path package, or checker change
+  needs an operator commit in `274bot-arch` (`policy.toml` plus a
+  regenerated `graph-provenance.json`, operator publishes first); propose
+  it as a patch or branch bundle for the operator to push.
 
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 

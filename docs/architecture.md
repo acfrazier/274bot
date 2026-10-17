@@ -8,42 +8,131 @@ lint stack.
 built, tested and claimed for it. Revision 274 is best-effort: it may run,
 but it is neither tested nor claimed.
 
-The allowed crate edges are defined in `tools/architecture/policy.toml` and
-checked by `tools/architecture/check.py`. Runtime semantics that a manifest
+The allowed crate edges are defined in the operator-owned
+[`274bot-arch` policy](https://github.com/acfrazier/274bot-arch/blob/main/policy.toml)
+and checked by its `check.py`. Runtime semantics that a manifest
 cannot prove stay **review requirements**. Changing a crate edge is a
-deliberate policy edit plus documentation and review; do not sneak a reverse
-or convenience dependency through an alias, target table, or optional rename.
+deliberate rule change in `274bot-arch` (proposed as a patch or branch bundle
+for the operator to review and push) plus documentation and review here; do
+not sneak a reverse or convenience dependency through an alias, target table,
+or optional rename.
 
 ## Local command
 
-Python **3.11+** (stdlib `tomllib`). No Rust rebuild.
+Python **3.11+** (stdlib `tomllib`). No Rust rebuild. The checker, its
+tests, and the graph-creating policy live only in [`acfrazier/274bot-arch`](https://github.com/acfrazier/274bot-arch)
+`main`, as decided in ADR 0010. See the
+[checker README](https://github.com/acfrazier/274bot-arch/blob/main/README.md)
+for its runtime pins and rule-change process. This repo holds the
+local-convenience-only runner `tools/architecture/run.sh`, which fetches
+`274bot-arch` `main` into a local cache and runs it against a tree. CI
+does not use the runner and never executes a candidate-tree script. The
+fine data the checker reads — exactly `tools/architecture/ownership.json`,
+`tools/architecture/inventories.json`, and
+`tools/architecture/foreign_types.json` — stays in this repo beside the
+runner and is reviewed like code. Everything that creates or activates the
+graph stays protected: workspace members, edges/kinds/migrations, the
+configuration feature/activation fields (including optional-dependency
+activation), and the graph provenance baseline.
+Agents and Main use the same runner locally.
 
 ```bash
-python3 tools/architecture/check.py
-python3 tools/architecture/check.py --self-test
+tools/architecture/run.sh
+tools/architecture/run.sh --root /path/to/tree
 ```
 
-If `python3` is older than 3.11, use `python3.11` or newer. The checker reads
-workspace and member `Cargo.toml` files, including `[dependencies]`,
-`[dev-dependencies]`, `[build-dependencies]`, `[target.*.dependencies]`,
-`optional`, `workspace = true` aliases, `path`, and `package` renames. It
-does not parse `.rs` with regex and does not compile.
+With no `--root`, the runner checks the product root it lives in.
+`ARCH_REPO` is a local-only override of where the rules come from: a URL
+(the default remote is always `main`) or a local clone, whose selected
+local `HEAD` is used as pre-push proof of an unpushed rule change. CI has
+no `ARCH_REPO` override. `ARCH_CACHE_DIR` overrides the local fetch cache,
+a bare Git cache defaulting to
+`${XDG_CACHE_HOME:-$HOME/.cache}/274bot-arch`.
 
-Membership is the explicit `workspace.members` path list plus a root
-`[package]` when present (Cargo's implicit root member). Globs, `exclude`,
-and other unsupported workspace shapes fail closed. A path dependency on a
-crate that is not a listed member still appears in the scan and must be a
-policy member or external.
+The runner checks the rust-analyzer executable on `PATH`: SHA-256
+`fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49`,
+`rust-analyzer 0.3.3081-standalone`. The checker reads
+workspace, member, and protected path-package `Cargo.toml` files. It scans
+`[dependencies]`, `[dev-dependencies]` / `[dev_dependencies]`, and
+`[build-dependencies]` / `[build_dependencies]`, including target tables.
+It resolves `optional`, `workspace = true` aliases, `path`, and `package`
+renames, plus path `[patch]` and `[replace]` entries. It does not compile
+candidate code or parse `.rs` with regex.
 
-GitHub Actions runs the same two commands in the `architecture` job, which
-also installs the pinned `flatc` and diffs `crates/script/schema/generated`
-against a fresh `flatc --rust` of `crates/script/schema/isolate.fbs`. That job
-does **not** replace `fmt`, `clippy`, or `test`. Those gates stay as they are.
+Product membership uses explicit `workspace.members` paths plus a root `[package]`
+when present (Cargo's implicit root member). Product workspace `members`,
+`default-members`, and `exclude` entries must resolve to protected manifests.
+Product member globs fail closed.
+Every non-member path
+package must have a canonical manifest binding in protected
+`policy.toml` `[workspace.path_packages]`. Unlisted path packages and symlink
+substitutions are refused. Every listed manifest is scanned, even when unused.
+Edges from listed packages need ordinary protected allowances.
+The checker refuses a `git` key in any dependency table, target table,
+`[workspace.dependencies]`, `[patch.*]`, or `[replace]` entry.
+The refusal names the manifest file and the entry.
+The checker never reads a git crate's manifest.
+A git crate could carry a crate edge or a feature request into a local package.
+Only root `[patch.*]` and `[replace]` entries listed by name and path in
+protected `policy.toml` `[root_patches]` may appear in the product root.
+The list now holds only `dear-imgui-wgpu` at `vendor/dear-imgui-wgpu-0.15.1`.
+A root patch makes a local package reachable from every external crate.
+Any other root patch or replacement needs an operator commit that adds it.
+Registry dependencies stay allowed. A crates.io crate cannot name a local path package without a root patch, and the root patch list covers that route.
 
-The explicit allowlist is [`tools/architecture/policy.toml`](../tools/architecture/policy.toml).
-Every workspace member must appear there, and every edge the manifests
-declare needs an `[[allow]]` with its kind. Unknown members and unlisted
-edges fail closed. crates.io and other non-path crates are ignored. `client`
+Every `Cargo.toml` below `vendor/fr-client-rust/` is pinned in protected
+`274bot-arch/vendor-manifests.json`. One digest covers the sorted path and exact-byte pairs.
+The digest is identity data for a protected input, like policy data, not bookkeeping.
+The checker names every added, removed, or changed manifest and requires an operator commit to update the pin.
+It does not interpret the client workspace's members, exclusions, globs, or inheritance.
+The pinned set has no `workspace = true` dependencies, and such dependencies are refused.
+A fork pointer change with byte-identical manifests needs no pin update.
+Print the digest with `python3 -B vendor_manifests.py /path/to/274bot` from the arch repository.
+Generate a reviewed replacement with
+`python3 -B vendor_manifests.py --emit-pin /path/to/274bot > vendor-manifests.json`.
+
+The checker refuses `.cargo/config` and `.cargo/config.toml` anywhere in the
+candidate tree, including vendored trees and symlinks. Directory and file names
+are matched without ASCII case distinctions. These files can override the graph.
+The checker also refuses an ASCII case variant of `Cargo.toml` anywhere in the tree, because it replaces the scanned manifest on a case-insensitive file system.
+Unicode look-alike names are outside this refusal because Cargo on Linux does not read them.
+One limit stays with review. A product build script can rewrite a vendored
+manifest on disk during a CI job, between steps.
+The checker reads committed manifests only. It does not run build scripts.
+A new `build.rs` needs an ownership row, so a reviewer sees it.
+Dependency aliases are tracked by package name, not by alias or version.
+Default-feature and dev-dependency activation is checked for every protected
+member and listed path package, even when no named configuration reaches it.
+
+GitHub Actions pins Python **3.14.8** and runs the operator-owned check
+inline in one `architecture` job on pushes and pull requests: it keeps the
+pinned rust-analyzer and `flatc` installation steps, then the check step
+itself runs `git clone --depth 1 --branch main
+https://github.com/acfrazier/274bot-arch.git "$RUNNER_TEMP/274bot-arch"`,
+verifies the rust-analyzer binary (SHA-256
+`fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49`,
+`rust-analyzer 0.3.3081-standalone`), then runs `python3 -B
+"$checker_root/check.py" --self-test` and `python3 -B
+"$checker_root/check.py" --root "$GITHUB_WORKSPACE"`. CI never executes a
+candidate-tree script (including `tools/architecture/run.sh`) and has no
+`ARCH_REPO` override. It also installs the pinned `flatc` and diffs
+`crates/script/schema/generated` against a fresh `flatc --rust` of
+`crates/script/schema/isolate.fbs`. That job does **not** replace `fmt`,
+`clippy`, or `test`. Those gates stay as they are.
+
+The explicit allowlist is [`policy.toml` in `274bot-arch`](https://github.com/acfrazier/274bot-arch/blob/main/policy.toml):
+workspace members, edges with their kinds and migrations, and the
+configuration feature/activation fields, all protected. The fine data lives
+beside the runner and is reviewed like code:
+[`tools/architecture/ownership.json`](../tools/architecture/ownership.json),
+[`tools/architecture/inventories.json`](../tools/architecture/inventories.json),
+[`tools/architecture/foreign_types.json`](../tools/architecture/foreign_types.json).
+The checker loads that data from the checked tree, refuses malformed or
+stale data, and cannot widen the protected edge policy.
+Every workspace member must appear in protected `policy.toml`. Every edge
+the manifests declare needs an `[[allow]]` or migration with its kind.
+Unknown members and unlisted edges fail closed. crates.io and other
+non-path crates are ignored. `client`
 is a workspace *alias* to `vendor/fr-client-rust/crates/client`, not a 274bot
 workspace member; it is listed as an architecture external.
 
@@ -112,8 +201,12 @@ claim that `e2e` owns those crates' production behavior.
 - **`host-play` → `nav`** is both a runtime dependency and a build-dependency
   (bake/stage nav identity). Both kinds are listed.
 
-If a future change needs a new edge or kind, edit the policy and this page
-and get review. Do not add a second hidden graph.
+For a new edge, kind, migration, optional-dependency activation, vendored path
+package, or checker change, follow [Changing a boundary](#changing-a-boundary).
+Include the regenerated baseline in the same arch commit as the protected
+rule change. Outside the pinned client manifests, purely local features without
+optional or cross-crate activation need no operator commit. Ownership, inventory, and foreign-type rows remain
+ordinary product diffs. Do not add a second hidden graph.
 
 ## Cargo features
 
@@ -686,7 +779,7 @@ need nothing. Profile files and the instance lock are owned by `host-play`
 
 ## Runtime ownership
 
-These are product boundaries. The crate checker does not prove them.
+These are product boundaries. The crate checker (in `274bot-arch`, run via `tools/architecture/run.sh`) does not prove them.
 
 | Boundary | Owner | Not the owner |
 | --- | --- | --- |
@@ -703,7 +796,7 @@ the JavaScript surface onto Rust host APIs.
 
 ## Behavioral invariants (review unless noted)
 
-The checker does **not** pretend to prove the following. They remain
+The checker in `274bot-arch` does **not** pretend to prove the following. They remain
 independent-review and test requirements unless a later, robust check exists.
 
 - **Isolate ↔ host and game-action wire:** FlatBuffers only. No extra JS↔Rust
@@ -803,8 +896,30 @@ python3 -B tools/lint-ratchet/lint_ratchet.py --update
 
 ## Changing a boundary
 
-1. Edit [`tools/architecture/policy.toml`](../tools/architecture/policy.toml)
-   with the new or removed `[[allow]]` and a reason.
-2. Update the tables on this page so the public description matches.
-3. Run the local commands above (including `--self-test`).
-4. Get review. Do not land a graph change as a drive-by import.
+An operator commit in protected `274bot-arch` is required for a new crate
+edge (including a new target cfg or cross-crate feature request), an edge kind,
+a migration, an optional-dependency activation, a vendored path package, a client manifest change, a root patch or replacement entry, or a checker change.
+The operator edits `policy.toml` where the rule change needs it.
+First merge current `dev` into the branch being merged.
+Regenerate the baseline from that merged branch tree in the same arch commit:
+
+```bash
+python3 -B check.py --emit-provenance-baseline /path/to/merged-branch > graph-provenance.json
+```
+
+Review removed records. Retain records that other active branches still need.
+
+The operator publishes first; the product change lands after. Only the
+operator can push `274bot-arch`; agents cannot. Propose the policy edit as
+a patch or branch bundle for the operator to review and push.
+Outside the pinned client manifests, purely local features with no optional dependency or cross-crate edge need no operator commit.
+Fine ownership/seam/inventory data also needs no operator commit. Fine-data
+changes (ownership rows, inventory rows, foreign-type rows) are ordinary
+product diffs in `tools/architecture/`, reviewed like code — the checker
+loads them from the checked tree, refuses malformed or stale data, and
+cannot widen the protected edge policy.
+
+1. Update the tables on this page so the public description matches.
+2. Run the local command above (point local-only `ARCH_REPO` at a local
+   `274bot-arch` clone to prove an unpushed policy change before review).
+3. Get review. Do not land a graph change as a drive-by import.
