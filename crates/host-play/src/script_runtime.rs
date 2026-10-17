@@ -53,6 +53,18 @@ mod route_inspect;
 #[cfg(test)]
 pub(super) use route_inspect::PostedInspect;
 
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "The test-support hook is called by host fixture loops."
+    )
+)]
+pub(super) fn poll_inspection_for_test(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
+    route_inspect::poll_inspection(navs, name);
+}
+
 #[path = "script_observe.rs"]
 mod script_observe;
 pub(super) use script_observe::{

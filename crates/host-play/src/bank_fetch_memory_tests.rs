@@ -435,6 +435,7 @@ fn a_compat_inspect_with_a_closed_bank_and_a_known_memory_is_bank_planned() {
         );
         let start = Instant::now();
         loop {
+            crate::script_runtime::poll_inspection_for_test(&navs, "alice");
             let term = navs.lock().unwrap().get("alice").and_then(|bot| {
                 [bot.inspect.latest.as_ref(), bot.inspect.prev.as_ref()]
                     .into_iter()

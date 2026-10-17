@@ -1856,7 +1856,7 @@ fn spawn_route_worker(
                     pending.request.completion.signal();
                 }
             }
-            })
+        })
         .is_ok();
     spawned
 }
