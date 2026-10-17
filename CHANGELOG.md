@@ -310,6 +310,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   Cooperative lookups keep the same work boundaries.
 - First-goal searches no longer copy an unused fallback proof future per node.
   Reverse proofs pin admission futures before polling them.
+- Packed route searches keep each collision link with its record to avoid
+  separate random reads, without increasing the reserved search storage.
 - One slow disk write no longer leaves script cards, the script catalogue or
   profiles stopped until 274bot restarts.
 - Windows now recovers damaged panel preferences and repairs duplicate loadout
