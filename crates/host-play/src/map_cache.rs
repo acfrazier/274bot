@@ -5635,12 +5635,10 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
             let (released, observed) = {
-                let mut service = shared.lock();
+                let service = shared.lock();
                 service.observe_health();
-                (
-                    service.capacity() == baseline,
-                    service.publication_epoch(),
-                )
+                let observed = service.publication_epoch();
+                (service.capacity() == baseline, observed)
             };
             if released {
                 break;
