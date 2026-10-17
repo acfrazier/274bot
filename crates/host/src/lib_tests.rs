@@ -3200,36 +3200,47 @@ fn slot_loop_does_not_count_a_send_blocked_on_the_peer() {
     use std::net::TcpListener;
     use std::sync::mpsc;
 
-    // A WebSocket peer (a slow network or server) that stops reading for
-    // 700 ms when told to, then takes everything.
+    // Wait for each write to finish or block on the peer before reading.
     let stall = Duration::from_millis(700);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
-    let (stop_tx, stop_rx) = mpsc::channel::<()>();
+    let (send_start_tx, send_start_rx) = mpsc::channel::<()>();
+    let (send_done_tx, send_done_rx) = mpsc::channel::<()>();
+    let (resumed_tx, resumed_rx) = mpsc::channel();
     let server = thread::spawn(move || {
         let (tcp, _) = listener.accept().unwrap();
         let mut ws = tungstenite::accept(tcp).unwrap();
-        stop_rx.recv().unwrap();
-        thread::sleep(stall);
-        let _ = std::io::copy(ws.get_mut(), &mut std::io::sink());
+        loop {
+            send_start_rx.recv().unwrap();
+            if send_done_rx.recv_timeout(stall).is_ok()
+                || send_done_rx.recv_timeout(Duration::from_millis(50)).is_ok()
+            {
+                continue;
+            }
+            resumed_tx.send(Instant::now()).unwrap();
+            let _ = std::io::copy(ws.get_mut(), &mut std::io::sink());
+            break;
+        }
     });
     let mut stream = connect_ws_plain("127.0.0.1", address.port()).unwrap();
-    // Larger than both socket buffers, so the send waits for the peer.
-    let payload = vec![0u8; 16 << 20];
+    let payload = vec![0u8; 1 << 20];
     let mut service = 0;
     let mut send = None;
-    // The thread's CPU clock stands still, as it does while a real send
-    // is blocked on its socket: without the bracket the 700 ms would be
-    // time off the CPU, as a starved frame is in
-    // `slot_loop_counts_time_off_the_cpu_inside_a_busy_frame`. The send is
-    // in the second service, the first one counted.
+    // The thread's CPU clock stands still while a real send waits on its
+    // socket, unlike a starved frame in the adjacent test.
     let delays = measured_loop_with(true, LoopClock::OffCpu, LoopFrame::default(), || {
         service += 1;
         if service == 2 {
-            let started = Instant::now();
-            stop_tx.send(()).unwrap();
-            stream.write(&payload, payload.len()).unwrap();
-            send = Some(started.elapsed());
+            loop {
+                let started = Instant::now();
+                send_start_tx.send(()).unwrap();
+                stream.write(&payload, payload.len()).unwrap();
+                send_done_tx.send(()).unwrap();
+                if resumed_rx.try_recv().is_ok() {
+                    send = Some(started.elapsed());
+                    break;
+                }
+            }
         }
     });
     drop(stream);

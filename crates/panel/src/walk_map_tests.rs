@@ -1,4 +1,7 @@
 use std::collections::HashSet;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -6,12 +9,15 @@ use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 use dear_imgui_rs::TextureId;
 use frontend_core::{WalkMapDecodeController, WalkMapDecodeResult};
+use host_play::map_cache::ReadyImages;
 use nav::collision::WorldCollision;
-use nav::map::formats::ImageManifest;
-use nav::map::identity::{Digest, ImageIdentity};
+use nav::map::formats::{ColorFormat, ImageManifest, PayloadReceipt, PlaneBounds, TileReceipt};
+use nav::map::identity::{Digest, ImageIdentity, IMAGE_SCHEMA};
 use nav::map::spatial::{
-    select_lod, GameTile, TileKey, View, TEXTURE_CAP, TILE_PIXELS, TILE_RGBA_BYTES,
+    select_lod, GameTile, TileKey, View, WorldBounds, TEXTURE_CAP, TILE_GUTTER, TILE_INTERIOR,
+    TILE_PIXELS, TILE_RGBA_BYTES,
 };
+use nav::map::Rows;
 use nav::transport::{TransportGraph, WildernessZone};
 use nav::world::NavWorld;
 
@@ -70,6 +76,97 @@ fn open_world(w: usize, h: usize) -> NavWorld {
         TransportGraph::default(),
         Vec::new(),
     )
+}
+
+struct ReadyImageDir(PathBuf);
+
+impl Drop for ReadyImageDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn ready_images_with_tile(
+    identity: ImageIdentity,
+    key: TileKey,
+) -> (Arc<ReadyImages>, ReadyImageDir) {
+    ready_images_with_tiles(identity, &[key], &[])
+}
+
+/// A ready cache that lists `keys` (inside x 0..=1, z 0). Each key in
+/// `unreadable` stays listed, but its file is zeroed after the cache opens,
+/// so every read of it fails its receipt.
+fn ready_images_with_tiles(
+    identity: ImageIdentity,
+    keys: &[TileKey],
+    unreadable: &[TileKey],
+) -> (Arc<ReadyImages>, ReadyImageDir) {
+    static NEXT_DIR: AtomicU64 = AtomicU64::new(1);
+    let root = std::env::temp_dir().join(format!(
+        "274bot-walk-map-{}-{}",
+        std::process::id(),
+        NEXT_DIR.fetch_add(1, Ordering::Relaxed)
+    ));
+    let cache = host_play::map_cache::MapCacheRoot::from_root(root.clone());
+    let directory = cache.image_dir(identity).expect("image directory");
+    fs::create_dir_all(&directory).expect("image directory");
+
+    let mut receipts = Vec::new();
+    let mut files = Vec::new();
+    for &key in keys {
+        let png = encode_tile(key).expect("tile PNG");
+        let tile_path = directory.join(key.relative_path().expect("tile path"));
+        fs::create_dir_all(tile_path.parent().expect("tile parent"))
+            .expect("tile parent directory");
+        fs::write(&tile_path, &png).expect("tile file");
+        receipts.push(TileReceipt {
+            key,
+            payload: PayloadReceipt {
+                bytes: png.len() as u32,
+                sha256: Digest::of(&png),
+            },
+        });
+        files.push((key, tile_path, png.len()));
+    }
+    let bounds = WorldBounds {
+        west: 0,
+        south: 0,
+        east: 128,
+        north: 64,
+    };
+    let manifest = ImageManifest {
+        schema: IMAGE_SCHEMA,
+        identity,
+        key: identity.key().expect("image key"),
+        extent: bounds,
+        planes: Rows::new(vec![PlaneBounds { plane: 0, bounds }]).expect("plane rows"),
+        max_lod: 0,
+        interior: TILE_INTERIOR,
+        gutter: TILE_GUTTER,
+        color: ColorFormat::Rgba8Unorm,
+        tiles: Rows::new(receipts).expect("tile rows"),
+    };
+    fs::write(
+        directory.join("manifest.json"),
+        manifest.encode().expect("manifest"),
+    )
+    .expect("manifest file");
+    let images = cache
+        .open_images(identity)
+        .expect("open image cache")
+        .expect("ready images");
+    for (key, path, len) in files {
+        if unreadable.contains(&key) {
+            fs::write(&path, vec![0u8; len]).expect("unreadable tile file");
+        }
+    }
+    (images, ReadyImageDir(root))
+}
+
+fn image_identity_with(byte: u8) -> ImageIdentity {
+    let mut identity = super::fixtures::image_identity();
+    identity.content = Digest([byte; 32]);
+    identity
 }
 
 fn bake_world(w: usize, h: usize, extras: &[(i32, i32, u32)]) -> NavWorld {
@@ -654,8 +751,9 @@ fn gpu_close_unregisters_textures_and_drops_cpu() {
     let mut gpu = RecordingGpu::new(device, queue);
     let world = open_world(3, 3);
     let mut map = WalkMapRenderer::new();
+    map.bind_fixtures(FixtureStore::with_keys([lod0(0, 0)]).expect("fixtures"));
     map.note_open();
-    let view = view_from_canvas((3220, 3220), (0.0, 0.0), 16.0, [200.0, 200.0], 0, 1, 1.0);
+    let view = grid_view(0, 0, 1, 1, 0, 0);
     for _ in 0..8 {
         map.test_sync(
             Some(&mut gpu),
@@ -669,23 +767,24 @@ fn gpu_close_unregisters_textures_and_drops_cpu() {
         );
     }
     assert!(
-        !gpu.registered.is_empty(),
-        "grid overlay uploads without fixture tiles"
+        gpu.registered.len() >= 2,
+        "the terrain tile and grid overlay must register textures"
     );
     assert!(
         map.overlay_cpu().is_none(),
         "CPU overlay dropped after GPU upload"
     );
     assert_eq!(map.counters().terrain_cpu_bytes, 0);
-    let registered: Vec<u64> = gpu.registered.iter().map(|(id, _)| *id).collect();
+    let mut registered: Vec<u64> = gpu.registered.iter().map(|(id, _)| *id).collect();
+    registered.sort_unstable();
     let baseline = phys_footprint_bytes();
     map.release(Some(&mut gpu));
-    for id in registered {
-        assert!(
-            gpu.unregistered.contains(&id),
-            "close must unregister texture {id}"
-        );
-    }
+    let mut unregistered = gpu.unregistered.clone();
+    unregistered.sort_unstable();
+    assert_eq!(
+        unregistered, registered,
+        "teardown must unregister every registered texture exactly once"
+    );
     assert!(map.slot_keys().is_empty());
     assert_eq!(map.counters().overlay_gpu_bytes, 0);
     assert_eq!(map.counters().phase, MapPhase::Pending);
@@ -695,6 +794,48 @@ fn gpu_close_unregisters_textures_and_drops_cpu() {
             after as i64 - before as i64
         );
     }
+}
+
+#[test]
+fn cache_rebind_unregisters_dropped_textures_on_next_frame() {
+    let Some((device, queue)) = headless_gpu() else {
+        return;
+    };
+    let mut gpu = Some(RecordingGpu::new(device, queue));
+    let world = open_world(3, 3);
+    let key = lod0(0, 0);
+    let mut map = WalkMapRenderer::new();
+    map.bind_fixtures(FixtureStore::with_keys([key]).expect("fixtures"));
+    map.note_open();
+    let view = grid_view(0, 0, 1, 1, 0, 0);
+    sync_test_view_with_gpu(&mut map, &world, view, &mut gpu);
+
+    let mut old_ids: Vec<u64> = gpu
+        .as_ref()
+        .expect("GPU")
+        .registered
+        .iter()
+        .map(|(id, _)| *id)
+        .collect();
+    old_ids.sort_unstable();
+    assert_eq!(old_ids.len(), 1, "the setup registers one terrain texture");
+
+    let identity = image_identity_with(0xa1);
+    let (images, _directory) = ready_images_with_tile(identity, lod0(1, 0));
+    map.bind_ready_images(images);
+    assert!(
+        gpu.as_ref().expect("GPU").unregistered.is_empty(),
+        "binding has no GPU handle and must defer unregistration"
+    );
+    sync_test_view_with_gpu(&mut map, &world, view, &mut gpu);
+
+    let gpu = gpu.as_ref().expect("GPU");
+    let mut unregistered = gpu.unregistered.clone();
+    unregistered.sort_unstable();
+    assert_eq!(
+        unregistered, old_ids,
+        "the next GPU frame must unregister the old terrain texture exactly once"
+    );
 }
 
 #[test]
@@ -1011,6 +1152,60 @@ fn tile_view(x: i32, z: i32, scale: f32, size: f32, max_lod: u8) -> View {
         1.0,
     )
 }
+fn grid_view(min_x: i32, min_z: i32, width: i32, height: i32, plane: u8, lod: u8) -> View {
+    let span = (64_i64 << lod) as f64;
+    let west = f64::from(min_x) * span;
+    let south = f64::from(min_z) * span;
+    View {
+        west,
+        south,
+        east: west + f64::from(width) * span,
+        north: south + f64::from(height) * span,
+        pixels_per_tile: if lod == 0 { 16.0 } else { 1.5 },
+        plane,
+        max_lod: lod,
+    }
+}
+
+fn sync_test_view(map: &mut WalkMapRenderer, world: &NavWorld, view: View) {
+    map.test_sync(
+        None,
+        view,
+        world,
+        layers_none(),
+        OverlayColors::default(),
+        &[],
+        &[],
+        None,
+    );
+}
+fn sync_test_view_with_gpu(
+    map: &mut WalkMapRenderer,
+    world: &NavWorld,
+    view: View,
+    gpu: &mut Option<RecordingGpu>,
+) {
+    map.test_sync(
+        gpu.as_mut().map(|gpu| gpu as &mut dyn FrameGpu),
+        view,
+        world,
+        layers_none(),
+        OverlayColors::default(),
+        &[],
+        &[],
+        None,
+    );
+}
+
+fn assert_terrain_cap(map: &WalkMapRenderer, gpu: &Option<RecordingGpu>) {
+    assert!(map.slots.len() <= TEXTURE_CAP);
+    let texture_count =
+        map.tex_pool.len() + map.slots.iter().filter(|slot| slot.gpu.is_some()).count();
+    assert!(texture_count <= TEXTURE_CAP);
+    if let Some(gpu) = gpu {
+        assert!(gpu.registered.len() <= TEXTURE_CAP);
+    }
+}
 
 #[test]
 fn renderer_decodes_one_visible_tile_per_sync_turn() {
@@ -1039,86 +1234,631 @@ fn renderer_decodes_one_visible_tile_per_sync_turn() {
 }
 
 #[test]
-fn terrain_slots_reuse_when_panning() {
+fn missing_visible_tile_does_not_churn_prefetch_and_reaches_ready() {
+    let _work_service_guard = decode_service_test_lock();
+    wait_for_decode_service_capacity_zero();
     let world = open_world(3, 3);
-    let keys = [
-        lod0(0, 0),
-        lod0(1, 0),
-        lod0(0, 1),
-        lod0(1, 1),
-        lod0(20, 20),
-        lod0(21, 20),
-        lod0(20, 21),
-        lod0(21, 21),
-    ];
+    let visible = lod0(0, 0);
+    let ring = lod0(2, 0);
+    let mut map = WalkMapRenderer::new();
+    map.test_sync_decode = false;
+    map.bind_fixtures(FixtureStore::with_keys([visible, ring]).expect("fixtures"));
+    map.note_open();
+    let view = grid_view(0, 0, 2, 1, 0, 0);
+    let identity = map.identity();
+    let generation = map.generation();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut ring_requests = 0;
+    let mut was_requested = false;
+    let mut ready_turns = 0;
+
+    while Instant::now() < deadline {
+        async_test_turn(&mut map, &world, view);
+        map.update_status(view, layers_none(), None);
+        let now = map.decode.is_requested(generation, identity, ring);
+        if now && !was_requested {
+            ring_requests += 1;
+        }
+        was_requested = now;
+        if ring_requests > 1 {
+            break;
+        }
+        if map.phase() == MapPhase::Ready && map.slot_keys().contains(&ring) {
+            ready_turns += 1;
+            if ready_turns == 3 {
+                break;
+            }
+        } else {
+            ready_turns = 0;
+        }
+        std::thread::yield_now();
+    }
+
+    assert!(
+        map.slot_keys().contains(&visible),
+        "the art-bearing visible tile must load"
+    );
+    assert!(
+        map.slot_keys().contains(&ring),
+        "the one-tile prefetch ring must load"
+    );
+    assert!(
+        ring_requests <= 1,
+        "one missing visible tile must not restart the ring decode"
+    );
+    assert_eq!(map.phase(), MapPhase::Ready);
+    assert!(map.status_line().starts_with("ready"));
+    let read_count = map.tile_read_count;
+    for _ in 0..10 {
+        async_test_turn(&mut map, &world, view);
+        map.update_status(view, layers_none(), None);
+    }
+    assert_eq!(
+        map.tile_read_count, read_count,
+        "settled visible and prefetch keys must not be read again"
+    );
+    assert_eq!(map.phase(), MapPhase::Ready);
+    map.release(None);
+    wait_for_decode_service_capacity_zero();
+}
+
+#[test]
+fn running_visible_decode_does_not_read_its_png_again() {
+    let _work_service_guard = decode_service_test_lock();
+    wait_for_decode_service_capacity_zero();
+    let visible = lod0(0, 0);
+    let mut map = WalkMapRenderer::new();
+    map.test_sync_decode = false;
+    map.bind_fixtures(FixtureStore::with_keys([visible]).expect("fixtures"));
+    map.note_open();
+    let view = grid_view(0, 0, 1, 1, 0, 0);
+    request_async_view(&mut map, view);
+
+    assert!(
+        map.decode.active_request().is_some(),
+        "the visible PNG decode must be active"
+    );
+    assert_eq!(map.tile_read_count, 1);
+    for _ in 0..32 {
+        request_async_view(&mut map, view);
+    }
+    assert_eq!(
+        map.tile_read_count, 1,
+        "an active visible decode must prevent repeat PNG reads"
+    );
+    map.release(None);
+    wait_for_decode_service_capacity_zero();
+}
+
+#[test]
+fn pending_visible_decode_does_not_read_its_png_again() {
+    let _work_service_guard = decode_service_test_lock();
+    wait_for_decode_service_capacity_zero();
+    let visible = lod0(0, 0);
+    let far = lod0(60, 60);
+    let mut map = WalkMapRenderer::new();
+    map.test_sync_decode = false;
+    map.bind_fixtures(FixtureStore::with_keys([visible]).expect("fixtures"));
+    map.note_open();
+    let identity = map.identity();
+    let generation = map.generation();
+    // An accepted decode outside the view stays active (cancelled, with no
+    // poll), so the visible request must wait as the pending demand.
+    let far_png = Arc::<[u8]>::from(encode_tile(far).expect("far PNG"));
+    map.decode
+        .request(generation, identity, far, far_png)
+        .expect("submit the far decode");
+    let view = grid_view(0, 0, 1, 1, 0, 0);
+    request_async_view(&mut map, view);
+
+    assert_eq!(
+        map.decode.pending_request(),
+        Some((generation, identity, visible)),
+        "the visible PNG decode must be pending"
+    );
+    assert_eq!(map.tile_read_count, 1);
+    for _ in 0..32 {
+        request_async_view(&mut map, view);
+    }
+    assert_eq!(
+        map.tile_read_count, 1,
+        "a pending visible decode must prevent repeat PNG reads"
+    );
+    map.release(None);
+    wait_for_decode_service_capacity_zero();
+}
+
+#[test]
+fn unreadable_visible_tile_is_recorded_and_status_settles() {
+    let _work_service_guard = decode_service_test_lock();
+    wait_for_decode_service_capacity_zero();
+    let world = open_world(3, 3);
+    let visible = lod0(0, 0);
+    let ring = lod0(1, 0);
+    let (images, _directory) =
+        ready_images_with_tiles(image_identity_with(0xc3), &[visible, ring], &[visible]);
+    let mut map = WalkMapRenderer::new();
+    map.test_sync_decode = false;
+    map.note_open();
+    map.bind_ready_images(images);
+    let view = grid_view(0, 0, 1, 1, 0, 0);
+    let identity = map.identity();
+    let generation = map.generation();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut ring_requests = 0;
+    let mut was_requested = false;
+    let mut ready_turns = 0;
+
+    while Instant::now() < deadline {
+        async_test_turn(&mut map, &world, view);
+        map.update_status(view, layers_none(), None);
+        let now = map.decode.is_requested(generation, identity, ring);
+        if now && !was_requested {
+            ring_requests += 1;
+        }
+        was_requested = now;
+        if ring_requests > 1 {
+            break;
+        }
+        if map.phase() == MapPhase::Ready && map.slot_keys().contains(&ring) {
+            ready_turns += 1;
+            if ready_turns == 3 {
+                break;
+            }
+        } else {
+            ready_turns = 0;
+        }
+        std::thread::yield_now();
+    }
+
+    assert!(
+        ring_requests <= 1,
+        "an unreadable visible tile restarted the ring decode {ring_requests} times"
+    );
+    assert!(
+        map.slot_keys().contains(&visible),
+        "the unreadable visible tile must get a negative record"
+    );
+    assert!(
+        map.slot_keys().contains(&ring),
+        "the readable ring tile must load"
+    );
+    assert_eq!(
+        map.phase(),
+        MapPhase::Ready,
+        "status: {}",
+        map.status_line()
+    );
+    assert!(map.status_line().starts_with("ready"));
+    let read_count = map.tile_read_count;
+    for _ in 0..10 {
+        async_test_turn(&mut map, &world, view);
+        map.update_status(view, layers_none(), None);
+    }
+    assert_eq!(
+        map.tile_read_count, read_count,
+        "a settled view must not read the unreadable tile again"
+    );
+    assert!(!map.decode.is_busy(), "a settled view must not decode");
+    assert_eq!(map.phase(), MapPhase::Ready);
+    assert_eq!(map.tile_warn_count, 1, "one warning for the unreadable key");
+    map.release(None);
+    wait_for_decode_service_capacity_zero();
+}
+
+#[test]
+fn unreadable_ring_tile_is_not_read_again_in_a_settled_view() {
+    let world = open_world(3, 3);
+    let visible = lod0(0, 0);
+    let ring = lod0(1, 0);
+    let (images, _directory) =
+        ready_images_with_tiles(image_identity_with(0xc4), &[visible, ring], &[ring]);
+    let mut map = WalkMapRenderer::new();
+    map.note_open();
+    map.bind_ready_images(images);
+    let view = grid_view(0, 0, 1, 1, 0, 0);
+    for _ in 0..16 {
+        sync_test_view(&mut map, &world, view);
+    }
+    map.update_status(view, layers_none(), None);
+    assert!(
+        map.slot_keys().contains(&ring),
+        "the unreadable ring tile must get a negative record"
+    );
+    assert!(map.status_line().starts_with("ready"));
+    let settled = map.tile_read_count;
+    for _ in 0..10 {
+        sync_test_view(&mut map, &world, view);
+    }
+    assert_eq!(
+        map.tile_read_count - settled,
+        0,
+        "a settled view must not read any PNG again"
+    );
+    assert_eq!(map.tile_warn_count, 1, "one warning for the unreadable key");
+
+    // A plane change drops the record; coming back reads the key once more
+    // but does not warn for it again.
+    for _ in 0..4 {
+        sync_test_view(&mut map, &world, grid_view(0, 0, 1, 1, 1, 0));
+    }
+    for _ in 0..16 {
+        sync_test_view(&mut map, &world, view);
+    }
+    assert!(map.slot_keys().contains(&ring));
+    assert_eq!(
+        map.tile_warn_count, 1,
+        "a key that cannot be read is warned once per bound cache"
+    );
+
+    // A different cache with the same unreadable key warns for it again.
+    let (images, _rebound) =
+        ready_images_with_tiles(image_identity_with(0xc5), &[visible, ring], &[ring]);
+    map.bind_ready_images(images);
+    for _ in 0..16 {
+        sync_test_view(&mut map, &world, view);
+    }
+    assert!(map.slot_keys().contains(&ring));
+    assert_eq!(
+        map.tile_warn_count, 2,
+        "a new bound cache warns once for its own unreadable key"
+    );
+}
+
+fn test_gpu_tex(device: &wgpu::Device, id: u64) -> super::GpuTex {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("274 walk map recycle test"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    super::GpuTex {
+        texture,
+        view,
+        tex_id: TextureId::new(id),
+    }
+}
+
+#[test]
+fn recycle_into_a_full_pool_unregisters_or_queues_the_texture() {
+    let Some((device, queue)) = headless_gpu() else {
+        return;
+    };
+    let mut pool: Vec<_> = (1..=TEXTURE_CAP as u64)
+        .map(|id| test_gpu_tex(&device, id))
+        .collect();
+    let mut pending = Vec::new();
+    let mut no_gpu: Option<&mut dyn FrameGpu> = None;
+    super::recycle_texture(
+        test_gpu_tex(&device, 100),
+        &mut pool,
+        &mut pending,
+        &mut no_gpu,
+    );
+    assert_eq!(pool.len(), TEXTURE_CAP);
+    assert_eq!(
+        pending,
+        vec![TextureId::new(100)],
+        "without a GPU handle the id must wait for the next GPU frame"
+    );
+
+    let mut recording = RecordingGpu::new(device.clone(), queue);
+    let mut gpu: Option<&mut dyn FrameGpu> = Some(&mut recording);
+    super::recycle_texture(
+        test_gpu_tex(&device, 101),
+        &mut pool,
+        &mut pending,
+        &mut gpu,
+    );
+    assert_eq!(pending, vec![TextureId::new(100)]);
+    assert_eq!(recording.unregistered, vec![101]);
+}
+
+#[test]
+fn visible_tiles_preempt_a_pending_prefetch_upload() {
+    let _work_service_guard = decode_service_test_lock();
+    wait_for_decode_service_capacity_zero();
+    let visible = lod0(0, 0);
+    let ring = lod0(1, 0);
+    let mut map = WalkMapRenderer::new();
+    map.test_sync_decode = false;
+    map.bind_fixtures(FixtureStore::with_keys([visible, ring]).expect("fixtures"));
+    map.note_open();
+    let identity = map.identity();
+    let generation = map.generation();
+    let ring_png = Arc::<[u8]>::from(encode_tile(ring).expect("ring PNG"));
+    map.decode
+        .request(generation, identity, ring, ring_png)
+        .expect("prefetch request");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while map.pending_upload.is_none() {
+        map.pump_decode();
+        assert!(
+            Instant::now() < deadline,
+            "the prefetch decode did not complete"
+        );
+        std::thread::yield_now();
+    }
+    assert!(
+        map.pending_upload
+            .as_ref()
+            .is_some_and(|(_, _, key, _)| *key == ring),
+        "the setup needs a completed prefetch upload"
+    );
+
+    request_async_view(&mut map, grid_view(0, 0, 1, 1, 0, 0));
+
+    assert!(
+        map.pending_upload.is_none(),
+        "a pending ring upload must yield to the missing visible tile"
+    );
+    assert!(
+        map.decode.is_requested(generation, identity, visible),
+        "the missing visible tile must replace the prefetch demand"
+    );
+    map.release(None);
+    wait_for_decode_service_capacity_zero();
+}
+#[test]
+fn terrain_slots_reuse_when_panning_one_tile_and_back() {
+    let _work_service_guard = decode_service_test_lock();
+    wait_for_decode_service_capacity_zero();
+    let world = open_world(3, 3);
+    let near_key = lod0(0, 0);
+    let right_key = lod0(1, 0);
+    let mut map = WalkMapRenderer::new();
+    let mut gpu = headless_gpu().map(|(device, queue)| RecordingGpu::new(device, queue));
+    map.test_sync_decode = false;
+    map.bind_fixtures(FixtureStore::with_keys([near_key, right_key]).expect("fixtures"));
+    map.note_open();
+    let near = grid_view(0, 0, 1, 1, 0, 0);
+    let right = grid_view(1, 0, 1, 1, 0, 0);
+    let near_slots = settle_renderer_with_gpu(&mut map, &world, near, &mut gpu);
+    assert!(near_slots.contains(&near_key), "the visible tile must load");
+    settle_renderer_with_gpu(&mut map, &world, right, &mut gpu);
+
+    let mut before_return = map.slot_keys();
+    before_return.sort();
+    let before_counters = map.counters();
+    request_async_view(&mut map, near);
+    let after_counters = map.counters();
+    assert!(!map.decode.is_busy(), "the returning tile needs no decode");
+    assert_eq!(after_counters.in_flight, before_counters.in_flight);
+    assert_eq!(
+        after_counters.pending_upload,
+        before_counters.pending_upload
+    );
+    assert_eq!(
+        after_counters.decode_staging_bytes,
+        before_counters.decode_staging_bytes
+    );
+    let after_return = settle_renderer_with_gpu(&mut map, &world, near, &mut gpu);
+    let settled_counters = map.counters();
+    assert_eq!(settled_counters.in_flight, before_counters.in_flight);
+    assert_eq!(
+        settled_counters.pending_upload,
+        before_counters.pending_upload
+    );
+    assert_eq!(
+        settled_counters.decode_staging_bytes,
+        before_counters.decode_staging_bytes
+    );
+    assert_eq!(
+        after_return, before_return,
+        "the returning cached tile is not decoded or uploaded again"
+    );
+    assert!(after_return.contains(&near_key));
+    assert!(
+        near_slots.contains(&right_key),
+        "the one-tile ring must prefetch the next tile"
+    );
+    wait_for_decode_service_capacity_zero();
+}
+
+#[test]
+fn terrain_slots_respect_cap_and_evict_least_recent_under_long_pan() {
+    let world = open_world(3, 3);
+    let keys = (0..34)
+        .flat_map(|x| {
+            (0..6).map(move |z| TileKey {
+                plane: 0,
+                lod: 0,
+                x,
+                z,
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut map = WalkMapRenderer::new();
+    let mut gpu = headless_gpu().map(|(device, queue)| RecordingGpu::new(device, queue));
+    map.bind_fixtures(FixtureStore::with_keys(keys).expect("fixtures"));
+    map.note_open();
+    let full = grid_view(0, 0, 4, 6, 0, 0);
+    for _ in 0..TEXTURE_CAP {
+        sync_test_view_with_gpu(&mut map, &world, full, &mut gpu);
+        assert_terrain_cap(&map, &gpu);
+    }
+    assert_eq!(map.slot_keys().len(), TEXTURE_CAP);
+
+    for x in 0..4 {
+        for z in 0..6 {
+            if (x, z) != (0, 0) {
+                sync_test_view_with_gpu(&mut map, &world, grid_view(x, z, 1, 1, 0, 0), &mut gpu);
+                assert_terrain_cap(&map, &gpu);
+                assert_eq!(
+                    map.slot_keys().len(),
+                    TEXTURE_CAP,
+                    "a one-tile pan must keep the warm terrain slots"
+                );
+            }
+        }
+    }
+
+    sync_test_view_with_gpu(&mut map, &world, grid_view(1, 0, 4, 6, 0, 0), &mut gpu);
+    assert_terrain_cap(&map, &gpu);
+    let after_first_eviction = map.slot_keys();
+    assert_eq!(after_first_eviction.len(), TEXTURE_CAP);
+    assert!(
+        !after_first_eviction.contains(&lod0(0, 0)),
+        "the least recently visible slot must leave first"
+    );
+    assert!(
+        after_first_eviction.contains(&lod0(0, 1)),
+        "a more recently visible slot must remain"
+    );
+
+    for x in 1..=30 {
+        let view = grid_view(x, 0, 4, 6, 0, 0);
+        for _ in 0..6 {
+            sync_test_view_with_gpu(&mut map, &world, view, &mut gpu);
+            assert_terrain_cap(&map, &gpu);
+        }
+    }
+}
+
+#[test]
+fn terrain_slots_evict_least_recently_visible_not_first_seen() {
+    let world = open_world(3, 3);
+    let keys = (0..=TEXTURE_CAP as i32).map(|x| lod0(x, 0));
     let mut map = WalkMapRenderer::new();
     map.bind_fixtures(FixtureStore::with_keys(keys).expect("fixtures"));
     map.note_open();
-    let near = tile_view(0, 0, 16.0, 200.0, 0);
-    let far = tile_view(20, 20, 16.0, 200.0, 0);
-    for _ in 0..8 {
-        map.test_sync(
-            None,
-            near,
-            &world,
-            layers_none(),
-            OverlayColors::default(),
-            &[],
-            &[],
-            None,
-        );
+    let full = grid_view(0, 0, TEXTURE_CAP as i32, 1, 0, 0);
+    for _ in 0..TEXTURE_CAP {
+        sync_test_view(&mut map, &world, full);
     }
-    let first = map.slot_keys();
-    assert!(!first.is_empty(), "near cluster must decode");
-    for _ in 0..8 {
-        map.test_sync(
-            None,
-            far,
-            &world,
-            layers_none(),
-            OverlayColors::default(),
-            &[],
-            &[],
-            None,
-        );
-    }
-    let second = map.slot_keys();
-    assert!(!second.is_empty(), "far cluster must decode");
+    assert_eq!(map.slot_keys().len(), TEXTURE_CAP);
+
+    sync_test_view(&mut map, &world, grid_view(0, 0, 1, 1, 0, 0));
+    sync_test_view(
+        &mut map,
+        &world,
+        grid_view(TEXTURE_CAP as i32, 0, 1, 1, 0, 0),
+    );
+
+    let keys = map.slot_keys();
+    assert!(keys.contains(&lod0(0, 0)), "the revisited slot must remain");
     assert!(
-        second.iter().all(|key| key.x >= 20 && key.z >= 20),
-        "panning must reuse slots instead of keeping the old cluster: {second:?}"
+        !keys.contains(&lod0(1, 0)),
+        "the older, never-revisited slot must leave first"
+    );
+    assert!(
+        keys.contains(&lod0(TEXTURE_CAP as i32, 0)),
+        "the newly visible tile must load"
     );
 }
 
 #[test]
-fn terrain_slots_cap_under_panning() {
+fn status_counts_only_visible_terrain_slots() {
     let world = open_world(3, 3);
-    let keys: Vec<_> = (0..8)
-        .flat_map(|x| (0..8).map(move |z| lod0(x, z)))
-        .collect();
+    let keys = (0..4)
+        .flat_map(|x| (0..6).map(move |z| lod0(x, z)))
+        .collect::<Vec<_>>();
     let mut map = WalkMapRenderer::new();
     map.bind_fixtures(FixtureStore::with_keys(keys).expect("fixtures"));
     map.note_open();
-    for (x, z) in [(2, 2), (5, 2), (5, 5), (2, 5), (3, 3)] {
-        let view = tile_view(x, z, 4.0, 1600.0, 0);
-        for _ in 0..12 {
-            map.test_sync(
-                None,
-                view,
-                &world,
-                layers_none(),
-                OverlayColors::default(),
-                &[],
-                &[],
-                None,
-            );
-        }
-        assert!(
-            map.slot_keys().len() <= TEXTURE_CAP,
-            "panning must keep at most {TEXTURE_CAP} slots, got {}",
-            map.slot_keys().len()
-        );
+    let full = grid_view(0, 0, 4, 6, 0, 0);
+    for _ in 0..TEXTURE_CAP {
+        sync_test_view(&mut map, &world, full);
     }
+    assert_eq!(map.slot_keys().len(), TEXTURE_CAP);
+
+    let visible = grid_view(1, 1, 2, 3, 0, 0);
+    sync_test_view(&mut map, &world, visible);
+    map.update_status(visible, layers_none(), None);
+
+    assert_eq!(map.phase(), MapPhase::Ready);
+    assert_eq!(map.status_line(), "ready · 6 tiles");
+}
+
+#[test]
+fn no_visible_set_drops_slots_from_other_contexts() {
+    let world = open_world(3, 3);
+    let key = lod0(0, 0);
+    let mut map = WalkMapRenderer::new();
+    map.bind_fixtures(FixtureStore::with_keys([key]).expect("fixtures"));
+    map.note_open();
+    sync_test_view(&mut map, &world, grid_view(0, 0, 1, 1, 0, 0));
+    assert!(map.slot_keys().contains(&key));
+
+    let no_visible = View {
+        west: -10_000.0,
+        south: -10_000.0,
+        east: 10_000.0,
+        north: 10_000.0,
+        pixels_per_tile: 1.5,
+        plane: 1,
+        max_lod: 0,
+    };
+    assert!(select_lod(no_visible, TEXTURE_CAP).is_err());
+    sync_test_view(&mut map, &world, no_visible);
+
+    assert!(
+        map.slot_keys().is_empty(),
+        "a view with no selected tile set must not retain or draw stale slots"
+    );
+}
+
+#[test]
+fn terrain_slots_drop_when_plane_or_lod_changes() {
+    let world = open_world(3, 3);
+    let p0l0 = [
+        TileKey {
+            plane: 0,
+            lod: 0,
+            x: 0,
+            z: 0,
+        },
+        TileKey {
+            plane: 0,
+            lod: 0,
+            x: 1,
+            z: 0,
+        },
+    ];
+    let p1l0 = TileKey {
+        plane: 1,
+        lod: 0,
+        x: 0,
+        z: 0,
+    };
+    let p1l1 = TileKey {
+        plane: 1,
+        lod: 1,
+        x: 0,
+        z: 0,
+    };
+    let mut map = WalkMapRenderer::new();
+    map.bind_fixtures(FixtureStore::with_keys([p0l0[0], p0l0[1], p1l0, p1l1]).expect("fixtures"));
+    map.note_open();
+    let near = grid_view(0, 0, 1, 1, 0, 0);
+    let right = grid_view(1, 0, 1, 1, 0, 0);
+    sync_test_view(&mut map, &world, near);
+    sync_test_view(&mut map, &world, near);
+    sync_test_view(&mut map, &world, right);
+    assert!(
+        map.slot_keys().contains(&p0l0[0]),
+        "panning must retain the earlier plane and LOD"
+    );
+
+    sync_test_view(&mut map, &world, grid_view(0, 0, 1, 1, 1, 0));
+    let plane_slots = map.slot_keys();
+    assert!(plane_slots.iter().all(|key| key.plane == 1 && key.lod == 0));
+    assert!(!plane_slots.contains(&p0l0[0]));
+
+    sync_test_view(&mut map, &world, grid_view(0, 0, 1, 1, 1, 1));
+    let lod_slots = map.slot_keys();
+    assert!(lod_slots.iter().all(|key| key.plane == 1 && key.lod == 1));
+    assert!(!lod_slots.contains(&p1l0));
+    assert!(lod_slots.contains(&p1l1));
 }
 
 #[test]
@@ -1664,8 +2404,18 @@ fn ancillary_text_and_icc_preserve_legacy_pixels() {
 }
 
 fn async_test_turn(map: &mut WalkMapRenderer, world: &NavWorld, view: View) {
+    let mut gpu = None;
+    async_test_turn_with_gpu(map, world, view, &mut gpu);
+}
+
+fn async_test_turn_with_gpu(
+    map: &mut WalkMapRenderer,
+    world: &NavWorld,
+    view: View,
+    gpu: &mut Option<RecordingGpu>,
+) {
     map.test_sync(
-        None,
+        gpu.as_mut().map(|gpu| gpu as &mut dyn FrameGpu),
         view,
         world,
         layers_none(),
@@ -1682,11 +2432,21 @@ fn request_async_view(map: &mut WalkMapRenderer, view: View) {
 }
 
 fn settle_renderer(map: &mut WalkMapRenderer, world: &NavWorld, view: View) -> Vec<TileKey> {
+    let mut gpu = None;
+    settle_renderer_with_gpu(map, world, view, &mut gpu)
+}
+
+fn settle_renderer_with_gpu(
+    map: &mut WalkMapRenderer,
+    world: &NavWorld,
+    view: View,
+    gpu: &mut Option<RecordingGpu>,
+) -> Vec<TileKey> {
     let deadline = Instant::now() + Duration::from_secs(60);
     let mut quiet = 0;
     let mut previous = Vec::new();
     while quiet < 16 {
-        async_test_turn(map, world, view);
+        async_test_turn_with_gpu(map, world, view, gpu);
         let mut keys = map.slot_keys();
         keys.sort();
         if !map.decode.is_busy() && map.pending_upload.is_none() && keys == previous {
@@ -1721,13 +2481,8 @@ fn renderer_background_decode_pans_refills_and_releases_every_owner() {
     let far = tile_view(23, 23, 4.0, 640.0, 0);
     let fixtures = FixtureStore::with_keys(async_renderer_keys()).expect("fixtures");
 
-    let mut oracle = WalkMapRenderer::new();
-    oracle.bind_fixtures(fixtures.clone());
-    oracle.note_open();
-    let near_expected = settle_renderer(&mut oracle, &world, near);
-    let far_expected = settle_renderer(&mut oracle, &world, far);
-    assert!(!near_expected.is_empty() && !far_expected.is_empty());
-    wait_for_decode_service_capacity_zero();
+    let near_visible = select_lod(near, TEXTURE_CAP).expect("near visible tiles");
+    let far_visible = select_lod(far, TEXTURE_CAP).expect("far visible tiles");
     let mut close_map = WalkMapRenderer::new();
     close_map.test_sync_decode = false;
     close_map.bind_fixtures(fixtures.clone());
@@ -1763,7 +2518,11 @@ fn renderer_background_decode_pans_refills_and_releases_every_owner() {
         map.decode.has_active(),
         "renderer turns must submit through the real background controller"
     );
-    assert_eq!(settle_renderer(&mut map, &world, near), near_expected);
+    let near_slots = settle_renderer(&mut map, &world, near);
+    assert!(
+        near_visible.keys().all(|key| near_slots.contains(&key)),
+        "the renderer must load every near visible tile"
+    );
     wait_for_decode_service_capacity_zero();
 
     let mut max_held_tickets = 0;
@@ -1775,11 +2534,12 @@ fn renderer_background_decode_pans_refills_and_releases_every_owner() {
         max_held_tickets <= 1,
         "one renderer retains at most one accepted ticket, saw {max_held_tickets}"
     );
-    assert_eq!(settle_renderer(&mut map, &world, far), far_expected);
+    let far_slots = settle_renderer(&mut map, &world, far);
     assert!(
-        map.slot_keys().iter().all(|key| key.x >= 20 && key.z >= 20),
-        "rapid panning must settle to the far visible set"
+        far_visible.keys().all(|key| far_slots.contains(&key)),
+        "the renderer must load every far visible tile"
     );
+    assert!(far_slots.len() <= TEXTURE_CAP);
     wait_for_decode_service_capacity_zero();
 
     map.release(None);
@@ -1795,7 +2555,11 @@ fn renderer_background_decode_pans_refills_and_releases_every_owner() {
     assert_ne!(map.generation(), old_generation);
     assert!(map.pending_upload.is_none());
     assert!(!map.decode.is_busy());
-    assert_eq!(settle_renderer(&mut map, &world, near), near_expected);
+    let near_slots = settle_renderer(&mut map, &world, near);
+    assert!(
+        near_visible.keys().all(|key| near_slots.contains(&key)),
+        "the renderer must reload every visible tile after identity invalidation"
+    );
     wait_for_decode_service_capacity_zero();
 
     for cycle in 0..200 {
@@ -1923,5 +2687,42 @@ fn trailing_data_matches_legacy_decoder_acceptance() {
     assert!(
         mismatches.is_empty(),
         "new decoder accept/reject behavior differs from legacy: {mismatches:?}"
+    );
+}
+
+/// A ring upload that becomes ready in the same frame whose terrain sync
+/// filled the last slot must not push the slot count past TEXTURE_CAP:
+/// `pump_decode` sets `pending_upload` after `sync_terrain` has run, and
+/// `upload_pending` runs next.
+#[test]
+fn ring_upload_at_the_texture_cap_is_dropped_not_slotted() {
+    let world = open_world(3, 3);
+    let keys = (0..=TEXTURE_CAP as i32).map(|x| lod0(x, 0));
+    let mut map = WalkMapRenderer::new();
+    map.bind_fixtures(FixtureStore::with_keys(keys).expect("fixtures"));
+    map.note_open();
+    let full = grid_view(0, 0, TEXTURE_CAP as i32, 1, 0, 0);
+    for _ in 0..TEXTURE_CAP {
+        sync_test_view(&mut map, &world, full);
+    }
+    assert_eq!(map.slot_keys().len(), TEXTURE_CAP);
+
+    let ring = lod0(TEXTURE_CAP as i32, 0);
+    map.pending_upload = Some((
+        map.generation(),
+        map.identity(),
+        ring,
+        vec![0u8; TILE_RGBA_BYTES],
+    ));
+    let mut no_gpu: Option<&mut dyn FrameGpu> = None;
+    map.upload_pending(&mut no_gpu);
+    assert_eq!(
+        map.slot_keys().len(),
+        TEXTURE_CAP,
+        "a ring upload at the cap must be dropped, not slotted"
+    );
+    assert!(
+        !map.slot_keys().contains(&ring),
+        "the ring tile must not take a slot past the cap"
     );
 }

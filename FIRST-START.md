@@ -49,7 +49,7 @@ self-baked navigation packs and the graphics defaults changed.
 
 ## Toolchain
 
-- Rust **1.98.0** (`rust-toolchain.toml` in this repo and in
+- Rust **1.98.1** (`rust-toolchain.toml` in this repo and in
   `vendor/fr-client-rust`).
 - Git with submodules:
   `git clone --recurse-submodules https://github.com/acfrazier/274bot.git`
