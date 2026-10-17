@@ -6,7 +6,8 @@
 //! releases go to the seat whatever the room, and a second hold keeps the
 //! controls of a fold whose pages still wait (round 7). That merge keeps a
 //! machine phase that returns to an earlier value, and carries each isolate
-//! repeat once (round 8).
+//! repeat once (round 8). A held tick keeps the walk aborts and the newest
+//! run policy for the first frame after the hold (rounds 9 and 10).
 
 use super::*;
 use api::run_policy::{RunEnergyMin, RunPolicyOverride};
@@ -1687,4 +1688,242 @@ fn host_held_tick_keeps_the_walk_abort_and_drops_gameplay() {
         "the first frame after the hold delivers the abort"
     );
     assert!(requests(later).is_empty(), "the abort is delivered once");
+}
+
+/// Put the watchdog in a recovery hold (`SamplingAnchor`).
+fn hold_for_watchdog(slot: &mut SlotScript) {
+    let start = Instant::now();
+    slot.watchdog.arm_fresh(start);
+    slot.watchdog
+        .stamp_game_packet_tick(start + crate::watchdog::WEDGE);
+    assert_eq!(
+        slot.watchdog.observe(start + crate::watchdog::WEDGE, true),
+        crate::watchdog::WatchdogAction::RequestAnchor
+    );
+    assert!(slot.watchdog.holds_script_actions());
+}
+
+fn end_watchdog_hold(slot: &mut SlotScript) {
+    let _ = slot.watchdog.abort_owned_recovery();
+    assert!(!slot.watchdog.holds_script_actions());
+}
+
+/// One host frame whose isolate batch has `reqs`. Returns what the drain
+/// gives the host.
+fn drained_frame(
+    slot: &mut SlotScript,
+    reqs: Vec<InteractReq>,
+) -> (Option<Option<RunPolicyOverride>>, Vec<InteractReq>) {
+    let mut pages = slot.load.as_ref().unwrap().drain_seat_batches();
+    pages.push(page(slot, reqs));
+    slot.load.as_ref().unwrap().restore_seat_batches(pages);
+    let (policy, reqs, _) = slot.drain_host_interacts();
+    (policy, requests(reqs))
+}
+
+fn floor_override(energy: i32) -> Option<Option<RunPolicyOverride>> {
+    Some(Some(RunPolicyOverride {
+        run_auto: None,
+        energy_min: Some(RunEnergyMin::Floor(energy)),
+    }))
+}
+
+// Round 10, Main decision 1 (operator decision 2026-10-16: aborts are never
+// dropped): a watchdog recovery hold keeps the batch's walk aborts in the
+// order the script sent them, at most one for each walk, and drops its
+// gameplay. The first frame after the hold delivers the aborts once.
+// Synthetic sequence: the batches enter the isolate queue directly.
+#[test]
+fn watchdog_held_tick_keeps_walk_aborts_in_send_order_and_drops_gameplay() {
+    let mut slot = with_seat(894);
+    hold_for_watchdog(&mut slot);
+    let before = dropped(&slot);
+    let first = drained_frame(
+        &mut slot,
+        vec![InteractReq::AbortWalk { request_id: 5 }, walk(6)],
+    );
+    slot.seat_held_tick();
+    let second = drained_frame(
+        &mut slot,
+        vec![
+            InteractReq::AbortWalk { request_id: 7 },
+            InteractReq::AbortWalk { request_id: 5 },
+            walk(8),
+        ],
+    );
+    let held_dropped = dropped(&slot) - before;
+    end_watchdog_hold(&mut slot);
+    let (_, after, _) = slot.drain_host_interacts();
+    let (_, later, _) = slot.drain_host_interacts();
+    slot.stop();
+    assert_eq!(first, (None, Vec::new()), "the held frame delivers nothing");
+    assert_eq!(second, (None, Vec::new()), "the aborts wait for the hold");
+    assert_eq!(
+        held_dropped, 2,
+        "only the two gameplay rows are dropped and counted"
+    );
+    assert_eq!(
+        requests(after),
+        [
+            InteractReq::AbortWalk { request_id: 5 },
+            InteractReq::AbortWalk { request_id: 7 },
+        ],
+        "the first frame after the hold delivers each abort once, in order"
+    );
+    assert!(requests(later).is_empty(), "the aborts are delivered once");
+}
+
+// Round 10, Main decision 1: the watchdog's held tick of the seat keeps a
+// walk abort that waits in the seat queue, with its release slot, for the
+// first frame after the hold. Synthetic sequence: the row enters the seat
+// directly.
+#[test]
+fn watchdog_held_tick_keeps_a_walk_abort_queued_in_the_seat() {
+    use api::script_contract::Release;
+    let mut slot = with_seat(895);
+    slot.seat
+        .as_mut()
+        .unwrap()
+        .push(
+            queued_interact(InteractReq::AbortWalk { request_id: 3 }),
+            api::script_contract::EmissionClass::Release,
+            EmissionSource::Root,
+            Some(Release::AbortWalk(id(3))),
+        )
+        .unwrap();
+    hold_for_watchdog(&mut slot);
+    slot.seat_held_tick();
+    let reserved = slot.seat.as_ref().unwrap().reserved_releases();
+    let (_, held, _) = slot.drain_host_interacts();
+    slot.seat_held_tick();
+    end_watchdog_hold(&mut slot);
+    let (_, after, _) = slot.drain_host_interacts();
+    slot.stop();
+    assert_eq!(reserved, 1, "the abort keeps its walk release slot");
+    assert!(requests(held).is_empty(), "the abort waits for the hold");
+    assert_eq!(
+        requests(after),
+        [InteractReq::AbortWalk { request_id: 3 }],
+        "the first frame after the hold delivers the abort"
+    );
+}
+
+// Round 10, Main decision 2: a watchdog recovery hold keeps the newest
+// run-policy update and gives it to the first frame after the hold, after
+// the kept abort. An older policy row that still waits in the seat does not
+// replace it. The held frames give the host no policy. Synthetic sequence:
+// the rows enter the seat and the isolate queue directly.
+#[test]
+fn watchdog_held_tick_keeps_the_newest_run_policy_for_after_the_hold() {
+    let mut slot = with_seat(896);
+    slot.seat
+        .as_mut()
+        .unwrap()
+        .push_policy(queued_interact(floor(5)), EmissionSource::Root)
+        .unwrap();
+    hold_for_watchdog(&mut slot);
+    slot.seat_held_tick();
+    let first = drained_frame(
+        &mut slot,
+        vec![InteractReq::AbortWalk { request_id: 4 }, floor(10)],
+    );
+    slot.seat_held_tick();
+    let second = drained_frame(&mut slot, vec![floor(20), walk(6)]);
+    end_watchdog_hold(&mut slot);
+    let after = drained_frame(&mut slot, Vec::new());
+    let later = drained_frame(&mut slot, Vec::new());
+    slot.stop();
+    assert_eq!(first, (None, Vec::new()), "the held frame gives no policy");
+    assert_eq!(second, (None, Vec::new()), "the policy waits for the hold");
+    assert_eq!(
+        after,
+        (
+            floor_override(20),
+            vec![InteractReq::AbortWalk { request_id: 4 }]
+        ),
+        "the newest policy, after the kept abort"
+    );
+    assert_eq!(later, (None, Vec::new()), "the policy is delivered once");
+}
+
+// Round 10, Main decision 2: a held tick of a frame that the slot loop
+// holds (scene load, welcome modal) keeps a run-policy row that waits in
+// the seat queue. The held frame gives the host no policy, and the first
+// frame after the hold gives the kept one. Synthetic sequence: the row
+// enters the seat directly.
+#[test]
+fn host_held_tick_keeps_the_seat_run_policy_for_after_the_hold() {
+    let mut slot = with_seat(897);
+    slot.seat
+        .as_mut()
+        .unwrap()
+        .push_policy(queued_interact(floor(30)), EmissionSource::Root)
+        .unwrap();
+    slot.seat_host_hold(true);
+    slot.seat_held_tick();
+    let held = drained_frame(&mut slot, Vec::new());
+    slot.seat_held_tick();
+    let still = drained_frame(&mut slot, Vec::new());
+    slot.seat_host_hold(false);
+    let after = drained_frame(&mut slot, Vec::new());
+    let later = drained_frame(&mut slot, Vec::new());
+    slot.stop();
+    assert_eq!(held, (None, Vec::new()), "the held frame gives no policy");
+    assert_eq!(still, (None, Vec::new()), "the policy waits for the hold");
+    assert_eq!(
+        after,
+        (floor_override(30), Vec::new()),
+        "the first frame after the hold gives the kept policy"
+    );
+    assert_eq!(later, (None, Vec::new()), "the policy is delivered once");
+}
+
+// Round 10, Main decision 3: the precondition of the accepted fold-order
+// limit (`carry_waiting_controls`). While the guardian holds, the seat does
+// not complete or start a native (`native/seat.rs:790-793`, `:1016-1018`):
+// neither a held frame nor a direct batch with `Done(1)` and a new start
+// of request 2 changes the seat. So no terminal and no new start apply
+// during the hold, and the seat state at resume is the state at the start
+// of the hold.
+#[test]
+fn guardian_hold_neither_completes_nor_starts_a_native() {
+    use crate::machine::MachineEventKind::Done;
+    let mut slot = with_seat(898);
+    slot.consume_seat_batch(
+        decoded(vec![start_input(&slot, 1, NativeKind::Hunt)], Vec::new()),
+        0,
+        &[],
+    );
+    let state = |slot: &SlotScript| {
+        let seat = slot.seat.as_ref().unwrap();
+        (
+            seat.live().iter().map(|entry| entry.id).collect::<Vec<_>>(),
+            seat.results().len(),
+        )
+    };
+    assert_eq!(state(&slot), (vec![id(1)], 0), "request 1 is live");
+    slot.seat_guardian_hold(true);
+    let mut held = page(&slot, Vec::new());
+    held.batch.starts = vec![start_input(&slot, 2, NativeKind::Hunt)];
+    held.machine_events = vec![machine_event(1, Done)];
+    slot.load.as_ref().unwrap().restore_seat_batches(vec![held]);
+    let _ = slot.drain_host_interacts();
+    let after_frame = state(&slot);
+    slot.consume_seat_batch(
+        decoded(vec![start_input(&slot, 2, NativeKind::Hunt)], Vec::new()),
+        0,
+        &[machine_event(1, Done)],
+    );
+    let after_batch = state(&slot);
+    slot.stop();
+    assert_eq!(
+        after_frame,
+        (vec![id(1)], 0),
+        "a held frame neither completes request 1 nor starts request 2"
+    );
+    assert_eq!(
+        after_batch,
+        (vec![id(1)], 0),
+        "a held seat neither completes request 1 nor starts request 2"
+    );
 }
