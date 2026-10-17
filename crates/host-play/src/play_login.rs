@@ -758,6 +758,17 @@ impl SlotArm {
         ready && lifecycle.session.ready().is_some()
     }
 
+    /// Why the current session is held, for the live seat cells.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn session_hold_reasons(&self) -> Vec<HoldReason> {
+        let lifecycle = self.lifecycle.lock();
+        HoldReason::ALL
+            .into_iter()
+            .filter(|why| lifecycle.session.held_by(*why))
+            .collect()
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub(super) fn observe_session_exit(&self, cause: SessionEndCause, resumable: bool) {
         self.lifecycle.lock().observe_exit(cause, resumable);

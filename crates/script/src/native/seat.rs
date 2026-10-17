@@ -1639,6 +1639,41 @@ impl<R> GameplaySeat<R> {
         self.combat_release = false;
     }
 
+    /// A held tick of a frame that the host holds for a scene load or the
+    /// welcome modal. Operator decision 2026-10-16 amends the held-tick row
+    /// of `28-seat-sg.md:64` for the abort releases only: as
+    /// [`Self::held_tick`], but queued and taken release rows (`AbortWalk`,
+    /// `GatherStop`, `CombatStop`) keep their custody and reservation, and
+    /// dispatch after the hold. A release row holds its reserved slot
+    /// (`reserve_release`), so at most `MAX_WALK_RELEASES` walk aborts, one
+    /// `GatherStop` and one `CombatStop` stay.
+    pub fn held_tick_keeping_releases(&mut self) {
+        use api::script_contract::Release;
+        if self.held {
+            return;
+        }
+        let before = self.queued.len() + self.in_flight.len();
+        self.queued.retain(|row| row.release.is_some());
+        self.in_flight.retain(|row| row.release.is_some());
+        self.dropped += (before - self.queued.len() - self.in_flight.len()) as u64;
+        let (queued, in_flight) = (&self.queued, &self.in_flight);
+        let kept = |release: Release| {
+            queued
+                .iter()
+                .chain(in_flight)
+                .any(|row| row.release == Some(release))
+        };
+        for slot in &mut self.walk_releases {
+            if !slot.is_some_and(|reserved| {
+                reserved.state == WalkReleaseState::Queued && kept(Release::AbortWalk(reserved.id))
+            }) {
+                *slot = None;
+            }
+        }
+        self.gather_release = kept(Release::GatherStop);
+        self.combat_release = kept(Release::CombatStop);
+    }
+
     /// Kept reconnect discards game actions, preserves results and releases.
     pub fn reconnect(&mut self, session: u64) {
         self.run.session = session;

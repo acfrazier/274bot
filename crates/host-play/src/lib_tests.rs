@@ -8235,6 +8235,7 @@ fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
         &world,
         false,
         false,
+        false,
         None,
         None,
         None,
@@ -21239,6 +21240,7 @@ fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
             &rig.world,
             false,
             false,
+            false,
             None,
             None,
             None,
@@ -21366,6 +21368,24 @@ impl ReconnectRig {
     }
 
     fn frame_dirty(&mut self, tick: u64, tick_edge: bool, dirty: bool) {
+        self.observe_frame(tick, tick_edge, dirty, false, false);
+    }
+
+    /// One observed frame while the slot loop holds the frame: `hold` is the
+    /// whole-frame hold (`play_slots.rs`: scene not ready, welcome modal,
+    /// guardian or session boundary) and `guardian` is its guardian part.
+    fn held_frame(&mut self, tick: u64, hold: bool, guardian: bool) {
+        self.observe_frame(tick, false, false, hold, guardian);
+    }
+
+    fn observe_frame(
+        &mut self,
+        tick: u64,
+        tick_edge: bool,
+        dirty: bool,
+        hold: bool,
+        guardian: bool,
+    ) {
         // The full Play loop aligns its seat with the F0 ready gate before
         // dispatch. This rig drives script_observe directly, so provide that
         // independent session key here rather than using the slot's work epoch.
@@ -21391,7 +21411,8 @@ impl ReconnectRig {
             &self.cheats,
             &self.navs,
             &self.world,
-            false,
+            hold,
+            guardian,
             false,
             None,
             None,
@@ -22348,6 +22369,82 @@ fn stale_route_generation_does_not_free_rearmed_walk_release() {
         "a terminal from the armed generation does free the release"
     );
     rig.slot().lock().unwrap().stop();
+}
+
+/// Round 9: only the random-event guardian holds the seat (`28-seat-sg.md`
+/// lines 64-65, `27-decision-r5.md` §6). A frame that the slot loop holds
+/// because the scene is not ready or the welcome modal is up is a held
+/// tick, not the guardian's `SessionHeld`, so the seat is not frozen.
+/// Synthetic sequence: the rig sets the frame hold directly.
+#[test]
+fn a_scene_load_hold_does_not_freeze_the_seat() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    rig.held_frame(2, true, false);
+    let held = rig.slot().lock().unwrap().seat_probe().unwrap().held;
+    rig.slot().lock().unwrap().stop();
+    assert!(!held, "a scene-load hold must not freeze the seat");
+}
+
+/// Round 9: the guardian hold still freezes the seat, and the freeze lifts
+/// with the hold. Synthetic sequence: the rig sets the frame hold directly.
+#[test]
+fn a_guardian_hold_still_freezes_the_seat() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    rig.held_frame(2, true, true);
+    let held = rig.slot().lock().unwrap().seat_probe().unwrap().held;
+    rig.frame(2, false);
+    let after = rig.slot().lock().unwrap().seat_probe().unwrap().held;
+    rig.slot().lock().unwrap().stop();
+    assert!(held, "the guardian hold freezes the seat");
+    assert!(!after, "the freeze lifts with the guardian hold");
+}
+
+/// Operator decision 2026-10-16 (round 9): an abort that a script sends in
+/// a scene-load or welcome-modal held tick is kept, and the first frame
+/// after the hold dispatches it. Gameplay from the same tick stays dropped.
+/// Synthetic sequence: the two rows enter the slot's interact queue
+/// directly, as the held tick's output.
+#[test]
+fn a_scene_load_hold_keeps_the_script_walk_abort_and_drops_its_gameplay() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    let (request_id, _) = rig.armed();
+    assert_ne!(request_id, 0, "the script walk is armed");
+    rig.slot().lock().unwrap().restore_interacts(vec![
+        script::shim::InteractReq::AbortWalk { request_id },
+        script::shim::InteractReq::Walk {
+            x: 50,
+            z: 50,
+            level: 0,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 777,
+            avoid: Vec::new(),
+            cross: Vec::new(),
+        },
+    ]);
+    rig.held_frame(2, true, false);
+    let during = rig.armed().0;
+    rig.held_frame(2, true, false);
+    let still = rig.armed().0;
+    rig.frame(2, false);
+    let after = rig.armed();
+    let walks = rig.walks();
+    rig.slot().lock().unwrap().stop();
+    assert_eq!(during, request_id, "the held frame dispatches nothing");
+    assert_eq!(still, request_id, "the abort waits for the scene");
+    assert_eq!(
+        after,
+        (0, None),
+        "the first frame after the hold dispatches the abort"
+    );
+    assert!(
+        walks.iter().all(|(id, _, _)| *id != 777),
+        "the held gameplay never reaches the host: {walks:?}"
+    );
 }
 
 /// Frozen relogs a running or paused script whatever the auto-login
@@ -28917,6 +29014,7 @@ mod host_batch_tests {
                 &self.cheats,
                 &self.navs,
                 &self.world,
+                hold,
                 hold,
                 false,
                 None,

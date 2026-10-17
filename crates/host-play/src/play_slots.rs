@@ -1772,6 +1772,7 @@ fn spawn_slot_thread(
                                 &slot_navs,
                                 &slot_world,
                                 hold,
+                                guardian_hold,
                                 status.ours,
                                 slot_canlight.as_deref(),
                                 Some(slot_input.as_ref()),
