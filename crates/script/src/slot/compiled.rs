@@ -1048,6 +1048,13 @@ impl SlotScript {
         assert!(incarnation != 0 && self.incarnation == 0 && !self.has_instance());
         self.incarnation = incarnation;
     }
+    /// The WorkAdmission scope for requests owned by this slot lifetime.
+    ///
+    /// An unbound slot has no work identity and must not submit slot-scoped
+    /// background work.
+    pub fn work_scope(&self) -> Option<api::identity::Scope> {
+        api::identity::SlotKey::from_incarnation(self.incarnation).map(api::identity::Scope::Slot)
+    }
 
     pub fn start_compiled(
         &mut self,

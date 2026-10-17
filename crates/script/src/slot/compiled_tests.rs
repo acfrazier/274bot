@@ -6,6 +6,19 @@ fn selected() -> Arc<api::game_data::SelectedGameData> {
     api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap()
 }
 
+#[test]
+fn work_scope_requires_the_bound_slot_lifetime() {
+    let mut slot = SlotScript::new();
+    assert_eq!(slot.work_scope(), None);
+    slot.bind_incarnation(42);
+    assert_eq!(
+        slot.work_scope(),
+        Some(api::identity::Scope::Slot(
+            api::identity::SlotKey::from_incarnation(42).unwrap(),
+        )),
+    );
+}
+
 #[cfg(feature = "load")]
 fn start(slot: &mut SlotScript, bag: SettingsBag) {
     slot.start_compiled(
