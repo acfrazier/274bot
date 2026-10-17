@@ -2087,6 +2087,11 @@ mod api_gather_seat {
             + installed_heap.bytes_current
             + polled.bytes_current;
         println!(
+            "ApiSeat={} ScriptSlot={}",
+            std::mem::size_of::<crate::slot::api_seat::ApiSeat>(),
+            std::mem::size_of::<SlotScript>()
+        );
+        println!(
             "API gather warmed Load baseline: idle option={}B; worker prepared+instance={worker:?}; dispatch={dispatched:?}; install={installed_heap:?}; polls={polled:?}; exclusive={exclusive}B",
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>()
         );

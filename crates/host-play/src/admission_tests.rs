@@ -2297,7 +2297,8 @@ fn real_squire_walk(
         compat_tile_intent: false,
         completion: Default::default(),
     };
-    (to, opts.zones, request.calculate_admitted().0)
+    let (admitted, _, options) = request.drive_route_admission_for_test();
+    (to, options.zones, admitted)
 }
 
 /// The headed Knight's Sword stall (DIAG-SURVIVABLE-POISON): squire's own
@@ -2449,8 +2450,7 @@ mod compact_final_route_tests {
                 units,
                 api::identity::Deadline::after(clock.now(), std::time::Duration::from_secs(5)),
             );
-            let mut context =
-                StepContext::<InspectionPhase>::new(&clock, budget, &cancellation);
+            let mut context = StepContext::<InspectionPhase>::new(&clock, budget, &cancellation);
             match cursor.advance(&mut context) {
                 nav::router::CursorStep::Complete(completion) => break completion,
                 nav::router::CursorStep::Yielded => {}
@@ -2606,14 +2606,28 @@ mod compact_final_route_tests {
         assert!(!before.input.missing_facts);
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_equipment(vec![wearable_item(2)]);
+        let mut food = wearable_item(379);
+        food.container = api::snapshot::ItemContainer::Inventory;
+        food.slot = 0;
+        food.count = 2;
+        snapshot.seed_inventory(vec![food], 28);
         let mut bot = compact_bank_bot(final_route, Arc::clone(&before), admission, dest);
 
         finish_carried_wear(&mut bot, &snapshot, &world, from);
 
         let after = bot.assessment.as_ref().expect("reassessed final route");
         assert!(!Arc::ptr_eq(&before, after));
-        assert!(after.input.missing_facts, "post-wear facts must replace stale input");
+        assert!(
+            after.input.missing_facts,
+            "post-wear facts must replace stale input"
+        );
         assert_eq!(bot.admission.as_deref().unwrap().input, after.input);
+        assert_eq!(
+            after.input,
+            capture(&snapshot, false, before.input.poison, false)
+        );
+        assert!(after.input.food_ids.contains(&379));
+        assert_eq!(after.input.food_counts.iter().copied().sum::<u8>(), 2);
         assert!(!bot.admission_pending);
         assert!(bot.route.is_none(), "the final route remains compact");
         assert_eq!(bot.route_destination(), Some(dest));
@@ -2637,7 +2651,14 @@ mod compact_final_route_tests {
 
         let after = bot.assessment.as_ref().expect("reassessed final route");
         assert!(!Arc::ptr_eq(&before, after));
-        assert!(after.input.missing_facts, "incomplete post-wear facts fail closed");
+        assert_eq!(
+            after.input,
+            capture(&snapshot, false, before.input.poison, false)
+        );
+        assert!(
+            after.input.missing_facts,
+            "incomplete post-wear facts fail closed"
+        );
         assert!(!bot.admission_pending);
         assert!(bot.route.is_none(), "refusal clears the compact route");
         assert_eq!(

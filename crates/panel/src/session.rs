@@ -3270,7 +3270,7 @@ impl Session {
                 _ => (false, (None, None)),
             };
             let script_handle = script_nav_paint.lock().unwrap().clone();
-            let paint_route = |script_route| {
+            let paint_route = |script_route: Option<RouteProjection<'_>>| {
                 let (route, click) = live_or_walk_paint(driven, live, walk, script_route);
                 match crate::picker::pack() {
                     Some(world) => {

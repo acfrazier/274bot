@@ -1667,7 +1667,7 @@ fn spawn_slot_thread(
                             let nav_facts = script_state_builds_nav_facts(script_state);
                             let (nav_owned, nav_armed) = slot_navs.lock().unwrap().get(name).map_or((false, false), |bot| (
                                 bot.ordinary_movement_owned(nav_snapshot.tick() as u16),
-                                bot.route.is_some() || bot.bank_fetch.is_some(),
+                                bot.has_route() || bot.bank_fetch.is_some(),
                             ));
                             frame_input.host_move_owned =
                                 project_slot_frame_host_move_owned(script_state, nav_owned);

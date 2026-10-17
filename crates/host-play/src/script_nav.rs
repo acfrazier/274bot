@@ -7,10 +7,8 @@ use std::task::{Context, Poll, Waker};
 use std::time::Instant;
 
 use super::route_inspect;
-#[cfg(test)]
-use super::{debug_enabled, fetch_stand, fetch_tile, fetchable_facts, route_or_bank_fetch};
 use api::bank_memory::Origin;
-use api::identity::{Cancellation, RequestId, Scope, Settlement, WorkIdentity};
+use api::identity::{Cancellation, PublishSequence, RequestId, Scope, Settlement, WorkIdentity};
 use api::process_condition::ProcessConditions;
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, SnapshotView, WorldTile};
@@ -28,10 +26,7 @@ use nav::bank_fetch::{
 use nav::contract::{NavLease, RoutePlanLease};
 use nav::producer::{lease as nav_lease, OwnerResultLedger, OwnerResultReservation};
 #[cfg(test)]
-use nav::router::{
-    find_first_with_avoid, find_first_with_fallback_avoid, find_missing_item_reqs_with_avoid,
-    FallbackRoute,
-};
+use nav::router::find_missing_item_reqs_with_avoid;
 use nav::router::{
     AvoidRect, BlockerDiagnosis, CompactFallbackRoute, CompactRoute, CursorStep, FindOptions,
     MissingReqView, MissingRequirements, Route, SearchCursor, SearchOutcome, SearchPreflight,
@@ -43,8 +38,6 @@ use nav::zones::{ZoneExempt, ZoneFilterOwned, ZoneKey};
 use nav::WorldState;
 use script::work_admission::{cancellation::WorkCancellation, WorkService};
 
-#[cfg(test)]
-use crate::walk_plan::StandFetch;
 use crate::walk_plan::{PendingBankFetch, RouteOutcome, RoutePath};
 
 #[derive(Default)]
@@ -954,7 +947,7 @@ enum RouteJobStage {
     Complete,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RouteSearchPurpose {
     Strict,
     StrictFirst,
@@ -998,6 +991,7 @@ pub(crate) struct RouteJob {
     // Minted under the service lock that also covers submission.
     identity: Option<WorkIdentity>,
     revision: InputRevision,
+    admission_capacity: Option<PublishSequence>,
     lease: NavLease,
     state: Arc<WorldState>,
     basis_avoid: Arc<[AvoidRect]>,
@@ -1127,6 +1121,7 @@ impl RouteJob {
             thread_name,
             kind: Some(kind),
             identity: None,
+            admission_capacity: None,
             lease,
             basis_avoid,
             state,
@@ -1707,6 +1702,8 @@ impl RouteJob {
             )
             .map_err(|_| RouteJobError::Search)?,
         };
+        #[cfg(test)]
+        route_work_tests::record_search_event(&self.thread_name, self.search_purpose, true);
         self.search_cursor = Some(search);
         Ok(true)
     }
@@ -2606,6 +2603,12 @@ impl CooperativeJob for RouteJob {
                         }
                         CursorStep::Failed(_) => return StepOutcome::Failed(RouteJobError::Search),
                         CursorStep::Complete(completion) => {
+                            #[cfg(test)]
+                            route_work_tests::record_search_event(
+                                &self.thread_name,
+                                self.search_purpose,
+                                false,
+                            );
                             self.search_cursor = None;
                             let (search, _state) = completion.into_parts();
                             if let Err(error) = self.handle_search(search) {
@@ -2879,20 +2882,20 @@ fn route_ticket_is_current(
 fn take_route_demand(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     name: &str,
+    capacity: Option<PublishSequence>,
 ) -> Option<(RouteDemand, Option<Scope>)> {
     let mut all = navs.lock().expect("navigation state mutex is not poisoned");
     let bot = all.get_mut(name)?;
     if bot.route_ticket.is_some() {
         return None;
     }
-    let demand = *bot.pending_route.take()?;
-    if matches!(&demand, RouteDemand::Preparing { .. }) {
-        bot.pending_route = Some(Box::new(demand));
+    let pending = bot.pending_route.as_deref()?;
+    if matches!(pending, RouteDemand::Preparing { .. })
+        || matches!(pending, RouteDemand::Prepared(job) if capacity.is_some() && job.admission_capacity == capacity)
+    {
         return None;
     }
-    let generation = demand.generation();
-    let request_id = demand.request_id();
-    let scope = match &demand {
+    let scope = match pending {
         RouteDemand::Pending { kind, .. } => bot.route_work_scope(kind),
         RouteDemand::Prepared(job) => job
             .kind
@@ -2900,10 +2903,11 @@ fn take_route_demand(
             .and_then(|kind| bot.route_work_scope(kind)),
         RouteDemand::Preparing { .. } => None,
     };
-    bot.pending_route = Some(Box::new(RouteDemand::Preparing {
-        generation,
-        request_id,
-    }));
+    let placeholder = RouteDemand::Preparing {
+        generation: pending.generation(),
+        request_id: pending.request_id(),
+    };
+    let demand = std::mem::replace(bot.pending_route.as_deref_mut()?, placeholder);
     Some((demand, scope))
 }
 
@@ -2942,7 +2946,10 @@ fn restore_prepared_route_demand(
     {
         return false;
     }
-    bot.pending_route = Some(Box::new(RouteDemand::Prepared(job)));
+    **bot
+        .pending_route
+        .as_mut()
+        .expect("current demand retains its box") = RouteDemand::Prepared(job);
     true
 }
 
@@ -3016,7 +3023,7 @@ pub(crate) fn pump_route_work(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: 
     let shared = match WorkService::shared() {
         Ok(shared) => shared,
         Err(error) => {
-            if let Some((demand, _)) = take_route_demand(navs, name) {
+            if let Some((demand, _)) = take_route_demand(navs, name, None) {
                 let generation = demand.generation();
                 let request_id = demand.request_id();
                 if let Some(kind) = demand.kind() {
@@ -3035,7 +3042,25 @@ pub(crate) fn pump_route_work(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: 
         }
     };
 
-    if let Some((demand, scope)) = take_route_demand(navs, name) {
+    pump_route_work_on_service(&shared, navs, name, OwnerResultLedger::shared());
+}
+
+fn pump_route_work_on_service(
+    shared: &Arc<parking_lot::Mutex<WorkService>>,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    ledger: &OwnerResultLedger,
+) {
+    // A completed search can submit its continuation in this same frame.
+    // Do not loop: each pass harvests at most one admitted route job.
+    harvest_route_terminal(shared, navs, name, ledger);
+    let capacity = {
+        let service = shared.lock();
+        service
+            .worker_available()
+            .then(|| service.publications().capacity().sequence())
+    };
+    if let Some((demand, scope)) = take_route_demand(navs, name, capacity) {
         let generation = demand.generation();
         let request_id = demand.request_id();
         let Some(scope) = scope else {
@@ -3101,6 +3126,7 @@ pub(crate) fn pump_route_work(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: 
         }
         let submission = {
             let mut service = shared.lock();
+            let before = service.publications().capacity().sequence();
             let conditions = ProcessConditions::new(service.incarnation());
             match service.mint_identity(scope, kind.origin()) {
                 Err(error) => Submission::Refused(error.to_string()),
@@ -3119,7 +3145,12 @@ pub(crate) fn pump_route_work(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: 
                         Err(refused) => {
                             let (reason, job) = refused.into_parts();
                             if reason == SubmissionRefusal::Full {
-                                Submission::Full(job.into_job())
+                                let mut job = job.into_job();
+                                let after = service.publications().capacity().sequence();
+                                // A release racing admission must permit another attempt.
+                                job.admission_capacity =
+                                    Some(if before == after { after } else { before });
+                                Submission::Full(job)
                             } else {
                                 Submission::Refused(reason.to_string())
                             }
@@ -3131,7 +3162,7 @@ pub(crate) fn pump_route_work(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: 
         match submission {
             Submission::Accepted(ticket, cancellation) => {
                 let identity = ticket.identity();
-                let mut owner = Some(RouteTicketOwner {
+                let mut owner = Some(Box::new(RouteTicketOwner {
                     identity,
                     revision,
                     generation,
@@ -3139,7 +3170,7 @@ pub(crate) fn pump_route_work(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: 
                     kind: kind.clone(),
                     cancellation,
                     active: true,
-                });
+                }));
                 let installed = {
                     let mut all = navs.lock().expect("navigation state mutex is not poisoned");
                     all.get_mut(name).is_some_and(|bot| {
@@ -3160,25 +3191,18 @@ pub(crate) fn pump_route_work(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: 
                     if let Some(mut owner) = owner {
                         owner.abandon(Cancellation::Superseded);
                     }
-                    return;
                 }
             }
             Submission::Full(job) => {
-                if !restore_prepared_route_demand(navs, name, generation, request_id, job) {
-                    return;
-                }
-                return;
+                restore_prepared_route_demand(navs, name, generation, request_id, job);
             }
             Submission::Refused(detail) => {
                 publish_unsubmitted_route_failure(
                     navs, name, generation, request_id, kind, &detail,
                 );
-                return;
             }
         }
     }
-
-    harvest_route_terminal(&shared, navs, name);
 }
 
 fn take_route_ticket_owner(
@@ -3186,7 +3210,7 @@ fn take_route_ticket_owner(
     name: &str,
     identity: WorkIdentity,
     revision: InputRevision,
-) -> Option<RouteTicketOwner> {
+) -> Option<Box<RouteTicketOwner>> {
     let mut all = navs.lock().expect("navigation state mutex is not poisoned");
     let bot = all.get_mut(name)?;
     if !bot
@@ -3591,6 +3615,7 @@ fn harvest_route_terminal(
     shared: &Arc<parking_lot::Mutex<WorkService>>,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     name: &str,
+    ledger: &OwnerResultLedger,
 ) {
     let (ticket, identity, revision, generation, request_id, kind) = {
         let all = navs.lock().expect("navigation state mutex is not poisoned");
@@ -3614,7 +3639,7 @@ fn harvest_route_terminal(
             Ok(Some(Settlement::Completed(output))) => match route_stage_retained_bytes(output) {
                 Err(error) => RouteReservation::Refused(error),
                 Ok(None) => RouteReservation::NotNeeded,
-                Ok(Some(bytes)) => match OwnerResultLedger::shared().try_reserve_bytes(bytes) {
+                Ok(Some(bytes)) => match ledger.try_reserve_bytes(bytes) {
                     Ok(reservation) => RouteReservation::Reserved(Some(reservation)),
                     Err(nav::producer::OwnerResultRefusal::Full { .. }) => RouteReservation::Full,
                     Err(error) => RouteReservation::Refused(error),
@@ -3780,8 +3805,8 @@ impl ScriptRouteExclusions {
 /// Per-uid nav state: the whole-world traveller plus the route it is
 /// following. `ctx.walk` stores the route, produced by the shared route-work
 /// service over [`NavWorld`]. The slot pump polls [`Traveller::follow`] with a
-/// clone of it one step per player-info tick. `route` being set is the "armed"
-/// gate the walk hook and the busy flag read. A pending BankBudget
+/// clone of it one step per player-info tick. [`NavBot::has_route`] is the
+/// "armed" gate the walk hook and the busy flag read. A pending BankBudget
 /// session freezes follow until its steps finish.
 #[derive(Default)]
 pub(crate) struct NavBot {
@@ -3810,7 +3835,7 @@ pub(crate) struct NavBot {
     pub(crate) route_generation: u64,
     pub(crate) map_route_generation: u64,
     pub(crate) pending_route: Option<Box<RouteDemand>>,
-    pub(crate) route_ticket: Option<RouteTicketOwner>,
+    pub(crate) route_ticket: Option<Box<RouteTicketOwner>>,
     /// Route family metadata retained with the caller-owned result.
     pub(crate) route_result_custody: Option<Arc<dyn std::any::Any + Send + Sync>>,
     /// Native ownership survives worker handoff, but not action revocation.
@@ -3972,14 +3997,6 @@ fn log_walk_arm(name: &str, build: impl FnOnce() -> String) {
         "walk-arm {}",
         build()
     );
-}
-
-#[cfg(test)]
-fn walk_arm_worker_slot() -> String {
-    std::thread::current()
-        .name()
-        .and_then(|n| n.strip_prefix("nav-find-").map(str::to_string))
-        .unwrap_or_else(|| "?".to_string())
 }
 
 pub(super) fn log_walk_arm_bot(build: impl FnOnce() -> String) {
@@ -5811,276 +5828,162 @@ impl ScriptRouteRequest {
 }
 #[cfg(test)]
 impl ScriptRouteRequest {
-    /// A modeled live loc or an unmodeled solid: legal stands first, then an
-    /// optional wall-aware radius fallback for unmodeled solids only. In order: a strict route to a
-    /// stand, a BankBudget session to a stand, a strict route to a radius tile, a
-    /// session to a radius tile. The strict search for the stands also
-    /// answers for the tiles as a search over them alone would, where that
-    /// needs no more settles ([`find_first_with_fallback`]: the tiles keep
-    /// their own proof and budget), and so does the search under what a
-    /// session can fetch; a search over the tiles alone runs only when its
-    /// stand search left them undecided. Of each such pair at most one stops
-    /// at the unproven budget, so the arm spends at most two budget-limited
-    /// searches, one strict and one fetchable, plus one fetchable search for
-    /// each stand or tile whose session is refused (no session covers its
-    /// missing facts, or the post-state re-find still misses a gate; a
-    /// session never deposits). A `Hint` bank memory adds one relaxed
-    /// goal-set diagnosis of the same shape before the fetchable search
-    /// ([`fetchable_facts`]), so its stock never rejects a goal whose one
-    /// verifying trip would decide it.
-    fn calculate_solid(
-        &self,
-        stands: &[WorldTile],
-        tiles: &[WorldTile],
-        state: &WorldState,
+    /// Convert the completed production job to the test route view.
+    fn project_route_job_outcome(
+        outcome: RouteJobOutcome,
         opts: FindOptions,
+        bank_avoid_copy: Vec<AvoidRect>,
+        world: &NavWorld,
     ) -> RouteOutcome {
-        let debug = debug_enabled();
-        let slot = walk_arm_worker_slot();
-        let started = debug.then(Instant::now);
-        let search = find_first_with_fallback_avoid(
-            &self.world.collision,
-            &self.world.graph,
-            self.from,
-            stands,
-            tiles,
-            opts,
-            state,
-            self.avoid(),
-        );
-        if debug {
-            let elapsed_ms = started.unwrap().elapsed().as_millis();
-            let scratch = search.scratch_capacities();
-            log_walk_arm(&slot, || {
-                format!(
-                    "approach solid dest={:?} r={} stands={} tiles={} settled={} \
-                     scratch={}/{}/{}/{} reverse={}/{} proof={:?} elapsed_ms={elapsed_ms} \
-                     stand={} tile={:?}",
-                    self.to,
-                    self.radius,
-                    stands.len(),
-                    tiles.len(),
-                    search.settled(),
-                    scratch.distances,
-                    scratch.predecessors,
-                    scratch.settled,
-                    scratch.heap,
-                    scratch.reverse,
-                    scratch.reverse_queue,
-                    search.proof(),
-                    search.route().is_ok(),
-                    search.fallback().map(|tile| match tile {
-                        FallbackRoute::Routed(route) => Ok(route.dest),
-                        other => Err(other.clone()),
-                    })
-                )
-            });
-        }
-        let strict_tile = match search.into_routes() {
-            (Ok(route), _) => return RouteOutcome::Routed(route),
-            (Err(_), tile) => tile,
-        };
-
-        // A routed strict tile beats a session to one, so the stands are
-        // searched alone under the fetchable facts (and diagnosed alone).
-        let stand_tiles = match strict_tile {
-            Some(FallbackRoute::Routed(_)) => &[][..],
-            _ => tiles,
-        };
-        let fetchable = fetchable_facts(
-            &self.world,
-            self.from,
-            stands,
-            stand_tiles,
-            opts,
-            state,
-            self.bank_origin,
-            &self.bank,
-            self.avoid(),
-        );
-        let mut fetch_tiles = None;
-        if let Some(fetchable) = &fetchable {
-            match fetch_stand(
-                &self.world,
-                self.from,
-                stands,
-                stand_tiles,
-                opts,
-                state,
-                fetchable,
-                self.bank_origin,
-                &self.bank,
-                self.avoid(),
-            ) {
-                StandFetch::Outcome(outcome) => return outcome,
-                StandFetch::Tiles(known) => fetch_tiles = known,
+        match outcome {
+            RouteJobOutcome::Route(route) => RouteOutcome::Routed(route.to_route(&world.graph)),
+            RouteJobOutcome::Bank {
+                steps,
+                route,
+                final_route,
+            } => {
+                let final_route = final_route.to_route(&world.graph);
+                let route = route
+                    .map(|route| route.to_route(&world.graph))
+                    .unwrap_or_else(|| final_route.clone());
+                RouteOutcome::BankSession {
+                    pending: PendingBankFetch {
+                        steps,
+                        dest: final_route.dest,
+                        opts,
+                        final_route: RoutePath::legacy(Arc::new(final_route.clone())),
+                        avoid: bank_avoid_copy,
+                        progress: Default::default(),
+                    },
+                    route,
+                }
             }
+            RouteJobOutcome::NoPath => RouteOutcome::NoPath,
         }
+    }
 
-        let strict_tile = match strict_tile {
-            Some(FallbackRoute::Routed(route)) => Some(route),
-            Some(FallbackRoute::Undecided) => find_first_with_avoid(
-                &self.world.collision,
-                &self.world.graph,
-                self.from,
-                tiles,
-                opts,
-                state,
-                self.avoid(),
+    fn drive_route_job_output_for_test(self) -> (RouteJobOutput, Vec<WorldTile>, Arc<NavWorld>) {
+        fn identity(index: u64) -> WorkIdentity {
+            WorkIdentity::new(
+                RequestId::from_raw(RequestId::HOST_FIRST + index)
+                    .expect("test route identity is valid"),
+                api::identity::ProcessIncarnation::from_start_nonce(
+                    std::num::NonZeroU64::new(1).expect("test incarnation is nonzero"),
+                ),
+                Scope::Slot(
+                    api::identity::SlotKey::from_incarnation(1)
+                        .expect("test slot incarnation is valid"),
+                ),
+                None,
             )
-            .into_route()
-            .ok(),
-            Some(FallbackRoute::Failed(_)) | None => None,
+            .expect("test route identity is valid")
+        }
+
+        fn drive_stage(worker: &mut RouteWorkJob) -> RouteStageResult {
+            use api::identity::Deadline;
+            use api::work::{MonotonicClock, SharedCancellation, SliceBudget, SystemClock};
+
+            let clock = SystemClock;
+            let cancellation = SharedCancellation::new();
+            for _ in 0..250_000 {
+                let budget = SliceBudget::new(
+                    std::num::NonZeroU32::new(64).expect("slice budget is nonzero"),
+                    Deadline::after(clock.now(), std::time::Duration::from_millis(10)),
+                );
+                let mut context = StepContext::new(&clock, budget, &cancellation);
+                match worker.step(&mut context) {
+                    StepOutcome::Yielded => {}
+                    StepOutcome::Completed(result) => return result,
+                    StepOutcome::Failed(error) => panic!("route stage failed: {error}"),
+                }
+            }
+            panic!("route stage exceeded the bounded slice count");
+        }
+
+        let world = Arc::clone(&self.world);
+        let mut job = RouteJob::prepare(
+            "route-rule-test",
+            Box::new(self),
+            RouteDemandKind::Walk { authority: None },
+        )
+        .expect("test route request prepares");
+        job.identity = Some(identity(0));
+        let mut next = Some(Box::new(job));
+        for stage_index in 0..64u64 {
+            let job = next.take().expect("the prior route stage continued");
+            let mut worker = RouteWorkJob::new(job);
+            match drive_stage(&mut worker) {
+                RouteStageResult::Continue(mut job) => {
+                    assert!(job.search_cursor.is_none());
+                    job.prepare_continuation()
+                        .expect("test route continuation prepares");
+                    job.identity = Some(identity(stage_index + 1));
+                    next = Some(job);
+                }
+                RouteStageResult::Complete(output) => {
+                    let targets = worker
+                        .job
+                        .as_ref()
+                        .expect("completed route worker retains its job")
+                        .targets
+                        .clone();
+                    return (output, targets, world);
+                }
+            }
+        }
+        panic!("route job exceeded the bounded stage count");
+    }
+
+    /// Drive admission through the production route job and preserve its output.
+    pub(crate) fn drive_route_admission_for_test(
+        self,
+    ) -> (
+        crate::admission::RouteAdmission,
+        Vec<WorldTile>,
+        FindOptions,
+    ) {
+        let (output, targets, world) = Self::drive_route_job_output_for_test(self);
+        let RouteJobOutput {
+            outcome,
+            opts,
+            bank_avoid_copy,
+            assessment,
+            refusal,
+            blocked,
+            ..
+        } = output;
+        let outcome = Self::project_route_job_outcome(outcome, opts, bank_avoid_copy, &world);
+        let tried = match &refusal {
+            Some(script::native::WalkRefusal::NoRouteWithinBounds { tried, .. }) => *tried,
+            _ => 0,
         };
-        if let Some(route) = strict_tile {
-            return RouteOutcome::Routed(route);
-        }
-
-        let outcome = match &fetchable {
-            Some(fetchable) => fetch_tile(
-                &self.world,
-                self.from,
-                tiles,
-                fetch_tiles,
-                opts,
-                state,
-                fetchable,
-                self.bank_origin,
-                &self.bank,
-                self.avoid(),
-            ),
-            None => RouteOutcome::NoPath,
-        };
-        if debug {
-            let elapsed_ms = started.unwrap().elapsed().as_millis();
-            log_walk_arm(&slot, || {
-                format!(
-                    "approach solid end elapsed_ms={elapsed_ms} fetchable={} outcome={}",
-                    fetchable.is_some(),
-                    walk_arm_outcome_tag(&outcome)
-                )
-            });
-        }
-        outcome
+        (
+            crate::admission::RouteAdmission {
+                outcome,
+                assessment,
+                refusal,
+                blocked,
+                tried,
+            },
+            targets,
+            opts,
+        )
     }
 
-    fn calculate_in_order(
-        &self,
-        candidates: &[WorldTile],
-        state: &WorldState,
-        label: &str,
-        opts: FindOptions,
-    ) -> RouteOutcome {
-        let debug = debug_enabled();
-        let slot = walk_arm_worker_slot();
-        for (idx, &target) in candidates.iter().enumerate() {
-            if debug {
-                log_walk_arm(&slot, || {
-                    format!(
-                        "{label} begin idx={idx} target={target:?} generation={} request_id={}",
-                        self.generation, self.request_id
-                    )
-                });
-            }
-            let started = debug.then(Instant::now);
-            let outcome = route_or_bank_fetch(
-                &self.world,
-                self.from,
-                target,
-                opts,
-                state,
-                self.bank_origin,
-                &self.bank,
-                self.avoid(),
-            );
-            if debug {
-                let elapsed_ms = started.unwrap().elapsed().as_millis();
-                log_walk_arm(&slot, || {
-                    format!(
-                        "{label} end idx={idx} target={target:?} elapsed_ms={elapsed_ms} outcome={}",
-                        walk_arm_outcome_tag(&outcome)
-                    )
-                });
-            }
-            if !matches!(outcome, RouteOutcome::NoPath) {
-                return outcome;
-            }
-        }
-        RouteOutcome::NoPath
-    }
-
-    pub(crate) fn calculate_admitted(&self) -> (crate::admission::RouteAdmission, Vec<WorldTile>) {
-        let targets = self.targets();
-        let result = crate::admission::route(
-            &self.world,
-            &self.admission,
-            self.opts,
-            |opts| self.calculate_targets_with_options(&targets, opts),
-            || self.blocking_zones(&RouteOutcome::NoPath, &targets),
-        );
-        (result, targets)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn calculate(&self) -> (RouteOutcome, Vec<WorldTile>) {
-        let targets = self.targets();
-        (self.calculate_targets(&targets), targets)
-    }
-
-    #[cfg(test)]
-    fn calculate_targets(&self, targets: &[WorldTile]) -> RouteOutcome {
-        self.calculate_targets_with_options(targets, self.opts)
-    }
-
-    fn calculate_targets_with_options(
-        &self,
-        targets: &[WorldTile],
-        opts: FindOptions,
-    ) -> RouteOutcome {
-        let empty = WorldState::empty();
-        let state = self.state.as_ref().unwrap_or(&empty);
-        if self.radius <= 0 {
-            return route_or_bank_fetch(
-                &self.world,
-                self.from,
-                self.to,
-                opts,
-                state,
-                self.bank_origin,
-                &self.bank,
-                self.avoid(),
-            );
-        }
-        if self.arrival == ArrivalKind::Area {
-            return self.calculate_solid(targets, &[], state, opts);
-        }
-
-        // Only explicitly identified live footprints use operable stands.
-        // Off-scene/unknown targets retain the ordinary anchor-radius estimate.
-        if self.live_geometry.is_some() {
-            return self.calculate_solid(targets, &[], state, opts);
-        }
-        if self.loc_id.is_none() && !self.world.collision.standable(self.to) {
-            let mut stands = [self.to; 4];
-            let mut len = 0;
-            for stand in api::query::arrival_stands(
-                self.to,
-                |stand| self.world.collision.standable(stand),
-                |stand| {
-                    Some(
-                        self.world
-                            .collision
-                            .walkable_word(stand.x, stand.z, stand.level)
-                            as i32,
-                    )
-                },
-            ) {
-                stands[len] = stand;
-                len += 1;
-            }
-            return self.calculate_solid(&stands[..len], targets, state, opts);
-        }
-        self.calculate_in_order(targets, state, "approach estimate", opts)
+    /// Drive this request through the cooperative route jobs used by the production worker.
+    /// Keep Admission unchanged because its policy can change production search options.
+    pub(crate) fn drive_route_job_for_test(self) -> (RouteOutcome, Vec<WorldTile>) {
+        let (output, targets, world) = Self::drive_route_job_output_for_test(self);
+        let RouteJobOutput {
+            outcome,
+            opts,
+            bank_avoid_copy,
+            ..
+        } = output;
+        (
+            Self::project_route_job_outcome(outcome, opts, bank_avoid_copy, &world),
+            targets,
+        )
     }
 }
 impl NavBot {
@@ -6944,6 +6847,10 @@ fn end_route_follow(nav: &mut NavBot) {
 mod facade_tests;
 
 #[cfg(test)]
+#[path = "route_work_tests.rs"]
+mod route_work_tests;
+
+#[cfg(test)]
 mod diagnostic_tests {
     use super::*;
 
@@ -7069,7 +6976,7 @@ mod diagnostic_tests {
         })
     }
 
-    fn tiny_stage_request() -> Box<ScriptRouteRequest> {
+    pub(super) fn tiny_stage_request() -> Box<ScriptRouteRequest> {
         let origin = WorldTile {
             x: 0,
             z: 0,
@@ -7314,17 +7221,25 @@ mod diagnostic_tests {
             });
             request.bank_origin = Origin::Session;
             request.bank = vec![(item, 1)];
-            let legacy = request.calculate_targets_with_options(&request.targets(), request.opts);
             if case == "exact-worn-blade" {
-                assert!(matches!(legacy, RouteOutcome::NoPath));
-                let state = request.state.as_ref().unwrap();
+                let state = request
+                    .state
+                    .as_ref()
+                    .expect("qualification request has a captured state")
+                    .clone();
+                let bank = request.bank.clone();
+                let from = request.from;
+                let to = request.to;
+                let opts = request.opts;
+                let (outcome, _) = request.drive_route_job_for_test();
+                assert!(matches!(outcome, RouteOutcome::NoPath));
                 let missing = nav::router::find_missing_item_reqs_with_avoid(
                     &world.collision,
                     &world.graph,
-                    request.from,
-                    request.to,
-                    request.opts,
-                    state,
+                    from,
+                    to,
+                    opts,
+                    &state,
                     &[],
                 )
                 .unwrap();
@@ -7335,13 +7250,13 @@ mod diagnostic_tests {
                 assert!(matches!(
                     nav::bank_fetch::plan_bank_fetch(
                         &missing,
-                        state,
-                        &request.bank,
+                        &state,
+                        &bank,
                         world.banks(),
-                        request.from,
+                        from,
                         &world.collision,
                         &world.graph,
-                        request.opts,
+                        opts,
                         &[],
                     ),
                     Err(nav::bank_fetch::BankFetchError::Unavailable),
@@ -7352,16 +7267,12 @@ mod diagnostic_tests {
                     "arrival": "Reach",
                     "legacy_result": "NoPath",
                     "missing": [{"kind": "Carry", "id": 946, "count": 1}],
-                    "bank_rows": request.bank,
+                    "bank_rows": bank,
                     "bank_plan_accepted": false,
                     "qualification": "unchanged exact-tile refusal; baseline comparison is external",
                 }));
                 continue;
             }
-            assert!(
-                matches!(legacy, RouteOutcome::BankSession { .. }),
-                "{case}: the retained synchronous implementation must use the real bank branch",
-            );
             let mut captured = None;
             let capture = allocation_counter::measure(|| {
                 let mut job =
