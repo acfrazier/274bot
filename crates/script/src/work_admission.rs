@@ -66,7 +66,8 @@ pub(crate) enum QualifiedUnit {
     QuesterProgressCompile,
 }
 
-/// A worker that remains inside a step this long makes the service unavailable.
+/// The shared background worker staying inside one step this long makes
+/// background work unavailable. A request step this long only logs a warning.
 /// Healthy disk I/O can stall for seconds (a 6.1 s fsync was measured).
 /// The sticky latch catches a lost worker, not a slow one.
 pub const WORKER_STALL_LIMIT: Duration = Duration::from_secs(60);
