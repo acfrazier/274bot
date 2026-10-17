@@ -1455,6 +1455,10 @@ fn gatherer_exclusive_heap_stays_inside_the_eight_kib_target() {
     let snapshot = gatherer_snapshot();
     let (cold_prepared, cold) = measure_prepared();
     let mut warm = gatherer_slot(92);
+    // The first park can grow parking_lot's process-global table.
+    // Warm this thread before charging only the Gatherer and its seat.
+    let warm_lock = parking_lot::Mutex::new(());
+    parking_lot::Condvar::new().wait_for(&mut warm_lock.lock(), Duration::from_millis(1));
     let mut shared_slot = None;
     let shared_seat = allocation_counter::measure(|| {
         let mut slot = SlotScript::new();
