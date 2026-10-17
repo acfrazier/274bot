@@ -2434,7 +2434,10 @@ mod compact_final_route_tests {
             nav::router::SearchRequest::Single {
                 from,
                 to,
-                options: FindOptions::default(),
+                options: FindOptions {
+                    zones: ZoneExempt::all(),
+                    ..FindOptions::default()
+                },
                 avoid: Box::default(),
                 max_settles: 1_024,
             },
@@ -2545,6 +2548,48 @@ mod compact_final_route_tests {
         }
     }
 
+    fn post_wear_snapshot(from: WorldTile) -> GameSnapshot {
+        let actor = api::snapshot::ActorView {
+            name: Some("post-wear-fixture".into()),
+            actions: Vec::new(),
+            tile: from,
+            distance: 0,
+            animation: -1,
+            animation_frame: 0,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: 0,
+            health: 80,
+            total_health: 80,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(api::snapshot::LocalPlayerView {
+            player: api::snapshot::PlayerView {
+                index: 0,
+                network: from,
+                actor,
+                combat_level: 50,
+                skill_level: 1,
+                headicons: 0,
+                weapon: None,
+            },
+            energy: 100,
+            weight: 0,
+            animation_update: None,
+        });
+        snapshot.seed_equipment(vec![wearable_item(2)]);
+        snapshot
+    }
+
     fn pending_wear(
         final_route: crate::walk_plan::RoutePath,
         dest: WorldTile,
@@ -2604,8 +2649,7 @@ mod compact_final_route_tests {
         let admission = make_admission(RiskPolicy::Proceed, input(80));
         let before = assess_route_path(&final_route, &world, &admission);
         assert!(!before.input.missing_facts);
-        let mut snapshot = GameSnapshot::new();
-        snapshot.seed_equipment(vec![wearable_item(2)]);
+        let mut snapshot = post_wear_snapshot(from);
         let mut food = wearable_item(379);
         food.container = api::snapshot::ItemContainer::Inventory;
         food.slot = 0;
@@ -2636,15 +2680,14 @@ mod compact_final_route_tests {
 
     #[test]
     fn compact_carried_wear_final_route_refuses_unknown_post_session_facts() {
-        let world = Arc::new(empty_corridor());
+        let world = Arc::new(known_corridor(&[5]));
         let from = tile(0, 1);
         let dest = tile(10, 1);
         let final_route = compact_route_path(&world, from, dest);
         let admission = make_admission(RiskPolicy::Inherit, input(80));
         let before = assess_route_path(&final_route, &world, &admission);
         assert!(!before.input.missing_facts);
-        let mut snapshot = GameSnapshot::new();
-        snapshot.seed_equipment(vec![wearable_item(2)]);
+        let snapshot = post_wear_snapshot(from);
         let mut bot = compact_bank_bot(final_route, Arc::clone(&before), admission, dest);
 
         finish_carried_wear(&mut bot, &snapshot, &world, from);

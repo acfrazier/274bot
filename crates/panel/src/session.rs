@@ -571,10 +571,6 @@ impl ScenePaintRoute<'_> {
             Self::Script(route) => route.route,
         }
     }
-
-    fn destination(&self) -> WorldTile {
-        self.projection().destination()
-    }
 }
 
 /// Shared route-owner precedence with the map overlay: driven live, then
