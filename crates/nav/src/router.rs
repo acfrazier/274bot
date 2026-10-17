@@ -3544,8 +3544,8 @@ async fn first_search_core_compact(
 }
 
 struct FirstZoneGoal {
-    key: Vec<u16>,
-    preferred: bool,
+    key: Box<[u16]>,
+    /// Index into preferred goals followed by fallback goals.
     index: usize,
 }
 
@@ -3679,8 +3679,7 @@ async fn first_cursor_search_with_output(
         let key = goal_zone_key_cooperative(graph, filter, target).await?;
         if !key.is_empty() || options.zones != ZoneExempt::NONE {
             partitions.push(FirstZoneGoal {
-                key,
-                preferred: true,
+                key: key.into_boxed_slice(),
                 index,
             });
         }
@@ -3690,16 +3689,14 @@ async fn first_cursor_search_with_output(
         let key = goal_zone_key_cooperative(graph, filter, target).await?;
         if !key.is_empty() || options.zones != ZoneExempt::NONE {
             partitions.push(FirstZoneGoal {
-                key,
-                preferred: false,
-                index,
+                key: key.into_boxed_slice(),
+                index: targets.len() + index,
             });
         }
     }
     sort_unstable_by_cooperative(&mut partitions, |left, right| {
         left.key
             .cmp(&right.key)
-            .then_with(|| right.preferred.cmp(&left.preferred))
             .then_with(|| left.index.cmp(&right.index))
     })
     .await;
@@ -3771,7 +3768,7 @@ async fn first_cursor_search_with_output(
             let mut fallback_count = 0usize;
             for goal in &partitions[start..end] {
                 work_unit().await;
-                if goal.preferred {
+                if goal.index < targets.len() {
                     preferred_count += 1;
                 } else {
                     fallback_count += 1;
@@ -3787,10 +3784,10 @@ async fn first_cursor_search_with_output(
                 .map_err(|_| SearchCursorError::Allocation)?;
             for goal in &partitions[start..end] {
                 work_unit().await;
-                if goal.preferred {
+                if goal.index < targets.len() {
                     preferred.push(targets[goal.index]);
                 } else {
-                    fallbacks.push(fallback[goal.index]);
+                    fallbacks.push(fallback[goal.index - targets.len()]);
                 }
             }
             let endpoint = preferred
