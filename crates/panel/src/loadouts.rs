@@ -839,6 +839,17 @@ mod tests {
             "got {:?}",
             session.loadouts_status
         );
+        assert!(
+            session.loadouts_status.contains("did not load")
+                && session.loadouts_status.contains("Reload"),
+            "the status says to reload first: {:?}",
+            session.loadouts_status
+        );
+        assert!(session.loadouts.loadouts().is_empty());
+        assert!(
+            !session.loadouts.is_dirty(),
+            "the failed form is discarded, as for other failed saves"
+        );
         assert_eq!(std::fs::read(&file).unwrap(), corrupt);
     }
 
