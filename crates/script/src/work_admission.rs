@@ -1,11 +1,10 @@
-//! Process-wide cooperative work admission and its single FIFO worker.
+//! Process-wide work admission, request threads and the background worker.
 //!
-//! Ordinary G2b dispatches request a yield after 64 work units or 10 ms.
-//! Returning late is reported, not treated as a failed operator action:
-//! scheduler delay is not evidence that a job ignored a checkpoint. A
-//! non-returning worker is detected separately; explicit unit/checkpoint
-//! violations still fail only their job. Admission reserves job, byte,
-//! operation-handle, and terminal custody.
+//! Each registered request-thread family gets one short-lived thread per job.
+//! Its yields continue on that thread. The background worker serves only the
+//! families that have not migrated. One ledger retains identity, cancellation,
+//! job slots, declared bytes, operation handles and unconsumed terminals.
+//! Ordinary steps request a yield after 64 work units or 10 ms.
 
 use std::any::{Any, TypeId};
 use std::cell::UnsafeCell;
@@ -29,11 +28,14 @@ use api::work::{
     AdmissionBounds, CancelOutcome, CooperativeJob, CooperativeViolation, JobError, JobSettlement,
     JobState, LedgerError, MonotonicClock, PreparationPhase, ProgressReport, RetainedState,
     SharedCancellation, SliceBudget, StepContext, StepOutcome, SubmissionRefusal, WorkAdmission,
-    WorkCapacity, WorkCharge, WorkFamily, WorkFamilySpec, WorkPhase, WorkProgress,
-    WorkPublications, WorkTicket, WorkerWake,
+    WorkByteAdmission, WorkCapacity, WorkCharge, WorkExecution, WorkFamily, WorkFamilySpec,
+    WorkPhase, WorkProgress, WorkPublications, WorkTicket, WorkerWake,
 };
 use parking_lot::{Condvar, Mutex, MutexGuard};
 use rand::RngCore;
+
+/// Identity-bound cancellation custody for already-admitted work.
+pub mod cancellation;
 
 /// Work units allowed in one dispatch.
 pub const WORK_UNITS_PER_SLICE: u32 = 64;
@@ -115,9 +117,14 @@ pub enum WorkStartError {
 /// Failure to complete an orderly worker shutdown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum WorkShutdownError {
-    /// The worker did not return before the shutdown bound.
-    #[error("the WorkAdmission worker did not return before the shutdown bound")]
-    WorkerNotReturned,
+    /// One or more execution threads did not return before the fixed deadline.
+    #[error("WorkAdmission shutdown deadline: background_worker={background_worker}, request_threads={request_threads}")]
+    ThreadsNotReturned {
+        /// Whether the background worker still owns its thread.
+        background_worker: bool,
+        /// Number of request threads that have not returned.
+        request_threads: usize,
+    },
     /// The worker thread exited by panicking outside a job boundary.
     #[error("the WorkAdmission worker panicked before shutdown acknowledgement")]
     WorkerPanicked,
@@ -145,6 +152,7 @@ pub struct WorkService {
     stopping: bool,
     shared: Arc<WorkerShared>,
     _worker: Option<JoinHandle<()>>,
+    request_threads: HashMap<RequestId, JoinHandle<()>>,
     worker_joined: bool,
     worker_panicked: bool,
 }
@@ -206,6 +214,7 @@ impl WorkService {
             notifier,
             slice_overruns: AtomicU64::new(0),
             progress_drops: AtomicU64::new(0),
+            cancellation_noops: AtomicU64::new(0),
             shutdown_requested: AtomicBool::new(false),
             unavailable: AtomicBool::new(false),
             exited: AtomicBool::new(false),
@@ -234,6 +243,7 @@ impl WorkService {
             last_job: None,
             stopping: false,
             shared,
+            request_threads: HashMap::with_capacity(MAX_WORK_JOBS),
             _worker: worker,
             worker_joined,
             worker_panicked: false,
@@ -354,13 +364,13 @@ impl WorkService {
         self.shared.wake_worker();
     }
 
-    /// Stop admission, register `Shutdown` for every accepted job, and wait
-    /// for the sole worker thread to return and be joined. Call without
-    /// holding the service mutex; it is released during the bounded wait.
+    /// Stop admission and register `Shutdown` for every accepted job.
+    /// Join returned threads until the fixed deadline, without holding the
+    /// service mutex during a wait. Pump paths never call this method.
     ///
-    /// `WorkerNotReturned` is not a retirement acknowledgement: the service,
-    /// worker handle, and any active-job credit remain retained. Call again
-    /// after the active step returns to join the worker.
+    /// `ThreadsNotReturned` is not a retirement acknowledgement. The service
+    /// retains those handles and their custody until the threads return.
+    /// A later call can finish their joins.
     pub fn shutdown(shared: &Arc<parking_lot::Mutex<Self>>) -> Result<(), WorkShutdownError> {
         Self::shutdown_with_timeout(shared, WORKER_SHUTDOWN_LIMIT)
     }
@@ -370,70 +380,49 @@ impl WorkService {
         timeout: Duration,
     ) -> Result<(), WorkShutdownError> {
         let deadline = Instant::now() + timeout;
-        {
-            let mut service = shared.lock();
-            service.begin_shutdown();
-        }
+        shared.lock().begin_shutdown();
         loop {
-            let (notifier, epoch, exited, joined, panicked) = {
-                let service = shared.lock();
+            let (notifier, epoch) = {
+                let mut service = shared.lock();
                 service.observe_health();
-                let epoch = service.publication_epoch();
-                (
-                    Arc::clone(&service.shared.notifier),
-                    epoch,
-                    service.shared.exited.load(Ordering::Acquire),
-                    service.worker_joined,
-                    service.worker_panicked,
-                )
-            };
-            if joined {
-                return if panicked {
-                    Err(WorkShutdownError::WorkerPanicked)
-                } else {
-                    Ok(())
-                };
-            }
-            if exited {
-                let worker = {
-                    let mut service = shared.lock();
-                    if service.worker_joined {
-                        None
-                    } else {
-                        service._worker.take()
-                    }
-                };
-                if let Some(worker) = worker {
-                    let panicked = worker.join().is_err();
-                    let mut service = shared.lock();
-                    service.worker_joined = true;
-                    service.worker_panicked = panicked;
-                    service.shared.notifier.signal_change();
-                    return if panicked {
-                        Err(WorkShutdownError::WorkerPanicked)
-                    } else {
-                        Ok(())
-                    };
-                }
-            }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                let service = shared.lock();
-                service.observe_health();
-                if service.worker_joined {
+                service.join_finished_threads();
+                if service.worker_joined && service.request_threads.is_empty() {
                     return if service.worker_panicked {
                         Err(WorkShutdownError::WorkerPanicked)
                     } else {
                         Ok(())
                     };
                 }
-                if service.shared.exited.load(Ordering::Acquire) && service._worker.is_some() {
-                    drop(service);
-                    continue;
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err(WorkShutdownError::ThreadsNotReturned {
+                        background_worker: !service.worker_joined,
+                        request_threads: service.request_threads.len(),
+                    });
                 }
-                return Err(WorkShutdownError::WorkerNotReturned);
-            }
-            notifier.wait_for_change(epoch, remaining);
+                (
+                    Arc::clone(&service.shared.notifier),
+                    service.publication_epoch(),
+                )
+            };
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            notifier.wait_for_change(epoch, remaining.min(Duration::from_millis(10)));
+        }
+    }
+
+    // Only shutdown calls this method. Finished handles may be discarded by
+    // pump cleanup, but pump paths never join a thread.
+    fn join_finished_threads(&mut self) {
+        if self._worker.as_ref().is_some_and(JoinHandle::is_finished) {
+            let worker = self._worker.take().expect("finished worker handle");
+            self.worker_panicked |= worker.join().is_err();
+            self.worker_joined = true;
+        }
+        for (_, thread) in self
+            .request_threads
+            .extract_if(|_, thread| thread.is_finished())
+        {
+            self.worker_panicked |= thread.join().is_err();
         }
     }
 
@@ -540,6 +529,8 @@ impl WorkService {
     }
 
     fn cleanup_released(&mut self) {
+        self.request_threads
+            .retain(|_, thread| !thread.is_finished());
         self.jobs.retain(|_, entry| {
             if entry.released.load(Ordering::Acquire) {
                 self.shared.registry.lock().remove(&entry.identity.job());
@@ -577,9 +568,29 @@ impl WorkService {
 impl Drop for WorkService {
     fn drop(&mut self) {
         self.begin_shutdown();
-        if let Some(worker) = self._worker.take() {
-            self.worker_panicked = worker.join().is_err();
-            self.worker_joined = true;
+        let deadline = Instant::now() + WORKER_SHUTDOWN_LIMIT;
+        loop {
+            self.join_finished_threads();
+            if self.worker_joined && self.request_threads.is_empty() {
+                return;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                api::host_log!(
+                    api::hostlog::Category::Lifecycle,
+                    api::hostlog::Level::Error,
+                    "WorkAdmission shutdown deadline: background_worker={} request_threads={}",
+                    !self.worker_joined,
+                    self.request_threads.len(),
+                );
+                // Dropping a handle detaches it. Its thread still owns the
+                // shared ledger and exact job custody until actual return.
+                return;
+            }
+            let epoch = self.publication_epoch();
+            self.shared
+                .notifier
+                .wait_for_change(epoch, remaining.min(Duration::from_millis(10)));
         }
     }
 }
@@ -591,6 +602,7 @@ struct CapacityLedger {
     jobs: usize,
     bytes: usize,
     handles: u32,
+    bounded_bytes: usize,
 }
 
 impl CapacityLedger {
@@ -598,12 +610,13 @@ impl CapacityLedger {
         &mut self,
         bounds: AdmissionBounds,
         charge: WorkCharge,
+        byte_admission: WorkByteAdmission,
     ) -> Result<(), SubmissionRefusal> {
         let bytes = charge
             .total_bytes()
             .and_then(|total| total.checked_add(PROGRESS_BYTES_PER_JOB))
             .ok_or(SubmissionRefusal::InvalidArgument)?;
-        if bytes > bounds.max_bytes().get()
+        if (byte_admission == WorkByteAdmission::Bounded && bytes > bounds.max_bytes().get())
             || charge.operation_handles() > bounds.max_handles().get()
         {
             // An impossible single-job charge is permanent, not Full.
@@ -616,7 +629,14 @@ impl CapacityLedger {
             .bytes
             .checked_add(bytes)
             .ok_or(SubmissionRefusal::InvalidArgument)?;
-        if next_bytes > bounds.max_bytes().get() {
+        let next_bounded = match byte_admission {
+            WorkByteAdmission::Bounded => self
+                .bounded_bytes
+                .checked_add(bytes)
+                .ok_or(SubmissionRefusal::InvalidArgument)?,
+            WorkByteAdmission::Declared => self.bounded_bytes,
+        };
+        if next_bounded > bounds.max_bytes().get() {
             return Err(SubmissionRefusal::Full);
         }
         let next_handles = self
@@ -629,10 +649,11 @@ impl CapacityLedger {
         self.jobs += 1;
         self.bytes = next_bytes;
         self.handles = next_handles;
+        self.bounded_bytes = next_bounded;
         Ok(())
     }
 
-    fn release(&mut self, charge: WorkCharge) {
+    fn release(&mut self, charge: WorkCharge, byte_admission: WorkByteAdmission) {
         let bytes = charge
             .total_bytes()
             .and_then(|total| total.checked_add(PROGRESS_BYTES_PER_JOB))
@@ -640,6 +661,9 @@ impl CapacityLedger {
         self.jobs -= 1;
         self.bytes -= bytes;
         self.handles -= charge.operation_handles();
+        if byte_admission == WorkByteAdmission::Bounded {
+            self.bounded_bytes -= bytes;
+        }
     }
 
     fn snapshot(&self) -> WorkCapacity {
@@ -673,6 +697,7 @@ struct WorkerShared {
     notifier: Arc<ServiceNotifier>,
     slice_overruns: AtomicU64,
     progress_drops: AtomicU64,
+    cancellation_noops: AtomicU64,
     shutdown_requested: AtomicBool,
     unavailable: AtomicBool,
     exited: AtomicBool,
@@ -711,7 +736,9 @@ impl WorkerShared {
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
         {
-            self.capacity.lock().release(entry.charge);
+            self.capacity
+                .lock()
+                .release(entry.charge, entry.family.policy().bytes());
             self.publish_capacity();
             self.registry.lock().remove(&entry.identity.job());
         }
@@ -761,6 +788,7 @@ struct EntryControl {
     state: JobState,
     stranded: api::process_condition::StrandedCustody,
     abandoned: bool,
+    cancellation_claimed: bool,
     progress_sequence: u64,
     progress_dropped: bool,
     qualified_unit: Option<QualifiedUnit>,
@@ -782,9 +810,17 @@ struct JobEntry {
     map_cancellation: fn(Cancellation) -> Cancellation,
     returned: AtomicBool,
     released: AtomicBool,
+    request_active: Mutex<Option<ActiveStep>>,
 }
 
 impl JobEntry {
+    fn active_step<'a>(&'a self, shared: &'a WorkerShared) -> &'a Mutex<Option<ActiveStep>> {
+        match self.family.policy().execution() {
+            WorkExecution::BackgroundWorker => &shared.active,
+            WorkExecution::RequestThread => &self.request_active,
+        }
+    }
+
     fn matches<F: WorkFamilySpec>(&self, ticket: &WorkTicket<F>) -> bool {
         self.identity == ticket.identity()
             && self.spec == TypeId::of::<F>()
@@ -1082,6 +1118,42 @@ fn worker_thread(shared: Arc<WorkerShared>) {
     }
 }
 
+fn request_thread(shared: Arc<WorkerShared>, entry: Arc<JobEntry>) {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        while !entry.returned.load(Ordering::Acquire) {
+            if shared.unavailable.load(Ordering::Acquire) {
+                drop_queued_entry(&shared, &entry);
+            } else {
+                run_entry(&shared, &entry);
+            }
+        }
+    }));
+    if result.is_err() {
+        let job = entry.job.lock().take();
+        let _ = catch_unwind(AssertUnwindSafe(|| drop(job)));
+        let published = {
+            let control = entry.control.lock();
+            if let Some(reason) = control.stranded.cancellation() {
+                entry.publish_service_terminal(ServiceTerminal::Cancelled(reason))
+            } else {
+                entry.publish_service_terminal(ServiceTerminal::FailedInternally)
+            }
+        };
+        if published {
+            shared.publish_terminal(&entry);
+        }
+        api::host_log!(
+            api::hostlog::Category::Lifecycle,
+            api::hostlog::Level::Error,
+            "request work job {:?} failed internally (contained panic); only this job failed",
+            entry.identity.job(),
+        );
+        *entry.request_active.lock() = None;
+        mark_returned(&shared, &entry);
+    }
+    shared.notifier.signal_change();
+}
+
 fn worker_loop(shared: &Arc<WorkerShared>) {
     loop {
         let entry = {
@@ -1098,19 +1170,19 @@ fn worker_loop(shared: &Arc<WorkerShared>) {
             drop_queued_entry(shared, &entry);
             continue;
         }
-        run_entry(shared, entry);
+        run_entry(shared, &entry);
     }
 }
 
-fn run_entry(shared: &Arc<WorkerShared>, entry: Arc<JobEntry>) {
+fn run_entry(shared: &Arc<WorkerShared>, entry: &Arc<JobEntry>) {
     if !entry.terminal.is_pending() {
-        drop_queued_entry(shared, &entry);
+        drop_queued_entry(shared, entry);
         return;
     }
     let mut job = match entry.job.lock().take() {
         Some(job) => job,
         None => {
-            mark_returned(shared, &entry);
+            mark_returned(shared, entry);
             return;
         }
     };
@@ -1118,7 +1190,7 @@ fn run_entry(shared: &Arc<WorkerShared>, entry: Arc<JobEntry>) {
     let skip_step = {
         let mut control = entry.control.lock();
         if shared.shutdown_requested.load(Ordering::Acquire) {
-            let _ = request_cancel_locked(&entry, &mut control, Cancellation::Shutdown);
+            let _ = request_cancel_locked(entry, &mut control, Cancellation::Shutdown);
         }
         if !entry.terminal.is_pending() {
             true
@@ -1132,14 +1204,14 @@ fn run_entry(shared: &Arc<WorkerShared>, entry: Arc<JobEntry>) {
     };
     if skip_step {
         if published {
-            shared.publish_terminal(&entry);
+            shared.publish_terminal(entry);
         }
         drop(job);
-        mark_returned(shared, &entry);
+        mark_returned(shared, entry);
         return;
     }
     let started = shared.clock.now();
-    *shared.active.lock() = Some(ActiveStep {
+    *entry.active_step(shared).lock() = Some(ActiveStep {
         entry: entry.identity.job(),
         started,
         returned: false,
@@ -1152,7 +1224,7 @@ fn run_entry(shared: &Arc<WorkerShared>, entry: Arc<JobEntry>) {
     let step = catch_unwind(AssertUnwindSafe(|| {
         job.step(&*shared.clock, budget, &*entry.cancellation)
     }));
-    if let Some(active) = shared.active.lock().as_mut() {
+    if let Some(active) = entry.active_step(shared).lock().as_mut() {
         if active.entry == entry.identity.job() {
             active.returned = true;
         }
@@ -1171,15 +1243,15 @@ fn run_entry(shared: &Arc<WorkerShared>, entry: Arc<JobEntry>) {
             );
             let published = entry.publish_service_terminal(ServiceTerminal::FailedInternally);
             if published {
-                shared.publish_terminal(&entry);
+                shared.publish_terminal(entry);
             }
-            *shared.active.lock() = None;
-            mark_returned(shared, &entry);
+            *entry.active_step(shared).lock() = None;
+            mark_returned(shared, entry);
         }
         Ok((outcome, report)) => {
             process_step(
                 shared,
-                &entry,
+                entry,
                 job,
                 outcome,
                 report,
@@ -1190,7 +1262,7 @@ fn run_entry(shared: &Arc<WorkerShared>, entry: Arc<JobEntry>) {
                     qualified,
                 },
             );
-            *shared.active.lock() = None;
+            *entry.active_step(shared).lock() = None;
         }
     }
 }
@@ -1345,6 +1417,11 @@ fn process_step(
         *entry.job.lock() = Some(job);
         let control = entry.control.lock();
         if control.stranded.cancellation().is_none() {
+            if entry.family.policy().execution() == WorkExecution::RequestThread
+                && !shared.unavailable.load(Ordering::Acquire)
+            {
+                return;
+            }
             let mut queue = shared.queue.lock();
             if !queue.stopping && !shared.unavailable.load(Ordering::Acquire) {
                 queue.jobs.push_back(Arc::clone(entry));
@@ -1584,6 +1661,33 @@ impl WorkService {
         F: WorkFamilySpec,
         J: CooperativeJob<Output = F::Output, Error = F::Error, Phase = F::Phase>,
     {
+        self.try_submit_with_spawn(
+            identity,
+            input,
+            job,
+            conditions,
+            qualified_unit,
+            |builder, shared, entry| builder.spawn(move || request_thread(shared, entry)),
+        )
+    }
+
+    fn try_submit_with_spawn<F, J>(
+        &mut self,
+        identity: WorkIdentity,
+        input: &F::Input,
+        job: J,
+        conditions: &ProcessConditions,
+        qualified_unit: Option<QualifiedUnit>,
+        spawn: impl FnOnce(
+            thread::Builder,
+            Arc<WorkerShared>,
+            Arc<JobEntry>,
+        ) -> std::io::Result<JoinHandle<()>>,
+    ) -> Result<WorkTicket<F>, api::work::Refused<J>>
+    where
+        F: WorkFamilySpec,
+        J: CooperativeJob<Output = F::Output, Error = F::Error, Phase = F::Phase>,
+    {
         if qualified_unit.is_some_and(|unit| {
             !matches!(
                 (unit, F::FAMILY),
@@ -1630,6 +1734,23 @@ impl WorkService {
         }
         let charge = F::charge(input);
         let revision = F::revision(input);
+        let policy = F::FAMILY.policy();
+        let builder = match policy.execution() {
+            WorkExecution::BackgroundWorker => None,
+            WorkExecution::RequestThread => {
+                let Some(settings) = job.request_thread() else {
+                    return Err(api::work::Refused::new(
+                        SubmissionRefusal::InvalidArgument,
+                        job,
+                    ));
+                };
+                let mut builder = thread::Builder::new().name(settings.name().to_owned());
+                if let Some(stack_bytes) = settings.stack_bytes() {
+                    builder = builder.stack_size(stack_bytes.get());
+                }
+                Some(builder)
+            }
+        };
         let mut queue = self.shared.queue.lock();
         if let Some(unavailable) = self.refusal_for_unavailable(identity) {
             return Err(api::work::Refused::new(unavailable, job));
@@ -1637,7 +1758,12 @@ impl WorkService {
         if queue.stopping || self.stopping {
             return Err(api::work::Refused::new(SubmissionRefusal::Stopping, job));
         }
-        if let Err(refusal) = self.shared.capacity.lock().reserve(self.bounds, charge) {
+        if let Err(refusal) =
+            self.shared
+                .capacity
+                .lock()
+                .reserve(self.bounds, charge, policy.bytes())
+        {
             return Err(api::work::Refused::new(refusal, job));
         }
         let entry = Arc::new(JobEntry {
@@ -1646,10 +1772,7 @@ impl WorkService {
             family: F::FAMILY,
             revision,
             charge,
-            job: Mutex::new(Some(Box::new(TypedJob::<F, J> {
-                job,
-                family: std::marker::PhantomData,
-            }))),
+            job: Mutex::new(None),
             control: Mutex::new(EntryControl {
                 state: JobState::Queued,
                 stranded: api::process_condition::StrandedCustody::new(
@@ -1657,6 +1780,7 @@ impl WorkService {
                     identity.scope(),
                 ),
                 abandoned: false,
+                cancellation_claimed: false,
                 progress_sequence: 0,
                 qualified_unit,
                 qualified_dispatches: 0,
@@ -1669,16 +1793,41 @@ impl WorkService {
             map_cancellation: F::map_cancellation,
             returned: AtomicBool::new(false),
             released: AtomicBool::new(false),
+            request_active: Mutex::new(None),
         });
+        // A new request thread cannot obtain the job until registration is
+        // complete. The original J stays with this caller if spawn fails.
+        let mut start = entry.job.lock();
+        if let Some(builder) = builder {
+            match spawn(builder, Arc::clone(&self.shared), Arc::clone(&entry)) {
+                Ok(thread) => {
+                    self.request_threads.insert(identity.job(), thread);
+                }
+                Err(_) => {
+                    self.shared.capacity.lock().release(charge, policy.bytes());
+                    return Err(api::work::Refused::new(
+                        SubmissionRefusal::ThreadStartFailed,
+                        job,
+                    ));
+                }
+            }
+        }
+        *start = Some(Box::new(TypedJob::<F, J> {
+            job,
+            family: std::marker::PhantomData,
+        }));
         self.jobs.insert(identity.job(), Arc::clone(&entry));
         self.last_job = Some(identity.job());
         self.shared
             .registry
             .lock()
             .insert(identity.job(), Arc::downgrade(&entry));
-        queue.jobs.push_back(Arc::clone(&entry));
+        if policy.execution() == WorkExecution::BackgroundWorker {
+            queue.jobs.push_back(Arc::clone(&entry));
+        }
         self.publish_capacity();
         drop(queue);
+        drop(start);
         self.shared.wake_worker();
         Ok(WorkTicket::new(identity, revision))
     }
