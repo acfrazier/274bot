@@ -8157,7 +8157,8 @@ async fn relax_packed<B: Budget>(
         return Err(());
     }
     let lookup = loop {
-        match table.locate(key.tile(), balance).await {
+        let result = table.locate(key.tile(), balance).await;
+        match result {
             Ok(lookup) => break lookup,
             Err(()) if pending_limit == 0 => {
                 *pending_after_limit = true;

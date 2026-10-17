@@ -212,6 +212,8 @@ pub(super) enum PackedLookup {
     Vacant(u32),
 }
 
+const PACKED_LOOKUP_CACHE_SIZE: usize = 1024;
+
 pub(super) struct PackedSearchTable {
     slots: Vec<PackedSearchSlot>,
     // Bucket heads and tagged next links share one allocation. A fingerprint
@@ -221,6 +223,9 @@ pub(super) struct PackedSearchTable {
     next_unused: usize,
     free_head: u32,
     link_id_mask: u32,
+    // Recent positive lookups store only dense IDs. Hits still compare the
+    // full key, and removal invalidates the corresponding cache position.
+    cached_ids: [u32; PACKED_LOOKUP_CACHE_SIZE],
 }
 
 impl PackedSearchTable {
@@ -232,6 +237,7 @@ impl PackedSearchTable {
             next_unused: 0,
             free_head: PACKED_ROOT_ID,
             link_id_mask: 0,
+            cached_ids: [PACKED_ROOT_ID; PACKED_LOOKUP_CACHE_SIZE],
         }
     }
 
@@ -259,6 +265,7 @@ impl PackedSearchTable {
             next_unused: 0,
             free_head: PACKED_ROOT_ID,
             link_id_mask: packed_link_id_mask(capacity),
+            cached_ids: [PACKED_ROOT_ID; PACKED_LOOKUP_CACHE_SIZE],
         })
     }
 
@@ -359,18 +366,26 @@ impl PackedSearchTable {
         self.slots[id as usize].state() == PACKED_SETTLED
     }
 
-    pub(super) async fn locate(&self, tile: WorldTile, balance: u32) -> Result<PackedLookup, ()> {
+    pub(super) async fn locate(
+        &mut self,
+        tile: WorldTile,
+        balance: u32,
+    ) -> Result<PackedLookup, ()> {
         if self.buckets == 0 {
             return Err(());
         }
-        if SYNCHRONOUS_WORK.get() {
-            return self
-                .locate_sync(tile, balance)
-                .map(PackedLookup::Found)
-                .or_else(|| self.vacant_id().map(PackedLookup::Vacant))
-                .ok_or(());
-        }
         let hash = packed_hash(tile, balance);
+        let cache_index = hash as usize & (PACKED_LOOKUP_CACHE_SIZE - 1);
+        if let Some(id) = self.cached_key(cache_index, tile, balance) {
+            return Ok(PackedLookup::Found(id));
+        }
+        if SYNCHRONOUS_WORK.get() {
+            if let Some(id) = self.locate_hashed(tile, balance, hash) {
+                self.cached_ids[cache_index] = id;
+                return Ok(PackedLookup::Found(id));
+            }
+            return self.vacant_id().map(PackedLookup::Vacant).ok_or(());
+        }
         let bucket = packed_bucket(hash, self.buckets);
         let fingerprint = packed_fingerprint(hash, self.link_id_mask);
         let mut link = read_u24(self.links[bucket]);
@@ -379,6 +394,7 @@ impl PackedSearchTable {
             if link & !self.link_id_mask == fingerprint {
                 let slot = &self.slots[id as usize];
                 if slot.tile() == tile && slot.balance() == balance {
+                    self.cached_ids[cache_index] = id;
                     return Ok(PackedLookup::Found(id));
                 }
             }
@@ -397,6 +413,21 @@ impl PackedSearchTable {
             return None;
         }
         let hash = packed_hash(tile, balance);
+        let cache_index = hash as usize & (PACKED_LOOKUP_CACHE_SIZE - 1);
+        self.cached_key(cache_index, tile, balance)
+            .or_else(|| self.locate_hashed(tile, balance, hash))
+    }
+
+    fn cached_key(&self, cache_index: usize, tile: WorldTile, balance: u32) -> Option<u32> {
+        let id = self.cached_ids[cache_index];
+        if id == PACKED_ROOT_ID {
+            return None;
+        }
+        let slot = &self.slots[id as usize];
+        (slot.tile() == tile && slot.balance() == balance).then_some(id)
+    }
+
+    fn locate_hashed(&self, tile: WorldTile, balance: u32, hash: u32) -> Option<u32> {
         let bucket = packed_bucket(hash, self.buckets);
         let fingerprint = packed_fingerprint(hash, self.link_id_mask);
         let mut link = read_u24(self.links[bucket]);
@@ -435,6 +466,7 @@ impl PackedSearchTable {
         let slot = &mut self.slots[id as usize];
         slot.set_key(tile, balance, action, action_index, cost);
         slot.set_open(0);
+        self.cached_ids[hash as usize & (PACKED_LOOKUP_CACHE_SIZE - 1)] = id;
     }
 
     pub(super) fn update(&mut self, id: u32, action: u8, action_index: u32, cost: f64) {
@@ -449,7 +481,8 @@ impl PackedSearchTable {
 
     pub(super) async fn tombstone(&mut self, id: u32) {
         let slot = self.slots[id as usize];
-        let bucket = packed_hash_index(slot.tile(), slot.balance(), self.buckets);
+        let hash = packed_hash(slot.tile(), slot.balance());
+        let bucket = packed_bucket(hash, self.buckets);
         let mut current = read_link(self.links[bucket], self.link_id_mask);
         let mut previous = PACKED_ROOT_ID;
         while current != id {
@@ -463,6 +496,10 @@ impl PackedSearchTable {
             self.links[bucket] = next;
         } else {
             self.links[self.buckets + previous as usize] = next;
+        }
+        let cache_index = hash as usize & (PACKED_LOOKUP_CACHE_SIZE - 1);
+        if self.cached_ids[cache_index] == id {
+            self.cached_ids[cache_index] = PACKED_ROOT_ID;
         }
         self.slots[id as usize].set_tombstone();
         self.set_next(id, self.free_head);
@@ -1489,6 +1526,7 @@ mod packed_search_tests {
             (tile(8), 3, Some(2), 0),
             (tile(9), 3, None, 2),
         ] {
+            table.cached_ids.fill(PACKED_ROOT_ID);
             let cooperative = {
                 let mut lookup = std::pin::pin!(table.locate(tile, balance));
                 let mut context = Context::from_waker(Waker::noop());
@@ -1554,8 +1592,17 @@ mod packed_search_tests {
                 PackedLookup::Found(id) => assert_eq!(id, live),
                 PackedLookup::Vacant(_) => panic!("second live packed key was not found"),
             }
+            assert!(matches!(
+                table.locate(first_tile, first_balance).await,
+                Ok(PackedLookup::Found(id)) if id == first
+            ));
 
             table.tombstone(first).await;
+            assert_eq!(table.locate_sync(first_tile, first_balance), None);
+            assert!(matches!(
+                table.locate(first_tile, first_balance).await,
+                Ok(PackedLookup::Vacant(id)) if id == first
+            ));
             let replacement_balance = 5;
             let replacement_tile = (8..100)
                 .map(tile)
@@ -1694,6 +1741,8 @@ mod packed_search_tests {
             assert_eq!(current, old_current, "the local expanding id stays valid");
             assert_eq!(table.slot(current).tile(), origin);
             assert_eq!(table.slot(current).parent(), PACKED_ROOT_ID);
+            assert_eq!(table.locate_sync(origin, 0), Some(current));
+            assert_eq!(table.locate_sync(child_tile, 0), Some(child));
             for id in [3, 2] {
                 assert_eq!(table.vacant_id(), Some(id));
                 let replacement = tile(3000 + id as i32);
@@ -1752,6 +1801,44 @@ mod packed_search_tests {
     }
 
     #[test]
+    fn packed_recent_key_lookup_does_not_rescan_unchanged_collision_links() {
+        let mut table = PackedSearchTable::try_new_capacity(32).unwrap();
+        let first = tile(0);
+        let second = (1..1024)
+            .map(tile)
+            .find(|&key| {
+                packed_hash_index(key, 0, table.buckets)
+                    == packed_hash_index(first, 0, table.buckets)
+                    && packed_hash(key, 0) & 1023 != packed_hash(first, 0) & 1023
+            })
+            .expect("two distinct recent-key positions in one collision chain");
+        table.insert(0, first, 0, 0, 0, 0.0);
+        table.insert(1, second, 0, 0, 0, 0.0);
+        for key in [first, second, first] {
+            let mut lookup = std::pin::pin!(table.locate(key, 0));
+            let mut context = Context::from_waker(Waker::noop());
+            assert!(
+                matches!(
+                    lookup.as_mut().poll(&mut context),
+                    Poll::Ready(Ok(PackedLookup::Found(_)))
+                ),
+                "a recent positive lookup must finish in its caller's work unit"
+            );
+        }
+        table.cached_ids.fill(PACKED_ROOT_ID);
+        assert!(matches!(
+            super::super::drive_to_completion(table.locate(first, 0)),
+            Ok(PackedLookup::Found(0))
+        ));
+        let mut lookup = std::pin::pin!(table.locate(first, 0));
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(matches!(
+            lookup.as_mut().poll(&mut context),
+            Poll::Ready(Ok(PackedLookup::Found(0)))
+        ));
+    }
+
+    #[test]
     fn packed_lookup_bundles_the_first_key_and_yields_between_further_collisions() {
         let mut table = PackedSearchTable::try_new_capacity(32).unwrap();
         let keys: Vec<_> = (0..1024)
@@ -1765,6 +1852,7 @@ mod packed_search_tests {
         }
         let mut context = std::task::Context::from_waker(std::task::Waker::noop());
         for (id, expected_pending) in [(15, 0), (0, 15)] {
+            table.cached_ids.fill(PACKED_ROOT_ID);
             let mut pending = 0;
             let mut future = std::pin::pin!(table.locate(keys[id], 0));
             loop {
