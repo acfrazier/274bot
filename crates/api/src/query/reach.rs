@@ -1,4 +1,278 @@
 use super::*;
+use std::future::Future;
+
+#[cfg(test)]
+std::thread_local! {
+    static ARRIVAL_LANDMARK_PREPARES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static ARRIVAL_LAYER_CLASSIFICATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static ARRIVAL_WINDOW_REPLAYS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+trait ArrivalYield {
+    type YieldFuture: Future<Output = ()>;
+
+    fn yield_unit(&mut self) -> Self::YieldFuture;
+}
+
+impl<Y, F> ArrivalYield for Y
+where
+    Y: FnMut() -> F,
+    F: Future<Output = ()>,
+{
+    type YieldFuture = F;
+
+    fn yield_unit(&mut self) -> Self::YieldFuture {
+        self()
+    }
+}
+
+const ARRIVAL_INIT_BATCH: usize = 1024;
+const ARRIVAL_PAGE_SIDE: usize = 32;
+const ARRIVAL_PAGE_CELLS: usize = ARRIVAL_PAGE_SIDE * ARRIVAL_PAGE_SIDE;
+const ARRIVAL_PAGED: u16 = 1 << 10;
+
+async fn arrival_filled_vec<T: Copy, Y: ArrivalYield>(
+    len: usize,
+    value: T,
+    yield_unit: &mut Y,
+) -> Vec<T> {
+    let mut values = Vec::with_capacity(len);
+    let mut batch = 0;
+    for _ in 0..len {
+        values.push(value);
+        batch += 1;
+        if batch == ARRIVAL_INIT_BATCH {
+            yield_unit.yield_unit().await;
+            batch = 0;
+        }
+    }
+    if batch != 0 {
+        yield_unit.yield_unit().await;
+    }
+    values
+}
+
+/// The full tile-coordinate rectangle in which the collision provider may
+/// return `Some`. These bounds reserve memory only; they never clip reads or
+/// synthesize `None`. The callback must return `None` outside this domain on
+/// every level.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct ArrivalCollisionBounds {
+    origin_x: i32,
+    origin_z: i32,
+    width: usize,
+    height: usize,
+}
+
+impl ArrivalCollisionBounds {
+    /// Constructs a checked provider rectangle with half-open width and height.
+    ///
+    /// Returns `None` if its last tile would not fit in signed world coordinates.
+    pub fn new(origin_x: i32, origin_z: i32, width: usize, height: usize) -> Option<Self> {
+        let end_x = i64::from(origin_x).checked_add(i64::try_from(width).ok()?)?;
+        let end_z = i64::from(origin_z).checked_add(i64::try_from(height).ok()?)?;
+        if (width != 0 && end_x - 1 > i64::from(i32::MAX))
+            || (height != 0 && end_z - 1 > i64::from(i32::MAX))
+        {
+            return None;
+        }
+        Some(Self {
+            origin_x,
+            origin_z,
+            width,
+            height,
+        })
+    }
+
+    /// The minimum x coordinate in the provider rectangle.
+    pub const fn origin_x(self) -> i32 {
+        self.origin_x
+    }
+
+    /// The minimum z coordinate in the provider rectangle.
+    pub const fn origin_z(self) -> i32 {
+        self.origin_z
+    }
+
+    /// The provider rectangle's width in tiles.
+    pub const fn width(self) -> usize {
+        self.width
+    }
+
+    /// The provider rectangle's height in tiles.
+    pub const fn height(self) -> usize {
+        self.height
+    }
+
+    fn page_capacity_with_halo(self) -> Option<usize> {
+        fn axis_pages(length: usize) -> Option<usize> {
+            if length == 0 {
+                return Some(0);
+            }
+            length.checked_div(ARRIVAL_PAGE_SIDE)?.checked_add(2)
+        }
+
+        // Page coordinates are query-local, so reserve the worst alignment
+        // after translating the provider rectangle and adding its one-tile halo.
+        axis_pages(self.width)?.checked_mul(axis_pages(self.height)?)
+    }
+}
+
+fn arrival_heap_vec_bytes<T>(capacity: usize) -> Option<usize> {
+    capacity.checked_mul(std::mem::size_of::<T>())
+}
+
+fn arrival_heap_hash_bytes(entry_bytes: usize, entries: usize) -> Option<usize> {
+    if entries == 0 {
+        return Some(0);
+    }
+    // HashMap reserves at a 7/8 load limit; include its power-of-two rounding.
+    let required_buckets = entries.checked_mul(8)?.checked_add(6)?.checked_div(7)?;
+    let buckets = required_buckets.max(16).checked_next_power_of_two()?;
+    let bucket_storage = buckets.checked_mul(entry_bytes)?;
+    // Include the control-group tail and old/new tables during a rehash.
+    let control_storage = buckets.checked_add(16)?;
+    bucket_storage.checked_add(control_storage)?.checked_mul(2)
+}
+
+fn arrival_heap_add(total: &mut usize, bytes: usize) -> Option<()> {
+    *total = total.checked_add(bytes)?;
+    Some(())
+}
+
+/// Returns an upper bound, in bytes, for heap storage owned by one arrival call.
+///
+/// The bound includes cached pages, flood arrays, candidate scratch, rounded
+/// hash-table capacities, and old/new storage overlap during growth.
+/// It excludes the caller's `candidates` buffer, callback captures, yield-future
+/// storage, and allocator metadata. Add `candidate_capacity * size_of::<WorldTile>()`
+/// and the opaque future size. Use `size_of_val` on an unpolled future.
+///
+/// The callback must return `None` outside `bounds` on every level. The bounds
+/// reserve memory only. They do not clip collision queries. This function
+/// returns `None` if checked arithmetic fails.
+pub fn arrival_candidates_heap_bound(
+    radius: i32,
+    candidate_capacity: usize,
+    bounds: ArrivalCollisionBounds,
+) -> Option<usize> {
+    let Ok(radius) = usize::try_from(radius) else {
+        return Some(0);
+    };
+    if candidate_capacity == 0 {
+        return Some(0);
+    }
+    let radius = radius.min(104);
+    let goal_side = radius.checked_mul(2)?.checked_add(1)?;
+    let budget = goal_side.checked_mul(goal_side)?;
+    let replay_entries = budget.checked_mul(8)?.checked_add(1)?;
+    let fallback = arrival_heap_hash_bytes(std::mem::size_of::<(i32, i32)>(), replay_entries)?
+        .checked_add(arrival_heap_vec_bytes::<(i32, i32)>(replay_entries)?)?;
+    if radius == 0 {
+        return Some(fallback);
+    }
+
+    let side = radius.checked_mul(6)?.checked_add(3)?;
+    let cells = side.checked_mul(side)?;
+    let page_capacity = bounds.page_capacity_with_halo()?;
+    let page_cells = page_capacity.checked_mul(ARRIVAL_PAGE_CELLS)?;
+    let layer_queue_entries = ARRIVAL_LAYER_BATCH.checked_mul(budget.checked_add(1)?)?;
+    let layer_page_count = page_capacity.min(layer_queue_entries);
+    let layer_state_entries = layer_queue_entries.min(page_cells);
+    let layer_state_capacity = layer_state_entries
+        .checked_mul(2)?
+        .checked_add(layer_page_count.checked_mul(2)?)?
+        .min(page_cells);
+
+    let mut cache_bytes = 0;
+    arrival_heap_add(
+        &mut cache_bytes,
+        arrival_heap_vec_bytes::<Option<i32>>(cells)?,
+    )?;
+    arrival_heap_add(&mut cache_bytes, arrival_heap_vec_bytes::<u16>(cells)?)?;
+    arrival_heap_add(
+        &mut cache_bytes,
+        arrival_heap_vec_bytes::<Box<ArrivalStepPage>>(page_capacity)?,
+    )?;
+    arrival_heap_add(
+        &mut cache_bytes,
+        arrival_heap_vec_bytes::<(i32, i32)>(page_capacity)?,
+    )?;
+    arrival_heap_add(
+        &mut cache_bytes,
+        arrival_heap_hash_bytes(std::mem::size_of::<((i32, i32), usize)>(), page_capacity)?,
+    )?;
+    let cache_pages = arrival_heap_vec_bytes::<ArrivalStepPage>(page_capacity)?;
+
+    let stride = side.checked_add(1)?;
+    let contour = stride.checked_mul(4)?;
+    let exit_capacity = goal_side.checked_mul(4)?;
+    let boundary_seed_capacity = side.saturating_sub(1).checked_mul(4)?;
+    let mut dense_bytes = 0;
+    for bytes in [
+        arrival_heap_vec_bytes::<u32>(cells.checked_mul(4)?)?,
+        arrival_heap_vec_bytes::<bool>(cells)?,
+        arrival_heap_vec_bytes::<u8>(cells)?,
+        arrival_heap_vec_bytes::<u32>(stride.checked_mul(stride)?)?,
+        arrival_heap_vec_bytes::<usize>(exit_capacity)?,
+    ] {
+        arrival_heap_add(&mut dense_bytes, bytes)?;
+    }
+    let flood_queues = cells
+        .checked_mul(3)?
+        .checked_add(contour)?
+        .checked_add(boundary_seed_capacity)?
+        .checked_mul(std::mem::size_of::<usize>())?;
+    let contour_depths = arrival_heap_vec_bytes::<u32>(contour)?;
+
+    let candidate_bytes_per_entry = std::mem::size_of::<bool>()
+        .checked_add(std::mem::size_of::<(usize, usize)>())?
+        .checked_add(std::mem::size_of::<usize>())?
+        .checked_add(std::mem::size_of::<(usize, usize)>())?
+        .checked_add(std::mem::size_of::<u32>())?;
+    let candidate_bytes = candidate_capacity.checked_mul(candidate_bytes_per_entry)?;
+
+    let landmark_capacity = budget.checked_mul(2)?.checked_add(1)?;
+    let landmark_bytes = arrival_heap_hash_bytes(
+        std::mem::size_of::<(usize, ArrivalLandmarkCell)>(),
+        landmark_capacity,
+    )?
+    .checked_add(arrival_heap_vec_bytes::<usize>(landmark_capacity)?)?
+    .checked_add(arrival_heap_vec_bytes::<usize>(landmark_capacity)?)?;
+
+    let replay_marks = cells
+        .div_ceil(u64::BITS as usize)
+        .checked_mul(std::mem::size_of::<u64>())?
+        .checked_add(arrival_heap_vec_bytes::<[u64; WINDOW_MARK_WORDS]>(
+            page_capacity,
+        )?)?
+        .checked_add(arrival_heap_vec_bytes::<usize>(replay_entries)?)?;
+    let layer_base = arrival_heap_vec_bytes::<ArrivalLayerCell>(cells)?
+        .checked_add(arrival_heap_vec_bytes::<usize>(cells)?)?
+        .checked_add(arrival_heap_vec_bytes::<Option<Box<ArrivalLayerPage>>>(
+            page_capacity,
+        )?)?
+        .checked_add(arrival_heap_vec_bytes::<usize>(layer_queue_entries)?)?;
+    let layer_states = arrival_heap_vec_bytes::<ArrivalLayerCell>(layer_state_capacity)?
+        .checked_add(arrival_heap_vec_bytes::<ArrivalLayerCell>(
+            ARRIVAL_PAGE_CELLS,
+        )?)?;
+    let layer_pages =
+        arrival_heap_vec_bytes::<ArrivalLayerPage>(layer_page_count)?.checked_add(layer_states)?;
+    let phase_scratch = layer_pages.max(replay_marks);
+    let mut classification_peak = cache_bytes;
+    arrival_heap_add(&mut classification_peak, cache_pages)?;
+    arrival_heap_add(&mut classification_peak, dense_bytes)?;
+    arrival_heap_add(&mut classification_peak, candidate_bytes)?;
+    arrival_heap_add(&mut classification_peak, landmark_bytes)?;
+    arrival_heap_add(&mut classification_peak, layer_base)?;
+    arrival_heap_add(&mut classification_peak, phase_scratch)?;
+    let mut flood_peak = cache_bytes;
+    arrival_heap_add(&mut flood_peak, dense_bytes)?;
+    arrival_heap_add(&mut flood_peak, contour_depths)?;
+    arrival_heap_add(&mut flood_peak, flood_queues)?;
+    Some(classification_peak.max(flood_peak).max(fallback))
+}
+
 /// Options for `SceneQuery::can_reach` (the m8aq `SceneReachOptions`).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SceneReachOptions {
@@ -86,8 +360,8 @@ fn can_step_local<F: Fn(i32, i32) -> Option<i32> + ?Sized>(
 
 /// Whether the destination tile's wall mask toward `(dx, dz)` is clear
 /// (the `adjacentOk` stop check).
-fn can_reach_adjacent_tile(
-    flags: &dyn Fn(i32, i32) -> Option<i32>,
+fn can_reach_adjacent_tile<F: Fn(i32, i32) -> Option<i32> + ?Sized>(
+    flags: &F,
     nx: i32,
     nz: i32,
     dx: i32,
@@ -114,6 +388,14 @@ fn can_reach_adjacent_tile(
 struct ReachScratch {
     seen: std::collections::HashSet<(i32, i32)>,
     queue: Vec<(i32, i32)>,
+}
+impl ReachScratch {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            seen: std::collections::HashSet::with_capacity(capacity),
+            queue: Vec::with_capacity(capacity),
+        }
+    }
 }
 
 /// BFS over `can_step_local` (the m8aq `canReachLocal`).
@@ -552,27 +834,84 @@ impl<F: Fn(WorldTile) -> Option<i32>> ArrivalProbe for CollisionArrivalProbe<F> 
     }
 }
 
+const WINDOW_MARK_WORDS: usize = ARRIVAL_PAGE_CELLS / u64::BITS as usize;
+
 struct WindowReachScratch {
-    marks: Vec<u32>,
+    dense_marks: Vec<u64>,
+    page_marks: Vec<[u64; WINDOW_MARK_WORDS]>,
     queue: Vec<usize>,
-    epoch: u32,
+}
+
+impl WindowReachScratch {
+    async fn new<Y: ArrivalYield>(
+        dense_cells: usize,
+        page_capacity: usize,
+        queue_capacity: usize,
+        yield_unit: &mut Y,
+    ) -> Self {
+        let dense_marks =
+            arrival_filled_vec(dense_cells.div_ceil(u64::BITS as usize), 0u64, yield_unit).await;
+        Self {
+            dense_marks,
+            page_marks: Vec::with_capacity(page_capacity),
+            queue: Vec::with_capacity(queue_capacity),
+        }
+    }
+
+    async fn insert<Y: ArrivalYield>(
+        &mut self,
+        index: usize,
+        dense_cells: usize,
+        yield_unit: &mut Y,
+    ) -> bool {
+        if index < dense_cells {
+            let word = &mut self.dense_marks[index / u64::BITS as usize];
+            let bit = 1 << (index % u64::BITS as usize);
+            let fresh = *word & bit == 0;
+            *word |= bit;
+            return fresh;
+        }
+        let offset = index - dense_cells;
+        let page_slot = offset / ARRIVAL_PAGE_CELLS;
+        while self.page_marks.len() <= page_slot {
+            self.page_marks.push([0; WINDOW_MARK_WORDS]);
+            yield_unit.yield_unit().await;
+        }
+        let local = offset % ARRIVAL_PAGE_CELLS;
+        let word = &mut self.page_marks[page_slot][local / u64::BITS as usize];
+        let bit = 1 << (local % u64::BITS as usize);
+        let fresh = *word & bit == 0;
+        *word |= bit;
+        fresh
+    }
+
+    fn clear_mark(&mut self, index: usize, dense_cells: usize) {
+        if index < dense_cells {
+            self.dense_marks[index / u64::BITS as usize] &= !(1 << (index % u64::BITS as usize));
+            return;
+        }
+        let offset = index - dense_cells;
+        let page_slot = offset / ARRIVAL_PAGE_CELLS;
+        let local = offset % ARRIVAL_PAGE_CELLS;
+        self.page_marks[page_slot][local / u64::BITS as usize] &=
+            !(1 << (local % u64::BITS as usize));
+    }
 }
 
 #[inline]
-fn window_reach<const ADJACENT: bool>(
-    cache: &mut ArrivalStepCache<'_>,
-    marks: &mut [u32],
-    queue: &mut Vec<usize>,
+async fn window_reach<const ADJACENT: bool, Y: ArrivalYield>(
+    cache: &mut ArrivalStepCache<'_, impl Fn(WorldTile) -> Option<i32>>,
+    scratch: &mut WindowReachScratch,
     target: usize,
     goals: &[usize],
     budget: usize,
-    epoch: u32,
+    yield_unit: &mut Y,
 ) -> (bool, usize) {
     let side = cache.side as isize;
     let offsets = [-side, side, -1, 1, -side - 1, side - 1, -side + 1, side + 1];
     let mut head = 0;
-    while head < queue.len() {
-        let index = queue[head];
+    while head < scratch.queue.len() {
+        let index = scratch.queue[head];
         if index == target || (ADJACENT && goals.contains(&index)) {
             return (true, head);
         }
@@ -583,154 +922,268 @@ fn window_reach<const ADJACENT: bool>(
             break;
         };
         head += 1;
-        let mut visit = |bit: u8, offset: isize| {
-            if mask & bit != 0 {
+        for (bit, &offset) in offsets.iter().enumerate() {
+            if mask & (1 << bit) != 0 {
                 let next = index.wrapping_add_signed(offset);
-                if marks[next] != epoch {
-                    marks[next] = epoch;
-                    queue.push(next);
+                if scratch.insert(next, cache.flags.len(), yield_unit).await {
+                    scratch.queue.push(next);
                 }
             }
-        };
-        visit(1, offsets[0]);
-        visit(2, offsets[1]);
-        visit(4, offsets[2]);
-        visit(8, offsets[3]);
-        visit(16, offsets[4]);
-        visit(32, offsets[5]);
-        visit(64, offsets[6]);
-        visit(128, offsets[7]);
+        }
+        yield_unit.yield_unit().await;
     }
     (false, head)
 }
 
 /// Exact forward dequeue order over cached steps, continuing through lazy
 /// dense pages outside the window. Its boundary never becomes a collision wall.
-struct WindowArrivalProbe<'a, F> {
-    fallback: &'a CollisionArrivalProbe<F>,
-    cache: std::cell::RefCell<ArrivalStepCache<'a>>,
-    goals: &'a [usize],
+struct WindowArrivalProbe<'cache, 'input, C> {
+    cache: &'cache mut ArrivalStepCache<'input, C>,
+    goals: &'cache [usize],
     base: WorldTile,
     side: usize,
-    scratch: std::cell::RefCell<WindowReachScratch>,
+    scratch: WindowReachScratch,
 }
 
-impl<F: Fn(WorldTile) -> Option<i32>> ArrivalProbe for WindowArrivalProbe<'_, F> {
-    fn can_reach_from(
-        &self,
+impl<C: Fn(WorldTile) -> Option<i32>> WindowArrivalProbe<'_, '_, C> {
+    async fn can_reach_from<const ADJACENT: bool, Y: ArrivalYield>(
+        &mut self,
         origin: WorldTile,
         destination: WorldTile,
-        options: &SceneReachOptions,
+        budget: usize,
+        yield_unit: &mut Y,
     ) -> bool {
         if origin.level != destination.level {
             return false;
         }
-        if !options.adjacent_ok && !self.walkable(destination) && origin != destination {
+        if !ADJACENT && !self.walkable(destination) && origin != destination {
             return false;
         }
         let x = origin.x - self.base.x;
         let z = origin.z - self.base.z;
         if x < 0 || z < 0 || x >= self.side as i32 || z >= self.side as i32 {
-            return self.fallback.can_reach_from(origin, destination, options);
+            let flags = |lx, lz| {
+                (self.cache.collision_at)(WorldTile {
+                    x: lx,
+                    z: lz,
+                    level: origin.level,
+                })
+            };
+            let capacity = budget.saturating_mul(8).saturating_add(1);
+            let mut scratch = ReachScratch::with_capacity(capacity);
+            let arrived = can_reach_local_cooperative(
+                &flags,
+                (origin.x, origin.z),
+                (destination.x, destination.z),
+                budget as u32,
+                ADJACENT,
+                &mut scratch,
+                yield_unit,
+            )
+            .await;
+            clear_reach_scratch(&mut scratch, yield_unit).await;
+            return arrived;
         }
         let start = x as usize * self.side + z as usize;
-        if !self.fallback.probeable(origin) {
+        if !self.probeable(origin) {
             return false;
         }
-        let mut scratch = self.scratch.borrow_mut();
-        let mut cache = self.cache.borrow_mut();
-        scratch.epoch = scratch.epoch.wrapping_add(1);
-        if scratch.epoch == 0 {
-            scratch.marks.fill(0);
-            scratch.epoch = 1;
-        }
-        scratch.marks.resize(cache.steps.len(), 0);
-        let epoch = scratch.epoch;
-        let budget = options.max_steps.unwrap_or(400) as usize;
-        scratch.queue.clear();
-        scratch.queue.push(start);
-        scratch.marks[start] = epoch;
+        let dense_cells = self.cache.flags.len();
+        self.scratch.queue.push(start);
+        self.scratch.insert(start, dense_cells, yield_unit).await;
         let target_x = destination.x - self.base.x;
         let target_z = destination.z - self.base.z;
         let target = target_x as usize * self.side + target_z as usize;
-        let WindowReachScratch { marks, queue, .. } = &mut *scratch;
-        let (arrived, mut head) = if options.adjacent_ok {
-            window_reach::<true>(&mut cache, marks, queue, target, self.goals, budget, epoch)
+        let (arrived, mut head) = if ADJACENT {
+            window_reach::<true, _>(
+                self.cache,
+                &mut self.scratch,
+                target,
+                self.goals,
+                budget,
+                yield_unit,
+            )
+            .await
         } else {
-            window_reach::<false>(&mut cache, marks, queue, target, self.goals, budget, epoch)
+            window_reach::<false, _>(
+                self.cache,
+                &mut self.scratch,
+                target,
+                self.goals,
+                budget,
+                yield_unit,
+            )
+            .await
         };
-        if arrived || head >= budget || head == queue.len() {
+        if arrived || head >= budget || head == self.scratch.queue.len() {
+            self.clear_scratch(dense_cells, yield_unit).await;
             return arrived;
         }
-        // Handles remain stable across page growth, preserving every queued
-        // tile, visited mark and dequeue rank at the dense-window boundary.
-        while head < scratch.queue.len() {
-            let index = scratch.queue[head];
-            if index == target || (options.adjacent_ok && self.goals.contains(&index)) {
+        while head < self.scratch.queue.len() {
+            let index = self.scratch.queue[head];
+            if index == target || (ADJACENT && self.goals.contains(&index)) {
+                self.clear_scratch(dense_cells, yield_unit).await;
                 return true;
             }
             if head >= budget {
+                self.clear_scratch(dense_cells, yield_unit).await;
                 return false;
             }
             head += 1;
-            let mut mask = cache.forward_mask(index);
-            scratch.marks.resize(cache.steps.len(), 0);
+            let mut mask = self.cache.forward_mask(index);
             while mask != 0 {
                 let bit = mask.trailing_zeros() as usize;
                 mask &= mask - 1;
-                let next = cache.neighbor(index, bit);
-                if scratch.marks[next] != epoch {
-                    scratch.marks[next] = epoch;
-                    scratch.queue.push(next);
+                let next = self.cache.neighbor(index, bit);
+                if self.scratch.insert(next, dense_cells, yield_unit).await {
+                    self.scratch.queue.push(next);
                 }
             }
+            yield_unit.yield_unit().await;
         }
+        self.clear_scratch(dense_cells, yield_unit).await;
         false
     }
 
+    async fn clear_scratch<Y: ArrivalYield>(&mut self, dense_cells: usize, yield_unit: &mut Y) {
+        for position in 0..self.scratch.queue.len() {
+            let index = self.scratch.queue[position];
+            self.scratch.clear_mark(index, dense_cells);
+            yield_unit.yield_unit().await;
+        }
+        self.scratch.queue.clear();
+    }
+
     fn walkable(&self, tile: WorldTile) -> bool {
-        self.fallback.walkable(tile)
+        flags_open((self.cache.collision_at)(tile), CollisionFlag::SQ_BLOCKED)
     }
 
     fn probeable(&self, tile: WorldTile) -> bool {
-        self.fallback.probeable(tile)
+        (self.cache.collision_at)(tile).is_some()
     }
+}
+
+async fn clear_reach_scratch<Y: ArrivalYield>(scratch: &mut ReachScratch, yield_unit: &mut Y) {
+    if !scratch.seen.is_empty() {
+        for _ in scratch.seen.drain() {
+            yield_unit.yield_unit().await;
+        }
+    }
+    scratch.queue.clear();
+}
+
+async fn can_reach_local_cooperative<F, Y: ArrivalYield>(
+    flags: &F,
+    from: (i32, i32),
+    to: (i32, i32),
+    max_steps: u32,
+    adjacent_ok: bool,
+    scratch: &mut ReachScratch,
+    yield_unit: &mut Y,
+) -> bool
+where
+    F: Fn(i32, i32) -> Option<i32> + ?Sized,
+{
+    if flags(from.0, from.1).is_none() {
+        return false;
+    }
+    if !scratch.seen.is_empty() {
+        for _ in scratch.seen.drain() {
+            yield_unit.yield_unit().await;
+        }
+    }
+    scratch.queue.clear();
+    scratch.seen.insert(from);
+    scratch.queue.push(from);
+    let mut head = 0usize;
+    while head < scratch.queue.len() {
+        let cur = scratch.queue[head];
+        head += 1;
+        if cur == to {
+            return true;
+        }
+        if adjacent_ok
+            && u64::from(cur.0.abs_diff(to.0)) + u64::from(cur.1.abs_diff(to.1)) == 1
+            && can_reach_adjacent_tile(flags, to.0, to.1, to.0 - cur.0, to.1 - cur.1)
+        {
+            return true;
+        }
+        if head as u64 > u64::from(max_steps) {
+            return false;
+        }
+        for (dx, dz) in DIRS {
+            let (Some(nx), Some(nz)) = (cur.0.checked_add(dx), cur.1.checked_add(dz)) else {
+                continue;
+            };
+            let next = (nx, nz);
+            if !scratch.seen.contains(&next) && can_step_local(flags, cur.0, cur.1, dx, dz) {
+                scratch.seen.insert(next);
+                scratch.queue.push(next);
+            }
+        }
+        yield_unit.yield_unit().await;
+    }
+    false
 }
 
 /// Collision steps are shared by the boxed certificates and the exact floods.
 /// Only the original radius box is prepared eagerly; larger floods extend this
 /// call-local cache without turning its outer boundary into a wall.
-struct ArrivalStepCache<'a> {
+struct ArrivalStepPage {
+    flags: [i32; ARRIVAL_PAGE_CELLS],
+    present: [u64; ARRIVAL_PAGE_CELLS / u64::BITS as usize],
+    steps: [u16; ARRIVAL_PAGE_CELLS],
+}
+
+impl ArrivalStepPage {
+    fn new() -> Self {
+        Self {
+            flags: [0; ARRIVAL_PAGE_CELLS],
+            present: [0; ARRIVAL_PAGE_CELLS / u64::BITS as usize],
+            steps: [ARRIVAL_PAGED; ARRIVAL_PAGE_CELLS],
+        }
+    }
+
+    fn has_flags(&self, local: usize) -> bool {
+        self.present[local / u64::BITS as usize] & (1 << (local % u64::BITS as usize)) != 0
+    }
+
+    fn set_has_flags(&mut self, local: usize) {
+        self.present[local / u64::BITS as usize] |= 1 << (local % u64::BITS as usize);
+    }
+}
+
+// Preserve the callback's auto traits instead of erasing them through dyn Fn.
+struct ArrivalStepCache<'a, C> {
     flags: &'a [Option<i32>],
     steps: Vec<u16>,
     side: usize,
     base: WorldTile,
-    collision_at: &'a dyn Fn(WorldTile) -> Option<i32>,
+    collision_at: &'a C,
     pages: std::collections::HashMap<(i32, i32), usize>,
     page_origins: Vec<(i32, i32)>,
-    page_flags: Vec<Option<i32>>,
-    page_neighbors: Vec<[usize; 8]>,
-    boundary_neighbors: Vec<[usize; 8]>,
+    page_flags: Vec<Box<ArrivalStepPage>>,
 }
 
-impl ArrivalStepCache<'_> {
+impl<C: Fn(WorldTile) -> Option<i32>> ArrivalStepCache<'_, C> {
     const PREPARED: u16 = 1 << 8;
     const FLAGS_LOADED: u16 = 1 << 9;
-    const PAGED: u16 = 1 << 10;
     const WALKABLE: u16 = 1 << 11;
-    const PAGE_SIDE: usize = 32;
-    const PAGE_CELLS: usize = Self::PAGE_SIDE * Self::PAGE_SIDE;
+
+    fn len(&self) -> usize {
+        self.flags.len() + self.page_flags.len() * ARRIVAL_PAGE_CELLS
+    }
 
     fn coordinates(&self, index: usize) -> (i32, i32) {
         if index < self.flags.len() {
             return ((index / self.side) as i32, (index % self.side) as i32);
         }
         let offset = index - self.flags.len();
-        let (x, z) = self.page_origins[offset / Self::PAGE_CELLS];
-        let local = offset % Self::PAGE_CELLS;
+        let (x, z) = self.page_origins[offset / ARRIVAL_PAGE_CELLS];
+        let local = offset % ARRIVAL_PAGE_CELLS;
         (
-            x + (local / Self::PAGE_SIDE) as i32,
-            z + (local % Self::PAGE_SIDE) as i32,
+            x + (local / ARRIVAL_PAGE_SIDE) as i32,
+            z + (local % ARRIVAL_PAGE_SIDE) as i32,
         )
     }
 
@@ -738,58 +1191,116 @@ impl ArrivalStepCache<'_> {
         if x >= 0 && z >= 0 && x < self.side as i32 && z < self.side as i32 {
             return x as usize * self.side + z as usize;
         }
-        let page_side = Self::PAGE_SIDE as i32;
+        let page_side = ARRIVAL_PAGE_SIDE as i32;
         let page = (x.div_euclid(page_side), z.div_euclid(page_side));
-        let count = self.page_origins.len();
-        let slot = *self.pages.entry(page).or_insert_with(|| {
-            if count == 0 {
-                // Reserve the call's paged allowance once, while keeping page
-                // contents lazy. Dense-only calls allocate no page buffers.
-                let paged_cells = self.steps.capacity() - self.flags.len();
-                self.page_origins
-                    .reserve_exact(paged_cells / Self::PAGE_CELLS);
-                self.page_flags.reserve_exact(paged_cells);
-                self.page_neighbors.reserve_exact(paged_cells);
-            }
+        let slot = if let Some(&slot) = self.pages.get(&page) {
+            slot
+        } else {
+            let slot = self.page_origins.len();
             self.page_origins
                 .push((page.0 * page_side, page.1 * page_side));
-            self.page_flags.resize((count + 1) * Self::PAGE_CELLS, None);
-            self.page_neighbors
-                .resize((count + 1) * Self::PAGE_CELLS, [0; 8]);
-            self.steps.resize(
-                self.flags.len() + (count + 1) * Self::PAGE_CELLS,
-                Self::PAGED,
-            );
-            count
-        });
+            self.page_flags.push(Box::new(ArrivalStepPage::new()));
+            self.pages.insert(page, slot);
+            slot
+        };
         self.flags.len()
-            + slot * Self::PAGE_CELLS
-            + x.rem_euclid(page_side) as usize * Self::PAGE_SIDE
+            + slot * ARRIVAL_PAGE_CELLS
+            + x.rem_euclid(page_side) as usize * ARRIVAL_PAGE_SIDE
             + z.rem_euclid(page_side) as usize
+    }
+
+    fn index_if_cached(&self, x: i32, z: i32) -> Option<usize> {
+        if x >= 0 && z >= 0 && x < self.side as i32 && z < self.side as i32 {
+            return Some(x as usize * self.side + z as usize);
+        }
+        let page_side = ARRIVAL_PAGE_SIDE as i32;
+        let page = (x.div_euclid(page_side), z.div_euclid(page_side));
+        let slot = *self.pages.get(&page)?;
+        Some(
+            self.flags.len()
+                + slot * ARRIVAL_PAGE_CELLS
+                + x.rem_euclid(page_side) as usize * ARRIVAL_PAGE_SIDE
+                + z.rem_euclid(page_side) as usize,
+        )
+    }
+
+    fn step(&self, index: usize) -> u16 {
+        if index < self.flags.len() {
+            self.steps[index]
+        } else {
+            let offset = index - self.flags.len();
+            self.page_flags[offset / ARRIVAL_PAGE_CELLS].steps[offset % ARRIVAL_PAGE_CELLS]
+        }
+    }
+
+    fn set_step(&mut self, index: usize, step: u16) {
+        if index < self.flags.len() {
+            self.steps[index] = step;
+        } else {
+            let offset = index - self.flags.len();
+            self.page_flags[offset / ARRIVAL_PAGE_CELLS].steps[offset % ARRIVAL_PAGE_CELLS] = step;
+        }
+    }
+
+    fn add_step(&mut self, index: usize, step: u16) {
+        self.set_step(index, self.step(index) | step);
+    }
+
+    async fn clear_paged<Y: ArrivalYield>(&mut self, yield_unit: &mut Y) {
+        // Dense edge masks can reference paged neighbors, so invalidate them
+        // before releasing the page indices they name. This perimeter has at
+        // most 4 * 627 - 4 cells because the public radius is capped at 104.
+        if !self.pages.is_empty() && self.side != 0 {
+            for x in 0..self.side {
+                let north = x * self.side;
+                self.steps[north] = 0;
+                if self.side > 1 {
+                    self.steps[north + self.side - 1] = 0;
+                }
+            }
+            if self.side > 2 {
+                for z in 1..self.side - 1 {
+                    self.steps[z] = 0;
+                    self.steps[(self.side - 1) * self.side + z] = 0;
+                }
+            }
+            yield_unit.yield_unit().await;
+        }
+        for _ in self.pages.drain() {
+            yield_unit.yield_unit().await;
+        }
+        self.page_origins.clear();
+        for _ in self.page_flags.drain(..) {
+            yield_unit.yield_unit().await;
+        }
+        self.steps.truncate(self.flags.len());
     }
 
     #[inline]
     fn neighbor(&self, index: usize, bit: usize) -> usize {
-        if self.steps[index] & Self::PAGED == 0 {
+        if self.step(index) & ARRIVAL_PAGED == 0 {
             let (dx, dz) = DIRS[bit];
             return index.wrapping_add_signed(dx as isize * self.side as isize + dz as isize);
         }
-        if index >= self.flags.len() {
-            return self.page_neighbors[index - self.flags.len()][bit];
-        }
-        self.boundary_neighbors[self.boundary_slot(index)][bit]
+        let (x, z) = self.coordinates(index);
+        let (dx, dz) = DIRS[bit];
+        self.index_if_cached(x + dx, z + dz)
+            .expect("arrival neighbor was indexed when its mask was prepared")
     }
 
-    fn boundary_slot(&self, index: usize) -> usize {
-        let (x, z) = (index / self.side, index % self.side);
-        if x == 0 {
-            z
-        } else if x + 1 == self.side {
-            self.side + z
-        } else if z == 0 {
-            self.side * 2 + x
+    fn cached_flag(&self, index: usize) -> Option<Option<i32>> {
+        if index < self.flags.len() {
+            return Some(self.flags[index]);
+        }
+        let offset = index - self.flags.len();
+        let (slot, local) = (offset / ARRIVAL_PAGE_CELLS, offset % ARRIVAL_PAGE_CELLS);
+        let page = &self.page_flags[slot];
+        if page.steps[local] & Self::FLAGS_LOADED == 0 {
+            None
+        } else if page.has_flags(local) {
+            Some(Some(page.flags[local]))
         } else {
-            self.side * 3 + x
+            Some(None)
         }
     }
 
@@ -797,9 +1308,11 @@ impl ArrivalStepCache<'_> {
         if index < self.flags.len() {
             return self.flags[index];
         }
-        if self.steps[index] & Self::FLAGS_LOADED == 0 {
+        let offset = index - self.flags.len();
+        let (slot, local) = (offset / ARRIVAL_PAGE_CELLS, offset % ARRIVAL_PAGE_CELLS);
+        if self.page_flags[slot].steps[local] & Self::FLAGS_LOADED == 0 {
             let (x, z) = self.coordinates(index);
-            self.page_flags[index - self.flags.len()] = self
+            let flags = self
                 .base
                 .x
                 .checked_add(x)
@@ -811,15 +1324,22 @@ impl ArrivalStepCache<'_> {
                         level: self.base.level,
                     })
                 });
-            self.steps[index] |= Self::FLAGS_LOADED;
+            let page = &mut self.page_flags[slot];
+            if let Some(flags) = flags {
+                page.flags[local] = flags;
+                page.set_has_flags(local);
+            }
+            page.steps[local] |= Self::FLAGS_LOADED;
+            return flags;
         }
-        self.page_flags[index - self.flags.len()]
+        self.cached_flag(index)
+            .expect("loaded arrival flag remains cached")
     }
 
     #[inline]
     fn forward_mask(&mut self, index: usize) -> u8 {
         if self.prepared(index) {
-            return self.steps[index] as u8;
+            return self.step(index) as u8;
         }
         self.prepare_forward_mask(index)
     }
@@ -830,18 +1350,12 @@ impl ArrivalStepCache<'_> {
                 return mask;
             }
         }
-        self.steps[index] |= Self::PAGED;
+        self.add_step(index, ARRIVAL_PAGED);
         let mut mask = 0;
         let source_flags = self.flag(index);
         if source_flags.is_some() {
             let (x, z) = self.coordinates(index);
             let neighbors = DIRS.map(|(dx, dz)| self.index(x + dx, z + dz));
-            if index < self.flags.len() {
-                let slot = self.boundary_slot(index);
-                self.boundary_neighbors[slot] = neighbors;
-            } else {
-                self.page_neighbors[index - self.flags.len()] = neighbors;
-            }
             let mut flags = [None; 8];
             for (flag, &next) in flags.iter_mut().zip(&neighbors) {
                 *flag = self.flag(next);
@@ -856,34 +1370,39 @@ impl ArrivalStepCache<'_> {
             mask |= u8::from(w && s && flags_open(flags[6], CollisionFlag::PL_WALK_SE)) << 6;
             mask |= u8::from(e && s && flags_open(flags[7], CollisionFlag::PL_WALK_SW)) << 7;
         }
-        self.steps[index] |= u16::from(mask)
-            | Self::PREPARED
-            | if flags_open(source_flags, CollisionFlag::SQ_BLOCKED) {
-                Self::WALKABLE
-            } else {
-                0
-            };
+        self.add_step(
+            index,
+            u16::from(mask)
+                | Self::PREPARED
+                | if flags_open(source_flags, CollisionFlag::SQ_BLOCKED) {
+                    Self::WALKABLE
+                } else {
+                    0
+                },
+        );
         mask
     }
 
     #[inline]
     fn prepared(&self, index: usize) -> bool {
-        self.steps[index] & Self::PREPARED != 0
+        self.step(index) & Self::PREPARED != 0
     }
 
     #[inline]
     fn walkable(&self, index: usize) -> bool {
         if self.prepared(index) {
-            self.steps[index] & Self::WALKABLE != 0
-        } else {
+            self.step(index) & Self::WALKABLE != 0
+        } else if index < self.flags.len() {
             flags_open(self.flags[index], CollisionFlag::SQ_BLOCKED)
+        } else {
+            flags_open(self.cached_flag(index).flatten(), CollisionFlag::SQ_BLOCKED)
         }
     }
 
     #[inline]
     fn mask(&mut self, index: usize) -> Option<u8> {
-        let step = self.steps[index];
-        if step & Self::PAGED != 0 {
+        let step = self.step(index);
+        if step & ARRIVAL_PAGED != 0 {
             return None;
         }
         if step & Self::PREPARED != 0 {
@@ -899,8 +1418,6 @@ impl ArrivalStepCache<'_> {
         }
         let mut mask = 0;
         if self.flags[index].is_some() {
-            // The same destination masks and orthogonal legs as can_step_local,
-            // reading each orthogonal neighbor once for all eight directions.
             let w = flags_open(self.flags[index - self.side], CollisionFlag::PL_WALK_E);
             let e = flags_open(self.flags[index + self.side], CollisionFlag::PL_WALK_W);
             let n = flags_open(self.flags[index - 1], CollisionFlag::PL_WALK_N);
@@ -933,30 +1450,41 @@ impl ArrivalStepCache<'_> {
 /// Reverse directed distances, either in the prepared radius box or in the
 /// larger flag cache. The shortest boundary distance lower-bounds every path
 /// that might enter the cache from unknown outside collision.
-fn arrival_distances<const BOXED: bool>(
-    cache: &ArrivalStepCache<'_>,
+async fn arrival_distances<const BOXED: bool, Y: ArrivalYield>(
+    cache: &ArrivalStepCache<'_, impl Fn(WorldTile) -> Option<i32>>,
     seeds: &[usize],
+    yield_unit: &mut Y,
 ) -> (Vec<u32>, u32, Vec<bool>, Vec<u32>) {
-    let mut depth = vec![u32::MAX; cache.flags.len()];
-    let mut queue = Vec::with_capacity(seeds.len());
+    let cells = cache.flags.len();
+    let mut depth = arrival_filled_vec(cells, u32::MAX, yield_unit).await;
+    let mut queue = Vec::with_capacity(cells.max(seeds.len()));
     let mut connected = if BOXED {
         Vec::new()
     } else {
-        vec![false; cache.flags.len()]
+        arrival_filled_vec(cells, false, yield_unit).await
     };
-    let mut extra = Vec::new();
+    let mut extra = if BOXED {
+        Vec::new()
+    } else {
+        Vec::with_capacity(cells)
+    };
     for &seed in seeds {
         depth[seed] = 0;
         queue.push(seed);
         if !BOXED {
             connected[seed] = true;
         }
+        yield_unit.yield_unit().await;
     }
     let flags = |x: i32, z: i32| cache.flags[x as usize * cache.side + z as usize];
     let inverse = [1, 0, 3, 2, 7, 6, 5, 4];
     let offsets = DIRS.map(|(dx, dz)| dx as isize * cache.side as isize + dz as isize);
     let mut boundary = u32::MAX;
-    let mut boundary_seeds = Vec::new();
+    let mut boundary_seeds = Vec::with_capacity(if BOXED {
+        0
+    } else {
+        cache.side.saturating_sub(1) * 4
+    });
     let mut head = 0;
     while head < queue.len() {
         let index = queue[head];
@@ -985,7 +1513,7 @@ fn arrival_distances<const BOXED: bool>(
                 continue;
             }
             let allowed = if cache.prepared(predecessor) {
-                cache.steps[predecessor] & (1 << inverse[bit]) != 0
+                cache.step(predecessor) & (1 << inverse[bit]) != 0
             } else {
                 can_step_local(&flags, x + dx, z + dz, -dx, -dz)
             };
@@ -1000,18 +1528,18 @@ fn arrival_distances<const BOXED: bool>(
                 extra.push(predecessor);
             }
         }
+        yield_unit.yield_unit().await;
     }
     let outside = if BOXED || boundary == u32::MAX {
         Vec::new()
     } else {
-        arrival_outside_distances(cache, &depth, &boundary_seeds)
+        arrival_outside_distances(cache, &depth, &boundary_seeds, yield_unit).await
     };
     // Reverse reach alone omits forward-only dead ends. Include their weak
     // closure before using this set as a vertex-count upper bound.
-    head = queue.len();
-    queue.extend(extra);
-    while head < queue.len() {
-        let index = queue[head];
+    head = 0;
+    while head < extra.len() {
+        let index = extra[head];
         head += 1;
         if depth[index] != u32::MAX {
             continue;
@@ -1026,19 +1554,20 @@ fn arrival_distances<const BOXED: bool>(
             if !connected[next]
                 && cache.walkable(next)
                 && ((if cache.prepared(index) {
-                    cache.steps[index] & (1 << bit) != 0
+                    cache.step(index) & (1 << bit) != 0
                 } else {
                     can_step_local(&flags, x, z, dx, dz)
                 }) || (if cache.prepared(next) {
-                    cache.steps[next] & (1 << inverse[bit]) != 0
+                    cache.step(next) & (1 << inverse[bit]) != 0
                 } else {
                     can_step_local(&flags, nx, nz, -dx, -dz)
                 }))
             {
                 connected[next] = true;
-                queue.push(next);
+                extra.push(next);
             }
         }
+        yield_unit.yield_unit().await;
     }
     (depth, boundary, connected, outside)
 }
@@ -1047,18 +1576,19 @@ fn arrival_distances<const BOXED: bool>(
 /// clamping maps every real outside walk onto this contour without increasing
 /// its length. Real directed edges remain intact inside the cache, including
 /// paths that leave and re-enter several times.
-fn arrival_outside_distances(
-    cache: &ArrivalStepCache<'_>,
+async fn arrival_outside_distances<Y: ArrivalYield>(
+    cache: &ArrivalStepCache<'_, impl Fn(WorldTile) -> Option<i32>>,
     depth: &[u32],
     boundary_seeds: &[usize],
+    yield_unit: &mut Y,
 ) -> Vec<u32> {
     let side = cache.side;
     let cells = cache.flags.len();
     let span = side + 1;
     let contour_len = span * 4;
-    let mut outside = vec![u32::MAX; cells];
-    let mut contour = vec![u32::MAX; contour_len];
-    let mut queue = Vec::new();
+    let mut outside = arrival_filled_vec(cells, u32::MAX, yield_unit).await;
+    let mut contour = arrival_filled_vec(contour_len, u32::MAX, yield_unit).await;
+    let mut queue = Vec::with_capacity(cells.saturating_add(contour_len));
     let flags = |x: i32, z: i32| cache.flags[x as usize * side + z as usize];
     let contour_index = |x: i32, z: i32| {
         if x == -1 && z < side as i32 {
@@ -1135,6 +1665,7 @@ fn arrival_outside_distances(
                     queue.push(next);
                 }
             }
+            yield_unit.yield_unit().await;
             continue;
         }
         let (x, z) = ((index / side) as i32, (index % side) as i32);
@@ -1161,7 +1692,7 @@ fn arrival_outside_distances(
                 // Boundary predecessors have no prepared dense-window mask.
                 // Read their directed edge just as the inside-only BFS does.
                 let allowed = if cache.prepared(predecessor) {
-                    cache.steps[predecessor] & (1 << inverse[bit]) != 0
+                    cache.step(predecessor) & (1 << inverse[bit]) != 0
                 } else {
                     can_step_local(&flags, x + dx, z + dz, -dx, -dz)
                 };
@@ -1171,6 +1702,7 @@ fn arrival_outside_distances(
                 }
             }
         }
+        yield_unit.yield_unit().await;
     }
     outside
 }
@@ -1178,88 +1710,134 @@ fn arrival_outside_distances(
 /// One forward landmark ball supplies a shared rank lower bound. Its tree's
 /// reversible paths let nearby origins reach every vertex in the ball before
 /// their earliest possible goal. Small closed components are decided outright.
+#[derive(Clone, Copy)]
+struct ArrivalLandmarkCell {
+    depth: u32,
+    reversible: bool,
+    goal_reachable: bool,
+}
+
 struct ArrivalLandmark {
-    depth: Vec<u32>,
-    reversible: Vec<bool>,
+    cells: std::collections::HashMap<usize, ArrivalLandmarkCell>,
     queue: Vec<usize>,
-    goal_reachable: Vec<bool>,
     goal_queue: Vec<usize>,
     goal_lower: u32,
 }
 
 impl ArrivalLandmark {
-    fn prepare(
+    fn new(budget: u32) -> Self {
+        let capacity = budget as usize * 2 + 1;
+        Self {
+            cells: std::collections::HashMap::with_capacity(capacity),
+            queue: Vec::with_capacity(capacity),
+            goal_queue: Vec::with_capacity(capacity),
+            goal_lower: 0,
+        }
+    }
+
+    fn depth(&self, index: usize) -> u32 {
+        self.cells.get(&index).map_or(u32::MAX, |cell| cell.depth)
+    }
+
+    fn reversible(&self, index: usize) -> bool {
+        self.cells.get(&index).is_some_and(|cell| cell.reversible)
+    }
+
+    fn goal_reachable(&self, index: usize) -> bool {
+        self.cells
+            .get(&index)
+            .is_some_and(|cell| cell.goal_reachable)
+    }
+
+    async fn clear<Y: ArrivalYield>(&mut self, yield_unit: &mut Y) {
+        for _ in self.cells.drain() {
+            yield_unit.yield_unit().await;
+        }
+        self.queue.clear();
+        self.goal_queue.clear();
+    }
+
+    async fn prepare<Y: ArrivalYield>(
         &mut self,
         root: usize,
         budget: u32,
         goals: &[usize],
-        cache: &mut ArrivalStepCache<'_>,
+        cache: &mut ArrivalStepCache<'_, impl Fn(WorldTile) -> Option<i32>>,
         explore_no_goal: bool,
+        yield_unit: &mut Y,
     ) -> (Option<u32>, u32, bool) {
-        for &index in &self.queue {
-            self.depth[index] = u32::MAX;
-            self.reversible[index] = false;
-            if let Some(reachable) = self.goal_reachable.get_mut(index) {
-                *reachable = false;
-            }
-        }
-        self.queue.clear();
-        self.goal_queue.clear();
+        #[cfg(test)]
+        ARRIVAL_LANDMARK_PREPARES.with(|count| count.set(count.get() + 1));
+        self.clear(yield_unit).await;
         self.queue.push(root);
-        self.depth[root] = 0;
-        self.reversible[root] = true;
+        self.cells.insert(
+            root,
+            ArrivalLandmarkCell {
+                depth: 0,
+                reversible: true,
+                goal_reachable: false,
+            },
+        );
         let inverse = [1, 0, 3, 2, 7, 6, 5, 4];
         let mut head = 0;
         let mut ball_depth = None;
         while head < self.queue.len() {
             let index = self.queue[head];
             head += 1;
+            let depth = self.depth(index);
+            let reversible = self.reversible(index);
             let mut mask = cache.forward_mask(index);
-            self.depth.resize(cache.steps.len(), u32::MAX);
-            self.reversible.resize(cache.steps.len(), false);
             while mask != 0 {
                 let bit = mask.trailing_zeros() as usize;
                 mask &= mask - 1;
                 let next = cache.neighbor(index, bit);
-                if self.depth[next] != u32::MAX {
+                if self.depth(next) != u32::MAX {
                     continue;
                 }
-                self.depth[next] = self.depth[index] + 1;
-                self.reversible[next] =
-                    self.reversible[index] && cache.forward_mask(next) & (1 << inverse[bit]) != 0;
+                let next_depth = depth + 1;
+                let next_reversible =
+                    reversible && cache.forward_mask(next) & (1 << inverse[bit]) != 0;
+                self.cells.insert(
+                    next,
+                    ArrivalLandmarkCell {
+                        depth: next_depth,
+                        reversible: next_reversible,
+                        goal_reachable: false,
+                    },
+                );
                 self.queue.push(next);
                 if self.queue.len() > budget as usize {
-                    let first_depth = *ball_depth.get_or_insert(self.depth[next]);
+                    let first_depth = *ball_depth.get_or_insert(next_depth);
                     if !explore_no_goal
-                        || goals.iter().any(|&goal| self.depth[goal] != u32::MAX)
+                        || goals.iter().any(|&goal| self.depth(goal) != u32::MAX)
                         || self.queue.len() > budget as usize * 2
                     {
                         self.goal_lower = goals
                             .iter()
-                            .map(|&goal| self.depth[goal])
+                            .map(|&goal| self.depth(goal))
                             .min()
                             .unwrap_or(u32::MAX)
-                            .min(self.depth[next]);
+                            .min(next_depth);
                         for &extra in &self.queue[budget as usize + 1..] {
-                            self.depth[extra] = u32::MAX;
-                            self.reversible[extra] = false;
+                            self.cells.remove(&extra);
+                            yield_unit.yield_unit().await;
                         }
                         self.queue.truncate(budget as usize + 1);
                         return (Some(first_depth), u32::MAX, false);
                     }
                 }
             }
+            yield_unit.yield_unit().await;
         }
-        // The complete closure either fits the dequeue budget or contains no
-        // goal. In the former case, reverse its goal paths: a directed origin
-        // need not share the root's goal reach.
-        if goals.iter().any(|&goal| self.depth[goal] != u32::MAX) {
-            self.goal_reachable.resize(cache.steps.len(), false);
+        if goals.iter().any(|&goal| self.depth(goal) != u32::MAX) {
             for &goal in goals {
-                if self.depth[goal] != u32::MAX {
-                    self.goal_reachable[goal] = true;
+                if self.depth(goal) != u32::MAX {
+                    if let Some(cell) = self.cells.get_mut(&goal) {
+                        cell.goal_reachable = true;
+                    }
                     self.goal_queue.push(goal);
                 }
+                yield_unit.yield_unit().await;
             }
             head = 0;
             while head < self.goal_queue.len() {
@@ -1267,19 +1845,22 @@ impl ArrivalLandmark {
                 head += 1;
                 for (bit, &inverse_bit) in inverse.iter().enumerate() {
                     let predecessor = cache.neighbor(index, bit);
-                    if self.depth[predecessor] != u32::MAX
-                        && !self.goal_reachable[predecessor]
-                        && cache.steps[predecessor] & (1 << inverse_bit) != 0
+                    if self.depth(predecessor) != u32::MAX
+                        && !self.goal_reachable(predecessor)
+                        && cache.step(predecessor) & (1 << inverse_bit) != 0
                     {
-                        self.goal_reachable[predecessor] = true;
+                        if let Some(cell) = self.cells.get_mut(&predecessor) {
+                            cell.goal_reachable = true;
+                        }
                         self.goal_queue.push(predecessor);
                     }
                 }
+                yield_unit.yield_unit().await;
             }
         }
         self.goal_lower = goals
             .iter()
-            .map(|&goal| self.depth[goal])
+            .map(|&goal| self.depth(goal))
             .min()
             .unwrap_or(u32::MAX);
         (ball_depth, u32::MAX, true)
@@ -1289,58 +1870,204 @@ impl ArrivalLandmark {
 /// Incoming edges read and update these states together.
 #[derive(Clone, Copy, Default)]
 struct ArrivalLayerCell {
-    visited: u64,
-    frontier: u64,
-    next: u64,
-    before: u64,
-    next_before: u64,
-    equal: u64,
+    low: u64,
+    middle: u64,
+    high: u64,
 }
 
-/// Bit-parallel forward layers for up to 64 origins. Per-origin vertex counts
-/// are bit-sliced, so a shared discovery increments all its origins together.
+impl ArrivalLayerCell {
+    const HISTORICAL: u8 = 1;
+    const FRONTIER: u8 = 2;
+    const FRONTIER_BEFORE: u8 = 3;
+    const NEXT: u8 = 4;
+    const NEXT_BEFORE: u8 = 5;
+
+    fn visited(self) -> u64 {
+        self.low | self.middle | self.high
+    }
+
+    fn frontier(self) -> u64 {
+        self.middle & !self.high
+    }
+
+    fn next(self) -> u64 {
+        self.high & !self.middle
+    }
+
+    fn before(self) -> u64 {
+        self.low & self.frontier()
+    }
+
+    fn next_before(self) -> u64 {
+        self.low & self.next()
+    }
+
+    fn set_state(&mut self, origins: u64, state: u8) {
+        self.low = (self.low & !origins) | if state & 1 != 0 { origins } else { 0 };
+        self.middle = (self.middle & !origins) | if state & 2 != 0 { origins } else { 0 };
+        self.high = (self.high & !origins) | if state & 4 != 0 { origins } else { 0 };
+    }
+}
+
+/// Bit-parallel forward layers for bounded cohorts of origins. Per-origin
+/// vertex counts are bit-sliced, so a shared discovery increments all its
+/// origins together. The eight-origin batch is the memory-bound shape: its
+/// queue and state pages remain within the whole-call scratch ceiling.
 /// A canonical shortest goal path orders its prefixes lexicographically in DIRS
 /// order. Tracking paths before those prefixes also gives exact dequeue ranks
 /// in the budget-crossing layer, without replaying each origin's flood.
+const ARRIVAL_LAYER_BATCH: usize = 8;
+
+struct ArrivalLayerPage {
+    slots: [u16; ARRIVAL_PAGE_CELLS],
+    states: Vec<ArrivalLayerCell>,
+}
+
+impl ArrivalLayerPage {
+    fn new() -> Self {
+        Self {
+            slots: [u16::MAX; ARRIVAL_PAGE_CELLS],
+            states: Vec::new(),
+        }
+    }
+}
+
+struct ArrivalLayerContext<'a> {
+    goals: &'a [usize],
+    budget: u32,
+    goal_depth: &'a [u32],
+}
+
 struct ArrivalLayers {
     cells: Vec<ArrivalLayerCell>,
     touched: Vec<usize>,
+    pages: Vec<Option<Box<ArrivalLayerPage>>>,
     queue: Vec<usize>,
-    next_queue: Vec<usize>,
 }
 
 impl ArrivalLayers {
-    fn new(cells: usize, capacity: usize) -> Self {
-        let mut states = Vec::with_capacity(capacity);
-        states.resize(cells, ArrivalLayerCell::default());
-        Self {
-            cells: states,
-            touched: Vec::with_capacity(cells),
-            queue: Vec::with_capacity(cells),
-            next_queue: Vec::with_capacity(cells),
+    fn cell(&self, index: usize, dense_cells: usize) -> ArrivalLayerCell {
+        if index < dense_cells {
+            return self.cells[index];
+        }
+        let offset = index - dense_cells;
+        let Some(page) = self
+            .pages
+            .get(offset / ARRIVAL_PAGE_CELLS)
+            .and_then(Option::as_ref)
+        else {
+            return ArrivalLayerCell::default();
+        };
+        let local = offset % ARRIVAL_PAGE_CELLS;
+        let slot = page.slots[local];
+        if slot == u16::MAX {
+            ArrivalLayerCell::default()
+        } else {
+            page.states[usize::from(slot)]
         }
     }
 
-    fn classify(
+    async fn cell_mut<Y: ArrivalYield>(
         &mut self,
-        starts: &[usize],
-        goals: &[usize],
-        budget: u32,
-        goal_depth: &[u32],
-        canonical: u64,
-        cache: &mut ArrivalStepCache<'_>,
-    ) -> (u64, u64) {
-        for index in self.touched.drain(..) {
+        index: usize,
+        dense_cells: usize,
+        yield_unit: &mut Y,
+    ) -> &mut ArrivalLayerCell {
+        if index < dense_cells {
+            return &mut self.cells[index];
+        }
+        let offset = index - dense_cells;
+        let page_slot = offset / ARRIVAL_PAGE_CELLS;
+        while self.pages.len() <= page_slot {
+            self.pages.push(None);
+            yield_unit.yield_unit().await;
+        }
+        if self.pages[page_slot].is_none() {
+            self.pages[page_slot] = Some(Box::new(ArrivalLayerPage::new()));
+            yield_unit.yield_unit().await;
+        }
+        let local = offset % ARRIVAL_PAGE_CELLS;
+        let needs_growth = {
+            let page = self.pages[page_slot].as_ref().unwrap();
+            page.slots[local] == u16::MAX && page.states.len() == page.states.capacity()
+        };
+        if needs_growth {
+            let page = self.pages[page_slot].as_ref().unwrap();
+            let additional = page
+                .states
+                .len()
+                .max(4)
+                .min(ARRIVAL_PAGE_CELLS - page.states.len());
+            self.pages[page_slot]
+                .as_mut()
+                .unwrap()
+                .states
+                .reserve_exact(additional);
+            yield_unit.yield_unit().await;
+        }
+        let page = self.pages[page_slot].as_mut().unwrap();
+        let mut slot = page.slots[local];
+        if slot == u16::MAX {
+            slot = u16::try_from(page.states.len())
+                .expect("arrival layer page has at most 1024 cells");
+            page.states.push(ArrivalLayerCell::default());
+            page.slots[local] = slot;
+        }
+        &mut page.states[usize::from(slot)]
+    }
+
+    async fn new<Y: ArrivalYield>(
+        cells: usize,
+        page_capacity: usize,
+        queue_capacity: usize,
+        yield_unit: &mut Y,
+    ) -> Self {
+        let states = arrival_filled_vec(cells, ArrivalLayerCell::default(), yield_unit).await;
+        Self {
+            cells: states,
+            touched: Vec::with_capacity(cells),
+            pages: Vec::with_capacity(page_capacity),
+            queue: Vec::with_capacity(queue_capacity),
+        }
+    }
+
+    async fn clear<Y: ArrivalYield>(&mut self, yield_unit: &mut Y) {
+        for position in 0..self.touched.len() {
+            let index = self.touched[position];
             self.cells[index] = ArrivalLayerCell::default();
+            yield_unit.yield_unit().await;
+        }
+        self.touched.clear();
+        while let Some(page) = self.pages.pop() {
+            drop(page);
+            yield_unit.yield_unit().await;
         }
         self.queue.clear();
-        self.next_queue.clear();
+    }
+
+    async fn classify<Y: ArrivalYield>(
+        &mut self,
+        starts: &[usize],
+        context: ArrivalLayerContext<'_>,
+        canonical: u64,
+        cache: &mut ArrivalStepCache<'_, impl Fn(WorldTile) -> Option<i32>>,
+        yield_unit: &mut Y,
+    ) -> (u64, u64) {
+        let ArrivalLayerContext {
+            goals,
+            budget,
+            goal_depth,
+        } = context;
+        #[cfg(test)]
+        ARRIVAL_LAYER_CLASSIFICATIONS.with(|count| count.set(count.get() + 1));
+        self.clear(yield_unit).await;
+        let dense_cells = cache.flags.len();
         let all = u64::MAX >> (64 - starts.len());
         let mut active = all;
         let mut accepted = 0;
         let mut uncertain = 0;
-        // An active origin has expanded at most budget vertices; each has
-        // eight successors. Nineteen planes cover 8*(2*104+1)^2+1 discoveries.
+        // The used encodings are unseen, historical, current/current-before,
+        // and next/next-before; three planes encode all 64 origins in 24 bytes.
         let count_bits = (u32::BITS - budget.leading_zeros() + 3) as usize;
         let mut storage = [0u64; 19];
         let counts = &mut storage[..count_bits];
@@ -1349,32 +2076,36 @@ impl ArrivalLayers {
         counts[0] = all;
         for (bit, &start) in starts.iter().enumerate() {
             let origin = 1 << bit;
-            let cell = &mut self.cells[start];
-            if cell.visited == 0 {
-                self.touched.push(start);
+            if self.cell(start, dense_cells).visited() == 0 {
+                if start < dense_cells {
+                    self.touched.push(start);
+                }
                 self.queue.push(start);
             }
-            cell.visited |= origin;
-            cell.frontier |= origin;
+            self.cell_mut(start, dense_cells, yield_unit)
+                .await
+                .set_state(origin, ArrivalLayerCell::FRONTIER);
             if canonical & origin != 0 {
-                cell.equal |= origin;
                 positions[bit] = start;
             }
+            yield_unit.yield_unit().await;
         }
+        let mut layer_start = 0;
+        let mut layer_end = self.queue.len();
         let mut previous_above = 0;
-        while !self.queue.is_empty() {
-            let at_goal = goals
-                .iter()
-                .fold(0, |found, &goal| found | self.cells[goal].visited)
-                & active;
+        while layer_start < layer_end {
+            let at_goal = goals.iter().fold(0, |found, &goal| {
+                found | self.cell(goal, dense_cells).visited()
+            }) & active;
             let exact = at_goal & canonical;
             if exact != 0 {
                 // Rank is zero-based: all previous layers, followed by the
                 // current-layer vertices whose first shortest path precedes
                 // the first shortest path to any goal.
                 let mut ranks = prior_counts;
-                for &index in &self.queue {
-                    let mut carry = self.cells[index].before & exact;
+                for q in layer_start..layer_end {
+                    let index = self.queue[q];
+                    let mut carry = self.cell(index, dense_cells).before() & exact;
                     for plane in &mut ranks[..count_bits] {
                         let next_carry = *plane & carry;
                         *plane ^= carry;
@@ -1383,6 +2114,7 @@ impl ArrivalLayers {
                             break;
                         }
                     }
+                    yield_unit.yield_unit().await;
                 }
                 accepted |= exact & !arrival_counts_above(&ranks[..count_bits], budget);
                 active &= !exact;
@@ -1402,6 +2134,27 @@ impl ArrivalLayers {
             previous_above = above;
             let mut prefix_before = [0u64; 8];
             let mut next_positions = positions;
+            let mut equal_positions = [(usize::MAX, 0u64); 64];
+            let mut equal_len = 0;
+            for (bit, &index) in positions.iter().take(starts.len()).enumerate() {
+                let origin = 1 << bit;
+                if canonical & active & origin != 0 {
+                    let mut slot = 0;
+                    while slot < equal_len && equal_positions[slot].0 < index {
+                        slot += 1;
+                    }
+                    if slot < equal_len && equal_positions[slot].0 == index {
+                        equal_positions[slot].1 |= origin;
+                    } else {
+                        for move_index in (slot..equal_len).rev() {
+                            equal_positions[move_index + 1] = equal_positions[move_index];
+                        }
+                        equal_positions[slot] = (index, origin);
+                        equal_len += 1;
+                    }
+                }
+                yield_unit.yield_unit().await;
+            }
             let mut prefixes = canonical & active;
             while prefixes != 0 {
                 let bit = prefixes.trailing_zeros() as usize;
@@ -1424,63 +2177,61 @@ impl ArrivalLayers {
                         break;
                     }
                 }
+                yield_unit.yield_unit().await;
             }
-            self.next_queue.clear();
-            for q in 0..self.queue.len() {
+            for q in layer_start..layer_end {
                 let index = self.queue[q];
-                let cell = &mut self.cells[index];
-                let origins = cell.frontier & active;
-                let before = cell.before & origins;
-                let equal = cell.equal & origins;
-                cell.frontier = 0;
-                cell.before = 0;
+                let cell = self.cell(index, dense_cells);
+                let origins = cell.frontier() & active;
+                let before = cell.before() & origins;
+                let equal = equal_positions[..equal_len]
+                    .binary_search_by_key(&index, |&(at, _)| at)
+                    .ok()
+                    .map_or(0, |slot| equal_positions[slot].1)
+                    & origins;
+                self.cell_mut(index, dense_cells, yield_unit)
+                    .await
+                    .set_state(origins, ArrivalLayerCell::HISTORICAL);
                 if origins == 0 {
+                    yield_unit.yield_unit().await;
                     continue;
                 }
                 let mut mask = cache.forward_mask(index);
-                if cache.steps.len() > self.cells.len() {
-                    self.cells
-                        .resize(cache.steps.len(), ArrivalLayerCell::default());
-                }
                 while mask != 0 {
                     let bit = mask.trailing_zeros() as usize;
                     mask &= mask - 1;
                     let next = cache.neighbor(index, bit);
-                    let cell = &mut self.cells[next];
-                    let fresh = origins & !cell.visited;
-                    // A second shortest incoming path may precede the goal
-                    // prefix even when the first incoming path did not.
-                    if before | equal != 0 {
-                        let same_layer = fresh | (origins & cell.next);
-                        cell.next_before |= same_layer & (before | (equal & prefix_before[bit]));
-                    }
+                    let cell = self.cell(next, dense_cells);
+                    let visited = cell.visited();
+                    let fresh = origins & !visited;
+                    let prior_next = cell.next();
+                    let same_layer = fresh | (origins & prior_next);
+                    let next_before = same_layer & (before | (equal & prefix_before[bit]));
                     if fresh == 0 {
+                        self.cell_mut(next, dense_cells, yield_unit)
+                            .await
+                            .set_state(next_before, ArrivalLayerCell::NEXT_BEFORE);
                         continue;
                     }
-                    if cell.visited == 0 {
+                    if visited == 0 && next < dense_cells {
                         self.touched.push(next);
                     }
-                    cell.visited |= fresh;
-                    if cell.next == 0 {
-                        self.next_queue.push(next);
+                    if prior_next == 0 {
+                        self.queue.push(next);
                     }
-                    cell.next |= fresh;
+                    let cell = self.cell_mut(next, dense_cells, yield_unit).await;
+                    cell.set_state(fresh, ArrivalLayerCell::NEXT);
+                    cell.set_state(next_before, ArrivalLayerCell::NEXT_BEFORE);
                 }
-            }
-            let mut prefixes = canonical & active;
-            while prefixes != 0 {
-                let bit = prefixes.trailing_zeros() as usize;
-                prefixes &= prefixes - 1;
-                self.cells[positions[bit]].equal &= !(1 << bit);
-                self.cells[next_positions[bit]].equal |= 1 << bit;
+                yield_unit.yield_unit().await;
             }
             positions = next_positions;
             prior_counts[..count_bits].copy_from_slice(counts);
-            // Coalesce discoveries at the vertex before incrementing counts,
-            // instead of repeating the carry chain for its incoming edges.
-            for &index in &self.next_queue {
-                let cell = &mut self.cells[index];
-                let mut carry = cell.next;
+            for q in layer_end..self.queue.len() {
+                let index = self.queue[q];
+                let cell = self.cell(index, dense_cells);
+                let origins = cell.next();
+                let mut carry = origins;
                 for plane in &mut *counts {
                     let next_carry = *plane & carry;
                     *plane ^= carry;
@@ -1489,12 +2240,18 @@ impl ArrivalLayers {
                         break;
                     }
                 }
-                cell.frontier = std::mem::take(&mut cell.next);
-                cell.before = std::mem::take(&mut cell.next_before);
+                let before = cell.next_before();
+                let cell = self.cell_mut(index, dense_cells, yield_unit).await;
+                cell.set_state(origins, ArrivalLayerCell::FRONTIER);
+                cell.set_state(before, ArrivalLayerCell::FRONTIER_BEFORE);
+                yield_unit.yield_unit().await;
             }
-            std::mem::swap(&mut self.queue, &mut self.next_queue);
+            layer_start = layer_end;
+            layer_end = self.queue.len();
         }
-        (accepted, uncertain)
+        let classified = (accepted, uncertain);
+        self.clear(yield_unit).await;
+        classified
     }
 }
 
@@ -1516,17 +2273,23 @@ fn arrival_counts_above(counts: &[u64], threshold: u32) -> u64 {
 /// Weak components of the radius box only over-connect directed steps. A
 /// component containing neither a goal nor an outgoing box exit is certainly
 /// rejected. Other components merely group nearby origins for shared layers.
-fn arrival_components(cache: &ArrivalStepCache<'_>, goals: &[usize]) -> (Vec<u32>, Vec<u8>) {
-    let mut components = vec![u32::MAX; cache.steps.len()];
-    let mut facts = Vec::new();
-    let mut queue = Vec::new();
+async fn arrival_components<Y: ArrivalYield>(
+    cache: &ArrivalStepCache<'_, impl Fn(WorldTile) -> Option<i32>>,
+    goals: &[usize],
+    yield_unit: &mut Y,
+) -> (Vec<u32>, Vec<u8>) {
+    let dense_cells = cache.len();
+    let mut components = arrival_filled_vec(dense_cells, u32::MAX, yield_unit).await;
+    let mut facts = Vec::with_capacity(dense_cells);
+    let mut queue = Vec::with_capacity(dense_cells);
     let offsets = DIRS.map(|(dx, dz)| dx as isize * cache.side as isize + dz as isize);
     let inverse = [1, 0, 3, 2, 7, 6, 5, 4];
-    for start in 0..cache.steps.len() {
+    for start in 0..cache.len() {
         if !cache.prepared(start)
             || components[start] != u32::MAX
             || !flags_open(cache.flags[start], CollisionFlag::SQ_BLOCKED)
         {
+            yield_unit.yield_unit().await;
             continue;
         }
         let component = facts.len() as u32;
@@ -1542,22 +2305,258 @@ fn arrival_components(cache: &ArrivalStepCache<'_>, goals: &[usize]) -> (Vec<u32
             for (bit, &offset) in offsets.iter().enumerate() {
                 let next = index.wrapping_add_signed(offset);
                 if !cache.prepared(next) {
-                    fact |= u8::from(cache.steps[index] & (1 << bit) != 0) << 1;
+                    fact |= u8::from(cache.step(index) & (1 << bit) != 0) << 1;
                 } else if components[next] == u32::MAX
                     && flags_open(cache.flags[next], CollisionFlag::SQ_BLOCKED)
-                    && (cache.steps[index] & (1 << bit) != 0
-                        || cache.steps[next] & (1 << inverse[bit]) != 0)
+                    && (cache.step(index) & (1 << bit) != 0
+                        || cache.step(next) & (1 << inverse[bit]) != 0)
                 {
                     components[next] = component;
                     queue.push(next);
                 }
             }
+            yield_unit.yield_unit().await;
         }
         facts.push(fact);
+        yield_unit.yield_unit().await;
     }
     (components, facts)
 }
 
+fn arrival_uncertain_key(
+    entry: (usize, usize),
+    components: &[u32],
+    side: usize,
+) -> (u32, usize, usize, usize) {
+    let start = entry.1;
+    (components[start], start / side / 8, start % side / 8, start)
+}
+
+async fn arrival_sift_down<Y: ArrivalYield>(
+    entries: &mut [(usize, usize)],
+    components: &[u32],
+    side: usize,
+    mut root: usize,
+    end: usize,
+    yield_unit: &mut Y,
+) {
+    loop {
+        let child = root * 2 + 1;
+        if child >= end {
+            yield_unit.yield_unit().await;
+            return;
+        }
+        let mut larger = child;
+        if child + 1 < end
+            && arrival_uncertain_key(entries[child], components, side)
+                <= arrival_uncertain_key(entries[child + 1], components, side)
+        {
+            larger = child + 1;
+        }
+        if arrival_uncertain_key(entries[root], components, side)
+            >= arrival_uncertain_key(entries[larger], components, side)
+        {
+            yield_unit.yield_unit().await;
+            return;
+        }
+        entries.swap(root, larger);
+        root = larger;
+        yield_unit.yield_unit().await;
+    }
+}
+
+async fn sort_arrival_uncertain<Y: ArrivalYield>(
+    entries: &mut [(usize, usize)],
+    components: &[u32],
+    side: usize,
+    yield_unit: &mut Y,
+) {
+    for start in (0..entries.len() / 2).rev() {
+        arrival_sift_down(entries, components, side, start, entries.len(), yield_unit).await;
+    }
+    for end in (1..entries.len()).rev() {
+        entries.swap(0, end);
+        arrival_sift_down(entries, components, side, 0, end, yield_unit).await;
+    }
+}
+async fn collision_probe_reach<F, Y: ArrivalYield>(
+    origin: WorldTile,
+    destination: WorldTile,
+    options: &SceneReachOptions,
+    collision_at: &F,
+    scratch: &mut ReachScratch,
+    yield_unit: &mut Y,
+) -> bool
+where
+    F: Fn(WorldTile) -> Option<i32>,
+{
+    if origin.level != destination.level
+        || (!options.adjacent_ok
+            && !flags_open(collision_at(destination), CollisionFlag::SQ_BLOCKED)
+            && origin != destination)
+    {
+        return false;
+    }
+    let flags = |x, z| {
+        collision_at(WorldTile {
+            x,
+            z,
+            level: origin.level,
+        })
+    };
+    can_reach_local_cooperative(
+        &flags,
+        (origin.x, origin.z),
+        (destination.x, destination.z),
+        options.max_steps.unwrap_or(400),
+        options.adjacent_ok,
+        scratch,
+        yield_unit,
+    )
+    .await
+}
+
+async fn is_arrived_collision_cooperative<F, Y: ArrivalYield>(
+    me: WorldTile,
+    destination: WorldTile,
+    radius: i32,
+    collision_at: &F,
+    scratch: &mut ReachScratch,
+    yield_unit: &mut Y,
+) -> bool
+where
+    F: Fn(WorldTile) -> Option<i32>,
+{
+    if me.level != destination.level {
+        return false;
+    }
+    let distance =
+        me.x.abs_diff(destination.x)
+            .max(me.z.abs_diff(destination.z));
+    let Ok(radius) = u32::try_from(radius) else {
+        return false;
+    };
+    if distance > radius {
+        return false;
+    }
+    if distance == 0 {
+        return true;
+    }
+    let side = u64::from(radius).saturating_mul(2).saturating_add(1);
+    let max_steps = u32::try_from(side.saturating_mul(side)).unwrap_or(u32::MAX);
+    if collision_probe_reach(
+        me,
+        destination,
+        &SceneReachOptions {
+            max_steps: Some(max_steps),
+            adjacent_ok: false,
+        },
+        collision_at,
+        scratch,
+        yield_unit,
+    )
+    .await
+    {
+        return true;
+    }
+    if flags_open(collision_at(destination), CollisionFlag::SQ_BLOCKED) {
+        return false;
+    }
+    if collision_at(destination).is_none() {
+        return true;
+    }
+    collision_probe_reach(
+        me,
+        destination,
+        &SceneReachOptions {
+            max_steps: Some(max_steps),
+            adjacent_ok: true,
+        },
+        collision_at,
+        scratch,
+        yield_unit,
+    )
+    .await
+}
+
+async fn is_arrived_window_cooperative<Y: ArrivalYield>(
+    me: WorldTile,
+    destination: WorldTile,
+    radius: i32,
+    probe: &mut WindowArrivalProbe<'_, '_, impl Fn(WorldTile) -> Option<i32>>,
+    yield_unit: &mut Y,
+) -> bool {
+    #[cfg(test)]
+    ARRIVAL_WINDOW_REPLAYS.with(|count| count.set(count.get() + 1));
+    if me.level != destination.level {
+        return false;
+    }
+    let distance =
+        me.x.abs_diff(destination.x)
+            .max(me.z.abs_diff(destination.z));
+    let Ok(radius) = u32::try_from(radius) else {
+        return false;
+    };
+    if distance > radius {
+        return false;
+    }
+    if distance == 0 {
+        return true;
+    }
+    let side = u64::from(radius) * 2 + 1;
+    let max_steps = u32::try_from(side.saturating_mul(side)).unwrap_or(u32::MAX) as usize;
+    if probe
+        .can_reach_from::<false, _>(me, destination, max_steps, yield_unit)
+        .await
+    {
+        return true;
+    }
+    if probe.walkable(destination) {
+        return false;
+    }
+    !probe.probeable(destination)
+        || probe
+            .can_reach_from::<true, _>(me, destination, max_steps, yield_unit)
+            .await
+}
+
+async fn retain_arrival_with_collision<F, Y: ArrivalYield>(
+    candidates: &mut Vec<WorldTile>,
+    destination: WorldTile,
+    radius: i32,
+    collision_at: &F,
+    yield_unit: &mut Y,
+) where
+    F: Fn(WorldTile) -> Option<i32>,
+{
+    if candidates.is_empty() {
+        return;
+    }
+    let side = u64::from(u32::try_from(radius).unwrap_or_default()) * 2 + 1;
+    let budget = u32::try_from(side.saturating_mul(side)).unwrap_or(u32::MAX) as usize;
+    let mut scratch = ReachScratch::with_capacity(budget.saturating_mul(8).saturating_add(1));
+    let original_len = candidates.len();
+    let mut write = 0;
+    for read in 0..original_len {
+        let tile = candidates[read];
+        if is_arrived_collision_cooperative(
+            tile,
+            destination,
+            radius,
+            collision_at,
+            &mut scratch,
+            yield_unit,
+        )
+        .await
+        {
+            candidates[write] = tile;
+            write += 1;
+        }
+        yield_unit.yield_unit().await;
+    }
+    clear_reach_scratch(&mut scratch, yield_unit).await;
+    candidates.truncate(write);
+}
 /// Filter packed radius goals with exactly the [`is_arrived`] predicate.
 ///
 /// Reverse directed floods supply goal paths across the collision cache and
@@ -1573,18 +2572,76 @@ pub fn retain_arrival_candidates(
     radius: i32,
     collision_at: impl Fn(WorldTile) -> Option<i32>,
 ) {
+    let mut yield_unit = || std::future::ready(());
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    let mut future = std::pin::pin!(retain_arrival_candidates_kernel(
+        candidates,
+        destination,
+        radius,
+        None,
+        collision_at,
+        &mut yield_unit,
+    ));
+    match future.as_mut().poll(&mut context) {
+        std::task::Poll::Ready(()) => {}
+        std::task::Poll::Pending => {
+            panic!("the synchronous arrival driver received a pending yield")
+        }
+    }
+}
+
+/// Retain the candidates that satisfy the exact walk-arrival rule, yielding
+/// after every bounded cache, flood, classification, replay, and retain unit.
+///
+/// The collision callback and candidate vector remain borrowed for the whole
+/// computation. The yield callback is also borrowed; each invocation returns
+/// the future awaited at the next cooperative checkpoint.
+pub async fn retain_arrival_candidates_cooperative<C, Y, F>(
+    candidates: &mut Vec<WorldTile>,
+    destination: WorldTile,
+    radius: i32,
+    collision_bounds: ArrivalCollisionBounds,
+    collision_at: C,
+    yield_unit: &mut Y,
+) where
+    C: Fn(WorldTile) -> Option<i32>,
+    Y: FnMut() -> F,
+    F: Future<Output = ()>,
+{
+    retain_arrival_candidates_kernel(
+        candidates,
+        destination,
+        radius,
+        Some(collision_bounds),
+        collision_at,
+        yield_unit,
+    )
+    .await;
+}
+
+async fn retain_arrival_candidates_kernel<C, Y: ArrivalYield>(
+    candidates: &mut Vec<WorldTile>,
+    destination: WorldTile,
+    radius: i32,
+    collision_bounds: Option<ArrivalCollisionBounds>,
+    collision_at: C,
+    yield_unit: &mut Y,
+) where
+    C: Fn(WorldTile) -> Option<i32>,
+{
     if radius < 0 {
         candidates.clear();
         return;
     }
     let radius = radius.min(104);
-    let probe = CollisionArrivalProbe::new(&collision_at);
     let Some(target_flags) = collision_at(destination) else {
-        candidates.retain(|&tile| is_arrived(tile, destination, radius, || &probe));
+        retain_arrival_with_collision(candidates, destination, radius, &collision_at, yield_unit)
+            .await;
         return;
     };
     if radius == 0 || candidates.is_empty() {
-        candidates.retain(|&tile| is_arrived(tile, destination, radius, || &probe));
+        retain_arrival_with_collision(candidates, destination, radius, &collision_at, yield_unit)
+            .await;
         return;
     }
     let extent = radius * 3 + 1;
@@ -1592,14 +2649,17 @@ pub fn retain_arrival_candidates(
         destination.x.checked_sub(extent),
         destination.z.checked_sub(extent),
     ) else {
-        candidates.retain(|&tile| is_arrived(tile, destination, radius, || &probe));
+        retain_arrival_with_collision(candidates, destination, radius, &collision_at, yield_unit)
+            .await;
         return;
     };
     let side = (extent * 2 + 1) as usize;
     let cells = side * side;
     let center = extent as usize * side + extent as usize;
-    let cached: Vec<_> = (0..cells)
-        .map(|index| {
+    let mut cached = Vec::with_capacity(cells);
+    let mut steps = Vec::with_capacity(cells);
+    for index in 0..cells {
+        cached.push(
             base_x
                 .checked_add((index / side) as i32)
                 .zip(base_z.checked_add((index % side) as i32))
@@ -1609,9 +2669,11 @@ pub fn retain_arrival_candidates(
                         z,
                         level: destination.level,
                     })
-                })
-        })
-        .collect();
+                }),
+        );
+        steps.push(0);
+        yield_unit.yield_unit().await;
+    }
     let flags = |x: i32, z: i32| cached[x as usize * side + z as usize];
     let mut goals = [center; 5];
     let mut goal_len = 1;
@@ -1625,17 +2687,9 @@ pub fn retain_arrival_candidates(
     }
     let goals = &goals[..goal_len];
     let budget = (radius as u32 * 2 + 1).pow(2);
-    // A landmark can explore twice the dequeue budget and load eight
-    // neighbors per discovery. Reserve that allowance for paged scratch,
-    // rounded to complete pages, rather than reallocating every new page.
-    // Distinct roots may grow past it; the cache remains dynamically extensible.
-    let paged_cells = (budget as usize * 16 + 1).div_ceil(ArrivalStepCache::PAGE_CELLS)
-        * ArrivalStepCache::PAGE_CELLS;
-    let scratch_cells = cells + paged_cells;
-    // Use the zeroed allocation path without eagerly touching the allowance.
-    // Only the dense window is live until pages are populated.
-    let mut steps = vec![0; scratch_cells];
-    steps.truncate(cells);
+    let page_capacity = collision_bounds
+        .and_then(ArrivalCollisionBounds::page_capacity_with_halo)
+        .unwrap_or_default();
     let mut cache = ArrivalStepCache {
         flags: &cached,
         steps,
@@ -1646,46 +2700,50 @@ pub fn retain_arrival_candidates(
             level: destination.level,
         },
         collision_at: &collision_at,
-        pages: std::collections::HashMap::new(),
-        page_origins: Vec::new(),
-        page_flags: Vec::new(),
-        page_neighbors: Vec::new(),
-        boundary_neighbors: vec![[0; 8]; side * 4],
+        pages: std::collections::HashMap::with_capacity(page_capacity),
+        page_origins: Vec::with_capacity(page_capacity),
+        page_flags: Vec::with_capacity(page_capacity),
     };
     let lo = (extent - radius) as usize;
     let hi = (extent + radius) as usize;
     for x in lo..=hi {
         for z in lo..=hi {
             cache.mask(x * side + z);
+            yield_unit.yield_unit().await;
         }
     }
     let offsets = DIRS.map(|(dx, dz)| dx as isize * side as isize + dz as isize);
-    let mut exits = Vec::new();
+    let mut exits = Vec::with_capacity((hi - lo + 1) * 4);
     for x in lo..=hi {
         for z in lo..=hi {
             if x != lo && x != hi && z != lo && z != hi {
+                yield_unit.yield_unit().await;
                 continue;
             }
             let index = x * side + z;
-            if cache.steps[index] as u8 != 0
+            if cache.step(index) as u8 != 0
                 && offsets.iter().enumerate().any(|(bit, &offset)| {
-                    cache.steps[index] & (1 << bit) != 0
+                    cache.step(index) & (1 << bit) != 0
                         && !cache.prepared(index.wrapping_add_signed(offset))
                 })
             {
                 exits.push(index);
             }
+            yield_unit.yield_unit().await;
         }
     }
-    // Exit seeds are the last in-box tile, one step before leaving the box.
-    let exit_depth = arrival_distances::<true>(&cache, &exits).0;
-    let (components, component_facts) = arrival_components(&cache, goals);
+    let exit_depth = arrival_distances::<true, _>(&cache, &exits, yield_unit)
+        .await
+        .0;
+    let (components, component_facts) = arrival_components(&cache, goals, yield_unit).await;
     // Boxed certificates must see the original box exits. After they are
     // captured, prepare the remaining dense steps once for all reverse edges.
     for index in 0..cells {
         cache.mask(index);
+        yield_unit.yield_unit().await;
     }
-    let (depth, goal_boundary, connected, outside) = arrival_distances::<false>(&cache, goals);
+    let (depth, goal_boundary, connected, outside) =
+        arrival_distances::<false, _>(&cache, goals, yield_unit).await;
     let outside_goal_bound = |index: usize| {
         if goal_boundary == u32::MAX {
             u32::MAX
@@ -1695,12 +2753,13 @@ pub fn retain_arrival_candidates(
     };
     let goal_lower_bound = |index: usize| depth[index].min(outside_goal_bound(index));
     let stride = side + 1;
-    let mut prefix = vec![0u32; stride * stride];
+    let mut prefix = arrival_filled_vec(stride * stride, 0u32, yield_unit).await;
     for x in 0..side {
         let mut row = 0;
         for z in 0..side {
             row += u32::from(connected[x * side + z]);
             prefix[(x + 1) * stride + z + 1] = prefix[x * stride + z + 1] + row;
+            yield_unit.yield_unit().await;
         }
     }
     let count_square = |x: usize, z: usize, reach: usize| {
@@ -1712,39 +2771,42 @@ pub fn retain_arrival_candidates(
             - prefix[x0 * stride + z1]
             - prefix[x1 * stride + z0]
     };
-    let mut keep = vec![false; candidates.len()];
-    let mut uncertain = Vec::new();
-    let mut replay = Vec::new();
-    for (candidate, &tile) in candidates.iter().enumerate() {
+    let mut keep = arrival_filled_vec(candidates.len(), false, yield_unit).await;
+    let mut uncertain = Vec::with_capacity(candidates.len());
+    let mut replay = Vec::with_capacity(candidates.len());
+    for candidate in 0..candidates.len() {
+        let tile = candidates[candidate];
         let distance = tile
             .x
             .abs_diff(destination.x)
             .max(tile.z.abs_diff(destination.z));
         if tile.level != destination.level || distance > radius as u32 {
+            yield_unit.yield_unit().await;
             continue;
         }
         if tile == destination {
             keep[candidate] = true;
+            yield_unit.yield_unit().await;
             continue;
         }
         let x = (tile.x - base_x) as usize;
         let z = (tile.z - base_z) as usize;
         let index = x * side + z;
         if cached[index].is_none() {
+            yield_unit.yield_unit().await;
             continue;
         }
         if !flags_open(cached[index], CollisionFlag::SQ_BLOCKED) {
             replay.push(candidate);
+            yield_unit.yield_unit().await;
             continue;
         }
         let d = depth[index];
         if d == u32::MAX && (goal_boundary == u32::MAX || outside[index] == u32::MAX) {
+            yield_unit.yield_unit().await;
             continue;
         }
         if d != u32::MAX {
-            // At depth d all dequeued tiles fit the origin's d-square. Also,
-            // outside tiles cannot get farther from the target box than
-            // d - first_exit + 1. Count every walkable tile, not just the path.
             let exit = exit_depth[index];
             let expansion = d.saturating_sub(exit);
             if d <= radius as u32
@@ -1757,29 +2819,31 @@ pub fn retain_arrival_candidates(
                 ) <= budget + 1
             {
                 keep[candidate] = true;
+                yield_unit.yield_unit().await;
                 continue;
             }
         }
         let component = components[index];
         if component != u32::MAX && component_facts[component as usize] == 0 {
+            yield_unit.yield_unit().await;
             continue;
         }
         uncertain.push((candidate, index));
+        yield_unit.yield_unit().await;
     }
-    uncertain.sort_unstable_by_key(|&(_, start)| {
-        (components[start], start / side / 8, start % side / 8, start)
-    });
+    sort_arrival_uncertain(&mut uncertain, &components, side, yield_unit).await;
     let mut group = 0;
     let mut layers: Option<ArrivalLayers> = None;
     let mut landmark: Option<ArrivalLandmark> = None;
-    let mut pending = Vec::new();
-    let mut nearest_root = vec![u32::MAX; candidates.len()];
+    let mut pending = Vec::with_capacity(candidates.len());
+    let mut nearest_root = arrival_filled_vec(candidates.len(), u32::MAX, yield_unit).await;
     while group < uncertain.len() {
         let mut end = group + 1;
         while end < uncertain.len()
             && components[uncertain[end].1] == components[uncertain[group].1]
         {
             end += 1;
+            yield_unit.yield_unit().await;
         }
         let region = &uncertain[group..end];
         if region.len() <= 8
@@ -1787,79 +2851,74 @@ pub fn retain_arrival_candidates(
                 .iter()
                 .all(|&(_, start)| depth[start] <= radius as u32 * 2)
         {
-            // Nearby tiny cohorts do not repay a landmark flood. Their
-            // ordered probes reuse the same collision steps and epoch marks.
-            replay.extend(region.iter().map(|&(candidate, _)| candidate));
+            for &(candidate, _) in region {
+                replay.push(candidate);
+                yield_unit.yield_unit().await;
+            }
             group = end;
+            yield_unit.yield_unit().await;
             continue;
         }
-        let root = region
-            .iter()
-            .enumerate()
-            .filter(|&(_, &(_, start))| goal_lower_bound(start) > radius as u32 * 2)
-            .min_by_key(|&(slot, &(_, start))| {
-                (
-                    std::cmp::Reverse(goal_lower_bound(start)),
-                    slot.abs_diff(region.len() / 2),
-                )
-            })
-            .map(|(_, &(_, start))| start)
-            .unwrap_or_else(|| {
-                region
-                    .iter()
-                    .enumerate()
-                    .min_by_key(|&(slot, &(_, start))| {
-                        (depth[start], slot.abs_diff(region.len() / 2))
-                    })
-                    .map(|(_, &(_, start))| start)
-                    .expect("nonempty component group")
-            });
-        let landmark = landmark.get_or_insert_with(|| {
-            let capacity = cache.steps.capacity();
-            let mut depth = Vec::with_capacity(capacity);
-            depth.resize(cache.steps.len(), u32::MAX);
-            let mut reversible = Vec::with_capacity(capacity);
-            reversible.resize(cache.steps.len(), false);
-            ArrivalLandmark {
-                depth,
-                reversible,
-                queue: Vec::with_capacity(budget as usize * 2 + 1),
-                goal_reachable: Vec::with_capacity(capacity),
-                goal_queue: Vec::with_capacity(budget as usize * 2 + 1),
-                goal_lower: 0,
+        let middle = region.len() / 2;
+        let mut preferred_root = None;
+        for (slot, &(_, start)) in region.iter().enumerate() {
+            let bound = goal_lower_bound(start);
+            if bound > radius as u32 * 2 {
+                let key = (std::cmp::Reverse(bound), slot.abs_diff(middle));
+                if preferred_root.is_none_or(|(_, best)| key < best) {
+                    preferred_root = Some((start, key));
+                }
             }
-        });
-        let bounds = landmark.prepare(root, budget, goals, &mut cache, depth[root] == u32::MAX);
+            yield_unit.yield_unit().await;
+        }
+        let root = if let Some((root, _)) = preferred_root {
+            root
+        } else {
+            let mut best = (region[0].1, (depth[region[0].1], 0usize));
+            for (slot, &(_, start)) in region.iter().enumerate().skip(1) {
+                let key = (depth[start], slot.abs_diff(middle));
+                if key < best.1 {
+                    best = (start, key);
+                }
+                yield_unit.yield_unit().await;
+            }
+            best.0
+        };
+        let landmark = landmark.get_or_insert_with(|| ArrivalLandmark::new(budget));
+        let bounds = landmark
+            .prepare(
+                root,
+                budget,
+                goals,
+                &mut cache,
+                depth[root] == u32::MAX,
+                yield_unit,
+            )
+            .await;
         let mut roots = [root; 64];
         let mut root_count = 1;
         let mut undecided = |(candidate, start): (usize, usize),
                              (ball_depth, boundary, closed): (Option<u32>, u32, bool),
                              landmark: &ArrivalLandmark,
                              nearest: &mut u32| {
-            let root_distance = landmark.depth[start];
+            let root_distance = landmark.depth(start);
             *nearest = (*nearest).min(root_distance);
             if landmark.queue[0] == start {
-                // The landmark retained exactly the first budget+1 FIFO
-                // discoveries, so its own root needs no second flood.
-                keep[candidate] = goals.iter().any(|&goal| landmark.depth[goal] != u32::MAX);
+                keep[candidate] = goals.iter().any(|&goal| landmark.depth(goal) != u32::MAX);
                 return false;
             }
             if root_distance != u32::MAX {
                 if closed {
-                    keep[candidate] = landmark.goal_reachable.get(start).copied().unwrap_or(false);
+                    keep[candidate] = landmark.goal_reachable(start);
                     return false;
                 }
                 if let Some(ball_depth) = ball_depth {
-                    // The root can reach the origin, so every tile dequeued by
-                    // its goal layer lies in the root's (root_distance+d) ball.
-                    // Layers strictly below ball_depth contain at most budget
-                    // vertices; an unexpanded boundary must not hide any.
                     let upper = root_distance.saturating_add(depth[start]);
                     if upper < ball_depth && upper <= boundary {
                         keep[candidate] = true;
                         return false;
                     }
-                    if landmark.reversible[start]
+                    if landmark.reversible(start)
                         && goal_lower_bound(start)
                             .max(landmark.goal_lower.saturating_sub(root_distance))
                             > root_distance.saturating_add(ball_depth)
@@ -1875,86 +2934,152 @@ pub fn retain_arrival_candidates(
             if undecided(entry, bounds, landmark, &mut nearest_root[entry.0]) {
                 pending.push(entry);
             }
+            yield_unit.yield_unit().await;
         }
-        if let Some(&(_, near)) = pending.iter().min_by_key(|&&(_, start)| depth[start]) {
+        landmark.clear(yield_unit).await;
+        cache.clear_paged(yield_unit).await;
+        let mut near = None;
+        for &(_, start) in &pending {
+            let key = depth[start];
+            if near.is_none_or(|(_, best)| key < best) {
+                near = Some((start, key));
+            }
+            yield_unit.yield_unit().await;
+        }
+        if let Some((near, _)) = near {
             if near != root {
-                let bounds =
-                    landmark.prepare(near, budget, goals, &mut cache, depth[near] == u32::MAX);
+                let bounds = landmark
+                    .prepare(
+                        near,
+                        budget,
+                        goals,
+                        &mut cache,
+                        depth[near] == u32::MAX,
+                        yield_unit,
+                    )
+                    .await;
                 roots[root_count] = near;
                 root_count += 1;
-                pending.retain(|&entry| {
-                    undecided(entry, bounds, landmark, &mut nearest_root[entry.0])
-                });
+                let pending_len = pending.len();
+                let mut retained = 0;
+                for read in 0..pending_len {
+                    let entry = pending[read];
+                    if undecided(entry, bounds, landmark, &mut nearest_root[entry.0]) {
+                        pending[retained] = entry;
+                        retained += 1;
+                    }
+                    yield_unit.yield_unit().await;
+                }
+                pending.truncate(retained);
+                landmark.clear(yield_unit).await;
+                cache.clear_paged(yield_unit).await;
             }
         }
-        // Continue the shared balls from widely separated undecided origins.
-        // A single component may wind far beyond the initial collision window.
         while pending.len() > 64 && root_count < roots.len() {
-            let Some(&(_, root)) = pending
-                .iter()
-                .filter(|&&(_, start)| !roots[..root_count].contains(&start))
-                .max_by_key(|&&(candidate, _)| nearest_root[candidate])
-            else {
+            let mut next_root = None;
+            for &(candidate, start) in &pending {
+                if !roots[..root_count].contains(&start) {
+                    let distance = nearest_root[candidate];
+                    if next_root.is_none_or(|(_, best)| distance >= best) {
+                        next_root = Some((start, distance));
+                    }
+                }
+                yield_unit.yield_unit().await;
+            }
+            let Some((root, _)) = next_root else {
                 break;
             };
             roots[root_count] = root;
             root_count += 1;
-            let bounds = landmark.prepare(root, budget, goals, &mut cache, depth[root] == u32::MAX);
-            pending.retain(|&entry| undecided(entry, bounds, landmark, &mut nearest_root[entry.0]));
+            let bounds = landmark
+                .prepare(
+                    root,
+                    budget,
+                    goals,
+                    &mut cache,
+                    depth[root] == u32::MAX,
+                    yield_unit,
+                )
+                .await;
+            let pending_len = pending.len();
+            let mut retained = 0;
+            for read in 0..pending_len {
+                let entry = pending[read];
+                if undecided(entry, bounds, landmark, &mut nearest_root[entry.0]) {
+                    pending[retained] = entry;
+                    retained += 1;
+                }
+                yield_unit.yield_unit().await;
+            }
+            pending.truncate(retained);
+            landmark.clear(yield_unit).await;
+            cache.clear_paged(yield_unit).await;
         }
         if pending.len() <= 64 {
-            // Small cohorts do not repay allocating the shared layer arrays.
-            replay.extend(pending.iter().map(|&(candidate, _)| candidate));
+            for &(candidate, _) in &pending {
+                replay.push(candidate);
+                yield_unit.yield_unit().await;
+            }
         } else {
-            for chunk in pending.chunks(64) {
+            for chunk in pending.chunks(ARRIVAL_LAYER_BATCH) {
                 let mut starts = [0; 64];
                 let mut canonical = 0;
                 for (bit, &(_, start)) in chunk.iter().enumerate() {
                     starts[bit] = start;
-                    // No outside path may be shorter OR tied: equal-length
-                    // paths could change the canonical DIRS ordering.
                     if depth[start] < outside_goal_bound(start) {
                         canonical |= 1 << bit;
                     }
+                    yield_unit.yield_unit().await;
+                }
+                if layers.is_none() {
+                    layers = Some(
+                        ArrivalLayers::new(
+                            cache.flags.len(),
+                            page_capacity,
+                            ARRIVAL_LAYER_BATCH * (budget as usize + 1),
+                            yield_unit,
+                        )
+                        .await,
+                    );
                 }
                 let (accepted, undecided) = layers
-                    .get_or_insert_with(|| {
-                        ArrivalLayers::new(cache.steps.len(), cache.steps.capacity())
-                    })
+                    .as_mut()
+                    .unwrap()
                     .classify(
                         &starts[..chunk.len()],
-                        goals,
-                        budget,
-                        &depth,
+                        ArrivalLayerContext {
+                            goals,
+                            budget,
+                            goal_depth: &depth,
+                        },
                         canonical,
                         &mut cache,
-                    );
+                        yield_unit,
+                    )
+                    .await;
                 for (bit, &(candidate, _)) in chunk.iter().enumerate() {
                     keep[candidate] = accepted & (1 << bit) != 0;
                     if undecided & (1 << bit) != 0 {
                         replay.push(candidate);
                     }
+                    yield_unit.yield_unit().await;
                 }
+                cache.clear_paged(yield_unit).await;
             }
         }
         group = end;
+        yield_unit.yield_unit().await;
     }
-    let scratch = WindowReachScratch {
-        marks: if replay.is_empty() {
-            Vec::new()
-        } else {
-            Vec::with_capacity(cache.steps.capacity())
-        },
-        queue: if replay.is_empty() {
-            Vec::new()
-        } else {
-            Vec::with_capacity(budget as usize * 8 + 1)
-        },
-        epoch: 0,
+    // Clear dense-flood pages before replay scratch overlaps them; the no-uncertain
+    // path needs the same cleanup as landmark batches.
+    cache.clear_paged(yield_unit).await;
+    let scratch = if replay.is_empty() {
+        WindowReachScratch::new(0, 0, 0, yield_unit).await
+    } else {
+        WindowReachScratch::new(cells, page_capacity, budget as usize * 8 + 1, yield_unit).await
     };
-    let window_probe = WindowArrivalProbe {
-        fallback: &probe,
-        cache: std::cell::RefCell::new(cache),
+    let mut window_probe = WindowArrivalProbe {
+        cache: &mut cache,
         goals,
         base: WorldTile {
             x: base_x,
@@ -1962,17 +3087,31 @@ pub fn retain_arrival_candidates(
             level: destination.level,
         },
         side,
-        scratch: std::cell::RefCell::new(scratch),
+        scratch,
     };
     for candidate in replay {
-        keep[candidate] = is_arrived(candidates[candidate], destination, radius, || &window_probe);
+        keep[candidate] = is_arrived_window_cooperative(
+            candidates[candidate],
+            destination,
+            radius,
+            &mut window_probe,
+            yield_unit,
+        )
+        .await;
+        yield_unit.yield_unit().await;
+        window_probe.cache.clear_paged(yield_unit).await;
     }
-    let mut index = 0;
-    candidates.retain(|_| {
-        let result = keep[index];
-        index += 1;
-        result
-    });
+    let original_len = candidates.len();
+    let mut write = 0;
+    for read in 0..original_len {
+        let tile = candidates[read];
+        if keep[read] {
+            candidates[write] = tile;
+            write += 1;
+        }
+        yield_unit.yield_unit().await;
+    }
+    candidates.truncate(write);
 }
 
 /// Compact derived reach query posted on the isolate snapshot. Not a
@@ -2762,4 +3901,338 @@ fn pack_u64_bitset_to_u32(words: &[u64], nbits: usize) -> Vec<u32> {
         }
     }
     out
+}
+#[cfg(test)]
+mod arrival_cooperation_tests {
+    use super::*;
+
+    fn poll_ready<F: Future>(future: F) -> F::Output {
+        let mut future = std::pin::pin!(future);
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        match future.as_mut().poll(&mut context) {
+            std::task::Poll::Ready(output) => output,
+            std::task::Poll::Pending => panic!("ready yield callback must finish in one poll"),
+        }
+    }
+
+    #[test]
+    fn cooperative_future_is_send_with_shared_callbacks() {
+        fn assert_send(_: impl Future<Output = ()> + Send) {}
+
+        let destination = WorldTile {
+            x: 1,
+            z: 1,
+            level: 0,
+        };
+        let mut candidates = vec![destination];
+        let bounds = ArrivalCollisionBounds::new(0, 0, 3, 3).unwrap();
+        let flags = Arc::new(0);
+        let collision_at = move |tile: WorldTile| {
+            (tile.level == 0 && (0..3).contains(&tile.x) && (0..3).contains(&tile.z))
+                .then_some(*flags)
+        };
+        let mut yield_unit = || std::future::ready(());
+        assert_send(retain_arrival_candidates_cooperative(
+            &mut candidates,
+            destination,
+            1,
+            bounds,
+            collision_at,
+            &mut yield_unit,
+        ));
+    }
+
+    #[test]
+    fn synchronous_and_cooperative_calls_accept_local_callbacks() {
+        let destination = WorldTile {
+            x: 1,
+            z: 1,
+            level: 0,
+        };
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+        let collision_at = |tile: WorldTile| {
+            calls.set(calls.get() + 1);
+            (tile.level == 0 && (0..3).contains(&tile.x) && (0..3).contains(&tile.z)).then_some(0)
+        };
+        let mut sync = vec![destination];
+        retain_arrival_candidates(&mut sync, destination, 1, collision_at);
+        let sync_calls = calls.get();
+        assert!(sync_calls > 0);
+
+        let mut cooperative = vec![destination];
+        let bounds = ArrivalCollisionBounds::new(0, 0, 3, 3).unwrap();
+        let yields = std::rc::Rc::new(std::cell::Cell::new(0));
+        let mut yield_unit = || {
+            let yields = std::rc::Rc::clone(&yields);
+            async move {
+                yields.set(yields.get() + 1);
+            }
+        };
+        poll_ready(retain_arrival_candidates_cooperative(
+            &mut cooperative,
+            destination,
+            1,
+            bounds,
+            collision_at,
+            &mut yield_unit,
+        ));
+        assert!(calls.get() > sync_calls);
+        assert!(yields.get() > 0);
+        assert_eq!(cooperative, sync);
+    }
+
+    #[test]
+    fn window_replay_matches_exact_budget_boundary_ranks() {
+        let side = 627usize;
+        let cells = side * side;
+        let budget = ((2 * 104 + 1) * (2 * 104 + 1)) as usize;
+        let mut path = Vec::with_capacity(44_000);
+        for row in 0..70 {
+            let z = 2 + row * 2;
+            if row == 0 {
+                path.extend((1..=625).map(|x| (x, z)));
+                continue;
+            }
+            let connector_x = if row % 2 == 1 { 625 } else { 1 };
+            path.push((connector_x, z - 1));
+            path.push((connector_x, z));
+            if row % 2 == 1 {
+                path.extend((1..625).rev().map(|x| (x, z)));
+            } else {
+                path.extend((2..=625).map(|x| (x, z)));
+            }
+        }
+        assert!(path.len() > budget + 1);
+
+        let mut flags = vec![Some(CollisionFlag::SQ_BLOCKED); cells];
+        for &(x, z) in &path {
+            flags[x * side + z] = Some(0);
+        }
+        let collision_at = |tile: WorldTile| {
+            if tile.level != 0
+                || tile.x < 0
+                || tile.z < 0
+                || tile.x >= side as i32
+                || tile.z >= side as i32
+            {
+                return None;
+            }
+            flags[tile.x as usize * side + tile.z as usize]
+        };
+        let base = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        let mut cache = ArrivalStepCache {
+            flags: &flags,
+            steps: vec![0; cells],
+            side,
+            base,
+            collision_at: &collision_at,
+            pages: std::collections::HashMap::new(),
+            page_origins: Vec::new(),
+            page_flags: Vec::new(),
+        };
+        let origin = WorldTile {
+            x: path[0].0 as i32,
+            z: path[0].1 as i32,
+            level: 0,
+        };
+        let mut yield_unit = || std::future::ready(());
+        let scratch = poll_ready(WindowReachScratch::new(
+            cells,
+            0,
+            budget * 8 + 1,
+            &mut yield_unit,
+        ));
+        let mut probe = WindowArrivalProbe {
+            cache: &mut cache,
+            goals: &[],
+            base,
+            side,
+            scratch,
+        };
+        for rank in [budget, budget + 1] {
+            let destination = WorldTile {
+                x: path[rank].0 as i32,
+                z: path[rank].1 as i32,
+                level: 0,
+            };
+            let local_flags = |x, z| collision_at(WorldTile { x, z, level: 0 });
+            let mut sync_scratch = ReachScratch::with_capacity(budget * 8 + 1);
+            let expected = can_reach_local(
+                &local_flags,
+                (origin.x, origin.z),
+                (destination.x, destination.z),
+                budget as u32,
+                false,
+                &mut sync_scratch,
+            );
+            assert_eq!(expected, rank == budget);
+            let actual = poll_ready(probe.can_reach_from::<false, _>(
+                origin,
+                destination,
+                budget,
+                &mut yield_unit,
+            ));
+            assert_eq!(actual, expected, "rank={rank}");
+        }
+    }
+
+    #[test]
+    fn layer_batches_preserve_all_origin_counts() {
+        let side = 9usize;
+        let cells = side * side;
+        let goal = 4 * side + 4;
+        let goals = [goal];
+        let budget = 81u32;
+        let bounds = ArrivalCollisionBounds::new(0, 0, side, side).unwrap();
+        let page_capacity = bounds.page_capacity_with_halo().unwrap();
+        for origin_count in [7usize, 8, 9, 63, 64, 65] {
+            let flags = vec![Some(0); cells];
+            let collision_at = |tile: WorldTile| {
+                if tile.level != 0
+                    || tile.x < 0
+                    || tile.z < 0
+                    || tile.x >= side as i32
+                    || tile.z >= side as i32
+                {
+                    return None;
+                }
+                Some(0)
+            };
+            let mut cache = ArrivalStepCache {
+                flags: &flags,
+                steps: vec![0; cells],
+                side,
+                base: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                collision_at: &collision_at,
+                pages: std::collections::HashMap::with_capacity(page_capacity),
+                page_origins: Vec::with_capacity(page_capacity),
+                page_flags: Vec::with_capacity(page_capacity),
+            };
+            let goal_depth: Vec<_> = (0..cells)
+                .map(|index| {
+                    let x = index / side;
+                    let z = index % side;
+                    x.abs_diff(goal / side).max(z.abs_diff(goal % side)) as u32
+                })
+                .collect();
+            let starts: Vec<_> = (0..origin_count).collect();
+            let mut yield_unit = || std::future::ready(());
+            let mut layers = poll_ready(ArrivalLayers::new(
+                cells,
+                page_capacity,
+                ARRIVAL_LAYER_BATCH * (budget as usize + 1),
+                &mut yield_unit,
+            ));
+            ARRIVAL_LAYER_CLASSIFICATIONS.with(|count| count.set(0));
+            for chunk in starts.chunks(ARRIVAL_LAYER_BATCH) {
+                let mask = (1u64 << chunk.len()) - 1;
+                let (accepted, uncertain) = poll_ready(layers.classify(
+                    chunk,
+                    ArrivalLayerContext {
+                        goals: &goals,
+                        budget,
+                        goal_depth: &goal_depth,
+                    },
+                    mask,
+                    &mut cache,
+                    &mut yield_unit,
+                ));
+                assert_eq!(accepted | uncertain, mask, "origins={origin_count}");
+                for (bit, &start) in chunk.iter().enumerate() {
+                    if uncertain & (1 << bit) != 0 {
+                        let origin = (start / side, start % side);
+                        let goal_xy = (goal / side, goal % side);
+                        let mut scratch = ReachScratch::with_capacity(budget as usize * 8 + 1);
+                        assert!(can_reach_local(
+                            &|x, z| collision_at(WorldTile { x, z, level: 0 }),
+                            (origin.0 as i32, origin.1 as i32),
+                            (goal_xy.0 as i32, goal_xy.1 as i32),
+                            budget,
+                            false,
+                            &mut scratch,
+                        ));
+                    }
+                }
+            }
+            let calls = ARRIVAL_LAYER_CLASSIFICATIONS.with(std::cell::Cell::get);
+            assert_eq!(calls, origin_count.div_ceil(ARRIVAL_LAYER_BATCH));
+        }
+    }
+
+    #[test]
+    fn cooperative_producer_replays_blocked_candidates_in_order() {
+        let destination = WorldTile {
+            x: 5,
+            z: 5,
+            level: 0,
+        };
+        let blocked = WorldTile {
+            x: 5,
+            z: 4,
+            level: 0,
+        };
+        let bounds = ArrivalCollisionBounds::new(0, 0, 11, 11).unwrap();
+        let collision_sync = |tile: WorldTile| {
+            if tile.level != 0 || !(0..11).contains(&tile.x) || !(0..11).contains(&tile.z) {
+                return None;
+            }
+            Some(if tile == blocked {
+                CollisionFlag::SQ_BLOCKED
+            } else {
+                0
+            })
+        };
+        let collision_cooperative = |tile: WorldTile| {
+            if tile.level != 0 || !(0..11).contains(&tile.x) || !(0..11).contains(&tile.z) {
+                return None;
+            }
+            Some(if tile == blocked {
+                CollisionFlag::SQ_BLOCKED
+            } else {
+                0
+            })
+        };
+        let candidates = vec![
+            blocked,
+            WorldTile {
+                x: 4,
+                z: 5,
+                level: 0,
+            },
+            destination,
+            WorldTile {
+                x: 6,
+                z: 5,
+                level: 0,
+            },
+            WorldTile {
+                level: 1,
+                ..destination
+            },
+        ];
+        let mut expected = candidates.clone();
+        retain_arrival_candidates(&mut expected, destination, 2, collision_sync);
+        let mut actual = candidates;
+        let mut yield_unit = || std::future::ready(());
+        ARRIVAL_WINDOW_REPLAYS.with(|count| count.set(0));
+        poll_ready(retain_arrival_candidates_cooperative(
+            &mut actual,
+            destination,
+            2,
+            bounds,
+            collision_cooperative,
+            &mut yield_unit,
+        ));
+        let replays = ARRIVAL_WINDOW_REPLAYS.with(std::cell::Cell::get);
+        assert!(replays > 0);
+        assert_eq!(actual, expected);
+    }
 }

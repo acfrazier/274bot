@@ -18,7 +18,6 @@ fn work_scope_requires_the_bound_slot_lifetime() {
         )),
     );
 }
-
 #[cfg(feature = "load")]
 fn start(slot: &mut SlotScript, bag: SettingsBag) {
     slot.start_compiled(
@@ -2026,6 +2025,10 @@ mod api_gather_seat {
             slot.api.is_none(),
             "established Load baseline has no seat allocation"
         );
+        // The first park can grow parking_lot's process-global table.
+        // Warm this thread before charging only this seat.
+        let warm_lock = parking_lot::Mutex::new(());
+        parking_lot::Condvar::new().wait_for(&mut warm_lock.lock(), Duration::from_millis(1));
         let (prepared, instance, worker) = FamilyPreparation::run(|families| {
             let selected = selected();
             let cx = PrepareContext {
@@ -2091,7 +2094,8 @@ mod api_gather_seat {
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>(),
             8
         );
-        assert!(exclusive <= 8192, "exclusive API seat exceeds 8KiB");
+        // Typed RouteTooLarge adds 40 B to inline receipts: 8,206 B measured, 242 B headroom.
+        assert!(exclusive <= 8448, "exclusive API seat exceeds 8.25KiB");
         let stopped = allocation_counter::measure(|| stop_in_seat(&mut slot, 209));
         println!("API gather post-Stop retained={}B (exclusive live + Stop delta), Stop={stopped:?}, worker transient_peak={}B", exclusive + stopped.bytes_current, i128::from(worker.bytes_max) - i128::from(worker.bytes_current));
         assert!(!slot.api_owns_foreground());
