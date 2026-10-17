@@ -643,7 +643,7 @@ fn pause_hold_and_session_reset_abort_a_parked_offer() {
         "Guardian hold must freeze the parked offer"
     );
 
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     snap.hold = false;
     snap.tick = 6;
     post(&iso, &snap);

@@ -7,8 +7,8 @@ export const notImpl = (name, reason) =>
     new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
 export const queue = (req) => {
     const h = host();
-    h.interact = h.interact || [];
-    h.interact.push(req);
+    const interact = h.interact ?? (h.interact = []);
+    interact.push(req);
 };
 
 // Start one Rust step machine and await its single completion. `hooks`

@@ -49,6 +49,8 @@ mod isolate;
 mod library;
 #[cfg(feature = "load")]
 mod line_of_sight;
+#[cfg(feature = "load")]
+mod lineage_v8;
 mod loadout_v8;
 #[cfg(feature = "load")]
 mod machine_v8;
@@ -120,8 +122,9 @@ pub(crate) use isolate::GameplayFactory;
 pub(crate) use isolate::TickOutcome;
 #[cfg(feature = "load")]
 pub use isolate::{
-    isolate_capacity_status, IsolateCapacityStatus, LoadIsolate, LoadIsolateError, QueuedInteract,
-    Ready, ScriptStopReceipt, TeardownProof, ValidationBatch, ValidationError,
+    isolate_capacity_status, HeldWaitFacts, IsolateCapacityStatus, LoadIsolate, LoadIsolateError,
+    QueuedInteract, QueuedSeatBatch, Ready, ScriptStopReceipt, TeardownProof, ValidationBatch,
+    ValidationError,
 };
 #[cfg(feature = "load")]
 pub use platform::bootstrap_v8_platform;

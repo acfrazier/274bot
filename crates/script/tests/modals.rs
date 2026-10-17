@@ -295,7 +295,7 @@ fn pause_hold_and_reset_do_not_emit_a_future_close() {
         "hold must not emit another close"
     );
 
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     snap.hold = false;
     snap.main_modal_id = -1;
     snap.tick = 6;

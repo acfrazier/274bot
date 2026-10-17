@@ -588,6 +588,13 @@ table Snapshot {
   api_combat: ApiGather;
   // Slot 290: retained terminal of the most recent combat session.
   api_combat_outcome: ApiCombatOutcome;
+  // Level-triggered native-seat page. Omitted in a delta means keep; empty
+  // vectors clear the corresponding page.
+  seat_live: [SeatLive];
+  seat_results: [SeatResult];
+  // Highest contiguous mirror revocation sequence applied by the host.
+  // Optional so an omitted delta retains the previous acknowledgement.
+  mirror_revokes_consumed: ulong = null;
 }
 
 table Collision {
@@ -654,6 +661,142 @@ table CombatFight {
   retaliate: bool = true;
   budget_ticks: ushort = 1500;
 }
+
+enum SeatKind: ubyte {
+  None = 0,
+  Gather,
+  Combat,
+  Hunt,
+  Quester,
+  DeathRecovery,
+  QuestProgress,
+  Walk,
+  BankPlan,
+  BankNearest,
+  PeriodicBank,
+  Dialogue,
+  MakeX,
+  Shop,
+  Trade,
+  PartnerTrade,
+  Teleport,
+  Reach,
+  Prayer,
+  Autocast,
+  Special,
+  Modals,
+  Fire,
+  Clue,
+  Duel,
+  CakeStall
+}
+
+enum SeatCancelReason: ubyte {
+  None = 0,
+  HookThrew,
+  ParentAborted
+}
+
+enum SeatRefusal: ubyte {
+  None = 0,
+  Busy,
+  ParentBusy,
+  ParentNotLive,
+  LineageDepth,
+  ArgsTooLarge,
+  HistoryExpired,
+  Unknown,
+  AwaitingDecision
+}
+
+enum SeatAbortReason: ubyte {
+  None = 0,
+  Reset,
+  Superseded,
+  Terminated,
+  UserInput,
+  ParentAborted
+}
+
+enum SeatOutcomeKind: ubyte {
+  None = 0,
+  Done,
+  Failed,
+  Refused,
+  Aborted
+}
+
+enum SeatPhase: ubyte {
+  None = 0,
+  Preparing,
+  Working,
+  Waiting,
+  Blocked,
+  Complete
+}
+
+table SeatArgs {
+  gather_settings: [SettingRow];
+  combat: CombatFight;
+  progress_name: string;
+}
+
+table NativeRequest {
+  id: ulong;
+  parent: ulong = 0;
+  // Both values are RunKey stamps. `session` is not a captured login-session
+  // seat entry.
+  run: ulong;
+  session: ulong;
+  kind: SeatKind = None;
+  args: SeatArgs;
+}
+
+table SeatDecide {
+  of: ulong;
+  decision_seq: uint;
+  // Bounded binary structured-clone subset, not JSON text.
+  answer: [ubyte];
+}
+
+table SeatCancel {
+  of: ulong;
+  reason: SeatCancelReason = None;
+}
+table MirrorRevoke {
+  owner: ulong;
+  seq: ulong;
+}
+
+table SeatPrompt {
+  seq: uint;
+  point: string;
+  // Bounded binary structured-clone subset, not JSON text.
+  args: [ubyte];
+}
+
+table SeatLive {
+  id: ulong;
+  parent: ulong = 0;
+  phase: SeatPhase = None;
+  decisions_consumed: uint;
+  prompt: SeatPrompt;
+}
+
+table SeatOutcome {
+  kind: SeatOutcomeKind = None;
+  // Bounded binary structured-clone subset, not JSON text.
+  value: [ubyte];
+  refusal: SeatRefusal = None;
+  abort_reason: SeatAbortReason = None;
+}
+
+table SeatResult {
+  id: ulong;
+  terminal_seq: ulong;
+  outcome: SeatOutcome;
+}
+
 
 // One shim interact request, tagged by `op`:
 // "open-booth" | "open-stand" | "walk" | "walk-near" | "walk-nearest-bank" | "walk-to" | "deposit" | "withdraw" | "withdraw-x" | "withdraw-load" | "close"
@@ -730,11 +873,23 @@ table Interact {
   combat: CombatFight;
   // Compat tile walks route to their requested walkable tile; radius is for arrival.
   compat_tile_intent: bool = false;
+  // Nearest seat ancestor captured when this row was pushed; 0 means root.
+  lineage: ulong = 0;
+  // In-isolate machine row that owned this emission, or 0 for none.
+  mirror_owner: ulong = 0;
 }
 
 // The tick's shim interact queue, forwarded to the host.
 table InteractBatch {
   reqs: [Interact];
+  // Highest retained terminal consumed by the isolate.
+  consumed_terminal_seq: ulong = 0;
+  // Adapter-only `local_parent` links never cross the wire.
+  starts: [NativeRequest];
+  decisions: [SeatDecide];
+  cancels: [SeatCancel];
+  // Coalesced in-isolate mirror revocations, carried until page acknowledgement.
+  mirror_revokes: [MirrorRevoke];
 }
 
 root_type Snapshot;

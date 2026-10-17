@@ -678,6 +678,7 @@ fn pause_resume_before_escape_dispatch_reissues_walk_without_hazard_click() {
 }
 
 fn tick_with_hold(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64, hold: bool) {
+    slot.seat_guardian_hold(hold);
     slot.on_game_tick(&mut ScriptCtx {
         driver: &mut Rec::default(),
         tick,

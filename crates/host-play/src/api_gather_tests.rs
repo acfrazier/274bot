@@ -82,7 +82,7 @@ fn selected_tree() -> (Arc<api::game_data::SelectedGameData>, i32, WorldTile) {
     panic!("R289 selected catalog has no complete normal-tree placement");
 }
 
-fn gather_snapshot(tree_id: i32, tile: WorldTile, client: &Client) -> GameSnapshot {
+fn gather_snapshot(tree_id: i32, tile: WorldTile, client: &Client, log_slots: i32) -> GameSnapshot {
     let item_def = |id, name: &str| api::ItemDefView {
         id,
         name: Some(name.into()),
@@ -93,7 +93,7 @@ fn gather_snapshot(tree_id: i32, tile: WorldTile, client: &Client) -> GameSnapsh
         certificate_link: -1,
         certificate_template: -1,
     };
-    let logs = (0..28)
+    let logs = (0..log_slots)
         .map(|slot| ItemView {
             def: item_def(LOG_ID, "Logs"),
             container: ItemContainer::Inventory,
@@ -282,19 +282,22 @@ fn observe_frame(
     cache: &Arc<Cache>,
     names: &Arc<api::obj_names::ObjNames>,
     policy: &mut host::ScriptRunPolicy,
+    service_arm: Option<&SlotArm>,
 ) -> Vec<u8> {
     let checkpoint =
         api::interact::Driver::packet_checkpoint(client).expect("R289 packet checkpoint");
-    script_observe_cached(
+    script_observe_cached_with_channels(
         client,
         SLOT,
         true,
         true,
+        false,
         tick,
         Some((here.x, here.z, here.level)),
         None,
         None,
         Some(snapshot),
+        None,
         None,
         Some(names.as_ref()),
         scripts,
@@ -303,11 +306,16 @@ fn observe_frame(
         &None,
         false,
         false,
+        false,
         None,
         None,
         Some(Arc::clone(cache)),
         Some(Arc::clone(names)),
+        None,
+        script_channels::BrokerWorld::Unavailable,
         Some(policy),
+        None,
+        service_arm,
     );
     let mut packets = Vec::new();
     assert!(api::interact::Driver::trace_packets(
@@ -393,11 +401,7 @@ fn finish_watchdog_hold(slot: &mut script::SlotScript, here: WorldTile) {
 #[test]
 fn gather_seat_owns_foreground_through_recovery_hold_stop_and_resume_dispatch() {
     let mut rig = GatherReconnectRig::with_source(CLIENT_SOURCE);
-    rig.isolate_tick_without_host_drain();
-    assert!(matches!(
-        rig.wait_for_controls().as_slice(),
-        [GatherControl::Run(_)]
-    ));
+    rig.queue_start();
     force_watchdog_sampling(&mut rig.slot().lock().unwrap(), rig.tile);
 
     let held_op = client::io::ClientProt289::OPHELD5.id as u8;
@@ -407,8 +411,8 @@ fn gather_seat_owns_foreground_through_recovery_hold_stop_and_resume_dispatch() 
         "recovery hold must drop the same-batch Held row"
     );
     assert!(
-        rig.slot().lock().unwrap().api_owns_foreground(),
-        "gather-run is admitted while the Load script is recovery-held"
+        !rig.slot().lock().unwrap().api_owns_foreground(),
+        "the typed start remains held with its batch until recovery releases it"
     );
     finish_watchdog_hold(&mut rig.slot().lock().unwrap(), rig.tile);
 
@@ -421,6 +425,7 @@ fn gather_seat_owns_foreground_through_recovery_hold_stop_and_resume_dispatch() 
             break;
         }
     }
+    assert!(rig.slot().lock().unwrap().api_owns_foreground());
     assert!(
         native_drop_batch_seen,
         "the live Gatherer seat dispatches its five-item Drop batch"
@@ -432,14 +437,10 @@ fn gather_seat_owns_foreground_through_recovery_hold_stop_and_resume_dispatch() 
 
     rig.probe("globalThis.__stop = true");
     rig.isolate_tick_without_host_drain();
-    assert!(matches!(
-        rig.wait_for_controls().as_slice(),
-        [GatherControl::Stop(_)]
-    ));
     let stop_packets = rig.frame();
     assert!(
         stop_packets.is_empty(),
-        "gather-stop and its same-batch Held row are drained before game dispatch"
+        "typed Stop and its same-batch Held row are drained before game dispatch"
     );
     assert!(
         !rig.slot().lock().unwrap().api_owns_foreground(),
@@ -474,20 +475,22 @@ fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows()
     use script::shim::InteractReq;
     use script_channels::{BrokerWorld, ChannelBroker};
 
-    let mut rig = GatherReconnectRig::with_source(
+    let mut rig = GatherReconnectRig::with_empty_inventory(
         r#"export const apiVersion = 2;
            export function tick(api) {
              globalThis.__api = api;
-             if (!globalThis.__run) {
-               globalThis.__run = api.gather.run({ skill: 'Woodcutting' });
+             globalThis.__page = api.snapshot.gather;
+             if (globalThis.__launch && !globalThis.__run) {
+               globalThis.__run = api.gather.run({ skill: 'Woodcutting', disposition: 'Power' });
+               globalThis.__run.then(value => { globalThis.__runResult = value; });
              }
            }"#,
     );
-    rig.isolate_tick_without_host_drain();
-    rig.wait_for_controls();
-    rig.drain_host();
-    assert!(rig.slot().lock().unwrap().api_owns_foreground());
-    force_watchdog_sampling(&mut rig.slot().lock().unwrap(), rig.tile);
+    rig.queue_start();
+    let (rows, owned) = rig.drain_host();
+    assert!(rows.is_empty());
+    assert!(owned);
+    let _token = rig.wait_for_start_page();
 
     let channel = "rs2b0t:kq:v1:gather-api,bob,carol,dave";
     let mut receiver = GatherReconnectRig::with_source(
@@ -534,20 +537,9 @@ fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows()
     rig.probe(&format!(
         "globalThis.__channel = new BroadcastChannel('{channel}'); \
          __channel.postMessage({{ proof: 'during-seat' }}); \
-         __api.request({{ op: 'held', name: 'Logs', action: 'Drop' }})"
+         __api.request({{ op: 'held', name: 'Logs', action: 'Drop' }}); true"
     ));
     rig.isolate_tick_without_host_drain();
-    {
-        let cell = rig.slot();
-        let mut slot = cell.lock().unwrap();
-        let rows = slot.drain_interacts();
-        assert!(
-            rows.iter()
-                .any(|row| matches!(row, InteractReq::ChannelPost { .. })),
-            "the real isolate must emit its BroadcastChannel post: {rows:?}"
-        );
-        slot.restore_interacts(rows);
-    }
     rig.slot()
         .lock()
         .unwrap()
@@ -574,6 +566,7 @@ fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows()
         &None,
         false,
         false,
+        false,
         None,
         None,
         Some(Arc::clone(&rig.cache)),
@@ -582,7 +575,9 @@ fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows()
         BrokerWorld::Local,
         Some(&mut rig.policy),
         None,
+        None,
     );
+    rig.tick += 1;
     let mut packets = Vec::new();
     assert!(api::interact::Driver::trace_packets(
         &rig.client,
@@ -651,9 +646,8 @@ fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows()
 }
 
 #[test]
-fn paused_gather_seat_preserves_non_game_rows_until_resume_in_every_frame_state() {
+fn paused_gather_seat_keeps_host_rows_queued_until_resume_in_every_frame_state() {
     use script::shim::InteractReq;
-    use script_channels::{BrokerWorld, ChannelBroker};
 
     for owned in [false, true] {
         for (up, hold, has_snapshot) in [
@@ -662,37 +656,26 @@ fn paused_gather_seat_preserves_non_game_rows_until_resume_in_every_frame_state(
             (true, false, false),
             (true, false, true),
         ] {
-            let mut rig = GatherReconnectRig::with_source(QUIET_SOURCE);
-            rig.isolate_tick_without_host_drain();
-            rig.frame();
+            let source = if owned {
+                RECONNECT_SOURCE
+            } else {
+                QUIET_SOURCE
+            };
+            let mut rig = GatherReconnectRig::with_source(source);
+            if owned {
+                rig.queue_start();
+                let (rows, seat_owns) = rig.drain_host();
+                assert!(rows.is_empty());
+                assert!(seat_owns, "the real typed Gather start owns the host seat");
+            } else {
+                rig.isolate_tick_without_host_drain();
+                rig.frame();
+            }
             let cell = rig.slot();
             cell.lock().unwrap().pause();
-            if owned {
-                cell.lock()
-                    .unwrap()
-                    .restore_interacts(vec![InteractReq::GatherRun {
-                        request_id: 7,
-                        settings: Arc::new(serde_json::Map::new()),
-                    }]);
-                rig.drain_host();
-            }
             assert_eq!(cell.lock().unwrap().api_owns_foreground(), owned);
 
-            let channel = "rs2b0t:kq:v1:gather-api,bob,carol,dave";
             let rows = vec![
-                InteractReq::ChannelOpen {
-                    channel_id: 1,
-                    name: channel.into(),
-                },
-                InteractReq::ChannelPost {
-                    channel_id: 1,
-                    name: channel.into(),
-                    data: script::channel::encode(&serde_json::json!({"proof": "paused"})).unwrap(),
-                },
-                InteractReq::ChannelClose {
-                    channel_id: 1,
-                    name: channel.into(),
-                },
                 InteractReq::InspectRoute {
                     x: rig.tile.x + 1,
                     z: rig.tile.z,
@@ -713,22 +696,18 @@ fn paused_gather_seat_preserves_non_game_rows_until_resume_in_every_frame_state(
                 },
                 InteractReq::SetCameraYaw { yaw: 777 },
             ];
-            cell.lock().unwrap().restore_interacts(rows.clone());
-            let broker = ChannelBroker::default();
-            let sender = broker.slot(SLOT);
+            cell.lock().unwrap().restore_interacts(rows);
             let before_yaw = rig.client.orbit_camera_yaw;
-            script_observe_cached_with_channels(
+            script_observe_cached(
                 &mut rig.client,
                 SLOT,
                 up,
-                true,
                 true,
                 rig.tick,
                 Some((rig.tile.x, rig.tile.z, rig.tile.level)),
                 None,
                 None,
                 has_snapshot.then_some(&rig.snapshot),
-                None,
                 None,
                 Some(rig.names.as_ref()),
                 &rig.scripts,
@@ -741,25 +720,16 @@ fn paused_gather_seat_preserves_non_game_rows_until_resume_in_every_frame_state(
                 None,
                 Some(Arc::clone(&rig.cache)),
                 Some(Arc::clone(&rig.names)),
-                Some(&sender),
-                BrokerWorld::Local,
                 Some(&mut rig.policy),
-                None,
             );
             assert_eq!(cell.lock().unwrap().state(), script::RunState::Paused);
             assert_eq!(rig.client.orbit_camera_yaw, before_yaw);
-            let retained = cell.lock().unwrap().drain_interacts();
-            assert_eq!(
-                retained, rows,
-                "Pause must retain channel, inspect and camera rows in order: \
-                 owned={owned}, up={up}, hold={hold}, snapshot={has_snapshot}"
-            );
-            cell.lock().unwrap().restore_interacts(retained);
+
             cell.lock().unwrap().resume();
             rig.frame();
             assert_eq!(
                 rig.client.orbit_camera_yaw, 777,
-                "the retained camera write must dispatch after Resume"
+                "the host row left queued during Pause dispatches after Resume"
             );
             cell.lock().unwrap().stop();
         }
@@ -767,29 +737,11 @@ fn paused_gather_seat_preserves_non_game_rows_until_resume_in_every_frame_state(
 }
 
 #[test]
-fn api_foreground_edges_drop_paused_game_rows_but_restore_unowned_rows() {
-    let mut rig = GatherReconnectRig::with_source(QUIET_SOURCE);
-    rig.isolate_tick_without_host_drain();
-    rig.frame();
-    assert_eq!(
-        rig.slot().lock().unwrap().state(),
-        script::RunState::Running
-    );
-    let GatherReconnectRig {
-        tile: here,
-        snapshot,
-        mut client,
-        _listener,
-        cache,
-        names,
-        scripts,
-        cheats,
-        navs,
-        mut policy,
-        ..
-    } = rig;
-
-    let cell = script_slot(&scripts, SLOT).expect("Load slot");
+fn api_foreground_edges_drop_owned_rows_and_restore_unowned_paused_rows() {
+    let mut unowned = GatherReconnectRig::with_source(QUIET_SOURCE);
+    unowned.isolate_tick_without_host_drain();
+    unowned.frame();
+    let cell = unowned.slot();
     let held = || script::shim::InteractReq::Held {
         name: "Logs".into(),
         action: "Drop".into(),
@@ -800,115 +752,93 @@ fn api_foreground_edges_drop_paused_game_rows_but_restore_unowned_rows() {
 
     cell.lock().unwrap().pause();
     cell.lock().unwrap().restore_interacts(vec![held()]);
-    let paused_unowned = observe_frame(
-        &mut client,
-        1,
-        here,
-        &snapshot,
-        &scripts,
-        &cheats,
-        &navs,
-        &cache,
-        &names,
-        &mut policy,
-    );
-    assert_eq!(
-        paused_unowned
-            .iter()
-            .filter(|opcode| **opcode == held_op)
-            .count(),
-        0,
-        "Pause keeps an unowned game row queued"
+    let paused_unowned = unowned.frame();
+    assert!(
+        !paused_unowned.contains(&held_op),
+        "Pause holds an unowned game row without dispatching it"
     );
     assert_eq!(cell.lock().unwrap().state(), script::RunState::Paused);
     cell.lock().unwrap().resume();
-    let resumed_unowned = observe_frame(
-        &mut client,
-        2,
-        here,
-        &snapshot,
-        &scripts,
-        &cheats,
-        &navs,
-        &cache,
-        &names,
-        &mut policy,
-    );
+    let resumed_unowned = unowned.frame();
     assert_eq!(
         resumed_unowned
             .iter()
             .filter(|opcode| **opcode == held_op)
             .count(),
         1,
-        "unowned paused rows retain their order and dispatch on Resume"
-    );
-
-    cell.lock().unwrap().pause();
-    cell.lock().unwrap().restore_interacts(vec![
-        script::shim::InteractReq::GatherRun {
-            request_id: 7,
-            settings: Arc::new(serde_json::Map::new()),
-        },
-        held(),
-    ]);
-    let paused_run_edge = observe_frame(
-        &mut client,
-        3,
-        here,
-        &snapshot,
-        &scripts,
-        &cheats,
-        &navs,
-        &cache,
-        &names,
-        &mut policy,
-    );
-    assert!(
-        !paused_run_edge.contains(&held_op),
-        "same-batch game row is dropped when paused control drain admits Gather"
-    );
-    assert!(cell.lock().unwrap().api_owns_foreground());
-
-    cell.lock().unwrap().restore_interacts(vec![
-        script::shim::InteractReq::GatherStop { request_id: 7 },
-        held(),
-    ]);
-    let paused_stop_edge = observe_frame(
-        &mut client,
-        4,
-        here,
-        &snapshot,
-        &scripts,
-        &cheats,
-        &navs,
-        &cache,
-        &names,
-        &mut policy,
-    );
-    assert!(
-        !paused_stop_edge.contains(&held_op),
-        "same-batch game row is dropped when paused control drain stops Gather"
-    );
-    assert!(!cell.lock().unwrap().api_owns_foreground());
-
-    cell.lock().unwrap().resume();
-    let resumed_after_stop = observe_frame(
-        &mut client,
-        5,
-        here,
-        &snapshot,
-        &scripts,
-        &cheats,
-        &navs,
-        &cache,
-        &names,
-        &mut policy,
-    );
-    assert!(
-        !resumed_after_stop.contains(&held_op),
-        "a row dropped on the Stop edge is never replayed after Resume"
+        "the unowned row dispatches once after Resume"
     );
     cell.lock().unwrap().stop();
+
+    let mut rig = GatherReconnectRig::with_log_slots(CLIENT_SOURCE, 1, None);
+    rig.queue_start();
+    let start_edge = rig.frame();
+    assert!(
+        !start_edge.contains(&held_op),
+        "a game row sharing the typed start batch is dropped by the admitted seat"
+    );
+    assert!(rig.slot().lock().unwrap().api_owns_foreground());
+
+    let stop_deadline = Instant::now() + Duration::from_secs(10);
+    let token = loop {
+        let page = rig.probe("globalThis.__lastPage && globalThis.__lastPage.token");
+        if let Some(token) = page.as_u64() {
+            break token;
+        }
+        rig.frame();
+        assert!(
+            Instant::now() < stop_deadline,
+            "typed Gather start did not publish its page"
+        );
+    };
+    // The page may publish its token before the compiled family enters
+    // Running. Emit and drain the live Held row while the seat still owns
+    // foreground; otherwise a late page could first emit it after Stop.
+    let live_deadline = Instant::now() + Duration::from_secs(10);
+    while rig.probe("globalThis.__liveHeldSent === true") != true {
+        let in_seat = rig.frame();
+        assert!(!in_seat.contains(&held_op), "the live row is seat-filtered");
+        assert!(
+            Instant::now() < live_deadline,
+            "Gather did not reach Running"
+        );
+    }
+    let in_seat = rig.frame();
+    assert!(!in_seat.contains(&held_op), "the live row is seat-filtered");
+    assert!(rig.slot().lock().unwrap().api_owns_foreground());
+    rig.probe("globalThis.__stop = true");
+    rig.isolate_tick_without_host_drain();
+    let stop_edge = rig.frame();
+    assert!(
+        !stop_edge.contains(&held_op),
+        "a game row sharing typed Stop is dropped before host dispatch"
+    );
+    assert!(!rig.slot().lock().unwrap().api_owns_foreground());
+
+    rig.isolate_tick_without_host_drain();
+    assert!(rig.probe("globalThis.__afterStopSent === true") == true);
+    let resumed_after_stop = rig.frame();
+    assert_eq!(
+        resumed_after_stop
+            .iter()
+            .filter(|opcode| **opcode == held_op)
+            .count(),
+        1,
+        "a later unowned row dispatches after Stop"
+    );
+    let result_deadline = Instant::now() + Duration::from_secs(10);
+    while rig.probe("globalThis.__runResult").is_null() {
+        rig.frame();
+        assert!(
+            Instant::now() < result_deadline,
+            "typed Stop did not settle Gather"
+        );
+    }
+    let result = rig.probe("globalThis.__runResult");
+    assert_eq!(result["kind"], "done");
+    assert_eq!(result["value"]["end"], "stopped");
+    assert_eq!(result["value"]["token"], token);
+    assert!(rig.probe("globalThis.__lastPage === null") == true);
 }
 
 const RECONNECT_SOURCE: &str = r#"
@@ -939,12 +869,6 @@ export function tick(api) {
 }
 "#;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GatherControl {
-    Run(u64),
-    Stop(u64),
-}
-
 struct GatherReconnectRig {
     tile: WorldTile,
     snapshot: GameSnapshot,
@@ -957,24 +881,66 @@ struct GatherReconnectRig {
     navs: Arc<Mutex<HashMap<String, NavBot>>>,
     policy: host::ScriptRunPolicy,
     tick: u64,
+    external_session: api::identity::SessionKey,
+    service_arm: Option<Arc<SlotArm>>,
 }
 
 impl GatherReconnectRig {
     fn new() -> Self {
-        Self::with_source(RECONNECT_SOURCE)
+        Self::with_empty_inventory(RECONNECT_SOURCE)
     }
 
     fn with_source(source: &str) -> Self {
+        Self::with_log_slots(source, 28, None)
+    }
+
+    fn with_empty_inventory(source: &str) -> Self {
+        Self::with_log_slots(source, 0, None)
+    }
+
+    fn with_real_session_gate(source: &str) -> Self {
+        let arm = SlotArm::new(7, true);
+        arm.complete_login_for_test();
+        let session = arm.session_key().expect("owner began a session");
+        arm.session_gate()
+            .observe(session, &api::lifecycle::SessionEventOut::SceneReady)
+            .expect("owner scene is ready");
+        Self::with_log_slots(source, 0, Some(arm))
+    }
+
+    fn with_log_slots(source: &str, log_slots: i32, service_arm: Option<Arc<SlotArm>>) -> Self {
         let (selected, tree_id, tile) = selected_tree();
         let (client, listener) = attached_client(tile);
-        let snapshot = gather_snapshot(tree_id, tile, &client);
+        let snapshot = gather_snapshot(tree_id, tile, &client, log_slots);
         let cache = Arc::clone(&client.cache);
         let names = Arc::new(api::obj_names::ObjNames::from_objs(&cache.objs));
         let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+        if let Some(arm) = &service_arm {
+            let incarnation = arm
+                .session_key()
+                .expect("owner began a session")
+                .slot()
+                .incarnation()
+                .get();
+            let mut slot = script::SlotScript::new();
+            slot.bind_incarnation(incarnation);
+            scripts
+                .lock()
+                .unwrap()
+                .insert(SLOT.to_string(), Arc::new(Mutex::new(slot)));
+        }
         start_source(&scripts, selected, source);
+        let external_session = api::identity::SessionKey::first(
+            script_slot(&scripts, SLOT)
+                .expect("bound Load slot")
+                .lock()
+                .unwrap()
+                .slot_key_for_test()
+                .expect("host-assigned incarnation"),
+        );
         Self {
             tile,
             snapshot,
@@ -986,6 +952,8 @@ impl GatherReconnectRig {
             cheats,
             navs,
             policy: host::ScriptRunPolicy::default(),
+            external_session,
+            service_arm,
             tick: 1,
         }
     }
@@ -998,9 +966,9 @@ impl GatherReconnectRig {
         probe(&self.scripts, expression)
     }
 
-    /// Let the real isolate tick after a host keyframe, but leave its emitted
-    /// batch queued. This is the reconnect seam: the boundary, not a mock,
-    /// drops the queued rows before the next host drain.
+    /// Tick the real isolate after a host keyframe but leave its typed seat
+    /// batch queued for explicit reconnect/admission ordering. Do not set the
+    /// host-side hold bit: the seat must still advance terminal state.
     fn isolate_tick_without_host_drain(&mut self) -> (bool, bool) {
         let tick = self.tick;
         self.tick += 1;
@@ -1052,10 +1020,7 @@ impl GatherReconnectRig {
             inv: None,
             snapshot: Some(snapshot),
             obj_names: Some(names.as_ref()),
-            compiled: script::CompiledTick {
-                hold: true,
-                ..Default::default()
-            },
+            compiled: script::CompiledTick::default(),
         };
         slot.on_game_tick(&mut context);
         drop(slot);
@@ -1075,50 +1040,14 @@ impl GatherReconnectRig {
             &self.cache,
             &self.names,
             &mut self.policy,
+            self.service_arm.as_deref(),
         );
         self.tick += 1;
         let _ = self.probe("undefined");
         packets
     }
 
-    /// Capture actual isolate output for assertions, then restore that exact
-    /// batch so the reconnect boundary can be the operation that loses it.
-    fn queued_controls(&self) -> Vec<GatherControl> {
-        let cell = self.slot();
-        let mut slot = cell.lock().unwrap();
-        let batch = slot.drain_interacts();
-        let controls = batch
-            .iter()
-            .filter_map(|request| match request {
-                script::shim::InteractReq::GatherRun { request_id, .. } => {
-                    Some(GatherControl::Run(*request_id))
-                }
-                script::shim::InteractReq::GatherStop { request_id } => {
-                    Some(GatherControl::Stop(*request_id))
-                }
-                _ => None,
-            })
-            .collect();
-        slot.restore_interacts(batch);
-        controls
-    }
-
-    fn wait_for_controls(&self) -> Vec<GatherControl> {
-        let deadline = Instant::now() + Duration::from_secs(60);
-        loop {
-            let controls = self.queued_controls();
-            if !controls.is_empty() {
-                return controls;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "real Gather waiter did not emit a host control"
-            );
-            let _ = self.probe("true");
-            std::thread::yield_now();
-        }
-    }
-
+    /// Exercise the host's typed-seat drain; only ordinary host rows escape it.
     fn drain_host(&self) -> (Vec<script::shim::InteractReq>, bool) {
         let cell = self.slot();
         let mut slot = cell.lock().unwrap();
@@ -1130,14 +1059,16 @@ impl GatherReconnectRig {
         )
     }
 
-    fn reconnect(&self) {
+    fn reconnect(&mut self) {
         let cell = self.slot();
         let mut slot = cell.lock().unwrap();
         assert!(
             slot.reconnect_session_work(),
             "active Load work survives an unexpected reconnect"
         );
+        self.external_session = self.external_session.next().expect("host session epoch");
         slot.on_is_up(true);
+        slot.align_seat_session(Some(self.external_session));
         assert_eq!(slot.state(), script::RunState::Running);
     }
 
@@ -1169,21 +1100,60 @@ impl GatherReconnectRig {
         );
     }
 
-    fn start_un_drained(&mut self) -> u64 {
+    fn queue_start(&mut self) {
         let _ = self.probe("globalThis.__launch = true");
         self.isolate_tick_without_host_drain();
-        match self.wait_for_controls().as_slice() {
-            [GatherControl::Run(token)] => *token,
-            controls => panic!("initial real GatherRun batch: {controls:?}"),
+    }
+
+    fn wait_for_start_page(&mut self) -> u64 {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            self.frame();
+            let token = self.probe("globalThis.__page && globalThis.__page.token");
+            if let Some(token) = token.as_u64() {
+                assert!(
+                    self.slot().lock().unwrap().api_owns_foreground(),
+                    "the public Gather page belongs to the admitted host seat"
+                );
+                return token;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "typed Gather start did not publish its host page: page={:?}, result={:?}, native={:?}, logs={:?}",
+                self.probe("globalThis.__page"),
+                self.probe("globalThis.__runResult"),
+                self.slot().lock().unwrap().native_status(),
+                self.slot().lock().unwrap().drain_logs(),
+            );
         }
     }
 
+    fn start_through_host(&mut self) -> u64 {
+        self.queue_start();
+        let (rows, owned) = self.drain_host();
+        assert!(
+            rows.is_empty(),
+            "typed Gather controls do not leak as host rows"
+        );
+        assert!(owned, "the host admits the isolate's typed Gather start");
+        self.wait_for_start_page()
+    }
+
     fn settled_result(&self, token: u64) -> serde_json::Value {
+        let result = self.settled_result_from_wire();
+        assert_eq!(result["value"]["token"], token, "terminal token: {result}");
+        result
+    }
+
+    fn settled_result_from_wire(&self) -> serde_json::Value {
         assert_eq!(self.probe("globalThis.__settleCount"), 1);
         let result = self.probe("globalThis.__runResult");
         assert_eq!(result["kind"], "done", "Gather waiter settled: {result}");
         assert_eq!(result["value"]["end"], "stopped", "terminal: {result}");
-        assert_eq!(result["value"]["token"], token, "terminal token: {result}");
+        assert!(
+            result["value"]["token"].as_u64().is_some(),
+            "terminal retains its public request token: {result}"
+        );
         result
     }
 
@@ -1204,39 +1174,32 @@ impl GatherReconnectRig {
 }
 
 #[test]
-fn gather_reconnect_before_start_drain_reemits_same_token_once() {
+fn gather_reconnect_before_start_drain_replays_pending_typed_start_once() {
     let mut rig = GatherReconnectRig::new();
-    let token = rig.start_un_drained();
-
-    rig.reconnect();
-    let (rows, owned) = rig.drain_host();
-    assert!(
-        rows.is_empty(),
-        "reconnect discarded the queued pre-start row"
-    );
-    assert!(!owned);
+    rig.queue_start();
     assert!(!rig.slot().lock().unwrap().api_owns_foreground());
 
+    rig.reconnect();
+    assert!(!rig.slot().lock().unwrap().api_owns_foreground());
     rig.isolate_tick_without_host_drain();
-    assert_eq!(
-        rig.wait_for_controls(),
-        vec![GatherControl::Run(token)],
-        "the real waiter carries its unacknowledged start with the same token"
-    );
     let (rows, owned) = rig.drain_host();
     assert!(rows.is_empty());
     assert!(
         owned,
-        "the re-emitted control is admitted through host drain"
+        "the reconnect-carried typed start is admitted by the host"
     );
+
+    let token = rig.wait_for_start_page();
     rig.expect_running_page(token);
+    assert_eq!(rig.probe("globalThis.__settleCount"), 0);
     rig.stop_and_settle(token);
+    assert_eq!(rig.probe("globalThis.__settleCount"), 1);
 }
 
 #[test]
 fn gather_reconnect_during_preparation_keeps_one_waiter_and_seat() {
     let mut rig = GatherReconnectRig::new();
-    let token = rig.start_un_drained();
+    rig.queue_start();
     let (rows, owned) = rig.drain_host();
     assert!(rows.is_empty());
     assert!(owned);
@@ -1246,7 +1209,7 @@ fn gather_reconnect_during_preparation_keeps_one_waiter_and_seat() {
         assert!(slot.api_owns_foreground());
         assert!(
             slot.native_status().is_none(),
-            "the real host seat has admitted GatherRun but has not installed its preparation"
+            "the typed start is admitted before Gatherer preparation installs"
         );
     }
 
@@ -1258,12 +1221,12 @@ fn gather_reconnect_during_preparation_keeps_one_waiter_and_seat() {
         assert!(slot.native_status().is_none());
     }
     rig.isolate_tick_without_host_drain();
+    let token = rig
+        .probe("globalThis.__page && globalThis.__page.token")
+        .as_u64()
+        .expect("reconnect keyframe exposes the admitted Gather token");
     assert_eq!(rig.probe("globalThis.__page.phase"), "preparing");
-    assert_eq!(rig.probe("globalThis.__page.token"), token);
-    assert!(
-        rig.queued_controls().is_empty(),
-        "the retained preparing keyframe acknowledges the waiter without replaying its start"
-    );
+    assert!(rig.slot().lock().unwrap().api_owns_foreground());
     rig.expect_running_page(token);
     assert_eq!(rig.probe("globalThis.__settleCount"), 0);
     assert_eq!(
@@ -1277,10 +1240,7 @@ fn gather_reconnect_during_preparation_keeps_one_waiter_and_seat() {
 #[test]
 fn gather_reconnect_after_install_rekeys_same_token_and_keeps_waiter_pending() {
     let mut rig = GatherReconnectRig::new();
-    let token = rig.start_un_drained();
-    let (rows, owned) = rig.drain_host();
-    assert!(rows.is_empty());
-    assert!(owned);
+    let token = rig.start_through_host();
     rig.expect_running_page(token);
     assert_eq!(rig.probe("globalThis.__page.token"), token);
     let before = rig.native_run();
@@ -1297,22 +1257,73 @@ fn gather_reconnect_after_install_rekeys_same_token_and_keeps_waiter_pending() {
     rig.isolate_tick_without_host_drain();
     assert_eq!(rig.probe("globalThis.__page.token"), token);
     assert_eq!(rig.probe("globalThis.__settleCount"), 0);
-    assert!(
-        rig.queued_controls().is_empty(),
-        "an acknowledged waiter does not re-emit GatherRun or settle on reconnect"
-    );
-    let (rows, _) = rig.drain_host();
+    let (rows, owned) = rig.drain_host();
     assert!(rows.is_empty());
+    assert!(
+        owned,
+        "the acknowledged Gather session stays foreground-owned"
+    );
+    assert_eq!(rig.native_run().run, before.run);
     rig.stop_and_settle(token);
+}
+
+#[test]
+fn load_observer_rearms_kept_seat_from_real_owner_gate_after_reconnect() {
+    let mut rig = GatherReconnectRig::with_real_session_gate(RECONNECT_SOURCE);
+    let token = rig.start_through_host();
+    rig.expect_running_page(token);
+    let before = rig.native_run();
+
+    let cell = rig.slot();
+    {
+        let mut slot = cell.lock().unwrap();
+        // A down observation can precede the owner's boundary notification.
+        // Its local work epoch is not the newly minted F0 session epoch.
+        slot.on_is_up(false);
+        assert!(slot.reconnect_session_work());
+        slot.on_is_up(true);
+        // Do not align_seat_session here: the observer must get the
+        // replacement execution fence from the real owner on its next tick.
+    }
+    let arm = rig.service_arm.as_ref().expect("real slot owner");
+    let old_session = arm.session_key().expect("first owner session");
+    arm.observe_session_exit(api::lifecycle::SessionEndCause::ConnectionLost, true);
+    arm.complete_login_for_test();
+    let next_session = arm.session_key().expect("replacement owner session");
+    assert_ne!(old_session, next_session);
+    arm.session_gate()
+        .observe(next_session, &api::lifecycle::SessionEventOut::SceneReady)
+        .expect("replacement scene is ready");
+
+    rig.frame();
+    assert!(rig.slot().lock().unwrap().api_owns_foreground());
+    assert_eq!(rig.native_run().run, before.run);
+    assert_eq!(rig.native_run().session_key(), Some(next_session));
+    rig.stop_and_settle(token);
+    rig.probe(
+        "globalThis.__launch=false; globalThis.__run=null; globalThis.__stop=false; globalThis.__stopSent=false; globalThis.__settleCount=0; true",
+    );
+    let next_token = rig.start_through_host();
+    assert_ne!(next_token, token, "the new Start has its own request id");
+    rig.expect_running_page(next_token);
+    rig.stop_and_settle(next_token);
+    assert!(
+        !rig
+            .slot()
+            .lock()
+            .unwrap()
+            .drain_logs()
+            .iter()
+            .any(|log| log.contains("seat batch without an execution fence")
+                || log.contains("dropped malformed seat batch run stamp")),
+        "the Load observer must rearm the execution fence and the isolate's Start stamp after reconnect"
+    );
 }
 
 #[test]
 fn manual_movement_takes_over_a_gather_session_with_no_walk_in_flight() {
     let mut rig = GatherReconnectRig::new();
-    let token = rig.start_un_drained();
-    let (rows, owned) = rig.drain_host();
-    assert!(rows.is_empty());
-    assert!(owned);
+    let token = rig.start_through_host();
     rig.expect_running_page(token);
     assert!(
         !rig.slot().lock().unwrap().live_walking_operation(),
@@ -1369,24 +1380,18 @@ fn manual_movement_takes_over_a_gather_session_with_no_walk_in_flight() {
 #[test]
 fn gather_reconnect_terminal_before_boundary_settles_once_across_keyframes() {
     let mut rig = GatherReconnectRig::new();
-    let token = rig.start_un_drained();
-    let (rows, owned) = rig.drain_host();
-    assert!(rows.is_empty());
-    assert!(owned);
+    let token = rig.start_through_host();
     rig.expect_running_page(token);
 
     let _ = rig.probe("globalThis.__stop = true");
     rig.isolate_tick_without_host_drain();
-    assert_eq!(rig.queued_controls(), vec![GatherControl::Stop(token)]);
     let (rows, owned) = rig.drain_host();
     assert!(rows.is_empty());
-    assert!(owned, "the host admits the real Stop before the boundary");
+    assert!(!owned, "the real typed Stop releases the host seat");
     assert!(!rig.slot().lock().unwrap().api_owns_foreground());
     assert_eq!(rig.probe("globalThis.__settleCount"), 0);
 
-    rig.reconnect();
     rig.isolate_tick_without_host_drain();
-    assert_eq!(rig.probe("globalThis.__settleCount"), 1);
     rig.settled_result(token);
     for _ in 0..2 {
         rig.reconnect();
@@ -1398,37 +1403,36 @@ fn gather_reconnect_terminal_before_boundary_settles_once_across_keyframes() {
 #[test]
 fn gather_reconnect_lost_stop_reemits_stop_without_restarting_seat() {
     let mut rig = GatherReconnectRig::new();
-    let token = rig.start_un_drained();
-    let (rows, owned) = rig.drain_host();
-    assert!(rows.is_empty());
-    assert!(owned);
+    let token = rig.start_through_host();
     rig.expect_running_page(token);
     let before = rig.native_run();
 
     let _ = rig.probe("globalThis.__stop = true");
     rig.isolate_tick_without_host_drain();
-    assert_eq!(
-        rig.queued_controls(),
-        vec![GatherControl::Stop(token)],
-        "the actual Stop row is queued but not admitted"
+    assert!(
+        rig.slot().lock().unwrap().api_owns_foreground(),
+        "an unconsumed Stop cannot release the host seat before its batch is dispatched"
     );
     rig.reconnect();
     assert_eq!(rig.native_run().session, before.session.wrapping_add(1));
-    let (rows, owned) = rig.drain_host();
-    assert!(rows.is_empty(), "reconnect dropped the old Stop row");
-    assert!(owned, "the running Gatherer seat survives the lost Stop");
-
-    rig.isolate_tick_without_host_drain();
-    assert_eq!(
-        rig.wait_for_controls(),
-        vec![GatherControl::Stop(token)],
-        "the acknowledged waiter carries only Stop, with the same token"
-    );
-    let (rows, owned) = rig.drain_host();
-    assert!(rows.is_empty());
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let (rows, owned) = rig.drain_host();
+        assert!(rows.is_empty(), "the typed Stop has no ordinary host row");
+        if !owned {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the carried Stop did not release the original Gatherer seat"
+        );
+        rig.isolate_tick_without_host_drain();
+        let _ = rig.probe("true");
+        std::thread::yield_now();
+    }
     assert!(
-        owned,
-        "the re-emitted Stop tears down the seat through host drain"
+        rig.slot().lock().unwrap().native_status().is_none(),
+        "Stop removes the original Gatherer without admitting a replacement"
     );
     assert!(!rig.slot().lock().unwrap().api_owns_foreground());
     rig.isolate_tick_without_host_drain();
@@ -1436,46 +1440,94 @@ fn gather_reconnect_lost_stop_reemits_stop_without_restarting_seat() {
 }
 
 #[test]
+fn guardian_hold_keeps_isolate_seat_batch_backlog_bounded() {
+    let mut rig = GatherReconnectRig::new();
+    let token = rig.start_through_host();
+    rig.expect_running_page(token);
+    let _ = rig.probe("globalThis.__stop = true");
+    rig.slot().lock().unwrap().seat_guardian_hold(true);
+    for tick in 0..40 {
+        rig.isolate_tick_without_host_drain();
+        if tick % 2 == 0 {
+            let _ = rig.drain_host();
+        } else {
+            // Paused guardian frames do not drain host interactions.
+            rig.slot().lock().unwrap().retain_held_seat_batches();
+        }
+        let pending = rig.slot().lock().unwrap().seat_batch_backlog();
+        assert!(
+            pending <= 2,
+            "guardian hold must not retain one seat batch per tick: tick={tick}, pending={pending}"
+        );
+    }
+    rig.slot().lock().unwrap().seat_guardian_hold(false);
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while rig.slot().lock().unwrap().api_owns_foreground() {
+        let _ = rig.drain_host();
+        if !rig.slot().lock().unwrap().api_owns_foreground() {
+            break;
+        }
+        assert!(Instant::now() < deadline, "held Stop did not dispatch");
+        rig.isolate_tick_without_host_drain();
+        let _ = rig.probe("true");
+    }
+    assert_eq!(rig.slot().lock().unwrap().seat_batch_backlog(), 0);
+}
+
+#[test]
+fn paused_only_guardian_frames_keep_seat_backlog_bounded() {
+    let mut rig = GatherReconnectRig::new();
+    let token = rig.start_through_host();
+    rig.expect_running_page(token);
+    let _ = rig.probe("globalThis.__stop = true");
+    rig.slot().lock().unwrap().seat_guardian_hold(true);
+    let mut max_pending = 0;
+    for _ in 0..40 {
+        rig.isolate_tick_without_host_drain();
+        rig.slot().lock().unwrap().retain_held_seat_batches();
+        max_pending = max_pending.max(rig.slot().lock().unwrap().seat_batch_backlog());
+    }
+    assert!(
+        max_pending <= 2,
+        "paused-only guardian frames must retain bounded batches: {max_pending}"
+    );
+    rig.slot().lock().unwrap().seat_guardian_hold(false);
+}
+
+#[test]
 fn gather_reconnect_lost_start_and_stop_replays_pair_then_one_terminal() {
     let mut rig = GatherReconnectRig::new();
     let _ = rig.probe("globalThis.__pair = true");
     rig.isolate_tick_without_host_drain();
-    let first = rig.wait_for_controls();
-    let [GatherControl::Run(token), GatherControl::Stop(stop_token)] = first.as_slice() else {
-        panic!("initial real GatherRun+GatherStop batch: {first:?}");
-    };
-    let token = *token;
-    assert_eq!(
-        *stop_token, token,
-        "paired Stop targets its real start token"
-    );
-
-    rig.reconnect();
-    let (rows, owned) = rig.drain_host();
-    assert!(rows.is_empty(), "boundary loses both pre-drain controls");
-    assert!(!owned);
     assert!(!rig.slot().lock().unwrap().api_owns_foreground());
 
+    rig.reconnect();
+    assert!(!rig.slot().lock().unwrap().api_owns_foreground());
     rig.isolate_tick_without_host_drain();
-    assert_eq!(
-        rig.wait_for_controls(),
-        vec![GatherControl::Run(token), GatherControl::Stop(token)],
-        "the live waiter replays its same-token Run+Stop pair in order"
-    );
     let (rows, owned) = rig.drain_host();
     assert!(rows.is_empty());
     assert!(
-        owned,
-        "the host drain observes the transient ownership edge"
+        !owned,
+        "the same-batch typed start and release leave no live seat"
     );
     assert!(!rig.slot().lock().unwrap().api_owns_foreground());
 
-    rig.isolate_tick_without_host_drain();
-    rig.settled_result(token);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while rig.probe("globalThis.__settleCount") == 0 {
+        rig.frame();
+        assert!(
+            Instant::now() < deadline,
+            "the replayed typed start and release did not settle"
+        );
+    }
+    let result = rig.settled_result_from_wire();
+    let token = result["value"]["token"]
+        .as_u64()
+        .expect("stopped terminal carries its public token");
     for _ in 0..2 {
         rig.reconnect();
         rig.isolate_tick_without_host_drain();
-        rig.settled_result(token);
+        assert_eq!(rig.settled_result(token), result);
     }
 }
 
@@ -1484,9 +1536,7 @@ fn recreated_load_isolates_never_inherit_old_seat_pages_or_authority() {
     for boundary in ["stop", "replace", "watchdog", "remove"] {
         for terminal_before_boundary in [false, true] {
             let mut rig = GatherReconnectRig::new();
-            let token = rig.start_un_drained();
-            let (rows, owned) = rig.drain_host();
-            assert!(rows.is_empty() && owned);
+            let token = rig.start_through_host();
             rig.expect_running_page(token);
             let old_run = rig.native_run();
             let selected = rig.slot().lock().unwrap().compiled_game_data().unwrap();
@@ -1518,11 +1568,12 @@ fn recreated_load_isolates_never_inherit_old_seat_pages_or_authority() {
             let authority = old_action.authority();
             assert!(authority.live());
             if terminal_before_boundary {
-                rig.slot().lock().unwrap().restore_interacts(vec![
-                    script::shim::InteractReq::GatherStop { request_id: token },
-                ]);
-                let (_, owned) = rig.drain_host();
-                assert!(owned);
+                let _ = rig.probe("globalThis.__stop = true");
+                rig.isolate_tick_without_host_drain();
+                let (rows, owned) = rig.drain_host();
+                assert!(rows.is_empty());
+                assert!(!owned);
+                assert!(!rig.slot().lock().unwrap().api_owns_foreground());
                 assert_eq!(rig.isolate_tick_without_host_drain(), (false, true));
                 rig.settled_result(token);
             }
@@ -1584,10 +1635,8 @@ fn recreated_load_isolates_never_inherit_old_seat_pages_or_authority() {
             );
             assert!(rig.probe("globalThis.__page === null") == true);
             assert_eq!(rig.probe("globalThis.__settleCount"), 0);
-            let next_token = rig.start_un_drained();
-            assert_ne!(next_token, token);
-            let (rows, owned) = rig.drain_host();
-            assert!(rows.is_empty() && owned);
+            // Request tokens are isolate-local and may be reused after recreate.
+            let next_token = rig.start_through_host();
             rig.expect_running_page(next_token);
             assert_ne!(
                 rig.native_run(),
@@ -1605,8 +1654,7 @@ fn recreated_load_isolates_never_inherit_old_seat_pages_or_authority() {
 }
 
 #[test]
-fn progress_supersede_across_reconnect_drops_first_queue_admits_second_and_settles_once() {
-    use script::shim::InteractReq;
+fn progress_pending_across_reconnect_completes_once_then_admits_next_session() {
     let mut rig = GatherReconnectRig::with_source(
         r#"export const apiVersion = 2;
 export function tick(api) { globalThis.__api = api; }"#,
@@ -1624,60 +1672,40 @@ export function tick(api) { globalThis.__api = api; }"#,
         "globalThis.__firstSettles=0; __api.questProgress({quest:'cook'}).then(out=>{globalThis.__first=out; __firstSettles++}); true",
     );
     rig.isolate_tick_without_host_drain();
-    let queued = |rig: &GatherReconnectRig| {
-        let cell = rig.slot();
-        let mut slot = cell.lock().unwrap();
-        let batch = slot.drain_interacts();
-        let tokens: Vec<_> = batch
-            .iter()
-            .filter_map(|row| {
-                if let InteractReq::ProgressRead { request_id, .. } = row {
-                    Some(*request_id)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        slot.restore_interacts(batch);
-        tokens
-    };
-    let deadline = Instant::now() + Duration::from_secs(60);
-    let first_token = loop {
-        let tokens = queued(&rig);
-        if tokens.len() == 1 {
-            break tokens[0];
-        }
-        assert!(Instant::now() < deadline);
-        rig.probe("true");
-        std::thread::yield_now();
-    };
-    rig.reconnect();
-    assert!(
-        queued(&rig).is_empty(),
-        "actual reconnect drops the first queued read"
-    );
+
     assert!(!rig.slot().lock().unwrap().api_owns_foreground());
+
+    rig.reconnect();
+    assert!(!rig.slot().lock().unwrap().api_owns_foreground());
+    rig.isolate_tick_without_host_drain();
+    let (rows, owned) = rig.drain_host();
+    assert!(rows.is_empty());
+    assert!(owned, "the host admits the carried typed progress request");
+    let first_deadline = Instant::now() + Duration::from_secs(60);
+    while rig.probe("globalThis.__first || null").is_null() {
+        rig.frame();
+        assert!(
+            Instant::now() < first_deadline,
+            "carried progress waiter did not receive its host terminal"
+        );
+    }
+    let first = rig.probe("globalThis.__first");
+    assert_eq!(first["kind"], "done");
+    assert_eq!(first["value"]["end"], "done");
+    assert_eq!(first["value"]["token"], 1);
+    assert_eq!(first["value"]["row"]["stage"]["value"], "cook:2");
+    assert_eq!(rig.probe("globalThis.__firstSettles"), 1);
+
+    // Progress is a Session: a second root cannot supersede it while live.
+    // Once the first terminal is credited, the next request is admitted.
     rig.probe(
         "globalThis.__secondSettles=0; __api.questProgress({quest:'cook'}).then(out=>{globalThis.__second=out; __secondSettles++}); true",
     );
     rig.isolate_tick_without_host_drain();
-    let deadline = Instant::now() + Duration::from_secs(60);
-    let second_token = loop {
-        let tokens = queued(&rig);
-        if tokens.len() == 1 {
-            break tokens[0];
-        }
-        assert!(Instant::now() < deadline);
-        rig.probe("true");
-        std::thread::yield_now();
-    };
-    assert_ne!(first_token, second_token);
-    assert_eq!(
-        rig.probe("globalThis.__first"),
-        serde_json::json!({"kind":"aborted","reason":"superseded"})
-    );
     let (rows, owned) = rig.drain_host();
-    assert!(rows.is_empty() && owned);
+    assert!(rows.is_empty());
+    assert!(owned, "the host admits the next typed progress request");
+
     let deadline = Instant::now() + Duration::from_secs(60);
     while rig.probe("globalThis.__second || null").is_null() {
         rig.frame();
@@ -1687,16 +1715,14 @@ export function tick(api) { globalThis.__api = api; }"#,
     let terminal = rig.probe("globalThis.__second");
     assert_eq!(terminal["kind"], "done");
     assert_eq!(terminal["value"]["end"], "done");
-    assert_eq!(terminal["value"]["token"], second_token);
+    assert_eq!(terminal["value"]["token"], 2);
     assert_eq!(terminal["value"]["row"]["stage"]["value"], "cook:2");
     assert_eq!(rig.probe("globalThis.__firstSettles"), 1);
     assert_eq!(rig.probe("globalThis.__secondSettles"), 1);
+
     rig.reconnect();
     rig.isolate_tick_without_host_drain();
-    assert!(
-        queued(&rig).is_empty(),
-        "retained terminal cannot resurrect a read"
-    );
+    assert_eq!(rig.probe("globalThis.__second"), terminal);
     assert_eq!(rig.probe("globalThis.__secondSettles"), 1);
 }
 
@@ -1719,7 +1745,7 @@ export function tick(api) {
 fn active_gather_permission_rig(settings: serde_json::Value) -> GatherReconnectRig {
     let mut rig = GatherReconnectRig::with_source(WALK_PERMISSION_SOURCE);
     rig.probe(&format!("globalThis.__settings = {settings}; true"));
-    let token = rig.start_un_drained();
+    let token = rig.start_through_host();
     rig.expect_running_page(token);
     rig
 }

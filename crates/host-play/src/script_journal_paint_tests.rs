@@ -116,6 +116,7 @@ impl PaintRig {
             &self.navs,
             &None,
             hold,
+            hold,
             false,
             None,
             None,
@@ -123,6 +124,7 @@ impl PaintRig {
             None,
             None,
             super::super::script_channels::BrokerWorld::Unavailable,
+            None,
             None,
             None,
         )

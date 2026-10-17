@@ -2835,7 +2835,7 @@ export default class T extends TaskBot {
     );
 
     // The connection boundary: the host's own relog path.
-    iso.reset_session_work();
+    iso.reset_session_work(None);
 
     // The page still holds the row, and the adapter's own read still answers
     // from the machine's list — the reclaim outlived the relog.

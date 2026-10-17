@@ -237,7 +237,7 @@ export default class T extends TaskBot {
 
     // This is a real current in-isolate machine child, not a seat admission.
     // Keep the callback and child walk pending across the actual kept reset.
-    iso.reconnect_session_work();
+    iso.reconnect_session_work(None);
     let next = relog(&iso, &mut snap, last_tick + 1);
     assert!(
         walks(&iso.drain_interacts()).is_empty(),

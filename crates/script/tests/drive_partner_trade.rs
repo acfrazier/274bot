@@ -512,7 +512,7 @@ fn reset_ends_the_iteration_without_later_callbacks_or_sends() {
     tick(&iso, 1);
     take(&iso);
     iso.drain_interacts();
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     snap.tick = 2;
     snap.trade_offer_open = false;
     snap.trade_confirm_open = true;

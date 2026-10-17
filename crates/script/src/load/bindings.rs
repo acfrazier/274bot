@@ -726,9 +726,10 @@ pub(super) fn wire_runtime(
             },
         )
         .map_err(|e| format!("register canvas onpaint done: {e}"))?;
-    runtime
-        .eval::<()>(crate::shim::PRELUDE)
+    super::lineage_v8::eval::<()>(runtime, crate::shim::PRELUDE)
         .map_err(|e| format!("shim: {e}"))?;
+    super::lineage_v8::eval::<()>(runtime, INTERACT_CAPTURE_SCRIPT)
+        .map_err(|e| format!("interact capture: {e}"))?;
     super::run_policy_v8::install(runtime).map_err(|e| format!("run-policy v8: {e}"))?;
     super::recovery_hints_v8::install(runtime).map_err(|e| format!("recovery hints v8: {e}"))?;
     super::buyout_plan::install(runtime).map_err(|e| format!("buyout plan: {e}"))?;
@@ -771,8 +772,7 @@ pub(super) fn wire_runtime(
         "globalThis.__rs2b0t_host.content = {};",
         crate::shim::content_json(game_data.as_deref())
     );
-    runtime
-        .eval::<()>(content.as_str())
+    super::lineage_v8::eval::<()>(runtime, content.as_str())
         .map_err(|e| format!("content: {e}"))?;
     let bot = rustyscript::Module::new(crate::shim::BOT_MODULE, source);
     let main = match shape {
@@ -805,9 +805,7 @@ pub(super) fn wire_runtime(
     // Loading evaluates the modules, so a missing `tick`/default
     // export, an unresolvable import, or a syntax error surfaces
     // here, before any tick runs.
-    runtime
-        .load_modules(&main, side)
-        .map_err(|e| format!("load: {e}"))?;
+    super::lineage_v8::load_modules(runtime, &main, side).map_err(|e| format!("load: {e}"))?;
     Ok(())
 }
 
@@ -838,6 +836,78 @@ const r = tick(api);
 if (!r || typeof r.then !== 'function') return null;
 return Promise.resolve(r).then(() => null, (e) => String((e && e.message) || e));
 };
+"#;
+
+/// Bind one bounded append-only host queue before any user module runs.
+/// Compat V1 direct pushes and V2 API requests share the same CPED capture.
+const INTERACT_CAPTURE_SCRIPT: &str = r#"
+const pushInteractRows = globalThis.__rs2b0t_push_interact_rows;
+delete globalThis.__rs2b0t_push_interact_rows;
+const interactGet = Reflect.get;
+const interactSetPrototypeOf = Reflect.setPrototypeOf;
+const interactIsArray = Array.isArray;
+const interactArrayPrototype = Array.prototype;
+const InteractProxy = Proxy;
+const interactTargets = new WeakMap();
+function instrumentInteractQueue(rows) {
+  if (!interactIsArray(rows)) return rows;
+  if (interactTargets.has(rows)) return rows;
+  if (!interactSetPrototypeOf(rows, null)) throw new TypeError('interact queue setup failed');
+  const append = function(...items) {
+    return pushInteractRows(rows, items);
+  };
+  const proxy = new InteractProxy(rows, {
+    get(target, property, receiver) {
+      if (property === 'push') return append;
+      const value = interactGet(target, property, receiver);
+      return value === undefined
+        ? interactGet(interactArrayPrototype, property, receiver)
+        : value;
+    },
+    set() { throw new TypeError('interact queue is append-only'); },
+    deleteProperty() { throw new TypeError('interact queue is append-only'); },
+    defineProperty() { throw new TypeError('interact queue is append-only'); },
+    setPrototypeOf() { throw new TypeError('interact queue prototype is fixed'); },
+  });
+  interactTargets.set(proxy, rows);
+  return proxy;
+}
+let instrumentedHost;
+function host() {
+  if (instrumentedHost) return instrumentedHost;
+  const h = globalThis.__rs2b0t_host || (globalThis.__rs2b0t_host = { interact: [], log: [] });
+  let interact = instrumentInteractQueue(h.interact ?? []);
+  Object.defineProperty(h, 'interact', {
+    configurable: true,
+    enumerable: true,
+    get() { return interact; },
+    set(rows) {
+      if (!interactIsArray(rows) || rows.length !== 0) {
+        throw new TypeError('interact queue can only be reset to an empty array');
+      }
+      interact = instrumentInteractQueue([]);
+    },
+  });
+  // serde_v8 cannot deserialize a Proxy as an array. Take the real,
+  // instrumented backing array only after detaching it from the host queue.
+  Object.defineProperty(globalThis, '__rs2b0t_take_interact_rows', {
+    value() {
+      const rows = interactTargets.get(interact) ?? interact;
+      h.interact = [];
+      return rows;
+    },
+    writable: false,
+    configurable: false,
+  });
+  instrumentedHost = h;
+  return h;
+}
+host();
+Object.defineProperty(globalThis, '__rs2b0t_seat_host', {
+  value: host,
+  writable: false,
+  configurable: false,
+});
 "#;
 
 /// Explicit v2 wrapper: public NativeApi only. Does not grow shim policy.
@@ -891,9 +961,7 @@ const OPTIONAL = {
   'walk-near': ['allow_teleports','allow_wilderness','allow_bank_fetch','request_id'],
   'inspect-route': ['allow_teleports','allow_wilderness','allow_bank_fetch','avoid','request_id'],
 };
-function host() {
-  return globalThis.__rs2b0t_host || (globalThis.__rs2b0t_host = { interact: [], log: [] });
-}
+const host = globalThis.__rs2b0t_seat_host;
 const snapshotRootCache = new WeakMap();
 const snapshotNestedCache = new WeakMap();
 function readOnlyView(value, root) {
@@ -989,9 +1057,7 @@ function enqueueRequest(op) {
     delete row.from;
     delete row.to;
   }
-  const h = host();
-  h.interact = h.interact || [];
-  h.interact.push(row);
+  host().interact.push(row);
 }
 const api = {
   get tick() { return host().tick || 0; },
@@ -1499,9 +1565,7 @@ api.cellRun = (site, hooks) => huntRun('hunt-cell', site, hooks);
 api.bankRun = (site, opts, hooks) => huntRun('hunt-bank', site && { ...site, ...(opts || {}) }, hooks);
 function recordSettlement(generation) {
   if (generation !== lifecycleGeneration) return;
-  const h = host();
-  h.interact = h.interact || [];
-  h.interact.push({ op: 'loop-settled' });
+  host().interact.push({ op: 'loop-settled' });
 }
 globalThis.__rs_tick = (n) => {
   api.tick = n;
