@@ -1128,7 +1128,10 @@ impl InspectJob {
         Ok(())
     }
 
-    fn start_bank_access(&mut self, mut planning: InspectBankAccess) -> Result<(), InspectJobError> {
+    fn start_bank_access(
+        &mut self,
+        mut planning: InspectBankAccess,
+    ) -> Result<(), InspectJobError> {
         let (from, options, budget) = {
             let capture = self.capture_ref();
             (
