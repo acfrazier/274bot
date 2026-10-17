@@ -118,6 +118,69 @@ fn wait_for_jobs(shared: &Arc<Mutex<WorkService>>, expected: usize) {
         notifier.wait_for_change(epoch, remaining);
     }
 }
+#[test]
+fn publication_wait_closes_change_before_and_during_wait_races() {
+    let shared = new_service(Arc::new(ManualClock::new()));
+    let notifier = Arc::clone(&shared.lock().shared.notifier);
+
+    let observed = shared.lock().publication_epoch();
+    notifier.signal_change();
+    assert_eq!(
+        WorkService::wait_for_publication_change(&shared, observed, Duration::ZERO),
+        PublicationWaitOutcome::Changed
+    );
+
+    let observed = shared.lock().publication_epoch();
+    let gate = notifier.gate.lock();
+    let waiting = Arc::clone(&shared);
+    let waiter = std::thread::spawn(move || {
+        WorkService::wait_for_publication_change(&waiting, observed, Duration::from_secs(1))
+    });
+    let signaling = Arc::clone(&notifier);
+    let signaler = std::thread::spawn(move || signaling.signal_change());
+    drop(gate);
+    assert_eq!(
+        waiter.join().expect("publication wait returned"),
+        PublicationWaitOutcome::Changed
+    );
+    signaler.join().expect("publication signal returned");
+    WorkService::shutdown(&shared).expect("service shuts down");
+}
+
+#[test]
+fn publication_wait_times_out_or_reports_shutdown_during_worker_outage() {
+    let shared = new_service(Arc::new(ManualClock::new()));
+    let observed = shared.lock().publication_epoch();
+    assert_eq!(
+        WorkService::wait_for_publication_change(&shared, observed, Duration::from_millis(1)),
+        PublicationWaitOutcome::TimedOut
+    );
+    {
+        shared.lock().begin_shutdown();
+    }
+    assert_eq!(
+        WorkService::wait_for_publication_change(&shared, observed, Duration::ZERO),
+        PublicationWaitOutcome::Unavailable
+    );
+    WorkService::shutdown(&shared).expect("service shuts down");
+
+    let nonce = NEXT_TEST_NONCE.fetch_add(1, Ordering::Relaxed);
+    let incarnation = ProcessIncarnation::from_start_nonce(
+        NonZeroU64::new(nonce).expect("test nonce is nonzero"),
+    );
+    let unavailable =
+        WorkService::build_with_spawn(incarnation, Arc::new(api::work::SystemClock), |_| {
+            Err(std::io::Error::other("injected worker start failure"))
+        });
+    let unavailable = Arc::new(Mutex::new(unavailable));
+    let observed = unavailable.lock().publication_epoch();
+    assert_eq!(
+        WorkService::wait_for_publication_change(&unavailable, observed, Duration::ZERO),
+        PublicationWaitOutcome::TimedOut,
+        "a background-worker outage does not stop request-thread publications"
+    );
+    WorkService::shutdown(&unavailable).expect("unavailable service shuts down");
+}
 
 struct QueueJob {
     id: u8,

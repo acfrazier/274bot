@@ -1,16 +1,18 @@
-//! Production [`MapBakeProducer`]: B's catalogue/terrain helpers over a leased
+//! Production [`MapBakeProducer`]: native resumable map cursors over a leased
 //! [`BakeRequest::client_input`].
 
 use crate::map_cache::{
-    ArtifactKind, BakeOutput, BakePlan, BakeRequest, BakeWriter, MapBakeProducer, MapCacheError,
-    MapStage,
+    ArtifactKind, BakePlan, BakeRequest, BakeWriter, MapBakeCursor, MapBakeCursorOutput,
+    MapBakeCursorStep, MapBakeProducer, MapCacheError, MapProgressSnapshot, MapStage,
 };
-use nav::map::cache::{BakeStage, UnitKey};
-use nav::map::formats::{CatalogueManifest, PayloadReceipt};
-use nav::map::identity::{Digest, CATALOGUE_SCHEMA};
-use nav::map::producer::{self, derive_catalogue};
-use nav::map::raster::{self, bake_images_into, ImageBakeOutcome, RasterStage};
-use nav::map::MapError;
+use nav::map::cache::{BakeStage, CompletedUnit, UnitKey};
+use nav::map::formats::{ClientPois, PayloadReceipt};
+use nav::map::identity::Digest;
+use nav::map::producer::{self, CatalogueCursor, CatalogueProgress, CatalogueStage};
+use nav::map::raster::{
+    self, ImageBakeCursor, ImageBakeError, ImageTileSink, RasterProgress, RasterStage,
+};
+use nav::map::spatial::TileKey;
 use std::sync::OnceLock;
 
 /// Native client-cache producer. One instance is shared by the process-wide
@@ -38,113 +40,317 @@ pub fn map_artifact_policies() -> Result<(Digest, Digest), MapCacheError> {
 }
 
 impl MapBakeProducer for NativeMapProducer {
-    fn plan(&self, request: &BakeRequest) -> Result<BakePlan, MapCacheError> {
+    fn charge(&self, request: &BakeRequest) -> Result<api::work::WorkCharge, MapCacheError> {
+        // CatalogueCursor::work_charge always includes the cold game_data
+        // initializer peak; the immutable process-static owner is measured
+        // separately by the release harness.
         let input = request.client_input()?;
-        match request.artifact() {
-            ArtifactKind::Catalogue => Ok(BakePlan {
+        let (charge, cursor_bytes) = match request.artifact() {
+            ArtifactKind::Catalogue => (
+                CatalogueCursor::work_charge(input).map_err(MapCacheError::Map)?,
+                std::mem::size_of::<CatalogueCursor>(),
+            ),
+            ArtifactKind::Images => (
+                ImageBakeCursor::work_charge(input, request.partial_dir_arc())
+                    .map_err(MapCacheError::Map)?,
+                std::mem::size_of::<ImageBakeCursor>(),
+            ),
+        };
+        let input_bytes = charge
+            .input_bytes()
+            .checked_add(std::mem::size_of::<NativeCursor>() - cursor_bytes)
+            .ok_or(MapCacheError::Map(nav::map::MapError::Limit(
+                "native map cursor charge",
+            )))?;
+        Ok(api::work::WorkCharge::new(
+            input_bytes,
+            charge.scratch_bytes(),
+            charge.result_bytes(),
+            charge.operation_handles(),
+        ))
+    }
+
+    fn cursor(
+        &self,
+        request: &BakeRequest,
+        partial_dir: std::sync::Arc<std::path::PathBuf>,
+    ) -> Result<Box<dyn MapBakeCursor>, MapCacheError> {
+        let input = request.client_input()?;
+        let cursor = match request.artifact() {
+            ArtifactKind::Catalogue => NativeCursor::Catalogue {
+                cursor: CatalogueCursor::new(input).map_err(MapCacheError::Map)?,
+                output: None,
+            },
+            ArtifactKind::Images => NativeCursor::Images(
+                ImageBakeCursor::new(input, partial_dir, request.descriptor().image_identity())
+                    .map_err(MapCacheError::Map)?,
+            ),
+        };
+        Ok(Box::new(cursor))
+    }
+}
+
+// The enclosing trait-object Box is the only cursor allocation. Boxing this
+// variant again would add an allocation solely to reduce an unused stack size.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "boxing the variant adds an allocation solely to reduce an unused stack size"
+)]
+enum NativeCursor {
+    Catalogue {
+        cursor: CatalogueCursor,
+        output: Option<ClientPois>,
+    },
+    Images(ImageBakeCursor),
+}
+
+impl MapBakeCursor for NativeCursor {
+    fn plan(&self) -> Option<BakePlan> {
+        match self {
+            // Input work does not touch cache output. Hand the writer to the
+            // host only after the owned result is ready for persistence.
+            Self::Catalogue { output, .. } => output.as_ref().map(|_| BakePlan {
                 planned_units: 1,
                 stage: BakeStage::Catalogue,
             }),
-            ArtifactKind::Images => {
-                let (plan, _) = raster::plan_images(input)?;
-                let planned_units = u32::try_from(plan.tiles().len())
-                    .map_err(|_| MapCacheError::Map(MapError::Limit("image tile count")))?;
-                BakePlan {
-                    planned_units,
-                    stage: BakeStage::BaseTerrain,
+            Self::Images(cursor) => cursor.planned_units().map(|planned_units| BakePlan {
+                planned_units,
+                stage: BakeStage::BaseTerrain,
+            }),
+        }
+    }
+
+    fn step(
+        &mut self,
+        context: &mut api::work::StepContext<'_, api::work::MapBakePhase>,
+        writer: Option<&mut BakeWriter>,
+    ) -> Result<MapBakeCursorStep, MapCacheError> {
+        match self {
+            Self::Catalogue { cursor, output } => {
+                if let Some(pois) = output.take() {
+                    return Ok(MapBakeCursorStep::Completed(
+                        MapBakeCursorOutput::Catalogue(pois),
+                    ));
                 }
-                .checked()
+                let result = cursor.step(context).map_err(MapCacheError::Map)?;
+                match result {
+                    producer::ProducerStep::Yielded => Ok(MapBakeCursorStep::Yielded),
+                    producer::ProducerStep::Completed(result) => {
+                        *output = Some(result.pois);
+                        Ok(MapBakeCursorStep::Yielded)
+                    }
+                    producer::ProducerStep::Cancelled => Ok(MapBakeCursorStep::Cancelled),
+                }
+            }
+            Self::Images(cursor) => {
+                let mut sink = match writer {
+                    Some(writer) => WriterImageTileSink { writer },
+                    None => {
+                        return match cursor
+                            .step(context, &mut BackpressureImageTileSink)
+                            .map_err(map_image_error)?
+                        {
+                            producer::ProducerStep::Yielded => Ok(MapBakeCursorStep::Yielded),
+                            producer::ProducerStep::Completed(report) => {
+                                Ok(MapBakeCursorStep::Completed(MapBakeCursorOutput::Images(
+                                    report.manifest,
+                                )))
+                            }
+                            producer::ProducerStep::Cancelled => Ok(MapBakeCursorStep::Cancelled),
+                        }
+                    }
+                };
+                match cursor.step(context, &mut sink).map_err(map_image_error)? {
+                    producer::ProducerStep::Yielded => Ok(MapBakeCursorStep::Yielded),
+                    producer::ProducerStep::Completed(report) => Ok(MapBakeCursorStep::Completed(
+                        MapBakeCursorOutput::Images(report.manifest),
+                    )),
+                    producer::ProducerStep::Cancelled => Ok(MapBakeCursorStep::Cancelled),
+                }
             }
         }
     }
 
-    fn run(
-        &self,
-        request: &BakeRequest,
-        writer: &mut BakeWriter,
-    ) -> Result<BakeOutput, MapCacheError> {
-        let input = request.client_input()?;
-        match request.artifact() {
-            ArtifactKind::Catalogue => {
-                writer.set_stage(BakeStage::Catalogue, "deriving client POIs")?;
-                let (pois, _) = derive_catalogue(input)?;
-                let payload = pois.encode()?;
-                writer.publish_unit(UnitKey::ClientPois, &payload)?;
-                Ok(BakeOutput::Catalogue(CatalogueManifest {
-                    schema: CATALOGUE_SCHEMA,
-                    identity: pois.identity,
-                    key: pois.identity.key()?,
-                    record_count: u32::try_from(pois.records.as_slice().len())
-                        .map_err(|_| MapCacheError::Map(MapError::Limit("POI count")))?,
-                    payload: PayloadReceipt {
-                        bytes: payload.len() as u32,
-                        sha256: Digest::of(&payload),
-                    },
-                }))
-            }
-            ArtifactKind::Images => run_images(input, writer),
+    fn progress(&self) -> MapProgressSnapshot {
+        match self {
+            Self::Catalogue { cursor, .. } => catalogue_progress(cursor.progress()),
+            Self::Images(cursor) => image_progress(cursor.progress()),
+        }
+    }
+
+    fn take_completed_units(&mut self) -> Vec<CompletedUnit> {
+        match self {
+            Self::Catalogue { .. } => Vec::new(),
+            Self::Images(cursor) => cursor.take_completed_units(),
         }
     }
 }
 
-pub(crate) fn run_images(
-    input: nav::map::producer::ClientMapInput<'_>,
-    writer: &mut BakeWriter,
-) -> Result<BakeOutput, MapCacheError> {
-    let dir = writer.directory().to_path_buf();
-    let outcome = bake_images_into(
-        input,
-        &dir,
-        |tile| writer.completed_receipt(UnitKey::Terrain { tile }),
-        |progress| {
-            if writer.is_cancelled() {
-                return false;
-            }
-            let (stage, message) = match progress.stage {
-                RasterStage::ReadingCache => {
-                    (MapStage::ReadingCache, String::from("reading cache"))
-                }
-                RasterStage::BaseTerrain { plane } => {
-                    (MapStage::BakingPlane, format!("baking plane {plane}"))
-                }
-                RasterStage::Downsample { plane, lod } => (
-                    MapStage::BuildingZoomLevels,
-                    format!("building zoom {lod} plane {plane}"),
-                ),
-                RasterStage::Publishing => (MapStage::Publishing, String::from("publishing")),
-            };
-            writer.report_progress(
-                stage,
-                progress.completed_tiles,
-                progress.total_tiles,
-                format!(
-                    "{message} · {}/{}",
-                    progress.completed_tiles, progress.total_tiles
-                ),
-            );
-            true
+struct WriterImageTileSink<'a> {
+    writer: &'a mut BakeWriter,
+}
+
+impl ImageTileSink for WriterImageTileSink<'_> {
+    type Error = MapCacheError;
+
+    fn checkpointed(&mut self, key: TileKey) -> Option<PayloadReceipt> {
+        self.writer
+            .completed_receipt(UnitKey::Terrain { tile: key })
+    }
+
+    fn write_tile(
+        &mut self,
+        key: TileKey,
+        png: &[u8],
+    ) -> Result<Option<PayloadReceipt>, Self::Error> {
+        self.writer
+            .write_image_tile(UnitKey::Terrain { tile: key }, png)
+            .map(Some)
+    }
+}
+
+struct BackpressureImageTileSink;
+
+impl ImageTileSink for BackpressureImageTileSink {
+    type Error = MapCacheError;
+
+    fn checkpointed(&mut self, _key: TileKey) -> Option<PayloadReceipt> {
+        None
+    }
+
+    fn write_tile(
+        &mut self,
+        _key: TileKey,
+        _png: &[u8],
+    ) -> Result<Option<PayloadReceipt>, Self::Error> {
+        Ok(None)
+    }
+}
+
+fn map_image_error(error: ImageBakeError<MapCacheError>) -> MapCacheError {
+    match error {
+        ImageBakeError::Native(error) => MapCacheError::Map(error),
+        ImageBakeError::Sink(error) => error,
+    }
+}
+
+fn catalogue_progress(progress: CatalogueProgress) -> MapProgressSnapshot {
+    let (stage, completed, total) = match progress.stage {
+        CatalogueStage::Preparing | CatalogueStage::Indexing => (
+            MapStage::ReadingCache,
+            u32::try_from(progress.units_completed).unwrap_or(u32::MAX),
+            None,
+        ),
+        CatalogueStage::Scanning => (
+            MapStage::DerivingPois,
+            progress.map_squares_completed,
+            progress.map_squares_total,
+        ),
+        CatalogueStage::Matching => (
+            MapStage::DerivingPois,
+            progress.map_squares_completed,
+            progress.map_squares_total,
+        ),
+        CatalogueStage::Finalizing => (
+            MapStage::DerivingPois,
+            progress.poi_records_ready,
+            progress.poi_records_total,
+        ),
+        CatalogueStage::Complete => (
+            MapStage::Publishing,
+            progress.poi_records_ready,
+            progress
+                .poi_records_total
+                .or(Some(progress.poi_records_ready)),
+        ),
+    };
+    MapProgressSnapshot {
+        stage,
+        completed,
+        total,
+    }
+}
+
+fn image_progress(progress: RasterProgress) -> MapProgressSnapshot {
+    match progress.stage {
+        RasterStage::ReadingCache => MapProgressSnapshot {
+            stage: MapStage::ReadingCache,
+            completed: progress.planning_squares_completed,
+            total: progress.planning_squares_total,
         },
-    )?;
-    finish_image_bake(writer, outcome)
+        RasterStage::BaseTerrain { .. } => MapProgressSnapshot {
+            stage: MapStage::BakingPlane,
+            completed: progress.completed_tiles,
+            total: (progress.total_tiles != 0).then_some(progress.total_tiles),
+        },
+        RasterStage::Downsample { .. } => MapProgressSnapshot {
+            stage: MapStage::BuildingZoomLevels,
+            completed: progress.completed_tiles,
+            total: (progress.total_tiles != 0).then_some(progress.total_tiles),
+        },
+        RasterStage::Publishing => MapProgressSnapshot {
+            stage: MapStage::Publishing,
+            completed: progress.completed_tiles,
+            total: (progress.total_tiles != 0).then_some(progress.total_tiles),
+        },
+    }
 }
 
-pub(crate) fn finish_image_bake(
-    writer: &mut BakeWriter,
-    outcome: ImageBakeOutcome,
-) -> Result<BakeOutput, MapCacheError> {
-    match outcome {
-        ImageBakeOutcome::Complete(report) => {
-            // The raster already wrote, synced and hashed every tile in the
-            // partial directory (or adopted a verified one from disk), and
-            // its manifest lists them in key order. Checkpoint those receipts
-            // without reading or rewriting a single PNG.
-            for tile in report.manifest.tiles.as_slice() {
-                writer.record_unit(UnitKey::Terrain { tile: tile.key }, tile.payload)?;
-            }
-            Ok(BakeOutput::Images(report.manifest))
-        }
-        // Nothing is checkpointed on a pause: the next bake adopts every
-        // valid tile already on disk (`bake_images_into`).
-        ImageBakeOutcome::Paused(_) => Err(MapCacheError::Cancelled),
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalogue_input_work_does_not_request_a_cache_writer() {
+        let input = producer::ClientMapInput::new(
+            289,
+            Digest([7; 32]),
+            std::path::Path::new("/verified/jag"),
+            std::path::Path::new("/verified/snapshot"),
+        )
+        .unwrap();
+        let cursor = NativeCursor::Catalogue {
+            cursor: CatalogueCursor::new(input).unwrap(),
+            output: None,
+        };
+        assert!(
+            cursor.plan().is_none(),
+            "catalogue input work must not request cache ownership"
+        );
+    }
+
+    #[test]
+    fn image_progress_uses_square_counts_before_plan_and_tile_counts_afterward() {
+        let reading = image_progress(RasterProgress {
+            stage: RasterStage::ReadingCache,
+            completed_tiles: 0,
+            total_tiles: 0,
+            planning_squares_completed: 12,
+            planning_squares_total: None,
+        });
+        assert_eq!(reading.stage, MapStage::ReadingCache);
+        assert_eq!(reading.completed, 12);
+        assert_eq!(reading.total, None);
+
+        let planned = image_progress(RasterProgress {
+            stage: RasterStage::ReadingCache,
+            completed_tiles: 0,
+            total_tiles: 0,
+            planning_squares_completed: 12,
+            planning_squares_total: Some(96),
+        });
+        assert_eq!(planned.completed, 12);
+        assert_eq!(planned.total, Some(96));
+
+        let terrain = image_progress(RasterProgress {
+            stage: RasterStage::BaseTerrain { plane: 0 },
+            completed_tiles: 7,
+            total_tiles: 28,
+            planning_squares_completed: 96,
+            planning_squares_total: Some(96),
+        });
+        assert_eq!(terrain.stage, MapStage::BakingPlane);
+        assert_eq!(terrain.completed, 7);
+        assert_eq!(terrain.total, Some(28));
     }
 }
