@@ -4,7 +4,9 @@
 //! hands the folded batch to the seat in pages that one take carries
 //! whole, so `GameplaySeat::take` clears none of its rows (round 6). The
 //! releases go to the seat whatever the room, and a second hold keeps the
-//! controls of a fold whose pages still wait (round 7).
+//! controls of a fold whose pages still wait (round 7). That merge keeps a
+//! machine phase that returns to an earlier value, and carries each isolate
+//! repeat once (round 8).
 
 use super::*;
 use api::run_policy::{RunEnergyMin, RunPolicyOverride};
@@ -1321,4 +1323,317 @@ fn held_second_hold_keeps_the_controls_of_a_waiting_fold() {
     assert_eq!(requests(resumed), expected, "every retained row, in order");
     assert!(!still_live, "the waiting fold's cancel applies");
     assert_eq!(after, before, "resume drops nothing");
+}
+
+/// Queue 141 lifecycle rows, so the next take has no room for a page.
+fn fill_seat_queue(slot: &mut SlotScript) {
+    for yaw in 1..=141 {
+        slot.seat
+            .as_mut()
+            .unwrap()
+            .push(
+                queued_interact(InteractReq::SetCameraYaw { yaw }),
+                api::script_contract::EmissionClass::Lifecycle,
+                EmissionSource::Root,
+                None,
+            )
+            .unwrap();
+    }
+}
+
+fn machine_event(raw: u64, kind: crate::machine::MachineEventKind) -> crate::machine::MachineEvent {
+    crate::machine::MachineEvent {
+        id: id(raw),
+        kind,
+        admitted: true,
+    }
+}
+
+fn mirror_revoke(raw: u64, seq: u64) -> crate::isolate_fb::SeatMirrorRevoke {
+    crate::isolate_fb::SeatMirrorRevoke {
+        owner: id(raw),
+        seq,
+    }
+}
+
+/// Hold with a retained fold of 20 opens, then for each newer batch: resume
+/// with a full seat queue, so the fold waits, queue the newer batch behind
+/// it, and hold again before the fold applies. Returns the carried fold.
+fn rehold_while_the_fold_waits(
+    slot: &mut SlotScript,
+    initial: crate::load::QueuedSeatBatch,
+    newer: Vec<crate::load::QueuedSeatBatch>,
+) -> crate::load::QueuedSeatBatch {
+    slot.seat_guardian_hold(true);
+    slot.load
+        .as_ref()
+        .unwrap()
+        .restore_seat_batches(vec![initial]);
+    let _ = slot.drain_host_interacts();
+    for batch in newer {
+        slot.seat_guardian_hold(false);
+        fill_seat_queue(slot);
+        let mut batches = slot.load.as_ref().unwrap().drain_seat_batches();
+        batches.push(batch);
+        slot.load.as_ref().unwrap().restore_seat_batches(batches);
+        let (_, first, _) = slot.drain_host_interacts();
+        assert_eq!(first.len(), 141, "the blocking rows take the frame");
+        assert_eq!(held_rows(slot).len(), 20, "the fold still waits");
+        slot.seat_guardian_hold(true);
+        let _ = slot.drain_host_interacts();
+    }
+    let mut carried = slot.load.as_ref().unwrap().drain_seat_batches();
+    assert_eq!(carried.len(), 1, "one folded batch");
+    carried.pop().unwrap()
+}
+
+// R8 R7-H1 (Grok `probe_r7_phase_return_across_reholds_keeps_the_newest_
+// phase`): the isolate keeps one phase for each id and replaces it, so a
+// newer `Waiting` after `Working` is a new transition, not a repeat. Two
+// reholds must carry `Waiting, Working, Waiting`, and the seat must end at
+// `Waiting`.
+#[test]
+fn held_rehold_keeps_a_phase_that_returns_to_an_earlier_value() {
+    use crate::machine::MachineEventKind::Phase;
+    use crate::native::NativePhase;
+    let mut slot = with_seat(889);
+    let mut admit = page(&slot, Vec::new());
+    admit.batch.starts = vec![start_input(&slot, 1, NativeKind::Hunt)];
+    slot.load
+        .as_ref()
+        .unwrap()
+        .restore_seat_batches(vec![admit]);
+    let _ = slot.drain_host_interacts();
+    let mut initial = page(&slot, (1..=20).map(lane_open).collect());
+    initial.machine_events = vec![machine_event(1, Phase(NativePhase::Waiting))];
+    let newer = [NativePhase::Working, NativePhase::Waiting]
+        .into_iter()
+        .map(|phase| {
+            let mut update = page(&slot, Vec::new());
+            update.machine_events = vec![machine_event(1, Phase(phase))];
+            update
+        })
+        .collect();
+    let carried = rehold_while_the_fold_waits(&mut slot, initial, newer);
+    let events: Vec<_> = carried
+        .machine_events
+        .iter()
+        .map(|event| event.kind)
+        .collect();
+    slot.load
+        .as_ref()
+        .unwrap()
+        .restore_seat_batches(vec![carried]);
+    slot.seat_guardian_hold(false);
+    let _ = slot.drain_host_interacts();
+    let phase = slot.seat.as_ref().unwrap().machine_phase(id(1));
+    slot.stop();
+    assert_eq!(
+        events,
+        [
+            Phase(NativePhase::Waiting),
+            Phase(NativePhase::Working),
+            Phase(NativePhase::Waiting)
+        ],
+        "every transition, in order"
+    );
+    assert_eq!(phase, Some(NativePhase::Waiting), "the newest phase");
+}
+
+// R8 R7-M1 (Codex `solr7b_phase_aba_across_waiting_reholds_keeps_newest_
+// phase`): the same A-B-A sequence with the start admitted by a direct
+// batch. All 20 retained opens arrive in order, and the seat ends at the
+// newest phase.
+#[test]
+fn held_rehold_phase_a_b_a_ends_at_the_newest_phase() {
+    use crate::machine::MachineEventKind::Phase;
+    use crate::native::NativePhase;
+    let mut slot = with_seat(890);
+    slot.consume_seat_batch(
+        decoded(vec![start_input(&slot, 1, NativeKind::Hunt)], Vec::new()),
+        0,
+        &[],
+    );
+    let mut initial = page(&slot, (1..=20).map(lane_open).collect());
+    initial.machine_events = vec![machine_event(1, Phase(NativePhase::Waiting))];
+    let newer = [NativePhase::Working, NativePhase::Waiting]
+        .into_iter()
+        .map(|phase| {
+            let mut update = page(&slot, Vec::new());
+            update.machine_events = vec![machine_event(1, Phase(phase))];
+            update
+        })
+        .collect();
+    let carried = rehold_while_the_fold_waits(&mut slot, initial, newer);
+    slot.load
+        .as_ref()
+        .unwrap()
+        .restore_seat_batches(vec![carried]);
+    slot.seat_guardian_hold(false);
+    let before = dropped(&slot);
+    let (_, delivered, _) = slot.drain_host_interacts();
+    let phase = slot.seat.as_ref().unwrap().machine_phase(id(1));
+    let after = dropped(&slot);
+    slot.stop();
+    assert_eq!(
+        requests(delivered),
+        (1..=20).map(lane_open).collect::<Vec<_>>(),
+        "every retained row, in order"
+    );
+    assert_eq!(
+        phase,
+        Some(NativePhase::Waiting),
+        "a return to an earlier phase is a transition, not a repeat"
+    );
+    assert_eq!(after, before, "resume drops nothing");
+}
+
+// R8: the isolate carries each unacknowledged mirror revoke in every batch
+// until a page acknowledges it. Across two reholds the merge carries each
+// owner once, so `validate_mirror_revokes` admits the batch, every revoke
+// applies once, and no repeat counts as a late control.
+#[test]
+fn held_rehold_carries_a_repeated_mirror_revoke_once() {
+    let mut slot = with_seat(891);
+    let mut initial = page(&slot, (1..=20).map(lane_open).collect());
+    initial.batch.mirror_revokes = vec![mirror_revoke(9, 1)];
+    let newer = [
+        vec![mirror_revoke(9, 1), mirror_revoke(8, 2)],
+        vec![
+            mirror_revoke(9, 1),
+            mirror_revoke(8, 2),
+            mirror_revoke(7, 3),
+        ],
+    ]
+    .into_iter()
+    .map(|revokes| {
+        let mut update = page(&slot, Vec::new());
+        update.batch.mirror_revokes = revokes;
+        update
+    })
+    .collect();
+    let carried = rehold_while_the_fold_waits(&mut slot, initial, newer);
+    let revokes = carried.batch.mirror_revokes.clone();
+    slot.load
+        .as_ref()
+        .unwrap()
+        .restore_seat_batches(vec![carried]);
+    slot.seat_guardian_hold(false);
+    let late_before = slot.seat.as_ref().unwrap().late_controls();
+    let before = dropped(&slot);
+    let (_, delivered, _) = slot.drain_host_interacts();
+    let seat = slot.seat.as_ref().unwrap();
+    let (consumed, late_after) = (seat.mirror_revokes_consumed(), seat.late_controls());
+    let after = dropped(&slot);
+    slot.stop();
+    assert_eq!(
+        revokes,
+        [
+            mirror_revoke(9, 1),
+            mirror_revoke(8, 2),
+            mirror_revoke(7, 3)
+        ],
+        "each owner once, in sequence order"
+    );
+    assert_eq!(
+        requests(delivered),
+        (1..=20).map(lane_open).collect::<Vec<_>>(),
+        "the batch is admitted and every retained row arrives"
+    );
+    assert_eq!(consumed, 3, "every revoke applies");
+    assert_eq!(late_after, late_before, "no repeat counts as late");
+    assert_eq!(after, before, "resume drops nothing");
+}
+
+// R8: each control class merges by the key that its producer keeps one
+// control for. A newer control with the key of a kept control is the
+// isolate's repeat of it: applied after the kept one it would be a
+// duplicate or a late control, so the kept one stays and the repeat goes.
+// A start keeps its id while the isolate replaces its arguments
+// (`machine.rs` `carry_typed_start`), and a cancel keeps its target while
+// the isolate raises its reason (`queue_cancel`).
+#[test]
+fn held_rehold_merges_each_control_by_its_producer_key() {
+    use crate::isolate_fb::{SeatCancelDecoded, SeatDecisionInput};
+    use crate::machine::MachineEventKind::{Done, Failed, Phase};
+    use crate::native::NativePhase;
+    use api::script_contract::{CallbackCancelReason, DecisionSequence};
+    let cancel = |raw, reason| SeatCancelDecoded {
+        of: id(raw),
+        reason,
+    };
+    let decision = |raw, answer: &[u8]| SeatDecisionInput {
+        of: id(raw),
+        sequence: DecisionSequence::FIRST,
+        answer: answer.to_vec(),
+    };
+    let mut slot = with_seat(892);
+    let mut waiting = page(&slot, Vec::new());
+    waiting.held_fold = true;
+    waiting.batch.consumed_terminal_seq = 9;
+    waiting.batch.starts = vec![start_input(&slot, 1, NativeKind::Gather)];
+    waiting.batch.decisions = vec![decision(2, b"kept")];
+    waiting.batch.cancels = vec![cancel(3, CallbackCancelReason::HookThrew)];
+    waiting.batch.mirror_revokes = vec![mirror_revoke(4, 1)];
+    waiting.machine_events = vec![
+        machine_event(5, Phase(NativePhase::Waiting)),
+        machine_event(6, Done),
+    ];
+    let mut newer = page(&slot, Vec::new());
+    newer.batch.consumed_terminal_seq = 8;
+    let mut replaced = start_input(&slot, 1, NativeKind::Gather);
+    replaced.args = SeatStartArgs::Gather(SettingsBag::new());
+    newer.batch.starts = vec![replaced, start_input(&slot, 7, NativeKind::Hunt)];
+    newer.batch.decisions = vec![decision(2, b"repeat"), decision(8, b"new")];
+    newer.batch.cancels = vec![
+        cancel(3, CallbackCancelReason::ParentAborted),
+        cancel(9, CallbackCancelReason::HookThrew),
+    ];
+    newer.batch.mirror_revokes = vec![mirror_revoke(4, 1), mirror_revoke(10, 2)];
+    newer.machine_events = vec![
+        machine_event(5, Phase(NativePhase::Waiting)),
+        machine_event(6, Done),
+        machine_event(11, Failed),
+        machine_event(12, Phase(NativePhase::Working)),
+    ];
+    let expected_starts = vec![
+        start_input(&slot, 1, NativeKind::Gather),
+        start_input(&slot, 7, NativeKind::Hunt),
+    ];
+    let kept = slot
+        .compact_held_seat_batches(vec![waiting, newer])
+        .pop()
+        .unwrap();
+    slot.stop();
+    assert_eq!(kept.batch.consumed_terminal_seq, 9, "the higher watermark");
+    assert_eq!(kept.batch.starts, expected_starts, "starts by id");
+    assert_eq!(
+        kept.batch.decisions,
+        [decision(2, b"kept"), decision(8, b"new")],
+        "decisions by request and sequence"
+    );
+    assert_eq!(
+        kept.batch.cancels,
+        [
+            cancel(3, CallbackCancelReason::HookThrew),
+            cancel(9, CallbackCancelReason::HookThrew)
+        ],
+        "cancels by target"
+    );
+    assert_eq!(
+        kept.batch.mirror_revokes,
+        [mirror_revoke(4, 1), mirror_revoke(10, 2)],
+        "mirror revokes by owner"
+    );
+    assert_eq!(
+        kept.machine_events,
+        [
+            machine_event(5, Phase(NativePhase::Waiting)),
+            machine_event(6, Done),
+            machine_event(11, Failed),
+            machine_event(12, Phase(NativePhase::Working)),
+        ],
+        "a phase equal to the last kept phase of its id, and a terminal \
+         equal to a kept one, are repeats"
+    );
 }
