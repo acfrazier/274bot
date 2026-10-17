@@ -14,7 +14,11 @@ use crate::test_support::{
     patiently, save_store_patiently, set_patiently, thread_preferences, thread_state_root, TestDir,
     TestPath,
 };
+use api::identity::Deadline;
 use api::snapshot::{GameSnapshot, WorldTile};
+use api::work::{
+    InspectionPhase, MonotonicClock, SharedCancellation, SliceBudget, StepContext, SystemClock,
+};
 use client::client::{Client, ClientConfig};
 use client::config::if_type::{ComponentType, IfType, IfTypeMut};
 use client::dash3d::CollisionFlag;
@@ -26,7 +30,9 @@ use host_play::profile::ProfileEnvironment;
 use host_play::{ProfileOptions, SlotArm, SlotStatus, StartupPhase};
 use nav::collision::WorldCollision;
 use nav::paint::{MAX_DRAW_TILES, NEAR_FULL_DENSITY};
-use nav::router::{Leg, Route};
+use nav::router::{
+    CursorStep, FindOptions, Leg, Route, SearchCompletion, SearchCursor, SearchRequest,
+};
 use nav::tile::Tile;
 use nav::transport::{TransportEdge, TransportGraph, TransportKind};
 use nav::traveller::Traveller;
@@ -35,6 +41,7 @@ use nav::zones::ZoneExempt;
 use nav::WorldState;
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -1074,15 +1081,11 @@ fn live_follow_route_wins_over_empty_walkto_arm() {
         dest,
         ticks: 1.0,
     };
-    let (route, click) = live_or_walk_paint(
-        true,
-        (Some(live_route.clone()), Some(dest)),
-        (None, None),
-        (None, None),
-    );
-    assert_eq!(route.unwrap().dest, dest);
+    let (route, click) =
+        live_or_walk_paint(true, (Some(live_route.clone()), Some(dest)), (None, None), None);
+    assert_eq!(route.unwrap().destination(), dest);
     assert_eq!(click, Some(dest));
-    let (route, _) = live_or_walk_paint(true, (None, None), (None, None), (None, None));
+    let (route, _) = live_or_walk_paint(true, (None, None), (None, None), None);
     assert!(route.is_none(), "no live route falls back to WalkTo");
     let script_dest = WorldTile {
         x: 3185,
@@ -1096,18 +1099,23 @@ fn live_follow_route_wins_over_empty_walkto_arm() {
         dest: script_dest,
         ticks: 1.0,
     };
-    let (route, click) = live_or_walk_paint(
-        false,
-        (None, None),
-        (None, None),
-        (Some(script_route), Some(script_dest)),
-    );
+    let script_projection = map_host::walk_map::RouteProjection {
+        stamp: map_host::walk_map::RouteStamp {
+            source: map_host::walk_map::RouteSource::Script,
+            generation: 1,
+            destination: script_dest,
+        },
+        route: map_host::walk_map::RouteProjectionPath::Legacy(&script_route),
+        aim: Some(script_dest),
+    };
+    let (route, click) =
+        live_or_walk_paint(false, (None, None), (None, None), Some(script_projection));
     assert_eq!(
         click,
         Some(script_dest),
         "catalog walk paints when WalkTo is idle"
     );
-    assert_eq!(route.unwrap().dest, script_dest);
+    assert_eq!(route.unwrap().destination(), script_dest);
 }
 
 #[test]
@@ -1748,6 +1756,105 @@ fn walled_world() -> NavWorld {
     )
 }
 
+fn compact_route_completion(
+    world: &Arc<NavWorld>,
+    from: WorldTile,
+    to: WorldTile,
+) -> (nav::contract::NavLease, SearchCompletion) {
+    let lease = nav::producer::lease(world).expect("fixture pack lease");
+    let mut cursor = SearchCursor::new(
+        SearchRequest::Single {
+            from,
+            to,
+            options: FindOptions::default(),
+            avoid: Box::default(),
+            max_settles: 1_024,
+        },
+        lease.clone(),
+        Arc::new(WorldState::default()),
+    )
+    .expect("small route cursor");
+    let clock = SystemClock;
+    let cancellation = SharedCancellation::new();
+    let units = NonZeroU32::new(64).expect("nonzero slice");
+    loop {
+        let budget = SliceBudget::new(units, Deadline::after(clock.now(), Duration::from_secs(5)));
+        let mut context = StepContext::<InspectionPhase>::new(&clock, budget, &cancellation);
+        match cursor.advance(&mut context) {
+            CursorStep::Complete(completion) => return (lease, completion),
+            CursorStep::Yielded => {}
+            CursorStep::Cancelled(reason) => panic!("fixture route cancelled: {reason:?}"),
+            CursorStep::Failed(error) => panic!("fixture route failed: {error:?}"),
+        }
+    }
+}
+
+#[test]
+fn compact_script_route_paints_its_scene_path_and_click_ahead_of_walkto() {
+    let mut client = paint_client();
+    let world = Arc::new(walled_world());
+    let from = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let destination = WorldTile { x: 3202, ..from };
+    let (lease, completion) = compact_route_completion(&world, from, destination);
+    let view = completion
+        .route_view(&lease)
+        .expect("same-pack compact route view")
+        .expect("completed route");
+    let script = map_host::walk_map::RouteProjection {
+        stamp: map_host::walk_map::RouteStamp {
+            source: map_host::walk_map::RouteSource::Script,
+            generation: 9,
+            destination,
+        },
+        route: map_host::walk_map::RouteProjectionPath::Compact(view),
+        aim: Some(destination),
+    };
+    let manual_destination = WorldTile { x: 3210, ..from };
+    let manual = Route {
+        legs: vec![Leg::Walk {
+            tiles: vec![manual_destination],
+        }],
+        dest: manual_destination,
+        ticks: 1.0,
+    };
+    let (route, click) = live_or_walk_paint(
+        false,
+        (None, None),
+        (Some(manual), Some(manual_destination)),
+        Some(script),
+    );
+    let route = route.expect("script route beats a manual WalkTo fallback");
+    assert_eq!(route.destination(), destination);
+    assert_eq!(click, Some(destination));
+
+    let settings = NavSettings {
+        show_nav_path: true,
+        ..NavSettings::default()
+    };
+    publish_nav_debug(
+        &mut client,
+        &world,
+        Some(route.projection()),
+        Some(from),
+        &[],
+        false,
+        click,
+        &settings,
+        true,
+        false,
+    );
+    let paint = client.nav_debug_paint().expect("focused scene paint");
+    assert_eq!(
+        paint.path,
+        vec![(0, 0, false), (1, 0, false), (2, 0, false)]
+    );
+    assert_eq!(paint.click, Some((2, 0)));
+}
+
 #[test]
 fn focused_slot_publishes_scene_collision_for_loaded_map() {
     let mut c = paint_client();
@@ -1802,7 +1909,7 @@ fn focused_slot_publishes_scene_collision_for_loaded_map() {
     publish_nav_debug(
         &mut c,
         &world,
-        Some(&route),
+        Some(map_host::walk_map::RouteProjectionPath::Legacy(&route)),
         here,
         &[],
         false,
@@ -2490,7 +2597,7 @@ fn show_nav_path_masters_hulls_click_and_trail() {
     publish_nav_debug(
         &mut c,
         &world,
-        Some(&route),
+        Some(map_host::walk_map::RouteProjectionPath::Legacy(&route)),
         None,
         &trail_world,
         false,
@@ -2521,7 +2628,7 @@ fn show_nav_path_masters_hulls_click_and_trail() {
     publish_nav_debug(
         &mut c,
         &world,
-        Some(&route),
+        Some(map_host::walk_map::RouteProjectionPath::Legacy(&route)),
         None,
         &trail_world,
         false,
@@ -2555,7 +2662,7 @@ fn show_nav_path_masters_hulls_click_and_trail() {
     publish_nav_debug(
         &mut c,
         &world,
-        Some(&route),
+        Some(map_host::walk_map::RouteProjectionPath::Legacy(&route)),
         None,
         &trail_world,
         true,
@@ -2640,7 +2747,7 @@ fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
     publish_nav_debug(
         &mut c,
         &world,
-        Some(&route),
+        Some(map_host::walk_map::RouteProjectionPath::Legacy(&route)),
         None,
         &[],
         false,
