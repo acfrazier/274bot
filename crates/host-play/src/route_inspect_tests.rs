@@ -1023,6 +1023,115 @@ fn reset_abandons_accepted_inspection_and_fences_generation() {
 }
 
 #[test]
+fn reset_releases_inspection_charge_once_and_preserves_replacement() {
+    const WIDTH: usize = 2001;
+    const HEIGHT: usize = 2001;
+    let world = Arc::new(NavWorld::from_parts(
+        open_world(WIDTH, HEIGHT),
+        TransportGraph::default(),
+        vec![],
+    ));
+    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let service = WorkService::shared().expect("work service");
+    let baseline = service.lock().capacity();
+
+    queue_inspect(
+        &navs,
+        "p",
+        &Some(Arc::clone(&world)),
+        Some(WorldState::empty()),
+        BankRows::default(),
+        None,
+        None,
+        req(tile(0, 0, 0), tile(WIDTH as i32, HEIGHT as i32, 0), 23),
+    );
+    wait_running(&navs, 23);
+    let old_ticket = {
+        let all = navs.lock().unwrap();
+        let inspect = &all.get("p").expect("inspection owner").inspect;
+        assert!(inspect.executing);
+        inspect
+            .active_ticket
+            .expect("accepted inspection ticket")
+            .ticket()
+    };
+    {
+        let service = service.lock();
+        let charged = service.capacity();
+        assert!(
+            charged.jobs() > baseline.jobs(),
+            "the accepted inspection must add a WorkService charge"
+        );
+        assert!(
+            service.state(&old_ticket).is_some(),
+            "the accepted inspection must remain in WorkService"
+        );
+        assert!(
+            service
+                .borrow_terminal(&old_ticket)
+                .expect("accepted inspection remains in WorkService")
+                .is_none(),
+            "reset must start before the inspection returns"
+        );
+    }
+
+    let next_generation = {
+        let mut all = navs.lock().unwrap();
+        let bot = all.get_mut("p").expect("inspection owner");
+        reset_inspect(bot);
+        assert!(!bot.inspect.executing);
+        assert!(bot.inspect.pending.is_none());
+        assert!(bot.inspect.latest.is_none());
+        bot.inspect.generation
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let capacity = service.lock().capacity();
+        if capacity == baseline {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "reset did not return the old inspection charge to baseline: {capacity:?} vs {baseline:?}"
+        );
+        thread::yield_now();
+    }
+    for _ in 0..8 {
+        thread::yield_now();
+        assert_eq!(
+            service.lock().capacity(),
+            baseline,
+            "reset must release the old inspection charge exactly once"
+        );
+    }
+
+    const REPLACEMENT_ID: u64 = 24;
+    queue_inspect(
+        &navs,
+        "p",
+        &Some(world),
+        Some(WorldState::empty()),
+        BankRows::default(),
+        None,
+        None,
+        req(tile(0, 0, 0), tile(2, 2, 0), REPLACEMENT_ID),
+    );
+    wait_running(&navs, REPLACEMENT_ID);
+    assert!(
+        service.lock().capacity().jobs() > baseline.jobs(),
+        "the replacement inspection must receive its own WorkService charge"
+    );
+    let replacement = wait_latest(&navs, REPLACEMENT_ID);
+    assert!(replacement.ok, "the replacement inspection must complete");
+    assert_eq!(replacement.generation, next_generation);
+    assert_eq!(
+        service.lock().capacity(),
+        baseline,
+        "the old reset must not retain or release the replacement charge"
+    );
+}
+
+#[test]
 fn pending_replace_publishes_stale_for_replaced_request() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));

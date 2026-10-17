@@ -9192,7 +9192,7 @@ fn inspect_route_cross_zone_exemption_routes_through_the_named_barrier() {
                 return term;
             }
             assert!(
-                start.elapsed() < Duration::from_secs(60),
+                start.elapsed() < Duration::from_secs(2),
                 "inspect {request_id} did not publish"
             );
             std::thread::yield_now();

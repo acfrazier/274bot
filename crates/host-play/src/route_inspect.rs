@@ -2292,7 +2292,10 @@ pub(super) fn validate_request(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)] // inspect queue packs nav/world/state/request fields
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The request forwards captured navigation inputs without allocating an argument bundle."
+)]
 pub(super) fn queue_inspect(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     name: &str,
@@ -2304,7 +2307,9 @@ pub(super) fn queue_inspect(
     req: InspectRequest,
 ) {
     let Some(world) = world.clone() else {
-        let mut all = navs.lock().unwrap();
+        let mut all = navs
+            .lock()
+            .expect("inspection navigation state mutex poisoned");
         let bot = all.entry(name.to_string()).or_default();
         if bot.inspect.is_duplicate(req.request_id) {
             return;
@@ -2323,7 +2328,9 @@ pub(super) fn queue_inspect(
 
     let lease = nav::producer::lease(&world);
     let (generation, revision, opts, lease) = {
-        let mut all = navs.lock().unwrap();
+        let mut all = navs
+            .lock()
+            .expect("inspection navigation state mutex poisoned");
         let bot = all.entry(name.to_string()).or_default();
         if bot.inspect.is_duplicate(req.request_id) {
             return;
@@ -2781,7 +2788,9 @@ fn poll_inspection_with_ledger(
     ledger: &nav::producer::OwnerResultLedger,
 ) {
     let (ticket, generation, request_id, active_world) = {
-        let mut all = navs.lock().unwrap();
+        let mut all = navs
+            .lock()
+            .expect("inspection navigation state mutex poisoned");
         let Some(bot) = all.get_mut(name) else {
             return;
         };
