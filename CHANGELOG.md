@@ -49,13 +49,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   abort that frees a release slot is never held back. A new hold while
   pages still wait keeps the waiting batch's cancels, starts and other
   controls, which apply after its last page.
-- A stop that a script sends while the map loads or the welcome screen is
-  open is no longer lost. A walk abort reaches the game in the first frame
-  after the map is ready, in the order the script sent it; a Gather Stop or
-  Combat Stop takes effect at once. Other game actions from those frames are
-  still dropped. Only a random-event hold now freezes the script's request
-  seat: a map load or the welcome screen no longer keeps the script's other
-  actions for later.
+- A stop that a script sends while the map loads, while the welcome screen
+  is open or while the watchdog recovers a stuck bot is no longer lost. A
+  walk abort reaches the game in the first frame after that hold, in the
+  order the script sent it. A Gather Stop or Combat Stop takes effect at
+  once. A run policy that the script sets during such a hold is no longer
+  lost either: the last one the script set applies after the hold, after
+  the walk aborts. Other game actions from those frames are still dropped.
+  Only a random-event hold now freezes the script's request seat: a map load
+  or the welcome screen no longer keeps the script's other actions for
+  later.
 - A saturated script tick keeps its release and control rows ahead of gameplay.
   It dispatches the first 141 other rows in their original order, drops the
   excess, and reports one overflow diagnostic instead of failing the batch.

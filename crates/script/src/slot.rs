@@ -181,8 +181,10 @@ fn seat_interact_class(
 }
 
 /// Rows that `GameplaySeat::take` moves before its 141 other rows: the
-/// releases and the one run-policy control.
-#[cfg(feature = "load")]
+/// releases and the one run-policy control. A held tick of a scene load, of
+/// the welcome modal or of a watchdog recovery keeps these rows (operator
+/// decision 2026-10-16: aborts are never dropped, and the newest run policy
+/// is delivered after the hold).
 fn seat_reserved_row(req: &crate::shim::InteractReq) -> bool {
     matches!(
         req,
@@ -193,22 +195,10 @@ fn seat_reserved_row(req: &crate::shim::InteractReq) -> bool {
     )
 }
 
-/// The abort releases that a held tick of a scene load or of the welcome
-/// modal keeps (operator decision 2026-10-16). `RunPolicyOverride` is the
-/// other reserved row (`seat_reserved_row`); a held tick does not keep it.
-fn seat_abort_release(req: &crate::shim::InteractReq) -> bool {
-    matches!(
-        req,
-        crate::shim::InteractReq::AbortWalk { .. }
-            | crate::shim::InteractReq::GatherStop { .. }
-            | crate::shim::InteractReq::CombatStop { .. }
-    )
-}
-
 /// A second guardian hold folds over a retained batch whose pages still
 /// wait, and whose controls the seat has not applied. Keep those controls
-/// ahead of the newer batch's controls, in order, so the merge applies as
-/// the waiting controls and then the newer ones would. The isolate repeats
+/// ahead of the newer batch's controls, in order, so each control class
+/// applies in the order of the waiting and then the newer controls. The isolate repeats
 /// every unacknowledged control in each batch, and keeps one control for
 /// each key, so a newer control with the key of a kept control is that
 /// control's repeat. Applied after it, the repeat is a duplicate or a late
@@ -228,6 +218,27 @@ fn seat_abort_release(req: &crate::shim::InteractReq) -> bool {
 /// transition and is kept. The watermark is the higher of the two, which
 /// the seat's monotone watermark gives when it applies both in order. Rows
 /// fold as for every held batch.
+///
+/// Accepted limit (R8-M1, T13B-R10): the order is kept inside each control
+/// class, not between classes. `apply_seat_batch` applies every start before
+/// every machine event. If one fold holds a terminal event of request A from
+/// an older batch and a new start of request B from a newer batch, resume
+/// tries B before A ends, and the seat can refuse a Session B as busy.
+/// Serial apply would end A first. The fold does not change, because these
+/// conditions make that sequence unreachable with guardian-only holds
+/// (`TRACK-T1/T1.3b/reachability/report.md`):
+/// - While the guardian holds, the seat does not complete or start a native:
+///   `GameplaySeat::complete` and `GameplaySeat::start` return early
+///   (`native/seat.rs:790-793`, `:1016-1018`). The isolate's machines do not
+///   step (`machine::pass` returns while the host is held), so no native
+///   gets a new terminal during the hold. The test
+///   `guardian_hold_neither_completes_nor_starts_a_native` asserts this.
+/// - The script's `loop()` does not run during the hold
+///   (`load/isolate/thread.rs:1709`). Only `onPaint` and event callbacks run.
+/// - One player has at most one active random event (`macro_events.rs2:73-75`),
+///   and the next general event waits for the 500-tick event timer
+///   (`login.rs2:40`, `macro_events.rs2:2-12`). So a second guardian hold does
+///   not start while the pages of the first fold wait.
 #[cfg(feature = "load")]
 fn carry_waiting_controls(
     waiting: &mut crate::load::QueuedSeatBatch,
@@ -481,6 +492,11 @@ pub struct SlotScript {
     /// 2026-10-16). One for each walk request, at most `MAX_WALK_RELEASES`.
     #[cfg(feature = "load")]
     held_aborts: Vec<crate::load::QueuedInteract>,
+    /// The newest run-policy update that the script sent while the frame was
+    /// held, for the first frame after the hold. The outer option is "an
+    /// update was kept". The inner option is replace versus clear.
+    #[cfg(feature = "load")]
+    held_policy: Option<Option<api::run_policy::RunPolicyOverride>>,
     /// A missing host session also freezes the shared seat.
     seat_session_held: bool,
     /// Physical Walk terminals deferred until guardian hold lifts.
@@ -638,6 +654,8 @@ impl SlotScript {
             seat_host_held: false,
             #[cfg(feature = "load")]
             held_aborts: Vec::new(),
+            #[cfg(feature = "load")]
+            held_policy: None,
             seat_session_held: false,
             held_walk_terminals: Vec::new(),
             #[cfg(feature = "load")]
@@ -805,11 +823,12 @@ impl SlotScript {
     /// Only the guardian freezes the seat (`28-seat-sg.md:65`, §27 §6 of
     /// `27-decision-r5.md`). This hold is a held tick (`28-seat-sg.md:64`):
     /// the seat keeps applying controls, and gameplay of the held frames is
-    /// dropped. The operator decision of 2026-10-16 amends that row for the
-    /// abort releases only: a held tick keeps `AbortWalk`, `GatherStop` and
-    /// `CombatStop`, and the first frame after the hold dispatches them in
-    /// the order the script sent them ([`Self::seat_held_tick`],
-    /// [`Self::keep_held_aborts`]).
+    /// dropped. The operator decision of 2026-10-16 amends that row: a held
+    /// tick keeps `AbortWalk`, `GatherStop`, `CombatStop` and the newest
+    /// `RunPolicyOverride`, and the first frame after the hold dispatches the
+    /// aborts in the order the script sent them, then the policy
+    /// ([`Self::seat_held_tick`], [`Self::keep_held_aborts`]). A watchdog
+    /// recovery hold keeps the same rows.
     pub fn seat_host_hold(&mut self, held: bool) {
         self.seat_host_held = held;
     }
@@ -865,12 +884,13 @@ impl SlotScript {
     /// A non-guardian held tick discards one-shot script effects. Guardian
     /// SessionHeld takes a different path: it keeps reserved releases. A
     /// held tick of a frame that the slot loop holds (the scene is not
-    /// ready, the welcome modal is up) keeps the abort releases too
-    /// (operator decision 2026-10-16, [`Self::seat_host_hold`]). The seat
-    /// keeps at most one release row for each reserved release slot
+    /// ready, the welcome modal is up) or of a watchdog recovery keeps the
+    /// abort releases and the newest run policy too (operator decision
+    /// 2026-10-16, [`Self::seat_host_hold`]). The seat keeps at most one
+    /// release row for each reserved release slot and one policy row
     /// (`GameplaySeat::held_tick_keeping_releases`).
     pub fn seat_held_tick(&mut self) {
-        let keep = self.seat_host_held;
+        let keep = self.seat_host_held || self.watchdog.holds_script_actions();
         let Some(seat) = self.seat.as_mut() else {
             return;
         };
@@ -882,7 +902,7 @@ impl SlotScript {
         } else {
             seat.held_tick();
         }
-        let abort = |req: &crate::shim::InteractReq| keep && seat_abort_release(req);
+        let abort = |req: &crate::shim::InteractReq| keep && seat_reserved_row(req);
         let abort_action = |action: &crate::native::HostAction| {
             let crate::native::HostEffect::Interaction(req) = &action.effect else {
                 return false;
@@ -977,6 +997,10 @@ impl SlotScript {
         self.seat_interact_delivery.clear();
         #[cfg(feature = "load")]
         self.held_aborts.clear();
+        #[cfg(feature = "load")]
+        {
+            self.held_policy = None;
+        }
         #[cfg(feature = "load")]
         self.seat_lifecycle.clear();
         #[cfg(feature = "load")]
@@ -1639,6 +1663,10 @@ impl SlotScript {
         #[cfg(feature = "load")]
         self.held_aborts.clear();
         #[cfg(feature = "load")]
+        {
+            self.held_policy = None;
+        }
+        #[cfg(feature = "load")]
         self.seat_lifecycle.clear();
         #[cfg(feature = "load")]
         self.held_channel_refusals.clear();
@@ -1799,6 +1827,10 @@ impl SlotScript {
             self.seat_interact_delivery.clear();
             #[cfg(feature = "load")]
             self.held_aborts.clear();
+            #[cfg(feature = "load")]
+            {
+                self.held_policy = None;
+            }
         }
         #[cfg(feature = "load")]
         self.seat_lifecycle.clear();
@@ -3072,7 +3104,10 @@ impl SlotScript {
         // machine events and terminal watermarks. The newest batch supersedes
         // those pages. A retained batch that still waits for its pages
         // (`held_fold`) is different: the seat has not applied its controls,
-        // so they stay first, in order (`carry_waiting_controls`).
+        // so they stay first, in order (`carry_waiting_controls`). The order
+        // between control classes (every start before every machine event at
+        // resume) is an accepted limit: `carry_waiting_controls` states the
+        // condition and why guardian-only holds do not reach it.
         // `SessionHeld` discards gameplay only (§28.4), so the fold bounds
         // the other rows by exact summaries:
         // - Releases are never dropped. A repeated release of the same target
@@ -3349,6 +3384,8 @@ impl SlotScript {
         // Set when the retained guardian-hold batch still has pages that
         // the seat cannot take in this frame.
         let mut paging = false;
+        // Reserved rows of batches that a watchdog recovery hold drops.
+        let mut watchdog_kept = Vec::new();
         for mut queued in batches {
             let current_generation = self.load.as_ref().expect("batch producer").generation();
             if queued.generation != current_generation {
@@ -3412,8 +3449,25 @@ impl SlotScript {
             }
             if self.watchdog.holds_script_actions() {
                 self.seat_held_tick();
-                let dropped = queued.rows();
-                queued.batch.reqs.clear();
+                // A watchdog recovery hold keeps the batch's controls for
+                // after the hold and drops its other rows. Operator decision
+                // 2026-10-16 (aborts are never dropped): the releases and the
+                // run-policy row join this frame's rows in the order the
+                // script sent them. As for a held tick of a scene load, the
+                // drain applies a Gather or Combat Stop at once, and
+                // `keep_held_aborts` keeps the walk aborts and the newest
+                // policy for the first frame after the hold.
+                let mut dropped = queued.rows();
+                let observed_walk_outcome_seq = queued.observed_walk_outcome_seq;
+                for row in queued.batch.reqs.drain(..) {
+                    if seat_reserved_row(&row.request) {
+                        dropped -= 1;
+                        watchdog_kept.push(crate::load::QueuedInteract {
+                            req: row.request,
+                            observed_walk_outcome_seq,
+                        });
+                    }
+                }
                 queued.held_waits = crate::load::HeldWaitFacts::default();
                 self.seat.as_mut().expect("armed").count_dropped(dropped);
                 carried.push(queued);
@@ -3457,6 +3511,7 @@ impl SlotScript {
         if self.dispatch_open() || self.completed_seat_dispatch_open() {
             reqs.extend(std::mem::take(&mut self.seat_interact_delivery));
         }
+        reqs.extend(watchdog_kept);
         let mut policy = None;
         reqs.retain(|queued| match &queued.req {
             crate::shim::InteractReq::RunPolicyOverride { policy: update } => {
@@ -3480,28 +3535,51 @@ impl SlotScript {
             }
             _ => true,
         });
-        self.keep_held_aborts(&mut reqs);
+        self.keep_held_aborts(&mut policy, &mut reqs);
         (policy, reqs, self.api_owns_foreground())
     }
 
-    /// While the slot loop holds the frame, the host dispatches no script
-    /// row (`script_observe.rs`, the `up && !hold` gate), so a walk abort
-    /// that reached this drain would be lost. Operator decision 2026-10-16
-    /// (amends `28-seat-sg.md:64` for the abort releases only): keep each
-    /// walk abort here, in order, and put the kept aborts in front of the
-    /// first frame after the hold. `GatherStop` and `CombatStop` never reach
-    /// this point: the drain applies them in the slot at once
-    /// (`consume_api_release`). The seat reserves one release slot for each
-    /// walk (`MAX_WALK_RELEASES`), so this keeps one abort for each walk
-    /// request and at most `MAX_WALK_RELEASES`; a further abort is counted
-    /// as dropped.
+    /// While the frame is held, the host dispatches no script row: the slot
+    /// loop's hold closes the `up && !hold` gate (`script_observe.rs`), and
+    /// a watchdog recovery hold drops the drained rows unless an API session
+    /// owns the foreground. A walk abort or a run-policy update that reached
+    /// this drain would be lost. Operator decision 2026-10-16 amends
+    /// `28-seat-sg.md:64`: aborts are never dropped. Keep each walk abort
+    /// here, in order, and the newest policy update, and give them to the
+    /// first frame after the hold: the aborts in front of that frame's rows,
+    /// and the policy as that frame's update unless the frame has a newer
+    /// one. `GatherStop` and `CombatStop` never reach this point: the drain
+    /// applies them in the slot at once (`consume_api_release`). The seat
+    /// reserves one release slot for each walk (`MAX_WALK_RELEASES`), so this
+    /// keeps one abort for each walk request and at most
+    /// `MAX_WALK_RELEASES`. The drain counts a further abort as dropped.
     #[cfg(feature = "load")]
-    fn keep_held_aborts(&mut self, reqs: &mut Vec<crate::load::QueuedInteract>) {
-        if !(self.guardian_held || self.seat_host_held) {
+    fn keep_held_aborts(
+        &mut self,
+        policy: &mut Option<Option<api::run_policy::RunPolicyOverride>>,
+        reqs: &mut Vec<crate::load::QueuedInteract>,
+    ) {
+        let held = self.guardian_held
+            || self.seat_host_held
+            || (self.watchdog.holds_script_actions() && !self.api_owns_foreground());
+        if !held {
             if !self.held_aborts.is_empty() {
                 reqs.splice(0..0, self.held_aborts.drain(..));
             }
+            // A policy update of this frame is newer than the kept one.
+            let kept = self.held_policy.take();
+            if policy.is_none() {
+                *policy = kept;
+            }
             return;
+        }
+        if let Some(update) = policy.take() {
+            // A policy row that still waits in the seat was sent before
+            // this one. Only the newest is kept.
+            if let Some(seat) = self.seat.as_mut() {
+                seat.discard_policy();
+            }
+            self.held_policy = Some(update);
         }
         let mut dropped = 0;
         let kept = &mut self.held_aborts;
