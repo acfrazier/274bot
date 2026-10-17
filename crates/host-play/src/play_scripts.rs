@@ -3,8 +3,6 @@ use std::sync::{Arc, Mutex};
 
 use api::host_log;
 use api::hostlog::{Category, Level};
-use api::snapshot::WorldTile;
-use nav::router::Route;
 
 use crate::play_status::lock_statuses;
 use crate::script_runtime;
@@ -30,21 +28,11 @@ fn clear_script_paint_status(statuses: &Arc<Mutex<Vec<crate::SlotStatus>>>, name
 }
 
 /// Cloneable overlay source for a catalog Traveller (`InteractReq::Walk`).
-/// The panel paints this when WalkTo's [`WalkArm`] is idle so a script
-/// walk shows the same path / click as a picker walk.
+/// The panel projects the borrowed route only while painting it, so compact
+/// plans are never expanded into legacy `Route` allocations.
 #[derive(Clone)]
 pub struct ScriptNavPaint {
     pub(crate) navs: Arc<Mutex<HashMap<String, NavBot>>>,
-}
-
-impl ScriptNavPaint {
-    /// Armed route and current hop aim for `name`, if any.
-    pub fn of(&self, name: &str) -> (Option<Route>, Option<WorldTile>) {
-        match self.navs.lock().unwrap().get(name) {
-            Some(b) => (b.route.as_deref().cloned(), b.traveller.current_aim()),
-            None => (None, None),
-        }
-    }
 }
 
 /// One prepared native-card configuration; an optional Quester registry is

@@ -1265,9 +1265,11 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
         // post-session facts and published, as the armed route was.
         bot.install_route_path(pending.final_route.clone());
         resume_final_route(snapshot, bot, world, here, map_members, &pending);
-        if let (Some(world), Some(route), Some(mut admission)) =
-            (world, bot.route.clone(), bot.admission.as_deref().copied())
-        {
+        if let (Some(world), Some(route), Some(mut admission)) = (
+            world,
+            bot.route_path_for_follow(),
+            bot.admission.as_deref().copied(),
+        ) {
             admission.input = crate::admission::capture(
                 snapshot,
                 map_members,
@@ -1275,7 +1277,9 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
                 bot.walk_guard_off.is_some(),
             );
             *bot.admission.as_deref_mut().expect("active admission") = admission;
-            bot.assessment = Some(crate::admission::assess(&route, world, &admission));
+            bot.assessment = Some(crate::admission::assess_route_path(
+                &route, world, &admission,
+            ));
             bot.admission_pending = true;
             crate::admission::publish(bot, world, snapshot, map_members, None);
         }
