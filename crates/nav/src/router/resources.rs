@@ -538,6 +538,7 @@ fn packed_bucket(hash: u32, capacity: usize) -> usize {
     ((u64::from(hash) * capacity as u64) >> 32) as usize
 }
 
+#[cfg(test)]
 fn packed_hash_index(tile: WorldTile, balance: u32, capacity: usize) -> usize {
     packed_bucket(packed_hash(tile, balance), capacity)
 }
@@ -1557,6 +1558,14 @@ mod packed_search_tests {
                 }
             }
         }
+        super::super::drive_to_completion(async {
+            for (key, expected) in [(tile(12_600), 0), (tile(112_017), 1), (tile(12_600), 0)] {
+                assert!(matches!(
+                    table.locate(key, 3).await,
+                    Ok(PackedLookup::Found(id)) if id == expected
+                ));
+            }
+        });
     }
 
     #[test]
