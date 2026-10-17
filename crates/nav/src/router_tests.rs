@@ -5935,6 +5935,48 @@ fn zoned_first_keeps_preferred_priority_and_does_not_use_fallback_zones_for_tran
             if route.dest == zoned && route.ticks == 1.0)
     );
     assert_eq!(empty.completion_partitions(), 0);
+
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        collision,
+        graph,
+        Vec::new(),
+    ));
+    let lease = crate::producer::lease(&world).expect("zoned fixture lease");
+    let preferred = [zoned];
+    let fallback = [from];
+    let beyond = [tile(4, 0, 0)];
+    for (targets, fallback, preferred_wins) in [
+        (&preferred[..], &fallback[..], true),
+        (&beyond[..], &preferred[..], false),
+        (&[][..], &preferred[..], false),
+    ] {
+        let completion = advance_real_route_completion(
+            super::SearchRequest::First {
+                from,
+                targets: targets.to_vec().into_boxed_slice(),
+                fallback: fallback.to_vec().into_boxed_slice(),
+                options: FindOptions::default(),
+                avoid: Box::new([]),
+                max_settles: super::NODE_BUDGET,
+            },
+            &lease,
+            &state,
+        );
+        let super::SearchOutcome::First { search } = completion.into_parts().0 else {
+            panic!("first-goal cursor returned the wrong result shape");
+        };
+        let (route, fallback) = search.into_routes();
+        if preferred_wins {
+            assert_eq!(route.expect("preferred completion").destination(), zoned);
+            assert!(fallback.is_none());
+        } else {
+            assert!(matches!(route, Err(RouteError::NoPath)));
+            assert!(
+                matches!(fallback, Some(super::CompactFallbackRoute::Routed(route))
+                    if route.destination() == zoned && route.ticks() == 1.0)
+            );
+        }
+    }
 }
 
 #[test]
