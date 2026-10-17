@@ -308,6 +308,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   session, the final route is checked against the updated inventory and gear.
   Routes waiting for work capacity retry only when capacity changes.
   Completed route searches submit their next stage in the same slot frame.
+  Legacy and compact routes share the same path and transport paint rules.
+  The panel releases the script route lock before scene paint and camera updates.
 
 - The first launch's game cache download no longer switches off background
   work on slower connections, and "Preparing cache snapshot" now shows how

@@ -47,15 +47,12 @@ use host_play::{
     ProfileOptions, ReadyCatalogue, ReadyImages, ScriptNavPaint, ServerProfile,
     SharedClientTemplate, SlotFrameInput, SlotStatus, ValidatedTemplate, WalkArm,
 };
-use nav::contract::{LegView, RouteView};
 use nav::paint::{
-    collision_at_with, hop_captions as legacy_hop_captions, hull_targets as legacy_hull_targets,
-    reached, remaining_path_tiles as legacy_remaining_path_tiles, remaining_trail,
+    collision_at_with, hop_captions, hull_targets, reached, remaining_path_tiles, remaining_trail,
     select_draw_indices, trail_tones, HopCaption, HullTarget, PathTile, TrailTone,
 };
 use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
-use nav::transport::TransportKind;
 use nav::world::NavWorld;
 use nav::WorldState;
 use vault::{Profile, ProfileSettings, RandomEventPolicy, Secret, Vault};
@@ -557,10 +554,10 @@ const SCENE_TILES: i32 = 104;
 /// the client only projects the locs inside its loaded scene anyway.
 const HULL_WINDOW: usize = 48;
 
-/// One selected route for the scene painter. Script projections borrow compact
-/// route storage; live and manual routes keep their existing owned snapshot.
+/// One selected route for the scene painter. All route storage stays borrowed
+/// while the painter builds its small output buffers.
 enum ScenePaintRoute<'a> {
-    Legacy(Route),
+    Legacy(&'a Route),
     Script(RouteProjection<'a>),
 }
 
@@ -574,11 +571,11 @@ impl ScenePaintRoute<'_> {
 }
 
 /// Shared route-owner precedence with the map overlay: driven live, then
-/// script, then manual WalkTo. Script routes stay borrowed through painting.
+/// script, then manual WalkTo. Script routes stay borrowed through projection.
 fn live_or_walk_paint<'a>(
     driven: bool,
-    live: (Option<Route>, Option<WorldTile>),
-    walk: (Option<Route>, Option<WorldTile>),
+    live: (Option<&'a Route>, Option<WorldTile>),
+    walk: (Option<&'a Route>, Option<WorldTile>),
     script: Option<RouteProjection<'a>>,
 ) -> (Option<ScenePaintRoute<'a>>, Option<WorldTile>) {
     match host_play::walk_map::select_route_source(
@@ -619,172 +616,50 @@ fn scene_route_fingerprint(route: Option<&ScenePaintRoute<'_>>) -> u64 {
     }
 }
 
-fn first_remaining_compact_leg(route: RouteView<'_>, here: Option<WorldTile>) -> usize {
-    let Some(here) = here else {
-        return 0;
-    };
-    let mut first = 0;
-    for leg in route.legs() {
-        let done = match leg {
-            LegView::Walk(tiles) => tiles.last().is_some_and(|last| *last == here),
-            LegView::Transport(hop) => hop.landing() == here,
+/// Route-only outputs. No route borrow or owner lock reaches the scene painter
+/// or the camera update.
+#[derive(Default)]
+struct SceneRoutePaint {
+    path: Vec<PathTile>,
+    captions: Vec<HopCaption>,
+    hulls: Vec<HullTarget>,
+}
+
+impl SceneRoutePaint {
+    fn build(
+        world: &NavWorld,
+        route: Option<RouteProjectionPath<'_>>,
+        here: Option<WorldTile>,
+        path: bool,
+        hops: bool,
+    ) -> Self {
+        let route = match route {
+            Some(RouteProjectionPath::Legacy(route)) => {
+                nav::producer::route_view(world, route).ok()
+            }
+            Some(RouteProjectionPath::Compact(route)) => Some(route),
+            None => None,
         };
-        if !done {
-            break;
-        }
-        first += 1;
-    }
-    first
-}
-
-fn push_path_tile(out: &mut Vec<PathTile>, tile: WorldTile, transport: bool) {
-    if let Some(previous) = out.last_mut() {
-        if previous.tile == tile {
-            previous.transport |= transport;
-            return;
-        }
-    }
-    out.push(PathTile { tile, transport });
-}
-
-fn compact_remaining_path_tiles(route: RouteView<'_>, here: Option<WorldTile>) -> Vec<PathTile> {
-    let first = first_remaining_compact_leg(route, here);
-    let mut out = Vec::new();
-    for (index, leg) in route.legs().enumerate().skip(first) {
-        match leg {
-            LegView::Walk(tiles) => {
-                let tiles = if index == first {
-                    here.and_then(|here| tiles.iter().position(|tile| *tile == here))
-                        .map_or(tiles, |at| &tiles[at..])
-                } else {
-                    tiles
-                };
-                for &tile in tiles {
-                    push_path_tile(&mut out, tile, false);
-                }
-            }
-            LegView::Transport(hop) => {
-                push_path_tile(&mut out, hop.anchor(), true);
-                push_path_tile(&mut out, hop.landing(), true);
-            }
-        }
-    }
-    out
-}
-
-fn projected_remaining_path_tiles(
-    route: RouteProjectionPath<'_>,
-    here: Option<WorldTile>,
-) -> Vec<PathTile> {
-    match route {
-        RouteProjectionPath::Legacy(route) => legacy_remaining_path_tiles(route, here),
-        RouteProjectionPath::Compact(route) => compact_remaining_path_tiles(route, here),
-    }
-}
-
-fn compact_hop_captions(route: RouteView<'_>, here: Option<WorldTile>) -> Vec<HopCaption> {
-    let first = first_remaining_compact_leg(route, here);
-    let mut out = Vec::new();
-    for leg in route.legs().skip(first) {
-        let LegView::Transport(hop) = leg else {
-            continue;
+        let Some(route) = route else {
+            return Self::default();
         };
-        let text = if hop.loc_id() == 733 {
-            Some("Web")
-        } else {
-            match hop.kind() {
-                TransportKind::Door => Some("Door"),
-                TransportKind::Ladder => Some("Ladder"),
-                TransportKind::Stairs => Some("Stairs"),
-                TransportKind::Boat => Some("Boat"),
-                TransportKind::AgilityShortcut => Some("Shortcut"),
-                TransportKind::Glider => Some("Glider"),
-                TransportKind::SpiritTree => Some("Spirit tree"),
-                TransportKind::Npc => Some("Npc"),
-                TransportKind::Teleport | TransportKind::EssenceExit => None,
-            }
-        };
-        if let Some(text) = text {
-            let at = hop.anchor();
-            if out
-                .last()
-                .is_none_or(|caption: &HopCaption| caption.at != at)
-            {
-                out.push(HopCaption {
-                    at,
-                    text: text.into(),
-                });
-            }
+        Self {
+            path: if path {
+                remaining_path_tiles(route, here)
+            } else {
+                Vec::new()
+            },
+            captions: if hops {
+                hop_captions(route, here)
+            } else {
+                Vec::new()
+            },
+            hulls: if hops {
+                hull_targets(route, here, HULL_WINDOW)
+            } else {
+                Vec::new()
+            },
         }
-    }
-    out
-}
-
-fn projected_hop_captions(
-    route: RouteProjectionPath<'_>,
-    here: Option<WorldTile>,
-) -> Vec<HopCaption> {
-    match route {
-        RouteProjectionPath::Legacy(route) => legacy_hop_captions(route, here),
-        RouteProjectionPath::Compact(route) => compact_hop_captions(route, here),
-    }
-}
-
-fn compact_hull_targets(
-    route: RouteView<'_>,
-    here: Option<WorldTile>,
-    next_only_plus: usize,
-) -> Vec<HullTarget> {
-    let first = first_remaining_compact_leg(route, here);
-    let mut out = Vec::new();
-    let mut tile_idx = 0usize;
-    let mut seen_loc_hop = false;
-    for (index, leg) in route.legs().enumerate().skip(first) {
-        match leg {
-            LegView::Walk(tiles) => {
-                let mut count = tiles.len();
-                if index == first {
-                    if let Some(here) = here {
-                        if let Some(at) = tiles.iter().position(|tile| *tile == here) {
-                            count -= at;
-                        }
-                    }
-                }
-                tile_idx += count;
-            }
-            LegView::Transport(hop) => {
-                if matches!(
-                    hop.kind(),
-                    TransportKind::Door
-                        | TransportKind::Ladder
-                        | TransportKind::Stairs
-                        | TransportKind::AgilityShortcut
-                ) {
-                    let target = HullTarget {
-                        loc_id: hop.loc_id(),
-                        at: hop.anchor(),
-                    };
-                    let next = !seen_loc_hop;
-                    seen_loc_hop = true;
-                    if (next || tile_idx <= next_only_plus) && !out.contains(&target) {
-                        out.push(target);
-                    }
-                }
-                tile_idx += 2;
-            }
-        }
-    }
-    out
-}
-
-fn projected_hull_targets(
-    route: RouteProjectionPath<'_>,
-    here: Option<WorldTile>,
-    next_only_plus: usize,
-) -> Vec<HullTarget> {
-    match route {
-        RouteProjectionPath::Legacy(route) => legacy_hull_targets(route, here, next_only_plus),
-        RouteProjectionPath::Compact(route) => compact_hull_targets(route, here, next_only_plus),
     }
 }
 
@@ -843,9 +718,9 @@ fn live_client_trail(client: &mut Client, here: Option<WorldTile>) -> Vec<WorldT
 /// view changes. Non-GPU, unfocused, skip-paint and renderer-off slots
 /// publish `None` once when demand drops, preventing stale paint.
 ///
-/// `world` is the baked pack, `route` the armed walk route, `here` the
-/// player's observed world tile, `trail_world` the local player's last
-/// `tryMove` route buffer, `run_on` its two-tone state, and `click` the
+/// `world` is the baked pack, `route` contains the projected route buffers,
+/// `trail_world` is the local player's last `tryMove` route buffer,
+/// `run_on` its two-tone state, and `click` the
 /// traveller's current walk aim. World-to-scene is
 /// `(x - map_build_base_x, z - map_build_base_z)`.
 #[expect(
@@ -855,8 +730,7 @@ fn live_client_trail(client: &mut Client, here: Option<WorldTile>) -> Vec<WorldT
 fn publish_nav_debug(
     client: &mut Client,
     world: &NavWorld,
-    route: Option<RouteProjectionPath<'_>>,
-    here: Option<WorldTile>,
+    route: Option<SceneRoutePaint>,
     trail_world: &[WorldTile],
     run_on: bool,
     click: Option<WorldTile>,
@@ -988,7 +862,7 @@ fn publish_nav_debug(
         // Full density near, stride after, always keeping the transport
         // hops and the terminal (the pack map keeps the full path).
         if settings.show_nav_path {
-            let tiles = projected_remaining_path_tiles(route, here);
+            let tiles = &route.path;
             let force: Vec<usize> = tiles
                 .iter()
                 .enumerate()
@@ -1007,7 +881,8 @@ fn publish_nav_debug(
         // strokes the transport loc hulls (the client's transport colour
         // family covers both).
         if settings.show_nav_path && settings.hop_labels {
-            paint.hulls = projected_hull_targets(route, here, HULL_WINDOW)
+            paint.hulls = route
+                .hulls
                 .into_iter()
                 .map(|h| NavDebugHull {
                     loc_id: h.loc_id,
@@ -1015,7 +890,8 @@ fn publish_nav_debug(
                     scene_z: h.at.z - base_z,
                 })
                 .collect();
-            paint.labels = projected_hop_captions(route, here)
+            paint.labels = route
+                .captions
                 .into_iter()
                 .map(|c| (c.at.x - base_x, c.at.z - base_z, c.text))
                 .collect();
@@ -1043,21 +919,13 @@ fn publish_nav_debug(
 /// Desired heading is held until it moves ≥ `TARGET_RETARGET_MIN` so a
 /// corridor does not twitch; ease velocity is ours, not the keycam field
 /// (`follow_camera` would double-integrate it).
-fn apply_path_camera(
-    client: &mut Client,
-    route: Option<RouteProjectionPath<'_>>,
-    here: Option<WorldTile>,
-) {
+fn apply_path_camera(client: &mut Client, tiles: &[PathTile], here: Option<WorldTile>) {
     if client.shell.key_held[1] == 1 || client.shell.key_held[2] == 1 {
         return;
     }
-    let Some(route) = route else {
-        return;
-    };
     let Some(here) = here else {
         return;
     };
-    let tiles = projected_remaining_path_tiles(route, Some(here));
     if tiles.is_empty() {
         return;
     }
@@ -3265,82 +3133,102 @@ impl Session {
                 }
                 _ => (false, (None, None)),
             };
-            let script_handle = script_nav_paint.lock().unwrap().clone();
-            let paint_route = |script_route: Option<RouteProjection<'_>>| {
-                let (route, click) = live_or_walk_paint(driven, live, walk, script_route);
-                match crate::picker::pack() {
-                    Some(world) => {
-                        let here = c.local_player.as_ref().map(|lp| WorldTile {
-                            x: c.map_build_base_x + lp.route_x[0],
-                            z: c.map_build_base_z + lp.route_z[0],
-                            level: 0,
-                        });
-                        retire_client_trail(c, here);
-                        // Run orb (varp 173 / 274 overlay), not the run
-                        // animation — the anim is only true while a run
-                        // cycle plays.
-                        let run_on = c.run_enabled();
-                        let active = drawing && c.nav_debug_drawable();
+            match crate::picker::pack() {
+                Some(world) => {
+                    let here = c.local_player.as_ref().map(|lp| WorldTile {
+                        x: c.map_build_base_x + lp.route_x[0],
+                        z: c.map_build_base_z + lp.route_z[0],
+                        level: 0,
+                    });
+                    retire_client_trail(c, here);
+                    // Run orb (varp 173 / 274 overlay), not the run animation.
+                    let run_on = c.run_enabled();
+                    let active = drawing && c.nav_debug_drawable();
+                    let camera = drawing
+                        && layers.camera_follow
+                        && here.is_some()
+                        && c.shell.key_held[1] != 1
+                        && c.shell.key_held[2] != 1;
+                    let previous = nav_paint_cache.lock().unwrap().last_frame(name);
+                    let base_facts = crate::nav_paint_cache::Facts {
+                        settings_generation,
+                        active,
+                        base_x: c.map_build_base_x,
+                        base_z: c.map_build_base_z,
+                        here,
+                        route: 0,
+                        click: None,
+                        trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
+                        run_on,
+                    };
+                    let project_route = |script_route: Option<RouteProjection<'_>>| {
+                        let (route, click) = live_or_walk_paint(
+                            driven,
+                            (live.0.as_ref(), live.1),
+                            (walk.0.as_ref(), walk.1),
+                            script_route,
+                        );
                         let facts = crate::nav_paint_cache::Facts {
-                            settings_generation,
-                            active,
-                            base_x: c.map_build_base_x,
-                            base_z: c.map_build_base_z,
-                            here,
                             route: scene_route_fingerprint(route.as_ref()),
                             click,
-                            trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
-                            run_on,
+                            ..base_facts
                         };
-                        let changed = nav_paint_cache.lock().unwrap().begin_frame(name, facts);
-                        if changed {
-                            // Full tryMove BFS (every scene tile, src→dest), not
-                            // the entity walk buffer (capped at 9). Materialize
-                            // it only when an active GPU consumer needs a view.
-                            let trail_world = if active {
-                                live_client_trail(c, here)
-                            } else {
-                                Vec::new()
-                            };
-                            // Focused drawer owns ensure/drop; when focus is None
-                            // any remaining slot may release the shared sidecar.
-                            let flags_owner = is_focused || focused.is_none();
-                            publish_nav_debug(
-                                c,
+                        let changed = previous != Some(facts);
+                        let path = camera || (changed && active && layers.show_nav_path);
+                        let hops = changed && active && layers.show_nav_path && layers.hop_labels;
+                        let outputs = if path || hops {
+                            SceneRoutePaint::build(
                                 &world,
                                 route.as_ref().map(ScenePaintRoute::projection),
                                 here,
-                                &trail_world,
-                                run_on,
-                                click,
-                                &layers,
-                                active,
-                                flags_owner,
-                            );
-                            let recorded = crate::nav_paint_cache::Facts {
-                                trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
-                                ..facts
-                            };
-                            nav_paint_cache.lock().unwrap().record(name, recorded);
-                        }
-                        if drawing && layers.camera_follow {
-                            apply_path_camera(
-                                c,
-                                route.as_ref().map(ScenePaintRoute::projection),
-                                here,
-                            );
-                        }
+                                path,
+                                hops,
+                            )
+                        } else {
+                            SceneRoutePaint::default()
+                        };
+                        (facts, changed, outputs)
+                    };
+                    let script_handle = script_nav_paint.lock().unwrap().clone();
+                    let (facts, changed, outputs) = match script_handle {
+                        Some(handle) => handle.with_map_route(name, project_route),
+                        None => project_route(None),
+                    };
+                    // The route borrow and the process-wide navs lock end above.
+                    if camera {
+                        apply_path_camera(c, &outputs.path, here);
                     }
-                    None => {
-                        nav_paint_cache.lock().unwrap().invalidate(name);
-                        c.set_nav_debug_paint(None);
+                    if changed {
+                        // Materialize the full tryMove trail only for an active
+                        // GPU consumer, after releasing the route owner.
+                        let trail_world = if active {
+                            live_client_trail(c, here)
+                        } else {
+                            Vec::new()
+                        };
+                        let flags_owner = is_focused || focused.is_none();
+                        publish_nav_debug(
+                            c,
+                            &world,
+                            Some(outputs),
+                            &trail_world,
+                            run_on,
+                            facts.click,
+                            &layers,
+                            active,
+                            flags_owner,
+                        );
+                        let recorded = crate::nav_paint_cache::Facts {
+                            trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
+                            ..facts
+                        };
+                        nav_paint_cache.lock().unwrap().record(name, recorded);
                     }
                 }
-            };
-            if let Some(script_handle) = script_handle {
-                script_handle.with_map_route(name, paint_route);
-            } else {
-                paint_route(None);
+                None => {
+                    nav_paint_cache.lock().unwrap().invalidate(name);
+                    c.set_nav_debug_paint(None);
+                }
             }
             // Sound follows the applied client mode, not the queued setting.
             // The open closure runs on this slot's client-owning thread.

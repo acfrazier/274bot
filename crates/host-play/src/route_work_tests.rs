@@ -256,6 +256,7 @@ fn route_owner_ledger_full_retains_terminal_until_result_capacity_returns() {
     drop(blocker);
     finish(&shared, &navs, &ledger);
     assert_eq!(navs.lock().unwrap()["alice"].route_destination(), Some(to));
+    wait_for_capacity(&shared, api::work::WorkCapacity::EMPTY);
     assert_eq!(shared.lock().capacity(), api::work::WorkCapacity::EMPTY);
     navs.lock().unwrap().clear();
     assert_eq!(ledger.used_bytes(), 0);
@@ -506,6 +507,7 @@ fn qualifies_real_bank_route_adapter_search_latency() {
             "pump_interval_ms": 20,
         }));
         navs.lock().unwrap().clear();
+        wait_for_capacity(&shared, api::work::WorkCapacity::EMPTY);
         assert_eq!(shared.lock().capacity(), api::work::WorkCapacity::EMPTY);
         assert_eq!(ledger.used_bytes(), 0);
     }
