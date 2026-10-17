@@ -878,6 +878,7 @@ fn u6_named_retry_keeps_teleport_wilderness_avoid_and_quest_authority() {
         allow_teleports: false,
         allow_wilderness: false,
         allow_bank_fetch: false,
+        prefer_target_order: false,
         essence: None,
         zones: ZoneExempt::NONE,
     };
@@ -1478,6 +1479,7 @@ fn c5_route_basis_keeps_hard_authority_through_replacement_and_revocation() {
         allow_teleports: false,
         allow_wilderness: false,
         allow_bank_fetch: false,
+        prefer_target_order: false,
         essence: None,
         zones: ZoneExempt::NONE,
     };
