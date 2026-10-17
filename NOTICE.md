@@ -25,13 +25,6 @@ Do **not** present this repo as “Lost City Client,” “LC,” “Fairy Ring,
 
 `vendor/dear-imgui-wgpu-0.15.1` is dear-imgui-wgpu 0.15.1, Copyright 2025 Mingzhen Zhuang, distributed under MIT OR Apache-2.0. The pinned shader modification replaces the renderer-wide Gamma22/Auto-on-sRGB power approximation with the IEC 61966-2-1 inverse sRGB transfer; it applies to all Dear ImGui samples on that path, including chrome and game content.
 
-## Vendored test allocator
-
-`vendor/allocation-counter-0.8.1` preserves allocation-counter 0.8.1 by Fredrik
-Fornwall under MIT OR Apache-2.0. Its local change forwards zeroed allocations
-to `System::alloc_zeroed` and counts each allocation once. This dev-only patch
-keeps live-test allocation behavior consistent with product executables.
-
 ## Embedded fonts
 
 Pass-2 native Canvas metrics/raster embed Liberation Sans Regular and Liberation Mono Regular 2.1.5 (`crates/script/fonts/`) under the SIL Open Font License 1.1. See that directory’s LICENSE and AUTHORS. Reserved Font Name: Liberation.
