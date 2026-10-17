@@ -1087,7 +1087,7 @@ fn live_follow_route_wins_over_empty_walkto_arm() {
         (None, None),
         None,
     );
-    assert_eq!(route.unwrap().destination(), dest);
+    assert_eq!(route.unwrap().projection().destination(), dest);
     assert_eq!(click, Some(dest));
     let (route, _) = live_or_walk_paint(true, (None, None), (None, None), None);
     assert!(route.is_none(), "no live route falls back to WalkTo");
@@ -1119,7 +1119,7 @@ fn live_follow_route_wins_over_empty_walkto_arm() {
         Some(script_dest),
         "catalog walk paints when WalkTo is idle"
     );
-    assert_eq!(route.unwrap().destination(), script_dest);
+    assert_eq!(route.unwrap().projection().destination(), script_dest);
 }
 
 #[test]
@@ -1832,7 +1832,7 @@ fn compact_script_route_paints_its_scene_path_and_click_ahead_of_walkto() {
         Some(script),
     );
     let route = route.expect("script route beats a manual WalkTo fallback");
-    assert_eq!(route.destination(), destination);
+    assert_eq!(route.projection().destination(), destination);
     assert_eq!(click, Some(destination));
 
     let settings = NavSettings {
