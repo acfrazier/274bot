@@ -357,6 +357,26 @@ impl WorkService {
                 );
             }
         }
+        for entry in self.jobs.values() {
+            if entry.family.policy().execution() != WorkExecution::RequestThread {
+                continue;
+            }
+            let mut active = entry.request_active.lock();
+            let Some(active) = active.as_mut().filter(|active| !active.returned) else {
+                continue;
+            };
+            let elapsed = now.saturating_duration_since(active.started);
+            if elapsed >= WORKER_STALL_LIMIT && !active.stall_warned {
+                active.stall_warned = true;
+                api::host_log!(
+                    api::hostlog::Category::Lifecycle,
+                    api::hostlog::Level::Warn,
+                    "request work step stalled after {elapsed:?} family={:?} job={:?}",
+                    entry.family,
+                    entry.identity.job(),
+                );
+            }
+        }
     }
 
     /// Wake the sole worker after a command has been published.
@@ -676,6 +696,7 @@ struct ActiveStep {
     entry: RequestId,
     started: Instant,
     returned: bool,
+    stall_warned: bool,
 }
 
 struct WorkerQueue {
@@ -1121,11 +1142,7 @@ fn worker_thread(shared: Arc<WorkerShared>) {
 fn request_thread(shared: Arc<WorkerShared>, entry: Arc<JobEntry>) {
     let result = catch_unwind(AssertUnwindSafe(|| {
         while !entry.returned.load(Ordering::Acquire) {
-            if shared.unavailable.load(Ordering::Acquire) {
-                drop_queued_entry(&shared, &entry);
-            } else {
-                run_entry(&shared, &entry);
-            }
+            run_entry(&shared, &entry);
         }
     }));
     if result.is_err() {
@@ -1174,6 +1191,13 @@ fn worker_loop(shared: &Arc<WorkerShared>) {
     }
 }
 
+fn executor_log_label(entry: &JobEntry) -> &'static str {
+    match entry.family.policy().execution() {
+        WorkExecution::BackgroundWorker => "background work",
+        WorkExecution::RequestThread => "request work",
+    }
+}
+
 fn run_entry(shared: &Arc<WorkerShared>, entry: &Arc<JobEntry>) {
     if !entry.terminal.is_pending() {
         drop_queued_entry(shared, entry);
@@ -1215,6 +1239,7 @@ fn run_entry(shared: &Arc<WorkerShared>, entry: &Arc<JobEntry>) {
         entry: entry.identity.job(),
         started,
         returned: false,
+        stall_warned: false,
     });
     let (allowance, qualified) = entry.slice_allowance();
     let budget = SliceBudget::new(
@@ -1238,7 +1263,8 @@ fn run_entry(shared: &Arc<WorkerShared>, entry: &Arc<JobEntry>) {
             api::host_log!(
                 api::hostlog::Category::Lifecycle,
                 api::hostlog::Level::Error,
-                "background work job {:?} failed internally (contained panic); only this job failed",
+                "{} job {:?} failed internally (contained panic); only this job failed",
+                executor_log_label(entry),
                 entry.identity.job(),
             );
             let published = entry.publish_service_terminal(ServiceTerminal::FailedInternally);
@@ -1288,7 +1314,8 @@ fn process_step(
         api::host_log!(
             api::hostlog::Category::Lifecycle,
             api::hostlog::Level::Warn,
-            "background work step returned slowly family={:?} elapsed={elapsed:?}",
+            "{} step returned slowly family={:?} elapsed={elapsed:?}",
+            executor_log_label(entry),
             entry.family,
         );
     }
@@ -1302,7 +1329,8 @@ fn process_step(
             api::host_log!(
                 api::hostlog::Category::Lifecycle,
                 api::hostlog::Level::Warn,
-                "background work slice overrun count={count} elapsed={elapsed:?} allowance={:?}",
+                "{} slice overrun count={count} elapsed={elapsed:?} allowance={:?}",
+                executor_log_label(entry),
                 timing.allowance,
             );
         }
@@ -1366,7 +1394,8 @@ fn process_step(
                             api::host_log!(
                                 api::hostlog::Category::Lifecycle,
                                 api::hostlog::Level::Warn,
-                                "background work job {:?} dropped progress after immutable snapshot custody filled",
+                                "{} job {:?} dropped progress after immutable snapshot custody filled",
+                                executor_log_label(entry),
                                 entry.identity.job(),
                             );
                         }
@@ -1417,9 +1446,7 @@ fn process_step(
         *entry.job.lock() = Some(job);
         let control = entry.control.lock();
         if control.stranded.cancellation().is_none() {
-            if entry.family.policy().execution() == WorkExecution::RequestThread
-                && !shared.unavailable.load(Ordering::Acquire)
-            {
+            if entry.family.policy().execution() == WorkExecution::RequestThread {
                 return;
             }
             let mut queue = shared.queue.lock();
@@ -1601,6 +1628,9 @@ fn latch_outage(
         .filter_map(Weak::upgrade)
         .collect();
     for entry in entries {
+        if entry.family.policy().execution() == WorkExecution::RequestThread {
+            continue;
+        }
         let mut published = false;
         {
             let mut control = entry.control.lock();
@@ -1707,12 +1737,18 @@ impl WorkService {
         }
         self.observe_health();
         self.cleanup_released();
+        let background = F::FAMILY.policy().execution() == WorkExecution::BackgroundWorker;
         let refusal = if identity.incarnation() != self.incarnation
             || conditions.incarnation() != self.incarnation
         {
             Some(SubmissionRefusal::InvalidAuthority)
-        } else if let Some(unavailable) = self.refusal_for_unavailable(identity) {
-            Some(unavailable)
+        } else if background {
+            self.refusal_for_unavailable(identity)
+        } else {
+            None
+        };
+        let refusal = if let Some(refusal) = refusal {
+            Some(refusal)
         } else if let Err(AdmissionRefusal::Unavailable(refusal)) = conditions.admit(
             ProcessCapability::BackgroundWork,
             Some(identity.job()),
@@ -1752,10 +1788,12 @@ impl WorkService {
             }
         };
         let mut queue = self.shared.queue.lock();
-        if let Some(unavailable) = self.refusal_for_unavailable(identity) {
-            return Err(api::work::Refused::new(unavailable, job));
+        if background {
+            if let Some(unavailable) = self.refusal_for_unavailable(identity) {
+                return Err(api::work::Refused::new(unavailable, job));
+            }
         }
-        if queue.stopping || self.stopping {
+        if self.stopping || (background && queue.stopping) {
             return Err(api::work::Refused::new(SubmissionRefusal::Stopping, job));
         }
         if let Err(refusal) =
@@ -1803,8 +1841,15 @@ impl WorkService {
                 Ok(thread) => {
                     self.request_threads.insert(identity.job(), thread);
                 }
-                Err(_) => {
+                Err(error) => {
                     self.shared.capacity.lock().release(charge, policy.bytes());
+                    self.publish_capacity();
+                    api::host_log!(
+                        api::hostlog::Category::Lifecycle,
+                        api::hostlog::Level::Warn,
+                        "request work thread start failed for job {:?}: {error}",
+                        identity.job(),
+                    );
                     return Err(api::work::Refused::new(
                         SubmissionRefusal::ThreadStartFailed,
                         job,
