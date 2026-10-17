@@ -263,9 +263,30 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - On Windows, giving the rs2b0t import a folder instead of the exported
   file now says it is not a regular file, as on Linux and macOS, instead of
   "cannot read …: Access is denied".
+- The first launch downloads the game cache faster. It keeps ten requests
+  to the update server in flight for the whole download, and it reads each
+  answer as soon as it arrives.
+- If 274bot cannot look up the name of the update server, the first
+  launch's game cache download now stops at once with a connection error,
+  and 274bot tries the next world if there is one. Before, the download
+  waited until it timed out.
+- When 274bot cannot reach a world's cache server, or cannot look up the
+  name of a world's server, while it prepares the game cache, it now moves
+  to the next world as a whole: it prepares the cache from that world, and
+  bots set to Auto start on that world. After a server name fails to look
+  up, 274bot skips each later world that uses that name. There is one
+  exception. A cache server name can look up at first and then fail to look
+  up during the cache download. Then `host-play` and the TUI (at each
+  start), and the panel (only before it selects its server profile), can
+  look up that name again for the next world. Each such world costs one
+  more wait for the name lookup. Before, 274bot took only the cache from
+  the next world and kept the first world's game server.
 
 ### Fixed during development
 
+- The first launch's game cache download no longer switches off background
+  work on slower connections, and "Preparing cache snapshot" now shows how
+  far the download has got.
 - One slow disk write no longer leaves script cards, the script catalogue or
   profiles stopped until 274bot restarts.
 - Windows now recovers damaged panel preferences and repairs duplicate loadout

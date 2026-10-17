@@ -50,7 +50,7 @@ use crate::input_capture::{discard_unconsumed_native_capture, stream_capture, Ke
 use crate::session::{
     debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, script_active,
     script_pause_enabled, script_stop_enabled, PanelWindow, ProfilePreparation,
-    ProfilePreparationCompletion, Session,
+    ProfilePreparationCompletion, ProfilePreparationSteps, Session,
 };
 use crate::theme::{
     applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title, native_applet,
@@ -566,11 +566,14 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
                 PROFILE_PREPARATION_RESULT_BYTES,
             );
             match input {
-                Ok(input) => match script::preparation::submit(
+                Ok(input) => match script::preparation::submit_cooperative(
                     script::preparation::PreparationKind::Profile,
                     api::identity::Scope::Process,
                     input,
-                    move |_| preparation.run_with_progress(&observer),
+                    {
+                        let mut steps = ProfilePreparationSteps::new(preparation, observer);
+                        move |_| steps.step()
+                    },
                 ) {
                     Ok(task) => {
                         startup.prepare_pending = None;

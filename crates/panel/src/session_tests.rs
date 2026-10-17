@@ -206,14 +206,28 @@ fn crc_body(packs: &[(String, Vec<u8>)]) -> Vec<u8> {
 }
 
 fn plant_snapshot(unpack: &Path, revision: u16, packs: &[(String, Vec<u8>)]) {
-    struct FixtureEntries;
+    struct FixtureEntries(Vec<(i32, i32)>);
     impl client::unpack::EntrySource for FixtureEntries {
-        fn fetch_entries(
+        fn request_entry(&mut self, archive: i32, file: i32) -> Result<(), String> {
+            self.0.push((archive, file));
+            Ok(())
+        }
+
+        fn take_entries(
             &mut self,
-            _archive: i32,
-            files: &[i32],
-        ) -> Result<Vec<(i32, Vec<u8>)>, String> {
-            Ok(files.iter().map(|&file| (file, b"body".to_vec())).collect())
+            _until: std::time::Instant,
+            out: &mut Vec<client::unpack::FetchedEntry>,
+        ) -> Result<(), String> {
+            out.extend(
+                self.0
+                    .drain(..)
+                    .map(|(archive, file)| client::unpack::FetchedEntry {
+                        archive,
+                        file,
+                        payload: b"body".to_vec(),
+                    }),
+            );
+            Ok(())
         }
     }
     let versionlist = &packs
@@ -237,7 +251,7 @@ fn plant_snapshot(unpack: &Path, revision: u16, packs: &[(String, Vec<u8>)]) {
     client::unpack::fetch_snapshot(
         &input.to_string_lossy(),
         &out.to_string_lossy(),
-        &mut FixtureEntries,
+        &mut FixtureEntries(Vec::new()),
     )
     .unwrap();
 }
