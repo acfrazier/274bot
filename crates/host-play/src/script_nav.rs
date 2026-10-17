@@ -3841,7 +3841,6 @@ pub(crate) struct NavBot {
     pub(crate) traveller: Traveller,
     pub(crate) route: Option<Arc<Route>>,
     pub(crate) compact_route: Option<RoutePath>,
-    pub(crate) route_result_custody: Option<Arc<dyn std::any::Any + Send + Sync>>,
     /// The walk request id `publish_route` installed `route` for. A retarget
     /// moves `walk_request_id` / `requested_route` to the new walk while the
     /// old route is still followed; only a route end whose owner is the
