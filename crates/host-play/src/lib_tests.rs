@@ -9145,6 +9145,7 @@ fn inspect_route_cross_zone_exemption_routes_through_the_named_barrier() {
         ));
         let start = Instant::now();
         loop {
+            crate::script_runtime::poll_inspection_for_test(&navs, "alice");
             let term = navs.lock().unwrap().get("alice").and_then(|bot| {
                 bot.inspect
                     .latest
@@ -28216,11 +28217,16 @@ fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
         false,
         false,
     );
+    let unreachable_wait_started = std::time::Instant::now();
     assert!(
         wait_for_route_work(&navs, "alice", |bot| {
             !bot.route_work_pending() && bot.walk_outcome_failed
         }),
         "NoPath did not publish"
+    );
+    println!(
+        "unreachable_route_wait_ns={}",
+        unreachable_wait_started.elapsed().as_nanos()
     );
     assert_eq!(queued(&navs), None, "NoPath never arms a route");
 

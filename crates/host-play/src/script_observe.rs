@@ -399,6 +399,7 @@ pub(crate) fn script_observe_cached_with_channels(
     let mut interact = Vec::new();
     let mut pending_withdraw_x_active = false;
     let mut pending_bank_op_active = false;
+    route_inspect::poll_inspection(navs, name);
     let observed_slot = script_slot(scripts, name);
     let mut slot_work_epoch = None;
     let mut has_native_actions = false;
