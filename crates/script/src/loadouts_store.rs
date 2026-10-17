@@ -245,7 +245,7 @@ impl LoadoutsStore {
     pub fn save(&mut self) -> Result<(), String> {
         if let Some(error) = &self.load_error {
             return Err(format!(
-                "the loadouts did not load ({error}). Reload the loadouts before you save."
+                "the loadouts did not load ({error}), so nothing was saved"
             ));
         }
         if !self.dirty {
@@ -1253,7 +1253,6 @@ mod tests {
         store.upsert(Loadout::new("loadout"));
         let error = store.save().unwrap_err();
         assert!(error.contains("did not load"), "{error}");
-        assert!(error.contains("Reload"), "{error}");
         assert!(store.is_dirty(), "a refused save keeps the form dirty");
         assert!(store.replace_at(0, Loadout::new("renamed")));
         let error = store.save().unwrap_err();
