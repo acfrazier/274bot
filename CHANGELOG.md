@@ -296,6 +296,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   Cooperative routes reserve the same maximum storage, but initialize only
   the pages that the search uses. Small first-goal diagnostics also retain
   demand-driven proof storage.
+- Large-radius Area and Reach requests no longer fail preparation because each
+  goal reserves zone IDs for the whole world. The reservation uses the pack's
+  spatial overlap bound and keeps the same route-search budget and job ceiling.
 - Cooperative route searches now check each work boundary once instead of
   repeating the same clock and cancellation check between work units.
 - One slow disk write no longer leaves script cards, the script catalogue or
