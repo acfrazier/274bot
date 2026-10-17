@@ -1263,8 +1263,7 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
         // it again from where the trip left the player when it no longer
         // starts here. Whatever route results is assessed under the live
         // post-session facts and published, as the armed route was.
-        bot.route = Some(Arc::clone(&pending.final_route));
-        bot.compact_route = None;
+        bot.install_route_path(pending.final_route.clone());
         resume_final_route(snapshot, bot, world, here, map_members, &pending);
         if let (Some(world), Some(route), Some(mut admission)) =
             (world, bot.route.clone(), bot.admission.as_deref().copied())
@@ -1389,9 +1388,12 @@ fn step_walk(
         // private route. The next poll belongs to the restored post-session
         // route, so drop that run first.
         bot.traveller.clear();
-        if let Some(pending) = bot.bank_fetch.as_ref() {
-            bot.route = Some(pending.final_route.clone());
-            bot.compact_route = None;
+        let final_route = bot
+            .bank_fetch
+            .as_ref()
+            .map(|pending| pending.final_route.clone());
+        if let Some(final_route) = final_route {
+            bot.install_route_path(final_route);
         }
         bot.map_route_generation = crate::walk_map::next_map_route_generation();
         return (false, StepEnd::Landed("on-access"));
