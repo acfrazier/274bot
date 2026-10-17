@@ -1081,8 +1081,12 @@ fn live_follow_route_wins_over_empty_walkto_arm() {
         dest,
         ticks: 1.0,
     };
-    let (route, click) =
-        live_or_walk_paint(true, (Some(live_route.clone()), Some(dest)), (None, None), None);
+    let (route, click) = live_or_walk_paint(
+        true,
+        (Some(live_route.clone()), Some(dest)),
+        (None, None),
+        None,
+    );
     assert_eq!(route.unwrap().destination(), dest);
     assert_eq!(click, Some(dest));
     let (route, _) = live_or_walk_paint(true, (None, None), (None, None), None);

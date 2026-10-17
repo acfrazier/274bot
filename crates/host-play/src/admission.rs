@@ -384,16 +384,6 @@ pub fn permits(
     permits_view(route, world, admission, assessment)
 }
 
-pub(crate) fn permits_route_path(
-    route: &RoutePath,
-    world: &NavWorld,
-    admission: &Admission,
-    assessment: &RouteAssessment,
-) -> bool {
-    route_path_view(route, world)
-        .is_some_and(|route| permits_view(route, world, admission, assessment))
-}
-
 fn permits_view(
     route: nav::contract::RouteView<'_>,
     world: &NavWorld,
@@ -447,17 +437,13 @@ fn route_path_view<'a>(
     }
 }
 fn retained_bot_route_view<'a>(
-    bot: &'a crate::script_runtime::NavBot,
+    legacy: Option<&'a Route>,
+    compact: Option<&'a RoutePath>,
     world: &'a NavWorld,
 ) -> Option<nav::contract::RouteView<'a>> {
-    bot.compact_route
-        .as_ref()
+    compact
         .and_then(RoutePath::view)
-        .or_else(|| {
-            bot.route
-                .as_deref()
-                .and_then(|route| producer::route_view(world, route).ok())
-        })
+        .or_else(|| legacy.and_then(|route| producer::route_view(world, route).ok()))
 }
 
 /// Assess one borrowed compact route without synchronously initializing risk tables.
@@ -614,13 +600,14 @@ pub(crate) fn publish(
     if !std::mem::take(&mut bot.admission_pending) {
         return;
     }
-    let (Some(mut admission), Some(assessment)) = (
-        bot.admission.as_deref().copied(),
-        bot.assessment.as_ref(),
-    ) else {
+    let (Some(mut admission), Some(assessment)) =
+        (bot.admission.as_deref().copied(), bot.assessment.as_ref())
+    else {
         return;
     };
-    let Some(route) = retained_bot_route_view(bot, world) else {
+    let Some(route) =
+        retained_bot_route_view(bot.route.as_deref(), bot.compact_route.as_ref(), world)
+    else {
         return;
     };
     if let Some(escape) = bot.slot_escape() {

@@ -29,7 +29,7 @@
 //!    after cell 2, the coins row again deleted before Play starts. A Load
 //!    script (`apiVersion = 2`) sends one isolate `walk-near` with
 //!    `allow_bank_fetch` and radius 1 to a solid tile on Musa Point, so the
-//!    host's solid-target goal search (`calculate_solid`) plans from the
+//!    host's production solid-target route search plans from the
 //!    coin-less `Hint` (REVIEW-BANK-SNAPSHOT-S5 H1). The slot's own script
 //!    walk pump runs the one verifying trip (30 coins of the 40 banked) and
 //!    the walk ends beside the target.

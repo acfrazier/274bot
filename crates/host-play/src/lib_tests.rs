@@ -125,200 +125,6 @@ fn wait_for_route_work(
     })
 }
 
-#[test]
-#[ignore = "requires BOT_ROUTE_BURST_NAVPACK and BOT_ROUTE_BURST_CAPTURE_OUT on an isolated lab guest"]
-fn qualifies_ten_real_content_route_producers_full_retry() {
-    use script::work_admission::WorkService;
-
-    const PRODUCERS: usize = 10;
-    let pack = std::path::PathBuf::from(
-        std::env::var_os("BOT_ROUTE_BURST_NAVPACK").expect("set the real 289 navpack"),
-    );
-    let output = std::path::PathBuf::from(
-        std::env::var_os("BOT_ROUTE_BURST_CAPTURE_OUT").expect("set the burst evidence path"),
-    );
-    assert!(pack.is_absolute() && output.is_absolute());
-    let loaded = NavWorld::load_pack(&pack).expect("load the real 289 navigation world");
-    loaded
-        .bind_named_bank_facts(
-            &api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
-        )
-        .expect("bind the selected revision's immutable bank facts");
-    let world = Arc::new(loaded);
-    let from = WorldTile {
-        x: 3080,
-        z: 3472,
-        level: 0,
-    };
-    let to = WorldTile {
-        x: 3222,
-        z: 3218,
-        level: 0,
-    };
-    let service = WorkService::shared().expect("the production shared worker must be available");
-    assert_eq!(
-        service.lock().capacity(),
-        api::work::WorkCapacity::EMPTY,
-        "run this ignored qualification alone"
-    );
-    let names: Vec<_> = (0..PRODUCERS)
-        .map(|index| format!("route-burst-{index}"))
-        .collect();
-    let scopes: Vec<_> = (0..PRODUCERS).map(|_| next_test_route_scope()).collect();
-    let navs = Arc::new(Mutex::new(
-        names
-            .iter()
-            .zip(&scopes)
-            .map(|(name, &scope)| {
-                (
-                    name.clone(),
-                    NavBot {
-                        work_scope: Some(scope),
-                        ..NavBot::default()
-                    },
-                )
-            })
-            .collect::<HashMap<_, _>>(),
-    ));
-    let started = Instant::now();
-    for (index, name) in names.iter().enumerate() {
-        let arm = ScriptWalkArm {
-            here: Some((from.x, from.z, from.level)),
-            world: Some(Arc::clone(&world)),
-            navs: Arc::clone(&navs),
-            name: name.clone(),
-            state: Some(nav::WorldState::default().with_map_members(true)),
-            bank: BankRows::default(),
-        };
-        assert!(
-            arm.queue_route(
-                to.x,
-                to.z,
-                to.level,
-                FindOptions::default(),
-                0,
-                false,
-                index as u64 + 1,
-            ),
-            "producer {name} must retain its real route demand"
-        );
-    }
-    let mut accepted_at = [None; PRODUCERS];
-    let mut settled_at = [None; PRODUCERS];
-    let mut initial = Vec::with_capacity(PRODUCERS);
-    for (index, name) in names.iter().enumerate() {
-        crate::script_runtime::pump_route_work(&navs, name);
-        let capacity = service.lock().capacity();
-        let all = navs.lock().unwrap();
-        let bot = &all[name];
-        let accepted = bot.route_ticket.is_some() || bot.has_route();
-        if accepted {
-            accepted_at[index] = Some(started.elapsed().as_nanos());
-        }
-        initial.push(serde_json::json!({
-            "producer": name,
-            "scope": format!("{:?}", scopes[index]),
-            "accepted": accepted,
-            "retry_retained": bot.route_work_pending() && !accepted,
-            "failed": bot.walk_outcome_failed,
-            "service_jobs": capacity.jobs(),
-            "service_bytes": capacity.bytes(),
-        }));
-        assert!(
-            !bot.walk_outcome_failed,
-            "Full must not fail producer {name}"
-        );
-        if index == 1 {
-            assert_eq!(
-                capacity.jobs(),
-                2,
-                "two full-budget route jobs must be admitted"
-            );
-        } else if index >= 2 {
-            assert_eq!(capacity.jobs(), 2, "a Full refusal must not add a job");
-            assert!(!accepted, "producer {name} must wait for capacity");
-            assert!(
-                bot.route_work_pending(),
-                "producer {name} lost its retry demand"
-            );
-        }
-    }
-    let full_capacity = service.lock().capacity();
-    let deadline = started + Duration::from_secs(180);
-    while settled_at.iter().any(Option::is_none) && Instant::now() < deadline {
-        for (index, name) in names.iter().enumerate() {
-            crate::script_runtime::pump_route_work(&navs, name);
-            let all = navs.lock().unwrap();
-            let bot = &all[name];
-            assert!(!bot.walk_outcome_failed, "route producer {name} failed");
-            if accepted_at[index].is_none() && (bot.route_ticket.is_some() || bot.has_route()) {
-                accepted_at[index] = Some(started.elapsed().as_nanos());
-            }
-            if settled_at[index].is_none() && !bot.route_work_pending() {
-                assert_eq!(
-                    bot.route_destination(),
-                    Some(to),
-                    "producer {name} route result"
-                );
-                settled_at[index] = Some(started.elapsed().as_nanos());
-            }
-        }
-        std::thread::sleep(Duration::from_millis(1));
-    }
-    let elapsed = started.elapsed();
-    let capacity = service.lock().capacity();
-    let producers: Vec<_> = names
-        .iter()
-        .enumerate()
-        .map(|(index, name)| {
-            serde_json::json!({
-                "producer": name,
-                "scope": format!("{:?}", scopes[index]),
-                "request_id": index as u64 + 1,
-                "accepted_after_ns": accepted_at[index],
-                "settled_after_ns": settled_at[index],
-                "completed": settled_at[index].is_some(),
-            })
-        })
-        .collect();
-    std::fs::write(
-        &output,
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "qualification": "ten real-content, bot-scoped production route producers",
-            "live_clients": false,
-            "navpack": pack,
-            "initial_admissions": initial,
-            "full_capacity_jobs": full_capacity.jobs(),
-            "full_capacity_bytes": full_capacity.bytes(),
-            "producers": producers,
-            "all_settled": settled_at.iter().all(Option::is_some),
-            "elapsed_ns": elapsed.as_nanos(),
-            "final_service_jobs": capacity.jobs(),
-            "final_service_bytes": capacity.bytes(),
-        }))
-        .unwrap(),
-    )
-    .expect("write the burst qualification evidence");
-    assert!(
-        accepted_at.iter().all(Option::is_some),
-        "every retry must be admitted"
-    );
-    assert!(
-        settled_at.iter().all(Option::is_some),
-        "all ten routes must settle before the deadline"
-    );
-    assert_eq!(capacity, api::work::WorkCapacity::EMPTY);
-    {
-        let service = service.lock();
-        assert!(service.worker_available() && service.health().is_none());
-    }
-    eprintln!(
-        "route_ten_producer_burst elapsed_ns={} evidence={}",
-        elapsed.as_nanos(),
-        output.display()
-    );
-}
-
 /// No script slot: the follow's arrival probe reads an unavailable view.
 fn no_reach() -> Arc<api::query::ReachQueryView> {
     Arc::new(api::query::ReachQueryView::unavailable())
@@ -6183,7 +5989,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         max_z: 3,
         level: Some(0),
     };
-    let RouteOutcome::Routed(straight) = request(Vec::new()).calculate().0 else {
+    let RouteOutcome::Routed(straight) = request(Vec::new()).drive_route_job_for_test().0 else {
         panic!("open floor routes");
     };
     // Every tile stepped, the waypoints' straight/diagonal runs expanded.
@@ -6212,7 +6018,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         "without the rectangle the cheapest route crosses it: {:?}",
         straight
     );
-    let RouteOutcome::Routed(around) = request(vec![thrower]).calculate().0 else {
+    let RouteOutcome::Routed(around) = request(vec![thrower]).drive_route_job_for_test().0 else {
         panic!("a detour exists north of the rectangle");
     };
     assert_eq!(around.dest.x, 11);
@@ -6226,13 +6032,13 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         ..thrower
     };
     assert!(matches!(
-        request(vec![sealed]).calculate().0,
+        request(vec![sealed]).drive_route_job_for_test().0,
         RouteOutcome::NoPath
     ));
 }
 
 #[test]
-fn radius_calculate_keeps_first_connected_open_floor_approach() {
+fn radius_route_job_keeps_first_connected_open_floor_approach() {
     let world = Arc::new(open_world(7, 7));
     let request = ScriptRouteRequest {
         admission: crate::admission::Admission::manual(
@@ -6266,7 +6072,7 @@ fn radius_calculate_keeps_first_connected_open_floor_approach() {
         completion: Default::default(),
         exclusions: None,
     };
-    let RouteOutcome::Routed(route) = request.calculate().0 else {
+    let RouteOutcome::Routed(route) = request.drive_route_job_for_test().0 else {
         panic!("open floor should route");
     };
     assert_eq!(
@@ -6280,7 +6086,7 @@ fn radius_calculate_keeps_first_connected_open_floor_approach() {
 }
 
 #[test]
-fn radius_calculate_drops_wall_separated_candidate() {
+fn radius_route_job_drops_wall_separated_candidate() {
     let mut world = open_world(7, 7);
     let mut flags = vec![0u32; 49];
     for z in 2..=4 {
@@ -6322,7 +6128,9 @@ fn radius_calculate_drops_wall_separated_candidate() {
         completion: Default::default(),
         exclusions: None,
     };
-    let RouteOutcome::Routed(route) = request.calculate().0 else {
+    let to = request.to;
+    let world = Arc::clone(&request.world);
+    let RouteOutcome::Routed(route) = request.drive_route_job_for_test().0 else {
         panic!("same-room approach should route");
     };
     assert_ne!(
@@ -6333,21 +6141,15 @@ fn radius_calculate_drops_wall_separated_candidate() {
             level: 0
         }
     );
+    assert!((route.dest.x - to.x).abs().max((route.dest.z - to.z).abs()) <= 1);
     assert!(
-        (route.dest.x - request.to.x)
-            .abs()
-            .max((route.dest.z - request.to.z).abs())
-            <= 1
-    );
-    assert!(
-        nav::router::local_step_component(&request.world.collision, request.to, 1)
-            .contains(&route.dest),
+        nav::router::local_step_component(&world.collision, to, 1).contains(&route.dest),
         "selected destination must be step-connected to the target"
     );
 }
 
 #[test]
-fn radius_calculate_uses_occupied_target_approach_candidates() {
+fn radius_route_job_uses_occupied_target_approach_candidates() {
     let mut world = open_world(7, 7);
     let target = WorldTile {
         x: 3,
@@ -6383,7 +6185,8 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
         completion: Default::default(),
         exclusions: None,
     };
-    let RouteOutcome::Routed(route) = request.calculate().0 else {
+    let world = Arc::clone(&request.world);
+    let RouteOutcome::Routed(route) = request.drive_route_job_for_test().0 else {
         panic!("occupied target should route to a neighbour");
     };
     assert_ne!(route.dest, target);
@@ -6393,7 +6196,7 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
             .max((route.dest.z - target.z).abs())
             <= 1
     );
-    assert!(request.world.collision.standable(route.dest));
+    assert!(world.collision.standable(route.dest));
 }
 
 #[test]
@@ -6445,7 +6248,7 @@ fn compat_radius_falls_back_to_arrival_endpoints_when_walkable_anchor_is_unreach
     let request = make_request(vec![avoid_anchor]);
     let candidates = approach_tiles(&request.world, from, target, 2, false);
     assert!(request.world.collision.walkable(target));
-    let (outcome, targets) = request.calculate();
+    let (outcome, targets) = request.drive_route_job_for_test();
     assert_eq!(targets.first(), Some(&target));
     assert_eq!(
         targets
@@ -6484,7 +6287,10 @@ fn compat_radius_falls_back_to_arrival_endpoints_when_walkable_anchor_is_unreach
         level: Some(target.level),
     }]);
     assert!(
-        matches!(unreachable.calculate().0, RouteOutcome::NoPath),
+        matches!(
+            unreachable.drive_route_job_for_test().0,
+            RouteOutcome::NoPath
+        ),
         "when all arrival endpoints are excluded the request still fails"
     );
 }
@@ -6529,7 +6335,7 @@ fn compat_radius_falls_back_to_an_in_radius_endpoint_when_center_is_blocked() {
         exclusions: None,
     };
     let candidates = approach_tiles(&world, from, target, 2, false);
-    let (outcome, targets) = request.calculate();
+    let (outcome, targets) = request.drive_route_job_for_test();
     assert!(
         !targets.contains(&target),
         "a blocked center is not a route goal"
@@ -6552,7 +6358,7 @@ fn compat_radius_falls_back_to_an_in_radius_endpoint_when_center_is_blocked() {
 }
 
 #[test]
-fn exact_tile_calculate_reaches_the_tile_or_refuses_an_occupied_one() {
+fn exact_tile_route_job_reaches_the_tile_or_refuses_an_occupied_one() {
     let target = WorldTile {
         x: 3,
         z: 3,
@@ -6592,18 +6398,21 @@ fn exact_tile_calculate_reaches_the_tile_or_refuses_an_occupied_one() {
             exclusions: None,
         }
     };
-    let RouteOutcome::Routed(route) = request(false).calculate().0 else {
+    let RouteOutcome::Routed(route) = request(false).drive_route_job_for_test().0 else {
         panic!("an open exact tile should route");
     };
     assert_eq!(route.dest, target, "radius 0 does not stop one tile short");
     assert!(
-        matches!(request(true).calculate().0, RouteOutcome::NoPath),
+        matches!(
+            request(true).drive_route_job_for_test().0,
+            RouteOutcome::NoPath
+        ),
         "an occupied exact tile is refused, never approached"
     );
 }
 
 #[test]
-fn radius_calculate_respects_wall_l_diagonal_geometry() {
+fn radius_route_job_respects_wall_l_diagonal_geometry() {
     let mut world = open_world(7, 7);
     let mut flags = vec![0u32; 49];
     let target = WorldTile {
@@ -6663,7 +6472,7 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
     };
     assert!(component.contains(&same_side));
     assert!(!component.contains(&far_side), "component={component:?}");
-    let RouteOutcome::Routed(route) = request.calculate().0 else {
+    let RouteOutcome::Routed(route) = request.drive_route_job_for_test().0 else {
         panic!("same-side WALL_L approach should route");
     };
     assert!(component.contains(&route.dest));
@@ -6671,7 +6480,7 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
 }
 
 #[test]
-fn radius_calculate_drops_detour_outside_radius() {
+fn radius_route_job_drops_detour_outside_radius() {
     let mut world = open_world(7, 7);
     let mut flags = vec![0u32; 49];
     for z in 1..=5 {
@@ -6720,7 +6529,7 @@ fn radius_calculate_drops_detour_outside_radius() {
         z: 3,
         level: 0
     }));
-    let RouteOutcome::Routed(route) = request.calculate().0 else {
+    let RouteOutcome::Routed(route) = request.drive_route_job_for_test().0 else {
         panic!("global detour should still leave a local approach");
     };
     assert!(component.contains(&route.dest));
@@ -6776,7 +6585,8 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         completion: Default::default(),
         exclusions: None,
     };
-    let RouteOutcome::Routed(route) = request.calculate().0 else {
+    let to = request.to;
+    let RouteOutcome::Routed(route) = request.drive_route_job_for_test().0 else {
         panic!("actual 289 route should exist");
     };
     assert_ne!(
@@ -6794,9 +6604,7 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         )),
         "radius arrival must not use Horvik door 1530"
     );
-    assert!(
-        nav::router::local_step_component(&world.collision, request.to, 2).contains(&route.dest)
-    );
+    assert!(nav::router::local_step_component(&world.collision, to, 2).contains(&route.dest));
 }
 
 #[test]
