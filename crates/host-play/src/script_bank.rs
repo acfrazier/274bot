@@ -36,8 +36,8 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 // Host-worker ranking has a wall-time bound, not an observed-tick budget.
-// Per-frame polls signal the same job's timeout fallback without PLAYER_INFO;
-// they never shorten the window or turn the selected candidate into arrival evidence.
+// Per-frame polls signal admitted work's fallback without PLAYER_INFO.
+// Unadmitted non-walking picks publish the fallback at the same deadline.
 const BANK_SELECTION_WINDOW: Duration = Duration::from_secs(5);
 
 const BANK_PICK_JOB_BYTES: usize = 192 * 1024 * 1024;
@@ -103,6 +103,29 @@ impl BankPickState {
             capacity_sequence: active.capacity_sequence?,
             charge: pending.inner.input.charge,
         })
+    }
+
+    #[cfg(any(test, all(feature = "live-harness", feature = "test-support")))]
+    pub(crate) fn query_inputs_match_for_test(&self, other: &Self) -> bool {
+        let (Some(left), Some(right)) = (&self.current, &other.current) else {
+            return false;
+        };
+        let left = &left.job.request;
+        let right = &right.job.request;
+        left.lease.identity() == right.lease.identity()
+            && left.facts.banks() == right.facts.banks()
+            && left.from == right.from
+            && left.opts == right.opts
+            && left.state == right.state
+            && left.target_count == right.target_count
+            && left.walk_generation.is_some() == right.walk_generation.is_some()
+            && left.native.is_some() == right.native.is_some()
+            && left.order.len() == right.order.len()
+            && left
+                .order
+                .iter()
+                .zip(&right.order)
+                .all(|(left, right)| left.index == right.index && left.access == right.access)
     }
 }
 
@@ -2102,6 +2125,9 @@ fn queue_bank(
         poll_bank_pick(navs, name, queued_at);
         return first.is_some();
     }
+    if walking {
+        bot.requested_route = first.map(|index| job.request.route_key(index));
+    }
     let Some((input, preflights)) = job.request.work_input(generation, near, name) else {
         api::host_log!(
             api::hostlog::Category::NavEvent,
@@ -2109,14 +2135,12 @@ fn queue_bank(
             slot = name,
             "bank pick request exceeds the bounded work charge"
         );
+        bot.bank_pick.pending_inline =
+            Some(job.pending_inline(scope, PickResult::plain(None, None, PickKind::NoCandidate)));
         drop(all);
-        drain_bank_pick_cancellation(navs, name);
-        drain_bank_pick_retired_owner(navs, name);
+        poll_bank_pick(navs, name, queued_at);
         return false;
     };
-    if walking {
-        bot.requested_route = first.map(|index| job.request.route_key(index));
-    }
     bot.bank_pick.current = Some(ActivePick {
         job: job.clone(),
         scope,
@@ -2212,13 +2236,8 @@ fn submit_pending_bank_pick_with_service(
 
     enum Attempt {
         Accepted(WorkTicket<BankPickSpec>, WorkCancellation<BankPickSpec>),
-        Refused(
-            SubmissionRefusal,
-            Box<AdmittedBankPickJob>,
-            PublishSequence,
-            PublishSequence,
-        ),
-        IdentityFailed(Box<AdmittedBankPickJob>, String, PublishSequence),
+        Refused(SubmissionRefusal, Box<AdmittedBankPickJob>, PublishSequence),
+        IdentityFailed(Box<AdmittedBankPickJob>, String),
     }
     let attempt = {
         let mut service = shared.lock();
@@ -2235,13 +2254,12 @@ fn submit_pending_bank_pick_with_service(
                         Attempt::Accepted(ticket, cancellation)
                     }
                     Err(refused) => {
-                        let after = service.publications().capacity().sequence();
                         let (reason, job) = refused.into_parts();
-                        Attempt::Refused(reason, Box::new(job), before, after)
+                        Attempt::Refused(reason, Box::new(job), before)
                     }
                 }
             }
-            Err(error) => Attempt::IdentityFailed(job, error.to_string(), before),
+            Err(error) => Attempt::IdentityFailed(job, error.to_string()),
         }
     };
 
@@ -2273,44 +2291,51 @@ fn submit_pending_bank_pick_with_service(
                         accepted_to_abandon = Some(cancellation);
                     }
                 }
-                Attempt::Refused(reason, job, before, after) => {
+                Attempt::Refused(reason, job, before) => {
                     if let Some(active) = current {
-                        active.pending_job = Some(job);
-                        active.submitting = false;
-                        active.capacity_sequence =
-                            Some(if before == after { after } else { before });
-                        #[cfg(any(test, all(feature = "live-harness", feature = "test-support")))]
-                        {
-                            active.last_submission_refusal = Some(reason);
+                        if reason == SubmissionRefusal::Full {
+                            active.pending_job = Some(job);
+                            active.submitting = false;
+                            active.capacity_sequence = Some(before);
+                            #[cfg(any(
+                                test,
+                                all(feature = "live-harness", feature = "test-support")
+                            ))]
+                            {
+                                active.last_submission_refusal = Some(reason);
+                            }
+                            submission_ok = true;
+                        } else {
+                            let job = active.job.clone();
+                            pick.current = None;
+                            pick.pending_inline = Some(job.pending_inline(
+                                scope,
+                                PickResult::plain(None, None, PickKind::NoCandidate),
+                            ));
+                            api::host_log!(
+                                api::hostlog::Category::NavEvent,
+                                api::hostlog::Level::Warn,
+                                slot = name,
+                                "bank pick work admission refused: {reason:?}"
+                            );
                         }
-                        submission_ok = reason == SubmissionRefusal::Full;
                     }
-                    if reason != SubmissionRefusal::Full {
+                }
+                Attempt::IdentityFailed(_job, error) => {
+                    if let Some(active) = current {
+                        let job = active.job.clone();
+                        pick.current = None;
+                        pick.pending_inline = Some(job.pending_inline(
+                            scope,
+                            PickResult::plain(None, None, PickKind::NoCandidate),
+                        ));
                         api::host_log!(
                             api::hostlog::Category::NavEvent,
                             api::hostlog::Level::Warn,
                             slot = name,
-                            "bank pick work admission refused: {reason:?}"
+                            "bank pick work identity refused: {error}"
                         );
                     }
-                }
-                Attempt::IdentityFailed(job, error, observed) => {
-                    if let Some(active) = current {
-                        active.pending_job = Some(job);
-                        active.submitting = false;
-                        active.capacity_sequence = Some(observed);
-                        #[cfg(any(test, all(feature = "live-harness", feature = "test-support")))]
-                        {
-                            active.last_submission_refusal = None;
-                        }
-                    }
-                    api::host_log!(
-                        api::hostlog::Category::NavEvent,
-                        api::hostlog::Level::Error,
-                        slot = name,
-                        "bank pick work identity refused at capacity {}: {error}",
-                        observed.get()
-                    );
                 }
             }
         } else if let Attempt::Accepted(_, cancellation) = attempt {
@@ -2486,10 +2511,11 @@ fn expire_bank_pick_deadline(
     now: Instant,
 ) {
     let mut all = navs.lock().expect("navigation state mutex is not poisoned");
-    let Some(active) = all
-        .get_mut(name)
-        .and_then(|bot| bot.bank_pick.current.as_mut())
-    else {
+    let Some(bot) = all.get_mut(name) else {
+        return;
+    };
+    let pick = &mut bot.bank_pick;
+    let Some(active) = pick.current.as_mut() else {
         return;
     };
     if active.deadline.is_some_and(|deadline| now >= deadline) {
@@ -2499,6 +2525,21 @@ fn expire_bank_pick_deadline(
             .request
             .timeout_fallback
             .store(true, Ordering::Release);
+        if active.ticket.is_none() && active.job.request.walk_generation.is_none() {
+            let job = active.job.clone();
+            let scope = active.scope;
+            let index = job.request.first();
+            let kind = if index.is_none()
+                || (job.request.native.is_some() && job.request.target_count == 0)
+            {
+                PickKind::NoCandidate
+            } else {
+                PickKind::AirFallback
+            };
+            pick.cancel_active(Cancellation::Superseded);
+            pick.pending_inline =
+                Some(job.pending_inline(scope, PickResult::plain(index, None, kind)));
+        }
     }
 }
 
@@ -2543,10 +2584,6 @@ fn apply_bank_pick_result(
             .as_ref()
             .filter(|job| job.request.walk_generation.is_some())
         {
-            let Some(ticket_ref) = commit.ticket else {
-                return;
-            };
-            let ticket = ticket_ref.ticket();
             let route_generation = job
                 .request
                 .walk_generation
@@ -2562,6 +2599,10 @@ fn apply_bank_pick_result(
                 route_rejected = true;
             } else {
                 let applied = if let Some(plan) = owner.value().plan.as_ref() {
+                    let Some(ticket_ref) = commit.ticket else {
+                        return;
+                    };
+                    let ticket = ticket_ref.ticket();
                     let custody: Arc<dyn std::any::Any + Send + Sync> = owner.clone();
                     let route = crate::walk_plan::RoutePath::compact(
                         plan.lease.clone(),

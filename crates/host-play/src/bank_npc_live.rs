@@ -2870,6 +2870,7 @@ struct BankPickBurstAdmission {
     last_progress_sequence: Option<u64>,
     last_terminal_sequence: Option<u64>,
     owner_observations: Vec<(String, BankPickWorkObservation)>,
+    full_sized_query_inputs_identical: bool,
     full_witness: Option<BankPickBurstFullWitness>,
     first_release_after_full: Option<serde_json::Value>,
     admitted_after_full: HashSet<String>,
@@ -2886,6 +2887,27 @@ struct BankPickBurstFullWitness {
     pending_accounts: Vec<String>,
     retained_revision: api::work::InputRevision,
     retained_charge: api::work::WorkCharge,
+    owner_observations: Vec<(String, BankPickWorkObservation)>,
+    full_sized_query_inputs_identical: bool,
+}
+
+impl BankPickBurstFullWitness {
+    fn direct_refusal_receipt_exposed(&self) -> bool {
+        self.owner_observations.iter().any(|(account, owner)| {
+            account == &self.account
+                && matches!(owner, BankPickWorkObservation::Full { capacity_sequence, .. }
+                    if capacity_sequence.get() == self.capacity_sequence)
+        })
+    }
+
+    fn owner_demand_retained(&self) -> bool {
+        self.pending_accounts.contains(&self.account)
+            && self.owner_observations.iter().any(|(account, owner)| {
+                account == &self.account
+                    && matches!(owner, BankPickWorkObservation::Full { revision, charge, .. }
+                        if *revision == self.retained_revision && *charge == self.retained_charge)
+            })
+    }
 }
 
 fn account_for_work_identity(
@@ -2939,12 +2961,22 @@ fn sample_bank_pick_burst_owners(
 ) {
     let observations: Vec<_> = {
         let navs = play.navs.lock().unwrap();
-        runs.iter()
+        let observations: Vec<_> = runs
+            .iter()
             .filter_map(|(_, account)| {
                 let owner = navs.get(account)?.bank_pick.work_observation_for_test()?;
                 Some((account.clone(), owner))
             })
-            .collect()
+            .collect();
+        admission.full_sized_query_inputs_identical = runs.len() == BANK_PICK_BURST_GUESTS
+            && observations.len() == BANK_PICK_BURST_GUESTS
+            && observations.first().is_some_and(|(account, _)| {
+                let first = &navs[account].bank_pick;
+                observations
+                    .iter()
+                    .all(|(account, _)| first.query_inputs_match_for_test(&navs[account].bank_pick))
+            });
+        observations
     };
     for (_, owner) in &observations {
         if let BankPickWorkObservation::Accepted { identity, .. } = owner {
@@ -3163,6 +3195,8 @@ fn observe_bank_pick_burst_full(
             .collect(),
         retained_revision: *retained_revision,
         retained_charge: *retained_charge,
+        owner_observations: admission.owner_observations.clone(),
+        full_sized_query_inputs_identical: admission.full_sized_query_inputs_identical,
     });
 }
 
@@ -3264,6 +3298,21 @@ mod bank_pick_burst_oracle_tests {
         assert_eq!(witness.accepted_identity_accounts.len(), 2);
         assert_eq!(witness.account, "guest-3");
         assert_eq!(witness.retained_revision, InputRevision::FIRST);
+        assert!(witness.direct_refusal_receipt_exposed());
+        assert!(witness.owner_demand_retained());
+    }
+
+    #[test]
+    fn bank_pick_burst_evidence_rejects_missing_or_changed_retained_demand() {
+        let mut receipt = Receipt::correct();
+        assert!(receipt.evaluate());
+        let mut witness = receipt.admission.full_witness.unwrap();
+        witness.retained_charge = WorkCharge::new(0, 1, 0, 0);
+        assert!(witness.direct_refusal_receipt_exposed());
+        assert!(!witness.owner_demand_retained());
+        witness.owner_observations.clear();
+        assert!(!witness.direct_refusal_receipt_exposed());
+        assert!(!witness.owner_demand_retained());
     }
 
     #[test]
@@ -3729,8 +3778,8 @@ pub fn live_ten_guest_shared_bank_pick_full_retry_burst() {
             "refusal_observation":
                 "two accepted Slot-scoped owner tickets plus the exact SubmissionRefusal::Full retained job at the same capacity publication",
             "completed_product_terminal_holders": holder_receipts.len(),
-            "direct_refusal_receipt_exposed": true,
-            "owner_demand_retained": true,
+            "direct_refusal_receipt_exposed": witness.direct_refusal_receipt_exposed(),
+            "owner_demand_retained": witness.owner_demand_retained(),
             "account": witness.account,
             "elapsed_ms": witness.elapsed_ms,
             "capacity_publication_sequence": witness.capacity_sequence,
@@ -3791,7 +3840,7 @@ pub fn live_ten_guest_shared_bank_pick_full_retry_burst() {
             "per_query_reserved_bytes":
                 witness.capacity.bytes().checked_sub(holder_capacity.bytes()).map(|bytes| bytes / 2),
             "total_declared_bytes_at_full": witness.capacity.bytes(),
-            "full_sized_query_inputs_identical": true,
+            "full_sized_query_inputs_identical": witness.full_sized_query_inputs_identical,
             "actual_result_bytes": serde_json::Value::Null,
             "actual_result_bytes_unavailable_via": "public WorkAdmission and bank owner publications",
         })
