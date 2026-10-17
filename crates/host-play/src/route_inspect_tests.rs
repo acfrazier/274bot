@@ -1032,7 +1032,15 @@ fn reset_releases_inspection_charge_once_and_preserves_replacement() {
         vec![],
     ));
     let navs = Arc::new(Mutex::new(HashMap::new()));
-    let service = WorkService::shared().expect("work service");
+    let incarnation = api::identity::ProcessIncarnation::from_start_nonce(
+        std::num::NonZeroU64::new(23).expect("test nonce is nonzero"),
+    );
+    let clock: Arc<dyn api::work::MonotonicClock + Send + Sync> = Arc::new(api::work::SystemClock);
+    let service = Arc::new(parking_lot::Mutex::new(WorkService::with_clock_for_tests(
+        incarnation,
+        clock,
+    )));
+    let _service_override = InspectionWorkServiceOverride::install(Arc::clone(&service));
     let baseline = service.lock().capacity();
 
     queue_inspect(

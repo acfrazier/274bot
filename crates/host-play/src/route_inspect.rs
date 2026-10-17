@@ -30,6 +30,48 @@ use script::work_admission::{cancellation::WorkCancellation, WorkService};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
 
+#[cfg(test)]
+std::thread_local! {
+    static INSPECTION_WORK_SERVICE_OVERRIDE: std::cell::RefCell<
+        Option<Arc<parking_lot::Mutex<WorkService>>>,
+    > = const { std::cell::RefCell::new(None) };
+}
+
+#[inline]
+fn inspection_work_service(
+) -> Result<Arc<parking_lot::Mutex<WorkService>>, script::work_admission::WorkStartError> {
+    #[cfg(test)]
+    if let Some(service) = INSPECTION_WORK_SERVICE_OVERRIDE.with(|service| service.borrow().clone())
+    {
+        return Ok(service);
+    }
+    WorkService::shared()
+}
+
+#[cfg(test)]
+struct InspectionWorkServiceOverride;
+
+#[cfg(test)]
+impl InspectionWorkServiceOverride {
+    fn install(service: Arc<parking_lot::Mutex<WorkService>>) -> Self {
+        INSPECTION_WORK_SERVICE_OVERRIDE.with(|current| {
+            let mut current = current.borrow_mut();
+            assert!(current.is_none(), "nested inspection service override");
+            *current = Some(service);
+        });
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for InspectionWorkServiceOverride {
+    fn drop(&mut self) {
+        INSPECTION_WORK_SERVICE_OVERRIDE.with(|service| {
+            let _ = service.borrow_mut().take();
+        });
+    }
+}
+
 pub(super) const MAX_AVOID: usize = 16;
 const MAX_INSPECT_CHARGE: usize = 192 * 1024 * 1024;
 /// Isolate unsettled-waiter cap. Host published storage plus admission
@@ -2492,7 +2534,7 @@ fn drive_pending(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
         (pending, generation, request_id, world)
     };
 
-    let attempt = match WorkService::shared() {
+    let attempt = match inspection_work_service() {
         Ok(service) => {
             let mut admitted = service.lock();
             match admitted.mint_identity(Scope::Process, None) {
@@ -2698,7 +2740,7 @@ fn poll_admitted_inspection(
     generation: u64,
     ledger: &nav::producer::OwnerResultLedger,
 ) -> InspectPollAttempt {
-    let Ok(shared) = WorkService::shared() else {
+    let Ok(shared) = inspection_work_service() else {
         return InspectPollAttempt::Unavailable;
     };
     let mut service = shared.lock();
