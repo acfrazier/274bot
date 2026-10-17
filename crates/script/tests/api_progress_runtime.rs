@@ -375,7 +375,7 @@ fn newer_read_supersedes_old_and_reset_aborts_the_live_waiter() {
     assert_eq!(result(&iso, "second")["kind"], "done");
 
     let (reset_token, _) = begin_and_take_read(&iso, "reset");
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     tick(&iso, 4, None);
     assert_eq!(
         result(&iso, "reset"),
@@ -395,7 +395,7 @@ fn newer_read_supersedes_old_and_reset_aborts_the_live_waiter() {
 fn reconnect_reemits_only_unacknowledged_read_once_per_epoch() {
     let iso = isolate();
     let (lost_token, _) = begin_and_take_read(&iso, "lost");
-    iso.reconnect_session_work();
+    iso.reconnect_session_work(None);
     assert!(iso.drain_interacts().is_empty());
     tick(&iso, 2, None);
     assert_eq!(take_single_read(&iso.drain_interacts()).0, lost_token);
@@ -407,7 +407,7 @@ fn reconnect_reemits_only_unacknowledged_read_once_per_epoch() {
     let (acked_token, _) = begin_and_take_read(&iso, "acked");
     tick(&iso, 5, Some(&ProgressPage::Reading { token: acked_token }));
     assert!(iso.drain_interacts().is_empty());
-    iso.reconnect_session_work();
+    iso.reconnect_session_work(None);
     assert!(iso.drain_interacts().is_empty());
     tick(&iso, 6, None);
     assert!(iso.drain_interacts().is_empty());

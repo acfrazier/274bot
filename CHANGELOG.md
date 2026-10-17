@@ -12,6 +12,81 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- Script operations now share a bounded request seat across native cards and
+  JavaScript. A second top-level Gatherer, combat, quest progress or Hunt
+  Session reports **busy** while one Session is live. Capability roots started
+  before a Session may coexist with it; a new Capability root while a Session
+  is live reports busy, including under Hunt. A child started from a Session
+  hook can still run. A fifth concurrent independent operation reports busy
+  instead of silently losing its gameplay actions.
+  A seat-refused replacement leaves the previous awaited operation running
+  until its own terminal result arrives.
+- Stops and walk releases keep their place through a random-event hold and
+  bypass a session's gameplay foreground. Gameplay emitted while the guardian
+  holds the script is discarded, never replayed after the event. Actions
+  accepted before an ordinary operation completes retain their authority;
+  cancelling the operation still invalidates its queued actions. A non-kept
+  Stop or removal drops the old seat before a new run starts.
+  A Gatherer or combat Stop also survives a lost Start batch during a kept
+  reconnect; an interrupted Hunt safespot walk asks the seat for a fresh walk
+  in the new session instead of replaying the old click.
+- Walks that arrive normally free their seat release slot, so repeated walks
+  do not block later actions. A kept reconnect discards old gameplay walks.
+  A wait whose walk was not delivered requests a fresh walk through the new
+  session's seat and still settles on arrival. During a guardian hold, all
+  walk terminals free their slots after resume. A held seat keeps one
+  pending batch and discards only gameplay. Every walk release (up to 16
+  handles), Gather Stop and Combat Stop is kept; a repeated release of the
+  same target and id is kept once. The run policy, camera yaw, recovery
+  anchor reply and progress stamps keep their newest value, so the host
+  applies the value the script set last. Wait enqueue and settle facts fold
+  into one exact summary that gives the watchdog the same wait count as the
+  events in order. BroadcastChannel opens, closes and posts, and route
+  inspections, stay in order. When that batch is full, only later
+  BroadcastChannel posts are refused: the script's channel gets one
+  `messageerror` with the reason, and each refused post is counted. After
+  the hold, the host hands the kept batch to the seat in pages of at most
+  one take (141 rows besides releases and the policy), so no kept open,
+  close, inspection or newest value is lost however long the hold was. The
+  newest values arrive after the ordered rows, and actions that the script
+  makes after the hold wait behind the remaining pages. Kept releases go to
+  the seat with the first page even when the seat queue is full, so a walk
+  abort that frees a release slot is never held back. A new hold while
+  pages still wait keeps the waiting batch's cancels, starts and other
+  controls, which apply after its last page.
+- A stop that a script sends while the map loads, while the welcome screen
+  is open or while the watchdog recovers a stuck bot is no longer lost. The
+  walk aborts reach the game in the first frame after that hold, in the
+  order the script sent them. A Gather Stop or Combat Stop takes effect at
+  once, so it can take effect before a walk abort that the script sent
+  earlier. A run policy that the script sets during such a hold is no
+  longer lost either: the last one the script set applies after the hold.
+  Other game actions that the script sends during the hold are still
+  dropped. A batch that the script sent before a map load started can still
+  reach the game after the load, as it did before this change. Only a
+  random-event hold now freezes the script's request seat: a map load or
+  the welcome screen no longer keeps the script's other actions for later.
+- A saturated script tick keeps its release and control rows ahead of gameplay.
+  It dispatches the first 141 other rows in their original order, drops the
+  excess, and reports one overflow diagnostic instead of failing the batch.
+  The guarded append copies nested row values, refuses accessors and Proxies
+  without calling them, and counts refused rows. Repeated aborts for one walk
+  coalesce; a seventeenth distinct walk release is still refused.
+- Compat cards and native V2 scripts now capture the first and subsequent
+  JavaScript interactions in one guarded queue. Machine actions keep their
+  order relative to queued script actions. The seat still bounds each tick.
+- Native V2 tick listeners run before waits resume on each eligible tick.
+  Their requests retain the root seat context.
+- A quest progress refusal retains its detailed result when its final page
+  and failed seat terminal arrive in the same snapshot.
+- Gatherer and combat Promises wait for the family's detailed terminal after
+  the seat ends their authority, rather than resolving with an empty result.
+  A watchdog recovery-anchor reply also arrives while gameplay is held.
+- Async walk wait and progress facts admitted by the seat reach the watchdog
+  rather than the game-action dispatcher, including after a kept reconnect.
+- Per-slot diagnostics expose dropped seat actions and late control copies as
+  read-only counters. Duplicate acknowledgements count without noisy error logs.
+
 - Reload and catalog refresh prepare source, siblings and settings off the UI
   thread. Their buttons show **Reloading…** or **Refreshing catalog…** through
   preparation and validation, rather than calling both stages validation.
@@ -214,6 +289,40 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   far the download has got.
 - One slow disk write no longer leaves script cards, the script catalogue or
   profiles stopped until 274bot restarts.
+- Windows now recovers damaged panel preferences and repairs duplicate loadout
+  names after preserving the original file in a flushed copy.
+- Windows now promptly cancels blocked login transport I/O when a login attempt
+  ends.
+### Release engineering
+
+- The architecture check refuses candidate Cargo configuration files without
+  ASCII case distinctions, including files in vendored trees and symlinks.
+  The check also refuses an ASCII case variant of `Cargo.toml`, because it
+  replaces the scanned manifest on a case-insensitive file system.
+  Every client `Cargo.toml` is now an exact protected input in `274bot-arch`.
+  Added, removed, or changed manifests need an operator commit to update the pin.
+  This replaces interpretation of vendored workspace membership and inheritance.
+  Fork pointer changes with byte-identical manifests need no pin update.
+  The check now refuses `git` dependency sources in product manifests.
+  Only root patch and replacement entries that protected policy lists may
+  appear in the product root. Other entries need an operator commit first.
+  The check covers default-feature and optional activation for every protected
+  package, even packages outside named configurations.
+  Baseline updates use the branch after it merges current `dev`.
+  Operators review removed records to retain permissions that other branches still need.
+- The architecture checker, its tests, and the crate-edge policy now live
+  in the operator-owned `274bot-arch` repo (`main`); this repo keeps the
+  local-convenience-only `tools/architecture/run.sh` runner, and CI runs
+  the check inline on pushes and PRs — cloning `274bot-arch` `main`,
+  verifying the pinned rust-analyzer binary, then running `check.py
+  --self-test` and `check.py --root` with no candidate-tree script
+  execution and no `ARCH_REPO` override. The fine data (`ownership.json`,
+  `inventories.json`, `foreign_types.json`) stays beside the runner and is
+  reviewed like code. A new crate edge, edge kind, migration,
+  optional-dependency activation, vendored path package, or checker change
+  needs an operator commit in `274bot-arch` (`policy.toml` plus a
+  regenerated `graph-provenance.json`, operator publishes first); propose
+  it as a patch or branch bundle for the operator to push.
 
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 

@@ -476,7 +476,7 @@ fn pause_hold_and_session_reset_abort_a_parked_make_x() {
     );
     assert!(iso.drain_interacts().is_empty());
 
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     snap.hold = false;
     snap.tick = 6;
     post(&iso, &snap, Some(&[]));

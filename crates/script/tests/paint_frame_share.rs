@@ -141,7 +141,7 @@ fn a_frame_sent_before_a_reset_installs_under_the_new_generation() {
     // sits in the channel across the reset.
     iso.on_game_tick(1);
     let _ = iso.probe("0");
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     let installed = iso.paint().expect("the pending pre-reset frame installs");
     tick(&iso, 2);
     let next = iso.paint().expect("next frame");
@@ -161,7 +161,7 @@ fn a_session_reset_restamps_the_held_frame() {
     let iso = spawn(STEADY, LoadShape::CompatClass);
     tick(&iso, 1);
     let before = iso.paint().expect("first frame");
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     let held = iso.paint().expect("held frame");
     assert!(
         held.generation > before.generation,

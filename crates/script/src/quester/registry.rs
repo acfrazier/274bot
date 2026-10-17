@@ -1444,11 +1444,11 @@ fn open_nonblocking(path: &Path) -> io::Result<std::fs::File> {
     options.open(path)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn read_bounded(path: &Path) -> Result<Vec<u8>, CompileError> {
     read_bounded_with_open(path, open_nonblocking)
 }
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn read_bounded_with_open(
     path: &Path,
     open_file: impl FnOnce(&Path) -> io::Result<std::fs::File>,

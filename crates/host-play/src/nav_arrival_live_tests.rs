@@ -646,7 +646,12 @@ pub(super) fn write_capture(
         serde_json::to_vec_pretty(&report).expect("serialize NAV-ARRIVAL live evidence"),
     )
     .unwrap_or_else(|error| panic!("write evidence {}: {error}", json_path.display()));
-    std::fs::File::open(&json_path)
+    // Windows `FlushFileBuffers` needs a handle with write access: a
+    // read-only handle fails with error 5. Open for writing, without
+    // truncating, as `local_state::files` does for its quarantine copy.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&json_path)
         .and_then(|file| file.sync_all())
         .unwrap_or_else(|error| panic!("fsync evidence {}: {error}", json_path.display()));
     println!("nav-arrival-evidence-json={}", json_path.display());
@@ -663,6 +668,34 @@ pub(super) fn live_profile(name: String, password: String) -> Profile {
         uid: 274_279_311,
         settings: ProfileSettings::default(),
     }
+}
+
+/// The evidence JSON is flushed through a handle that can write. On
+/// Windows, `sync_all` on a read-only handle fails with error 5.
+#[test]
+fn write_capture_flushes_its_json_without_a_frame() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let run_dir =
+        std::env::temp_dir().join(format!("nav-arrival-sync-{}-{stamp}", std::process::id()));
+    std::fs::create_dir_all(&run_dir).unwrap();
+    let mailbox = FrameBuf::new();
+    let written = write_capture(
+        &run_dir,
+        "stamp",
+        "sync",
+        false,
+        json!({ "step": "sync" }),
+        &mailbox,
+    );
+    assert!(!written, "no frame arrived, so no PNG");
+    let report: Value =
+        serde_json::from_slice(&std::fs::read(run_dir.join("stamp_sync.json")).unwrap()).unwrap();
+    assert_eq!(report["step"], "sync");
+    assert_eq!(report["capture"]["png_written"], false);
+    std::fs::remove_dir_all(&run_dir).unwrap();
 }
 
 #[test]

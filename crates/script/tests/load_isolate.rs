@@ -1845,7 +1845,7 @@ fn session_reset_keeps_the_active_runaway_deadline() {
     thread::sleep(Duration::from_millis(20));
 
     let reset_at = Instant::now();
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     let deadline = reset_at + Duration::from_secs(2);
     while iso.execution_active() && Instant::now() < deadline {
         thread::yield_now();
@@ -2091,9 +2091,9 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-// M7: a queued interact row no request variant accepts — or no serde read
-// at all — is logged under its tick; its valid siblings and the tick's wait
-// facts still reach the host.
+// M7: accepted malformed rows are logged under their tick; primitives that
+// the V8 append gate refuses never reach this decoder. Valid siblings and the
+// tick's wait facts still reach the host.
 #[test]
 fn malformed_interact_rows_are_logged_not_dropped_silently() {
     let src = "export function tick(api) { const h = globalThis.__rs2b0t_host; \
@@ -2117,19 +2117,12 @@ fn malformed_interact_rows_are_logged_not_dropped_silently() {
     );
     let logs = iso.drain_logs();
     assert_eq!(
-        logs[..4],
+        logs,
         [
             "tick 1: dropped malformed interact row: op \"no-such-op\"",
-            "tick 1: dropped malformed interact row: a number",
-            "tick 1: dropped malformed interact row: bytes",
             "tick 1: dropped malformed interact row: an object without a string op",
-        ],
-        "{logs:?}"
-    );
-    assert_eq!(logs.len(), 5, "{logs:?}");
-    assert!(
-        logs[4].starts_with("tick 1: dropped malformed interact row: unreadable ("),
-        "{logs:?}"
+            "tick 1: dropped malformed interact row: an object without a string op",
+        ]
     );
     iso.join();
 }
@@ -10081,7 +10074,7 @@ fn session_reset_discards_unread_old_interactions_and_preserves_the_isolate() {
         iso.probe("globalThis.__rs_n").unwrap(),
         serde_json::json!(1)
     );
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     assert!(iso.drain_interacts().is_empty());
     iso.on_game_tick(2);
     assert_eq!(
@@ -10204,3 +10197,725 @@ export default class T extends LoopingBot {
     );
     iso.join();
 }
+
+fn post_case23_open_bank<'a>(
+    iso: &LoadIsolate,
+    tick: u64,
+    pack: &'a [script::isolate_fb::ItemRowInput<'a>],
+    side: &'a [script::isolate_fb::ItemRowInput<'a>],
+) {
+    let mut snap = base_snapshot();
+    snap.tick = tick;
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 3222,
+        z: 3222,
+        level: 0,
+    });
+    snap.inv = pack;
+    snap.inv_size = 28;
+    snap.bank_side = side;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    snap.bank_generation = 7;
+    post_with_side_root(iso, &snap);
+}
+
+fn case23_chicken<'a>(
+    actions: &'a [String],
+    index: i32,
+) -> script::isolate_fb::SceneEntityInput<'a> {
+    script::isolate_fb::SceneEntityInput {
+        index,
+        id: 41,
+        name: Some("Chicken"),
+        x: 3222,
+        z: 3222,
+        level: 0,
+        distance: 0,
+        health: 10,
+        max_health: 10,
+        in_combat: false,
+        animating: false,
+        actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 1,
+        target_kind: 0,
+        target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
+        shape: 0,
+        angle: 0,
+    }
+}
+
+/// §28.7 case 1: execute the actual Fight machine through its V8 wrapper.
+/// The returned false values from `armSpecial` and `Sustain.run` are ignored;
+/// the pending sustain is polled without reinvoking it, and one disappearance
+/// of the engaged NPC produces one `countKill` notification.
+#[test]
+fn seat_case_1_hunt_sustain_and_count_kill_run_through_v8_once() {
+    let src = r#"
+import { Fight } from '../../api/combat/hunting/combat.js';
+import { Sustain } from '../../api/sustain/Sustain.js';
+const site = {
+    key: 'case-1-v8',
+    target: 'Chicken',
+    boxes: [{ minX: 3210, maxX: 3230, minZ: 3210, maxZ: 3230, level: 0 }],
+    meleeAnchor: { x: 3222, z: 3222, level: 0 },
+};
+export default class T extends LoopingBot {
+    loop() {
+        if (globalThis.__case1Started) return;
+        globalThis.__case1Started = true;
+        globalThis.__armCalls = 0;
+        globalThis.__sustainCalls = 0;
+        globalThis.__killCalls = 0;
+        globalThis.__fightDone = false;
+        globalThis.__fightError = null;
+        Sustain.set(() => {
+            globalThis.__sustainCalls++;
+            return new Promise((resolve) => {
+                globalThis.__releaseSustain = resolve;
+            });
+        });
+        const host = {
+            hpFraction() { return 1; },
+            hasFood() { return true; },
+            needEat() { return false; },
+            armSpecial() {
+                globalThis.__armCalls++;
+                return Promise.resolve(false);
+            },
+            countKill() {
+                globalThis.__killCalls++;
+                return { ignored: true };
+            },
+        };
+        new Fight(host, site).execute().then(
+            () => { globalThis.__fightDone = true; },
+            (error) => { globalThis.__fightError = String(error && error.message || error); },
+        );
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let actions = ["Attack".to_string()];
+    let chickens = [case23_chicken(&actions, 7)];
+    let no_npcs: [script::isolate_fb::SceneEntityInput<'_>; 0] = [];
+    let mut interactions = Vec::new();
+
+    for tick in 1..=12 {
+        let mut snap = ready_snapshot();
+        snap.tick = tick;
+        snap.npcs = &chickens;
+        post_snapshot_input(&iso, &snap);
+        iso.on_game_tick(tick);
+        let _ = iso.probe("true");
+        interactions.extend(iso.drain_interacts());
+    }
+
+    assert_eq!(
+        iso.probe("__sustainCalls").unwrap(),
+        1,
+        "Fight must call the installed Sustain hook through runMachine"
+    );
+    assert_eq!(iso.probe("__killCalls").unwrap(), 0);
+    assert!(
+        interactions.iter().any(|request| matches!(
+            request,
+            script::shim::InteractReq::Npc {
+                name,
+                action,
+                index: Some(7),
+            } if name == "Chicken" && action == "Attack"
+        )),
+        "armSpecial's awaited Promise(false) must not prevent the product attack: {interactions:?}"
+    );
+    assert!(
+        iso.probe("__armCalls")
+            .unwrap()
+            .as_i64()
+            .is_some_and(|count| count > 0),
+        "the fight must call armSpecial before continuing"
+    );
+    assert_eq!(iso.probe("__fightDone").unwrap(), false);
+
+    iso.probe("__releaseSustain(false)").unwrap();
+    for tick in 13..=20 {
+        let mut snap = ready_snapshot();
+        snap.tick = tick;
+        snap.npcs = &no_npcs;
+        post_snapshot_input(&iso, &snap);
+        iso.on_game_tick(tick);
+        let _ = iso.probe("true");
+        interactions.extend(iso.drain_interacts());
+        if iso.probe("__fightDone").unwrap().as_bool() == Some(true) {
+            break;
+        }
+    }
+    assert_eq!(iso.probe("__fightError").unwrap(), serde_json::Value::Null);
+    assert_eq!(
+        iso.probe("__sustainCalls").unwrap(),
+        1,
+        "settling the pending callback must not invoke Sustain a second time"
+    );
+    assert_eq!(iso.probe("__killCalls").unwrap(), 1);
+    assert_eq!(iso.probe("__fightDone").unwrap(), true);
+
+    let mut snap = ready_snapshot();
+    snap.tick = 21;
+    snap.npcs = &no_npcs;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(21);
+    let _ = iso.probe("true");
+    assert_eq!(
+        iso.probe("__killCalls").unwrap(),
+        1,
+        "the later absent-NPC snapshot must not replay the terminal countKill"
+    );
+    iso.join();
+}
+
+/// §28.7 case 23, `ask/ignored`: unlike a synchronous return, a Promise from
+/// Hunt's notification callback is the retained `not impl` host discrepancy.
+/// The frozen caller ignores the value, but this characterization must not
+/// silently reinterpret the Promise as an awaited callback.
+#[test]
+fn seat_case_23_hunt_count_kill_promise_fails_the_real_ask_path() {
+    let src = r#"
+import { Fight } from '../../api/combat/hunting/combat.js';
+const site = {
+    key: 'case-23-kill-promise',
+    target: 'Chicken',
+    boxes: [{ minX: 3210, maxX: 3230, minZ: 3210, maxZ: 3230, level: 0 }],
+    meleeAnchor: { x: 3222, z: 3222, level: 0 },
+};
+export default class T extends LoopingBot {
+    loop() {
+        if (globalThis.__killStarted) return;
+        globalThis.__killStarted = true;
+        globalThis.__killCalls = 0;
+        globalThis.__killError = null;
+        new Fight({
+            hpFraction() { return 1; },
+            hasFood() { return true; },
+            needEat() { return false; },
+            countKill() {
+                globalThis.__killCalls++;
+                return Promise.resolve(1);
+            },
+        }, site).execute().catch(error => {
+            globalThis.__killError = String(error && error.message || error);
+        });
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let actions = ["Attack".to_string()];
+    let chickens = [case23_chicken(&actions, 7)];
+    let no_npcs: [script::isolate_fb::SceneEntityInput<'_>; 0] = [];
+    for tick in 1..=12 {
+        let mut snap = ready_snapshot();
+        snap.tick = tick;
+        snap.npcs = &chickens;
+        post_snapshot_input(&iso, &snap);
+        iso.on_game_tick(tick);
+        let _ = iso.probe("true");
+    }
+    assert!(
+        iso.drain_interacts().iter().any(|request| matches!(
+            request,
+            script::shim::InteractReq::Npc {
+                name,
+                action,
+                index: Some(7),
+            } if name == "Chicken" && action == "Attack"
+        )),
+        "the notification is reached only after the real fight attacks"
+    );
+    for tick in 13..=24 {
+        let mut snap = ready_snapshot();
+        snap.tick = tick;
+        snap.npcs = &no_npcs;
+        post_snapshot_input(&iso, &snap);
+        iso.on_game_tick(tick);
+        let _ = iso.probe("true");
+        if iso.probe("__killError").unwrap().is_string() {
+            break;
+        }
+    }
+    assert_eq!(iso.probe("__killCalls").unwrap(), 1);
+    let error = iso.probe("__killError").unwrap();
+    assert!(
+        error
+            .as_str()
+            .is_some_and(|message| message.contains("not impl")),
+        "the ignored synchronous notification Promise must fail rather than be awaited: {error:?}"
+    );
+    iso.join();
+}
+
+/// §28.7 case 23: `eatOnce` is an awaited/used member; the actual Hunt
+/// consumer treats an awaited numeric zero as false and yields before Attack.
+#[test]
+fn seat_case_23_hunt_eat_once_uses_the_awaited_zero() {
+    let src = r#"
+import { Fight } from '../../api/combat/hunting/combat.js';
+const site = {
+    key: 'case-23-eat-once',
+    target: 'Chicken',
+    boxes: [{ minX: 3210, maxX: 3230, minZ: 3210, maxZ: 3230, level: 0 }],
+    meleeAnchor: { x: 3222, z: 3222, level: 0 },
+};
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__case23Started) return;
+        globalThis.__case23Started = true;
+        globalThis.__eatCalls = 0;
+        globalThis.__done = false;
+        globalThis.__error = null;
+        const host = {
+            hpFraction() { return 1; },
+            hasFood() { return true; },
+            needEat() { return true; },
+            eatOnce() {
+                globalThis.__eatCalls++;
+                return Promise.resolve(0);
+            },
+        };
+        try {
+            await new Fight(host, site).execute();
+            globalThis.__done = true;
+        } catch (error) {
+            globalThis.__error = String(error && error.message || error);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let actions = ["Attack".to_string()];
+    let chickens = [case23_chicken(&actions, 9)];
+    for tick in 1..=4 {
+        let mut snap = ready_snapshot();
+        snap.tick = tick;
+        snap.npcs = &chickens;
+        post_snapshot_input(&iso, &snap);
+        iso.on_game_tick(tick);
+        let _ = iso.probe("true");
+    }
+    assert_eq!(iso.probe("__eatCalls").unwrap(), 1);
+    assert_eq!(iso.probe("__done").unwrap(), true);
+    assert_eq!(iso.probe("__error").unwrap(), serde_json::Value::Null);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "eatOnce's awaited zero must stop before the posted Chicken is attacked"
+    );
+    iso.join();
+}
+
+/// §28.7 case 23: a throwing Hunt ask keeps the exact thrown V8 value.
+#[test]
+fn seat_case_23_hunt_ask_throw_preserves_value_identity() {
+    let src = r#"
+import { Fight } from '../../api/combat/hunting/combat.js';
+const site = { key: 'case-23-ask-throw', target: 'Chicken' };
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__case23Started) return;
+        globalThis.__case23Started = true;
+        globalThis.__marker = { case: 23 };
+        globalThis.__same = false;
+        const host = {
+            hpFraction() { throw globalThis.__marker; },
+        };
+        try {
+            await new Fight(host, site).execute();
+        } catch (error) {
+            globalThis.__same = error === globalThis.__marker;
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let snap = ready_snapshot();
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    iso.on_game_tick(2);
+    assert_eq!(
+        iso.probe("__same").unwrap(),
+        true,
+        "the product Fight promise must reject with the value thrown by hpFraction"
+    );
+    iso.join();
+}
+
+/// §28.7 case 23: a Promise returned from the synchronous Hunt `hpFraction`
+/// ask is rejected as `not impl`, rather than implicitly awaited.
+#[test]
+fn seat_case_23_hunt_sync_ask_does_not_await_a_promise() {
+    let src = r#"
+import { Fight } from '../../api/combat/hunting/combat.js';
+const site = { key: 'case-23-ask-promise', target: 'Chicken' };
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__case23Started) return;
+        globalThis.__case23Started = true;
+        globalThis.__message = '';
+        const host = {
+            hpFraction() { return Promise.resolve(0.75); },
+        };
+        try {
+            await new Fight(host, site).execute();
+        } catch (error) {
+            globalThis.__message = String(error && error.message || error);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let snap = ready_snapshot();
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    iso.on_game_tick(2);
+    let message = iso.probe("__message").unwrap();
+    assert!(
+        message
+            .as_str()
+            .is_some_and(|message| message.contains("not impl")),
+        "the actual Hunt ask must reject its returned Promise: {message:?}"
+    );
+    iso.join();
+}
+
+/// §28.7 case 23: PeriodicBank calls the sync `deposit` matcher and
+/// `commonJunk` member through runMachine. A Promise is truthy at the latter
+/// call site, so its `false` resolution still includes Strange fruit.
+#[test]
+fn seat_case_23_periodic_bank_common_junk_promise_is_truthy() {
+    let src = r#"
+import { PeriodicBank } from '../../api/tasks/PeriodicBank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__case23Started) return;
+        globalThis.__case23Started = true;
+        globalThis.__picked = [];
+        globalThis.__error = null;
+        const task = new PeriodicBank({
+            setStatus() { return Promise.resolve('ignored'); },
+            commonJunk() { return Promise.resolve(false); },
+            deposit(name) {
+                globalThis.__picked.push(name);
+                return false;
+            },
+        });
+        try {
+            await task.execute();
+        } catch (error) {
+            globalThis.__error = String(error && error.message || error);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let ops = deposit_ops();
+    let side = [side_row(1963, Some("Strange fruit"), 1, &ops, 0)];
+    let pack = [pack_row(1963, Some("Strange fruit"), 1, 0)];
+    post_case23_open_bank(&iso, 1, &pack, &side);
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    assert_eq!(
+        iso.probe("__picked").unwrap(),
+        serde_json::json!(["Strange fruit"])
+    );
+    assert_eq!(iso.probe("__error").unwrap(), serde_json::Value::Null);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![deposit_all(1963, 0, 7)],
+        "commonJunk's Promise object is truthy despite resolving false, overriding the false matcher"
+    );
+    iso.join();
+}
+
+/// §28.7 case 23: call-sync PeriodicBank options treat Promise objects as
+/// values. In particular a destination Promise has no tile, so the family
+/// requests native bank selection instead of walking to the Promise's result.
+#[test]
+fn seat_case_23_periodic_bank_destination_promise_is_not_awaited() {
+    let src = r#"
+import { PeriodicBank } from '../../api/tasks/PeriodicBank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__case23Started) return;
+        globalThis.__case23Started = true;
+        globalThis.__calls = { status: 0, destination: 0, common: 0, returnTo: 0 };
+        globalThis.__logMessages = [];
+        globalThis.__done = false;
+        globalThis.__error = null;
+        const task = new PeriodicBank({
+            setStatus() {
+                globalThis.__calls.status++;
+                return Promise.resolve('ignored');
+            },
+            destination() {
+                globalThis.__calls.destination++;
+                return Promise.resolve({ x: 4000, z: 4000, level: 0 });
+            },
+            commonJunk() {
+                globalThis.__calls.common++;
+                return Promise.resolve(false);
+            },
+            returnTo() {
+                globalThis.__calls.returnTo++;
+                return Promise.resolve({ x: 4001, z: 4001, level: 0 });
+            },
+            deposit() { return false; },
+            log(message) {
+                globalThis.__logMessages.push(message);
+                return Promise.resolve('ignored');
+            },
+        });
+        try {
+            await task.execute();
+            globalThis.__done = true;
+        } catch (error) {
+            globalThis.__error = String(error && error.message || error);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = ready_snapshot();
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 100,
+        z: 100,
+        level: 0,
+    });
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    let calls = iso.probe("__calls").unwrap();
+    assert_eq!(calls["status"], 1);
+    assert_eq!(calls["destination"], 1);
+    assert_eq!(calls["common"], 1);
+    assert_eq!(calls["returnTo"], 1);
+    let requests = iso.drain_interacts();
+    let [script::shim::InteractReq::SelectBank { request_id, .. }] = requests.as_slice() else {
+        panic!("a non-destination Promise must take the native selection path, got {requests:?}");
+    };
+    let request_id = *request_id;
+    assert!(
+        !requests.iter().any(|request| matches!(
+            request,
+            script::shim::InteractReq::WalkNear {
+                x: 4000,
+                z: 4000,
+                ..
+            }
+        )),
+        "a Promise result is not a destination tile"
+    );
+    assert_eq!(iso.probe("__done").unwrap(), false);
+
+    snap.tick = 2;
+    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
+        &snap,
+        script::isolate_fb::NativeFactsInput {
+            bank_selection: script::isolate_fb::BankSelectionInput {
+                request_id,
+                generation: 1,
+                bank_index: -1,
+                kind: 4,
+            },
+            ..Default::default()
+        },
+    ));
+    iso.on_game_tick(2);
+    let _ = iso.probe("true");
+    for tick in 3..=6 {
+        snap.tick = tick;
+        post_snapshot_input(&iso, &snap);
+        iso.on_game_tick(tick);
+        let _ = iso.probe("true");
+        if iso.probe("__done").unwrap().as_bool() == Some(true) {
+            break;
+        }
+    }
+    assert_eq!(iso.probe("__done").unwrap(), true);
+    assert_eq!(iso.probe("__error").unwrap(), serde_json::Value::Null);
+    assert_eq!(
+        iso.probe("__logMessages").unwrap(),
+        serde_json::json!([
+            "no usable 'Bank booth' in the scene",
+            "periodic bank: no bank reachable — will retry later",
+        ]),
+        "an unsuccessful native selection logs the fallback access failure, then PeriodicBank logs the failed run"
+    );
+    iso.join();
+}
+
+/// §28.7 case 23: the PeriodicBank call-sync path rejects a throwing hook
+/// with that exact object, rather than converting it to a message.
+#[test]
+fn seat_case_23_periodic_bank_sync_throw_preserves_value_identity() {
+    let src = r#"
+import { PeriodicBank } from '../../api/tasks/PeriodicBank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__case23Started) return;
+        globalThis.__case23Started = true;
+        globalThis.__marker = { case: 23, path: 'call-sync' };
+        globalThis.__same = false;
+        globalThis.__calls = 0;
+        const task = new PeriodicBank({
+            setStatus() {
+                globalThis.__calls++;
+                throw globalThis.__marker;
+            },
+        });
+        try {
+            await task.execute();
+        } catch (error) {
+            globalThis.__same = error === globalThis.__marker;
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let snap = base_snapshot();
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    assert_eq!(iso.probe("__calls").unwrap(), 1);
+    assert_eq!(
+        iso.probe("__same").unwrap(),
+        true,
+        "PeriodicBank's product promise must reject with the call-sync hook's object"
+    );
+    iso.join();
+}
+
+/// §28.7 case 23: a non-undefined value from the awaited/ignored
+/// PeriodicBank afterDeposit hook is discarded; the run waits one settle tick
+/// and completes normally.
+#[test]
+fn seat_case_23_periodic_bank_after_deposit_false_is_ignored() {
+    let src = r#"
+import { PeriodicBank } from '../../api/tasks/PeriodicBank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__case23Started) return;
+        globalThis.__case23Started = true;
+        globalThis.__afterCalls = 0;
+        globalThis.__done = false;
+        globalThis.__error = null;
+        const task = new PeriodicBank({
+            setStatus() { return Promise.resolve('ignored'); },
+            deposit() { return false; },
+            afterDeposit() {
+                globalThis.__afterCalls++;
+                return new Promise((resolve) => {
+                    globalThis.__releaseAfter = resolve;
+                });
+            },
+        });
+        try {
+            await task.execute();
+            globalThis.__done = true;
+        } catch (error) {
+            globalThis.__error = String(error && error.message || error);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let empty: [script::isolate_fb::ItemRowInput<'_>; 0] = [];
+    let mut tick = 0;
+    for next_tick in 1..=4 {
+        tick = next_tick;
+        post_case23_open_bank(&iso, tick, &empty, &empty);
+        iso.on_game_tick(tick);
+        let _ = iso.probe("true");
+        if iso.probe("__afterCalls").unwrap().as_i64() == Some(1) {
+            break;
+        }
+    }
+    assert_eq!(iso.probe("__afterCalls").unwrap(), 1);
+    assert_eq!(iso.probe("__done").unwrap(), false);
+    iso.probe("__releaseAfter(false)").unwrap();
+
+    tick += 1;
+    post_case23_open_bank(&iso, tick, &empty, &empty);
+    iso.on_game_tick(tick);
+    let _ = iso.probe("true");
+    assert_eq!(
+        iso.probe("__done").unwrap(),
+        false,
+        "afterDeposit's settled value is ignored, then the run waits its settle tick"
+    );
+    tick += 1;
+    post_case23_open_bank(&iso, tick, &empty, &empty);
+    iso.on_game_tick(tick);
+    let _ = iso.probe("true");
+    assert_eq!(iso.probe("__afterCalls").unwrap(), 1);
+    assert_eq!(iso.probe("__done").unwrap(), true);
+    assert_eq!(iso.probe("__error").unwrap(), serde_json::Value::Null);
+    iso.join();
+}
+
+/// §28.7 case 11 and case 23: a delayed rejection from bankNearest's
+/// awaited/ignored afterDeposit hook remains a failure with the same V8 value.
+#[test]
+fn seat_case_11_bank_nearest_after_deposit_delayed_throw_preserves_identity() {
+    let src = r#"
+import { Banking } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__case11Started) return;
+        globalThis.__case11Started = true;
+        globalThis.__marker = { case: 11, path: 'afterDeposit' };
+        globalThis.__afterCalls = 0;
+        globalThis.__same = false;
+        globalThis.__unexpected = false;
+        Banking.bankNearest({
+            afterDeposit() {
+                globalThis.__afterCalls++;
+                return new Promise((_, reject) => {
+                    globalThis.__rejectAfter = () => reject(globalThis.__marker);
+                });
+            },
+        }).then(
+            () => { globalThis.__unexpected = true; },
+            (error) => { globalThis.__same = error === globalThis.__marker; },
+        );
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let empty: [script::isolate_fb::ItemRowInput<'_>; 0] = [];
+    post_case23_open_bank(&iso, 1, &empty, &empty);
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    assert_eq!(iso.probe("__afterCalls").unwrap(), 1);
+    assert_eq!(iso.probe("__same").unwrap(), false);
+    iso.probe("__rejectAfter()").unwrap();
+
+    post_case23_open_bank(&iso, 2, &empty, &empty);
+    iso.on_game_tick(2);
+    let _ = iso.probe("true");
+    post_case23_open_bank(&iso, 3, &empty, &empty);
+    iso.on_game_tick(3);
+    assert_eq!(
+        iso.probe("__same").unwrap(),
+        true,
+        "the awaited bank hook's rejection object must reach the caller unchanged"
+    );
+    assert_eq!(iso.probe("__unexpected").unwrap(), false);
+    iso.join();
+}
+
+#[path = "load_isolate/seat_product_cases.rs"]
+mod seat_product_cases;

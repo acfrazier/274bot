@@ -59,6 +59,10 @@ required-features = ["test-support"]
 name = "survivable_admission_live"
 required-features = ["live-harness", "test-support", "live-probe"]
 
+[[test]]
+name = "seat_live"
+required-features = ["live-harness", "test-support", "live-probe"]
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",

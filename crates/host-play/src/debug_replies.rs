@@ -219,8 +219,10 @@ mod tests {
         let reply = synthetic_reply_snapshot();
         let start = Instant::now();
         let mut replies = DebugReplies::default();
-        replies.sent_at("alice", "first".into(), &baseline, start);
-        replies.sent_at("alice", "second".into(), &baseline, start);
+        // Login fixtures register "first" and "second" as process-wide secrets.
+        // Command names must not collide with those independently tested passwords.
+        replies.sent_at("alice", "reply_probe_alpha".into(), &baseline, start);
+        replies.sent_at("alice", "reply_probe_beta".into(), &baseline, start);
         replies.observe_at("alice", &reply, start + Duration::from_secs(1));
 
         let records = crate::walk_map::test_log::records_since(mark)
@@ -231,7 +233,7 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert!(records
             .iter()
-            .all(|record| record.contains("[first, second]")));
+            .all(|record| record.contains("[reply_probe_alpha, reply_probe_beta]")));
         assert!(records.iter().any(|record| record.contains("chat reply")));
         assert!(records.iter().any(|record| record.contains("modal reply")));
     }

@@ -503,7 +503,7 @@ fn begin_requires_a_usable_pair_and_component_but_accepts_posted_zero() {
         vec![InteractReq::IfButton { component_id: 0 }]
     );
     assert!(j.outcome().is_null());
-    j.iso.reset_session_work();
+    j.iso.reset_session_work(None);
     j.tick(5);
     j.iso.join();
 }
@@ -526,7 +526,7 @@ fn a_frozen_begin_starts_no_token_or_click_then_thaws_normally() {
         j.iso.drain_interacts(),
         vec![InteractReq::IfButton { component_id: 1234 }]
     );
-    j.iso.reset_session_work();
+    j.iso.reset_session_work(None);
     j.tick(3);
     j.iso.join();
 }
@@ -682,7 +682,7 @@ fn closing_timeout_settles_and_releases_the_journal() {
         vec![InteractReq::IfButton { component_id: 1234 }],
         "the closing timeout released the journal"
     );
-    j.iso.reset_session_work();
+    j.iso.reset_session_work(None);
     j.tick(5);
     j.iso.join();
 }
@@ -724,7 +724,7 @@ fn acquisition_timeout_settles_the_run_without_closing() {
         "the timed-out token released the journal"
     );
     assert_eq!(j.begin_result()["ok"], true);
-    j.iso.reset_session_work();
+    j.iso.reset_session_work(None);
     j.tick(4);
     j.iso.join();
 }
@@ -765,7 +765,7 @@ fn pause_and_hold_freeze_the_acquisition_window_and_reset_aborts_the_await() {
         "pause and hold did not consume the acquisition window"
     );
 
-    j.iso.reset_session_work();
+    j.iso.reset_session_work(None);
     j.tick(6);
     assert_eq!(j.outcome(), json!({ "kind": "aborted", "reason": "reset" }));
     assert!(j.iso.drain_interacts().is_empty());

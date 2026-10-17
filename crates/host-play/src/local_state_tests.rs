@@ -2350,6 +2350,19 @@ fn preferences_at(scratch: &IsolatedEnv, case: &str) -> Preferences {
     .preferences()
 }
 
+#[test]
+fn quarantine_copy_flushes_its_candidate() {
+    let scratch = IsolatedEnv::enter("local-state-quarantine-copy-flush");
+    let path = scratch.home.join(".274bot").join("panel-ui.json");
+    let bytes = b"quarantine contents".to_vec();
+    write_private(&path, &bytes);
+
+    let quarantined = files::quarantine_copy(&path, &bytes, "regression").unwrap();
+
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert_eq!(std::fs::read(quarantined).unwrap(), bytes);
+}
+
 /// T5.2 r4 (the pre-T5.2 recovery, made safe): a preferences file whose
 /// content is malformed (not JSON, not UTF-8, JSON that is not an object)
 /// is refused by reads, so readers fail closed, and untouched by them. The

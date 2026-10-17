@@ -202,6 +202,8 @@ fn with_tick_output_reach<R>(
     let mut actions = NativeActions { _private: () };
     let mut native = NativeTick {
         state: None,
+        service_authority: None,
+        prompt_port: None,
         actions: &mut actions,
         cx: crate::native::ActionContext {
             evidence,
@@ -235,6 +237,7 @@ fn with_tick_output_reach<R>(
                 hold: false,
                 world_members,
                 interacts: Some(Vec::new()),
+                service_gate: None,
             },
         },
     };
@@ -7626,6 +7629,59 @@ fn arrive_slot_walk(
             escape: None,
         },
     );
+}
+
+/// The native receipt can arrive before the next owner tick retires inactive
+/// routes. It must free the armed release slot immediately.
+#[cfg(feature = "test-hooks")]
+#[test]
+fn native_walk_receipt_frees_its_seat_release_before_next_tick() {
+    let mut slot = mill_descent_slot();
+    let ladder = WorldTile {
+        x: 3165,
+        z: 3307,
+        level: 1,
+    };
+    slot_tick(&mut slot, &mill_frame(ladder, 1781), 10);
+    let walk = take_slot_walk(&mut slot);
+    assert_eq!(slot.seat_probe().unwrap().reserved_releases, 1);
+    arrive_slot_walk(&mut slot, &walk, 11);
+    assert_eq!(
+        slot.seat_probe().unwrap().reserved_releases,
+        0,
+        "native receipt frees the seat slot without another owner tick"
+    );
+    slot.stop();
+}
+
+/// A native receipt that arrives during a guardian hold keeps its release
+/// slot reserved until the hold ends, then frees it on resume.
+#[cfg(feature = "test-hooks")]
+#[test]
+fn native_walk_receipt_during_guardian_hold_frees_its_slot_after_resume() {
+    let mut slot = mill_descent_slot();
+    let ladder = WorldTile {
+        x: 3165,
+        z: 3307,
+        level: 1,
+    };
+    slot_tick(&mut slot, &mill_frame(ladder, 1781), 10);
+    let walk = take_slot_walk(&mut slot);
+    assert_eq!(slot.seat_probe().unwrap().reserved_releases, 1);
+    slot.seat_guardian_hold(true);
+    arrive_slot_walk(&mut slot, &walk, 11);
+    assert_eq!(
+        slot.seat_probe().unwrap().reserved_releases,
+        1,
+        "the guardian hold defers the native walk terminal"
+    );
+    slot.seat_guardian_hold(false);
+    assert_eq!(
+        slot.seat_probe().unwrap().reserved_releases,
+        0,
+        "resume applies the deferred native walk terminal"
+    );
+    slot.stop();
 }
 
 /// The loc ids of every loc op the slot queued this tick.

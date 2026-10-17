@@ -32,33 +32,51 @@ pub(super) struct MouseGestureIdentities {
     pub(super) unpairable: u64,
 }
 
+fn stamp_mouse_gesture_identity(
+    req: &mut crate::shim::InteractReq,
+    input_identity: u64,
+    gestures: &mut MouseGestureIdentities,
+) {
+    let crate::shim::InteractReq::Mouse { down, identity, .. } = req else {
+        return;
+    };
+    if *down {
+        *identity = input_identity;
+        if gestures.unpairable != 0 {
+            gestures.unpairable = gestures.unpairable.saturating_add(1);
+        } else if gestures.pairs.len() >= MAX_MOUSE_GESTURES {
+            gestures.unpairable = (gestures.pairs.len() as u64).saturating_add(1);
+            gestures.pairs.clear();
+        } else {
+            gestures.pairs.push_back(input_identity);
+        }
+    } else if gestures.unpairable != 0 {
+        gestures.unpairable -= 1;
+        *identity = 0;
+    } else {
+        // FIFO is deliberate: if a second down precedes the first
+        // up, that old up must retain the oldest gesture identity.
+        *identity = gestures.pairs.pop_front().unwrap_or(0);
+    }
+}
+
 pub(super) fn stamp_mouse_gesture_identities(
     reqs: &mut [crate::shim::InteractReq],
     input_identity: u64,
     gestures: &mut MouseGestureIdentities,
 ) {
     for req in reqs {
-        let crate::shim::InteractReq::Mouse { down, identity, .. } = req else {
-            continue;
-        };
-        if *down {
-            *identity = input_identity;
-            if gestures.unpairable != 0 {
-                gestures.unpairable = gestures.unpairable.saturating_add(1);
-            } else if gestures.pairs.len() >= MAX_MOUSE_GESTURES {
-                gestures.unpairable = (gestures.pairs.len() as u64).saturating_add(1);
-                gestures.pairs.clear();
-            } else {
-                gestures.pairs.push_back(input_identity);
-            }
-        } else if gestures.unpairable != 0 {
-            gestures.unpairable -= 1;
-            *identity = 0;
-        } else {
-            // FIFO is deliberate: if a second down precedes the first
-            // up, that old up must retain the oldest gesture identity.
-            *identity = gestures.pairs.pop_front().unwrap_or(0);
-        }
+        stamp_mouse_gesture_identity(req, input_identity, gestures);
+    }
+}
+
+fn stamp_mouse_gesture_lineage_pairs(
+    reqs: &mut [(crate::shim::InteractReq, crate::machine::CapturedLineage)],
+    input_identity: u64,
+    gestures: &mut MouseGestureIdentities,
+) {
+    for (req, _) in reqs {
+        stamp_mouse_gesture_identity(req, input_identity, gestures);
     }
 }
 
@@ -72,27 +90,30 @@ enum HostValue<'a> {
 /// Set `__rs2b0t_host[key]` through V8 directly: typed, no script eval.
 /// `false` when the host handle is missing or the write failed.
 fn set_host_field(runtime: &mut Runtime, key: &str, value: HostValue<'_>) -> bool {
-    let scope = &mut runtime.deno_runtime().handle_scope();
-    let global = scope.get_current_context().global(scope);
-    let (Ok(host_key), Ok(field)) = (key_string(scope, "__rs2b0t_host"), key_string(scope, key))
-    else {
-        return false;
-    };
-    let Some(host) = global
-        .get(scope, host_key.into())
-        .and_then(|host| host.to_object(scope))
-    else {
-        return false;
-    };
-    let value: v8::Local<v8::Value> = match value {
-        HostValue::Number(n) => v8::Number::new(scope, n).into(),
-        HostValue::Str(s) => match v8::String::new(scope, s) {
-            Some(s) => s.into(),
-            None => return false,
-        },
-        HostValue::Null => v8::null(scope).into(),
-    };
-    host.set(scope, field.into(), value).is_some()
+    super::super::lineage_v8::enter_root(runtime, |runtime| {
+        let scope = &mut runtime.deno_runtime().handle_scope();
+        let global = scope.get_current_context().global(scope);
+        let (Ok(host_key), Ok(field)) =
+            (key_string(scope, "__rs2b0t_host"), key_string(scope, key))
+        else {
+            return false;
+        };
+        let Some(host) = global
+            .get(scope, host_key.into())
+            .and_then(|host| host.to_object(scope))
+        else {
+            return false;
+        };
+        let value: v8::Local<v8::Value> = match value {
+            HostValue::Number(n) => v8::Number::new(scope, n).into(),
+            HostValue::Str(s) => match v8::String::new(scope, s) {
+                Some(s) => s.into(),
+                None => return false,
+            },
+            HostValue::Null => v8::null(scope).into(),
+        };
+        host.set(scope, field.into(), value).is_some()
+    })
 }
 
 /// Record the eligible tick number on the host handle
@@ -106,14 +127,16 @@ fn current_observed_walk_outcome_seq() -> u64 {
 
 /// `!!globalThis[name]`, read through V8 without compiling a script.
 fn global_flag(runtime: &mut Runtime, name: &str) -> bool {
-    let scope = &mut runtime.deno_runtime().handle_scope();
-    let global = scope.get_current_context().global(scope);
-    let Ok(key) = key_string(scope, name) else {
-        return false;
-    };
-    global
-        .get(scope, key.into())
-        .is_some_and(|value| value.boolean_value(scope))
+    super::super::lineage_v8::enter_root(runtime, |runtime| {
+        let scope = &mut runtime.deno_runtime().handle_scope();
+        let global = scope.get_current_context().global(scope);
+        let Ok(key) = key_string(scope, name) else {
+            return false;
+        };
+        global
+            .get(scope, key.into())
+            .is_some_and(|value| value.boolean_value(scope))
+    })
 }
 
 /// Drops every machine row when the tick loop ends (Stop, script stop).
@@ -169,6 +192,7 @@ pub(super) fn isolate_main(
     paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     teardown: std::sync::Arc<Mutex<TeardownState>>,
     proof: std::sync::Arc<TeardownProofInner>,
+    execution: Option<api::identity::ExecutionId>,
     #[cfg(feature = "memory-profile")] counters: std::sync::Arc<crate::memory_profile::Counters>,
 ) {
     #[cfg(feature = "memory-profile")]
@@ -206,18 +230,25 @@ pub(super) fn isolate_main(
     let _machines = MachinesStop;
     let _obj_records = ObjRecordsStop;
     crate::machine::set_walking_publication(walking_ownership);
+    crate::machine::set_execution(execution);
     #[cfg(feature = "memory-profile")]
     counters
         .heap_live
         .store(1, std::sync::atomic::Ordering::Relaxed);
-    if let Err(e) = wire_runtime(
-        &mut runtime,
-        &source,
-        shape,
-        &siblings,
-        game_data,
-        named_banks,
-    ) {
+    let carrier_ready = super::super::lineage_v8::install(&mut runtime, execution.is_some())
+        .and_then(|()| {
+            super::super::lineage_v8::enter_root(&mut runtime, |runtime| {
+                super::super::lineage_v8::install_interact_capture(runtime)
+            })
+        });
+    if let Err(e) = carrier_ready {
+        let _ = setup.send(SetupMessage::Ready(Err(e)));
+        return;
+    }
+    let wired = super::super::lineage_v8::enter_root(&mut runtime, |runtime| {
+        wire_runtime(runtime, &source, shape, &siblings, game_data, named_banks)
+    });
+    if let Err(e) = wired {
         let _ = setup.send(SetupMessage::Ready(Err(e)));
         return;
     }
@@ -229,15 +260,17 @@ pub(super) fn isolate_main(
     // for them would grow a queue nothing drains. A future v2
     // `api.on(...)` only has to define the flush global; delivery turns
     // back on here with no other change.
-    let events_consumed = runtime
-        .eval::<bool>("typeof globalThis.__rs2b0t_flush_native_events === 'function'")
-        .unwrap_or(false);
+    let events_consumed = super::super::lineage_v8::eval::<bool>(
+        &mut runtime,
+        "typeof globalThis.__rs2b0t_flush_native_events === 'function'",
+    )
+    .unwrap_or(false);
     let v2_native = shape == LoadShape::NativeTick
         && matches!(
             super::shape::parse_declared_api_version(&source),
             Ok(Some(2))
         );
-    let _ = runtime.eval::<serde_json::Value>(INSTALL_HOST_HOOKS);
+    let _ = super::super::lineage_v8::eval::<serde_json::Value>(&mut runtime, INSTALL_HOST_HOOKS);
     let _ = setup.send(SetupMessage::Ready(Ok(())));
     tick_loop(
         runtime,
@@ -251,6 +284,7 @@ pub(super) fn isolate_main(
         v2_native,
         events_consumed,
         matches!(shape, LoadShape::CompatDefineBot | LoadShape::CompatClass),
+        execution,
         #[cfg(feature = "memory-profile")]
         counters,
     );
@@ -437,6 +471,195 @@ fn append_wait_facts(reqs: &mut Vec<crate::shim::InteractReq>, enqueued: u32, se
     }
 }
 
+fn seat_interact_is_reserved(request: &crate::shim::InteractReq) -> bool {
+    matches!(
+        request,
+        crate::shim::InteractReq::AbortWalk { .. }
+            | crate::shim::InteractReq::GatherStop { .. }
+            | crate::shim::InteractReq::CombatStop { .. }
+            | crate::shim::InteractReq::RunPolicyOverride { .. }
+    )
+}
+
+fn append_seat_wait_facts(
+    rows: &mut Vec<(crate::shim::InteractReq, crate::machine::CapturedLineage)>,
+    enqueued: u32,
+    settled: u32,
+) -> usize {
+    let gameplay_rows = rows
+        .iter()
+        .filter(|(request, _)| !seat_interact_is_reserved(request))
+        .count();
+    let available = crate::isolate_fb::MAX_SEAT_GAMEPLAY_ROWS.saturating_sub(gameplay_rows);
+    let enqueue_rows = (enqueued as usize).min(available);
+    let settle_rows = (settled as usize).min(available - enqueue_rows);
+    rows.reserve(enqueue_rows + settle_rows);
+    for _ in 0..enqueue_rows {
+        rows.push((
+            crate::shim::InteractReq::WaitEnqueued,
+            crate::machine::CapturedLineage::default(),
+        ));
+    }
+    for _ in 0..settle_rows {
+        rows.push((
+            crate::shim::InteractReq::WaitSettled,
+            crate::machine::CapturedLineage::default(),
+        ));
+    }
+    (enqueued as usize)
+        .saturating_sub(enqueue_rows)
+        .saturating_add((settled as usize).saturating_sub(settle_rows))
+}
+
+type EncodedSeatBatch = (Vec<u8>, Vec<crate::machine::MachineEvent>);
+
+fn encode_seat_batch(
+    ipc: &mut crate::isolate_fb::IsolateBuf,
+    rows: &[(crate::shim::InteractReq, crate::machine::CapturedLineage)],
+    dropped: &mut usize,
+) -> Result<Option<EncodedSeatBatch>, String> {
+    let pending_stops = crate::api_session::pending_stop_intents();
+    if !crate::machine::has_pending_seat_batch()
+        && rows.is_empty()
+        && pending_stops.iter().all(Option::is_none)
+    {
+        return Ok(None);
+    }
+    crate::machine::with_seat_batch(|carry| {
+        let Some(carry) = carry else {
+            return Ok(None);
+        };
+        let has_control_work = carry.has_work();
+        let starts = carry.starts?;
+        let decisions: [crate::isolate_fb::SeatDecisionRef<'_>; 0] = [];
+        let max_rows = crate::isolate_fb::MAX_SEAT_RESERVED_ROWS
+            .saturating_add(crate::isolate_fb::MAX_SEAT_GAMEPLAY_ROWS);
+        let mut requests = Vec::with_capacity(
+            rows.len()
+                .saturating_add(pending_stops.iter().flatten().count())
+                .min(max_rows),
+        );
+        let mut walk_releases = [0u64; api::script_contract::MAX_WALK_RELEASES];
+        let mut walk_release_count = 0;
+        let mut gather_stop = false;
+        let mut combat_stop = false;
+        let mut run_policy = false;
+
+        // Controls and releases must precede gameplay in the physical batch.
+        for (request, lineage) in rows {
+            if !seat_interact_is_reserved(request) {
+                continue;
+            }
+            let keep = match request {
+                crate::shim::InteractReq::AbortWalk { request_id } => {
+                    if walk_releases[..walk_release_count].contains(request_id) {
+                        false
+                    } else if walk_release_count < walk_releases.len() {
+                        walk_releases[walk_release_count] = *request_id;
+                        walk_release_count += 1;
+                        true
+                    } else {
+                        *dropped = dropped.saturating_add(1);
+                        false
+                    }
+                }
+                crate::shim::InteractReq::GatherStop { .. } if gather_stop => false,
+                crate::shim::InteractReq::GatherStop { .. } => {
+                    gather_stop = true;
+                    true
+                }
+                crate::shim::InteractReq::CombatStop { .. } if combat_stop => false,
+                crate::shim::InteractReq::CombatStop { .. } => {
+                    combat_stop = true;
+                    true
+                }
+                crate::shim::InteractReq::RunPolicyOverride { .. } if run_policy => false,
+                crate::shim::InteractReq::RunPolicyOverride { .. } => {
+                    run_policy = true;
+                    true
+                }
+                _ => unreachable!("reserved seat row has a non-reserved request"),
+            };
+            if keep {
+                requests.push(crate::isolate_fb::SeatInteractRequest {
+                    lineage: lineage.lineage,
+                    mirror_owner: lineage.mirror_owner,
+                    request,
+                });
+            }
+        }
+
+        for (present, request) in [gather_stop, combat_stop].into_iter().zip(&pending_stops) {
+            if !present {
+                if let Some(request) = request {
+                    requests.push(crate::isolate_fb::SeatInteractRequest {
+                        lineage: None,
+                        mirror_owner: None,
+                        request,
+                    });
+                }
+            }
+        }
+
+        let mut gameplay_rows = 0;
+        for (request, lineage) in rows {
+            if seat_interact_is_reserved(request) || lineage.dropped {
+                continue;
+            }
+            if gameplay_rows < crate::isolate_fb::MAX_SEAT_GAMEPLAY_ROWS {
+                gameplay_rows += 1;
+                requests.push(crate::isolate_fb::SeatInteractRequest {
+                    lineage: lineage.lineage,
+                    mirror_owner: lineage.mirror_owner,
+                    request,
+                });
+            } else {
+                *dropped = dropped.saturating_add(1);
+            }
+        }
+        if !has_control_work && requests.is_empty() {
+            return Ok(None);
+        }
+        let input = crate::isolate_fb::SeatInteractBatchInput {
+            consumed_terminal_seq: carry.consumed_terminal_seq,
+            starts: &starts,
+            decisions: &decisions,
+            cancels: &carry.cancels,
+            mirror_revokes: &carry.mirror_revokes,
+            reqs: &requests,
+        };
+        let bytes = ipc.encode_seat_interact_batch(&input)?;
+        Ok(Some((bytes, carry.machine_events)))
+    })
+}
+
+fn take_seat_interact_overflow(
+    runtime: &mut Runtime,
+    out: &Sender<ThreadMsg>,
+    tick: u64,
+    generation: u64,
+) -> usize {
+    match super::super::lineage_v8::take_interact_overflow(runtime) {
+        Ok(dropped) => dropped,
+        Err(error) => {
+            let _ = out.send(ThreadMsg::TickError {
+                tick,
+                generation,
+                message: format!("interact overflow: {error}"),
+            });
+            0
+        }
+    }
+}
+
+fn log_seat_interact_drops(out: &Sender<ThreadMsg>, dropped: usize) {
+    if dropped > 0 {
+        let _ = out.send(ThreadMsg::Log(format!(
+            "[rs2b0t] dropped {dropped} over-cap seat interact rows"
+        )));
+    }
+}
+
 /// Run this tick's event loop for up to 10 ms. An unhandled promise
 /// rejection — an un-awaited shim call that failed — surfaces here once
 /// as the drain's error; log it under the tick instead of dropping it.
@@ -591,27 +814,35 @@ fn finish_tick(
     if !suppress_user_callbacks {
         pump_event_loop(runtime, out, n, generation, teardown);
     }
+    if super::super::lineage_v8::take_foreign_diagnostic(runtime) {
+        let _ = out.send(ThreadMsg::Log(
+            "foreign async context encountered; interact ancestry falls back to the active hook or root"
+                .to_string(),
+        ));
+    }
     requested_stop(runtime)
 }
 
 /// ScriptRunner.stop's flag and bounded reason, read off the host handle
 /// through V8 (no script).
 fn requested_stop(runtime: &mut Runtime) -> Option<String> {
-    let scope = &mut runtime.deno_runtime().handle_scope();
-    let global = scope.get_current_context().global(scope);
-    let host_key = key_string(scope, "__rs2b0t_host").ok()?;
-    let host = global.get(scope, host_key.into())?.to_object(scope)?;
-    let flag = key_string(scope, "stopRequested").ok()?;
-    if !host.get(scope, flag.into())?.boolean_value(scope) {
-        return None;
-    }
-    let reason = key_string(scope, "stopReason")
-        .ok()
-        .and_then(|key| host.get(scope, key.into()))
-        .filter(|reason| reason.is_string())
-        .map(|reason| reason.to_rust_string_lossy(scope))
-        .unwrap_or_default();
-    Some(bounded_stop_reason(reason))
+    super::super::lineage_v8::enter_root(runtime, |runtime| {
+        let scope = &mut runtime.deno_runtime().handle_scope();
+        let global = scope.get_current_context().global(scope);
+        let host_key = key_string(scope, "__rs2b0t_host").ok()?;
+        let host = global.get(scope, host_key.into())?.to_object(scope)?;
+        let flag = key_string(scope, "stopRequested").ok()?;
+        if !host.get(scope, flag.into())?.boolean_value(scope) {
+            return None;
+        }
+        let reason = key_string(scope, "stopReason")
+            .ok()
+            .and_then(|key| host.get(scope, key.into()))
+            .filter(|reason| reason.is_string())
+            .map(|reason| reason.to_rust_string_lossy(scope))
+            .unwrap_or_default();
+        Some(bounded_stop_reason(reason))
+    })
 }
 
 /// The settle promise of a compat method invoker or a v1 native tick: it
@@ -629,13 +860,14 @@ fn call_interruptible<T, E>(
     teardown: &Mutex<TeardownState>,
     call: impl FnOnce(&mut Runtime) -> Result<T, E>,
 ) -> Result<T, E> {
-    let result = call(runtime);
+    let result = super::super::lineage_v8::enter_root(runtime, call);
     let direct_termination = runtime
         .deno_runtime()
         .v8_isolate()
         .is_execution_terminating();
     let interrupted = teardown.lock().unwrap().execution_interrupt.is_some();
-    let consumed_here = interrupted && (direct_termination || runtime.eval::<()>("void 0").is_ok());
+    let consumed_here = interrupted
+        && (direct_termination || super::super::lineage_v8::eval::<()>(runtime, "void 0").is_ok());
     if consumed_here {
         if let Some(interrupt) = &mut teardown.lock().unwrap().execution_interrupt {
             interrupt.consumed = true;
@@ -764,6 +996,17 @@ fn report_interrupted_execution(
     let _ = out.send(ThreadMsg::ScriptCut);
 }
 
+fn fire_tick_listeners(runtime: &mut Runtime, teardown: &Mutex<TeardownState>) {
+    let _ = call_interruptible(runtime, teardown, |runtime| {
+        runtime.call_function_immediate::<()>(
+            None,
+            "__rs2b0t_fire_tick_listeners",
+            json_args!(),
+        )?;
+        runtime.advance_event_loop(rustyscript::deno_core::PollEventLoopOptions::default())
+    });
+}
+
 /// One eligible non-v2 tick, in the phase order the isolate owns (the
 /// tick is already recorded and machines stepped): tick listeners, wait
 /// settle, `onStart` once (compat), native events once started, then
@@ -796,20 +1039,9 @@ fn run_tick_phases(
     if let Phase::StartFailed = runner.phase {
         runner.phase = Phase::Idle;
     }
-    // BotHost tick listeners, before any wait settles this tick. Absent
-    // when the card never loaded BotHost.
-    if machines_halted(teardown) {
-        return Ok(());
-    }
-    let listener = call_interruptible(runtime, teardown, |runtime| {
-        runtime.call_function_immediate::<()>(
-            None,
-            "__rs2b0t_fire_tick_listeners",
-            json_args!(),
-        )?;
-        runtime.advance_event_loop(rustyscript::deno_core::PollEventLoopOptions::default())
-    });
-    let _ = listener;
+    // BotHost tick listeners run before waits. Cards without BotHost keep
+    // their optional listener entry behavior.
+    fire_tick_listeners(runtime, teardown);
     if machines_halted(teardown) {
         return Ok(());
     }
@@ -873,18 +1105,19 @@ fn run_tick_phases(
 
 /// Sample recoveryAnchor on the isolate thread. Invalid/missing/throw → none.
 fn eval_recovery_anchor(runtime: &mut Runtime) -> Option<(i32, i32, i32)> {
-    let value: Result<Option<Vec<i32>>, rustyscript::Error> = runtime.eval(
+    let value: Result<Option<Vec<i32>>, rustyscript::Error> = super::super::lineage_v8::eval(
+        runtime,
         r#"(() => {
-            try {
-                const inst = globalThis.__rs_bot;
-                if (!inst || typeof inst.recoveryAnchor !== 'function') return null;
-                const a = inst.recoveryAnchor();
-                if (!a || typeof a !== 'object' || Array.isArray(a)) return null;
-                const x = a.x, z = a.z, level = a.level;
-                if (!Number.isInteger(x) || !Number.isInteger(z) || !Number.isInteger(level)) return null;
-                return [x, z, level];
-            } catch (_) { return null; }
-        })()"#,
+                try {
+                    const inst = globalThis.__rs_bot;
+                    if (!inst || typeof inst.recoveryAnchor !== 'function') return null;
+                    const a = inst.recoveryAnchor();
+                    if (!a || typeof a !== 'object' || Array.isArray(a)) return null;
+                    const x = a.x, z = a.z, level = a.level;
+                    if (!Number.isInteger(x) || !Number.isInteger(z) || !Number.isInteger(level)) return null;
+                    return [x, z, level];
+                } catch (_) { return null; }
+            })()"#,
     );
     match value {
         Ok(Some(coords)) if coords.len() >= 3 => Some((coords[0], coords[1], coords[2])),
@@ -917,8 +1150,9 @@ return String((e && (e.message || e.stack)) || e);
 }, globalThis.__rs2b0t_take_tick_output = function (facts) {
   const h = globalThis.__rs2b0t_host;
   if (!h) return { interact: [], queue: null, waitEnqueues: 0, waitSettles: 0 };
-  const rows = h.interact;
-  h.interact = [];
+  const takeRows = globalThis.__rs2b0t_take_interact_rows;
+  const rows = typeof takeRows === 'function' ? takeRows() : h.interact;
+  if (typeof takeRows !== 'function') h.interact = [];
   let e = 0, s = 0;
   if (facts) {
     e = Math.max(0, h.waitEnqueues | 0);
@@ -1107,6 +1341,7 @@ fn tick_loop(
     v2_native: bool,
     events_consumed: bool,
     compat: bool,
+    mut execution: Option<api::identity::ExecutionId>,
     #[cfg(feature = "memory-profile")] counters: std::sync::Arc<crate::memory_profile::Counters>,
 ) {
     let _finish = TickLoopFinish(proof.clone());
@@ -1176,9 +1411,13 @@ fn tick_loop(
                 // blob is logged, never fatal.
                 match crate::isolate_fb::Snapshot::from_bytes(&bytes.bytes) {
                     Ok(snap) => {
-                        // Step machines read the scene at call time; the
-                        // hooks below are the edge-triggered waits.
+                        // A native terminal may share this snapshot with
+                        // its family's final page. Make the page visible
+                        // before the seat settles the JS promise.
                         crate::observed::apply(&snap);
+                        if let Err(error) = crate::machine::on_snapshot(&snap) {
+                            let _ = out.send(ThreadMsg::Log(format!("seat page: {error}")));
+                        }
                         super::reach_query::apply(&snap);
                         crate::walk_wait::on_snapshot(&snap);
                         crate::inspect_wait::on_snapshot(&snap);
@@ -1191,11 +1430,34 @@ fn tick_loop(
                                 seq,
                                 generation: inspect_generation,
                             };
-                            let _ = out.send(ThreadMsg::Interact {
-                                bytes: ipc.encode_interact_batch(&[req]),
-                                generation,
-                                observed_walk_outcome_seq: current_observed_walk_outcome_seq(),
-                            });
+                            if execution.is_some() {
+                                let rows = [(req, crate::machine::CapturedLineage::default())];
+                                let mut dropped = 0;
+                                match encode_seat_batch(&mut ipc, &rows, &mut dropped) {
+                                    Ok(Some((bytes, machine_events))) => {
+                                        let _ = out.send(ThreadMsg::SeatBatch {
+                                            bytes,
+                                            generation,
+                                            observed_walk_outcome_seq:
+                                                current_observed_walk_outcome_seq(),
+                                            machine_events,
+                                        });
+                                    }
+                                    Ok(None) => {}
+                                    Err(error) => {
+                                        let _ = out.send(ThreadMsg::Log(format!(
+                                            "seat interact: {error}"
+                                        )));
+                                    }
+                                }
+                                log_seat_interact_drops(&out, dropped);
+                            } else {
+                                let _ = out.send(ThreadMsg::Interact {
+                                    bytes: ipc.encode_interact_batch(&[req]),
+                                    generation,
+                                    observed_walk_outcome_seq: current_observed_walk_outcome_seq(),
+                                });
+                            }
                         }
                         crate::reach::on_snapshot(&snap);
                         if snap.has_hold() {
@@ -1474,12 +1736,45 @@ fn tick_loop(
                     if !halted {
                         drain_event_loop(&mut runtime, &out, n, generation, &teardown);
                     }
-                    // Held gameplay rows are dropped. Execution remains owned
-                    // through paint/readback so Pause cannot arm a terminate
-                    // after an early cancel and leak it into Resume.
-                    let output =
-                        take_tick_output(&mut runtime, &out, n, generation, false, &teardown);
-                    crate::machine::drop_ops();
+                    // The owner seat drops held gameplay. Execution remains
+                    // owned through paint/readback so Pause cannot arm a
+                    // terminate after an early cancel and leak it into Resume.
+                    let output = take_tick_output(
+                        &mut runtime,
+                        &out,
+                        n,
+                        generation,
+                        execution.is_some(),
+                        &teardown,
+                    );
+                    output.log_rejected(&out, n, generation);
+                    if execution.is_some() {
+                        parked_waits = parked_waits
+                            .saturating_add(output.enqueued)
+                            .saturating_sub(output.settled);
+                    }
+                    let (lineages, mut dropped) = if execution.is_some() {
+                        let lineages =
+                            match super::super::lineage_v8::take_interact_lineages(&mut runtime) {
+                                Ok(lineages) => lineages,
+                                Err(error) => {
+                                    let _ = out.send(ThreadMsg::TickError {
+                                        tick: n,
+                                        generation,
+                                        message: format!("interact lineage: {error}"),
+                                    });
+                                    Vec::new()
+                                }
+                            };
+                        (
+                            lineages,
+                            take_seat_interact_overflow(&mut runtime, &out, n, generation),
+                        )
+                    } else {
+                        super::super::lineage_v8::clear_interact_lineages(&mut runtime);
+                        crate::machine::drop_ops();
+                        (Vec::new(), 0)
+                    };
                     let stop = finish_tick(
                         &mut runtime,
                         &out,
@@ -1494,37 +1789,100 @@ fn tick_loop(
                         &mut last_ignored_randoms,
                     );
                     // Work that fulfils under hold is still scheduler
-                    // progress; its gameplay is dropped above. Polled after
-                    // the log read, so a failed loop logs after the tick's
-                    // own lines, as it did.
-                    let mut lifecycle: Vec<crate::shim::InteractReq> = if v2_native {
-                        output
-                            .rows
-                            .into_iter()
-                            .filter_map(|row| match row {
-                                crate::shim::MaybeInteractReq::Req(
-                                    req @ crate::shim::InteractReq::LoopSettled,
-                                ) => Some(req),
-                                _ => None,
-                            })
-                            .collect()
+                    // progress; the owner seat drops gameplay but keeps
+                    // lifecycle/releases. Polled after the log read, so a failed loop
+                    // logs after the tick's own lines, as it did.
+                    let mut seat_rows = None;
+                    let mut legacy_lifecycle = None;
+                    if execution.is_some() {
+                        let mut rows =
+                            match crate::machine::merge_ops_with_lineage(output.rows, lineages) {
+                                Ok(rows) => rows,
+                                Err(error) => {
+                                    crate::machine::drop_ops();
+                                    let _ = out.send(ThreadMsg::TickError {
+                                        tick: n,
+                                        generation,
+                                        message: format!("interact lineage: {error}"),
+                                    });
+                                    Vec::new()
+                                }
+                            };
+                        if !v2_native && runner.poll(&mut runtime, &out, n, generation) && compat {
+                            rows.push((
+                                crate::shim::InteractReq::LoopSettled,
+                                crate::machine::CapturedLineage::default(),
+                            ));
+                        }
+                        if let Some(policy) = super::run_policy_v8::take_pending() {
+                            rows.push((policy, crate::machine::CapturedLineage::default()));
+                        }
+                        stamp_mouse_gesture_lineage_pairs(
+                            &mut rows,
+                            input_identity,
+                            &mut mouse_gestures,
+                        );
+                        crate::inspect_wait::filter_public_inspect_wire(&mut rows, |(req, _)| req);
+                        dropped = dropped.saturating_add(append_seat_wait_facts(
+                            &mut rows,
+                            output.enqueued,
+                            output.settled,
+                        ));
+                        seat_rows = Some(rows);
                     } else {
-                        Vec::new()
-                    };
-                    if !v2_native && runner.poll(&mut runtime, &out, n, generation) && compat {
-                        lifecycle.push(crate::shim::InteractReq::LoopSettled);
-                    }
-                    if let Some(policy) = super::run_policy_v8::take_pending() {
-                        lifecycle.push(policy);
+                        let mut lifecycle: Vec<crate::shim::InteractReq> = if v2_native {
+                            output
+                                .rows
+                                .into_iter()
+                                .filter_map(|row| match row {
+                                    crate::shim::MaybeInteractReq::Req(
+                                        req @ crate::shim::InteractReq::LoopSettled,
+                                    ) => Some(req),
+                                    _ => None,
+                                })
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
+                        if !v2_native && runner.poll(&mut runtime, &out, n, generation) && compat {
+                            lifecycle.push(crate::shim::InteractReq::LoopSettled);
+                        }
+                        if let Some(policy) = super::run_policy_v8::take_pending() {
+                            lifecycle.push(policy);
+                        }
+                        legacy_lifecycle = Some(lifecycle);
                     }
                     let interrupt = finish_interruptible_execution(&mut runtime, &teardown);
                     report_interrupted_execution(interrupt, &out, n, generation);
-                    if !lifecycle.is_empty() {
-                        let _ = out.send(ThreadMsg::Interact {
-                            bytes: ipc.encode_interact_batch(&lifecycle),
-                            generation,
-                            observed_walk_outcome_seq: walk_outcome_seq_at_tick,
-                        });
+                    if let Some(rows) = seat_rows {
+                        match encode_seat_batch(&mut ipc, &rows, &mut dropped) {
+                            Ok(Some((bytes, machine_events))) => {
+                                let _ = out.send(ThreadMsg::SeatBatch {
+                                    bytes,
+                                    generation,
+                                    observed_walk_outcome_seq: walk_outcome_seq_at_tick,
+                                    machine_events,
+                                });
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                let _ = out.send(ThreadMsg::TickError {
+                                    tick: n,
+                                    generation,
+                                    message: format!("seat interact: {error}"),
+                                });
+                            }
+                        }
+                        log_seat_interact_drops(&out, dropped);
+                    }
+                    if let Some(lifecycle) = legacy_lifecycle {
+                        if !lifecycle.is_empty() {
+                            let _ = out.send(ThreadMsg::Interact {
+                                bytes: ipc.encode_interact_batch(&lifecycle),
+                                generation,
+                                observed_walk_outcome_seq: walk_outcome_seq_at_tick,
+                            });
+                        }
                     }
                     if let Some(reason) = stop {
                         stop_on_script_request(
@@ -1564,9 +1922,18 @@ fn tick_loop(
                         runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n))
                     })
                 } else if v2_native {
-                    let pumped = call_interruptible(&mut runtime, &teardown, |runtime| {
-                        runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n))
-                    });
+                    fire_tick_listeners(&mut runtime, &teardown);
+                    let pumped = if machines_halted(&teardown) {
+                        Ok(())
+                    } else {
+                        call_interruptible(&mut runtime, &teardown, |runtime| {
+                            runtime.call_function_immediate::<()>(
+                                None,
+                                "__rs2b0t_pump",
+                                json_args!(n),
+                            )
+                        })
+                    };
                     // Do not re-enter tick while a previous returned
                     // Promise is pending. Snapshot posts still merge;
                     // this only skips tick.
@@ -1665,29 +2032,112 @@ fn tick_loop(
                     .saturating_add(taken.enqueued)
                     .saturating_sub(taken.settled);
                 taken.log_rejected(&out, n, generation);
-                let mut reqs = crate::machine::merge_ops(taken.rows);
-                if let Some(policy) = super::run_policy_v8::take_pending() {
-                    reqs.push(policy);
-                }
-                stamp_mouse_gesture_identities(&mut reqs, input_identity, &mut mouse_gestures);
-                crate::inspect_wait::filter_public_inspect_wire(&mut reqs);
-                if v2_native
-                    && reqs
-                        .iter()
-                        .any(|req| matches!(req, crate::shim::InteractReq::LoopSettled))
-                {
-                    iteration_completed = true;
-                }
-                if loop_settled {
-                    reqs.push(crate::shim::InteractReq::LoopSettled);
-                }
-                append_wait_facts(&mut reqs, taken.enqueued, taken.settled);
-                if !reqs.is_empty() {
-                    let _ = out.send(ThreadMsg::Interact {
-                        bytes: ipc.encode_interact_batch(&reqs),
-                        generation,
-                        observed_walk_outcome_seq: walk_outcome_seq_at_tick,
-                    });
+                let lineages = if execution.is_some() {
+                    match super::super::lineage_v8::take_interact_lineages(&mut runtime) {
+                        Ok(lineages) => lineages,
+                        Err(error) => {
+                            let _ = out.send(ThreadMsg::TickError {
+                                tick: n,
+                                generation,
+                                message: format!("interact lineage: {error}"),
+                            });
+                            Vec::new()
+                        }
+                    }
+                } else {
+                    super::super::lineage_v8::clear_interact_lineages(&mut runtime);
+                    Vec::new()
+                };
+                let mut dropped = if execution.is_some() {
+                    take_seat_interact_overflow(&mut runtime, &out, n, generation)
+                } else {
+                    0
+                };
+                if execution.is_some() {
+                    let mut rows =
+                        match crate::machine::merge_ops_with_lineage(taken.rows, lineages) {
+                            Ok(rows) => rows,
+                            Err(error) => {
+                                crate::machine::drop_ops();
+                                let _ = out.send(ThreadMsg::TickError {
+                                    tick: n,
+                                    generation,
+                                    message: format!("interact lineage: {error}"),
+                                });
+                                Vec::new()
+                            }
+                        };
+                    if let Some(policy) = super::run_policy_v8::take_pending() {
+                        rows.push((policy, crate::machine::CapturedLineage::default()));
+                    }
+                    stamp_mouse_gesture_lineage_pairs(
+                        &mut rows,
+                        input_identity,
+                        &mut mouse_gestures,
+                    );
+                    crate::inspect_wait::filter_public_inspect_wire(&mut rows, |(req, _)| req);
+                    if v2_native
+                        && rows
+                            .iter()
+                            .any(|(req, _)| matches!(req, crate::shim::InteractReq::LoopSettled))
+                    {
+                        iteration_completed = true;
+                    }
+                    if loop_settled {
+                        rows.push((
+                            crate::shim::InteractReq::LoopSettled,
+                            crate::machine::CapturedLineage::default(),
+                        ));
+                    }
+                    dropped = dropped.saturating_add(append_seat_wait_facts(
+                        &mut rows,
+                        taken.enqueued,
+                        taken.settled,
+                    ));
+                    match encode_seat_batch(&mut ipc, &rows, &mut dropped) {
+                        Ok(Some((bytes, machine_events))) => {
+                            let _ = out.send(ThreadMsg::SeatBatch {
+                                bytes,
+                                generation,
+                                observed_walk_outcome_seq: walk_outcome_seq_at_tick,
+                                machine_events,
+                            });
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            let _ = out.send(ThreadMsg::TickError {
+                                tick: n,
+                                generation,
+                                message: format!("seat interact: {error}"),
+                            });
+                        }
+                    }
+                    log_seat_interact_drops(&out, dropped);
+                } else {
+                    let mut reqs = crate::machine::merge_ops(taken.rows);
+                    if let Some(policy) = super::run_policy_v8::take_pending() {
+                        reqs.push(policy);
+                    }
+                    stamp_mouse_gesture_identities(&mut reqs, input_identity, &mut mouse_gestures);
+                    crate::inspect_wait::filter_public_inspect_wire(&mut reqs, |req| req);
+                    if v2_native
+                        && reqs
+                            .iter()
+                            .any(|req| matches!(req, crate::shim::InteractReq::LoopSettled))
+                    {
+                        iteration_completed = true;
+                    }
+                    if loop_settled {
+                        reqs.push(crate::shim::InteractReq::LoopSettled);
+                    }
+                    append_wait_facts(&mut reqs, taken.enqueued, taken.settled);
+                    if !reqs.is_empty() {
+                        let _ = out.send(ThreadMsg::Interact {
+                            bytes: ipc.encode_interact_batch(&reqs),
+                            generation,
+                            observed_walk_outcome_seq: walk_outcome_seq_at_tick,
+                        });
+                    }
                 }
                 // The tick's one onPaint pass and everything else it left
                 // on the host handle (`finish_tick`). onPaint is sync and
@@ -1783,10 +2233,20 @@ fn tick_loop(
                     });
                 }
             }
+            IsolateCmd::RearmDiscardedWalk(token) => {
+                crate::walk_wait::rearm_discarded(token);
+            }
+            IsolateCmd::AlignExecution(owner_execution) => {
+                execution = Some(owner_execution);
+                crate::machine::set_execution(execution);
+            }
             IsolateCmd::ResetSession {
                 keep_work,
                 generation: reset_generation,
+                execution: new_execution,
+                undelivered_walks,
             } => {
+                execution = new_execution;
                 if let Some(lease) = compat_journal.as_ref() {
                     lease.set_generation(reset_generation);
                     lease.revoke();
@@ -1812,6 +2272,7 @@ fn tick_loop(
                     crate::clue::on_reset();
                     crate::duel::on_reset();
                 }
+                crate::machine::set_execution(execution);
                 crate::event_signal::clear();
                 // Held channel deliveries stay: the channel membership
                 // belongs to the script run, not to the connection.
@@ -1821,8 +2282,10 @@ fn tick_loop(
                     // events that were staged but not yet flushed. A
                     // reconnect must not replay them into the new
                     // session, and must not leave the trim window full.
-                    let _ =
-                        runtime.eval::<()>("globalThis.__rs2b0t_pending_native_event_batch = null");
+                    let _ = super::super::lineage_v8::eval::<()>(
+                        &mut runtime,
+                        "globalThis.__rs2b0t_pending_native_event_batch = null",
+                    );
                 }
                 if keep_work {
                     // Frozen AutoRelogin pauses the whole script on a
@@ -1834,20 +2297,26 @@ fn tick_loop(
                     session_held = true;
                     crate::machine::on_session_hold(true);
                     sync_work_freeze(&mut work_frozen, true);
+                    for token in undelivered_walks {
+                        crate::walk_wait::rearm_discarded(token);
+                    }
                 } else if v2_native {
-                    let _ = runtime.eval::<()>(
+                    let _ = super::super::lineage_v8::eval::<()>(
+                        &mut runtime,
                         "if (typeof globalThis.__rs_v2_reset_session === 'function') globalThis.__rs_v2_reset_session()",
                     );
                     // Machine rows are gone: settle their awaits now, so a
                     // stale promise cannot take a later snapshot's facts.
                     if crate::machine::any_settled() {
-                        let _ = runtime.call_function_immediate::<()>(
+                        let _ = super::super::lineage_v8::call_function_immediate::<()>(
+                            &mut runtime,
                             None,
                             "__rs2b0t_settle_machines",
                             json_args!(),
                         );
                     }
-                    if let Err(e) = runtime.block_on_event_loop(
+                    if let Err(e) = super::super::lineage_v8::block_on_event_loop(
+                        &mut runtime,
                         rustyscript::deno_core::PollEventLoopOptions::default(),
                         Some(Duration::from_millis(10)),
                     ) {
@@ -1856,7 +2325,10 @@ fn tick_loop(
                 }
                 // Connection-scoped rows queued during the reset drain go,
                 // machine ops with them.
-                let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
+                let _ = super::super::lineage_v8::eval::<()>(
+                    &mut runtime,
+                    "globalThis.__rs2b0t_host.interact = []",
+                );
                 crate::machine::drop_ops();
                 // RunManager.override lasts for the script run. Re-publish its
                 // latest replacement in the new connection generation; this
@@ -1874,12 +2346,42 @@ fn tick_loop(
                     && reset_generation
                         == work_generation.load(std::sync::atomic::Ordering::Acquire)
                 {
-                    let facts = vec![crate::shim::InteractReq::WaitEnqueued; parked_waits as usize];
-                    let _ = out.send(ThreadMsg::Interact {
-                        bytes: ipc.encode_interact_batch(&facts),
-                        generation: reset_generation,
-                        observed_walk_outcome_seq: current_observed_walk_outcome_seq(),
-                    });
+                    if execution.is_some() {
+                        let wait_rows = parked_waits
+                            .min(crate::isolate_fb::MAX_SEAT_GAMEPLAY_ROWS as u32)
+                            as usize;
+                        let mut rows = Vec::with_capacity(wait_rows);
+                        for _ in 0..wait_rows {
+                            rows.push((
+                                crate::shim::InteractReq::WaitEnqueued,
+                                crate::machine::CapturedLineage::default(),
+                            ));
+                        }
+                        let mut dropped = (parked_waits as usize).saturating_sub(wait_rows);
+                        match encode_seat_batch(&mut ipc, &rows, &mut dropped) {
+                            Ok(Some((bytes, machine_events))) => {
+                                let _ = out.send(ThreadMsg::SeatBatch {
+                                    bytes,
+                                    generation: reset_generation,
+                                    observed_walk_outcome_seq: current_observed_walk_outcome_seq(),
+                                    machine_events,
+                                });
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                let _ = out.send(ThreadMsg::Log(format!("seat interact: {error}")));
+                            }
+                        }
+                        log_seat_interact_drops(&out, dropped);
+                    } else {
+                        let facts =
+                            vec![crate::shim::InteractReq::WaitEnqueued; parked_waits as usize];
+                        let _ = out.send(ThreadMsg::Interact {
+                            bytes: ipc.encode_interact_batch(&facts),
+                            generation: reset_generation,
+                            observed_walk_outcome_seq: current_observed_walk_outcome_seq(),
+                        });
+                    }
                 }
                 // Every tick of the dropped connection has finished.
                 let _ = out.send(ThreadMsg::SessionReset {
@@ -1969,6 +2471,10 @@ fn tick_loop(
                 if !pause_interrupted
                     && generation == work_generation.load(std::sync::atomic::Ordering::Acquire)
                 {
+                    // The host requested this watchdog sample. Deliver it
+                    // through the generation-fenced lifecycle path even
+                    // while gameplay is held by SamplingAnchor. A seat
+                    // batch here would be discarded by the gameplay hold.
                     let _ = out.send(ThreadMsg::Interact {
                         bytes: ipc.encode_interact_batch(&[req]),
                         generation,
@@ -1982,7 +2488,7 @@ fn tick_loop(
             }
             IsolateCmd::Probe(expr, reply) => {
                 let value: Result<serde_json::Value, String> =
-                    runtime.eval(expr).map_err(|e| e.to_string());
+                    super::super::lineage_v8::eval(&mut runtime, expr).map_err(|e| e.to_string());
                 let _ = reply.send(value);
             }
             IsolateCmd::Stop { invoke_hook } => {

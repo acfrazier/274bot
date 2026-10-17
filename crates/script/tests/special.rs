@@ -399,7 +399,7 @@ fn pause_and_hold_freeze_mid_arm_without_late_click() {
         serde_json::Value::Null,
         "Guardian hold must freeze the parked arm wait"
     );
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     let staff = [SideTabIfaceInput { index: 0, id: 328 }];
     snap.hold = false;
     snap.tick = 6;

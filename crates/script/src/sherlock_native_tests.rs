@@ -388,6 +388,8 @@ fn with_tick<R>(
     let mut output = Output;
     let mut native = NativeTick {
         state: None,
+        service_authority: None,
+        prompt_port: None,
         actions: &mut actions,
         cx: crate::native::ActionContext {
             evidence,
@@ -417,6 +419,7 @@ fn with_tick<R>(
                 hold: world.held,
                 world_members: api::selected::Truth::Unknown,
                 interacts: Some(Vec::new()),
+                service_gate: None,
             },
         },
     };
@@ -1266,6 +1269,7 @@ fn tick_sherlock_slot(slot: &mut crate::slot::SlotScript, world: &World, tick: u
             hold: world.held,
             world_members: api::selected::Truth::Unknown,
             interacts: None,
+            service_gate: None,
         },
     });
 }

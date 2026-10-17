@@ -62,6 +62,9 @@ pub(crate) fn alloc_token(avoid: u64) -> u64 {
 thread_local! {
     static SLOT: RefCell<WalkSlot> = const { RefCell::new(WalkSlot::new()) };
     static INTENT_BASELINE: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    /// The last queued walk discarded by a kept reconnect must be requested
+    /// again by its live wait, not replayed from the old host queue.
+    static REARM_DISCARDED: Cell<u64> = const { Cell::new(0) };
 }
 
 impl HostOutcome {
@@ -141,6 +144,7 @@ pub(crate) fn on_snapshot(snap: &Snapshot<'_>) {
 pub(crate) fn on_reset() {
     SLOT.with(|slot| slot.borrow_mut().reset());
     INTENT_BASELINE.with(|baseline| baseline.set((0, 0)));
+    REARM_DISCARDED.with(|token| token.set(0));
 }
 
 pub(crate) fn on_pause() {}
@@ -148,6 +152,17 @@ pub(crate) fn on_pause() {}
 pub(crate) fn on_resume() {}
 
 pub(crate) fn on_hold(_held: bool) {}
+/// A reset discarded this pending request before host dispatch. The resumed
+/// walk may issue the same wait's request on a fresh seat turn.
+pub(crate) fn rearm_discarded(token: u64) {
+    if owns(token) {
+        REARM_DISCARDED.with(|pending| pending.set(token));
+    }
+}
+
+pub(crate) fn take_rearm(token: u64) -> bool {
+    REARM_DISCARDED.with(|pending| pending.get() == token && pending.replace(0) == token)
+}
 
 /// Whether `token` still owns the isolate's single native-walk wait.
 ///

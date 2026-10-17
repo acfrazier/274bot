@@ -1431,6 +1431,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/tests/seat_live.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/tests/selected_game_data_resident.rs",
       "owner": "T1"
     },
@@ -3419,6 +3423,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/load/lineage_v8.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/script/src/load/loadout_v8.rs",
       "owner": "T1"
     },
@@ -4403,6 +4411,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/script/src/slot/held_fold_tests.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/script/src/slot/pending.rs",
       "owner": "T1"
     },
@@ -4412,6 +4424,14 @@
     },
     {
       "path": "crates/script/src/slot/progress_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/slot/seat_family_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/slot/seat_wire_tests.rs",
       "owner": "T1"
     },
     {
@@ -4768,6 +4788,10 @@
     },
     {
       "path": "crates/script/tests/load_isolate.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/tests/load_isolate/seat_product_cases.rs",
       "owner": "T1"
     },
     {
@@ -5363,43 +5387,7 @@
       "owner": "T1"
     },
     {
-      "path": "tools/architecture/check.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/e2e_trusted_gate.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/graph.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/inventories.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/ownership.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/test_graph.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/test_inventories.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/test_ownership.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/test_trusted_gate.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/trusted_gate.py",
+      "path": "tools/architecture/run.sh",
       "owner": "T1"
     },
     {
@@ -6609,6 +6597,18 @@
     {
       "path": "crates/script/src/native/request.rs",
       "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/native/seat.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/native/seat_product_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/native/seat_tests.rs",
+      "owner": "T1"
     },
     {
       "path": "crates/script/src/native/services.rs",

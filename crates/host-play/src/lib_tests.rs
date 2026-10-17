@@ -3288,7 +3288,9 @@ fn spawned_worker_unwinding_after_its_grant_frees_the_next_login() {
 /// real socket: at its lease end the queue shuts that socket before it
 /// grants the next bot, so the server has already read end of stream when
 /// the next handshake may start. The late return reports the cancel and does
-/// not free the next bot's slot.
+/// not free the next bot's slot. The next bot starts its attempt behind a
+/// gate, so its started flight (which never evaporates) holds the slot
+/// while the tail asserts, however long loaded schedulers stall the threads.
 #[test]
 fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
     use client::io::client_stream::ClientStream;
@@ -3339,20 +3341,37 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
     });
     let deadline = deadline_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     let mut alice_socket = server.join().unwrap();
-    let (bob_tx, bob_rx) = mpsc::channel();
+    let (bob_started_tx, bob_started_rx) = mpsc::channel();
+    let (bob_release_tx, bob_release_rx) = mpsc::channel();
+    let (bob_done_tx, bob_done_rx) = mpsc::channel();
     let bob_queue = Arc::clone(&queue);
     let bob_statuses = Arc::clone(&statuses);
     let bob_arm = Arc::clone(&bob);
     let bob_waiter = thread::spawn(move || {
-        bob_tx
-            .send(wait_for_permit(
-                &bob_queue,
-                &bob_statuses,
-                "bob",
-                8,
-                &bob_arm,
-            ))
-            .unwrap();
+        let mut permit = granted(wait_for_permit(
+            &bob_queue,
+            &bob_statuses,
+            "bob",
+            8,
+            &bob_arm,
+        ));
+        // Start the attempt at once, behind a gate: a started flight never
+        // evaporates while unreturned (it retires instead), so bob's slot
+        // stays occupied across the assertions below no matter how long a
+        // loaded scheduler stalls these threads. An unstarted grant expires
+        // hold + slack after its poll and would free the slot instead.
+        let result = permit.attempt(
+            |_| true,
+            |_, _| {
+                bob_started_tx.send(()).unwrap();
+                bob_release_rx
+                    .recv_timeout(Duration::from_secs(60))
+                    .unwrap();
+                Ok::<(), String>(())
+            },
+            |_| None,
+        );
+        bob_done_tx.send(result).unwrap();
     });
     read_ended_rx
         .recv_timeout(Duration::from_secs(60))
@@ -3365,7 +3384,7 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
         "elapsed time alone cannot grant bob while alice has not returned"
     );
     assert!(matches!(
-        bob_rx.recv_timeout(Duration::from_millis(100)),
+        bob_started_rx.recv_timeout(Duration::from_millis(100)),
         Err(mpsc::RecvTimeoutError::Timeout)
     ));
     alice_socket.set_nonblocking(true).unwrap();
@@ -3382,12 +3401,9 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
         .expect("alice's attempt started")
         .unwrap_err();
     assert_eq!(error.to_string(), "login cancelled by its host");
-    let bob_permit = granted(
-        bob_rx
-            .recv_timeout(Duration::from_secs(60))
-            .expect("bob follows alice's actual return"),
-    );
-    bob_waiter.join().unwrap();
+    bob_started_rx
+        .recv_timeout(Duration::from_secs(60))
+        .expect("bob starts behind alice's actual return");
     let now = Instant::now();
     assert!(matches!(request_shared(&queue, 9, now), Permit::Wait(_)));
     assert_eq!(
@@ -3395,7 +3411,13 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
         Some(host::login_queue::AdmitBlocker::Handshake),
         "alice's late return does not free bob's slot"
     );
-    complete(bob_permit);
+    bob_release_tx.send(()).unwrap();
+    bob_done_rx
+        .recv_timeout(Duration::from_secs(60))
+        .expect("bob returns after release")
+        .expect("bob's attempt started")
+        .unwrap();
+    bob_waiter.join().unwrap();
 }
 
 /// The real worker and client against a server that accepts the login and
@@ -8235,6 +8257,7 @@ fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
         &world,
         false,
         false,
+        false,
         None,
         None,
         None,
@@ -8243,6 +8266,7 @@ fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
         super::script_channels::BrokerWorld::Unavailable,
         None,
         Some(&mut replies),
+        None,
     );
 
     assert_eq!(
@@ -11569,7 +11593,11 @@ export default class T extends LoopingBot {
         .unwrap()
         .lock()
         .unwrap()
-        .drain_interacts();
+        .drain_host_interacts()
+        .1
+        .into_iter()
+        .map(|queued| queued.req)
+        .collect::<Vec<_>>();
     let bytes = script::isolate_fb::encode_interact_batch(&reqs);
     let decoded = script::isolate_fb::decode_interact_batch(&bytes).expect("fb mouse batch");
     let old_down = decoded
@@ -21234,12 +21262,14 @@ fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
             &rig.world,
             false,
             false,
+            false,
             None,
             None,
             None,
             None,
             None,
             script_channels::BrokerWorld::Local,
+            None,
             None,
             None,
         );
@@ -21290,6 +21320,7 @@ struct ReconnectRig {
     /// The Play's BroadcastChannel broker and alice's slot handle on it.
     broker: script_channels::ChannelBroker,
     channels: script_channels::SlotChannels,
+    ready_session: std::cell::Cell<api::identity::SessionKey>,
 }
 
 type ArmedWalk = (
@@ -21315,6 +21346,11 @@ impl ReconnectRig {
         snap.rebuild(&client);
         let broker = script_channels::ChannelBroker::default();
         let channels = broker.slot("alice");
+        let ready_session = {
+            let slot = script_slot(&scripts, "alice").expect("bound Load slot");
+            let slot = slot.lock().unwrap();
+            api::identity::SessionKey::first(slot.slot_key_for_test().expect("slot key"))
+        };
         Self {
             scripts,
             cheats: Arc::new(Mutex::new(HashMap::new())),
@@ -21326,6 +21362,7 @@ impl ReconnectRig {
             here,
             broker,
             channels,
+            ready_session: std::cell::Cell::new(ready_session),
         }
     }
 
@@ -21353,6 +21390,31 @@ impl ReconnectRig {
     }
 
     fn frame_dirty(&mut self, tick: u64, tick_edge: bool, dirty: bool) {
+        self.observe_frame(tick, tick_edge, dirty, false, false);
+    }
+
+    /// One observed frame while the slot loop holds the frame: `hold` is the
+    /// whole-frame hold (`play_slots.rs`: scene not ready, welcome modal,
+    /// guardian or session boundary) and `guardian` is its guardian part.
+    fn held_frame(&mut self, tick: u64, hold: bool, guardian: bool) {
+        self.observe_frame(tick, false, false, hold, guardian);
+    }
+
+    fn observe_frame(
+        &mut self,
+        tick: u64,
+        tick_edge: bool,
+        dirty: bool,
+        hold: bool,
+        guardian: bool,
+    ) {
+        // The full Play loop aligns its seat with the F0 ready gate before
+        // dispatch. This rig drives script_observe directly, so provide that
+        // independent session key here rather than using the slot's work epoch.
+        self.slot()
+            .lock()
+            .unwrap()
+            .align_seat_session(Some(self.ready_session.get()));
         script_observe_cached_with_channels(
             &mut self.client,
             "alice",
@@ -21371,7 +21433,8 @@ impl ReconnectRig {
             &self.cheats,
             &self.navs,
             &self.world,
-            false,
+            hold,
+            guardian,
             false,
             None,
             None,
@@ -21379,6 +21442,7 @@ impl ReconnectRig {
             None,
             Some(&self.channels),
             script_channels::BrokerWorld::Local,
+            None,
             None,
             None,
         );
@@ -21456,6 +21520,10 @@ impl ReconnectRig {
     }
 
     fn boundary(&self, reconnect: bool) {
+        if reconnect {
+            self.ready_session
+                .set(self.ready_session.get().next().expect("relog session"));
+        }
         reset_slot_session_work(
             "alice",
             &self.scripts,
@@ -21515,18 +21583,18 @@ export default class T extends LoopingBot {{
 
 /// Pause with the rig's script walk armed, Resume, and the same walk goes
 /// out once more; nothing else is walked.
-fn pause_resume_resends(rig: &mut ReconnectRig) {
-    rig.frames(1);
+fn pause_resume_resends(rig: &mut ReconnectRig, first_tick: u64) {
+    rig.frames(first_tick);
     let walks = rig.walks();
     let armed = rig.armed();
     assert_eq!(walks.len(), 1, "one walk before the Pause: {walks:?}");
     rig.operator_pause();
     assert_eq!(rig.armed(), (0, None), "Pause ends the follow");
-    rig.frames(2);
+    rig.frames(first_tick + 1);
     assert_eq!(rig.walks(), walks, "paused: nothing goes out");
     rig.resume();
-    rig.frames(3);
-    rig.frames(4);
+    rig.frames(first_tick + 2);
+    rig.frames(first_tick + 3);
     assert_eq!(rig.armed(), armed, "Resume re-arms the same walk");
     assert_eq!(
         rig.walks(),
@@ -21538,7 +21606,7 @@ fn pause_resume_resends(rig: &mut ReconnectRig) {
 #[test]
 fn operator_pause_carries_the_script_walk_and_resume_sends_it_once() {
     let mut rig = ReconnectRig::new(40, 40);
-    pause_resume_resends(&mut rig);
+    pause_resume_resends(&mut rig, 1);
     rig.slot().lock().unwrap().stop();
 }
 
@@ -22063,7 +22131,7 @@ fn a_paused_bank_access_booth_walk_resumes() {
     rig.snap = GameSnapshot::new();
     rig.snap.rebuild(&rig.client);
     assert_eq!(rig.snap.bank_component_id(), -1, "the bank is closed");
-    pause_resume_resends(&mut rig);
+    pause_resume_resends(&mut rig, 1);
     assert_eq!(rig.walks()[0].0, 0, "an id-0 walk");
     rig.slot().lock().unwrap().stop();
 }
@@ -22095,7 +22163,10 @@ fn a_paused_hunt_walk_resumes() {
         open_world_at(2880, 9780, 64, 64),
         (2914, 9809, 0),
     );
-    pause_resume_resends(&mut rig);
+    // The typed Hunt root is admitted on the first tick. Its walk is emitted
+    // after the seat page reaches the isolate on the next tick.
+    rig.frames(1);
+    pause_resume_resends(&mut rig, 2);
     rig.slot().lock().unwrap().stop();
 }
 
@@ -22110,7 +22181,7 @@ fn a_paused_reach_walk_resumes() {
         open_world(64, 64),
         (3, 3, 0),
     );
-    pause_resume_resends(&mut rig);
+    pause_resume_resends(&mut rig, 1);
     rig.slot().lock().unwrap().stop();
 }
 
@@ -22229,26 +22300,173 @@ fn a_reconnect_re_arms_the_held_script_walk_on_the_relogged_session() {
     rig.slot().lock().unwrap().stop();
 }
 
-/// The script emits its walk and the connection drops before host-play
-/// drains it: the request never reached the old session, so the relogged
-/// session dispatches it, once, under its own request id.
+/// A stale queued walk cannot cross a kept reconnect. The original wait
+/// requests a new seat walk and settles after the host observes arrival.
 #[test]
-fn a_walk_emitted_just_before_the_drop_goes_out_after_the_relog() {
+fn an_undispatched_walk_before_drop_is_discarded_at_relog() {
     let mut rig = ReconnectRig::new(40, 40);
-    // The posting frame only: the tick queues the walk, nothing drains it.
     rig.frame(1, true);
     assert_eq!(rig.armed(), (0, None));
 
     rig.boundary(true);
-    rig.frames(2);
-    let (request_id, requested) = rig.armed();
-    assert_ne!(
-        request_id, 0,
-        "the undispatched walk goes out after the relog"
+    assert!(
+        rig.walks().is_empty(),
+        "the stale row never reaches the host"
     );
+    rig.frames(2);
+    rig.frames(3);
+    let (request_id, requested) = rig.armed();
+    assert_ne!(request_id, 0, "the wait re-arms through the new seat");
     assert_eq!(requested, walk_dest(40, 40));
-    assert_eq!(rig.walks(), vec![(request_id, 40, 40)], "exactly once");
+    assert_eq!(
+        rig.walks(),
+        vec![(request_id, 40, 40)],
+        "only the fresh walk reaches the host"
+    );
+    assert_eq!(
+        rig.slot().lock().unwrap().probe("__rs_ok").unwrap(),
+        serde_json::Value::Null
+    );
+    rig.here = (40, 40, 0);
+    rig.frames(4);
+    rig.frames(5);
+    assert_eq!(
+        rig.slot().lock().unwrap().probe("__rs_ok").unwrap(),
+        true,
+        "the same wait settles at its destination"
+    );
     rig.slot().lock().unwrap().stop();
+}
+
+/// A prior route generation can publish a terminal after a new route reused
+/// the same request id. Only a terminal from the current arm frees its slot.
+#[test]
+fn stale_route_generation_does_not_free_rearmed_walk_release() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    let (request_id, _) = rig.armed();
+    assert_ne!(request_id, 0);
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .seat_probe()
+            .unwrap()
+            .reserved_releases,
+        1
+    );
+    {
+        let mut navs = rig.navs.lock().unwrap();
+        let bot = navs.get_mut("alice").unwrap();
+        bot.walk_outcome_seq += 1;
+        bot.walk_outcome_request_id = request_id;
+        bot.walk_outcome_generation = bot.route_generation.wrapping_add(1);
+    }
+    rig.frame(2, false);
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .seat_probe()
+            .unwrap()
+            .reserved_releases,
+        1,
+        "the stale terminal cannot free the rearmed route's release"
+    );
+    {
+        let mut navs = rig.navs.lock().unwrap();
+        let bot = navs.get_mut("alice").unwrap();
+        bot.walk_outcome_seq += 1;
+        bot.walk_outcome_generation = bot.route_generation;
+    }
+    rig.frame(3, false);
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .seat_probe()
+            .unwrap()
+            .reserved_releases,
+        0,
+        "a terminal from the armed generation does free the release"
+    );
+    rig.slot().lock().unwrap().stop();
+}
+
+/// Round 9: only the random-event guardian holds the seat (`28-seat-sg.md`
+/// lines 64-65, `27-decision-r5.md` §6). A frame that the slot loop holds
+/// because the scene is not ready or the welcome modal is up is a held
+/// tick, not the guardian's `SessionHeld`, so the seat is not frozen.
+/// Synthetic sequence: the rig sets the frame hold directly.
+#[test]
+fn a_scene_load_hold_does_not_freeze_the_seat() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    rig.held_frame(2, true, false);
+    let held = rig.slot().lock().unwrap().seat_probe().unwrap().held;
+    rig.slot().lock().unwrap().stop();
+    assert!(!held, "a scene-load hold must not freeze the seat");
+}
+
+/// Round 9: the guardian hold still freezes the seat, and the freeze lifts
+/// with the hold. Synthetic sequence: the rig sets the frame hold directly.
+#[test]
+fn a_guardian_hold_still_freezes_the_seat() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    rig.held_frame(2, true, true);
+    let held = rig.slot().lock().unwrap().seat_probe().unwrap().held;
+    rig.frame(2, false);
+    let after = rig.slot().lock().unwrap().seat_probe().unwrap().held;
+    rig.slot().lock().unwrap().stop();
+    assert!(held, "the guardian hold freezes the seat");
+    assert!(!after, "the freeze lifts with the guardian hold");
+}
+
+/// Operator decision 2026-10-16 (round 9): an abort that a script sends in
+/// a scene-load or welcome-modal held tick is kept, and the first frame
+/// after the hold dispatches it. Gameplay from the same tick stays dropped.
+/// Synthetic sequence: the two rows enter the slot's interact queue
+/// directly, as the held tick's output.
+#[test]
+fn a_scene_load_hold_keeps_the_script_walk_abort_and_drops_its_gameplay() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    let (request_id, _) = rig.armed();
+    assert_ne!(request_id, 0, "the script walk is armed");
+    rig.slot().lock().unwrap().restore_interacts(vec![
+        script::shim::InteractReq::AbortWalk { request_id },
+        script::shim::InteractReq::Walk {
+            x: 50,
+            z: 50,
+            level: 0,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 777,
+            avoid: Vec::new(),
+            cross: Vec::new(),
+        },
+    ]);
+    rig.held_frame(2, true, false);
+    let during = rig.armed().0;
+    rig.held_frame(2, true, false);
+    let still = rig.armed().0;
+    rig.frame(2, false);
+    let after = rig.armed();
+    let walks = rig.walks();
+    rig.slot().lock().unwrap().stop();
+    assert_eq!(during, request_id, "the held frame dispatches nothing");
+    assert_eq!(still, request_id, "the abort waits for the scene");
+    assert_eq!(
+        after,
+        (0, None),
+        "the first frame after the hold dispatches the abort"
+    );
+    assert!(
+        walks.iter().all(|(id, _, _)| *id != 777),
+        "the held gameplay never reaches the host: {walks:?}"
+    );
 }
 
 /// Frozen relogs a running or paused script whatever the auto-login
@@ -28819,6 +29037,7 @@ mod host_batch_tests {
                 &self.navs,
                 &self.world,
                 hold,
+                hold,
                 false,
                 None,
                 None,
@@ -28826,6 +29045,7 @@ mod host_batch_tests {
                 None,
                 None,
                 super::super::script_channels::BrokerWorld::Unavailable,
+                None,
                 None,
                 None,
             )

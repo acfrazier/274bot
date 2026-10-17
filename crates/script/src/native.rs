@@ -21,9 +21,13 @@ mod actions;
 pub mod custody;
 pub mod divergence;
 pub mod request;
+pub mod seat;
 pub mod services;
 pub use request::NativeRequest;
-pub use services::{LocalStateCapability, ScriptServices, ServiceAuthority, ServiceError};
+pub use services::{
+    LocalStateCapability, PromptPoint, ScriptServices, SeatPromptPort, ServiceAuthority,
+    ServiceError,
+};
 pub mod death;
 pub(crate) mod ledger;
 mod owner;
@@ -391,11 +395,36 @@ pub struct NativeTick<'a> {
     /// the account's durable identity. `None` when the composition bound
     /// no state service to this slot.
     pub state: Option<&'a crate::local_state::SlotState>,
+    pub service_authority: Option<ServiceAuthority<'a>>,
+    /// Borrow of the owner's admitted seat, not a second request scheduler.
+    pub prompt_port: Option<&'a mut dyn SeatPromptPort>,
     #[cfg(feature = "load")]
     pub(crate) frame: HostFrame<'a>,
 }
 
-impl NativeTick<'_> {
+impl<'frame> NativeTick<'frame> {
+    /// Bind the actual native frame to the host's current execution fence,
+    /// session gate and optional T5.2 state capability. A standalone test
+    /// frame without the host authority cannot mint a service.
+    pub fn services<'service>(
+        &'service mut self,
+    ) -> Result<ScriptServices<'service, 'frame>, ServiceError>
+    where
+        'frame: 'service,
+    {
+        let authority = self
+            .service_authority
+            .ok_or(ServiceError::AuthorityUnavailable)?;
+        let state = self
+            .state
+            .map(|state| LocalStateCapability::new(state.port(), state.account(), state.scope()));
+        match self.prompt_port.as_deref_mut() {
+            Some(port) => ScriptServices::new(authority, self.actions, &mut self.cx, state)?
+                .with_prompt_port(port),
+            None => ScriptServices::new(authority, self.actions, &mut self.cx, state),
+        }
+    }
+
     /// The operator's loadout rows this tick may plan with: the bound
     /// service's current lease, or explicitly absent rows when no service
     /// is bound. `NotReady` while the domain is cold: the card retries on

@@ -1411,6 +1411,7 @@ fn spawn_slot_thread(
                         let mut session_epoch = 0u64;
                         let mut welcome = login_readiness::LoginReadiness::default();
                         let mut debug_replies = super::debug_replies::DebugReplies::default();
+                        let seat_arm = arm.as_ref();
                         // This frame's random status is published before
                         // observe; its hold freezes script tick and nav follow.
                         move |c, _ignored, run_sends, status: &RandomStatus, run_policy| {
@@ -1771,6 +1772,7 @@ fn spawn_slot_thread(
                                 &slot_navs,
                                 &slot_world,
                                 hold,
+                                guardian_hold,
                                 status.ours,
                                 slot_canlight.as_deref(),
                                 Some(slot_input.as_ref()),
@@ -1780,6 +1782,7 @@ fn spawn_slot_thread(
                                 broker_world,
                                 Some(&mut *run_policy),
                                 Some(&mut debug_replies),
+                                Some(seat_arm),
                                 )
                             };
                             let crate::script_runtime::ScriptObservation {

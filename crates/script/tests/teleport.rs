@@ -366,7 +366,7 @@ export default class T extends LoopingBot {
         serde_json::Value::Null,
         "Guardian hold must freeze the parked teleport wait"
     );
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     snap.hold = false;
     snap.tick = 6;
     snap.here = Some(TileInput {

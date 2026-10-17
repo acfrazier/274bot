@@ -1475,14 +1475,27 @@ mod tests {
         let port = size_of::<SlotHintPort>();
         let slot_hint = size_of::<SlotHint>();
         let slot = size_of::<SlotBankMemory>();
+        let path = size_of::<PathBuf>();
+        let pending = size_of::<Mutex<Vec<Pending>>>();
         println!(
             "per-bot bank memory: BankMemory={memory}B RwLock<BankMemory>={cell}B \
-             SlotHintPort={port}B SlotHint={slot_hint}B SlotBankMemory={slot}B; \
+             SlotHintPort={port}B SlotHint={slot_hint}B SlotBankMemory={slot}B \
+             (PathBuf={path}B pending={pending}B); \
              rows heap = 8B x bank_size once loaded; local-state writer is shared by service"
         );
         assert!(memory <= 96, "BankMemory is {memory} bytes");
+        // SlotBankMemory is one shared header (the Arc) plus the slot's
+        // single reserved table (its hint). A Windows PathBuf is a
+        // `Wtf8Buf`: its byte `Vec` plus an `is_known_utf8` flag, which
+        // padding makes 8 bytes wider than the Unix `Vec<u8>`. So the cap
+        // prices that platform word in: 152 + 8 header on Unix, 160 + 8
+        // header on Windows. Growth beyond either fails here.
+        #[cfg(windows)]
+        const SLOT_CAP: usize = 168;
+        #[cfg(not(windows))]
+        const SLOT_CAP: usize = 160;
         assert!(
-            slot <= 160,
+            slot <= SLOT_CAP,
             "SlotBankMemory is {slot} bytes with its service identity"
         );
     }

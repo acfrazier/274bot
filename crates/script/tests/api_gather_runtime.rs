@@ -593,7 +593,7 @@ fn synchronous_refusals_stop_idempotence_settings_limit_and_control_forgery() {
 fn explicit_reset_aborts_waiter_and_drop_allows_a_fresh_session() {
     let iso = isolate();
     let (first_token, _) = begin_and_take_run(&iso, "reset", &serde_json::json!({}));
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     let empty = clear_page();
     tick(&iso, 2, Some(&empty), None);
     assert_eq!(
@@ -621,7 +621,7 @@ fn explicit_reset_aborts_waiter_and_drop_allows_a_fresh_session() {
 fn reconnect_discards_queued_start_then_reemits_once_and_preserves_waiter() {
     let iso = isolate();
     begin(&iso, "queued", &serde_json::json!({}));
-    iso.reconnect_session_work();
+    iso.reconnect_session_work(None);
     assert!(
         iso.drain_interacts().is_empty(),
         "the unforwarded old-epoch start is discarded at reconnect"
@@ -646,7 +646,7 @@ fn reconnect_reemits_same_unacknowledged_token_after_a_dropped_delivery() {
     let (token, original_settings) = begin_and_take_run(&iso, "lost_start", &serde_json::json!({}));
     // The test deliberately drops the delivered batch instead of admitting
     // it to a host seat. The row remains pending at the isolate.
-    iso.reconnect_session_work();
+    iso.reconnect_session_work(None);
     assert!(
         iso.drain_interacts().is_empty(),
         "no pre-reemit stale row remains"
@@ -679,7 +679,7 @@ fn reconnect_carries_lost_stop_without_restarting_an_acknowledged_session() {
         serde_json::json!({"ok": true, "value": null})
     );
     // Leave the first Stop in the isolate queue so reconnect must lose it.
-    iso.reconnect_session_work();
+    iso.reconnect_session_work(None);
     assert!(
         iso.drain_interacts().is_empty(),
         "old queued Stop is discarded"
@@ -716,7 +716,7 @@ fn lost_start_and_stop_in_one_epoch_reemit_in_start_then_stop_order() {
         iso.probe("__api.gather.stop()").unwrap(),
         serde_json::json!({"ok": true, "value": null})
     );
-    iso.reconnect_session_work();
+    iso.reconnect_session_work(None);
     assert!(
         iso.drain_interacts().is_empty(),
         "both old-epoch rows were lost"
@@ -750,7 +750,7 @@ fn lost_start_and_stop_in_one_epoch_reemit_in_start_then_stop_order() {
 fn terminal_in_reconnect_keyframe_settles_before_any_start_or_stop_carry() {
     let iso = isolate();
     let (token, _) = begin_and_take_run(&iso, "terminal_keyframe", &serde_json::json!({}));
-    iso.reconnect_session_work();
+    iso.reconnect_session_work(None);
     assert!(iso.drain_interacts().is_empty());
 
     let empty = clear_page();

@@ -782,10 +782,22 @@ mod tests {
         let original = serde_json::to_vec_pretty(&legacy).unwrap();
         std::fs::write(&path, &original).unwrap();
 
-        let original_permissions = std::fs::metadata(&bot_dir).unwrap().permissions();
+        // The migration write must fail. A read-only directory refuses the
+        // temporary and backup files on Unix, but Windows still allows
+        // writes there, so each platform denies a different path: Unix the
+        // directory, Windows the replacement of a read-only servers.json
+        // itself (the temporary and backup files still succeed, then the
+        // publish fails and its backup cleanup removes the marker again).
+        #[cfg(unix)]
+        let guarded = &bot_dir;
+        #[cfg(windows)]
+        let guarded = &path;
+        #[cfg(not(any(unix, windows)))]
+        let guarded = &bot_dir;
+        let original_permissions = std::fs::metadata(guarded).unwrap().permissions();
         let mut read_only_permissions = original_permissions.clone();
         read_only_permissions.set_readonly(true);
-        std::fs::set_permissions(&bot_dir, read_only_permissions).unwrap();
+        std::fs::set_permissions(guarded, read_only_permissions).unwrap();
 
         let mut warnings = Vec::new();
         let loaded = Servers::load_with_before_publish_and_warning(
@@ -794,7 +806,7 @@ mod tests {
             |warning| warnings.push(warning),
         )
         .unwrap();
-        std::fs::set_permissions(&bot_dir, original_permissions).unwrap();
+        std::fs::set_permissions(guarded, original_permissions).unwrap();
 
         assert_eq!(loaded, legacy);
         assert_eq!(std::fs::read(&path).unwrap(), original);
@@ -843,9 +855,16 @@ mod tests {
     fn failed_atomic_publish_removes_temporary_file() {
         let root = TempRoot::new();
         let path = root.0.join("servers.json");
+        // Build the temporary file while the target is a regular file:
+        // copying a directory's permissions onto a file is rejected on
+        // Windows (Win32 error 87), before the publish is even attempted.
+        std::fs::write(&path, b"original").unwrap();
+        let temporary_file = create_temporary_server_file(&path, b"replacement").unwrap();
+        // No platform renames a file over a directory, so the publish
+        // still fails everywhere and must clean up after itself.
+        std::fs::remove_file(&path).unwrap();
         std::fs::create_dir(&path).unwrap();
 
-        let temporary_file = create_temporary_server_file(&path, b"replacement").unwrap();
         assert!(temporary_file.publish(&path).is_err());
         let remaining = std::fs::read_dir(&root.0)
             .unwrap()

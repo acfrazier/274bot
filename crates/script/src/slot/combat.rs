@@ -115,7 +115,11 @@ fn prepare_combat(
 }
 
 impl SlotScript {
-    pub(super) fn start_api_combat(&mut self, token: u64, request: &Arc<CombatSessionRequest>) {
+    pub(in crate::slot) fn start_api_combat(
+        &mut self,
+        token: u64,
+        request: &Arc<CombatSessionRequest>,
+    ) {
         if !self.load_active() {
             return;
         }
@@ -158,16 +162,16 @@ impl SlotScript {
         let run = RunKey {
             slot: self.incarnation,
             run: generation,
-            session: self.work_epoch,
+            session: self
+                .seat
+                .as_ref()
+                .map_or(self.work_epoch, |seat| seat.run().session),
         };
         let cell = SettleCell::default();
         let prepared = prepare_combat(run, Arc::clone(&selected), Arc::clone(request), &cell);
         match prepared {
             Ok(job) => {
                 self.control_generation = generation;
-                seat.dropped_rows = 0;
-                seat.reported_drops = 0;
-                seat.dropped_owner = None;
                 seat.combat_page = Some(Arc::new(CombatPage {
                     token,
                     phase: GatherPhase::Preparing,
@@ -296,7 +300,7 @@ impl SlotScript {
             };
             match job.join() {
                 Ok(mut run) => {
-                    run.rekey_session(self.work_epoch);
+                    run.rekey_session(self.api_session_epoch());
                     seat.combat_page = Some(running_page(token, None));
                     seat.combat = CombatSeat::Running {
                         token,
@@ -327,13 +331,28 @@ impl SlotScript {
                 .get_or_insert_with(|| Arc::new(Mutex::new(RetainedMemory::default())))
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            run.tick(
+            let (result, interacts) = run.tick(
                 ctx,
                 &mut retained,
                 &mut self.native_runtime,
                 None,
                 self.local_state.as_deref(),
-            )
+                crate::slot::compiled::SeatTickPorts {
+                    authority: None,
+                    prompt: self
+                        .seat
+                        .as_mut()
+                        .map(|seat| seat.as_mut() as &mut dyn crate::native::SeatPromptPort),
+                },
+            );
+            #[cfg(feature = "load")]
+            {
+                ctx.compiled.interacts = interacts;
+            }
+            #[cfg(not(feature = "load"))]
+            let _ = interacts;
+            run.finish_tick();
+            result
         };
         let changed = match seat
             .combat_page

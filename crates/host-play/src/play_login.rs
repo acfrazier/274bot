@@ -681,6 +681,11 @@ impl SlotArm {
         self.lifecycle.lock().session.current()
     }
 
+    /// Borrow the actual session gate while its owner lock remains held.
+    pub(super) fn session_gate(&self) -> parking_lot::MappedMutexGuard<'_, SessionGate> {
+        parking_lot::MutexGuard::map(self.lifecycle.lock(), |lifecycle| &mut lifecycle.session)
+    }
+
     /// The most recently published event, including a newer session's exit.
     /// Consumers requiring ordered boundaries and overflow accounting use
     /// `take_lifecycle_event`.
@@ -751,6 +756,17 @@ impl SlotArm {
             }
         }
         ready && lifecycle.session.ready().is_some()
+    }
+
+    /// Why the current session is held, for the live seat cells.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn session_hold_reasons(&self) -> Vec<HoldReason> {
+        let lifecycle = self.lifecycle.lock();
+        HoldReason::ALL
+            .into_iter()
+            .filter(|why| lifecycle.session.held_by(*why))
+            .collect()
     }
 
     #[cfg(any(test, feature = "test-support"))]

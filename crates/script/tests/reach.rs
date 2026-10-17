@@ -605,7 +605,7 @@ fn hold_and_reset_do_not_emit_another_talk() {
     assert_eq!(iso.probe("__ok").unwrap(), "retry");
     assert!(iso.drain_interacts().is_empty());
 
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     snap.tick = 5;
     post(&iso, &snap);
     tick(&iso, 5);

@@ -100,8 +100,8 @@ export const Execution = {
     noteProgress() {
         const h = globalThis.__rs2b0t_host;
         if (!h) return;
-        h.interact = h.interact || [];
-        h.interact.push({ op: 'note-progress' });
+        const interact = h.interact ?? (h.interact = []);
+        interact.push({ op: 'note-progress' });
     },
 };
 

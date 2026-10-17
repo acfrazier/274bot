@@ -770,12 +770,15 @@ fn route_args_invalid(req: &InteractReq) -> bool {
 /// Drop JS-forged `inspect-ack` and unauthorized `inspect-route` before the
 /// isolate encodes the host FlatBuffer. Snapshot-only `request_id` 0 is
 /// forwarded after the same argument checks; invented tokens never leave.
-pub(crate) fn filter_public_inspect_wire(reqs: &mut Vec<InteractReq>) {
+pub(crate) fn filter_public_inspect_wire<T>(
+    reqs: &mut Vec<T>,
+    request: impl for<'a> Fn(&'a T) -> &'a InteractReq,
+) {
     SLOT.with(|slot| {
         let mut slot = slot.borrow_mut();
-        reqs.retain(|req| match req {
+        reqs.retain(|row| match request(row) {
             InteractReq::InspectAck { .. } => false,
-            InteractReq::InspectRoute { .. } => slot.authorize_route(req),
+            req @ InteractReq::InspectRoute { .. } => slot.authorize_route(req),
             _ => true,
         });
     });
@@ -1374,7 +1377,7 @@ mod tests {
                 generation: 1,
             },
         ];
-        filter_public_inspect_wire(&mut reqs);
+        filter_public_inspect_wire(&mut reqs, |row| row);
         assert!(reqs.is_empty(), "invented token and JS ACK never leave");
         assert!(settled(99));
         assert_eq!(value(99)["reason"], "stale");
@@ -1392,10 +1395,10 @@ mod tests {
         .as_u64()
         .unwrap();
         let mut first = vec![route(token, (1, 2, 0), (3, 4, 0))];
-        filter_public_inspect_wire(&mut first);
+        filter_public_inspect_wire(&mut first, |row| row);
         assert_eq!(first.len(), 1);
         let mut dup = vec![route(token, (1, 2, 0), (3, 4, 0))];
-        filter_public_inspect_wire(&mut dup);
+        filter_public_inspect_wire(&mut dup, |row| row);
         assert!(dup.is_empty(), "duplicate must not consume a second job");
         on_reset();
         let token = dispatch(&json!({
@@ -1408,7 +1411,7 @@ mod tests {
         .as_u64()
         .unwrap();
         let mut mismatch = vec![route(token, (1, 2, 0), (3, 4, 0))];
-        filter_public_inspect_wire(&mut mismatch);
+        filter_public_inspect_wire(&mut mismatch, |row| row);
         assert!(mismatch.is_empty());
         assert!(settled(token));
         assert_eq!(value(token)["reason"], "invalid-args");
@@ -1418,7 +1421,7 @@ mod tests {
     fn snapshot_only_zero_is_forwarded_without_waiter() {
         on_reset();
         let mut reqs = vec![route(0, (1, 2, 0), (3, 4, 0))];
-        filter_public_inspect_wire(&mut reqs);
+        filter_public_inspect_wire(&mut reqs, |row| row);
         assert_eq!(reqs.len(), 1);
         assert!(!settled(0));
         let mut bad = vec![InteractReq::InspectRoute {
@@ -1435,7 +1438,7 @@ mod tests {
             cross: Vec::new(),
             request_id: 0,
         }];
-        filter_public_inspect_wire(&mut bad);
+        filter_public_inspect_wire(&mut bad, |row| row);
         assert_eq!(bad.len(), 1, "id0 invalid-args still reaches host publish");
     }
 
@@ -1487,7 +1490,7 @@ mod tests {
         assert!(settled(token));
         assert_eq!(value(token)["reason"], "stale");
         let mut reqs = vec![route(token, (0, 0, 0), (1, 1, 0))];
-        filter_public_inspect_wire(&mut reqs);
+        filter_public_inspect_wire(&mut reqs, |row| row);
         assert!(reqs.is_empty(), "already-stale begin must not authorize");
     }
 }

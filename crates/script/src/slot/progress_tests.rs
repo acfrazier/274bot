@@ -1,7 +1,10 @@
 use super::*;
 use crate::ctx::test_support::NullDriver;
+use crate::isolate_fb::{DecodedSeatBatch, SeatInteractDecoded, SeatStartArgs, SeatStartInput};
+use crate::native::request::NativeKind;
 use crate::native::{HostEffect, InteractionReceipt};
 use crate::shim::InteractReq;
+use api::identity::RequestId;
 use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, FactKey, Truth};
 use api::snapshot::{GameSnapshot, QuestStatusView};
@@ -46,6 +49,7 @@ fn snapshot(colour: i32) -> GameSnapshot {
     );
     snapshot
 }
+
 fn drive(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64, hold: bool) {
     slot.tick_api(&mut ScriptCtx {
         driver: &mut NullDriver::default(),
@@ -62,6 +66,24 @@ fn drive(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64, hold: bool) 
         },
     });
 }
+
+fn drive_host(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64, hold: bool) {
+    slot.on_game_tick(&mut ScriptCtx {
+        driver: &mut NullDriver::default(),
+        tick,
+        here: None,
+        walk: None,
+        walk_with: None,
+        inv: None,
+        snapshot: Some(snapshot),
+        obj_names: None,
+        compiled: crate::CompiledTick {
+            hold,
+            ..Default::default()
+        },
+    });
+}
+
 fn read(slot: &mut SlotScript, token: u64, quest: &str) {
     slot.consume_api_control(&InteractReq::ProgressRead {
         request_id: token,
@@ -147,20 +169,20 @@ fn show_journal(snapshot: &mut GameSnapshot, body: &str) {
     );
 }
 fn finish_journal(slot: &mut SlotScript, snapshot: &mut GameSnapshot, body: &str) {
-    drive(slot, snapshot, 2, false);
+    drive_host(slot, snapshot, 2, false);
     assert!(matches!(
         ack(slot, 2),
         HostEffect::Interaction(InteractReq::IfButton { component_id: 42 })
     ));
     show_journal(snapshot, body);
-    drive(slot, snapshot, 3, false);
-    drive(slot, snapshot, 4, false);
+    drive_host(slot, snapshot, 3, false);
+    drive_host(slot, snapshot, 4, false);
     assert!(matches!(
         ack(slot, 4),
         HostEffect::Interaction(InteractReq::CloseModal)
     ));
     snapshot.seed_main_modal(-1, vec![]);
-    drive(slot, snapshot, 5, false);
+    drive_host(slot, snapshot, 5, false);
     assert!(!slot.has_native_actions());
     assert!(!slot.api_owns_foreground());
     assert!(slot
@@ -237,7 +259,7 @@ fn journal_rule_reads_one_click_closes_and_resolves_stage_and_count() {
     let mut slot = load();
     let mut snapshot = snapshot(0xf8f800);
     journal_fixture(&mut slot, 3);
-    drive(&mut slot, &snapshot, 1, false);
+    drive_host(&mut slot, &snapshot, 1, false);
     finish_journal(&mut slot, &mut snapshot, "Bring eggs: 12 eggs");
     let Some(ProgressPage::Done { row, .. }) = &slot.api.as_ref().unwrap().progress_page else {
         panic!("missing done");
@@ -255,7 +277,7 @@ fn journal_no_match_is_unknown_not_colour_fallback() {
     let mut slot = load();
     let mut snapshot = snapshot(0xf8f800);
     journal_fixture(&mut slot, 4);
-    drive(&mut slot, &snapshot, 1, false);
+    drive_host(&mut slot, &snapshot, 1, false);
     finish_journal(&mut slot, &mut snapshot, "unrecognised branch");
     let Some(ProgressPage::Done { row, .. }) = &slot.api.as_ref().unwrap().progress_page else {
         panic!("missing done");
@@ -272,15 +294,15 @@ fn adopted_journal_closes_without_another_button() {
     let mut snapshot = snapshot(0xf8f800);
     show_journal(&mut snapshot, "Bring eggs: 7 eggs");
     journal_fixture(&mut slot, 5);
-    drive(&mut slot, &snapshot, 1, false);
+    drive_host(&mut slot, &snapshot, 1, false);
     // The adopted page is captured and closed on the same tick (TICK-FIX #6).
-    drive(&mut slot, &snapshot, 2, false);
+    drive_host(&mut slot, &snapshot, 2, false);
     assert!(matches!(
         ack(&mut slot, 2),
         HostEffect::Interaction(InteractReq::CloseModal)
     ));
     snapshot.seed_main_modal(-1, vec![]);
-    drive(&mut slot, &snapshot, 3, false);
+    drive_host(&mut slot, &snapshot, 3, false);
     let Some(ProgressPage::Done { row, .. }) = &slot.api.as_ref().unwrap().progress_page else {
         panic!("missing adopted result");
     };
@@ -320,20 +342,54 @@ fn gather_preparing_and_running_both_refuse_progress() {
 #[test]
 fn reading_progress_refuses_gather_and_drops_only_game_rows() {
     let mut slot = load();
-    journal_fixture(&mut slot, 9);
-    slot.restore_interacts(vec![
-        InteractReq::GatherRun {
-            request_id: 10,
-            settings: Arc::default(),
+    let run = slot.seat.as_ref().expect("armed gameplay seat").run();
+    let interact = |request| SeatInteractDecoded {
+        lineage: None,
+        mirror_owner: None,
+        request,
+    };
+    slot.consume_seat_batch(
+        DecodedSeatBatch {
+            consumed_terminal_seq: 0,
+            starts: vec![SeatStartInput {
+                id: RequestId::isolate(9).unwrap(),
+                parent: None,
+                run: run.run,
+                session: run.session,
+                kind: NativeKind::QuestProgress,
+                args: SeatStartArgs::QuestProgress("cook".into()),
+            }],
+            decisions: Vec::new(),
+            cancels: Vec::new(),
+            mirror_revokes: Vec::new(),
+            reqs: vec![
+                interact(InteractReq::Held {
+                    name: "Logs".into(),
+                    action: "Drop".into(),
+                    slot: None,
+                    target_item_id: None,
+                }),
+                interact(InteractReq::SetCameraYaw { yaw: 777 }),
+            ],
         },
-        InteractReq::Held {
-            name: "Logs".into(),
-            action: "Drop".into(),
-            slot: None,
-            target_item_id: None,
-        },
-        InteractReq::SetCameraYaw { yaw: 777 },
-    ]);
+        0,
+        &[],
+    );
+    assert_eq!(
+        slot.seat.as_ref().unwrap().session(),
+        Some(RequestId::isolate(9).unwrap())
+    );
+    assert!(matches!(
+        &slot.api.as_ref().unwrap().progress_page,
+        Some(ProgressPage::Reading { token: 9 })
+    ));
+    slot.consume_api_control(&InteractReq::GatherRun {
+        request_id: 10,
+        settings: Arc::default(),
+    });
+    assert!(
+        matches!(&slot.api.as_ref().unwrap().terminal, Some(GatherEnd::Refused { token: 10, reason }) if reason.as_ref() == "busy")
+    );
     let (_, rows, owned) = slot.drain_host_interacts();
     assert!(owned);
     assert_eq!(
@@ -342,9 +398,7 @@ fn reading_progress_refuses_gather_and_drops_only_game_rows() {
             .collect::<Vec<_>>(),
         vec![InteractReq::SetCameraYaw { yaw: 777 }]
     );
-    assert!(
-        matches!(&slot.api.as_ref().unwrap().terminal, Some(GatherEnd::Refused { token: 10, reason }) if reason.as_ref() == "busy")
-    );
+    assert_eq!(slot.seat.as_ref().unwrap().dropped(), 1);
     slot.stop();
 }
 #[test]
@@ -373,7 +427,7 @@ fn supersede_open_journal_refuses_second_closes_first_and_third_resolves() {
     let mut slot = load();
     let mut snapshot = snapshot(0xf8f800);
     journal_fixture(&mut slot, 15);
-    drive(&mut slot, &snapshot, 1, false);
+    drive_host(&mut slot, &snapshot, 1, false);
     read(&mut slot, 16, "cook");
     assert!(
         matches!(&slot.api.as_ref().unwrap().progress_page, Some(ProgressPage::Refused { token: 16, reason }) if reason.as_ref() == "busy")
@@ -503,18 +557,18 @@ fn reconnect_open_read_is_stale_and_explicit_reset_clears_pages_authority() {
     let mut slot = load();
     let snapshot = snapshot(0xf8f800);
     journal_fixture(&mut slot, 20);
-    drive(&mut slot, &snapshot, 1, false);
-    drive(&mut slot, &snapshot, 2, false);
+    drive_host(&mut slot, &snapshot, 1, false);
+    drive_host(&mut slot, &snapshot, 2, false);
     let authority = slot.take_native_action().unwrap().authority();
     assert!(slot.reconnect_session_work());
     assert!(!authority.live());
     slot.on_is_up(true);
-    drive(&mut slot, &snapshot, 3, false);
+    drive_host(&mut slot, &snapshot, 3, false);
     assert!(
         matches!(&slot.api.as_ref().unwrap().progress_page, Some(ProgressPage::Refused { token: 20, reason }) if reason.as_ref() == "stale")
     );
     journal_fixture(&mut slot, 21);
-    drive(&mut slot, &snapshot, 4, false);
+    drive_host(&mut slot, &snapshot, 4, false);
     slot.reset_session_work();
     assert!(!slot.api_owns_foreground());
     assert!(slot.api.as_ref().unwrap().progress_page.is_none());
@@ -548,7 +602,7 @@ fn progress_flag_count_is_bounded_to_nine_digits_by_shared_resolver() {
     let mut slot = load();
     let mut snapshot = snapshot(0xf8f800);
     journal_fixture(&mut slot, 23);
-    drive(&mut slot, &snapshot, 1, false);
+    drive_host(&mut slot, &snapshot, 1, false);
     finish_journal(&mut slot, &mut snapshot, "Bring eggs: 999999999 eggs");
     let Some(ProgressPage::Done { row, .. }) = &slot.api.as_ref().unwrap().progress_page else {
         panic!("missing done");
@@ -557,7 +611,7 @@ fn progress_flag_count_is_bounded_to_nine_digits_by_shared_resolver() {
     assert!(i32::try_from(row.flags[0].count.unwrap()).is_ok());
     snapshot = self::snapshot(0xf8f800);
     journal_fixture(&mut slot, 24);
-    drive(&mut slot, &snapshot, 1, false);
+    drive_host(&mut slot, &snapshot, 1, false);
     finish_journal(&mut slot, &mut snapshot, "Bring eggs: 1000000000 eggs");
     let Some(ProgressPage::Done { row, .. }) = &slot.api.as_ref().unwrap().progress_page else {
         panic!("missing done");

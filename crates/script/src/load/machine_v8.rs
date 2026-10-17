@@ -58,7 +58,12 @@ pub(super) fn settle_waits(
     claimed: &dyn Fn() -> bool,
 ) -> Result<(), rustyscript::Error> {
     if machine::any_settled() && !claimed() {
-        runtime.call_function_immediate::<()>(None, "__rs2b0t_settle_machines", json_args!())?;
+        super::lineage_v8::call_function_immediate::<()>(
+            runtime,
+            None,
+            "__rs2b0t_settle_machines",
+            json_args!(),
+        )?;
     }
     Ok(())
 }
@@ -68,6 +73,16 @@ fn start_callback<'s>(
     args: v8::FunctionCallbackArguments<'s>,
     rv: v8::ReturnValue,
 ) {
+    super::lineage_v8::assert_guarded(scope);
+    let parent = match super::lineage_v8::resolve_lineage(scope) {
+        super::lineage_v8::Lineage::Root => None,
+        super::lineage_v8::Lineage::Token(handle) => Some(handle),
+        super::lineage_v8::Lineage::Foreign => {
+            let reason = callback_v8::string(scope, "lineage carrier is not installed");
+            let envelope = envelope(scope, "refused", "reason", reason);
+            return callback_v8::finish(scope, rv, envelope);
+        }
+    };
     let family = args.get(0).to_rust_string_lossy(scope);
     let hooks = match hold_hooks(scope, &family, args.get(2)) {
         Ok(hooks) => hooks,
@@ -75,7 +90,7 @@ fn start_callback<'s>(
     };
     let at = js_queue_len(scope);
     let started = match serde_v8::from_v8::<Value>(scope, args.get(1)) {
-        Ok(value) => machine::start(&family, value, hooks, at),
+        Ok(value) => machine::start_with_parent(&family, value, hooks, at, parent),
         Err(e) => Started::Refused(format!("{family} arguments: {e}")),
     };
     if let Started::Running(handle) = &started {
@@ -121,6 +136,7 @@ fn take_callback<'s>(
     args: v8::FunctionCallbackArguments<'s>,
     rv: v8::ReturnValue,
 ) {
+    super::lineage_v8::assert_guarded(scope);
     let handle = args.get(0).number_value(scope).unwrap_or(0.0) as machine::Handle;
     if let Take::Settled(outcome) = machine::take(handle) {
         let envelope = outcome_envelope(scope, outcome);
@@ -137,6 +153,10 @@ fn outcome_envelope<'s>(
             let value = serde_v8::to_v8(scope, &value)
                 .map_err(|e| callback_v8::type_error(scope, &format!("machine value: {e}")))?;
             envelope(scope, "done", "value", value)
+        }
+        Outcome::Refused(reason) => {
+            let reason = callback_v8::string(scope, &reason);
+            envelope(scope, "refused", "reason", reason)
         }
         Outcome::Failed(thrown) => {
             let error = match thrown.value() {
@@ -184,9 +204,21 @@ fn js_queue_len(scope: &mut v8::HandleScope) -> usize {
     let Some(interact_key) = v8::String::new(scope, "interact") else {
         return 0;
     };
-    host.get(scope, interact_key.into())
-        .and_then(|rows| v8::Local::<v8::Array>::try_from(rows).ok())
-        .map_or(0, |rows| rows.length() as usize)
+    let Some(rows) = host
+        .get(scope, interact_key.into())
+        .and_then(|rows| v8::Local::<v8::Object>::try_from(rows).ok())
+    else {
+        return 0;
+    };
+    let Some(length_key) = v8::String::new(scope, "length") else {
+        return 0;
+    };
+    // The guarded append-only queue is a Proxy, not a V8 Array handle.
+    rows.get(scope, length_key.into())
+        .filter(|length| length.is_number())
+        .and_then(|length| length.number_value(scope))
+        .filter(|length| (0.0..=u32::MAX as f64).contains(length) && length.fract() == 0.0)
+        .map_or(0, |length| length as usize)
 }
 
 /// Drive a just-started row from the start callback's own scope.
@@ -199,10 +231,20 @@ impl machine::Js for ScopeJs<'_, '_> {
         js_queue_len(self.scope)
     }
 
-    fn call(&mut self, hook: Option<&HeldCallback>, args: &[Value]) -> Called {
+    fn call(&mut self, _hook: Option<&HeldCallback>, _args: &[Value]) -> Called {
+        // V8 machine calls must carry their owning row.
+        Called::Terminated
+    }
+
+    fn call_for(
+        &mut self,
+        handle: machine::Handle,
+        hook: Option<&HeldCallback>,
+        args: &[Value],
+    ) -> Called {
         // Nested in the caller's JS: draining the isolate queue here would
         // run unrelated microtasks before the caller continues (M-187).
-        call_hook(self.scope, hook, args, false)
+        call_hook(self.scope, handle, hook, args, false)
     }
 
     fn poll(&mut self, pending: &Pending) -> Option<Reply> {
@@ -229,10 +271,20 @@ impl machine::Js for RuntimeJs<'_> {
         js_queue_len(&mut scope)
     }
 
-    fn call(&mut self, hook: Option<&HeldCallback>, args: &[Value]) -> Called {
+    fn call(&mut self, _hook: Option<&HeldCallback>, _args: &[Value]) -> Called {
+        // V8 machine calls must carry their owning row.
+        Called::Terminated
+    }
+
+    fn call_for(
+        &mut self,
+        handle: machine::Handle,
+        hook: Option<&HeldCallback>,
+        args: &[Value],
+    ) -> Called {
         let called = {
             let scope = &mut self.runtime.deno_runtime().handle_scope();
-            call_hook(scope, hook, args, true)
+            call_hook(scope, handle, hook, args, true)
         };
         // `drive` found the pass unhalted just before this call. A
         // terminate armed since then hit this call's own JS: its
@@ -256,6 +308,7 @@ impl machine::Js for RuntimeJs<'_> {
 
 fn call_hook(
     scope: &mut v8::HandleScope,
+    handle: machine::Handle,
     hook: Option<&HeldCallback>,
     args: &[Value],
     drain_microtasks: bool,
@@ -263,6 +316,21 @@ fn call_hook(
     let Some(hook) = hook else {
         return Called::Settled(Reply::Threw(Thrown::new("undeclared machine callback")));
     };
+    match super::lineage_v8::enter_hook(scope, handle, |scope| {
+        call_hook_inner(scope, hook, args, drain_microtasks)
+    }) {
+        Ok(called) => called,
+        Err(Throw::Value(exception)) => Called::Settled(Reply::Threw(thrown(scope, exception))),
+        Err(Throw::Terminated) => Called::Terminated,
+    }
+}
+
+fn call_hook_inner(
+    scope: &mut v8::HandleScope,
+    hook: &HeldCallback,
+    args: &[Value],
+    drain_microtasks: bool,
+) -> Called {
     let callback = hook.open(scope);
     let mut argv = Vec::with_capacity(args.len());
     for arg in args {
