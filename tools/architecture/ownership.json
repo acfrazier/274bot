@@ -1119,6 +1119,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/src/script_bank_harness.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/src/script_bank_tests.rs",
       "owner": "T1"
     },
@@ -1224,6 +1228,10 @@
     },
     {
       "path": "crates/host-play/tests/bank_choice_live.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/bank_pick_work_live.rs",
       "owner": "T1"
     },
     {

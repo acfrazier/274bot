@@ -4,7 +4,15 @@ use super::*;
 #[path = "script_bank.rs"]
 mod bank;
 use bank::dispatch_observed_bank_op;
+#[cfg(all(target_os = "linux", feature = "test-support"))]
+pub use bank::harness::measures_captured_native_bank_pick_cpu;
 pub(crate) use bank::open_bank_at_here;
+#[cfg(any(test, all(feature = "live-harness", feature = "test-support")))]
+pub(crate) use bank::BankPickWorkObservation;
+#[cfg(test)]
+pub(super) fn poll_bank_pick_for_test(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
+    bank::poll_bank_pick(navs, name, Instant::now());
+}
 #[path = "script_nav.rs"]
 mod script_nav;
 #[cfg(test)]
@@ -38,10 +46,12 @@ pub(super) use script_snapshot::{slot_arrival_reach, with_script_snapshot_input_
 #[path = "script_interact.rs"]
 mod script_interact;
 pub(super) use script_interact::{
-    dispatch_native_bank_deposit, dispatch_script_interact_cached, BankDepositDispatch,
+    dispatch_native_bank_deposit, dispatch_script_interact_cached_scoped, BankDepositDispatch,
 };
 #[cfg(test)]
-pub(super) use script_interact::{dispatch_script_interact, validated_duel_accept};
+pub(super) use script_interact::{
+    dispatch_script_interact, dispatch_script_interact_cached, validated_duel_accept,
+};
 #[path = "script_paint.rs"]
 mod script_paint;
 pub(super) use script_paint::{

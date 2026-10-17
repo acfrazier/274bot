@@ -492,7 +492,7 @@ pub(crate) fn refuse(
         radius,
         teleports,
     );
-    bot.route = None;
+    bot.clear_route();
     bot.bank_fetch = None;
     bot.traveller.clear();
     bot.risk_refusal = Some(Box::new((request_id, refusal)));

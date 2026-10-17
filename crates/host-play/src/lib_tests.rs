@@ -24672,14 +24672,12 @@ fn nav_rig_with(world: Option<Arc<NavWorld>>) -> NavRig {
     }
 }
 
-/// The armed route's dest, `None` when the uid has no route. The pump
-/// and the walk-refusal gate read the same field.
+/// The armed route's destination, regardless of its backing representation.
 fn queued(navs: &Arc<Mutex<HashMap<String, NavBot>>>) -> Option<WorldTile> {
     navs.lock()
         .unwrap()
         .get("alice")
-        .and_then(|b| b.route.as_ref())
-        .map(|r| r.dest)
+        .and_then(NavBot::route_destination)
 }
 
 /// A connected, ingame, scene-ready client on build base (0,0): world
@@ -24842,7 +24840,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
     );
     let out_before = c.out.pos;
     assert!(
-        dispatch_script_interact_cached(
+        dispatch_script_interact_cached_scoped(
             &mut c,
             &snap,
             None,
@@ -24852,6 +24850,9 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
             Some(WorldState::empty()),
             None,
             "test",
+            Some(api::identity::Scope::Slot(
+                api::identity::SlotKey::from_incarnation(1).unwrap(),
+            )),
             requests,
             None,
             None,
@@ -24862,20 +24863,13 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
         c.out.pos, out_before,
         "raw bank selection itself must not write a movement packet",
     );
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while navs
-        .lock()
-        .unwrap()
-        .get("test")
-        .and_then(|bot| bot.route.as_ref())
-        .is_none()
-    {
-        assert!(
-            Instant::now() < deadline,
-            "bank worker did not publish the selected stand route",
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    assert!(
+        wait_settled(|| {
+            super::script_runtime::poll_bank_pick_for_test(&navs, "test");
+            navs.lock().unwrap()["test"].has_route()
+        }),
+        "bank owner must publish the selected stand route after polling",
+    );
 
     let flood = api::query::SceneQuery::new(snap.scene(), Some(start)).flood_reach();
     let reach = Arc::new(api::query::pack_reach_query(snap.scene(), flood.as_ref()));
@@ -24915,7 +24909,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
         || Arc::clone(&reach),
     );
     assert!(
-        navs.lock().unwrap()["test"].route.is_none(),
+        !navs.lock().unwrap()["test"].has_route(),
         "arrival on the resolved stand must settle the host route",
     );
 
@@ -28208,7 +28202,14 @@ fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
         false,
         false,
     );
-    thread::sleep(Duration::from_millis(20));
+    assert!(
+        wait_settled(|| {
+            let all = navs.lock().unwrap();
+            let bot = &all["alice"];
+            bot.route_worker.is_none() && bot.pending_route.is_none()
+        }),
+        "the unreachable worker must settle before the next fixed walk",
+    );
     assert_eq!(queued(&navs), None, "NoPath never arms a route");
 
     // A reachable request arms asynchronously on the worker.

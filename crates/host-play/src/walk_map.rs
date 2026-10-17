@@ -20,7 +20,9 @@ pub use catalogue::{
     SourceStatus, BANK_API_NOTE,
 };
 pub use observations::{observed_services, ObservedService, MAX_OBSERVED_SERVICES};
-pub use routes::{select_route_source, RouteProjection, RouteSource, RouteStamp};
+pub use routes::{
+    select_route_source, RouteProjection, RouteProjectionPath, RouteSource, RouteStamp,
+};
 
 /// Debug Teleport is admitted only for a Local launch profile on loopback.
 /// Panel enablement and [`crate::Play::map_teleport`] both call this.

@@ -598,8 +598,11 @@ mod bank_core_live;
 mod bank_fetch_closed_live;
 #[cfg(test)]
 mod bank_memory_live;
-#[cfg(test)]
-mod bank_npc_live;
+#[cfg(any(test, all(feature = "live-harness", feature = "test-support")))]
+pub mod bank_npc_live;
+
+#[cfg(all(target_os = "linux", feature = "test-support"))]
+pub use script_runtime::measures_captured_native_bank_pick_cpu;
 #[cfg(test)]
 mod gather_bait_live;
 #[cfg(test)]

@@ -4,8 +4,10 @@ use std::thread;
 use std::time::Instant;
 
 use api::bank_memory::Origin;
+use api::identity::WorkIdentity;
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, SnapshotView, WorldTile};
+use api::work::InputRevision;
 use nav::arrival::ArrivalKind;
 use nav::bank_fetch::{plan_bank_fetch, planning_rows, BankFetchError, BankRows};
 use nav::router::{
@@ -21,6 +23,7 @@ use super::{
     debug_enabled, fetch_stand, fetch_tile, fetchable_facts, route_inspect, route_or_bank_fetch,
     PendingBankFetch, RouteOutcome, StandFetch,
 };
+use crate::walk_plan::RoutePath;
 #[derive(Default)]
 pub(crate) struct RouteCompletion {
     #[cfg(test)]
@@ -148,6 +151,8 @@ pub(crate) struct NavBot {
     pub(crate) requested_exclusions: Option<Arc<ScriptRouteExclusions>>,
     pub(crate) traveller: Traveller,
     pub(crate) route: Option<Arc<Route>>,
+    pub(crate) compact_route: Option<RoutePath>,
+    pub(crate) route_result_custody: Option<Arc<dyn std::any::Any + Send + Sync>>,
     /// The walk request id `publish_route` installed `route` for. A retarget
     /// moves `walk_request_id` / `requested_route` to the new walk while the
     /// old route is still followed; only a route end whose owner is the
@@ -1095,14 +1100,14 @@ impl ScriptWalkArm {
             None => bot.note_failure(bot.route_generation, request_id, to, radius, key.2),
         };
         if bot.bank_fetch.is_some()
-            || (!retarget && (bot.route.is_some() || bot.route_worker.is_some()))
+            || (!retarget && (bot.has_route() || bot.route_worker.is_some()))
         {
             log_walk_arm(&self.name, || {
                 format!(
                     "queue_route refused-in-flight dest={to:?} r={radius} request_id={request_id} \
                      bank_fetch={} retarget={retarget} route={} worker={}",
                     bot.bank_fetch.is_some(),
-                    bot.route.is_some(),
+                    bot.has_route(),
                     bot.route_worker.is_some()
                 )
             });
@@ -1114,7 +1119,7 @@ impl ScriptWalkArm {
             && bot.route_loc_id == loc_id
             && bot.route_arrival == arrival
             && bot.route_compat_tile_intent == compat_tile_intent
-            && (bot.route_worker.is_some() || bot.route.is_some() || bot.pending_route.is_some())
+            && (bot.route_worker.is_some() || bot.has_route() || bot.pending_route.is_some())
         {
             // Same-id retransmission and legacy request_id 0 keep the
             // in-flight find. A later distinct nonzero wait is refused
@@ -1408,6 +1413,9 @@ impl ScriptWalkArm {
             match bot.admission.as_deref_mut() {
                 Some(pending) => *pending = admission,
                 None => bot.admission = Some(Box::new(admission)),
+            }
+            if bot.bank_pick.walking(bot.route_generation) {
+                bot.bank_pick.reset_for_route_replacement();
             }
             bot.route_generation = admission.generation;
             bot.manual_walk_cancelled_detail = false;
@@ -2460,6 +2468,91 @@ impl ScriptRouteRequest {
     }
 }
 impl NavBot {
+    pub(crate) fn has_route(&self) -> bool {
+        self.route.is_some() || self.compact_route.is_some()
+    }
+
+    pub(crate) fn route_destination(&self) -> Option<WorldTile> {
+        self.compact_route
+            .as_ref()
+            .map(RoutePath::destination)
+            .or_else(|| self.route.as_ref().map(|route| route.dest))
+    }
+
+    pub(crate) fn route_path_for_follow(&self) -> Option<RoutePath> {
+        self.compact_route.clone().or_else(|| {
+            self.route
+                .as_ref()
+                .map(|route| RoutePath::legacy(Arc::clone(route)))
+        })
+    }
+
+    pub(crate) fn install_route_path(&mut self, route: RoutePath) {
+        match route {
+            RoutePath::Legacy(route) => {
+                self.route = Some(route);
+                self.compact_route = None;
+            }
+            compact @ RoutePath::Compact { .. } => {
+                self.route = None;
+                self.compact_route = Some(compact);
+            }
+        }
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The owner checks the route identity and transfers its existing custody without copying."
+    )]
+    pub(crate) fn publish_compact_route(
+        &mut self,
+        generation: u64,
+        request_id: u64,
+        identity: WorkIdentity,
+        revision: InputRevision,
+        allow_teleports: bool,
+        route: RoutePath,
+        pending: Option<PendingBankFetch>,
+        custody: Arc<dyn std::any::Any + Send + Sync>,
+        quest_evidence: Option<nav::quest_gates::QuestEvidence>,
+    ) -> bool {
+        let Some(plan) = route.plan() else {
+            return false;
+        };
+        if self.route_generation != generation
+            || self.walk_request_id != request_id
+            || plan.identity() != identity
+            || plan.revision() != revision
+        {
+            return false;
+        }
+        self.traveller.clear();
+        self.install_route_path(route);
+        self.route_result_custody = Some(custody);
+        self.map_route_generation = crate::walk_map::next_map_route_generation();
+        self.route_request_id = request_id;
+        self.bank_fetch = pending;
+        self.allow_teleports = allow_teleports;
+        self.route_quest_evidence = quest_evidence;
+        true
+    }
+
+    pub(crate) fn route_projection(&self) -> Option<crate::walk_map::RouteProjectionPath<'_>> {
+        self.compact_route
+            .as_ref()
+            .map(RoutePath::projection)
+            .or_else(|| {
+                self.route
+                    .as_deref()
+                    .map(crate::walk_map::RouteProjectionPath::Legacy)
+            })
+    }
+
+    pub(crate) fn clear_route(&mut self) {
+        self.route = None;
+        self.compact_route = None;
+    }
+
     fn bump_walk_outcome_seq(&mut self) {
         self.manual_walk_cancelled_detail = false;
         self.walk_outcome_seq = self.walk_outcome_seq.wrapping_add(1);
@@ -2470,7 +2563,7 @@ impl NavBot {
 
     pub(crate) fn ordinary_movement_owned(&self, tick: u16) -> bool {
         self.native_walk.as_ref().is_some_and(|owner| owner.live())
-            || self.route.is_some()
+            || self.has_route()
             || self.bank_fetch.is_some()
             || self.slot_escape().is_some()
             || self
@@ -2854,7 +2947,7 @@ impl NavBot {
 
     /// Whether a script walk is armed, in flight or following.
     pub(crate) fn script_walk_armed(&self) -> bool {
-        self.route.is_some()
+        self.has_route()
             || self.bank_fetch.is_some()
             || self.route_worker.is_some()
             || self.pending_route.is_some()
@@ -2948,7 +3041,7 @@ impl NavBot {
             }
         };
         self.traveller.clear();
-        self.route = Some(Arc::clone(&route));
+        self.install_route_path(RoutePath::legacy(Arc::clone(&route)));
         self.map_route_generation = crate::walk_map::next_map_route_generation();
         self.route_request_id = request_id;
         self.bank_fetch = pending;
@@ -3055,7 +3148,7 @@ pub(crate) fn hold_script_nav(
         let route_generation = nav.route_generation;
         // A duel's screens belong to the dropped connection.
         nav.duel_offer_partner = None;
-        let armed = nav.route.is_some()
+        let armed = nav.has_route()
             || nav.route_worker.is_some()
             || nav.pending_route.is_some()
             || nav.bank_fetch.is_some();
@@ -3140,7 +3233,7 @@ fn end_route_follow(nav: &mut NavBot) {
     nav.pending_assess = None;
     nav.requested_route = None;
     nav.traveller.clear();
-    nav.route = None;
+    nav.clear_route();
     nav.bank_fetch = None;
     nav.walk_request_id = 0;
     nav.route_quest_evidence = None;
