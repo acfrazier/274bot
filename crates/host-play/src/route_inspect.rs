@@ -684,10 +684,6 @@ struct InspectBankAccess {
     cursor: BankFetchCursor,
 }
 
-#[expect(
-    clippy::large_enum_variant,
-    reason = "The job charges inline bank-cursor custody instead of allocating at each search transition."
-)]
 enum InspectSearchPurpose {
     Strict,
     Missing,
