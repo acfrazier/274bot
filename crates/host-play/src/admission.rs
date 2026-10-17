@@ -311,6 +311,36 @@ pub fn capture(
 }
 
 pub fn assess(route: &Route, world: &NavWorld, admission: &Admission) -> Arc<RouteAssessment> {
+    let Ok(route) = producer::route_view(world, route) else {
+        return unknown_assessment(
+            UnknownWhy::NavIdentity,
+            "Route assessment unknown: navigation lease identity unavailable",
+            admission,
+        );
+    };
+    assess_view(route, world, admission)
+}
+
+pub(crate) fn assess_route_path(
+    route: &RoutePath,
+    world: &NavWorld,
+    admission: &Admission,
+) -> Arc<RouteAssessment> {
+    let Some(route) = route_path_view(route, world) else {
+        return unknown_assessment(
+            UnknownWhy::NavIdentity,
+            "Route assessment unknown: navigation lease identity unavailable",
+            admission,
+        );
+    };
+    assess_view(route, world, admission)
+}
+
+fn assess_view(
+    route: nav::contract::RouteView<'_>,
+    world: &NavWorld,
+    admission: &Admission,
+) -> Arc<RouteAssessment> {
     let Some(tables) = tables(world) else {
         return unknown_assessment(
             UnknownWhy::MissingFacts,
@@ -318,8 +348,7 @@ pub fn assess(route: &Route, world: &NavWorld, admission: &Admission) -> Arc<Rou
             admission,
         );
     };
-    let (Ok(route), Ok(zones), Ok(wilderness)) = (
-        producer::route_view(world, route),
+    let (Ok(Some(zones)), Ok(wilderness)) = (
         producer::zones_view(world),
         producer::wilderness_view(world),
     ) else {
@@ -332,7 +361,7 @@ pub fn assess(route: &Route, world: &NavWorld, admission: &Admission) -> Arc<Rou
     risk::assess(
         route,
         &Estimate {
-            zones,
+            zones: Some(zones),
             wilderness,
             risks: &tables.risks,
             combat: &tables.combat,
@@ -345,6 +374,18 @@ pub fn assess(route: &Route, world: &NavWorld, admission: &Admission) -> Arc<Rou
 
 pub fn permits(
     route: &Route,
+    world: &NavWorld,
+    admission: &Admission,
+    assessment: &RouteAssessment,
+) -> bool {
+    let Ok(route) = producer::route_view(world, route) else {
+        return false;
+    };
+    permits_view(route, world, admission, assessment)
+}
+
+fn permits_view(
+    route: nav::contract::RouteView<'_>,
     world: &NavWorld,
     admission: &Admission,
     assessment: &RouteAssessment,
@@ -365,10 +406,9 @@ pub fn permits(
     if assessment.plan.crossings.is_empty() {
         return true;
     }
-    let (Ok(Some(zones)), Some(tables), Ok(route), Ok(wilderness)) = (
+    let (Ok(Some(zones)), Some(tables), Ok(wilderness)) = (
         producer::zones_view(world),
         tables(world),
-        producer::route_view(world, route),
         producer::wilderness_view(world),
     ) else {
         return false;
@@ -385,6 +425,25 @@ pub fn permits(
         risk::Grants::request(named, wilderness),
     )
     .unwrap_or(false)
+}
+
+fn route_path_view<'a>(
+    route: &'a RoutePath,
+    world: &'a NavWorld,
+) -> Option<nav::contract::RouteView<'a>> {
+    match route {
+        RoutePath::Legacy(route) => producer::route_view(world, route).ok(),
+        RoutePath::Compact { .. } => route.view(),
+    }
+}
+fn retained_bot_route_view<'a>(
+    legacy: Option<&'a Route>,
+    compact: Option<&'a RoutePath>,
+    world: &'a NavWorld,
+) -> Option<nav::contract::RouteView<'a>> {
+    compact
+        .and_then(RoutePath::view)
+        .or_else(|| legacy.and_then(|route| producer::route_view(world, route).ok()))
 }
 
 /// Assess one borrowed compact route without synchronously initializing risk tables.
@@ -538,18 +597,23 @@ pub(crate) fn publish(
     map_members: bool,
     slot: Option<&str>,
 ) {
-    if bot.compact_route.is_some() || !std::mem::take(&mut bot.admission_pending) {
+    if !std::mem::take(&mut bot.admission_pending) {
         return;
     }
-    let (Some(route), Some(mut admission), Some(assessment)) = (
-        bot.route.as_deref(),
-        bot.admission.as_deref().copied(),
-        bot.assessment.as_ref(),
-    ) else {
+    let (Some(mut admission), Some(assessment)) =
+        (bot.admission.as_deref().copied(), bot.assessment.as_ref())
+    else {
+        return;
+    };
+    let Some(route) =
+        retained_bot_route_view(bot.route.as_deref(), bot.compact_route.as_ref(), world)
+    else {
         return;
     };
     if let Some(escape) = bot.slot_escape() {
-        let destination = bot.requested_route.map_or(route.dest, |request| request.0);
+        let destination = bot
+            .requested_route
+            .map_or(route.destination(), |request| request.0);
         refuse(bot, world, destination, WalkRefusal::EscapeInProgress);
         if let Some(end) = bot.native_end_risk.as_deref_mut() {
             end.escape = Some(escape);
@@ -565,18 +629,20 @@ pub(crate) fn publish(
     if !fresh(assessment, input) {
         admission.input = input;
         *bot.admission.as_deref_mut().expect("pending admission") = admission;
-        bot.assessment = Some(assess(route, world, &admission));
+        bot.assessment = Some(assess_view(route, world, &admission));
     }
     let assessment = bot
         .assessment
         .as_ref()
         .expect("publication retains assessment");
     log(slot, assessment, admission.compat_v1);
-    if permits(route, world, &admission, assessment) {
+    let destination = bot
+        .requested_route
+        .map_or(route.destination(), |request| request.0);
+    if permits_view(route, world, &admission, assessment) {
         return;
     }
     let refusal = verdict_refusal(assessment.verdict);
-    let destination = bot.requested_route.map_or(route.dest, |request| request.0);
     refuse(bot, world, destination, refusal);
 }
 

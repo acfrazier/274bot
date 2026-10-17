@@ -3713,7 +3713,7 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
 }
 
 #[test]
-#[ignore = "requires WORLD_NAV_PACK pointing to the real 289 nav pack"]
+#[ignore = "NAV-GOAL-RESERVATION: full-pack radii >=17 exceed the reservation; requires WORLD_NAV_PACK"]
 fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal() {
     use crate::ScriptRouteRequest;
     use nav::arrival::ArrivalKind;
@@ -3732,7 +3732,7 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
     };
     assert!(!world.collision.standable(centre));
     assert!(world.collision.standable(shore));
-    let mut request = ScriptRouteRequest {
+    let request = |arrival| ScriptRouteRequest {
         admission: crate::admission::Admission {
             enforce: true,
             ..crate::admission::Admission::manual(
@@ -3744,12 +3744,12 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
         },
         generation: 1,
         request_id: 1,
-        world,
+        world: Arc::clone(&world),
         from: shore,
         to: centre,
         radius: 40,
         loc_id: None,
-        arrival: ArrivalKind::Area,
+        arrival,
         opts: FindOptions::default(),
         state: None,
         bank_origin: api::bank_memory::Origin::Unknown,
@@ -3759,14 +3759,13 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
         compat_tile_intent: false,
         completion: Default::default(),
     };
-    let (area, _) = request.calculate();
+    let (area, _) = request(ArrivalKind::Area).drive_route_job_for_test();
     let RouteOutcome::Routed(route) = area else {
         panic!("Area arrival must accept the real standable Catherby shoreline");
     };
     assert_eq!(route.dest, shore);
-    assert!(request.world.collision.standable(route.dest));
-    request.arrival = ArrivalKind::Reach;
-    let (reach, _) = request.calculate();
+    assert!(world.collision.standable(route.dest));
+    let (reach, _) = request(ArrivalKind::Reach).drive_route_job_for_test();
     assert!(matches!(reach, RouteOutcome::NoPath));
 }
 
