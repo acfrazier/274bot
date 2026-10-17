@@ -12,21 +12,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
-- Each admitted route inspection now runs strict routing, bank-fetch planning,
-  post-bank routing and danger-zone diagnosis on its own short-lived thread.
-  Its whole-job charge remains capped at 192 MiB, without a process-wide
-  navigation byte cap. It preserves existing transport names and actions in
-  each reported hop. Bank planning and post-fetch state growth use the loaded
-  graph's effective fetchable-item limit. Full missing-item diagnosis and its search budget are
-  unchanged.
-  Single-target zone refusals keep the selected relaxed route's witness.
-  Search checkpoints cover bounded expansions and queue operations, not each
-  neighbor or heap comparison. Variable-length chains still check live time
-  and cancellation.
-- Full job admission or result storage delays publication instead of refusing a
-  valid inspection. Reset cancels only the accepted job and prevents stale
-  output. Replay retains two terminals and one held terminal until
-  acknowledgement or eviction.
 - Script operations now share a bounded request seat across native cards and
   JavaScript. A second top-level Gatherer, combat, quest progress or Hunt
   Session reports **busy** while one Session is live. Capability roots started
@@ -135,20 +120,23 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Navigation
 
-- Each admitted route plan now runs on its own short-lived thread. Its
-  whole-job charge remains capped at 192 MiB, without a process-wide navigation
-  byte cap. A request waits when job admission is full. Replacing or stopping a
-  walk cancels its old plan, so a late result cannot replace the new walk.
-  Refused routes cannot remain marked as waiting for admission.
-  Search checkpoints cover bounded expansions and queue operations, not each
-  neighbor or heap comparison. Variable-length chains still check live time
-  and cancellation.
-- Route plans keep compact references to transport facts instead of copying
-  those facts for every hop.
-  Bank-fetch plans account for carried and worn requirements without reducing
-  the route-search budget.
-- Single-tile walks and radius walks keep their existing zone-refusal rules,
-  even when a radius search has only one candidate.
+- Route planning now runs independently for each request, with a 192 MiB
+  memory limit for each search. A request waits when search capacity is full.
+  Replacing or stopping a walk cancels its old search, so a late result
+  cannot replace the new walk. Refused routes no longer appear to wait for
+  search capacity.
+  Searches still check cancellation and time limits throughout their work.
+- Routes share transport details instead of copying them for every hop.
+  Plans that fetch banked supplies account for carried and worn requirements
+  without reducing the route-search budget.
+- Single-tile walks and radius walks keep their existing danger-zone refusal
+  rules, even when a radius search has only one candidate.
+- Route inspection now runs independently, including banked supply planning
+  and danger-zone explanations. Each inspection keeps its 192 MiB memory limit.
+  Reported transport names and actions remain unchanged.
+  Busy search capacity or result storage delays a valid inspection instead
+  of refusing it. Reset cancels the current inspection and prevents stale
+  output. Recent results remain available until acknowledged or replaced.
 
 ### Random-event guardian
 
@@ -279,23 +267,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Panel
 
-- Each admitted map bake now runs on its own short-lived thread under the
-  shared admission ledger. Existing map caches rebuild once because the native
-  bake policies changed.
-  Progress advances through both catalogue preparation and terrain baking.
-- Map catalogue preparation no longer locks the output cache during input-only
-  work.
-- Map caches with too many files now recover through bounded pruning and
-  rebuilding.
-- Resuming an interrupted map bake checks saved batches and all later tiles.
-  It regenerates damaged files before publishing terrain.
-- A fresh map manager now checks existing terrain before it asks to bake.
-- Dropping a map manager releases its unconsumed terminal work reservation.
-- Cache pruning skips terrain held by a live admitted owner and removes
-  unleased entries in least-recently-used order.
-
-- Request-thread map bakes continue during a background-worker outage.
-  Packaging waits for a bake to stop before it removes scratch files.
+- Map baking now runs independently of other background work. Existing map
+  caches rebuild once for the updated map preparation.
+  Progress shows both catalogue preparation and terrain baking.
+  Map baking continues if another background worker stops responding.
+- Map preparation no longer locks its output cache while it only reads inputs.
+  Oversized caches recover by removing unused files and rebuilding.
+  An interrupted bake checks saved batches and later tiles, then replaces
+  damaged files before it publishes terrain.
+  Opening the map checks existing terrain before starting another bake.
+- Closing a map releases any unused work reservation.
+  Cache cleanup preserves terrain still in use and removes the least recently
+  used entries first. Release packaging waits for a bake to stop before it
+  removes temporary files.
 - WalkTo terrain tiles decode on a background worker using shared bounded work, rather
   than a separate map-decoding thread.
 - Panning the WalkTo map no longer redraws squares that you just scrolled past.
@@ -344,70 +328,67 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   the next world and kept the first world's game server.
 ### Fixed during development
 
+#### Navigation
+
 - Bots that need banked route supplies now choose an access tile they can reach.
   An unreachable access at the nearest bank no longer prevents the bank trip.
   If no access is reachable, danger-zone refusals keep their explanation.
-  Route inspection checks each access before it applies banked supplies.
-  It releases the missing-item diagnosis before it searches bank access routes.
-- Compact script routes remain visible in the panel game view. After a bank
-  session, the final route is checked against the updated inventory and gear.
-  Routes waiting for work capacity retry only when capacity changes.
-  Completed route searches submit their next stage in the same slot frame.
-  Legacy and compact routes share the same path and transport paint rules.
-  The panel releases the script route lock before scene paint and camera updates.
+  Route inspection checks each bank access before planning with banked supplies.
+- Script routes remain visible in the panel game view. After a bank session,
+  the final route is checked against the updated inventory and gear.
+  Searches waiting for capacity resume when capacity becomes available.
+  Multi-stage routes continue without an extra frame between search stages.
+  Routes keep the same map paths and transport labels.
+  Route overlays no longer block navigation updates while the panel draws the game view.
+- Valid native walks and route assessments no longer fail before their searches
+  start. Concurrent requests no longer cause false search-start failures.
+- Short route searches use memory only for the parts of the search they visit.
+  Their maximum search allowance remains unchanged.
+- Walking to an area or to within reach of a tile with a radius of 17 tiles or
+  more no longer fails before the route search starts. Such walks are planned
+  again within the same memory limit as other routes.
+- Route searches avoid duplicate clock and cancellation checks without changing
+  cancellation or time limits.
+- Large route searches no longer slow sharply as their stored search history grows.
+  Their existing search budget and route order stay unchanged.
+- Radius walks keep the requested center as their first goal when it is valid.
+  Missing-supply checks retain space for the route's transports, not the full
+  search budget, so later planning stages do not refuse short routes.
+- A card's first walk now starts correctly. Bank-planned walks keep the selected
+  approach tile and can equip a carried item without requiring a bank visit.
+
+#### Maps
+
+- Map baking saves progress in batches of 64 tiles. Cancelling or finishing a
+  bake saves the remaining tiles. Terrain and catalogue saves avoid duplicate
+  disk flushes without reducing recovery guarantees.
+- Checking for missing terrain no longer creates cache files.
+  Catalogue preparation avoids empty progress files and redundant disk flushes.
+- A completed catalogue saves its final manifest without first rewriting a
+  progress file. Cancelled and incomplete work still save their progress.
+- Catalogue preparation groups small operations but still checks cancellation
+  and time limits before each placement.
+  It avoids a second world scan when all candidates fit its memory limit.
+  Larger inputs keep the second scan.
+
+#### Startup and saved state
 
 - The first launch's game cache download no longer switches off background
   work on slower connections, and "Preparing cache snapshot" now shows how
   far the download has got.
-
-- Native walks and route assessments no longer refuse valid requests because
-  their run context is missing. Concurrent submissions also avoid spurious
-  worker-admission failures.
-- Short route searches no longer allocate the full node-budget table.
-  Cooperative routes reserve the same maximum storage, but initialize only
-  the pages that the search uses. Small first-goal diagnostics also retain
-  demand-driven proof storage.
-- Walking to an area or to within reach of a tile with a radius of 17 tiles or
-  more no longer fails before the route search starts. Such walks are planned
-  again within the same memory limit as other routes.
-- Cooperative route searches now check each work boundary once instead of
-  repeating the same clock and cancellation check between work units.
-- Bank-pick live and CPU qualification can run in a separate integration
-  target with the product allocator, without the lib-test allocation counter.
-- The local Cook bank-choice check starts at the ingredient stage and waits
-  for its after-bank evidence before judging a failed lifecycle. A permitted
-  danger-zone refusal after bank arrival no longer races its CPU capture.
 - One slow disk write no longer leaves script cards, the script catalogue or
   profiles stopped until 274bot restarts.
-- Large route searches no longer slow sharply as their predecessor store fills.
-  Their existing search budget and route order stay unchanged.
-- Radius walks keep the requested center as their first goal when it is valid.
-  Missing-supply diagnostics retain space for the traversed transport edges,
-  not the full search budget, so later planning stages do not refuse short routes.
-- The first compiled walk now carries its slot's work scope when it creates
-  the navigation state. Bank-planned walks keep the selected stand destination
-  and can wear a carried item without requiring a bank visit.
-- Terrain checkpoints synchronize each changed directory and each new parent
-  once per 64-tile batch, after tile data and before the checkpoint write.
-  Cancellation and completion flush the remaining batch. New terrain roots and
-  catalogue payloads share their checkpoint's parent sync without a second flush.
-- Probing for missing terrain no longer creates image-cache directories or
-  lock files. Catalogue preparation avoids an empty checkpoint and redundant
-  directory syncs without changing payload durability.
-- Catalogue completion writes its durable manifest without first rewriting a
-  checkpoint that it immediately supersedes. Cancellation and incomplete work
-  still flush their checkpoints.
-- Catalogue preparation groups cheap placement operations into bounded work
-  units. It still checks cancellation and the deadline before each operation.
-- Catalogue preparation avoids a second world scan when its tree and quest
-  candidates fit bounded, charged storage. Larger inputs keep the second scan.
 - Windows now recovers damaged panel preferences and repairs duplicate loadout
   names after preserving the original file in a flushed copy.
-- Windows now promptly cancels blocked login transport I/O when a login attempt
-  ends.
 - A loadout list that did not load can no longer save. Add, rename, remove
   and Save in the panel and the TUI refuse and show why the list did not
   load. The saved loadouts stay as they were.
+
+#### Login
+
+- Windows now promptly cancels blocked login transport I/O when a login attempt
+  ends.
+
 ### Release engineering
 
 - The architecture check refuses candidate Cargo configuration files without
