@@ -191,6 +191,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - The first launch downloads the game cache faster. It keeps ten requests
   to the update server in flight for the whole download, and it reads each
   answer as soon as it arrives.
+- If 274bot cannot look up the name of the update server, the first
+  launch's game cache download now stops at once with a connection error,
+  and 274bot tries the next world if there is one. Before, the download
+  waited until it timed out.
 
 ### Fixed during development
 

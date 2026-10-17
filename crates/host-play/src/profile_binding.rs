@@ -1009,7 +1009,8 @@ enum TemplateStage {
     Start,
     Fill {
         supplied: Option<CacheManifest>,
-        fill: client::unpack::RuntimeCacheFill,
+        /// Boxed: the fill is far larger than the other stages.
+        fill: Box<client::unpack::RuntimeCacheFill>,
     },
     Bind {
         supplied: Option<CacheManifest>,
@@ -1051,8 +1052,9 @@ impl TemplatePreparation {
                     0,
                     1,
                 ));
-                let fill =
-                    client::unpack::RuntimeCacheFill::begin(&self.selected.runtime_cache_request());
+                let fill = Box::new(client::unpack::RuntimeCacheFill::begin(
+                    &self.selected.runtime_cache_request(),
+                ));
                 self.stage = TemplateStage::Fill { supplied, fill };
                 waiting
             }
