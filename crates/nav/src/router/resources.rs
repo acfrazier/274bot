@@ -152,7 +152,12 @@ impl PackedSearchSlotExt for PackedSearchSlot {
     }
 
     fn set_open(&mut self, position: usize) {
-        self.4 = write_u24((PACKED_OPEN << PACKED_STATUS_SHIFT) | u32::try_from(position).unwrap());
+        self.4 = write_u24(
+            (PACKED_OPEN << PACKED_STATUS_SHIFT)
+                | u32::try_from(position).expect(
+                    "table capacity is at most PACKED_ID_MASK, so a heap position fits in 22 bits",
+                ),
+        );
     }
 
     fn set_settled(&mut self, parent: u32) {
@@ -908,7 +913,6 @@ impl Budget for Unmetered {
     fn allowed(&self, state: &WorldState, edge: &TransportEdge, relax: Relax) -> bool {
         edge_allowed(state, edge, relax)
     }
-    #[allow(clippy::unused_async)]
     async fn cross(
         &mut self,
         key: WorldTile,
