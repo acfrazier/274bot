@@ -6119,6 +6119,10 @@
       "owner": "T1"
     },
     {
+      "path": "vendor/fr-client-rust/crates/client/tests/cold_fill_resolver.rs",
+      "owner": "T1"
+    },
+    {
       "path": "vendor/fr-client-rust/crates/client/tests/cold_fill_steps.rs",
       "owner": "T1"
     },
