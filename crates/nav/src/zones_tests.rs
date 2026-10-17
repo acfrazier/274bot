@@ -120,6 +120,34 @@ fn blocking_detail_item_length_matches_formatter_without_allocating() {
 }
 
 #[test]
+fn blocked_detail_writer_matches_legacy_format_with_cached_bound() {
+    let table = table();
+    let keys = [table.key(0), table.key(1), table.key(2)];
+    let expected = format!(
+        "blocked by danger zones: {}",
+        keys.iter()
+            .map(|&key| format!("{} [{}]", table.label(key), table.name(key)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let bound = table.blocking_detail_bytes_bound();
+    assert_eq!(bound, expected.len());
+    let mut actual = String::with_capacity(bound);
+    table.write_blocking_detail_prefix(&mut actual).unwrap();
+    for (index, key) in keys.into_iter().enumerate() {
+        if index != 0 {
+            actual.push_str(", ");
+        }
+        table.write_blocking_detail_item(key, &mut actual).unwrap();
+    }
+    assert_eq!(actual, expected);
+    for key in keys {
+        let item = format!("{} [{}]", table.label(key), table.name(key));
+        assert_eq!(table.blocking_detail_item_bytes(key), item.len());
+    }
+}
+
+#[test]
 fn level_rules_and_always_zones_share_the_expected_activation_predicate() {
     let table = table();
     let wilderness = WildernessRules::default();
