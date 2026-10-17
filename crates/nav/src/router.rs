@@ -7084,13 +7084,10 @@ impl Goals<'_> {
         }
     }
 
-    async fn settle(
-        &mut self,
-        tile: WorldTile,
-        ticks: f64,
-        settled_at: usize,
-    ) -> Result<Settle, SearchCursorError> {
-        let cost = TargetCost { ticks, settled_at };
+    // These shapes cannot yield. Keep the proof-backed First future out of
+    // their per-node path: its inline state would otherwise be copied twice
+    // even when the selected shape never polls it.
+    fn settle_non_first(&mut self, tile: WorldTile, cost: TargetCost) -> Settle {
         let done = match self {
             Goals::Single { to, cost: found } => {
                 if *to == tile {
@@ -7100,7 +7097,7 @@ impl Goals<'_> {
                     false
                 }
             }
-            Goals::First(first) => return first.settle(tile, cost).await,
+            Goals::First(_) => unreachable!("first goals settle with their cooperative proof"),
             Goals::Many {
                 unique,
                 costs,
@@ -7114,9 +7111,9 @@ impl Goals<'_> {
                 }
                 *remaining == 0
             }
-            Goals::Frontier { .. } => return Ok(Settle::Continue),
+            Goals::Frontier { .. } => return Settle::Continue,
         };
-        Ok(if done { Settle::Stop } else { Settle::Continue })
+        if done { Settle::Stop } else { Settle::Continue }
     }
 
     /// Everything reachable has settled, `settled` nodes in all.
@@ -8296,7 +8293,15 @@ async fn search_kernel_budget<B: Budget>(
                 reached,
             );
         }
-        let stop = match goals.settle(cur, current_cost, expanded).await {
+        let cost = TargetCost {
+            ticks: current_cost,
+            settled_at: expanded,
+        };
+        let decision = match goals {
+            Goals::First(first) => first.settle(cur, cost).await,
+            _ => Ok(goals.settle_non_first(cur, cost)),
+        };
+        let stop = match decision {
             Ok(Settle::Continue) => None,
             Ok(Settle::Stop) => Some((expanded, SearchStop::Completed)),
             Ok(Settle::Spent) => Some((expanded - 1, SearchStop::Budget)),
