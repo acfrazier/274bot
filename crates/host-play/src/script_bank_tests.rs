@@ -1740,34 +1740,177 @@ mod bank_pick_capture {
     }
 
     #[test]
-    fn deadline_flags_the_current_owner_demand_without_reticketing() {
-        let navs = navs(vec![bank("bank", 8, 8)]);
+    fn full_refused_nonwalking_pick_publishes_air_fallback_at_deadline() {
+        let service = service();
         let world = world(false);
         let generation = 9;
-        stage_pick(&navs, world, 1, generation, scope(), None);
-        let deadline = navs
-            .lock()
-            .unwrap()
-            .get("test")
-            .and_then(|bot| bot.bank_pick.current.as_ref())
-            .and_then(|active| active.deadline)
-            .expect("staged bank pick has its selection deadline");
+        let mut admitted = Vec::new();
+        let mut refused = None;
+        for request_id in 1..=65 {
+            let pending = navs(vec![bank("bank", 8, 8)]);
+            stage_pick(
+                &pending,
+                Arc::clone(&world),
+                request_id,
+                generation,
+                scope(),
+                None,
+            );
+            assert!(super::super::submit_pending_bank_pick_with_service(
+                &pending,
+                "test",
+                scope(),
+                true,
+                &service,
+            ));
+            if pending.lock().unwrap()["test"]
+                .bank_pick
+                .current
+                .as_ref()
+                .unwrap()
+                .ticket
+                .is_none()
+            {
+                refused = Some(pending);
+                break;
+            }
+            admitted.push(pending);
+        }
+        let pending = refused.expect("the real WorkService job limit refuses demand with Full");
+        let (request_id, deadline) = {
+            let all = pending.lock().unwrap();
+            let active = all["test"].bank_pick.current.as_ref().unwrap();
+            assert_eq!(
+                active.last_submission_refusal,
+                Some(SubmissionRefusal::Full)
+            );
+            assert!(active.pending_job.is_some());
+            (active.job.request.request_id, active.deadline.unwrap())
+        };
+        let capacity = service.lock().publications().capacity().sequence();
+        let posted =
+            super::super::poll_bank_pick_with_service(&pending, "test", deadline, &service);
+        let retired = pending.lock().unwrap()["test"].bank_pick.current.is_none();
+        assert_eq!(
+            service.lock().publications().capacity().sequence(),
+            capacity
+        );
+        drop(admitted);
+        drop(pending);
+        wait_for_returned_capacity(&service, 0);
+        assert_eq!(WorkService::shutdown(&service), Ok(()));
+        assert_eq!(posted.request_id, request_id);
+        assert_eq!(posted.generation, generation);
+        assert_eq!(posted.bank_index, 0);
+        assert_eq!(posted.kind, PickKind::AirFallback as u8);
+        assert!(retired, "deadline discards the unadmitted retained job");
+    }
 
-        super::super::expire_bank_pick_deadline(&navs, "test", deadline + Duration::from_millis(1));
+    #[test]
+    fn stopping_refusal_posts_no_candidate_without_retry() {
+        let service = service();
+        assert_eq!(WorkService::shutdown(&service), Ok(()));
+        let navs = navs(vec![bank("bank", 8, 8)]);
+        stage_pick(&navs, world(false), 7, 9, scope(), None);
+        assert!(!super::super::submit_pending_bank_pick_with_service(
+            &navs,
+            "test",
+            scope(),
+            true,
+            &service,
+        ));
+        {
+            let all = navs.lock().unwrap();
+            let pick = &all["test"].bank_pick;
+            assert!(pick.current.is_none(), "permanent refusal retires demand");
+            assert!(matches!(
+                pick.pending_inline
+                    .as_ref()
+                    .map(|pending| pending.result.kind),
+                Some(PickKind::NoCandidate)
+            ));
+        }
+        let capacity = service.lock().publications().capacity().sequence();
+        let posted =
+            super::super::poll_bank_pick_with_service(&navs, "test", Instant::now(), &service);
+        assert_eq!(posted.request_id, 7);
+        assert_eq!(posted.generation, 9);
+        assert_eq!(posted.bank_index, -1);
+        assert_eq!(posted.kind, PickKind::NoCandidate as u8);
+        assert!(!super::super::submit_pending_bank_pick_with_service(
+            &navs,
+            "test",
+            scope(),
+            true,
+            &service,
+        ));
+        assert_eq!(
+            service.lock().publications().capacity().sequence(),
+            capacity
+        );
+        assert_eq!(service.lock().capacity(), api::work::WorkCapacity::EMPTY);
+    }
 
-        let all = navs.lock().unwrap();
-        let pick = &all.get("test").unwrap().bank_pick;
-        let active = pick
-            .current
-            .as_ref()
-            .expect("deadline retains active demand");
-        assert_eq!(pick.generation, generation);
-        assert_eq!(active.job.generation, generation);
-        assert!(active.ticket.is_none());
-        assert!(active.pending_job.is_some());
-        assert!(active.deadline.is_none());
-        assert!(pick.pending_cancel.is_none());
-        assert!(active.job.request.timeout_fallback.load(Ordering::Acquire));
+    #[test]
+    fn overcharge_publishes_a_failure_for_selection_and_walking() {
+        for walking in [false, true] {
+            let navs = navs(vec![bank("bank", 8, 8)]);
+            let mut state = WorldState::default();
+            // Reserved captured storage counts even when its map is empty.
+            state
+                .varps
+                .reserve(BANK_PICK_JOB_BYTES / std::mem::size_of::<(i32, i32)>());
+            assert!(!super::super::queue_bank(
+                &navs,
+                "test",
+                scope(),
+                &Some(world(false)),
+                Some(state),
+                tile(0, 0),
+                FindOptions::default(),
+                7,
+                BankPreferences::default(),
+                None,
+                walking,
+                None,
+            ));
+            let all = navs.lock().unwrap();
+            let bot = &all["test"];
+            assert!(bot.bank_pick.current.is_none());
+            assert!(bot.bank_pick.pending_inline.is_none());
+            assert_eq!(
+                bot.bank_pick.owner_result.as_ref().unwrap().value().kind,
+                PickKind::NoCandidate
+            );
+            if walking {
+                assert!(bot.walk_outcome_failed);
+                assert_eq!(bot.walk_outcome_generation, bot.route_generation);
+                assert_eq!(bot.walk_outcome_request_id, 0);
+                assert_eq!((bot.walk_outcome_x, bot.walk_outcome_z), (8, 8));
+                assert!(bot.requested_route.is_none());
+            } else {
+                assert_eq!(bot.bank_pick.posted.request_id, 7);
+                assert_eq!(bot.bank_pick.posted.kind, PickKind::NoCandidate as u8);
+            }
+        }
+    }
+
+    #[test]
+    fn burst_input_equality_uses_captured_query_contents() {
+        let world = world(false);
+        let first = navs(vec![bank("bank", 8, 8)]);
+        let same = navs(vec![bank("bank", 8, 8)]);
+        let different = navs(vec![bank("other", 12, 12)]);
+        stage_pick(&first, Arc::clone(&world), 1, 1, scope(), None);
+        stage_pick(&same, Arc::clone(&world), 2, 2, scope(), None);
+        stage_pick(&different, world, 3, 3, scope(), None);
+        let first = first.lock().unwrap();
+        assert!(first["test"]
+            .bank_pick
+            .query_inputs_match_for_test(&same.lock().unwrap()["test"].bank_pick,));
+        assert!(!first["test"]
+            .bank_pick
+            .query_inputs_match_for_test(&different.lock().unwrap()["test"].bank_pick,));
     }
 
     #[test]

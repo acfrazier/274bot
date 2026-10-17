@@ -159,7 +159,10 @@ fn record_script_act(navs: &Arc<Mutex<HashMap<String, NavBot>>>, slot: &str, act
 /// the slot's observer leaves this frame (the loaded open bank, else an
 /// unobserved `Unknown` bank).
 #[cfg(test)]
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the test wrapper supplies the same observed inputs as scoped interaction dispatch"
+)]
 pub(crate) fn dispatch_script_interact(
     driver: &mut dyn Driver,
     snapshot: &GameSnapshot,
@@ -242,7 +245,10 @@ pub(crate) fn dispatch_native_bank_deposit(
 }
 
 #[cfg(test)]
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the test wrapper preserves cached inputs without constructing a live slot"
+)]
 pub(crate) fn dispatch_script_interact_cached<R>(
     driver: &mut dyn Driver,
     snapshot: &GameSnapshot,
