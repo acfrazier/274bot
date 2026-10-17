@@ -167,16 +167,99 @@ pub enum ContractError {
     TooManyExemptions,
 }
 
+/// O(1) graph counts needed to reserve search scratch.
+///
+/// Computed once when a lease is prepared and copied with each lease handle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SearchGraphEnvelope {
+    pub(crate) carry_rows: usize,
+    pub(crate) return_rows: usize,
+    pub(crate) worn_rows: usize,
+    pub(crate) max_worn_ids_per_edge: usize,
+    pub(crate) max_quest_gates: usize,
+    representable: bool,
+}
+
+impl Default for SearchGraphEnvelope {
+    fn default() -> Self {
+        Self {
+            carry_rows: 0,
+            return_rows: 0,
+            worn_rows: 0,
+            max_worn_ids_per_edge: 0,
+            max_quest_gates: 0,
+            representable: true,
+        }
+    }
+}
+
+impl SearchGraphEnvelope {
+    pub(crate) fn from_graph(graph: &crate::transport::TransportGraph) -> Self {
+        let mut envelope = Self::default();
+        for edge in graph.edges.iter().chain(&graph.teleports) {
+            if envelope
+                .include_edge(
+                    edge.item_req.len(),
+                    edge.consumed_req.len(),
+                    edge.item_returns.len(),
+                    edge.worn_req.len(),
+                    edge.quest_gates
+                        .as_ref()
+                        .map_or(0, |gates| gates.gates().len()),
+                )
+                .is_none()
+            {
+                envelope.representable = false;
+                break;
+            }
+        }
+        envelope
+    }
+
+    pub(crate) const fn is_representable(self) -> bool {
+        self.representable
+    }
+
+    fn include_edge(
+        &mut self,
+        item_req_rows: usize,
+        consumed_req_rows: usize,
+        return_rows: usize,
+        worn_ids: usize,
+        quest_gates: usize,
+    ) -> Option<()> {
+        if !self.representable {
+            return None;
+        }
+        let carry_rows = self
+            .carry_rows
+            .checked_add(item_req_rows)?
+            .checked_add(consumed_req_rows)?
+            .checked_add(return_rows)?;
+        let return_rows_total = self.return_rows.checked_add(return_rows)?;
+        let worn_rows = self.worn_rows.checked_add(worn_ids)?;
+        let max_quest_gates = self.max_quest_gates.checked_add(quest_gates)?;
+
+        self.carry_rows = carry_rows;
+        self.return_rows = return_rows_total;
+        self.worn_rows = worn_rows;
+        self.max_worn_ids_per_edge = self.max_worn_ids_per_edge.max(worn_ids);
+        self.max_quest_gates = max_quest_gates;
+        Some(())
+    }
+}
+
 /// Immutable pack lease. Concrete views borrow it; they cannot outlive it
 /// or index a different pack. Not a per-tick clone and not a heap-allocated
 /// trait object.
 ///
-/// [`Clone`] clones the `Arc` handle (the bake is not copied). T5.1's host
-/// producer holds one handle per loaded pack and shares it; that is the
-/// consumer justification.
+/// [`Clone`] clones the `Arc` handle and copies the checked scalar graph
+/// envelope; the bake is not copied. The production owner reuses one prepared
+/// lease across a cooperative cursor's phases.
 #[derive(Clone)]
 pub struct NavLease {
     identity: NavIdentity,
+    search_envelope: SearchGraphEnvelope,
     world: Arc<NavWorld>,
 }
 
@@ -185,8 +268,11 @@ impl NavLease {
     /// Every call mints a distinct lease identity; the host's one shared
     /// identity per loaded world is [`crate::producer::lease`].
     pub fn wrap(world: Arc<NavWorld>, content: PackDigest) -> Result<Self, ContractError> {
+        let identity = NavIdentity::mint(content)?;
+        let search_envelope = SearchGraphEnvelope::from_graph(&world.graph);
         Ok(Self {
-            identity: NavIdentity::mint(content)?,
+            identity,
+            search_envelope,
             world,
         })
     }
@@ -194,12 +280,27 @@ impl NavLease {
     /// A lease over `world` under an identity the owner boundary already
     /// minted for it (`crate::producer`).
     pub(crate) fn with_identity(world: Arc<NavWorld>, identity: NavIdentity) -> Self {
-        Self { identity, world }
+        let search_envelope = world.search_graph_envelope();
+        Self {
+            identity,
+            search_envelope,
+            world,
+        }
     }
 
     /// Pack/format/content identity.
     pub const fn identity(&self) -> NavIdentity {
         self.identity
+    }
+    pub(crate) fn graph(&self) -> &crate::transport::TransportGraph {
+        &self.world.graph
+    }
+    pub(crate) const fn search_envelope(&self) -> SearchGraphEnvelope {
+        self.search_envelope
+    }
+    /// Route cursors borrow the same collision kernel as synchronous searches.
+    pub(crate) fn collision_world(&self) -> &crate::collision::WorldCollision {
+        &self.world.collision
     }
 
     /// Borrowed collision view over this lease's packed bake.
@@ -221,23 +322,6 @@ impl NavLease {
     pub fn wilderness(&self) -> WildernessView<'_> {
         WildernessView::new(&self.world.graph.wilderness)
     }
-
-    /// Publish an immutable, identity-bound plan from a backend route.
-    /// Owner-boundary constructor; iterating the lease does not expose
-    /// `Route`/`Leg` storage. Not part of the frozen public facade
-    /// (hidden storage must not appear in a public signature). T5.1 serves
-    /// borrowed [`RouteView`]s from the owner's retained route
-    /// (`crate::producer::route_view`); publication under a work identity
-    /// is test-only until T5.W(route) runs the search as a job.
-    #[cfg(test)]
-    pub(crate) fn publish_route(
-        &self,
-        identity: api::identity::WorkIdentity,
-        revision: api::work::InputRevision,
-        route: crate::router::Route,
-    ) -> RoutePlanLease {
-        RoutePlanLease::from_backend(self.identity.pack, identity, revision, route)
-    }
 }
 
 impl std::fmt::Debug for NavLease {
@@ -251,3 +335,96 @@ impl std::fmt::Debug for NavLease {
 #[cfg(test)]
 #[path = "contract_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod search_graph_envelope_tests {
+    use super::SearchGraphEnvelope;
+
+    #[test]
+    fn envelope_uses_checked_totals_and_per_edge_maxima() {
+        let mut envelope = SearchGraphEnvelope::default();
+        envelope.include_edge(2, 3, 5, 7, 11).unwrap();
+        envelope.include_edge(1, 2, 3, 9, 13).unwrap();
+        assert_eq!(
+            envelope,
+            SearchGraphEnvelope {
+                carry_rows: 16,
+                return_rows: 8,
+                worn_rows: 16,
+                max_worn_ids_per_edge: 9,
+                max_quest_gates: 24,
+                representable: true,
+            }
+        );
+    }
+
+    #[test]
+    fn envelope_rejects_overflow_without_partial_updates() {
+        let mut envelope = SearchGraphEnvelope::default();
+        envelope
+            .include_edge(usize::MAX, 0, 0, usize::MAX, usize::MAX)
+            .unwrap();
+        let before = envelope;
+        assert!(envelope.include_edge(1, 0, 0, 0, 1).is_none());
+        assert_eq!(envelope, before);
+    }
+    #[test]
+    fn envelope_rejects_worn_total_overflow_without_partial_updates() {
+        let mut envelope = SearchGraphEnvelope::default();
+        envelope.include_edge(0, 0, 0, usize::MAX, 0).unwrap();
+        let before = envelope;
+        assert!(envelope.include_edge(0, 0, 0, 1, 0).is_none());
+        assert_eq!(envelope, before);
+    }
+
+    #[test]
+    fn envelope_counts_graph_edges_and_teleports() {
+        let mut graph = crate::transport::TransportGraph::default();
+        graph.edges.push(crate::transport::TransportEdge {
+            takeoff: None,
+            worn_all_req: Vec::new(),
+            kind: crate::transport::TransportKind::Door,
+            player_delta: None,
+            at: api::snapshot::WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            to: api::snapshot::WorldTile {
+                x: 1,
+                z: 0,
+                level: 0,
+            },
+            loc_id: 0,
+            option: 0,
+            ticks: 1,
+            dir: None,
+            open_loc_id: None,
+            skill_req: Vec::new(),
+            item_req: Vec::new(),
+            consumed_req: Vec::new(),
+            item_returns: Vec::new(),
+            quest_req: Vec::new(),
+            varp_req: Vec::new(),
+            worn_req: vec![10, 11],
+            members_req: false,
+            wildy_cap: None,
+            quest_gates: None,
+        });
+        let mut teleport = graph.edges[0].clone();
+        teleport.kind = crate::transport::TransportKind::Teleport;
+        teleport.worn_req = vec![11, 12, 13];
+        graph.teleports.push(teleport);
+        let envelope = SearchGraphEnvelope::from_graph(&graph);
+        assert_eq!(envelope.worn_rows, 5);
+        assert_eq!(envelope.max_worn_ids_per_edge, 3);
+    }
+
+    #[test]
+    fn empty_graph_has_zero_envelope() {
+        assert_eq!(
+            SearchGraphEnvelope::from_graph(&crate::transport::TransportGraph::default()),
+            SearchGraphEnvelope::default()
+        );
+    }
+}

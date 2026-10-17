@@ -373,6 +373,35 @@ unchanged manifest; compression does not change selected-content identities.
 | `bin/cache-content-id.rs` | `cache-content-id` CLI | read-only identity export |
 | `required-content-274.tsv`, `required-content-289.tsv` | canonical content inventory | build-checked data, not code |
 
+#### Cooperative search storage
+
+All search goals use one packed table and one bounded doubling and rehash
+method. Records have dense IDs. Hashing selects a three-byte bucket head,
+not a position across the record array.
+
+Cooperative cursors reserve their complete settle-cap backing once. Slot
+fields use a zero-valued tuple of primitive arrays and integers. Each record
+remains 28 bytes with four-byte alignment. Safe `Vec` construction obtains
+zeroed backing without an explicit initialization pass under the pinned
+toolchain. The operating system can make pages resident as the search touches
+them. Admission charges the complete backing, not the observed resident bytes.
+
+Legacy synchronous facades start with six settles and grow the same table
+only when needed. Their reverse proofs also retain demand-driven storage.
+Cooperative reverse proofs reserve their bounded capacities once, so an
+ordinary slice never grows or rehashes a complete proof.
+
+The frontier starts as a binary min-heap. Only bounded-frontier eviction
+converts it to a min-max heap, in place and with one checkpoint per parent.
+Ordinary heap operations share the caller's expansion or transport unit.
+A sift has at most 22 levels under the packed capacity limit.
+The comparison order, decrease-key behavior and worst-entry eviction stay unchanged.
+
+One expansion includes its eight fixed collision steps and the first hash-key
+comparison for each relaxation. Further hash-chain links and each transport-list
+entry remain separate work units. Search budgets and live clock and cancellation
+reads at each checkpoint remain unchanged.
+
 #### Native map data boundary
 
 The public `nav::map` modules define the data/spatial contract independently of

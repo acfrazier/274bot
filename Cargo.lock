@@ -3052,6 +3052,7 @@ dependencies = [
 name = "nav"
 version = "0.2.3"
 dependencies = [
+ "allocation-counter",
  "api",
  "client",
  "png",
