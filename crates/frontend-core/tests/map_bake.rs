@@ -113,10 +113,12 @@ fn a_cold_images_open_asks_and_bakes_only_the_catalogue() {
     let handle = gate
         .open(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
-    assert_eq!(gate.prompt(), MapBakePrompt::Asking);
-    assert_eq!(handle.demand(), MapDemand::CatalogueOnly);
+    assert_eq!(gate.prompt(), MapBakePrompt::None, "check readiness first");
+    assert_eq!(handle.demand(), MapDemand::ReadyImages, "adopt, never bake");
     wait_ready(&handle);
     assert!(!has_terrain(&handle));
+    gate.note_ready_without_terrain(handle.demand());
+    assert_eq!(gate.prompt(), MapBakePrompt::Asking);
     assert_eq!(producer.catalogue_runs(), 1);
     assert_eq!(producer.image_runs(), 0, "no terrain bake");
 }
@@ -130,6 +132,9 @@ fn not_now_keeps_the_map_catalogue_only_across_reopens() {
         .open(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
     wait_ready(&first);
+    assert!(!has_terrain(&first));
+    gate.note_ready_without_terrain(first.demand());
+    assert_eq!(gate.prompt(), MapBakePrompt::Asking);
     gate.decline();
     assert_eq!(gate.prompt(), MapBakePrompt::Declined);
     drop(first);
@@ -138,6 +143,7 @@ fn not_now_keeps_the_map_catalogue_only_across_reopens() {
         .open(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
     wait_ready(&reopened);
+    gate.note_ready_without_terrain(reopened.demand());
     assert_eq!(gate.prompt(), MapBakePrompt::Declined, "no second question");
     assert!(!has_terrain(&reopened));
     assert_eq!(producer.image_runs(), 0, "no terrain bake");
@@ -165,9 +171,9 @@ fn accepting_bakes_the_terrain_and_joins_the_open_catalogue_demand() {
 }
 
 #[test]
-fn a_ready_cache_opens_without_asking_or_baking() {
+fn a_fresh_manager_with_a_complete_cache_never_asks() {
     let scratch = Scratch::new("warm");
-    // Publish once, as an earlier run (or a pre-installed cache) left it.
+    // Publish once, then destroy the installer and its in-memory ready cache.
     {
         let (installer, _) = manager(&scratch);
         let handle = MapBakeGate::new(MapBakeChoice::Always)
@@ -180,8 +186,18 @@ fn a_ready_cache_opens_without_asking_or_baking() {
     let handle = gate
         .open(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
-    assert_eq!(gate.prompt(), MapBakePrompt::None);
-    assert_eq!(handle.status(), MapJobStatus::Ready, "served, not queued");
+    assert_eq!(
+        gate.prompt(),
+        MapBakePrompt::None,
+        "unknown disk readiness must not be reported as a missing cache"
+    );
+    assert_eq!(handle.demand(), MapDemand::ReadyImages, "adopt, never bake");
+    wait_ready(&handle);
+    if !has_terrain(&handle) {
+        gate.note_ready_without_terrain(handle.demand());
+    }
+    assert_eq!(gate.prompt(), MapBakePrompt::None, "the cache is complete");
+    assert_eq!(handle.status(), MapJobStatus::Ready, "admitted cache hit");
     assert!(has_terrain(&handle));
     assert_eq!(producer.catalogue_runs(), 0);
     assert_eq!(producer.image_runs(), 0);
@@ -258,11 +274,13 @@ fn shipped_terrain_for_the_bound_cache_opens_without_asking_or_baking_in_both_fr
     let reopened = panel
         .open(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
+    wait_ready(&reopened);
     assert_eq!(reopened.status(), MapJobStatus::Ready, "served, not queued");
     assert!(has_terrain(&reopened));
     let catalogue = tui
         .open(&manager, fixture_descriptor(), MapDemand::CatalogueOnly)
         .unwrap();
+    wait_ready(&catalogue);
     assert_eq!(catalogue.status(), MapJobStatus::Ready);
     assert_eq!(
         (panel.prompt(), tui.prompt()),
@@ -280,10 +298,12 @@ fn terrain_shipped_for_another_client_cache_is_ignored_and_the_bake_asks() {
     let handle = gate
         .open(&manager, other_cache_descriptor(), MapDemand::Images)
         .unwrap();
-    assert_eq!(gate.prompt(), MapBakePrompt::Asking);
-    assert_eq!(handle.demand(), MapDemand::CatalogueOnly);
+    assert_eq!(gate.prompt(), MapBakePrompt::None, "check readiness first");
+    assert_eq!(handle.demand(), MapDemand::ReadyImages, "adopt, never bake");
     wait_ready(&handle);
     assert!(!has_terrain(&handle));
+    gate.note_ready_without_terrain(handle.demand());
+    assert_eq!(gate.prompt(), MapBakePrompt::Asking);
     assert_eq!(producer.image_runs(), 0);
     assert_eq!(tree(shipped.path()), before, "shipped terrain left on disk");
 }
@@ -316,15 +336,19 @@ fn damaged_shipped_terrain_raises_the_prompt_instead_of_baking() {
     assert_eq!(producer.image_runs(), 0, "no bake without consent");
     drop(handle);
     manager.reap();
-    // A reopen asks straight away and stays catalogue-only.
+    // A reopen probes again, without starting a local bake.
     gate.decline();
     let mut again = MapBakeGate::new(MapBakeChoice::Ask);
     let reopened = again
         .open(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
-    assert_eq!(again.prompt(), MapBakePrompt::Asking);
-    assert_eq!(reopened.demand(), MapDemand::CatalogueOnly);
+    assert_eq!(again.prompt(), MapBakePrompt::None, "check readiness first");
+    assert_eq!(reopened.demand(), MapDemand::ReadyImages);
     wait_ready(&reopened);
+    assert!(!has_terrain(&reopened));
+    again.note_ready_without_terrain(reopened.demand());
+    assert_eq!(again.prompt(), MapBakePrompt::Asking);
+    assert_eq!(producer.image_runs(), 0, "no bake before consent");
     // Consent bakes locally, as without shipped terrain.
     again.accept();
     let baking = again
@@ -357,20 +381,42 @@ fn set_dir_modified(dir: &Path, time: std::time::SystemTime) {
 #[test]
 fn over_the_cache_cap_the_admitted_terrain_is_not_pruned_or_rebaked() {
     let scratch = Scratch::new("over-cap");
-    publish_terrain_without_catalogue(&scratch);
+    let terrain_owner = {
+        let (installer, _) = manager(&scratch);
+        let handle = installer
+            .request(fixture_descriptor(), MapDemand::Images)
+            .unwrap();
+        wait_ready(&handle);
+        handle.ready().unwrap().images.unwrap()
+    };
+    let catalogue = scratch
+        .root()
+        .catalogue_dir(fixture_descriptor().catalogue_identity())
+        .unwrap();
+    std::fs::remove_dir_all(catalogue).unwrap();
     let terrain = scratch
         .root()
         .image_dir(fixture_descriptor().image_identity())
         .unwrap();
-    // The admitted terrain is the least recently used entry, and a newer
-    // unrelated entry puts the cache over its cap (a sparse file: no disk).
+    // Publish a second owned identity, then exceed the whole-cache cap with
+    // an unreferenced sparse payload. A foreign directory must remain invalid.
+    {
+        let (installer, _) = manager(&scratch);
+        let handle = installer
+            .request(other_cache_descriptor(), MapDemand::Images)
+            .unwrap();
+        wait_ready(&handle);
+    }
+    let unrelated = scratch
+        .root()
+        .image_dir(other_cache_descriptor().image_identity())
+        .unwrap();
+    // The requested terrain is the least recently used accepted image root.
     set_dir_modified(
         &terrain,
         std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(3600),
     );
-    let unrelated = terrain.parent().unwrap().join("unrelated-older-bake");
-    std::fs::create_dir_all(&unrelated).unwrap();
-    std::fs::File::create(unrelated.join("tile.png"))
+    std::fs::File::create(unrelated.join("unused-padding.bin"))
         .unwrap()
         .set_len(host_play::map_cache::MAX_GENERATED_CACHE_BYTES + (16 << 20))
         .unwrap();
@@ -388,6 +434,7 @@ fn over_the_cache_cap_the_admitted_terrain_is_not_pruned_or_rebaked() {
     assert!(!unrelated.exists(), "capacity came from the other entry");
     assert_eq!(producer.catalogue_runs(), 1);
     assert_eq!(producer.image_runs(), 0, "no bake without consent");
+    drop(terrain_owner);
 }
 
 #[test]

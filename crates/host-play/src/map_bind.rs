@@ -50,8 +50,8 @@ pub fn map_demand_manager() -> Result<&'static MapDemandManager, MapCacheError> 
     Ok(MANAGER.get_or_init(|| created))
 }
 
-/// Join a finished bake thread on close. Never creates the manager: a map
-/// that was never opened leaves nothing to reap.
+/// Reap published map-job terminals on a UI cadence. Never creates the
+/// manager: a map that was never opened leaves nothing to reap.
 pub fn reap_map_demand() {
     if let Some(manager) = MANAGER.get() {
         manager.reap();
@@ -67,9 +67,9 @@ pub fn map_profile_descriptor(
     MapProfileDescriptor::from_profile(profile, image, catalogue)
 }
 
-/// Request `demand` for `descriptor`, starting or joining the local worker
-/// when it is not ready. Images demand always runs catalogue first (D's
-/// worker).
+/// Request `demand` for `descriptor`, starting or joining the shared
+/// WorkAdmission job when it is not ready. Images demand always derives the
+/// catalogue before the image stage.
 ///
 /// Reopening a failed/paused identity is an explicit retry, not an automatic
 /// loop: ordinary `request` keeps the terminal status.
@@ -88,14 +88,15 @@ pub fn open_map_demand(
     }
 }
 
-/// Open terrain that needs no local bake for `descriptor` without ever
-/// baking it: terrain already published, or shipped with this release for
-/// exactly its image identity (the worker installs that). `None` when there
-/// is neither. A published terrain stays leased for the handle, so capacity
-/// pruning cannot remove it while the worker derives a missing catalogue,
-/// and the [`MapDemand::ReadyImages`] image stage never starts a bake: it
-/// settles catalogue-only if the terrain is gone or the shipped files are
-/// unusable, and the front end asks before baking.
+/// Open terrain already leased by this manager, or shipped for exactly this
+/// image identity, without a local bake. `None` means readiness is unknown,
+/// not that the disk cache is absent. The caller can submit an admitted
+/// [`MapDemand::ReadyImages`] probe to check the disk cache.
+///
+/// A known terrain lease stays with the handle while the worker derives a
+/// missing catalogue. The adopt-only image stage never starts a local bake.
+/// It settles catalogue-only when no usable terrain exists, so the front end
+/// can ask before baking.
 pub fn open_map_ready_terrain(
     manager: &MapDemandManager,
     descriptor: MapProfileDescriptor,
@@ -110,11 +111,9 @@ pub fn open_map_ready_terrain(
     Ok(None)
 }
 
-/// Release packaging: bake `revision` terrain for an offline client cache
-/// (`jag_dir` and the decoded snapshot under `snapshot_root`, as the nav
-/// build reads them) through the production image path, then ship it under
-/// `out/map/<revision>/` for the install resource root `out`. `progress`
-/// sees every worker status until the bake settles.
+/// Bake map images for `revision` below `out/map/<revision>`, where `out` is
+/// the install resource root. `progress` receives each published WorkAdmission
+/// status until the bake settles.
 pub fn bake_shipped_map_images(
     revision: u16,
     jag_dir: &Path,
@@ -160,13 +159,16 @@ pub(crate) fn ship_map_images(
                 }
                 MapJobStatus::Queued | MapJobStatus::Running(_) => {}
             }
-            std::thread::sleep(Duration::from_millis(100));
+            if handle.wait_for_change(Duration::from_millis(100))
+                == script::work_admission::PublicationWaitOutcome::Unavailable
+            {
+                return Err(MapCacheError::Message(
+                    "WorkAdmission is unavailable".into(),
+                ));
+            }
         }
         drop(handle);
-        // Join the worker so none of its leases outlives the scratch cache.
-        while !manager.reap_idle() {
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        manager.reap();
         shipped.ship_from(&root, descriptor.image_identity())
     })();
     match (result, fs::remove_dir_all(&scratch)) {
@@ -177,7 +179,8 @@ pub(crate) fn ship_map_images(
     }
 }
 
-/// Catalogue published independently of terrain. `None` while still baking.
+/// Previously admitted catalogue lease, or `None` until bounded preflight has
+/// published one independently of terrain.
 pub fn peek_map_catalogue(profile: &ServerProfile) -> Option<Arc<ReadyCatalogue>> {
     let descriptor = map_profile_descriptor(profile).ok()?;
     map_demand_manager()
@@ -411,9 +414,8 @@ pub fn load_navpois(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map_cache::{MapCacheRoot, MapJobStatus, MapProfileDescriptor};
+    use crate::map_cache::{MapCacheRoot, MapProfileDescriptor};
     use nav::map::identity::Digest;
-    use std::time::{Duration, Instant};
 
     #[test]
     fn artifact_policies_are_stable() {
@@ -431,27 +433,9 @@ mod tests {
         let manager = MapDemandManager::new(root, Arc::new(NativeMapProducer::new()));
         let (image, catalogue) = map_artifact_policies().unwrap();
         let descriptor = MapProfileDescriptor::new(289, Digest([1; 32]), image, catalogue).unwrap();
-        let handle = manager.request_catalogue(descriptor).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(2);
-        let status = loop {
-            let status = handle.status();
-            if !matches!(status, MapJobStatus::Queued | MapJobStatus::Running(_)) {
-                break status;
-            }
-            if Instant::now() > deadline {
-                panic!("producer did not finish: {status:?}");
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        };
-        match status {
-            MapJobStatus::Failed(message) => {
-                assert!(
-                    message.contains("prepared client cache")
-                        || message.contains("map assets unavailable"),
-                    "{message}"
-                );
-            }
-            other => panic!("expected failed without cache, got {other:?}"),
-        }
+        assert!(matches!(
+            manager.request_catalogue(descriptor),
+            Err(MapCacheError::NoPreparedCache)
+        ));
     }
 }

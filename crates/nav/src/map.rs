@@ -95,6 +95,14 @@ impl<T, const N: usize> Rows<T, N> {
         self.0.push(row);
         Ok(())
     }
+    /// Insert one row; check the bound before the vector grows.
+    pub fn insert(&mut self, index: usize, row: T) -> Result<(), MapError> {
+        if self.0.len() >= N {
+            return Err(MapError::Limit("record count"));
+        }
+        self.0.insert(index, row);
+        Ok(())
+    }
     pub fn as_slice(&self) -> &[T] {
         &self.0
     }
