@@ -354,6 +354,13 @@ fn request_threads_keep_running_when_the_background_worker_stalls() {
         .lock()
         .health()
         .expect("a stalled background worker latches the outage");
+
+    let observed = shared.lock().publication_epoch();
+    assert_eq!(
+        WorkService::wait_for_publication_change(&shared, observed, Duration::ZERO),
+        PublicationWaitOutcome::TimedOut,
+        "a worker outage must not mark a running request thread unavailable"
+    );
     WorkService::wait_terminal(&shared, &background)
         .expect("the background job ends as unavailable");
     assert!(matches!(

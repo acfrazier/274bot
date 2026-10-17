@@ -63,8 +63,9 @@ impl MapRecordIndexBuilder {
         input.seek(SeekFrom::Start(self.position))?;
         let mut header = [0; 8];
         input.read_exact(&mut header)?;
-        let id = u32::from_le_bytes(header[..4].try_into().unwrap());
-        let bytes = u32::from_le_bytes(header[4..].try_into().unwrap());
+        let [id_0, id_1, id_2, id_3, bytes_0, bytes_1, bytes_2, bytes_3] = header;
+        let id = u32::from_le_bytes([id_0, id_1, id_2, id_3]);
+        let bytes = u32::from_le_bytes([bytes_0, bytes_1, bytes_2, bytes_3]);
         if bytes == 0 {
             return Err(MapError::Invalid("empty map record"));
         }

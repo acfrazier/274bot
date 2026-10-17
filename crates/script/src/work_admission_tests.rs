@@ -148,7 +148,7 @@ fn publication_wait_closes_change_before_and_during_wait_races() {
 }
 
 #[test]
-fn publication_wait_times_out_and_reports_shutdown_or_unavailability() {
+fn publication_wait_times_out_or_reports_shutdown_during_worker_outage() {
     let shared = new_service(Arc::new(ManualClock::new()));
     let observed = shared.lock().publication_epoch();
     assert_eq!(
@@ -176,7 +176,8 @@ fn publication_wait_times_out_and_reports_shutdown_or_unavailability() {
     let observed = unavailable.lock().publication_epoch();
     assert_eq!(
         WorkService::wait_for_publication_change(&unavailable, observed, Duration::ZERO),
-        PublicationWaitOutcome::Unavailable
+        PublicationWaitOutcome::TimedOut,
+        "a background-worker outage does not stop request-thread publications"
     );
     WorkService::shutdown(&unavailable).expect("unavailable service shuts down");
 }

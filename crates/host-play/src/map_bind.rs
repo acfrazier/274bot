@@ -162,6 +162,23 @@ pub(crate) fn ship_map_images(
             if handle.wait_for_change(Duration::from_millis(100))
                 == script::work_admission::PublicationWaitOutcome::Unavailable
             {
+                // Shutdown can return before a request thread exits. Keep the
+                // scratch cache until its terminal status arrives.
+                handle.cancel();
+                loop {
+                    let status = handle.status();
+                    progress(&status);
+                    if matches!(
+                        &status,
+                        MapJobStatus::Ready
+                            | MapJobStatus::Paused
+                            | MapJobStatus::Cancelled
+                            | MapJobStatus::Failed(_)
+                    ) {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
                 return Err(MapCacheError::Message(
                     "WorkAdmission is unavailable".into(),
                 ));

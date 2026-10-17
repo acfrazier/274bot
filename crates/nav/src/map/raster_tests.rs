@@ -702,10 +702,18 @@ impl TestImageTileSink {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
 enum TestSinkError {
+    #[error("injected sink failure")]
     Injected,
+    #[error("atomic tile write failed")]
     AtomicWrite,
+}
+
+#[test]
+fn image_bake_error_implements_std_error() {
+    fn assert_error<T: std::error::Error>() {}
+    assert_error::<super::ImageBakeError<TestSinkError>>();
 }
 
 impl ImageTileSink for TestImageTileSink {
@@ -1195,7 +1203,10 @@ mod native_map_unit_qualification {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one measurement case needs its input values and measured action"
+    )]
     fn measure_case(
         case: &str,
         kind: &str,
@@ -2536,7 +2547,10 @@ mod native_map_unit_qualification {
 
     #[test]
     #[ignore = "release-only native-unit qualification; requires matching prepared 274/289 cache inputs"]
-    #[allow(clippy::assertions_on_constants)]
+    #[expect(
+        clippy::assertions_on_constants,
+        reason = "release-only qualification must reject debug builds"
+    )]
     fn native_map_producer_release_qualification() {
         assert!(
             !cfg!(debug_assertions),
