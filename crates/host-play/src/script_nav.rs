@@ -3146,10 +3146,8 @@ fn pump_route_work_on_service(
                             let (reason, job) = refused.into_parts();
                             if reason == SubmissionRefusal::Full {
                                 let mut job = job.into_job();
-                                let after = service.publications().capacity().sequence();
                                 // A release racing admission must permit another attempt.
-                                job.admission_capacity =
-                                    Some(if before == after { after } else { before });
+                                job.admission_capacity = Some(before);
                                 Submission::Full(job)
                             } else {
                                 Submission::Refused(reason.to_string())
