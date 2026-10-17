@@ -198,9 +198,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - When 274bot cannot reach a world's cache server, or cannot look up the
   name of a world's server, while it prepares the game cache, it now moves
   to the next world as a whole: it prepares the cache from that world, and
-  bots set to Auto start on that world. It skips a world whose server name
-  already failed to look up. Before, 274bot took only the cache from the
-  next world and kept the first world's game server.
+  bots set to Auto start on that world. After a server name fails to look
+  up, 274bot skips each later world that uses that name. There is one
+  exception. A cache server name can look up at first and then fail to look
+  up during the cache download. Then `host-play` and the TUI (at each
+  start), and the panel (only before it selects its server profile), can
+  look up that name again for the next world. Each such world costs one
+  more wait for the name lookup. Before, 274bot took only the cache from
+  the next world and kept the first world's game server.
 
 ### Fixed during development
 

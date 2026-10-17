@@ -954,12 +954,17 @@ impl ProfileSelection {
 
 /// The world fallback of a runtime cache fill. After a connection failure,
 /// the fill moves on to the next roster world as a whole: its game endpoint
-/// and its asset endpoint together. It passes over a world whose game host
-/// or asset host is a name that a fill could not look up
-/// (`RuntimeCacheError::failed_lookup`), so the chain never looks up that
-/// name again. The stepped fill and the one-call fill both report a failed
-/// lookup of either host. Only a public (wss) roster has more than one
-/// world.
+/// and its asset endpoint together. From the first failed lookup of a name
+/// (`RuntimeCacheError::failed_lookup`), it passes over each later world
+/// whose game host or asset host is that name. The stepped fill and the
+/// one-call fill both report a failed lookup of either host.
+///
+/// Limit: the one-call fill (`prepare_runtime_cache`) looks up the asset
+/// host again for each JAG download, and that error does not name the host.
+/// So a name that looked up for `/crc` and then fails at the JAG download
+/// can be looked up again for the next world that shares it. The cost is
+/// one more resolver wait for each such world. Only a public (wss) roster
+/// has more than one world.
 struct WorldFallback {
     count: usize,
     /// The roster index of the selected world.
