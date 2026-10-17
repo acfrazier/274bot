@@ -568,11 +568,13 @@ fn template_preparation_steps_stay_bounded_while_the_cache_lock_is_held() {
     use std::time::{Duration, Instant};
     let (root, public, lock) = stepped_fixture("stepped-lock");
     let held = Duration::from_millis(1500);
+    // The hold starts when the lock is taken, so the total is measured from
+    // there too, not from after the server and preparation setup.
+    let started = Instant::now();
     let release = hold_lock(&lock, held);
     let (port, server) = serve_packs(public, 0);
     let mut preparation = selection(&root, "274", port).begin_template_preparation();
     let observer = ProfileProgressObserver::default();
-    let started = Instant::now();
     let (mut longest, mut steps) = (Duration::ZERO, 0);
     let template = loop {
         let step_started = Instant::now();
