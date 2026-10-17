@@ -7265,5 +7265,51 @@ fn real_289_full_budget_phase_reservations_fit_the_whole_job_limit() {
     }
 }
 
+#[test]
+fn real_289_radius_goal_sets_fit_the_full_budget_reservation() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let world = Arc::new(world);
+    let lease = crate::producer::lease(&world).expect("real pack lease");
+    let state = Arc::new(WorldState::empty());
+    for radius in [40usize, 104] {
+        let candidates = (2 * radius + 1).pow(2);
+        for allow_teleports in [false, true] {
+            let options = FindOptions {
+                allow_teleports,
+                ..FindOptions::default()
+            };
+            for shape in [
+                super::SearchRequestShape::First {
+                    target_capacity: candidates,
+                    fallback_capacity: candidates,
+                    options,
+                    avoid_capacity: 0,
+                    max_settles: super::NODE_BUDGET,
+                },
+                super::SearchRequestShape::MissingItemReqs {
+                    target_capacity: candidates,
+                    fallback_capacity: candidates,
+                    options,
+                    avoid_capacity: 0,
+                    max_settles: super::NODE_BUDGET,
+                },
+            ] {
+                let preflight = super::SearchCursor::preflight(shape, &lease, &state)
+                    .expect("large goal-set preflight");
+                let total = preflight.input_bytes()
+                    + preflight.reservation().future_layout_bytes
+                    + preflight.reservation().peak_bytes
+                    + state.try_shared_retained_bytes().expect("state charge");
+                assert!(
+                    total <= 192 * 1024 * 1024,
+                    "radius {radius}, {shape:?} needs {total} bytes"
+                );
+            }
+        }
+    }
+}
+
 #[path = "router/consumption_tests.rs"]
 mod consumption;

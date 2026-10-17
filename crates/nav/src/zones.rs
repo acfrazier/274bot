@@ -356,6 +356,7 @@ pub struct ZoneTable {
     cols: u32,
     rows: u32,
     blocking_detail_bytes_bound: usize,
+    max_bucket_zones: usize,
 }
 
 /// Malformed or internally inconsistent zone-table input.
@@ -440,6 +441,19 @@ impl ZoneTable {
             buckets,
             entries,
         } = build_index(&zones, origin, cols, rows)?;
+        // Every tile query examines only one bucket. Later predicates only
+        // remove candidates, so this also bounds each goal's zone-ID row.
+        let max_bucket_zones = buckets
+            .iter()
+            .enumerate()
+            .map(|(index, &(_, start))| {
+                let end = buckets
+                    .get(index + 1)
+                    .map_or(entries.len(), |&(_, start)| start as usize);
+                end - start as usize
+            })
+            .max()
+            .unwrap_or(0);
         let blocking_detail_bytes_bound = blocking_detail_bytes_bound(&zones, &kinds, &groups);
         Ok(Self {
             zones: zones.into_boxed_slice(),
@@ -454,12 +468,18 @@ impl ZoneTable {
             cols,
             rows,
             blocking_detail_bytes_bound,
+            max_bucket_zones,
         })
     }
 
     /// Zone rows in deterministic pack order.
     pub fn zones(&self) -> &[Zone] {
         &self.zones
+    }
+
+    /// Content-derived upper bound on zone IDs returned for any one tile.
+    pub(crate) const fn max_zones_per_tile(&self) -> usize {
+        self.max_bucket_zones
     }
 
     /// Packed kind descriptions.
