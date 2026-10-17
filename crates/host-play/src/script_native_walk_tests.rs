@@ -3713,7 +3713,7 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
 }
 
 #[test]
-#[ignore = "requires WORLD_NAV_PACK pointing to the real 289 nav pack"]
+#[ignore = "NAV-GOAL-RESERVATION: full-pack radii >=17 exceed the reservation; requires WORLD_NAV_PACK"]
 fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal() {
     use crate::ScriptRouteRequest;
     use nav::arrival::ArrivalKind;
