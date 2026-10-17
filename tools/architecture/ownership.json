@@ -2067,6 +2067,10 @@
       "owner": "T5"
     },
     {
+      "path": "crates/nav/tests/arrival_candidate_parity.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/nav/tests/death_plateau_real_pack.rs",
       "owner": "T5"
     },

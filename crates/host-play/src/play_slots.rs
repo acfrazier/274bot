@@ -489,9 +489,14 @@ impl Play {
             .unwrap()
             .entry(username.clone())
             .or_default();
+        let work_scope = slot_script
+            .lock()
+            .expect("slot script mutex is not poisoned")
+            .work_scope();
         {
             let mut navs = self.navs.lock().unwrap();
             let bot = navs.entry(username.clone()).or_default();
+            bot.work_scope = work_scope;
             bot.walk_globals = Some(Arc::clone(&self.walk_globals));
             bot.walk_globals_store = self.walk_globals_store.clone();
         }
@@ -1838,6 +1843,8 @@ fn spawn_slot_thread(
                             if !wires.is_empty() {
                                 dispatch_wires(c, &nav_snapshot, wires.into(), hold);
                             }
+                            // Poll work independently of the per-player follow latch.
+                            crate::script_runtime::pump_route_work(&slot_navs, name);
                             // Per-uid nav step on the pump, gated on the
                             // player-gen/tile latch like the panel's WalkTo
                             // hook so a hop is sent once per server tick,
@@ -1848,7 +1855,7 @@ fn spawn_slot_thread(
                             let nav_key = (c.gens.player, here);
                             if nav_step_due(&mut last_nav_step, nav_key, hold, exclusive, || {
                                 slot_navs.lock().unwrap().get(name).is_some_and(|b| {
-                                    b.route.is_some() || b.bank_fetch.is_some() || b.walk_guard_off.is_some() || b.combat_prayer_off.is_some()
+                                    b.has_route() || b.route_work_pending() || b.bank_fetch.is_some() || b.walk_guard_off.is_some() || b.combat_prayer_off.is_some()
                                 })
                             }) {
                                 let before_outcome = slot_navs
@@ -1918,7 +1925,7 @@ fn spawn_slot_thread(
                                     .get(name)
                                     .is_some_and(|q| !q.is_empty())
                                 || slot_navs.lock().unwrap().get(name).is_some_and(|b| {
-                                    b.route.is_some() || b.bank_fetch.is_some() || b.walk_guard_off.is_some() || b.combat_prayer_off.is_some()
+                                    b.has_route() || b.bank_fetch.is_some() || b.walk_guard_off.is_some() || b.combat_prayer_off.is_some()
                                 })
                         }
                     },

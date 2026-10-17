@@ -32,6 +32,7 @@ pub struct RouteStamp {
     pub generation: u64,
     pub destination: WorldTile,
 }
+
 /// A map projection keeps legacy routes borrowed and compact script routes in
 /// their bounded `RouteView`; neither branch expands compact storage.
 #[derive(Clone, Copy)]

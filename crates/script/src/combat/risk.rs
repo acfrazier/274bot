@@ -17,10 +17,91 @@ pub use geometry::{build_plan, RoutePath};
 pub use input::*;
 use nav::contract::{BoundZoneKey, ContractError, PackId, ZoneKey, ZoneTableView};
 pub use replay::{
-    admission_passes, assess, candidate_cost, eat_line, estimated_floor, replay, Estimate, Grants,
-    ReplayResult,
+    admission_passes, admission_passes_cooperative, assess, assess_cooperative, candidate_cost,
+    eat_line, estimated_floor, replay, Estimate, Grants, ReplayResult,
 };
+use std::future::Future;
 use std::sync::Arc;
+use std::task::{Context, Poll, Waker};
+
+pub(super) async fn checkpoint<F, U>(checkpoint: &mut F)
+where
+    F: FnMut() -> U,
+    U: Future<Output = ()>,
+{
+    checkpoint().await;
+}
+
+/// Drive a risk kernel whose checkpoint is immediately ready. The async and
+/// synchronous APIs therefore execute the same kernel without a runtime,
+/// allocation, or unsafe pin projection.
+pub(super) fn drive_synchronously<F: Future>(future: F) -> F::Output {
+    let mut future = std::pin::pin!(future);
+    let mut context = Context::from_waker(Waker::noop());
+    match future.as_mut().poll(&mut context) {
+        Poll::Ready(output) => output,
+        Poll::Pending => panic!("synchronous risk checkpoint suspended"),
+    }
+}
+
+const MAX_PLAN_ROWS: usize = u16::MAX as usize;
+const MAX_DISPLAY_ROWS: usize = 8;
+const MAX_SUPPLY_ROWS: usize = 6;
+const MAX_REASON_BYTES: usize = 1536;
+
+/// Conservative owned-heap bounds for one assessment. `peak_bytes` includes
+/// all simultaneous scratch and retained allocations; `retained_bytes` is
+/// the largest returned `Arc<RouteAssessment>` and its separately backed
+/// collections/reason. Sorting is in-place, and exact-capacity vectors make
+/// their boxed conversions allocation-free. The retained input route and
+/// pinned future layout are accounted for by the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RiskHeapBounds {
+    pub peak_bytes: usize,
+    pub retained_bytes: usize,
+}
+
+/// Worst-case assessment heap under the existing u16 plan-count limits.
+/// `None` means the checked upper-bound arithmetic cannot be represented.
+pub fn assessment_heap_bounds() -> Option<RiskHeapBounds> {
+    let plan_rows = MAX_PLAN_ROWS.checked_mul(std::mem::size_of::<ZoneInterval>())?;
+    let crossing_rows = MAX_PLAN_ROWS.checked_mul(std::mem::size_of::<CrossingGeom>())?;
+    let plan = plan_rows.checked_add(crossing_rows)?;
+    let display = MAX_DISPLAY_ROWS.checked_mul(std::mem::size_of::<Crossing>())?;
+    let supplies = MAX_SUPPLY_ROWS.checked_mul(std::mem::size_of::<SupplyNeed>())?;
+    let arc_header = 2usize.checked_mul(std::mem::size_of::<usize>())?;
+    let reason = arc_header.checked_add(MAX_REASON_BYTES)?;
+    let allocation_alignment =
+        std::mem::align_of::<RouteAssessment>().max(std::mem::align_of::<usize>());
+    let alignment_slack = allocation_alignment.checked_sub(1)?.checked_mul(2)?;
+    let assessment = arc_header
+        .checked_add(std::mem::size_of::<RouteAssessment>())?
+        .checked_add(alignment_slack)?;
+    let retained_bytes = plan
+        .checked_add(display)?
+        .checked_add(supplies)?
+        .checked_add(reason)?
+        .checked_add(assessment)?;
+    Some(RiskHeapBounds {
+        peak_bytes: retained_bytes,
+        retained_bytes,
+    })
+}
+
+/// Worst-case total heap while admission retains an assessment and its
+/// temporary projected replay plan and crossing-obligation bitset. Projection
+/// uses exact capacities and cannot allocate a second store while shrinking.
+pub fn admission_peak_heap_bytes() -> Option<usize> {
+    let projected_rows = MAX_PLAN_ROWS.checked_mul(std::mem::size_of::<ZoneInterval>())?;
+    let projected_crossings = MAX_PLAN_ROWS.checked_mul(std::mem::size_of::<CrossingGeom>())?;
+    let projected_plan = projected_rows.checked_add(projected_crossings)?;
+    let mask_words = MAX_PLAN_ROWS.div_ceil(64);
+    let mask = mask_words.checked_mul(std::mem::size_of::<u64>())?;
+    assessment_heap_bounds()?
+        .peak_bytes
+        .checked_add(projected_plan)?
+        .checked_add(mask)
+}
 
 /// A facade refusal: the route, plan, key or exemption belongs to another
 /// nav pack, or names a row this pack does not have.

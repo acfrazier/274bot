@@ -15,6 +15,7 @@ use client::client::{Client, ClientConfig};
 use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::dash3d::CollisionFlag;
 use client::io::ServerProt;
+use std::future::Future;
 use std::sync::Arc;
 
 fn fixture_item(id: i32, count: i32) -> ItemView {
@@ -1636,6 +1637,328 @@ fn batched_arrival_keeps_boundary_hugging_route_that_exits_elsewhere() {
         vec![start, root],
         "start must not depend on other candidates"
     );
+}
+
+struct ArrivalYieldOnce(bool);
+
+impl Future for ArrivalYieldOnce {
+    type Output = ();
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<()> {
+        if self.0 {
+            std::task::Poll::Ready(())
+        } else {
+            self.0 = true;
+            context.waker().wake_by_ref();
+            std::task::Poll::Pending
+        }
+    }
+}
+
+fn retain_arrival_cooperatively(
+    candidates: &mut Vec<WorldTile>,
+    destination: WorldTile,
+    radius: i32,
+    bounds: ArrivalCollisionBounds,
+    collision_at: impl Fn(WorldTile) -> Option<i32>,
+) -> usize {
+    let yields = std::cell::Cell::new(0);
+    let mut yield_unit = || {
+        yields.set(yields.get() + 1);
+        ArrivalYieldOnce(false)
+    };
+    let mut future = std::pin::pin!(retain_arrival_candidates_cooperative(
+        candidates,
+        destination,
+        radius,
+        bounds,
+        collision_at,
+        &mut yield_unit,
+    ));
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    loop {
+        match Future::poll(future.as_mut(), &mut context) {
+            std::task::Poll::Ready(()) => return yields.get(),
+            std::task::Poll::Pending => {}
+        }
+    }
+}
+
+#[test]
+fn cooperative_arrival_matches_sync_order_and_yields_at_every_unit() {
+    let target = WorldTile {
+        x: 13,
+        z: 13,
+        level: 0,
+    };
+    let open = |x: i32, z: i32| {
+        (z == 17 && (0..=10).contains(&x))
+            || (x == 0 && (17..=19).contains(&z))
+            || (z == 19 && (0..=26).contains(&x))
+            || (x == 27 && (10..=19).contains(&z))
+            || (z == 10 && (13..=27).contains(&x))
+            || (x == 13 && (10..=14).contains(&z))
+            || ((15..=16).contains(&z) && (12..=19).contains(&x))
+    };
+    let collision = |tile: WorldTile| {
+        if tile.level != 0 || !(0..35).contains(&tile.x) || !(0..35).contains(&tile.z) {
+            return None;
+        }
+        Some(if open(tile.x, tile.z) {
+            0
+        } else {
+            CollisionFlag::SQ_BLOCKED
+        })
+    };
+    let mut expected = vec![
+        WorldTile {
+            x: 9,
+            z: 17,
+            level: 0,
+        },
+        WorldTile {
+            x: 10,
+            z: 17,
+            level: 0,
+        },
+        target,
+        WorldTile {
+            x: 10,
+            z: 17,
+            level: 1,
+        },
+    ];
+    let mut actual = expected.clone();
+    retain_arrival_candidates(&mut expected, target, 4, collision);
+    let yields = retain_arrival_cooperatively(
+        &mut actual,
+        target,
+        4,
+        ArrivalCollisionBounds::new(0, 0, 35, 35).unwrap(),
+        collision,
+    );
+    assert_eq!(actual, expected);
+    assert!(yields > 1);
+}
+
+#[test]
+fn cooperative_arrival_radius104_matches_sync_and_negative_clears() {
+    let target = WorldTile {
+        x: 3210,
+        z: 3424,
+        level: 0,
+    };
+    let collision = |tile: WorldTile| {
+        (tile.level == 0
+            && (target.x - 313..=target.x + 313).contains(&tile.x)
+            && (target.z - 313..=target.z + 313).contains(&tile.z))
+        .then_some(0)
+    };
+    let mut expected = vec![
+        target,
+        WorldTile {
+            x: target.x + 104,
+            z: target.z + 104,
+            level: 0,
+        },
+        WorldTile {
+            x: target.x + 105,
+            z: target.z,
+            level: 0,
+        },
+        WorldTile { level: 1, ..target },
+    ];
+    let mut actual = expected.clone();
+    retain_arrival_candidates(&mut expected, target, 104, collision);
+    assert!(
+        retain_arrival_cooperatively(
+            &mut actual,
+            target,
+            104,
+            ArrivalCollisionBounds::new(target.x - 313, target.z - 313, 627, 627).unwrap(),
+            collision,
+        ) > 1
+    );
+    assert_eq!(actual, expected);
+
+    let mut rejected = vec![target];
+    assert_eq!(
+        retain_arrival_cooperatively(
+            &mut rejected,
+            target,
+            -1,
+            ArrivalCollisionBounds::new(target.x - 313, target.z - 313, 627, 627).unwrap(),
+            collision,
+        ),
+        0
+    );
+    assert!(rejected.is_empty());
+}
+
+#[test]
+fn cooperative_arrival_matches_sync_at_world_coordinate_boundaries() {
+    let targets = [
+        WorldTile {
+            x: i32::MIN + 8,
+            z: i32::MIN + 8,
+            level: 0,
+        },
+        WorldTile {
+            x: i32::MAX - 8,
+            z: i32::MAX - 8,
+            level: 0,
+        },
+    ];
+    for target in targets {
+        let bounds = ArrivalCollisionBounds::new(target.x - 4, target.z - 4, 9, 9).unwrap();
+        let collision = |tile: WorldTile| {
+            (tile.level == 0
+                && (bounds.origin_x()..bounds.origin_x() + bounds.width() as i32).contains(&tile.x)
+                && (bounds.origin_z()..bounds.origin_z() + bounds.height() as i32)
+                    .contains(&tile.z))
+            .then_some(0)
+        };
+        let mut expected = vec![
+            WorldTile {
+                x: target.x - 4,
+                z: target.z,
+                level: 0,
+            },
+            WorldTile {
+                x: target.x + 4,
+                z: target.z,
+                level: 0,
+            },
+            WorldTile {
+                x: target.x,
+                z: target.z - 4,
+                level: 0,
+            },
+            WorldTile {
+                x: target.x,
+                z: target.z + 4,
+                level: 0,
+            },
+            target,
+            WorldTile { level: 1, ..target },
+        ];
+        let mut actual = expected.clone();
+        retain_arrival_candidates(&mut expected, target, 4, collision);
+        let yields = retain_arrival_cooperatively(&mut actual, target, 4, bounds, collision);
+        assert!(yields > 0);
+        assert_eq!(actual, expected, "target={target:?}");
+    }
+}
+
+#[test]
+fn arrival_heap_bound_fits_full_provider_and_future_layout() {
+    let bounds = ArrivalCollisionBounds::new(0, 0, 1792, 9088).unwrap();
+    let capacity = 65_536usize;
+    let mut candidates = Vec::new();
+    let mut yield_unit = || std::future::ready(());
+    let collision = |_: WorldTile| None;
+    let future = retain_arrival_candidates_cooperative(
+        &mut candidates,
+        tile(0, 0),
+        104,
+        bounds,
+        collision,
+        &mut yield_unit,
+    );
+    let future_bytes = std::mem::size_of_val(&future);
+    drop(future);
+
+    let scratch_bytes = arrival_candidates_heap_bound(104, capacity, bounds).unwrap();
+    let translated_bounds = ArrivalCollisionBounds::new(1, 1, 1792, 9088).unwrap();
+    assert_eq!(
+        scratch_bytes,
+        arrival_candidates_heap_bound(104, capacity, translated_bounds).unwrap()
+    );
+    let candidate_bytes = capacity * std::mem::size_of::<WorldTile>();
+    let total_bytes = scratch_bytes + candidate_bytes + future_bytes;
+    let limit = 192usize * 1024 * 1024;
+    assert!(
+        total_bytes <= limit,
+        "scratch={scratch_bytes}, candidates={candidate_bytes}, future={future_bytes}"
+    );
+
+    let full_world = ArrivalCollisionBounds::new(
+        i32::MIN,
+        i32::MIN,
+        usize::try_from(1u64 << 32).unwrap(),
+        usize::try_from(1u64 << 32).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(arrival_candidates_heap_bound(104, 1, full_world), None);
+}
+
+#[test]
+fn dropping_cooperative_arrival_releases_scratch_and_closure_without_mutating_candidates() {
+    struct DropSignal(std::rc::Rc<std::cell::Cell<bool>>);
+
+    impl Drop for DropSignal {
+        fn drop(&mut self) {
+            self.0.set(true);
+        }
+    }
+
+    let target = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let candidates = vec![
+        target,
+        WorldTile {
+            x: target.x + 1,
+            z: target.z,
+            level: target.level,
+        },
+    ];
+    let mut actual = candidates.clone();
+    let dropped = std::rc::Rc::new(std::cell::Cell::new(false));
+    let signal = DropSignal(dropped.clone());
+    let bounds = ArrivalCollisionBounds::new(target.x - 313, target.z - 313, 627, 627).unwrap();
+    let collision = move |tile: WorldTile| {
+        let _keep_alive = &signal;
+        (tile.level == 0
+            && (bounds.origin_x()..bounds.origin_x() + bounds.width() as i32).contains(&tile.x)
+            && (bounds.origin_z()..bounds.origin_z() + bounds.height() as i32).contains(&tile.z))
+        .then_some(0)
+    };
+    let yield_unit = || ArrivalYieldOnce(false);
+    let yield_allocations = allocation_counter::measure(|| {
+        let mut future = std::pin::pin!(yield_unit());
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(matches!(
+            Future::poll(future.as_mut(), &mut context),
+            std::task::Poll::Pending
+        ));
+    });
+    assert_eq!(yield_allocations.count_total, 0);
+    let allocations = allocation_counter::measure(|| {
+        let mut yield_unit = || ArrivalYieldOnce(false);
+        let mut future = std::pin::pin!(retain_arrival_candidates_cooperative(
+            &mut actual,
+            target,
+            104,
+            bounds,
+            collision,
+            &mut yield_unit,
+        ));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(matches!(
+            Future::poll(future.as_mut(), &mut context),
+            std::task::Poll::Pending
+        ));
+    });
+    assert_eq!(allocations.bytes_current, 0);
+    assert!(allocations.bytes_max > 0);
+    assert_eq!(actual, candidates);
+    assert!(dropped.get());
 }
 
 #[test]
