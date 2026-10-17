@@ -161,10 +161,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - Bank selection now runs on its own short-lived thread. Its whole-job charge
   remains capped at 192 MiB, including captured inputs, cursor and result.
   Admitted searches run independently, without a process-wide navigation byte cap.
-  The existing five-second selection window is preserved: walking selections then
-  use the route-only Single fallback; other selections keep the first bank
-  without a route, even when admission remains full. Full job admission or
-  owner-result pressure keeps valid demand for retry. A permanent admission
+  After five seconds, a walking selection switches to a fallback route search.
+  If it still waits for admission, it starts that search only after admission,
+  so the result can take longer than five seconds. Other selections keep the
+  first bank without a route, even when admission remains full. Full job admission
+  or owner-result pressure keeps valid demand for retry. A permanent admission
   refusal or oversized request publishes a failed selection instead of
   waiting without a result.
   Walking selections keep the shared compact route for following and map
