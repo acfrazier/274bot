@@ -4,6 +4,7 @@
 //! helpers. Unsupported or incomplete facts retain an explicit class instead
 //! of acquiring a guessed zero-risk interpretation.
 
+use std::future::Future;
 #[cfg(all(test, feature = "load"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -302,20 +303,42 @@ pub(super) fn build_count_for_test() -> usize {
 impl RiskTables {
     /// Build once from the full selected NPC extract.
     pub fn build(combat: &CombatTables) -> Self {
+        let mut yield_unit = || std::future::ready(());
+        super::drive_synchronously(Self::build_cooperative(combat, &mut yield_unit))
+            .expect("risk table allocation")
+    }
+
+    /// Build selected NPC facts with one borrowed checkpoint per NPC row.
+    ///
+    /// The async state contains only the input borrow, scalar indexes, and
+    /// the one output vector. Callers account for its future layout, the
+    /// vector/boxed-slice conversion overlap, and the returned table.
+    pub async fn build_cooperative<F, U>(
+        combat: &CombatTables,
+        yield_unit: &mut F,
+    ) -> Result<Self, std::collections::TryReserveError>
+    where
+        F: FnMut() -> U,
+        U: Future<Output = ()>,
+    {
         #[cfg(all(test, feature = "load"))]
         RISK_TABLE_BUILD_COUNT.fetch_add(1, Ordering::Relaxed);
 
-        let npcs = combat
+        let rows = combat
             .selected()
             .npc_names()
-            .map_or(&[][..], |names| &names.rows)
-            .iter()
-            .map(|row| (row.id, KindRisk::from_npc(row, combat)))
-            .collect();
-        Self {
-            npcs,
-            poison_unknown_v: poison_unknown_v(combat),
+            .map_or(&[][..], |names| &names.rows);
+        let mut npcs = Vec::new();
+        npcs.try_reserve_exact(rows.len())?;
+        for row in rows {
+            npcs.push((row.id, KindRisk::from_npc(row, combat)));
+            yield_unit().await;
         }
+        let poison_unknown_v = poison_unknown_v_rows_cooperative(rows, yield_unit).await;
+        Ok(Self {
+            npcs: npcs.into_boxed_slice(),
+            poison_unknown_v,
+        })
     }
 
     /// Facts of one selected NPC, or `None` when the selection lacks it.
@@ -356,13 +379,26 @@ impl RiskTables {
     }
 }
 
-fn poison_unknown_v(combat: &CombatTables) -> u8 {
-    let Some(npc_names) = combat.selected().npc_names() else {
+async fn poison_unknown_v_rows_cooperative<F, U>(rows: &[NpcNameRow], yield_unit: &mut F) -> u8
+where
+    F: FnMut() -> U,
+    U: Future<Output = ()>,
+{
+    if rows.is_empty() {
         return u8::MAX;
-    };
-    poison_unknown_v_rows(&npc_names.rows)
+    }
+    let mut maximum = 0;
+    for row in rows {
+        let Some(per_tick) = poison_per_tick(row.poison_severity) else {
+            return u8::MAX;
+        };
+        maximum = maximum.max(per_tick);
+        yield_unit().await;
+    }
+    maximum
 }
 
+#[cfg(test)]
 fn poison_unknown_v_rows(rows: &[NpcNameRow]) -> u8 {
     if rows.is_empty() {
         return u8::MAX;
@@ -622,5 +658,25 @@ mod tests {
         assert_eq!(fact.max_hit, 7);
         assert_eq!(fact.unknown_for(false), None);
         assert_eq!(fact.unknown_for(true), Some(UnknownKind::Poison));
+    }
+
+    #[test]
+    fn u2_cooperative_risk_table_matches_sync_and_checkpoints_both_passes() {
+        let combat = combat();
+        let rows = &combat.selected().npc_names().unwrap().rows;
+        let mut checkpoints = 0;
+        let mut yield_unit = || {
+            checkpoints += 1;
+            std::future::ready(())
+        };
+        let cooperative = super::super::drive_synchronously(RiskTables::build_cooperative(
+            &combat,
+            &mut yield_unit,
+        ))
+        .unwrap();
+        let synchronous = RiskTables::build(&combat);
+        assert_eq!(checkpoints, rows.len() * 2);
+        assert_eq!(cooperative.npcs.as_ref(), synchronous.npcs.as_ref());
+        assert_eq!(cooperative.poison_unknown_v, synchronous.poison_unknown_v);
     }
 }

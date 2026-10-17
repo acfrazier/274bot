@@ -744,13 +744,21 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
     ));
     std::fs::create_dir_all(&run_dir).expect("create per-account capture directory");
 
+    let port = std::env::var("BOT_GAME_PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(45594);
+    let http_port = std::env::var("BOT_HTTP_PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(2080);
     let options = ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(45594),
-        http_port: Some(2080),
+        port: Some(port),
+        http_port: Some(http_port),
         engine_dir: Some(engine_dir),
         cache_dir: Some(copied_cache.clone()),
         unpack_dir: Some(copied_cache),
