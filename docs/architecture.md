@@ -346,7 +346,7 @@ unchanged manifest; compression does not change selected-content identities.
 | `pack/zones.rs` | zone table codec | wire geometry and stable identity of exclusion zones |
 | `paint.rs` | nav-paint buffers | no imgui, no client draw |
 | `quest_gates.rs` | quest-stage gates on transport edges | typed gates over selected progress signals |
-| `router.rs` | world-space Dijkstra | total-ticks cost, gated edges |
+| `router.rs` | world-space Dijkstra | exact-coordinate compact storage, shared synchronous/cooperative kernel, total-ticks cost and gated edges |
 | `router/grid.rs` | legacy grid A-star | `find_on_grid` for traveller and harness |
 | `router/resources.rs` | resource labels on walk nodes | change only at paid hops |
 | `tile.rs` | tile coords and distance | x, z, level |
@@ -372,6 +372,22 @@ unchanged manifest; compression does not change selected-content identities.
 | `bin/nav-input-audit.rs` | input audit CLI | offline cache and content audit |
 | `bin/cache-content-id.rs` | `cache-content-id` CLI | read-only identity export |
 | `required-content-274.tsv`, `required-content-289.tsv` | canonical content inventory | build-checked data, not code |
+
+#### Shared bounded routing
+
+The loaded navigation lease supplies separate carry, worn and diagnosis bounds.
+`max_plan_item_rows` is the smaller of the full diagnosis bound and the sum of
+the carry and worn bounds. Bank planners use this effective item bound, not
+the full search budget. Captured bank rows remain a separate dimension.
+Cursor construction does not allocate. Cursor growth uses checked limits and
+fallible reservations.
+
+Route execution separates completed searches into private jobs in the existing
+Route family. A later job charges retained routes, diagnosis and plan storage
+at their exact sizes as input. Each whole job remains within 192 MiB.
+The shared owner-result ledger holds continuation custody between jobs.
+Cancellation and request-generation checks apply across each gap.
+Public Search/Commit phases and Path/NoPath results do not change.
 
 #### Cooperative search storage
 

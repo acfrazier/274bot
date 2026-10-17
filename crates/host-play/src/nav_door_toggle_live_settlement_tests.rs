@@ -147,10 +147,10 @@ impl SettlementRig {
     fn new(world: Arc<NavWorld>) -> Self {
         let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let control = Arc::new(parking_lot::Mutex::new(WalkControl::default()));
-        script_slot_or_insert(&scripts, ALICE)
-            .lock()
-            .unwrap()
-            .start_test_script(
+        let slot = script_slot_or_insert(&scripts, ALICE);
+        {
+            let mut slot = slot.lock().unwrap();
+            slot.start_test_script(
                 Box::new(SettlementWalker {
                     control: Arc::clone(&control),
                     handle: None,
@@ -158,6 +158,7 @@ impl SettlementRig {
                 None,
             )
             .unwrap();
+        }
 
         let mut client = crate::tests::nav_client();
         client.map_build_base_x = INITIAL_BASE.x;
@@ -206,9 +207,11 @@ impl SettlementRig {
             false,
             false,
         );
+        crate::script_runtime::pump_route_work(&self.navs, ALICE);
     }
 
     fn pump(&mut self, here: WorldTile) {
+        crate::script_runtime::pump_route_work(&self.navs, ALICE);
         step_nav_bot(
             &mut self.client,
             ALICE,
@@ -248,25 +251,32 @@ impl SettlementRig {
     }
 }
 
+#[track_caller]
 fn wait_for_route(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     mut matches: impl FnMut(WorldTile) -> bool,
-) -> nav::router::Route {
+) -> WorldTile {
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
-        let route = navs
+        crate::script_runtime::pump_route_work(navs, ALICE);
+        let destination = navs
             .lock()
             .unwrap()
             .get(ALICE)
-            .and_then(|bot| bot.route.as_deref().cloned());
-        if let Some(route) = route {
-            if matches(route.dest) {
-                return route;
+            .and_then(NavBot::route_destination);
+        if let Some(destination) = destination {
+            if matches(destination) {
+                return destination;
             }
         }
         assert!(
             Instant::now() < deadline,
-            "route worker did not arm the expected endpoint"
+            "route work did not arm the expected endpoint: destination={destination:?}; state={:?}",
+            navs.lock().unwrap().get(ALICE).map(|bot| (
+                bot.work_scope,
+                bot.route_work_pending(),
+                bot.walk_outcome_detail.clone(),
+            ))
         );
         std::thread::yield_now();
     }
@@ -283,12 +293,30 @@ fn live_owner_id(navs: &Arc<Mutex<HashMap<String, NavBot>>>) -> u64 {
 }
 
 #[test]
+fn first_compiled_walk_without_a_prior_nav_bot_carries_the_slot_scope() {
+    let mut rig = SettlementRig::new(packed_world());
+    assert!(rig.navs.lock().unwrap().is_empty());
+
+    rig.observe(1, START);
+
+    let scope = script_slot(&rig.scripts, ALICE)
+        .unwrap()
+        .lock()
+        .unwrap()
+        .work_scope()
+        .expect("the compiled slot has a work scope");
+    let navs = rig.navs.lock().unwrap();
+    let bot = &navs[ALICE];
+    assert_eq!(bot.work_scope, Some(scope));
+    assert!(bot.route_work_pending() || bot.has_route());
+}
+
+#[test]
 fn estimated_loc_endpoint_waits_for_live_footprint_then_refreshes_under_same_owner() {
     let world = packed_world();
     let mut rig = SettlementRig::new(world);
     rig.observe(1, START);
-    let estimated = wait_for_route(&rig.navs, |_| true);
-    let estimated_endpoint = estimated.dest;
+    let estimated_endpoint = wait_for_route(&rig.navs, |_| true);
     assert_eq!(
         estimated_endpoint,
         WorldTile {
@@ -319,10 +347,7 @@ fn estimated_loc_endpoint_waits_for_live_footprint_then_refreshes_under_same_own
     );
     assert_eq!(live_owner_id(&rig.navs), request_id);
     assert_eq!(
-        rig.navs.lock().unwrap()[ALICE]
-            .route
-            .as_ref()
-            .map(|route| route.dest),
+        rig.navs.lock().unwrap()[ALICE].route_destination(),
         Some(estimated_endpoint),
         "the estimated route remains armed until live footprint evidence arrives"
     );
@@ -362,23 +387,24 @@ fn estimated_loc_endpoint_waits_for_live_footprint_then_refreshes_under_same_own
         "scene entry with a known footprint refreshes once"
     );
     assert!(
-        (refreshed.dest
+        (refreshed
             == WorldTile {
                 x: TARGET.x,
                 z: TARGET.z - 1,
                 level: TARGET.level
             })
-            || (refreshed.dest
+            || (refreshed
                 == WorldTile {
                     x: TARGET.x,
                     z: TARGET.z + 1,
                     level: TARGET.level
                 }),
         "the refreshed route uses a live-valid north/south stand, got {:?}",
-        refreshed.dest
+        refreshed
     );
+
     assert_eq!(
-        api::query::loc_approach::arrived_at(&rig.snapshot, refreshed.dest, TARGET, 1, 0),
+        api::query::loc_approach::arrived_at(&rig.snapshot, refreshed, TARGET, 1, 0),
         Some(true),
         "the refreshed endpoint passes the live footprint predicate"
     );
@@ -392,7 +418,7 @@ fn estimated_loc_endpoint_waits_for_live_footprint_then_refreshes_under_same_own
     rig.pump(estimated_endpoint);
     let all = rig.navs.lock().unwrap();
     assert!(
-        all[ALICE].route.is_none(),
+        !all[ALICE].has_route(),
         "explicit native cancellation clears the refreshed follow"
     );
     assert!(
@@ -452,7 +478,7 @@ fn loc_intent_target_gone_settles_instead_of_waiting_for_respawn() {
                 deplete(&mut rig, start);
             }
             rig.observe(1, start);
-            let endpoint = wait_for_route(&rig.navs, |_| true).dest;
+            let endpoint = wait_for_route(&rig.navs, |_| true);
             let initial_generation = rig.navs.lock().unwrap()[ALICE].route_generation;
             rig.set_position(endpoint);
             deplete(&mut rig, endpoint);
@@ -466,10 +492,7 @@ fn loc_intent_target_gone_settles_instead_of_waiting_for_respawn() {
                 "replaced={replaced}, gone_before_arm={gone_before_arm}: a gone target must settle through tile arrival"
             );
             let all = rig.navs.lock().unwrap();
-            assert!(
-                all[ALICE].route.is_none(),
-                "the host follow must settle too"
-            );
+            assert!(!all[ALICE].has_route(), "the host follow must settle too");
             assert!(all[ALICE]
                 .native_walk
                 .as_ref()
@@ -487,10 +510,10 @@ fn loc_intent_target_gone_settles_instead_of_waiting_for_respawn() {
 fn loc_intent_missing_on_scene_entry_settles_through_tile_arrival() {
     let mut rig = SettlementRig::new(packed_world());
     rig.observe(1, START);
-    let endpoint = wait_for_route(&rig.navs, |_| true).dest;
+    let endpoint = wait_for_route(&rig.navs, |_| true);
     rig.set_position(endpoint);
     rig.pump(endpoint);
-    assert!(rig.navs.lock().unwrap()[ALICE].route.is_some());
+    assert!(rig.navs.lock().unwrap()[ALICE].has_route());
     rig.client.map_build_base_x = LIVE_BASE.x;
     rig.client.map_build_base_z = LIVE_BASE.z;
     rig.set_position(endpoint);
@@ -503,7 +526,7 @@ fn loc_intent_missing_on_scene_entry_settles_through_tile_arrival() {
         matches!(rig.control.lock().result.as_ref(), Some(Ok(receipt)) if receipt.end == script::native::WalkEnd::Arrived),
         "an observed empty scene is target-gone evidence, not an off-scene estimate"
     );
-    assert!(rig.navs.lock().unwrap()[ALICE].route.is_none());
+    assert!(!rig.navs.lock().unwrap()[ALICE].has_route());
 }
 
 #[test]
@@ -541,7 +564,7 @@ fn depleted_large_loc_refreshes_to_plain_tile_radius_before_settling() {
     rig.client.collision[0].flags[52][52] |= CollisionFlag::SQ_BLOCKED;
     rig.set_position(start);
     rig.observe(1, start);
-    let old_endpoint = wait_for_route(&rig.navs, |_| true).dest;
+    let old_endpoint = wait_for_route(&rig.navs, |_| true);
     assert!(old_endpoint.x.abs_diff(TARGET.x) > 1);
     let request_id = live_owner_id(&rig.navs);
     let initial_generation = rig.navs.lock().unwrap()[ALICE].route_generation;
@@ -550,7 +573,7 @@ fn depleted_large_loc_refreshes_to_plain_tile_radius_before_settling() {
     rig.set_position(old_endpoint);
     rig.observe(2, old_endpoint);
     rig.pump(old_endpoint);
-    let endpoint = wait_for_route(&rig.navs, |dest| dest != old_endpoint).dest;
+    let endpoint = wait_for_route(&rig.navs, |dest| dest != old_endpoint);
     assert_eq!(live_owner_id(&rig.navs), request_id);
     assert!(
         endpoint
@@ -572,7 +595,7 @@ fn depleted_large_loc_refreshes_to_plain_tile_radius_before_settling() {
         matches!(rig.control.lock().result.as_ref(), Some(Ok(receipt)) if receipt.end == script::native::WalkEnd::Arrived),
         "a depleted large target must not end at its obsolete far perimeter"
     );
-    assert!(rig.navs.lock().unwrap()[ALICE].route.is_none());
+    assert!(!rig.navs.lock().unwrap()[ALICE].has_route());
 }
 
 #[test]
@@ -612,8 +635,15 @@ fn offscene_solid_strip_walk_makes_progress_without_unchanged_refreshes() {
     rig.set_position(start);
     rig.observe(1, start);
     let deadline = Instant::now() + Duration::from_secs(3);
-    while rig.navs.lock().unwrap()[ALICE].route_worker.is_some() {
-        assert!(Instant::now() < deadline, "initial worker did not finish");
+    loop {
+        crate::script_runtime::pump_route_work(&rig.navs, ALICE);
+        if !rig.navs.lock().unwrap()[ALICE].route_work_pending() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "initial route work did not finish"
+        );
         std::thread::yield_now();
     }
     rig.observe(2, start);
@@ -629,14 +659,14 @@ fn offscene_solid_strip_walk_makes_progress_without_unchanged_refreshes() {
     }
     let (after, route) = {
         let all = rig.navs.lock().unwrap();
-        (all[ALICE].route_generation, all[ALICE].route.clone())
+        (all[ALICE].route_generation, all[ALICE].has_route())
     };
     assert_eq!(
         after, generation,
-        "unchanged inputs cannot restart the worker"
+        "unchanged inputs cannot restart route work"
     );
     assert!(
-        route.is_none(),
+        !route,
         "no anchor-radius stand exists inside this strip; never route to its remote perimeter"
     );
 }

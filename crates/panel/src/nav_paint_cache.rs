@@ -28,19 +28,14 @@ impl Cache {
         self.slots.remove(name);
     }
 
-    /// Record this frame's visible facts and report whether the caller must
-    /// publish. The changed state is committed atomically with the decision,
-    /// so identical frames cannot request duplicate materialization.
-    pub fn begin_frame(&mut self, name: &str, facts: Facts) -> bool {
-        if self.slots.get(name) == Some(&facts) {
-            return false;
-        }
-        self.slots.insert(name.to_owned(), facts);
-        true
+    /// Copy the small fact key before borrowing the route owner. The slot's
+    /// frame callback compares it without holding either process-wide lock.
+    pub fn last_frame(&self, name: &str) -> Option<Facts> {
+        self.slots.get(name).copied()
     }
 
-    /// Correct a fact changed as a side effect of publication (trail
-    /// retirement) without requesting a second publication.
+    /// Record the completed paint, including any trail retirement. Each slot
+    /// owns its sequential frame callback.
     pub fn record(&mut self, name: &str, facts: Facts) {
         self.slots.insert(name.to_owned(), facts);
     }
@@ -145,7 +140,8 @@ mod tests {
                 ..baseline
             },
         ] {
-            if cache.begin_frame("alice", candidate) {
+            if cache.last_frame("alice") != Some(candidate) {
+                cache.record("alice", candidate);
                 publishes += 1;
             }
         }

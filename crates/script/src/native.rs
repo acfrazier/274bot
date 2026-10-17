@@ -595,6 +595,10 @@ pub enum WalkRefusal {
         tried: u8,
         last: Option<crate::combat::risk::Verdict>,
     },
+    RouteTooLarge {
+        required_bytes: usize,
+        maximum_bytes: usize,
+    },
     Unsurvivable,
     FixableWith,
     Unknown(crate::combat::risk::UnknownWhy),
@@ -611,6 +615,13 @@ impl std::fmt::Display for WalkRefusal {
                 }
                 Ok(())
             }
+            Self::RouteTooLarge {
+                required_bytes,
+                maximum_bytes,
+            } => write!(
+                f,
+                "route result needs {required_bytes} bytes, above the {maximum_bytes}-byte limit",
+            ),
             Self::Unsurvivable => f.write_str("route is unsurvivable"),
             Self::FixableWith => f.write_str("route needs additional supplies"),
             Self::Unknown(why) => write!(f, "route risk is unknown: {why:?}"),
@@ -938,6 +949,10 @@ mod walk_permission_tests {
             WalkRefusal::FixableWith,
             WalkRefusal::Unknown(crate::combat::risk::UnknownWhy::MissingFacts),
             WalkRefusal::EscapeInProgress,
+            WalkRefusal::RouteTooLarge {
+                required_bytes: 64 * 1024 * 1024 + 1,
+                maximum_bytes: 64 * 1024 * 1024,
+            },
         ];
         for left in 0..refusals.len() {
             for right in left + 1..refusals.len() {

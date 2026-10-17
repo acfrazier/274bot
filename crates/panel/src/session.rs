@@ -37,7 +37,10 @@ use host_play::local_state::{LocalStateService, Preferences, StateRoot};
 use host_play::map_cache::MapDemand;
 use host_play::profile::ProfileEnvironment;
 use host_play::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
-use host_play::walk_map::{observed_services, Catalogue, ObservedService, SourceStatus};
+use host_play::walk_map::{
+    observed_services, Catalogue, ObservedService, RouteProjection, RouteProjectionPath,
+    RouteSource, SourceStatus,
+};
 use host_play::{
     map_ready_catalogue, map_ready_images, open_vault, peek_map_catalogue, run_prepared_template,
     run_with_io, run_with_template, MapDemandHandle, MapJobStatus, MapStage, PlayOptions,
@@ -46,7 +49,7 @@ use host_play::{
 };
 use nav::paint::{
     collision_at_with, hop_captions, hull_targets, reached, remaining_path_tiles, remaining_trail,
-    select_draw_indices, trail_tones, TrailTone,
+    select_draw_indices, trail_tones, HopCaption, HullTarget, PathTile, TrailTone,
 };
 use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
@@ -551,24 +554,112 @@ const SCENE_TILES: i32 = 104;
 /// the client only projects the locs inside its loaded scene anyway.
 const HULL_WINDOW: usize = 48;
 
+/// One selected route for the scene painter. All route storage stays borrowed
+/// while the painter builds its small output buffers.
+enum ScenePaintRoute<'a> {
+    Legacy(&'a Route),
+    Script(RouteProjection<'a>),
+}
+
+impl ScenePaintRoute<'_> {
+    fn projection(&self) -> RouteProjectionPath<'_> {
+        match self {
+            Self::Legacy(route) => RouteProjectionPath::Legacy(route),
+            Self::Script(route) => route.route,
+        }
+    }
+}
+
 /// Shared route-owner precedence with the map overlay: driven live, then
-/// script, then manual WalkTo. A script walk never writes the WalkArm map,
-/// so painting from that arm alone would drop the packed path.
-fn live_or_walk_paint(
+/// script, then manual WalkTo. Script routes stay borrowed through projection.
+fn live_or_walk_paint<'a>(
     driven: bool,
-    live: (Option<Route>, Option<WorldTile>),
-    walk: (Option<Route>, Option<WorldTile>),
-    script: (Option<Route>, Option<WorldTile>),
-) -> (Option<Route>, Option<WorldTile>) {
-    use host_play::walk_map::{select_route_source, RouteSource};
-    match select_route_source(
+    live: (Option<&'a Route>, Option<WorldTile>),
+    walk: (Option<&'a Route>, Option<WorldTile>),
+    script: Option<RouteProjection<'a>>,
+) -> (Option<ScenePaintRoute<'a>>, Option<WorldTile>) {
+    match host_play::walk_map::select_route_source(
         driven && live.0.is_some(),
-        script.0.is_some(),
+        script.is_some(),
         walk.0.is_some(),
     ) {
-        Some(RouteSource::Live) => live,
-        Some(RouteSource::Script) => script,
-        _ => walk,
+        Some(RouteSource::Live) => (live.0.map(ScenePaintRoute::Legacy), live.1),
+        Some(RouteSource::Script) => (
+            script.map(ScenePaintRoute::Script),
+            script.and_then(|p| p.aim),
+        ),
+        _ => (walk.0.map(ScenePaintRoute::Legacy), walk.1),
+    }
+}
+
+fn scene_route_fingerprint(route: Option<&ScenePaintRoute<'_>>) -> u64 {
+    match route {
+        None => crate::nav_paint_cache::route_fingerprint(None),
+        Some(ScenePaintRoute::Legacy(route)) => {
+            crate::nav_paint_cache::route_fingerprint(Some(route))
+        }
+        Some(ScenePaintRoute::Script(route)) => {
+            use std::hash::{Hash, Hasher};
+            let mut state = std::collections::hash_map::DefaultHasher::new();
+            let source = match route.stamp.source {
+                RouteSource::Manual => 0u8,
+                RouteSource::Script => 1,
+                RouteSource::Live => 2,
+            };
+            source.hash(&mut state);
+            route.stamp.generation.hash(&mut state);
+            route.stamp.destination.x.hash(&mut state);
+            route.stamp.destination.z.hash(&mut state);
+            route.stamp.destination.level.hash(&mut state);
+            state.finish()
+        }
+    }
+}
+
+/// Route-only outputs. No route borrow or owner lock reaches the scene painter
+/// or the camera update.
+#[derive(Default)]
+struct SceneRoutePaint {
+    path: Vec<PathTile>,
+    captions: Vec<HopCaption>,
+    hulls: Vec<HullTarget>,
+}
+
+impl SceneRoutePaint {
+    fn build(
+        world: &NavWorld,
+        route: Option<RouteProjectionPath<'_>>,
+        here: Option<WorldTile>,
+        path: bool,
+        hops: bool,
+    ) -> Self {
+        let route = match route {
+            Some(RouteProjectionPath::Legacy(route)) => {
+                nav::producer::route_view(world, route).ok()
+            }
+            Some(RouteProjectionPath::Compact(route)) => Some(route),
+            None => None,
+        };
+        let Some(route) = route else {
+            return Self::default();
+        };
+        Self {
+            path: if path {
+                remaining_path_tiles(route, here)
+            } else {
+                Vec::new()
+            },
+            captions: if hops {
+                hop_captions(route, here)
+            } else {
+                Vec::new()
+            },
+            hulls: if hops {
+                hull_targets(route, here, HULL_WINDOW)
+            } else {
+                Vec::new()
+            },
+        }
     }
 }
 
@@ -627,19 +718,19 @@ fn live_client_trail(client: &mut Client, here: Option<WorldTile>) -> Vec<WorldT
 /// view changes. Non-GPU, unfocused, skip-paint and renderer-off slots
 /// publish `None` once when demand drops, preventing stale paint.
 ///
-/// `world` is the baked pack, `route` the armed walk route, `here` the
-/// player's observed world tile, `trail_world` the local player's last
-/// `tryMove` route buffer, `run_on` its two-tone state, and `click` the
+/// `world` is the baked pack, `route` contains the projected route buffers,
+/// `trail_world` is the local player's last `tryMove` route buffer,
+/// `run_on` its two-tone state, and `click` the
 /// traveller's current walk aim. World-to-scene is
 /// `(x - map_build_base_x, z - map_build_base_z)`.
-// The brief fixes this signature; a param struct would only shuffle names
-// across the one call site.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the scene painter consumes these facts at one call site"
+)]
 fn publish_nav_debug(
     client: &mut Client,
     world: &NavWorld,
-    route: Option<&Route>,
-    here: Option<WorldTile>,
+    route: Option<SceneRoutePaint>,
     trail_world: &[WorldTile],
     run_on: bool,
     click: Option<WorldTile>,
@@ -771,7 +862,7 @@ fn publish_nav_debug(
         // Full density near, stride after, always keeping the transport
         // hops and the terminal (the pack map keeps the full path).
         if settings.show_nav_path {
-            let tiles = remaining_path_tiles(route, here);
+            let tiles = &route.path;
             let force: Vec<usize> = tiles
                 .iter()
                 .enumerate()
@@ -790,7 +881,8 @@ fn publish_nav_debug(
         // strokes the transport loc hulls (the client's transport colour
         // family covers both).
         if settings.show_nav_path && settings.hop_labels {
-            paint.hulls = hull_targets(route, here, HULL_WINDOW)
+            paint.hulls = route
+                .hulls
                 .into_iter()
                 .map(|h| NavDebugHull {
                     loc_id: h.loc_id,
@@ -798,7 +890,8 @@ fn publish_nav_debug(
                     scene_z: h.at.z - base_z,
                 })
                 .collect();
-            paint.labels = hop_captions(route, here)
+            paint.labels = route
+                .captions
                 .into_iter()
                 .map(|c| (c.at.x - base_x, c.at.z - base_z, c.text))
                 .collect();
@@ -826,17 +919,13 @@ fn publish_nav_debug(
 /// Desired heading is held until it moves ≥ `TARGET_RETARGET_MIN` so a
 /// corridor does not twitch; ease velocity is ours, not the keycam field
 /// (`follow_camera` would double-integrate it).
-fn apply_path_camera(client: &mut Client, route: Option<&Route>, here: Option<WorldTile>) {
+fn apply_path_camera(client: &mut Client, tiles: &[PathTile], here: Option<WorldTile>) {
     if client.shell.key_held[1] == 1 || client.shell.key_held[2] == 1 {
         return;
     }
-    let Some(route) = route else {
-        return;
-    };
     let Some(here) = here else {
         return;
     };
-    let tiles = remaining_path_tiles(route, Some(here));
     if tiles.is_empty() {
         return;
     }
@@ -3044,13 +3133,6 @@ impl Session {
                 }
                 _ => (false, (None, None)),
             };
-            let script = script_nav_paint
-                .lock()
-                .unwrap()
-                .as_ref()
-                .map(|h| h.of(name))
-                .unwrap_or((None, None));
-            let (route, click) = live_or_walk_paint(driven, live, walk, script);
             match crate::picker::pack() {
                 Some(world) => {
                     let here = c.local_player.as_ref().map(|lp| WorldTile {
@@ -3059,43 +3141,79 @@ impl Session {
                         level: 0,
                     });
                     retire_client_trail(c, here);
-                    // Run orb (varp 173 / 274 overlay), not the run
-                    // animation — the anim is only true while a run
-                    // cycle plays.
+                    // Run orb (varp 173 / 274 overlay), not the run animation.
                     let run_on = c.run_enabled();
                     let active = drawing && c.nav_debug_drawable();
-                    let facts = crate::nav_paint_cache::Facts {
+                    let camera = drawing
+                        && layers.camera_follow
+                        && here.is_some()
+                        && c.shell.key_held[1] != 1
+                        && c.shell.key_held[2] != 1;
+                    let previous = nav_paint_cache.lock().unwrap().last_frame(name);
+                    let base_facts = crate::nav_paint_cache::Facts {
                         settings_generation,
                         active,
                         base_x: c.map_build_base_x,
                         base_z: c.map_build_base_z,
                         here,
-                        route: crate::nav_paint_cache::route_fingerprint(route.as_ref()),
-                        click,
+                        route: 0,
+                        click: None,
                         trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
                         run_on,
                     };
-                    let changed = nav_paint_cache.lock().unwrap().begin_frame(name, facts);
+                    let project_route = |script_route: Option<RouteProjection<'_>>| {
+                        let (route, click) = live_or_walk_paint(
+                            driven,
+                            (live.0.as_ref(), live.1),
+                            (walk.0.as_ref(), walk.1),
+                            script_route,
+                        );
+                        let facts = crate::nav_paint_cache::Facts {
+                            route: scene_route_fingerprint(route.as_ref()),
+                            click,
+                            ..base_facts
+                        };
+                        let changed = previous != Some(facts);
+                        let path = camera || (changed && active && layers.show_nav_path);
+                        let hops = changed && active && layers.show_nav_path && layers.hop_labels;
+                        let outputs = if path || hops {
+                            SceneRoutePaint::build(
+                                &world,
+                                route.as_ref().map(ScenePaintRoute::projection),
+                                here,
+                                path,
+                                hops,
+                            )
+                        } else {
+                            SceneRoutePaint::default()
+                        };
+                        (facts, changed, outputs)
+                    };
+                    let script_handle = script_nav_paint.lock().unwrap().clone();
+                    let (facts, changed, outputs) = match script_handle {
+                        Some(handle) => handle.with_map_route(name, project_route),
+                        None => project_route(None),
+                    };
+                    // The route borrow and the process-wide navs lock end above.
+                    if camera {
+                        apply_path_camera(c, &outputs.path, here);
+                    }
                     if changed {
-                        // Full tryMove BFS (every scene tile, src→dest), not
-                        // the entity walk buffer (capped at 9). Materialize
-                        // it only when an active GPU consumer needs a view.
+                        // Materialize the full tryMove trail only for an active
+                        // GPU consumer, after releasing the route owner.
                         let trail_world = if active {
                             live_client_trail(c, here)
                         } else {
                             Vec::new()
                         };
-                        // Focused drawer owns ensure/drop; when focus is None
-                        // any remaining slot may release the shared sidecar.
                         let flags_owner = is_focused || focused.is_none();
                         publish_nav_debug(
                             c,
                             &world,
-                            route.as_ref(),
-                            here,
+                            Some(outputs),
                             &trail_world,
                             run_on,
-                            click,
+                            facts.click,
                             &layers,
                             active,
                             flags_owner,
@@ -3105,9 +3223,6 @@ impl Session {
                             ..facts
                         };
                         nav_paint_cache.lock().unwrap().record(name, recorded);
-                    }
-                    if drawing && layers.camera_follow {
-                        apply_path_camera(c, route.as_ref(), here);
                     }
                 }
                 None => {

@@ -10,7 +10,8 @@ use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 
 use crate::collision::{WorldCollision, SQ_BLOCKED};
-use crate::router::{step_ok, Leg, Route};
+use crate::contract::{LegView, RouteView};
+use crate::router::step_ok;
 use crate::transport::{TransportGraph, TransportKind};
 
 /// One tile of the remaining path: a walk tile or a transport hop tile
@@ -21,7 +22,7 @@ pub struct PathTile {
     pub transport: bool,
 }
 
-/// The tiles still ahead on a whole-world `Route`, front to back. Walk
+/// The tiles still ahead on a whole-world route view, front to back. Walk
 /// legs contribute every tile; a transport leg contributes its `at` and
 /// `to` so the path stays connected across the crossing. When `here` is
 /// given (the player's observed tile), legs already traversed are skipped
@@ -29,24 +30,12 @@ pub struct PathTile {
 /// trimmed to the tiles from `here` onward. Consecutive duplicate tiles (a
 /// transport's `to` is the next walk leg's first tile) collapse into one,
 /// keeping the transport flag.
-pub fn remaining_path_tiles(route: &Route, here: Option<WorldTile>) -> Vec<PathTile> {
-    let mut leg = 0;
-    if let Some(here) = here {
-        while leg < route.legs.len() {
-            let done = match &route.legs[leg] {
-                Leg::Walk { tiles } => tiles.last().is_some_and(|last| *last == here),
-                Leg::Transport { edge } => edge.to == here,
-            };
-            if !done {
-                break;
-            }
-            leg += 1;
-        }
-    }
+pub fn remaining_path_tiles(route: RouteView<'_>, here: Option<WorldTile>) -> Vec<PathTile> {
+    let leg = first_remaining_leg(route, here);
     let mut out: Vec<PathTile> = Vec::new();
-    for (i, l) in route.legs.iter().enumerate().skip(leg) {
+    for (i, l) in route.legs().enumerate().skip(leg) {
         match l {
-            Leg::Walk { tiles } => {
+            LegView::Walk(tiles) => {
                 let tiles: &[WorldTile] = if i == leg {
                     if let Some(here) = here {
                         if let Some(pos) = tiles.iter().position(|t| *t == here) {
@@ -64,13 +53,26 @@ pub fn remaining_path_tiles(route: &Route, here: Option<WorldTile>) -> Vec<PathT
                     push_tile(&mut out, *t, false);
                 }
             }
-            Leg::Transport { edge } => {
-                push_tile(&mut out, edge.at, true);
-                push_tile(&mut out, edge.to, true);
+            LegView::Transport(hop) => {
+                push_tile(&mut out, hop.anchor(), true);
+                push_tile(&mut out, hop.landing(), true);
             }
         }
     }
     out
+}
+
+fn first_remaining_leg(route: RouteView<'_>, here: Option<WorldTile>) -> usize {
+    let Some(here) = here else {
+        return 0;
+    };
+    route
+        .legs()
+        .take_while(|leg| match leg {
+            LegView::Walk(tiles) => tiles.last().is_some_and(|last| *last == here),
+            LegView::Transport(hop) => hop.landing() == here,
+        })
+        .count()
 }
 
 /// Append a tile unless it repeats the last one; a repeat keeps (ORs in)
@@ -265,32 +267,20 @@ fn hop_kind_word(kind: TransportKind) -> Option<&'static str> {
 }
 
 /// Remaining transport hops that get a caption, one per hop at `at`.
-pub fn hop_captions(route: &Route, here: Option<WorldTile>) -> Vec<HopCaption> {
-    let mut leg = 0;
-    if let Some(here) = here {
-        while leg < route.legs.len() {
-            let done = match &route.legs[leg] {
-                Leg::Walk { tiles } => tiles.last().is_some_and(|last| *last == here),
-                Leg::Transport { edge } => edge.to == here,
-            };
-            if !done {
-                break;
-            }
-            leg += 1;
-        }
-    }
+pub fn hop_captions(route: RouteView<'_>, here: Option<WorldTile>) -> Vec<HopCaption> {
+    let leg = first_remaining_leg(route, here);
     let mut out = Vec::new();
-    for l in route.legs.iter().skip(leg) {
-        if let Leg::Transport { edge } = l {
-            let text = if edge.loc_id == 733 {
+    for l in route.legs().skip(leg) {
+        if let LegView::Transport(hop) = l {
+            let text = if hop.loc_id() == 733 {
                 Some("Web")
             } else {
-                hop_kind_word(edge.kind)
+                hop_kind_word(hop.kind())
             };
             if let Some(text) = text {
-                if out.last().is_none_or(|c: &HopCaption| c.at != edge.at) {
+                if out.last().is_none_or(|c: &HopCaption| c.at != hop.anchor()) {
                     out.push(HopCaption {
-                        at: edge.at,
+                        at: hop.anchor(),
                         text: text.into(),
                     });
                 }
@@ -318,29 +308,17 @@ fn is_loc_backed(kind: TransportKind) -> bool {
 /// [`remaining_path_tiles`]; duplicate targets (a door placement's two
 /// directed edges share one `at`) collapse.
 pub fn hull_targets(
-    route: &Route,
+    route: RouteView<'_>,
     here: Option<WorldTile>,
     next_only_plus: usize,
 ) -> Vec<HullTarget> {
-    let mut leg = 0;
-    if let Some(here) = here {
-        while leg < route.legs.len() {
-            let done = match &route.legs[leg] {
-                Leg::Walk { tiles } => tiles.last().is_some_and(|last| *last == here),
-                Leg::Transport { edge } => edge.to == here,
-            };
-            if !done {
-                break;
-            }
-            leg += 1;
-        }
-    }
+    let leg = first_remaining_leg(route, here);
     let mut out: Vec<HullTarget> = Vec::new();
     let mut tile_idx = 0usize;
     let mut seen_loc_hop = false;
-    for (i, l) in route.legs.iter().enumerate().skip(leg) {
+    for (i, l) in route.legs().enumerate().skip(leg) {
         match l {
-            Leg::Walk { tiles } => {
+            LegView::Walk(tiles) => {
                 // The first remaining walk leg counts from `here` onward,
                 // exactly like `remaining_path_tiles` trims it, so the
                 // window is measured from the same remaining start.
@@ -354,11 +332,11 @@ pub fn hull_targets(
                 }
                 tile_idx += count;
             }
-            Leg::Transport { edge } => {
-                if is_loc_backed(edge.kind) {
+            LegView::Transport(hop) => {
+                if is_loc_backed(hop.kind()) {
                     let hop = HullTarget {
-                        loc_id: edge.loc_id,
-                        at: edge.at,
+                        loc_id: hop.loc_id(),
+                        at: hop.anchor(),
                     };
                     let next = !seen_loc_hop;
                     seen_loc_hop = true;
