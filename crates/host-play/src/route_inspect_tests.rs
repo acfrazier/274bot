@@ -3958,6 +3958,38 @@ fn inspection_charge_accounts_for_each_bank_fetch_phase_overlap() {
     let strict = preflights.strict.as_ref().expect("strict phase");
     let missing = preflights.missing.as_ref().expect("missing-item phase");
     let stand = preflights.stand.as_ref().expect("stand phase");
+    let stand_fallback = preflights
+        .stand_fallback
+        .as_ref()
+        .expect("first-candidate diagnostic phase");
+    let mut stand_options = capture.opts;
+    stand_options.allow_bank_fetch = false;
+    stand_options.prefer_target_order = true;
+    let stand_rows = capture.world.banks().len();
+    let expected_stand = nav::router::SearchCursor::preflight(
+        nav::router::SearchRequestShape::First {
+            target_capacity: stand_rows.checked_mul(4).expect("stand goal bound"),
+            fallback_capacity: 0,
+            options: stand_options,
+            avoid_capacity: capture.avoid.len(),
+            max_settles: stand_budget(&capture),
+        },
+        &capture.lease,
+        &capture.state,
+    )
+    .expect("target-ordered bank access preflight");
+    assert_eq!(*stand, expected_stand);
+    let expected_stand_fallback = nav::router::SearchCursor::preflight(
+        nav::router::SearchRequestShape::Single {
+            options: stand_options,
+            avoid_capacity: capture.avoid.len(),
+            max_settles: stand_budget(&capture),
+        },
+        &capture.lease,
+        &capture.state,
+    )
+    .expect("first-candidate diagnostic preflight");
+    assert_eq!(*stand_fallback, expected_stand_fallback);
     let post = preflights.post.as_ref().expect("post-route phase");
     let blockers_with_bank = preflights
         .blockers_with_bank
@@ -3977,6 +4009,7 @@ fn inspection_charge_accounts_for_each_bank_fetch_phase_overlap() {
     let strict_peak = search_peak(strict);
     let missing_peak = search_peak(missing);
     let stand_peak = search_peak(stand);
+    let stand_fallback_peak = search_peak(stand_fallback);
     let post_peak = search_peak(post);
     let blocker_with_peak = search_peak(blockers_with_bank);
     let blocker_without_peak = search_peak(blockers_without_bank);
@@ -4020,7 +4053,8 @@ fn inspection_charge_accounts_for_each_bank_fetch_phase_overlap() {
         capture.bank.len() + plan_item_rows,
         "captured bank rows remain independent of U_eff"
     );
-    let bank_cursor = BankFetchCursor::heap_bound(bank_rows, plan_item_rows).expect("bank cursor");
+    let bank_cursor =
+        BankFetchCursor::heap_bound(bank_rows, plan_item_rows, stand_rows).expect("bank cursor");
     let bank_plan = BankFetchPlan::heap_bound(plan_item_rows).expect("bank plan");
     let wear_choices = plan_item_rows.min(missing_reservation.max_missing_worn_ids);
     let inventory_new = plan_item_rows;
@@ -4054,7 +4088,7 @@ fn inspection_charge_accounts_for_each_bank_fetch_phase_overlap() {
     let phase_b = (planning_peak + missing_result)
         .max(planning_rows + bank_cursor + missing_result)
         .max(bank_plan + state_growth);
-    let phase_c = (stand_peak + bank_cursor).max(post_peak + state_growth);
+    let phase_c = (stand_peak.max(stand_fallback_peak) + bank_cursor).max(post_peak + state_growth);
     let expected_phase_peak = phase_a.max(phase_b).max(phase_c);
     assert_eq!(submission.phase_peak_bytes, expected_phase_peak);
 

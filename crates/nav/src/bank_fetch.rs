@@ -27,8 +27,8 @@ use crate::collision::WorldCollision;
 use crate::named_banks::{is_access_tile, AccessReach, Footprint};
 use crate::pack::BankStand;
 use crate::router::{
-    find_blocking_zones, find_with_avoid, AvoidRect, FindOptions, MissingReq, MissingReqView,
-    MissingRequirements, RouteError,
+    find_blocking_zones, find_first_with_avoid, find_with_avoid, AvoidRect, FindOptions,
+    MissingReq, MissingReqView, MissingRequirements, RouteError,
 };
 use crate::transport::TransportGraph;
 use crate::world_state::WorldState;
@@ -235,8 +235,8 @@ pub fn nearest_bank_access(
 /// One step of a [`BankFetch`] session, in execution order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BankStep {
-    /// Walk to a standable access tile of the nearest packed stand (the
-    /// host routes it). Never the stand's own interact tile.
+    /// Walk to the reachable access with the cheapest strict path.
+    /// Never the stand's own interact tile.
     Walk { x: i32, z: i32, level: i32 },
     /// Open the bank (booth `Use-quickly` / teller op).
     Open,
@@ -300,8 +300,9 @@ pub enum BankFetchError {
 /// cannot be proved and this returns [`BankFetchError::Unavailable`];
 /// `stands` is the packed bank stand table
 /// ([`crate::world::NavWorld::banks`]), booths and NPC tellers; `from`
-/// is the player's tile. The existing air-distance order picks the first access
-/// tile that the strict query reaches with `state`, `options`, and `avoid`.
+/// is the player's tile. One strict first-goal search chooses the cheapest
+/// reachable access with `state`, `options`, and `avoid`. Equal path costs
+/// keep the existing air-distance order.
 ///
 /// A `worn_req` alternative already carried plans only [`BankStep::Wear`]
 /// — no bank walk. Otherwise the plan walks to that access tile, opens the
@@ -310,9 +311,9 @@ pub enum BankFetchError {
 /// the bank as it equips. If no Wear is needed, the plan closes after
 /// withdrawals. `worn_all_req` is never synthesized or worn by this session.
 /// Existing carried inventory is never deposited or cleared. Every required
-/// amount must be covered by bank + carried stacks combined. If every access
-/// query fails, return the first failure and its active-zone witness. Diagnose
-/// that witness only after all candidates fail, not on a successful plan.
+/// amount must be covered by bank + carried stacks combined. If no access
+/// routes, return the first candidate's strict failure and active-zone witness.
+/// Diagnose that witness only after the goal-set search fails.
 ///
 /// Cooperative jobs use [`BankFetchCursor`] and move their owned pre-state
 /// through [`BankFetchPlan::apply_next`]. This synchronous adapter alone copies
@@ -333,40 +334,45 @@ pub fn plan_bank_fetch<M: MissingRequirementsView + ?Sized>(
     avoid: &[AvoidRect],
 ) -> Result<BankFetch, BankFetchError> {
     let mut cursor = BankFetchCursor::new();
-    let mut first_failure = None;
+    while !cursor.advance(missing, state, bank, stands, from, collision) {}
     let strict = FindOptions {
         allow_bank_fetch: false,
+        prefer_target_order: true,
         ..options
     };
-    loop {
-        while !cursor.advance(missing, state, bank, stands, from, collision) {}
-        let Some(access) = cursor.planned_access() else {
-            break;
-        };
-        match find_with_avoid(collision, graph, from, access, strict, state, avoid) {
-            Ok(_) => break,
-            Err(error) => {
-                first_failure.get_or_insert((access, error));
+    if let Some(first) = cursor.planned_access() {
+        let search = find_first_with_avoid(
+            collision,
+            graph,
+            from,
+            cursor.access_targets(),
+            strict,
+            state,
+            avoid,
+        );
+        match search.into_route() {
+            Ok(route) => {
+                cursor.select_access(route.dest);
+            }
+            Err(_) => {
+                // A goal-set failure need not equal the first candidate's
+                // single-target budget outcome. Preserve that exact error.
+                let error = find_with_avoid(collision, graph, from, first, strict, state, avoid)
+                    .expect_err("the failed goal set contains the first candidate");
+                return Err(BankFetchError::Access {
+                    access: first,
+                    error,
+                    blocked_zones: if error == RouteError::NoPath {
+                        find_blocking_zones(collision, graph, from, first, strict, state, avoid)
+                            .unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    },
+                });
             }
         }
-        if !cursor.reject_access() {
-            break;
-        }
     }
-    let plan = cursor.take_plan();
-    let mut plan = plan.ok_or_else(|| match first_failure {
-        Some((access, error)) => BankFetchError::Access {
-            access,
-            error,
-            blocked_zones: if error == RouteError::NoPath {
-                find_blocking_zones(collision, graph, from, access, strict, state, avoid)
-                    .unwrap_or_default()
-            } else {
-                Vec::new()
-            },
-        },
-        None => BankFetchError::Unavailable,
-    })?;
+    let mut plan = cursor.take_plan().ok_or(BankFetchError::Unavailable)?;
     let mut post = state.clone();
     while !plan.apply_next(&mut post) {}
     Ok(BankFetch {
