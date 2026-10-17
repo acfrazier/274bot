@@ -380,14 +380,19 @@ method. Records have dense IDs. Hashing selects a three-byte bucket head,
 not a position across the record array.
 
 Cooperative cursors reserve their complete settle-cap backing once. Slot
-fields use a zero-valued tuple of primitive byte arrays. Each 31-byte record
-includes its three-byte next link and has one-byte alignment. Only bucket
-heads remain in the separate link array, so the complete backing charge is
-unchanged. A failed key comparison can read the next link from the same record.
+fields use a zero-valued tuple of primitive arrays and integers. Each record
+remains 28 bytes with four-byte alignment. Bucket heads and next links share
+a separate array of three-byte links. Each link uses only the ID bits its
+table capacity needs; the remaining bits hold a hash fingerprint. A fingerprint
+mismatch skips the full record read. Matching fingerprints still require full
+key equality. Growth rebuilds the fingerprints for the new ID width and keeps
+the same dense IDs and collision order.
+
 Safe `Vec` construction obtains zeroed backing without an explicit
 initialization pass under the pinned toolchain. The operating system can make
 pages resident as the search touches them. Admission charges the complete
-backing, not the observed resident bytes.
+backing, not the observed resident bytes. Fingerprints use existing link bits
+and do not increase that charge.
 
 Legacy synchronous facades start with six settles and grow the same table
 only when needed. Their reverse proofs also retain demand-driven storage.
