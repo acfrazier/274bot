@@ -1,4 +1,5 @@
 use super::*;
+use crate::admission::{RiskPolicy, WalkAllow, WalkRefusal};
 use api::quest_progress::EvidenceProvider;
 use api::selected::ClientRevision;
 use api::selected::{QuestGate, RunKey, Truth};
@@ -92,7 +93,7 @@ fn fixture_world(
     );
     let world = NavWorld::from_parts(collision, graph, Vec::new());
     let risks = RiskTables::build(&combat);
-    world.risk_facts(|| Some(Tables { combat, risks }));
+    prime_tables(&world, Some(Tables { combat, risks }));
     world
 }
 
@@ -1489,7 +1490,7 @@ fn c5_route_basis_keeps_hard_authority_through_replacement_and_revocation() {
     };
     let original_route = Arc::new(original_route);
     let original = Arc::new(RouteBasis {
-        route: Arc::clone(&original_route),
+        _route: crate::walk_plan::RoutePath::legacy(Arc::clone(&original_route)),
         options: frozen_options,
         avoid: Arc::clone(&avoid),
         quest_evidence: Some(evidence),
@@ -1508,10 +1509,13 @@ fn c5_route_basis_keeps_hard_authority_through_replacement_and_revocation() {
         dest: tile(2, 1),
         ticks: 1.0,
     };
-    assert!(Arc::ptr_eq(arm.route.as_ref().unwrap(), &retained.route));
+    assert!(Arc::ptr_eq(
+        arm.route.as_ref().unwrap(),
+        retained._route.legacy_route().unwrap()
+    ));
     let refreshed_route = Arc::new(refreshed_route);
     let refreshed = Arc::new(RouteBasis {
-        route: Arc::clone(&refreshed_route),
+        _route: crate::walk_plan::RoutePath::legacy(Arc::clone(&refreshed_route)),
         options: retained.options,
         avoid: Arc::clone(&retained.avoid),
         quest_evidence: retained.quest_evidence.clone(),
@@ -1531,7 +1535,7 @@ fn c5_route_basis_keeps_hard_authority_through_replacement_and_revocation() {
             .family(),
         &family
     );
-    assert_eq!(retained.route.dest, tile(1, 1));
+    assert_eq!(retained._route.destination(), tile(1, 1));
     assert_eq!(retained.options, frozen_options);
     assert_eq!(retained.avoid.as_ref(), avoid.as_ref());
     assert_eq!(
@@ -2288,12 +2292,13 @@ fn real_squire_walk(
         state: Some(state),
         bank_origin: api::bank_memory::Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         exclusions: None,
         compat_tile_intent: false,
         completion: Default::default(),
     };
-    (to, opts.zones, request.calculate_admitted().0)
+    let (admitted, _, options) = request.drive_route_admission_for_test();
+    (to, options.zones, admitted)
 }
 
 /// The headed Knight's Sword stall (DIAG-SURVIVABLE-POISON): squire's own
@@ -2352,5 +2357,385 @@ fn real_squire_ice_chain_admits_named_and_destination_zones_with_unknown_poison(
             "{step}: whether only the endpoint grant admits it"
         );
         from = route.dest;
+    }
+}
+#[cfg(test)]
+mod compact_final_route_tests {
+    use super::*;
+    use api::identity::{ProcessIncarnation, RequestIdMinter, Scope, WorkIdentity};
+    use api::work::{
+        InputRevision, InspectionPhase, MonotonicClock, SharedCancellation, SliceBudget,
+        StepContext, SystemClock,
+    };
+    use std::num::NonZeroU32;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct IdleOut;
+
+    impl api::prot::Out for IdleOut {
+        fn p1_enc(&mut self, _opcode: i32) {}
+        fn p1(&mut self, _value: i32) {}
+        fn p2(&mut self, _value: i32) {}
+        fn p4(&mut self, _value: i32) {}
+        fn pjstr(&mut self, _value: &str) {}
+    }
+
+    #[derive(Default)]
+    struct IdleDriver {
+        out: IdleOut,
+    }
+
+    impl api::interact::Driver for IdleDriver {
+        fn set_menu(&mut self, _slot: i32, _action: i32, _a: i32, _b: i32, _c: i32) {}
+        fn do_action(&mut self, _slot: i32) -> bool {
+            false
+        }
+        fn try_move(
+            &mut self,
+            _src_x: i32,
+            _src_z: i32,
+            _dx: i32,
+            _dz: i32,
+            _try_nearest: bool,
+            _loc_width: i32,
+            _loc_length: i32,
+            _loc_angle: i32,
+            _loc_shape: i32,
+            _forceapproach: i32,
+            _type: i32,
+        ) -> bool {
+            false
+        }
+        fn local_route(&self) -> Option<(i32, i32)> {
+            None
+        }
+        fn build_base(&self) -> (i32, i32) {
+            (0, 0)
+        }
+        fn loc_typecode(&self, _scene_x: i32, _scene_z: i32) -> Option<i32> {
+            None
+        }
+        fn out(&mut self) -> &mut dyn api::prot::Out {
+            &mut self.out
+        }
+        fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
+            false
+        }
+    }
+
+    fn compact_route_path(
+        world: &Arc<NavWorld>,
+        from: WorldTile,
+        to: WorldTile,
+    ) -> crate::walk_plan::RoutePath {
+        let lease = producer::lease(world).expect("fixture navigation lease");
+        let mut cursor = nav::router::SearchCursor::new(
+            nav::router::SearchRequest::Single {
+                from,
+                to,
+                options: FindOptions {
+                    zones: ZoneExempt::all(),
+                    ..FindOptions::default()
+                },
+                avoid: Box::default(),
+                max_settles: 1_024,
+            },
+            lease.clone(),
+            Arc::new(WorldState::default()),
+        )
+        .expect("small fixture route cursor");
+        let clock = SystemClock;
+        let cancellation = SharedCancellation::new();
+        let units = NonZeroU32::new(64).expect("nonzero work slice");
+        let completion = loop {
+            let budget = SliceBudget::new(
+                units,
+                api::identity::Deadline::after(clock.now(), std::time::Duration::from_secs(5)),
+            );
+            let mut context = StepContext::<InspectionPhase>::new(&clock, budget, &cancellation);
+            match cursor.advance(&mut context) {
+                nav::router::CursorStep::Complete(completion) => break completion,
+                nav::router::CursorStep::Yielded => {}
+                nav::router::CursorStep::Cancelled(reason) => {
+                    panic!("fixture route cancelled: {reason:?}")
+                }
+                nav::router::CursorStep::Failed(error) => {
+                    panic!("fixture route failed: {error:?}")
+                }
+            }
+        };
+        let (outcome, _) = completion.into_parts();
+        let nav::router::SearchOutcome::Single { route: Ok(route) } = outcome else {
+            panic!("fixture search did not return one compact route")
+        };
+        let bytes =
+            nav::producer::compact_route_result_bytes(&route).expect("route size is bounded");
+        let ledger = nav::producer::OwnerResultLedger::with_limits(bytes, bytes);
+        let reservation = ledger
+            .try_reserve_bytes(bytes)
+            .expect("fixture route result reservation");
+        let identity = WorkIdentity::new(
+            RequestIdMinter::new().mint().expect("host request id"),
+            ProcessIncarnation::from_start_nonce(
+                std::num::NonZeroU64::new(1).expect("nonzero process nonce"),
+            ),
+            Scope::Process,
+            None,
+        )
+        .expect("valid fixture work identity");
+        let plan = nav::producer::publish_compact_route(
+            &lease,
+            identity,
+            InputRevision::FIRST,
+            route,
+            reservation.clone(),
+        );
+        let custody: Arc<dyn std::any::Any + Send + Sync> =
+            Arc::new(reservation.hold(plan.clone()));
+        crate::walk_plan::RoutePath::compact(plan, lease, custody)
+    }
+
+    #[test]
+    fn compact_script_nav_paint_borrows_the_compact_route_projection() {
+        let world = Arc::new(empty_corridor());
+        let from = tile(0, 1);
+        let dest = tile(3, 1);
+        let route = compact_route_path(&world, from, dest);
+        let bot = crate::script_runtime::NavBot {
+            compact_route: Some(route),
+            map_route_generation: 9,
+            ..Default::default()
+        };
+        let navs = Arc::new(Mutex::new(std::collections::HashMap::from([(
+            "alice".to_owned(),
+            bot,
+        )])));
+        let paint = crate::ScriptNavPaint { navs };
+        paint.with_map_route("alice", |projection| {
+            let projection = projection.expect("compact script route");
+            assert_eq!(
+                projection.stamp.source,
+                crate::walk_map::RouteSource::Script
+            );
+            assert_eq!(projection.stamp.generation, 9);
+            assert_eq!(projection.stamp.destination, dest);
+            assert!(matches!(
+                projection.route,
+                crate::walk_map::RouteProjectionPath::Compact(_)
+            ));
+        });
+    }
+
+    fn wearable_item(id: i32) -> api::snapshot::ItemView {
+        api::snapshot::ItemView {
+            def: api::obj_names::ItemDefView {
+                id,
+                name: Some("fixture shield".into()),
+                stackable: false,
+                members: false,
+                base_value: 0,
+                noted: false,
+                certificate_link: -1,
+                certificate_template: -1,
+            },
+            container: api::snapshot::ItemContainer::Equipment,
+            action_family: api::snapshot::ItemActionFamily::Held,
+            slot: 5,
+            count: 1,
+            actions: Vec::new(),
+            component_id: -1,
+        }
+    }
+
+    fn post_wear_snapshot(from: WorldTile) -> GameSnapshot {
+        let actor = api::snapshot::ActorView {
+            name: Some("post-wear-fixture".into()),
+            actions: Vec::new(),
+            tile: from,
+            distance: 0,
+            animation: -1,
+            animation_frame: 0,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: 0,
+            health: 80,
+            total_health: 80,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(api::snapshot::LocalPlayerView {
+            player: api::snapshot::PlayerView {
+                index: 0,
+                network: from,
+                actor,
+                combat_level: 50,
+                skill_level: 1,
+                headicons: 0,
+                weapon: None,
+            },
+            energy: 100,
+            weight: 0,
+            animation_update: None,
+        });
+        snapshot.seed_equipment(vec![wearable_item(2)]);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_stats(vec![api::snapshot::StatView {
+            index: 3,
+            name: "hitpoints".into(),
+            effective: 70,
+            base: 80,
+            xp: 0,
+            used: true,
+        }]);
+        snapshot.seed_world(api::snapshot::WorldStateView {
+            map_base_x: 0,
+            map_base_z: 0,
+            level: from.level,
+            members: false,
+            multi_combat: false,
+            player_count: 1,
+            npc_count: 0,
+            cycle: 1,
+        });
+        snapshot.seed_hitmarks(api::snapshot::HitmarksView {
+            marks: [api::snapshot::HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            }; 4],
+            loop_cycle: 0,
+        });
+        snapshot
+    }
+
+    fn pending_wear(
+        final_route: crate::walk_plan::RoutePath,
+        dest: WorldTile,
+        id: i32,
+    ) -> crate::PendingBankFetch {
+        crate::PendingBankFetch {
+            steps: std::collections::VecDeque::from([nav::bank_fetch::BankStep::Wear { id }]),
+            dest,
+            opts: FindOptions::default(),
+            final_route,
+            avoid: Vec::new(),
+            progress: Default::default(),
+        }
+    }
+
+    fn compact_bank_bot(
+        final_route: crate::walk_plan::RoutePath,
+        assessment: Arc<RouteAssessment>,
+        admission: Admission,
+        dest: WorldTile,
+    ) -> crate::script_runtime::NavBot {
+        crate::script_runtime::NavBot {
+            bank_fetch: Some(pending_wear(final_route, dest, 2)),
+            requested_route: Some((dest, 0, false, false, false, ZoneExempt::NONE)),
+            walk_request_id: 7,
+            route_generation: 3,
+            admission: Some(Box::new(admission)),
+            assessment: Some(assessment),
+            admission_pending: true,
+            ..Default::default()
+        }
+    }
+
+    fn finish_carried_wear(
+        bot: &mut crate::script_runtime::NavBot,
+        snapshot: &GameSnapshot,
+        world: &NavWorld,
+        from: WorldTile,
+    ) {
+        let mut driver = IdleDriver::default();
+        assert!(!crate::script_runtime::step_bank_fetch_on_bot(
+            &mut driver,
+            snapshot,
+            bot,
+            Some(world),
+            Some((from.x, from.z, from.level)),
+            false,
+        ));
+    }
+
+    #[test]
+    fn compact_carried_wear_final_route_reassesses_post_session_facts() {
+        let world = Arc::new(empty_corridor());
+        let from = tile(0, 1);
+        let dest = tile(10, 1);
+        let final_route = compact_route_path(&world, from, dest);
+        let admission = make_admission(RiskPolicy::Proceed, input(80));
+        let before = assess_route_path(&final_route, &world, &admission);
+        assert!(!before.input.missing_facts);
+        let mut snapshot = post_wear_snapshot(from);
+        let mut food = wearable_item(379);
+        food.container = api::snapshot::ItemContainer::Inventory;
+        food.slot = 0;
+        food.count = 2;
+        snapshot.seed_inventory(vec![food], 28);
+        let mut bot = compact_bank_bot(final_route, Arc::clone(&before), admission, dest);
+
+        finish_carried_wear(&mut bot, &snapshot, &world, from);
+
+        let after = bot.assessment.as_ref().expect("reassessed final route");
+        assert!(!Arc::ptr_eq(&before, after));
+        assert!(
+            after.input.missing_facts,
+            "post-wear facts must replace stale input"
+        );
+        assert_eq!(bot.admission.as_deref().unwrap().input, after.input);
+        assert_eq!(
+            after.input,
+            capture(&snapshot, false, before.input.poison, false)
+        );
+        assert_eq!(after.input.hp, 70);
+        assert!(after.input.food_ids.contains(&379));
+        assert_eq!(after.input.food_counts.iter().copied().sum::<u8>(), 2);
+        assert!(!bot.admission_pending);
+        assert!(bot.route.is_none(), "the final route remains compact");
+        assert_eq!(bot.route_destination(), Some(dest));
+        assert!(bot.risk_refusal.is_none());
+    }
+
+    #[test]
+    fn compact_carried_wear_final_route_refuses_unknown_post_session_facts() {
+        let world = Arc::new(known_corridor(&[5]));
+        let from = tile(0, 1);
+        let dest = tile(10, 1);
+        let final_route = compact_route_path(&world, from, dest);
+        let admission = make_admission(RiskPolicy::Inherit, input(80));
+        let before = assess_route_path(&final_route, &world, &admission);
+        assert!(!before.input.missing_facts);
+        let snapshot = post_wear_snapshot(from);
+        let mut bot = compact_bank_bot(final_route, Arc::clone(&before), admission, dest);
+
+        finish_carried_wear(&mut bot, &snapshot, &world, from);
+
+        let after = bot.assessment.as_ref().expect("reassessed final route");
+        assert!(!Arc::ptr_eq(&before, after));
+        assert_eq!(
+            after.input,
+            capture(&snapshot, false, before.input.poison, false)
+        );
+        assert!(
+            after.input.missing_facts,
+            "incomplete post-wear facts fail closed"
+        );
+        assert!(!bot.admission_pending);
+        assert!(bot.route.is_none(), "refusal clears the compact route");
+        assert_eq!(
+            bot.risk_refusal.as_deref().map(|(_, refusal)| *refusal),
+            Some(WalkRefusal::Unknown(UnknownWhy::MissingFacts))
+        );
+        assert_eq!(bot.route_destination(), None);
     }
 }

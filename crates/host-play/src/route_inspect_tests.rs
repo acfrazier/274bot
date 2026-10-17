@@ -791,7 +791,7 @@ fn abort_script_walk_leaves_inspect_worker() {
         let bot = all.get("p").unwrap();
         assert!(bot.inspect.worker.is_some());
         assert_eq!(bot.inspect.running_id, 61);
-        assert!(bot.route_worker.is_none());
+        assert!(!bot.route_work_pending());
     }
     barrier.release();
     let term = wait_latest(&navs, 61);

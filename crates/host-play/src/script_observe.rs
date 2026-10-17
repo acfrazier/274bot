@@ -414,6 +414,14 @@ pub(crate) fn script_observe_cached_with_channels(
             break 'script_slot;
         };
         slot.observe_lifecycle();
+        let work_scope = slot.work_scope();
+        if let Some(bot) = navs
+            .lock()
+            .expect("navigation state mutex is not poisoned")
+            .get_mut(name)
+        {
+            bot.work_scope = work_scope;
+        }
         // Only the random-event guardian holds the seat (`SessionHeld`,
         // `28-seat-sg.md:65`; `27-decision-r5.md` §6). Every other frame
         // hold is a held tick (`28-seat-sg.md:64`): the seat is not frozen,
@@ -972,6 +980,7 @@ pub(crate) fn script_observe_cached_with_channels(
         {
             let mut navs = navs.lock().unwrap();
             let bot = navs.entry(name.to_owned()).or_default();
+            bot.work_scope = slot.work_scope();
             bot.native_permissions = slot.native_walk_permissions();
             bot.compat_v1 = slot.api_family() == Some(script::ApiFamily::V1);
         }
@@ -1250,6 +1259,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     {
                         let mut navs = navs.lock().unwrap();
                         let bot = navs.entry(name.to_owned()).or_default();
+                        bot.work_scope = slot.work_scope();
                         bot.native_permissions = slot.native_walk_permissions();
                         bot.compat_v1 = slot.api_family() == Some(script::ApiFamily::V1);
                     }

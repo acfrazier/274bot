@@ -1127,7 +1127,7 @@ fn actual_route_projection_follows_live_script_manual_precedence_and_focus() {
     );
     let manual = Mutex::new(crate::WalkArm::default());
     let read = |projection: Option<RouteProjection<'_>>| {
-        projection.map(|p| (p.stamp.source, p.stamp.generation, p.route.dest))
+        projection.map(|p| (p.stamp.source, p.stamp.generation, p.route.destination()))
     };
     assert_eq!(
         play.with_map_route("alice", Some(&manual), None, read),

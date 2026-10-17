@@ -2212,18 +2212,16 @@ fn player_at_plane_one_follow_uses_level() {
         legs: vec![],
         ticks: 0.0,
     });
-    let pending = PendingBankFetch {
-        steps: VecDeque::from([BankStep::Walk {
+    let pending = PendingBankFetch::for_test_with_route(
+        VecDeque::from([BankStep::Walk {
             x: here.0,
             z: here.1,
             level: 1,
         }]),
-        dest: final_route.dest,
-        opts: FindOptions::default(),
-        final_route: final_route.clone(),
-        avoid: Vec::new(),
-        progress: Default::default(),
-    };
+        final_route.dest,
+        FindOptions::default(),
+        final_route.clone(),
+    );
 
     let mut arm = WalkArm {
         bank_fetch: Some(pending.clone()),
@@ -2290,18 +2288,16 @@ fn follow_tick_pumps_bank_budget_step() {
         ticks: 0.0,
     });
     let mut arm = WalkArm {
-        bank_fetch: Some(PendingBankFetch {
-            steps: VecDeque::from([BankStep::Withdraw { id: 2, count: 1 }, BankStep::Close]),
-            dest: WorldTile {
+        bank_fetch: Some(PendingBankFetch::for_test_with_route(
+            VecDeque::from([BankStep::Withdraw { id: 2, count: 1 }, BankStep::Close]),
+            WorldTile {
                 x: 4,
                 z: 4,
                 level: 0,
             },
-            opts: FindOptions::default(),
-            final_route: final_route.clone(),
-            avoid: Vec::new(),
-            progress: Default::default(),
-        }),
+            FindOptions::default(),
+            final_route.clone(),
+        )),
         route: Some(Arc::new(Route {
             dest: WorldTile {
                 x: 0,
@@ -2358,18 +2354,16 @@ fn bank_stand_subroute_does_not_emit_operator_terminal_receipt() {
         ticks: 1.0,
     });
     let mut arm = WalkArm {
-        bank_fetch: Some(PendingBankFetch {
-            steps: VecDeque::from([BankStep::Walk {
+        bank_fetch: Some(PendingBankFetch::for_test_with_route(
+            VecDeque::from([BankStep::Walk {
                 x: stand.x,
                 z: stand.z,
                 level: stand.level,
             }]),
-            dest: destination,
-            opts: FindOptions::default(),
-            final_route: final_route.clone(),
-            avoid: Vec::new(),
-            progress: Default::default(),
-        }),
+            destination,
+            FindOptions::default(),
+            final_route.clone(),
+        )),
         route: Some(Arc::new(Route {
             dest: stand,
             legs: vec![Leg::Walk {

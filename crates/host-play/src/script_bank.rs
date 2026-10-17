@@ -766,9 +766,11 @@ fn queue_bank(
     });
     opts.essence = bot.traveller.essence();
     let first = order.first().map(|candidate| candidate.index);
+    let generation = pick.generation;
     let walk_generation = if walking && first.is_some() {
         bot.route_generation = bot.route_generation.wrapping_add(1);
         bot.walk_request_id = 0;
+        bot.supersede_route_work();
         bot.pending_route = None;
         Some(bot.route_generation)
     } else {
@@ -794,10 +796,11 @@ fn queue_bank(
     let near = request.native.is_none()
         && first.is_some_and(|index| near_bank(from, request.route_target(index)));
     let job = BankPickJob {
-        generation: pick.generation,
+        generation,
         request,
         route_only: near,
     };
+    let pick = &mut bot.bank_pick;
     if first.is_none() || (near && !walking) {
         if job.request.native.is_some() {
             pick.complete_native(

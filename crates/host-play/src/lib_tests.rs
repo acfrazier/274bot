@@ -87,6 +87,43 @@ fn test_navs(name: &str) -> Arc<Mutex<HashMap<String, NavBot>>> {
         NavBot::default(),
     )])))
 }
+fn test_route_scope(incarnation: u64) -> api::identity::Scope {
+    api::identity::Scope::Slot(
+        api::identity::SlotKey::from_incarnation(incarnation).expect("nonzero test incarnation"),
+    )
+}
+fn next_test_incarnation() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+fn next_test_route_scope() -> api::identity::Scope {
+    test_route_scope(next_test_incarnation())
+}
+
+fn bind_test_route_scope(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
+    navs.lock()
+        .unwrap()
+        .entry(name.to_owned())
+        .or_default()
+        .work_scope = Some(next_test_route_scope());
+}
+
+fn with_pending_route_work(mut bot: NavBot) -> NavBot {
+    bot.set_route_work_preparing_for_test();
+    bot
+}
+
+fn wait_for_route_work(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    mut ready: impl FnMut(&NavBot) -> bool,
+) -> bool {
+    wait_until(60_000, || {
+        crate::script_runtime::pump_route_work(navs, name);
+        navs.lock().unwrap().get(name).is_some_and(&mut ready)
+    })
+}
 
 /// No script slot: the follow's arrival probe reads an unavailable view.
 fn no_reach() -> Arc<api::query::ReachQueryView> {
@@ -4344,6 +4381,7 @@ fn failed_radius_search_can_retry_same_destination_with_old_route_retained() {
         "retry".to_string(),
         NavBot {
             route: Some(Arc::clone(&old)),
+            work_scope: Some(next_test_route_scope()),
             ..Default::default()
         },
     )])));
@@ -4359,27 +4397,19 @@ fn failed_radius_search_can_retry_same_destination_with_old_route_retained() {
     // run a new search, while retaining the unrelated route on failure.
     for expected_generation in 1..=2 {
         assert!(arm.route_with_radius(100, 100, 0, FindOptions::default(), 1));
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        loop {
-            let all = navs.lock().unwrap();
-            let bot = &all["retry"];
-            assert_eq!(bot.route_generation, expected_generation);
-            assert_eq!(bot.route, Some(old.clone()));
-            if bot.route_worker.is_none() {
-                break;
-            }
-            drop(all);
-            assert!(
-                std::time::Instant::now() < deadline,
-                "route worker did not finish"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
+        assert!(
+            wait_for_route_work(&navs, "retry", |bot| !bot.route_work_pending()),
+            "route work did not finish"
+        );
+        let all = navs.lock().unwrap();
+        let bot = &all["retry"];
+        assert_eq!(bot.route_generation, expected_generation);
+        assert_eq!(bot.route, Some(old.clone()));
     }
 }
 
 #[test]
-fn exact_walk_near_retargets_active_nearby_route_and_rejects_stale_worker() {
+fn exact_walk_near_retargets_active_nearby_route_and_rejects_stale_result() {
     let nearby = WorldTile {
         x: 3,
         z: 3,
@@ -4397,13 +4427,13 @@ fn exact_walk_near_retargets_active_nearby_route_and_rejects_stale_worker() {
     });
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "bank".to_string(),
-        NavBot {
+        with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
             route_generation: 1,
-            route_worker: Some(Arc::new(())),
+            work_scope: Some(next_test_route_scope()),
             requested_route: Some(native_requested(nearby, 1, false)),
             ..Default::default()
-        },
+        }),
     )])));
     let arm = ScriptWalkArm {
         here: Some((0, 0, 0)),
@@ -4420,38 +4450,30 @@ fn exact_walk_near_retargets_active_nearby_route_and_rejects_stale_worker() {
     );
     assert!(
         !arm.queue_route(4, 4, 0, FindOptions::default(), 0, false, 0),
-        "ordinary Walk stays non-retargeting while a route or worker is busy"
+        "ordinary Walk stays non-retargeting while route work is busy"
     );
-
-    let pending = {
-        let mut all = navs.lock().unwrap();
-        let bot = all.get_mut("bank").expect("nav bot");
-        assert_eq!(bot.route_generation, 2);
-        assert_eq!(bot.requested_route, Some(native_requested(exact, 0, false)));
-        assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(nearby));
-        assert!(bot.route_worker.is_some());
-        let pending = bot
-            .pending_route
-            .take()
-            .expect("exact request coalesces onto the in-flight worker");
-        assert_eq!(pending.generation, 2);
-        assert_eq!(pending.radius, 0);
-        assert_eq!(pending.to, exact);
-        pending
-    };
 
     {
         let mut all = navs.lock().unwrap();
         let bot = all.get_mut("bank").expect("nav bot");
+        assert_eq!(bot.route_generation, 2);
+        assert_eq!(bot.requested_route, Some(native_requested(exact, 0, false)));
+        assert_eq!(bot.route_destination(), Some(nearby));
+        assert!(bot.route_work_pending());
+        assert!(bot.pending_route.is_some());
         bot.publish_route(1, 0, false, RouteOutcome::Routed((*old).clone()));
         assert_eq!(
-            bot.route.as_ref().map(|r| r.dest),
+            bot.route_destination(),
             Some(nearby),
-            "stale nearby worker result must not replace the exact request"
+            "stale nearby route result must not replace the exact request"
         );
-        bot.publish_route(2, 0, false, pending.calculate().0);
-        assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(exact));
     }
+    assert!(
+        wait_for_route_work(&navs, "bank", |bot| {
+            !bot.route_work_pending() && bot.route_destination() == Some(exact)
+        }),
+        "the retargeted route must complete"
+    );
 
     assert!(arm.route_with_radius(exact.x, exact.z, exact.level, FindOptions::default(), 0));
     assert_eq!(navs.lock().unwrap()["bank"].route_generation, 2);
@@ -4492,7 +4514,7 @@ fn route_end_of_a_retargeted_walk_does_not_settle_the_new_walk() {
         bot.publish_route(1, 7, false, RouteOutcome::Routed(route_to(a)));
         // A find is still in flight, so B's retarget coalesces onto it and
         // B's route is not installed yet: the retarget window.
-        bot.route_worker = Some(Arc::new(()));
+        bot.set_route_work_preparing_for_test();
     }
     let arm = ScriptWalkArm {
         here: Some((0, 0, 0)),
@@ -4507,22 +4529,19 @@ fn route_end_of_a_retargeted_walk_does_not_settle_the_new_walk() {
     let mut all = navs.lock().unwrap();
     let bot = all.get_mut("bank").unwrap();
     assert_eq!(bot.walk_request_id, 8, "B is the armed walk");
-    assert_eq!(
-        bot.route.as_ref().map(|r| r.dest),
-        Some(a),
-        "A still followed"
-    );
+    assert_eq!(bot.route_destination(), Some(a), "A still followed");
     apply_nav_follow_outcome(
         bot,
         Some(nav::traveller::TravelOutcome::Arrived { at: a }),
         false,
     );
-    assert!(bot.route.is_none());
+    assert!(!bot.has_route());
     assert_eq!(
         bot.walk_outcome_seq, 0,
         "A's route end must not settle B's wait"
     );
 
+    bot.pending_route = None;
     bot.publish_route(2, 8, false, RouteOutcome::Routed(route_to(b)));
     apply_nav_follow_outcome(
         bot,
@@ -4569,7 +4588,7 @@ fn stall_of_a_retargeted_walk_does_not_fail_the_new_walk() {
         let mut all = navs.lock().unwrap();
         let bot = all.get_mut("bank").unwrap();
         bot.publish_route(1, 7, false, RouteOutcome::Routed(route_to(a)));
-        bot.route_worker = Some(Arc::new(()));
+        bot.set_route_work_preparing_for_test();
     }
     let arm = ScriptWalkArm {
         here: Some((0, 0, 0)),
@@ -4584,16 +4603,13 @@ fn stall_of_a_retargeted_walk_does_not_fail_the_new_walk() {
     let mut all = navs.lock().unwrap();
     let bot = all.get_mut("bank").unwrap();
     assert_eq!(bot.walk_request_id, 8, "B is the armed walk");
-    assert_eq!(
-        bot.route.as_ref().map(|r| r.dest),
-        Some(a),
-        "A still followed"
-    );
+    assert_eq!(bot.route_destination(), Some(a), "A still followed");
     apply_nav_follow_outcome(bot, gave_up(a), false);
-    assert!(bot.route.is_none(), "the stalled route is dropped");
+    assert!(!bot.has_route(), "the stalled route is dropped");
     assert_eq!(bot.walk_outcome_seq, 0, "A's stall must not fail B's wait");
-    assert!(bot.pending_route.is_some(), "B's find is still owed");
+    assert!(bot.route_work_pending(), "B's find is still owed");
 
+    bot.pending_route = None;
     bot.publish_route(2, 8, false, RouteOutcome::Routed(route_to(b)));
     apply_nav_follow_outcome(bot, gave_up(b), false);
     assert_eq!(bot.walk_outcome_seq, 1, "B's own stall publishes");
@@ -4631,7 +4647,7 @@ fn route_end_of_request_id_zero_publishes_nothing() {
         Some(nav::traveller::TravelOutcome::Arrived { at: dest }),
         false,
     );
-    assert!(bot.route.is_none(), "the route ended");
+    assert!(!bot.has_route(), "the route ended");
     assert_eq!(bot.walk_outcome_seq, 0, "request id 0 publishes nothing");
 }
 
@@ -4675,7 +4691,7 @@ fn end_blocked_follow_settles_the_armed_walk_as_a_blocked_route_end() {
         }),
         false,
     );
-    assert!(bot.route.is_none(), "the follow ended");
+    assert!(!bot.has_route(), "the follow ended");
     assert_eq!(bot.walk_outcome_seq, 1);
     assert_eq!(bot.walk_outcome_request_id, 9);
     assert!(!bot.walk_outcome_failed, "blocked is a settled route end");
@@ -4729,7 +4745,8 @@ fn bank_fetch_session_refuses_exact_walk_near() {
                     legs: vec![],
                     dest,
                     ticks: 0.0,
-                }),
+                })
+                .into(),
                 avoid: Vec::new(),
                 progress: Default::default(),
             }),
@@ -4785,7 +4802,7 @@ fn missing_nav_world_publishes_a_failed_walk_outcome() {
     assert_eq!(bot.walk_outcome_x, 2820);
     assert_eq!(bot.walk_outcome_z, 3556);
     assert_eq!(bot.walk_outcome_radius, 1);
-    assert!(bot.route.is_none());
+    assert!(!bot.has_route());
     assert!(bot.requested_route.is_none());
 }
 
@@ -5029,7 +5046,8 @@ fn bank_fetch_refuse_echoes_request_id_without_bumping_route() {
                     legs: vec![],
                     dest,
                     ticks: 0.0,
-                }),
+                })
+                .into(),
                 avoid: Vec::new(),
                 progress: Default::default(),
             }),
@@ -5125,7 +5143,7 @@ fn mid_follow_terminals_publish_the_armed_request_id() {
             }]),
             dest,
             opts: FindOptions::default(),
-            final_route: Arc::clone(&route),
+            final_route: Arc::clone(&route).into(),
             avoid: Vec::new(),
             progress: Default::default(),
         }),
@@ -5139,7 +5157,7 @@ fn mid_follow_terminals_publish_the_armed_request_id() {
         }),
         false,
     );
-    assert!(bot.route.is_none());
+    assert!(!bot.has_route());
     assert!(
         bot.bank_fetch.is_some(),
         "non-stand Refused must not drop an unrelated bank-fetch"
@@ -5165,7 +5183,7 @@ fn mid_follow_terminals_publish_the_armed_request_id() {
         }),
         true,
     );
-    assert!(bot.route.is_none());
+    assert!(!bot.has_route());
     assert!(bot.bank_fetch.is_none());
     assert!(bot.walk_outcome_failed);
     assert_eq!(bot.walk_outcome_request_id, 8);
@@ -5268,14 +5286,13 @@ fn same_key_walk_near_refuses_distinct_id_and_keeps_inflight() {
     });
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "coal".to_string(),
-        NavBot {
+        with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
             route_generation: 1,
-            route_worker: Some(Arc::new(())),
             requested_route: Some(native_requested(dest, 1, false)),
             walk_request_id: 7,
             ..Default::default()
-        },
+        }),
     )])));
     let arm = ScriptWalkArm {
         here: Some((2823, 3555, 0)),
@@ -5325,8 +5342,8 @@ fn same_key_walk_near_refuses_distinct_id_and_keeps_inflight() {
     assert_eq!(bot.route_generation, 1);
     assert_eq!(bot.walk_request_id, 7);
     assert_eq!(bot.requested_route, Some(native_requested(dest, 1, false)));
-    assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(dest));
-    assert!(bot.route_worker.is_some());
+    assert_eq!(bot.route_destination(), Some(dest));
+    assert!(bot.route_work_pending());
     assert!(bot.walk_outcome_failed);
     assert_eq!(bot.walk_outcome_request_id, 9);
     assert_eq!(bot.walk_outcome_x, dest.x);
@@ -5348,14 +5365,13 @@ fn unpublished_wait_refusal_survives_legacy_zero_and_yields_to_newer_wait() {
     });
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "coal".to_string(),
-        NavBot {
+        with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
             route_generation: 1,
-            route_worker: Some(Arc::new(())),
             requested_route: Some(native_requested(dest, 1, false)),
             walk_request_id: 7,
             ..Default::default()
-        },
+        }),
     )])));
     let arm = ScriptWalkArm {
         here: Some((2823, 3555, 0)),
@@ -5385,7 +5401,7 @@ fn unpublished_wait_refusal_survives_legacy_zero_and_yields_to_newer_wait() {
         );
         bot.publish_route(1, 7, false, RouteOutcome::NoPath);
         assert_eq!(bot.walk_outcome_request_id, 9);
-        assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(dest));
+        assert_eq!(bot.route_destination(), Some(dest));
         assert_eq!(bot.walk_request_id, 7);
         assert!(bot.requested_route.is_none());
         bot.requested_route = Some(native_requested(dest, 1, false));
@@ -5432,40 +5448,12 @@ fn same_key_pending_route_refuses_distinct_id() {
     let world = Arc::new(open_world(7, 7));
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "pend".to_string(),
-        NavBot {
+        with_pending_route_work(NavBot {
             route_generation: 1,
-            pending_route: Some(Box::new(ScriptRouteRequest {
-                admission: crate::admission::Admission::manual(
-                    FindOptions::default(),
-                    Default::default(),
-                    0,
-                    crate::WalkGlobals::default(),
-                ),
-                loc_id: None,
-                arrival: nav::arrival::ArrivalKind::Reach,
-                generation: 1,
-                request_id: 7,
-                world: Arc::clone(&world),
-                from: WorldTile {
-                    x: 2823,
-                    z: 3555,
-                    level: 0,
-                },
-                to: dest,
-                radius: 1,
-                opts: FindOptions::default(),
-                state: None,
-                bank_origin: Origin::Unknown,
-                bank: Vec::new(),
-                live_candidates: None,
-                compat_tile_intent: false,
-                completion: Default::default(),
-                exclusions: None,
-            })),
             requested_route: Some(native_requested(dest, 1, false)),
             walk_request_id: 7,
             ..Default::default()
-        },
+        }),
     )])));
     let arm = ScriptWalkArm {
         here: Some((2823, 3555, 0)),
@@ -5487,9 +5475,7 @@ fn same_key_pending_route_refuses_distinct_id() {
     let bot = &navs.lock().unwrap()["pend"];
     assert_eq!(bot.route_generation, 1);
     assert_eq!(bot.walk_request_id, 7);
-    assert!(bot.pending_route.is_some());
-    assert_eq!(bot.pending_route.as_ref().map(|p| p.request_id), Some(7));
-    assert!(bot.route_worker.is_none());
+    assert!(bot.route_work_pending());
     assert!(bot.walk_outcome_failed);
     assert_eq!(bot.walk_outcome_request_id, 9);
 }
@@ -5515,14 +5501,13 @@ fn two_same_key_walk_near_refuses_later_wait_and_old_nopath_does_not_settle_it()
     let (first_id, second_id) = park_two_walks(&iso, dest.x, dest.z, 1);
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "coal".to_string(),
-        NavBot {
+        with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
             route_generation: 1,
-            route_worker: Some(Arc::new(())),
             requested_route: Some(native_requested(dest, 1, false)),
             walk_request_id: first_id,
             ..Default::default()
-        },
+        }),
     )])));
     let arm = ScriptWalkArm {
         here: Some((2823, 3555, 0)),
@@ -5562,13 +5547,13 @@ fn two_same_key_walk_near_refuses_later_wait_and_old_nopath_does_not_settle_it()
         let mut all = navs.lock().unwrap();
         let bot = all.get_mut("coal").expect("nav bot");
         assert_eq!(bot.walk_request_id, first_id);
-        assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(dest));
+        assert_eq!(bot.route_destination(), Some(dest));
         // The isolate already observed the current wait refusal. A later
         // coalesced NoPath may now occupy the single outcome slot.
         bot.mark_walk_outcome_posted(bot.walk_outcome_seq);
         bot.publish_route(1, first_id, false, RouteOutcome::NoPath);
         assert_eq!(
-            bot.route.as_ref().map(|r| r.dest),
+            bot.route_destination(),
             Some(dest),
             "coalesced NoPath must retain the armed route"
         );
@@ -5608,14 +5593,13 @@ fn two_same_key_old_nopath_before_snapshot_keeps_later_refusal() {
     let (first_id, second_id) = park_two_walks(&iso, dest.x, dest.z, 1);
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "coal".to_string(),
-        NavBot {
+        with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
             route_generation: 1,
-            route_worker: Some(Arc::new(())),
             requested_route: Some(native_requested(dest, 1, false)),
             walk_request_id: first_id,
             ..Default::default()
-        },
+        }),
     )])));
     let arm = ScriptWalkArm {
         here: Some((2823, 3555, 0)),
@@ -5656,8 +5640,8 @@ fn two_same_key_old_nopath_before_snapshot_keeps_later_refusal() {
         assert!(bot.walk_outcome_failed);
         assert_eq!(bot.walk_request_id, first_id);
         assert_eq!(bot.route_generation, 1);
-        assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(dest));
-        assert!(bot.route_worker.is_some());
+        assert_eq!(bot.route_destination(), Some(dest));
+        assert!(bot.route_work_pending());
         assert!(bot.requested_route.is_none());
     }
     let posted = posted_from_bot(&navs.lock().unwrap()["coal"]);
@@ -5695,14 +5679,13 @@ fn two_same_key_old_mid_follow_terminal_before_snapshot_keeps_later_refusal() {
     let (first_id, second_id) = park_two_walks(&iso, dest.x, dest.z, 1);
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "coal".to_string(),
-        NavBot {
+        with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
             route_generation: 1,
-            route_worker: Some(Arc::new(())),
             requested_route: Some(native_requested(dest, 1, false)),
             walk_request_id: first_id,
             ..Default::default()
-        },
+        }),
     )])));
     let arm = ScriptWalkArm {
         here: Some((2823, 3555, 0)),
@@ -5746,8 +5729,8 @@ fn two_same_key_old_mid_follow_terminal_before_snapshot_keeps_later_refusal() {
         assert!(bot.walk_outcome_failed);
         assert_eq!(bot.walk_request_id, first_id);
         assert_eq!(bot.route_generation, 1);
-        assert!(bot.route.is_none());
-        assert!(bot.route_worker.is_some());
+        assert!(!bot.has_route());
+        assert!(bot.route_work_pending());
     }
     let posted = posted_from_bot(&navs.lock().unwrap()["coal"]);
     assert_eq!(posted.request_id, second_id);
@@ -5847,7 +5830,8 @@ fn bank_fetch_refusal_echoes_isolate_request_id() {
                     legs: vec![],
                     dest,
                     ticks: 0.0,
-                }),
+                })
+                .into(),
                 avoid: Vec::new(),
                 progress: Default::default(),
             }),
@@ -5896,7 +5880,12 @@ fn exact_walk_near_replaces_published_nearby_route() {
         z: 1,
         level: 0,
     };
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    navs.lock()
+        .unwrap()
+        .entry("bank".into())
+        .or_default()
+        .work_scope = Some(next_test_route_scope());
     let arm = ScriptWalkArm {
         here: Some((0, 0, 0)),
         world: Some(Arc::new(open_world(7, 7))),
@@ -5906,41 +5895,22 @@ fn exact_walk_near_replaces_published_nearby_route() {
         bank: BankRows::default(),
     };
     assert!(arm.route_with_radius(6, 6, 0, FindOptions::default(), 1));
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    loop {
-        let all = navs.lock().unwrap();
-        let bot = all.get("bank").expect("nav bot");
-        if bot.route_worker.is_none() && bot.route.is_some() {
-            break;
-        }
-        drop(all);
-        assert!(
-            std::time::Instant::now() < deadline,
-            "nearby worker did not finish"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
-    let nearby_dest = navs.lock().unwrap()["bank"]
-        .route
-        .as_ref()
-        .map(|route| route.dest);
+    assert!(
+        wait_for_route_work(&navs, "bank", |bot| {
+            !bot.route_work_pending() && bot.has_route()
+        }),
+        "nearby route work did not finish"
+    );
+    let nearby_dest = navs.lock().unwrap()["bank"].route_destination();
     assert_ne!(nearby_dest, Some(exact));
 
     assert!(arm.route_with_radius(exact.x, exact.z, exact.level, FindOptions::default(), 0));
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    loop {
-        let all = navs.lock().unwrap();
-        let bot = all.get("bank").expect("nav bot");
-        if bot.route_worker.is_none() && bot.route.as_ref().map(|route| route.dest) == Some(exact) {
-            break;
-        }
-        drop(all);
-        assert!(
-            std::time::Instant::now() < deadline,
-            "exact worker did not publish dest"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
+    assert!(
+        wait_for_route_work(&navs, "bank", |bot| {
+            !bot.route_work_pending() && bot.route_destination() == Some(exact)
+        }),
+        "exact route work did not publish the destination"
+    );
 }
 
 #[test]
@@ -6004,7 +5974,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         state: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         compat_tile_intent: false,
         completion: Default::default(),
         exclusions: Some(Arc::new(ScriptRouteExclusions {
@@ -6019,7 +5989,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         max_z: 3,
         level: Some(0),
     };
-    let RouteOutcome::Routed(straight) = request(Vec::new()).calculate().0 else {
+    let RouteOutcome::Routed(straight) = request(Vec::new()).drive_route_job_for_test().0 else {
         panic!("open floor routes");
     };
     // Every tile stepped, the waypoints' straight/diagonal runs expanded.
@@ -6048,7 +6018,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         "without the rectangle the cheapest route crosses it: {:?}",
         straight
     );
-    let RouteOutcome::Routed(around) = request(vec![thrower]).calculate().0 else {
+    let RouteOutcome::Routed(around) = request(vec![thrower]).drive_route_job_for_test().0 else {
         panic!("a detour exists north of the rectangle");
     };
     assert_eq!(around.dest.x, 11);
@@ -6062,13 +6032,13 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         ..thrower
     };
     assert!(matches!(
-        request(vec![sealed]).calculate().0,
+        request(vec![sealed]).drive_route_job_for_test().0,
         RouteOutcome::NoPath
     ));
 }
 
 #[test]
-fn radius_calculate_keeps_first_connected_open_floor_approach() {
+fn radius_route_job_keeps_first_connected_open_floor_approach() {
     let world = Arc::new(open_world(7, 7));
     let request = ScriptRouteRequest {
         admission: crate::admission::Admission::manual(
@@ -6097,12 +6067,12 @@ fn radius_calculate_keeps_first_connected_open_floor_approach() {
         state: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         compat_tile_intent: false,
         completion: Default::default(),
         exclusions: None,
     };
-    let RouteOutcome::Routed(route) = request.calculate().0 else {
+    let RouteOutcome::Routed(route) = request.drive_route_job_for_test().0 else {
         panic!("open floor should route");
     };
     assert_eq!(
@@ -6116,7 +6086,7 @@ fn radius_calculate_keeps_first_connected_open_floor_approach() {
 }
 
 #[test]
-fn radius_calculate_drops_wall_separated_candidate() {
+fn radius_route_job_drops_wall_separated_candidate() {
     let mut world = open_world(7, 7);
     let mut flags = vec![0u32; 49];
     for z in 2..=4 {
@@ -6153,12 +6123,14 @@ fn radius_calculate_drops_wall_separated_candidate() {
         state: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         compat_tile_intent: false,
         completion: Default::default(),
         exclusions: None,
     };
-    let RouteOutcome::Routed(route) = request.calculate().0 else {
+    let to = request.to;
+    let world = Arc::clone(&request.world);
+    let RouteOutcome::Routed(route) = request.drive_route_job_for_test().0 else {
         panic!("same-room approach should route");
     };
     assert_ne!(
@@ -6169,21 +6141,15 @@ fn radius_calculate_drops_wall_separated_candidate() {
             level: 0
         }
     );
+    assert!((route.dest.x - to.x).abs().max((route.dest.z - to.z).abs()) <= 1);
     assert!(
-        (route.dest.x - request.to.x)
-            .abs()
-            .max((route.dest.z - request.to.z).abs())
-            <= 1
-    );
-    assert!(
-        nav::router::local_step_component(&request.world.collision, request.to, 1)
-            .contains(&route.dest),
+        nav::router::local_step_component(&world.collision, to, 1).contains(&route.dest),
         "selected destination must be step-connected to the target"
     );
 }
 
 #[test]
-fn radius_calculate_uses_occupied_target_approach_candidates() {
+fn radius_route_job_uses_occupied_target_approach_candidates() {
     let mut world = open_world(7, 7);
     let target = WorldTile {
         x: 3,
@@ -6214,12 +6180,13 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
         state: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         compat_tile_intent: true,
         completion: Default::default(),
         exclusions: None,
     };
-    let RouteOutcome::Routed(route) = request.calculate().0 else {
+    let world = Arc::clone(&request.world);
+    let RouteOutcome::Routed(route) = request.drive_route_job_for_test().0 else {
         panic!("occupied target should route to a neighbour");
     };
     assert_ne!(route.dest, target);
@@ -6229,7 +6196,7 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
             .max((route.dest.z - target.z).abs())
             <= 1
     );
-    assert!(request.world.collision.standable(route.dest));
+    assert!(world.collision.standable(route.dest));
 }
 
 #[test]
@@ -6263,7 +6230,7 @@ fn compat_radius_falls_back_to_arrival_endpoints_when_walkable_anchor_is_unreach
         state: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         compat_tile_intent: true,
         completion: Default::default(),
         exclusions: Some(Arc::new(ScriptRouteExclusions {
@@ -6281,7 +6248,7 @@ fn compat_radius_falls_back_to_arrival_endpoints_when_walkable_anchor_is_unreach
     let request = make_request(vec![avoid_anchor]);
     let candidates = approach_tiles(&request.world, from, target, 2, false);
     assert!(request.world.collision.walkable(target));
-    let (outcome, targets) = request.calculate();
+    let (outcome, targets) = request.drive_route_job_for_test();
     assert_eq!(targets.first(), Some(&target));
     assert_eq!(
         targets
@@ -6320,7 +6287,10 @@ fn compat_radius_falls_back_to_arrival_endpoints_when_walkable_anchor_is_unreach
         level: Some(target.level),
     }]);
     assert!(
-        matches!(unreachable.calculate().0, RouteOutcome::NoPath),
+        matches!(
+            unreachable.drive_route_job_for_test().0,
+            RouteOutcome::NoPath
+        ),
         "when all arrival endpoints are excluded the request still fails"
     );
 }
@@ -6359,13 +6329,13 @@ fn compat_radius_falls_back_to_an_in_radius_endpoint_when_center_is_blocked() {
         state: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         compat_tile_intent: true,
         completion: Default::default(),
         exclusions: None,
     };
     let candidates = approach_tiles(&world, from, target, 2, false);
-    let (outcome, targets) = request.calculate();
+    let (outcome, targets) = request.drive_route_job_for_test();
     assert!(
         !targets.contains(&target),
         "a blocked center is not a route goal"
@@ -6388,7 +6358,7 @@ fn compat_radius_falls_back_to_an_in_radius_endpoint_when_center_is_blocked() {
 }
 
 #[test]
-fn exact_tile_calculate_reaches_the_tile_or_refuses_an_occupied_one() {
+fn exact_tile_route_job_reaches_the_tile_or_refuses_an_occupied_one() {
     let target = WorldTile {
         x: 3,
         z: 3,
@@ -6422,24 +6392,27 @@ fn exact_tile_calculate_reaches_the_tile_or_refuses_an_occupied_one() {
             opts: FindOptions::default(),
             state: None,
             bank: vec![],
-            live_candidates: None,
+            live_geometry: None,
             compat_tile_intent: false,
             completion: Default::default(),
             exclusions: None,
         }
     };
-    let RouteOutcome::Routed(route) = request(false).calculate().0 else {
+    let RouteOutcome::Routed(route) = request(false).drive_route_job_for_test().0 else {
         panic!("an open exact tile should route");
     };
     assert_eq!(route.dest, target, "radius 0 does not stop one tile short");
     assert!(
-        matches!(request(true).calculate().0, RouteOutcome::NoPath),
+        matches!(
+            request(true).drive_route_job_for_test().0,
+            RouteOutcome::NoPath
+        ),
         "an occupied exact tile is refused, never approached"
     );
 }
 
 #[test]
-fn radius_calculate_respects_wall_l_diagonal_geometry() {
+fn radius_route_job_respects_wall_l_diagonal_geometry() {
     let mut world = open_world(7, 7);
     let mut flags = vec![0u32; 49];
     let target = WorldTile {
@@ -6481,7 +6454,7 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
         state: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         compat_tile_intent: false,
         completion: Default::default(),
         exclusions: None,
@@ -6499,7 +6472,7 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
     };
     assert!(component.contains(&same_side));
     assert!(!component.contains(&far_side), "component={component:?}");
-    let RouteOutcome::Routed(route) = request.calculate().0 else {
+    let RouteOutcome::Routed(route) = request.drive_route_job_for_test().0 else {
         panic!("same-side WALL_L approach should route");
     };
     assert!(component.contains(&route.dest));
@@ -6507,7 +6480,7 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
 }
 
 #[test]
-fn radius_calculate_drops_detour_outside_radius() {
+fn radius_route_job_drops_detour_outside_radius() {
     let mut world = open_world(7, 7);
     let mut flags = vec![0u32; 49];
     for z in 1..=5 {
@@ -6545,7 +6518,7 @@ fn radius_calculate_drops_detour_outside_radius() {
         state: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         compat_tile_intent: false,
         completion: Default::default(),
         exclusions: None,
@@ -6556,7 +6529,7 @@ fn radius_calculate_drops_detour_outside_radius() {
         z: 3,
         level: 0
     }));
-    let RouteOutcome::Routed(route) = request.calculate().0 else {
+    let RouteOutcome::Routed(route) = request.drive_route_job_for_test().0 else {
         panic!("global detour should still leave a local approach");
     };
     assert!(component.contains(&route.dest));
@@ -6607,12 +6580,13 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         state: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         compat_tile_intent: false,
         completion: Default::default(),
         exclusions: None,
     };
-    let RouteOutcome::Routed(route) = request.calculate().0 else {
+    let to = request.to;
+    let RouteOutcome::Routed(route) = request.drive_route_job_for_test().0 else {
         panic!("actual 289 route should exist");
     };
     assert_ne!(
@@ -6630,9 +6604,7 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         )),
         "radius arrival must not use Horvik door 1530"
     );
-    assert!(
-        nav::router::local_step_component(&world.collision, request.to, 2).contains(&route.dest)
-    );
+    assert!(nav::router::local_step_component(&world.collision, to, 2).contains(&route.dest));
 }
 
 #[test]
@@ -6867,7 +6839,7 @@ fn unroutable_bank_stand_aborts_the_walk_request_exactly_once() {
             }]),
             dest: destination,
             opts: FindOptions::default(),
-            final_route,
+            final_route: final_route.into(),
             avoid: Vec::new(),
             progress: Default::default(),
         }),
@@ -6967,7 +6939,7 @@ fn failed_bank_stand_subroute_omits_private_leg_metadata() {
             }]),
             dest: destination,
             opts: FindOptions::default(),
-            final_route,
+            final_route: final_route.into(),
             avoid: Vec::new(),
             progress: Default::default(),
         }),
@@ -8366,9 +8338,8 @@ fn disconnect_reset_discards_queued_work_and_pauses_session_state() {
         .push_back("setvar tutorial 1000".into());
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "alice".to_string(),
-        NavBot {
+        with_pending_route_work(NavBot {
             route_generation: 7,
-            route_worker: Some(Arc::new(())),
             requested_route: Some((
                 WorldTile {
                     x: 1,
@@ -8382,7 +8353,7 @@ fn disconnect_reset_discards_queued_work_and_pauses_session_state() {
                 nav::zones::ZoneExempt::NONE,
             )),
             ..NavBot::default()
-        },
+        }),
     )])));
 
     reset_slot_session_work("alice", &scripts, &cheats, &wires, &navs, false);
@@ -8396,9 +8367,9 @@ fn disconnect_reset_discards_queued_work_and_pauses_session_state() {
     let navs = navs.lock().unwrap();
     let nav = &navs["alice"];
     assert_eq!(nav.route_generation, 8);
-    assert!(nav.route_worker.is_none());
+    assert!(!nav.route_work_pending());
     assert!(nav.requested_route.is_none());
-    assert!(nav.route.is_none());
+    assert!(!nav.has_route());
     assert!(nav.bank_fetch.is_none());
 }
 
@@ -9239,21 +9210,19 @@ fn accepted_open_booth_cancels_only_the_requesting_slot_walk() {
     navs.lock().unwrap().extend([
         (
             "alice".into(),
-            NavBot {
+            with_pending_route_work(NavBot {
                 route: Some(route.clone()),
-                route_worker: Some(Arc::new(())),
                 requested_route: requested,
                 ..Default::default()
-            },
+            }),
         ),
         (
             "bob".into(),
-            NavBot {
+            with_pending_route_work(NavBot {
                 route: Some(route.clone()),
-                route_worker: Some(Arc::new(())),
                 requested_route: requested,
                 ..Default::default()
-            },
+            }),
         ),
     ]);
 
@@ -9278,12 +9247,12 @@ fn accepted_open_booth_cancels_only_the_requesting_slot_walk() {
     ));
     let all = navs.lock().unwrap();
     let alice = &all["alice"];
-    assert!(alice.route.is_none());
-    assert!(alice.route_worker.is_none());
+    assert!(!alice.has_route());
+    assert!(!alice.route_work_pending());
     assert!(alice.pending_route.is_none());
     assert!(alice.requested_route.is_none());
     assert_eq!(all["bob"].route, Some(route));
-    assert!(all["bob"].route_worker.is_some());
+    assert!(all["bob"].route_work_pending());
     assert_eq!(all["bob"].requested_route, requested);
 }
 
@@ -9316,12 +9285,11 @@ fn rejected_open_booth_does_not_cancel_the_requesting_slot_walk() {
     ));
     navs.lock().unwrap().insert(
         "alice".into(),
-        NavBot {
+        with_pending_route_work(NavBot {
             route: Some(route.clone()),
-            route_worker: Some(Arc::new(())),
             requested_route: requested,
             ..Default::default()
-        },
+        }),
     );
 
     assert!(!dispatch_script_interact(
@@ -9344,7 +9312,7 @@ fn rejected_open_booth_does_not_cancel_the_requesting_slot_walk() {
     ));
     let all = navs.lock().unwrap();
     assert_eq!(all["alice"].route, Some(route));
-    assert!(all["alice"].route_worker.is_some());
+    assert!(all["alice"].route_work_pending());
     assert_eq!(all["alice"].requested_route, requested);
 }
 
@@ -13757,7 +13725,7 @@ fn dispatch_script_interact_walk_to_uses_nearest_scene_packet_for_solid_target()
         navs.lock()
             .unwrap()
             .get("alice")
-            .is_none_or(|b| b.route.is_none()),
+            .is_none_or(|b| !b.has_route()),
         "walk-to must not arm packed nav"
     );
 }
@@ -13824,6 +13792,7 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
     snap.rebuild(&c);
 
     let navs_off = test_navs("alice");
+    bind_test_route_scope(&navs_off, "alice");
     assert!(dispatch_script_interact(
         &mut c,
         &snap,
@@ -13846,11 +13815,19 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
         }],
     ));
     assert!(
-        !wait_until(100, || queued(&navs_off).is_some()),
+        wait_for_route_work(&navs_off, "alice", |bot| {
+            !bot.route_work_pending() && bot.walk_outcome_failed && !bot.has_route()
+        }),
+        "walk-only route work did not publish NoPath"
+    );
+    assert_eq!(
+        queued(&navs_off),
+        None,
         "walk-only find must not use the teleport edge"
     );
 
     let navs_on = test_navs("alice");
+    bind_test_route_scope(&navs_on, "alice");
     assert!(dispatch_script_interact(
         &mut c,
         &snap,
@@ -13873,7 +13850,9 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
         }],
     ));
     assert!(
-        wait_settled(|| queued(&navs_on) == Some(dest)),
+        wait_for_route_work(&navs_on, "alice", |bot| {
+            !bot.route_work_pending() && bot.route_destination() == Some(dest)
+        }),
         "allow_teleports routes the teleport"
     );
 }
@@ -13931,6 +13910,7 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
     snap.rebuild(&c);
 
     let navs_off = test_navs("alice");
+    bind_test_route_scope(&navs_off, "alice");
     assert!(dispatch_script_interact(
         &mut c,
         &snap,
@@ -13953,11 +13933,19 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
         }],
     ));
     assert!(
-        !wait_until(100, || queued(&navs_off).is_some()),
+        wait_for_route_work(&navs_off, "alice", |bot| {
+            !bot.route_work_pending() && bot.walk_outcome_failed && !bot.has_route()
+        }),
+        "default-false wilderness did not publish NoPath"
+    );
+    assert_eq!(
+        queued(&navs_off),
+        None,
         "default-false wilderness must not enter the zone"
     );
 
     let navs_on = test_navs("alice");
+    bind_test_route_scope(&navs_on, "alice");
     assert!(dispatch_script_interact(
         &mut c,
         &snap,
@@ -13980,7 +13968,9 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
         }],
     ));
     assert!(
-        wait_settled(|| queued(&navs_on) == Some(dest)),
+        wait_for_route_work(&navs_on, "alice", |bot| {
+            !bot.route_work_pending() && bot.route_destination() == Some(dest)
+        }),
         "explicit wilderness must route into the zone"
     );
 }
@@ -14429,7 +14419,7 @@ fn step_bank_fetch_walk_stand_matches_player_plane() {
                 level: 0,
             },
             opts: FindOptions::default(),
-            final_route: Arc::clone(&final_route),
+            final_route: Arc::clone(&final_route).into(),
             avoid: Vec::new(),
             progress: Default::default(),
         }),
@@ -14507,14 +14497,14 @@ fn step_bank_fetch_walk_stand_matches_player_plane() {
             level: 0,
         },
         opts: FindOptions::default(),
-        final_route: Arc::clone(&final_route),
+        final_route: Arc::clone(&final_route).into(),
         avoid: Vec::new(),
         progress: Default::default(),
     });
     bot.route = None;
     step_bank_fetch_on_bot(&mut driver, &snap, &mut bot, None, Some((10, 20, 0)), false);
     assert!(
-        bot.route.is_none(),
+        !bot.has_route(),
         "ground-plane here must not complete an upstairs stand Walk"
     );
 }
@@ -14710,6 +14700,7 @@ fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
         .map(|it| (it.def.id, it.count))
         .collect();
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    bind_test_route_scope(&navs, "alice");
     let arm = ScriptWalkArm {
         here: Some((0, 4, 0)),
         world: Some(Arc::clone(&world)),
@@ -14721,7 +14712,7 @@ fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
             rows: bank_rows.clone(),
         },
     };
-    let worker_done = arm
+    let _completion = arm
         .queue_route_in_snapshot_synced(
             &snapshot,
             4,
@@ -14737,9 +14728,12 @@ fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
             None,
         )
         .expect("solid-target route accepted");
-    worker_done
-        .recv_timeout(Duration::from_secs(60))
-        .expect("route worker completes");
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.bank_fetch.is_some()
+        }),
+        "route work did not publish the BankBudget session"
+    );
 
     let navs = navs.lock().unwrap();
     let fetch = navs
@@ -14754,7 +14748,7 @@ fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
         "the in-scene first-goal diagnosis must use a target-cardinal stand, got {:?}",
         fetch.dest
     );
-    assert_eq!(fetch.final_route.dest, fetch.dest);
+    assert_eq!(fetch.final_route.destination(), fetch.dest);
 }
 
 /// Fix round — BankBudget execute on the live walk arm: `allow_bank_fetch`
@@ -14776,6 +14770,7 @@ fn allow_bank_fetch_on_script_walk_arm_drives_shortage_withdrawal() {
         "knife is in the open bank"
     );
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    bind_test_route_scope(&navs, "alice");
     // Stand on the packed booth's access tile so the session's Walk
     // completes without a follow hop; Open sees the already-open bank.
     let arm = ScriptWalkArm {
@@ -14804,21 +14799,12 @@ fn allow_bank_fetch_on_script_walk_arm_drives_shortage_withdrawal() {
         ),
         "the walk arm must accept the bank-fetch route"
     );
-    // The worker latches the session; wait briefly for it.
-    let mut latched = false;
-    for _ in 0..200 {
-        if navs
-            .lock()
-            .unwrap()
-            .get("alice")
-            .is_some_and(|b| b.bank_fetch.is_some())
-        {
-            latched = true;
-            break;
-        }
-        thread::sleep(Duration::from_millis(5));
-    }
-    assert!(latched, "allow_bank_fetch must latch a BankFetch session");
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.bank_fetch.is_some()
+        }),
+        "allow_bank_fetch must latch a BankFetch session"
+    );
     let out_before = c.out.pos;
     // Pump until Withdraw has had a chance to write (Walk
     // and Open complete immediately on this fixture).
@@ -14901,6 +14887,7 @@ fn compat_walk_fetch_on_with_full_pack_preserves_non_route_items() {
             ..Default::default()
         },
     )])));
+    bind_test_route_scope(&navs, "compat-full-pack");
     let arm = ScriptWalkArm {
         here: Some((0, 3, 0)),
         world: Some(Arc::clone(&world)),
@@ -14925,22 +14912,12 @@ fn compat_walk_fetch_on_with_full_pack_preserves_non_route_items() {
         false,
         0
     ));
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        if navs
-            .lock()
-            .unwrap()
-            .get("compat-full-pack")
-            .is_some_and(|bot| bot.bank_fetch.is_some())
-        {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "compat walk did not install BankBudget"
-        );
-        thread::sleep(Duration::from_millis(5));
-    }
+    assert!(
+        wait_for_route_work(&navs, "compat-full-pack", |bot| {
+            !bot.route_work_pending() && bot.bank_fetch.is_some()
+        }),
+        "compat walk did not install BankBudget"
+    );
     let expected = VecDeque::from([
         BankStep::Walk {
             x: 0,
@@ -15041,7 +15018,7 @@ fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending()
             steps: plan.steps.into(),
             dest: destination,
             opts: FindOptions::default(),
-            final_route: Arc::new(final_route),
+            final_route: Arc::new(final_route).into(),
             avoid: vec![],
             progress: Default::default(),
         }),
@@ -15178,6 +15155,7 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
         "knife is in the open bank"
     );
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    bind_test_route_scope(&navs, "alice");
     let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
         username: "alice".into(),
         ..SlotStatus::default()
@@ -15210,20 +15188,12 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
         ),
         "the walk arm must accept the bank-fetch route"
     );
-    let mut latched = false;
-    for _ in 0..200 {
-        if navs
-            .lock()
-            .unwrap()
-            .get("alice")
-            .is_some_and(|b| b.bank_fetch.is_some())
-        {
-            latched = true;
-            break;
-        }
-        thread::sleep(Duration::from_millis(5));
-    }
-    assert!(latched, "allow_bank_fetch must latch a BankFetch session");
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.bank_fetch.is_some()
+        }),
+        "allow_bank_fetch must latch a BankFetch session"
+    );
     // Live pump: session Walk + follow (not step_bank_fetch alone).
     step_nav_bot(
         &mut c,
@@ -15246,7 +15216,7 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
             .is_some_and(|p| matches!(p.steps.front(), Some(BankStep::Walk { .. }))),
         "Walk must still be the front step (not skipped to Open/final)"
     );
-    let dest = bot.route.as_ref().map(|r| r.dest);
+    let dest = bot.route_destination();
     let access = nav::bank_fetch::nearest_bank_access(
         &world.collision,
         world.banks(),
@@ -15426,7 +15396,7 @@ fn bank_fetch_wear_close_wait_for_snapshot() {
         steps: VecDeque::from([BankStep::Close]),
         dest: route.dest,
         opts: FindOptions::default(),
-        final_route: Arc::new(route.clone()),
+        final_route: Arc::new(route.clone()).into(),
         avoid: Vec::new(),
         progress: Default::default(),
     });
@@ -15447,7 +15417,7 @@ fn bank_fetch_wear_close_wait_for_snapshot() {
         steps: VecDeque::from([BankStep::Wear { id: 2 }]),
         dest: route.dest,
         opts: FindOptions::default(),
-        final_route: Arc::new(route),
+        final_route: Arc::new(route).into(),
         avoid: Vec::new(),
         progress: Default::default(),
     });
@@ -15513,7 +15483,7 @@ fn s2b_bank_close_reassesses_the_real_final_route_and_keeps_frozen_authority() {
     };
     let assessment = crate::admission::assess(&route, &world, &admission);
     let basis = Arc::new(crate::admission::RouteBasis {
-        route: Arc::clone(&route),
+        _route: crate::walk_plan::RoutePath::legacy(Arc::clone(&route)),
         options,
         avoid: Arc::from([]),
         quest_evidence: state.quest_evidence.clone(),
@@ -15527,7 +15497,7 @@ fn s2b_bank_close_reassesses_the_real_final_route_and_keeps_frozen_authority() {
             steps: [BankStep::Close].into(),
             dest: destination,
             opts: options,
-            final_route: Arc::clone(&route),
+            final_route: Arc::clone(&route).into(),
             avoid: Vec::new(),
             progress: Default::default(),
         }),
@@ -15558,7 +15528,7 @@ fn s2b_bank_close_reassesses_the_real_final_route_and_keeps_frozen_authority() {
         "the observed closed bank hands off"
     );
     assert_eq!(
-        bot.route.as_ref().expect("fresh routed final leg").dest,
+        bot.route_destination().expect("fresh routed final leg"),
         destination
     );
     assert!(Arc::ptr_eq(bot.route.as_ref().unwrap(), &route));
@@ -15608,7 +15578,7 @@ fn bank_fetch_open_uses_packed_npc_access() {
             steps: VecDeque::from([BankStep::Open, BankStep::Withdraw { id: 2, count: 1 }]),
             dest: route.dest,
             opts: FindOptions::default(),
-            final_route: Arc::new(route),
+            final_route: Arc::new(route).into(),
             avoid: Vec::new(),
             progress: Default::default(),
         }),
@@ -15743,7 +15713,7 @@ fn bank_fetch_withdraw_aborts_when_bank_closed() {
             steps: VecDeque::from([BankStep::Withdraw { id: 2, count: 1 }, BankStep::Close]),
             dest: route.dest,
             opts: FindOptions::default(),
-            final_route: Arc::new(route),
+            final_route: Arc::new(route).into(),
             avoid: Vec::new(),
             progress: Default::default(),
         }),
@@ -15773,7 +15743,7 @@ fn pump_fetch_session(
         steps: steps.into(),
         dest: route.dest,
         opts: FindOptions::default(),
-        final_route: Arc::new(route.clone()),
+        final_route: Arc::new(route.clone()).into(),
         avoid: Vec::new(),
         progress: Default::default(),
     };
@@ -16003,7 +15973,7 @@ fn bank_fetch_reads_the_backpack_not_the_bank_while_open() {
             steps: VecDeque::from([BankStep::Withdraw { id: 1, count: 2 }]),
             dest: route.dest,
             opts: FindOptions::default(),
-            final_route: Arc::new(route),
+            final_route: Arc::new(route).into(),
             avoid: Vec::new(),
             progress: Default::default(),
         }),
@@ -16067,7 +16037,7 @@ fn bank_fetch_waits_through_the_gap_after_a_sent_move() {
                 steps: VecDeque::from([step]),
                 dest: route.dest,
                 opts: FindOptions::default(),
-                final_route: Arc::new(route),
+                final_route: Arc::new(route).into(),
                 avoid: Vec::new(),
                 progress: Default::default(),
             }),
@@ -16204,7 +16174,7 @@ fn bank_fetch_wear_ignores_its_own_bank_close_until_equipped() {
             steps: VecDeque::from([wear.clone()]),
             dest: route.dest,
             opts: FindOptions::default(),
-            final_route: Arc::new(route),
+            final_route: Arc::new(route).into(),
             avoid: Vec::new(),
             progress: Default::default(),
         }),
@@ -16313,7 +16283,7 @@ fn bank_fetch_withdraw_ignores_an_unrelated_backpack_change() {
             steps: [withdraw.clone()].into(),
             dest: route.dest,
             opts: FindOptions::default(),
-            final_route: Arc::new(route.clone()),
+            final_route: Arc::new(route.clone()).into(),
             avoid: Vec::new(),
             progress: Default::default(),
         };
@@ -16590,8 +16560,7 @@ fn empty_nav() -> EmptyNav {
     (Arc::new(Mutex::new(HashMap::new())), None)
 }
 
-/// Poll `cond` for up to `ms` milliseconds. The route-arming worker is
-/// detached, so tests wait on the effect instead of joining it.
+/// Poll `cond` for up to `ms` milliseconds, sleeping briefly between checks.
 fn wait_until(ms: u64, mut cond: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + Duration::from_millis(ms);
     while Instant::now() < deadline {
@@ -20075,10 +20044,9 @@ export default class T extends LoopingBot {
     );
     navs.lock().unwrap().insert(
         "alice".into(),
-        NavBot {
-            route_worker: Some(Arc::new(())),
+        with_pending_route_work(NavBot {
             ..NavBot::default()
-        },
+        }),
     );
     c.orbit_camera_yaw = 0;
     let slot = script_slot(&scripts, "alice").unwrap();
@@ -20286,10 +20254,9 @@ export default class T extends LoopingBot {
     );
     navs.lock().unwrap().insert(
         "alice".into(),
-        NavBot {
-            route_worker: Some(Arc::new(())),
+        with_pending_route_work(NavBot {
             ..NavBot::default()
-        },
+        }),
     );
     for tick in 2..=4 {
         observe(&mut c, true, tick);
@@ -20589,10 +20556,9 @@ fn guardian_hold_aborts_recovery_unlike_internal_hold() {
     );
     navs.lock().unwrap().insert(
         "alice".into(),
-        NavBot {
-            route_worker: Some(Arc::new(())),
+        with_pending_route_work(NavBot {
             ..NavBot::default()
-        },
+        }),
     );
     script_observe(
         &mut c,
@@ -20627,8 +20593,7 @@ fn guardian_hold_aborts_recovery_unlike_internal_hold() {
             .unwrap()
             .get("alice")
             .unwrap()
-            .route_worker
-            .is_some(),
+            .route_work_pending(),
         "owned recovery nav continues during internal hold"
     );
     script_observe(
@@ -20665,12 +20630,12 @@ fn guardian_hold_aborts_recovery_unlike_internal_hold() {
     );
     drop(slot);
     assert!(
-        navs.lock()
+        !navs
+            .lock()
             .unwrap()
             .get("alice")
             .unwrap()
-            .route_worker
-            .is_none(),
+            .route_work_pending(),
         "guardian hold aborts recovery nav"
     );
     script_slot(&scripts, "alice")
@@ -20710,41 +20675,39 @@ fn pause_clears_live_recovery_walk() {
     );
     play.navs.lock().unwrap().insert(
         "alice".into(),
-        NavBot {
-            route_worker: Some(Arc::new(())),
+        with_pending_route_work(NavBot {
             ..NavBot::default()
-        },
+        }),
     );
     play.script_pause("alice");
     assert_eq!(play.script_state("alice"), script::RunState::Paused);
     let navs = play.navs.lock().unwrap();
     let bot = navs.get("alice").expect("nav bot");
-    assert!(bot.route_worker.is_none(), "Pause must abort recovery nav");
-    assert!(bot.route.is_none());
+    assert!(!bot.route_work_pending(), "Pause must abort recovery nav");
+    assert!(!bot.has_route());
     assert!(bot.pending_route.is_none());
     drop(navs);
     play.script_stop("alice");
 }
 
-/// A script walk mid-follow: armed route, request id, worker.
+/// A script walk mid-follow: armed route and request id.
 fn following_script_walk() -> NavBot {
     let dest = WorldTile {
         x: 2939,
         z: 3154,
         level: 0,
     };
-    NavBot {
+    with_pending_route_work(NavBot {
         route: Some(Arc::new(Route {
             legs: vec![],
             dest,
             ticks: 0.0,
         })),
-        route_worker: Some(Arc::new(())),
         requested_route: Some((dest, 2, false, true, true, nav::zones::ZoneExempt::NONE)),
         walk_request_id: 9,
         route_request_id: 9,
         ..NavBot::default()
-    }
+    })
 }
 
 /// A BankBudget session latched on the walk is part of it: an abort
@@ -20763,7 +20726,7 @@ fn an_aborted_walk_ends_its_bank_fetch_session() {
         .into(),
         dest: route.dest,
         opts: FindOptions::default(),
-        final_route: route,
+        final_route: route.into(),
         avoid: Vec::new(),
         progress: Default::default(),
     });
@@ -20944,8 +20907,7 @@ fn session_reset_clears_live_recovery_walk() {
     );
     navs.lock().unwrap().insert(
         "alice".into(),
-        NavBot {
-            route_worker: Some(Arc::new(())),
+        with_pending_route_work(NavBot {
             requested_route: Some((
                 WorldTile {
                     x: 100,
@@ -20959,7 +20921,7 @@ fn session_reset_clears_live_recovery_walk() {
                 nav::zones::ZoneExempt::NONE,
             )),
             ..NavBot::default()
-        },
+        }),
     );
     // A reconnect: the script's work is held, but the watchdog's own
     // recovery walk ends with the session and is not carried.
@@ -20973,7 +20935,7 @@ fn session_reset_clears_live_recovery_walk() {
         .is_none());
     let bot = navs.lock().unwrap();
     let bot = bot.get("alice").unwrap();
-    assert!(bot.route_worker.is_none());
+    assert!(!bot.route_work_pending());
     assert!(bot.carried_walk.is_none());
     script_slot(&scripts, "alice")
         .unwrap()
@@ -21351,11 +21313,12 @@ impl ReconnectRig {
     /// A rig running `source` on `world`, the player at `here`.
     fn with_source(source: String, world: NavWorld, here: (i32, i32, i32)) -> Self {
         let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
-        script_slot_or_insert(&scripts, "alice")
-            .lock()
-            .unwrap()
-            .start_load_settled(source, script::LoadShape::CompatClass, vec![])
-            .unwrap();
+        let slot = script_slot_or_insert(&scripts, "alice");
+        {
+            let mut slot = slot.lock().unwrap();
+            slot.start_load_settled(source, script::LoadShape::CompatClass, vec![])
+                .unwrap();
+        }
         let client = bank_client();
         let mut snap = GameSnapshot::new();
         snap.rebuild(&client);
@@ -21461,7 +21424,14 @@ impl ReconnectRig {
             None,
             None,
         );
+        crate::script_runtime::pump_route_work(&self.navs, "alice");
         self.slot().lock().unwrap().probe("true").unwrap();
+    }
+    fn wait_for_route_work(&self, ms: u64, mut ready: impl FnMut() -> bool) -> bool {
+        wait_until(ms, || {
+            crate::script_runtime::pump_route_work(&self.navs, "alice");
+            ready()
+        })
     }
 
     /// The slot loop's session boundary, as a drop or a relog calls it.
@@ -21840,19 +21810,17 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
     let armed = rig.armed();
     let initial_walks = rig.walks();
     assert!(
-        wait_settled(|| {
+        rig.wait_for_route_work(60_000, || {
             rig.navs.lock().unwrap().get("alice").is_some_and(|bot| {
                 bot.route_compat_tile_intent
-                    && bot.route_worker.is_none()
+                    && !bot.route_work_pending()
                     && bot.pending_route.is_none()
-                    && bot.route.as_ref().is_some_and(|route| {
-                        route.dest
-                            == WorldTile {
-                                x: 40,
-                                z: 40,
-                                level: 0,
-                            }
-                    })
+                    && bot.route_destination()
+                        == Some(WorldTile {
+                            x: 40,
+                            z: 40,
+                            level: 0,
+                        })
             })
         }),
         "the original compatibility route ends at its requested center"
@@ -21902,19 +21870,17 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
         "the carry is restored exactly once"
     );
     assert!(
-        wait_settled(|| {
+        rig.wait_for_route_work(60_000, || {
             rig.navs.lock().unwrap().get("alice").is_some_and(|bot| {
                 bot.route_compat_tile_intent
-                    && bot.route_worker.is_none()
+                    && !bot.route_work_pending()
                     && bot.pending_route.is_none()
-                    && bot.route.as_ref().is_some_and(|route| {
-                        route.dest
-                            == WorldTile {
-                                x: 40,
-                                z: 40,
-                                level: 0,
-                            }
-                    })
+                    && bot.route_destination()
+                        == Some(WorldTile {
+                            x: 40,
+                            z: 40,
+                            level: 0,
+                        })
             })
         }),
         "the re-armed compatibility route still ends at its requested center"
@@ -21955,6 +21921,7 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
         let bot = navs.get_mut("alice").unwrap();
         bot.traveller.clear();
         bot.route = None;
+        bot.compact_route = None;
     }
     let arm = crate::script_runtime::ScriptWalkArm {
         here: Some(rig.here),
@@ -21977,13 +21944,13 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
         true,
     ));
     assert!(
-        wait_settled(|| {
+        rig.wait_for_route_work(60_000, || {
             rig.navs.lock().unwrap().get("alice").is_some_and(|bot| {
                 bot.route_generation != route_generation
-                    && bot.route_worker.is_none()
+                    && !bot.route_work_pending()
                     && bot.pending_route.is_none()
                     && bot.route_compat_tile_intent
-                    && bot.route.as_ref().is_some_and(|route| route.dest == to)
+                    && bot.route_destination() == Some(to)
             })
         }),
         "live route refresh preserves the compatibility tile endpoint"
@@ -23925,8 +23892,10 @@ fn hold_freezes_follow_and_keeps_the_armed_route() {
         false,
     ));
     assert!(
-        wait_settled(|| queued(&navs).is_some()),
-        "the worker armed the route"
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.has_route()
+        }),
+        "route work did not publish the follow"
     );
 
     // Held: no follow step, and the armed route is not consumed.
@@ -24678,8 +24647,7 @@ fn queued(navs: &Arc<Mutex<HashMap<String, NavBot>>>) -> Option<WorldTile> {
     navs.lock()
         .unwrap()
         .get("alice")
-        .and_then(|b| b.route.as_ref())
-        .map(|r| r.dest)
+        .and_then(NavBot::route_destination)
 }
 
 /// A connected, ingame, scene-ready client on build base (0,0): world
@@ -24791,6 +24759,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
     world.bind_named_bank_facts(&game_data).unwrap();
     let bot = NavBot::default();
     let navs = Arc::new(Mutex::new(HashMap::from([("test".to_string(), bot)])));
+    bind_test_route_scope(&navs, "test");
     let statuses = Arc::new(Mutex::new(Vec::new()));
     let world_opt = Some(Arc::clone(&world));
 
@@ -24862,20 +24831,11 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
         c.out.pos, out_before,
         "raw bank selection itself must not write a movement packet",
     );
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while navs
-        .lock()
-        .unwrap()
-        .get("test")
-        .and_then(|bot| bot.route.as_ref())
-        .is_none()
-    {
-        assert!(
-            Instant::now() < deadline,
-            "bank worker did not publish the selected stand route",
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    assert!(
+        wait_for_route_work(&navs, "test", |bot| !bot.route_work_pending()
+            && bot.has_route()),
+        "bank route work did not publish the selected stand"
+    );
 
     let flood = api::query::SceneQuery::new(snap.scene(), Some(start)).flood_reach();
     let reach = Arc::new(api::query::pack_reach_query(snap.scene(), flood.as_ref()));
@@ -24915,7 +24875,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
         || Arc::clone(&reach),
     );
     assert!(
-        navs.lock().unwrap()["test"].route.is_none(),
+        !navs.lock().unwrap()["test"].has_route(),
         "arrival on the resolved stand must settle the host route",
     );
 
@@ -25018,6 +24978,7 @@ fn native_v2_open_stand_aborts_armed_walk_after_operable_neighbor() {
     ));
     let world_opt = Some(Arc::clone(&world));
     let navs = test_navs("native-v2");
+    bind_test_route_scope(&navs, "native-v2");
     let statuses = Arc::new(Mutex::new(Vec::new()));
     let iso = script::LoadIsolate::spawn(
         r#"
@@ -25116,20 +25077,12 @@ export function tick(api) {
         "native-v2",
         requests,
     ));
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while navs
-        .lock()
-        .unwrap()
-        .get("native-v2")
-        .and_then(|bot| bot.route.as_ref())
-        .is_none()
-    {
-        assert!(
-            Instant::now() < deadline,
-            "native v2 walk did not publish a route",
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    assert!(
+        wait_for_route_work(&navs, "native-v2", |bot| {
+            !bot.route_work_pending() && bot.has_route()
+        }),
+        "native v2 route work did not publish a route"
+    );
 
     let reach = {
         let flood = api::query::SceneQuery::new(snap.scene(), Some(start)).flood_reach();
@@ -25198,7 +25151,7 @@ export function tick(api) {
         "a refused OpenStand must not write a booth packet",
     );
     assert!(
-        navs.lock().unwrap()["native-v2"].route.is_some(),
+        navs.lock().unwrap()["native-v2"].has_route(),
         "a refused OpenStand must keep the armed v2 walk",
     );
 
@@ -25263,7 +25216,7 @@ export function tick(api) {
         "accepted OpenStand must abort the armed v2 walk before a follow re-issues movement",
     );
     assert!(
-        navs.lock().unwrap()["native-v2"].route.is_none(),
+        !navs.lock().unwrap()["native-v2"].has_route(),
         "accepted OpenStand must clear the v2 route",
     );
     iso.join();
@@ -25285,7 +25238,7 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
     nav_snapshot_at(&mut c, &mut snap, 0, 0);
 
     // Native cards queue a walk against an observed frame. The host admits it
-    // after the tick and arms the uid's route off-pump.
+    // after the tick and starts route work through the shared service.
     assert!(script_observe(
         &mut d,
         "alice",
@@ -25305,13 +25258,16 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
         false,
     ));
     assert!(
-        wait_settled(|| queued(&navs)
-            == Some(WorldTile {
-                x: 4,
-                z: 0,
-                level: 0
-            })),
-        "the worker armed the route"
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending()
+                && bot.route_destination()
+                    == Some(WorldTile {
+                        x: 4,
+                        z: 0,
+                        level: 0,
+                    })
+        }),
+        "route work did not publish the follow"
     );
 
     // The pump's per-uid nav step polls follow once, sending one hop
@@ -25648,6 +25604,7 @@ fn walk_near_follow_ends_when_here_is_within_the_requested_radius() {
         Vec::new(),
     ));
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    bind_test_route_scope(&navs, "alice");
     let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
         username: "alice".into(),
         ..SlotStatus::default()
@@ -25668,8 +25625,10 @@ fn walk_near_follow_ends_when_here_is_within_the_requested_radius() {
         level: 0,
     };
     assert!(
-        wait_settled(|| queued(&navs) == Some(approach)),
-        "the worker armed the approach route"
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.route_destination() == Some(approach)
+        }),
+        "route work did not publish the approach route"
     );
     let mut d = NavRec::default();
     let mut c = nav_client();
@@ -25780,6 +25739,7 @@ export default class T extends LoopingBot {{
         let mut client = nav_client();
         let mut snapshot = GameSnapshot::new();
         nav_snapshot_at(&mut client, &mut snapshot, here.x, here.z);
+        bind_test_route_scope(&navs, name);
         assert!(dispatch_script_interact(
             &mut client,
             &snapshot,
@@ -25792,18 +25752,14 @@ export default class T extends LoopingBot {{
             requests,
         ));
         assert!(
-            wait_settled(|| navs
-                .lock()
-                .unwrap()
-                .get(name)
-                .is_some_and(|bot| bot.route.is_some())),
-            "{name}'s route worker settled"
+            wait_for_route_work(&navs, name, |bot| {
+                !bot.route_work_pending() && bot.has_route()
+            }),
+            "{name}'s route work did not complete"
         );
         let endpoint = navs.lock().unwrap()[name]
-            .route
-            .as_ref()
-            .expect("routed walk")
-            .dest;
+            .route_destination()
+            .expect("routed walk");
 
         iso.post_snapshot(encode_walk_snapshot(
             2,
@@ -25928,7 +25884,12 @@ fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() 
         );
     };
     observe(&mut driver, &snapshot, 1);
-    assert!(wait_settled(|| queued(&navs).is_some()));
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.has_route()
+        }),
+        "native route work did not publish a route"
+    );
 
     // Arrival can be transient between native polls, for example when a
     // transport moves the actor again. The host terminal must survive it.
@@ -25997,6 +25958,7 @@ fn walk_near_follow_does_not_end_through_a_closed_wall() {
         Vec::new(),
     ));
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    bind_test_route_scope(&navs, "alice");
     let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
         username: "alice".into(),
         ..SlotStatus::default()
@@ -26010,7 +25972,12 @@ fn walk_near_follow_does_not_end_through_a_closed_wall() {
         bank: BankRows::default(),
     };
     assert!(arm.route_with_radius(10, 16, 0, FindOptions::default(), 4));
-    assert!(wait_settled(|| queued(&navs).is_some()), "route armed");
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.has_route()
+        }),
+        "route work did not publish a route"
+    );
     let armed = queued(&navs);
     let mut d = NavRec::default();
     let mut c = nav_client();
@@ -26112,6 +26079,7 @@ fn walk_near_blocked_target_routes_to_an_arrival_capable_stand() {
     nav_snapshot_at(&mut client, &mut snapshot, outside.x, outside.z);
 
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    bind_test_route_scope(&navs, "alice");
     let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
         username: "alice".into(),
         ..SlotStatus::default()
@@ -26124,7 +26092,7 @@ fn walk_near_blocked_target_routes_to_an_arrival_capable_stand() {
         state: None,
         bank: BankRows::default(),
     };
-    let worker_done = arm
+    let _completion = arm
         .queue_route_in_snapshot_synced(
             &snapshot,
             dest.x,
@@ -26136,17 +26104,23 @@ fn walk_near_blocked_target_routes_to_an_arrival_capable_stand() {
             17,
             None,
         )
-        .expect("route worker spawned");
-    worker_done
-        .recv_timeout(Duration::from_secs(60))
-        .expect("route worker completed");
-    let route = navs.lock().unwrap()["alice"].route.clone().expect("route");
+        .expect("route request accepted");
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.route_destination() == Some(inside)
+        }),
+        "route work did not publish the legal endpoint"
+    );
+    let route = navs.lock().unwrap()["alice"]
+        .route_path_for_follow()
+        .expect("route");
     assert_eq!(
-        route.dest, inside,
+        route.destination(),
+        inside,
         "the route crosses around the wall to the legal destination-side stand"
     );
     assert!(
-        route.ticks > 0.0,
+        route.view().expect("compact route view").ticks() > 0.0,
         "the route must not settle where it started"
     );
 
@@ -26187,7 +26161,7 @@ fn walk_near_blocked_target_routes_to_an_arrival_capable_stand() {
     );
     let all = navs.lock().unwrap();
     let bot = &all["alice"];
-    assert!(bot.route.is_none(), "fresh arrival clears the route");
+    assert!(!bot.has_route(), "fresh arrival clears the route");
 }
 
 pub(super) fn plant_nav_footprint_loc(
@@ -26228,8 +26202,9 @@ fn arm_snapshot_route(
     to: WorldTile,
     radius: i32,
     loc_id: Option<i32>,
-) -> Arc<nav::router::Route> {
+) -> crate::walk_plan::RoutePath {
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    bind_test_route_scope(&navs, "alice");
     let arm = ScriptWalkArm {
         here: Some((from.x, from.z, from.level)),
         world: Some(world),
@@ -26238,7 +26213,7 @@ fn arm_snapshot_route(
         state: None,
         bank: BankRows::default(),
     };
-    let worker_done = arm
+    let _completion = arm
         .queue_route_in_snapshot_synced(
             snapshot,
             to.x,
@@ -26250,15 +26225,16 @@ fn arm_snapshot_route(
             29,
             loc_id,
         )
-        .expect("route worker spawned");
-    worker_done
-        .recv_timeout(Duration::from_secs(60))
-        .expect("route worker completed");
-    let route = {
-        let all = navs.lock().unwrap();
-        all.get("alice").and_then(|bot| bot.route.clone())
-    };
-    route.expect("route")
+        .expect("route request accepted");
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| !bot.route_work_pending()
+            && bot.has_route()),
+        "route work did not publish a route"
+    );
+    let route = navs.lock().unwrap()["alice"]
+        .route_path_for_follow()
+        .expect("route");
+    route
 }
 
 #[test]
@@ -26375,11 +26351,15 @@ fn modeled_booth_behind_closed_door_routes_with_the_baked_graph() {
     );
 
     let route = arm_snapshot_route(world, &snapshot, from, booth, 1, Some(loc.id));
-    assert_eq!(route.dest, stand);
+    assert_eq!(route.destination(), stand);
     assert!(
-        route.legs.iter().any(
-            |leg| matches!(leg, nav::router::Leg::Transport { edge } if edge.kind == TransportKind::Door)
-        ),
+        route
+            .view()
+            .expect("compact route view")
+            .legs()
+            .any(|leg| leg
+                .transport()
+                .is_some_and(|edge| edge.kind() == TransportKind::Door)),
         "the baked multi-goal route must cross the closed door"
     );
     let stand_flood = api::query::SceneQuery::new(snapshot.scene(), Some(stand))
@@ -26449,7 +26429,7 @@ fn modeled_two_by_two_loc_routes_to_a_full_footprint_arrival_stand() {
         .id;
     let route = arm_snapshot_route(world, &snapshot, from, target, 1, Some(loc_id));
     assert_eq!(
-        api::query::loc_approach::arrived_at(&snapshot, route.dest, target, 1, loc_id),
+        api::query::loc_approach::arrived_at(&snapshot, route.destination(), target, 1, loc_id),
         Some(true),
         "the endpoint must be a real operable footprint stand inside the radius"
     );
@@ -26654,6 +26634,7 @@ fn assert_snapshot_route_no_path(
     radius: i32,
 ) {
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    bind_test_route_scope(&navs, "alice");
     let arm = ScriptWalkArm {
         here: Some((from.x, from.z, from.level)),
         world: Some(world),
@@ -26662,25 +26643,30 @@ fn assert_snapshot_route_no_path(
         state: None,
         bank: BankRows::default(),
     };
-    arm.queue_route_in_snapshot_synced(
-        snapshot,
-        to.x,
-        to.z,
-        to.level,
-        FindOptions::default(),
-        radius,
-        true,
-        29,
-        None,
-    )
-    .expect("route worker spawned")
-    .recv_timeout(Duration::from_secs(60))
-    .expect("route worker completed");
+    let _completion = arm
+        .queue_route_in_snapshot_synced(
+            snapshot,
+            to.x,
+            to.z,
+            to.level,
+            FindOptions::default(),
+            radius,
+            true,
+            29,
+            None,
+        )
+        .expect("route request accepted");
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.walk_outcome_failed
+        }),
+        "route work did not publish NoPath"
+    );
 
     let all = navs.lock().unwrap();
     let bot = &all["alice"];
     assert!(
-        bot.route.is_none(),
+        !bot.has_route(),
         "an unreachable target must not route to a radius tile"
     );
     assert!(
@@ -26757,27 +26743,33 @@ fn offscene_solid_radius_goals_reach_target_side_through_packed_door() {
     );
 
     let route = arm_snapshot_route(Arc::clone(&world), &snapshot, from, target, 4, None);
+    let destination = route.destination();
     assert_ne!(
-        route.dest, from,
+        destination, from,
         "radius four must not settle on the source side of the wall"
     );
     assert!(
-        route.dest.x <= 18,
+        destination.x <= 18,
         "route endpoint must remain on the target side, got {:?}",
-        route.dest
+        destination
     );
     assert!(
-        route.legs.iter().any(
-            |leg| matches!(leg, nav::router::Leg::Transport { edge } if edge.kind == TransportKind::Door)
-        ),
+        route
+            .view()
+            .expect("compact route view")
+            .legs()
+            .any(|leg| leg
+                .transport()
+                .is_some_and(|edge| edge.kind() == TransportKind::Door)),
         "the packed route must cross the closed wall by its door"
     );
 
-    let reach_snapshot = raw_flags_scene(&flags, SIZE, (0, 0), route.dest);
-    let flood = api::query::SceneQuery::new(reach_snapshot.scene(), Some(route.dest)).flood_reach();
+    let reach_snapshot = raw_flags_scene(&flags, SIZE, (0, 0), destination);
+    let flood =
+        api::query::SceneQuery::new(reach_snapshot.scene(), Some(destination)).flood_reach();
     let view = api::query::pack_reach_query(reach_snapshot.scene(), flood.as_ref());
     assert!(
-        api::query::is_arrived(route.dest, target, 4, || &view),
+        api::query::is_arrived(destination, target, 4, || &view),
         "the selected endpoint must be able to reach the offscene solid target"
     );
 }
@@ -26860,8 +26852,8 @@ fn raw_flags_scene(flags: &[u32], size: usize, base: (i32, i32), from: WorldTile
     snapshot
 }
 
-/// Arm one radius walk and wait for its worker; returns the bot's route and
-/// latched BankBudget session.
+/// Arm one radius walk and wait for route work to finish; returns the bot's
+/// route and latched BankBudget session.
 #[allow(clippy::too_many_arguments)] // world, scene, request and the state it gates on
 fn arm_route_outcome(
     world: Arc<NavWorld>,
@@ -26872,8 +26864,9 @@ fn arm_route_outcome(
     opts: FindOptions,
     state: Option<WorldState>,
     bank: BankRows,
-) -> (Option<Arc<nav::router::Route>>, Option<PendingBankFetch>) {
+) -> (Option<WorldTile>, Option<PendingBankFetch>) {
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    bind_test_route_scope(&navs, "alice");
     let arm = ScriptWalkArm {
         here: Some((from.x, from.z, from.level)),
         world: Some(world),
@@ -26882,15 +26875,21 @@ fn arm_route_outcome(
         state,
         bank,
     };
-    arm.queue_route_in_snapshot_synced(
-        snapshot, to.x, to.z, to.level, opts, radius, true, 43, None,
-    )
-    .expect("route worker spawned")
-    .recv_timeout(Duration::from_secs(60))
-    .expect("route worker completed");
+    let _completion = arm
+        .queue_route_in_snapshot_synced(
+            snapshot, to.x, to.z, to.level, opts, radius, true, 43, None,
+        )
+        .expect("route request accepted");
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending()
+                && (bot.has_route() || bot.bank_fetch.is_some() || bot.walk_outcome_failed)
+        }),
+        "route work did not produce a terminal result"
+    );
     let all = navs.lock().unwrap();
     let bot = &all["alice"];
-    (bot.route.clone(), bot.bank_fetch.clone())
+    (bot.route_destination(), bot.bank_fetch.clone())
 }
 
 /// Falador's west-wall bank in miniature: the booth's stands lie behind a
@@ -26956,9 +26955,9 @@ fn solid_target_stands_past_a_long_detour_route_to_a_stand() {
         let route = route.expect("the detour reaches a stand");
         assert!(session.is_none());
         assert!(
-            stands.contains(&route.dest),
+            stands.contains(&route),
             "r={radius} must end on a booth stand, got {:?}",
-            route.dest
+            route
         );
     }
 }
@@ -27085,7 +27084,7 @@ fn solid_target_behind_worn_gate_in_a_large_world_plans_a_bank_session() {
         );
         let session = session.expect("the banked worn obj plans a session");
         assert_eq!(session.dest, stand, "r={radius}");
-        assert_eq!(session.final_route.dest, stand);
+        assert_eq!(session.final_route.destination(), stand);
         assert!(route.is_some());
     }
 }
@@ -27202,7 +27201,7 @@ fn unfetchable_stands_do_not_hide_a_fetchable_one() {
         );
         let session = session.expect("obj 3 opens the third stand");
         assert_eq!(session.dest, stands[2]);
-        assert_eq!(session.final_route.dest, stands[2]);
+        assert_eq!(session.final_route.destination(), stands[2]);
         assert_eq!(Vec::from(session.steps), steps);
         assert!(route.is_some());
     }
@@ -27291,7 +27290,7 @@ fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
     let session = session.expect("wearing the carried obj 3 opens the door");
     assert_eq!(session.dest, stand);
     assert_eq!(Vec::from(session.steps), vec![BankStep::Wear { id: 3 }]);
-    assert_eq!(route.map(|route| route.dest), Some(stand));
+    assert_eq!(route, Some(stand));
 }
 
 /// Compare every admitted and rejected candidate, including directed walls
@@ -27436,7 +27435,7 @@ fn real_v16_return_radius_endpoint_is_native_arrival() {
         state: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         exclusions: None,
         compat_tile_intent: false,
         completion: Default::default(),
@@ -27519,6 +27518,7 @@ fn radius_walk_route_end_publishes_a_settled_outcome() {
         Vec::new(),
     ));
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    bind_test_route_scope(&navs, "alice");
     let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
         username: "alice".into(),
         ..SlotStatus::default()
@@ -27537,7 +27537,12 @@ fn radius_walk_route_end_publishes_a_settled_outcome() {
         level: 0,
     };
     assert!(arm.queue_route(dest.x, dest.z, 0, FindOptions::default(), 12, true, 7));
-    assert!(wait_settled(|| queued(&navs).is_some()), "route armed");
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.has_route()
+        }),
+        "route work did not publish a route"
+    );
     let approach = queued(&navs).unwrap();
     assert_eq!(
         (approach.x - dest.x).abs().max((approach.z - dest.z).abs()),
@@ -27955,25 +27960,25 @@ fn script_observe_walk_uses_slot_state_across_a_toll() {
         false,
     ));
     assert!(
-        wait_settled(|| queued(&navs)
-            == Some(WorldTile {
-                x: 4,
-                z: 4,
-                level: 0
-            })),
-        "the worker armed the toll route"
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending()
+                && bot.route_destination()
+                    == Some(WorldTile {
+                        x: 4,
+                        z: 4,
+                        level: 0,
+                    })
+        }),
+        "route work did not arm the toll route"
     );
-    let route = navs
-        .lock()
-        .unwrap()
-        .get("alice")
-        .and_then(|b| b.route.clone())
+    let route = navs.lock().unwrap()["alice"]
+        .route_path_for_follow()
         .expect("armed route");
     assert!(
-        route.legs.iter().any(|l| matches!(
-            l,
-            nav::router::Leg::Transport { edge } if edge.consumed_req == vec![(995, 10)]
-        )),
+        route.view().expect("compact route view").legs().any(|leg| {
+            leg.transport()
+                .is_some_and(|edge| edge.consumed() == &[(995, 10)][..])
+        }),
         "the route must cross the toll"
     );
 }
@@ -28054,13 +28059,16 @@ fn script_observe_walk_uses_the_latched_essence_session() {
         false,
     ));
     assert!(
-        wait_settled(|| queued(&navs)
-            == Some(WorldTile {
-                x: 3253,
-                z: 3401,
-                level: 0
-            })),
-        "the worker armed the exit route with the latched session"
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending()
+                && bot.route_destination()
+                    == Some(WorldTile {
+                        x: 3253,
+                        z: 3401,
+                        level: 0,
+                    })
+        }),
+        "route work did not publish the exit route with the latched session"
     );
 }
 
@@ -28208,7 +28216,12 @@ fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
         false,
         false,
     );
-    thread::sleep(Duration::from_millis(20));
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.walk_outcome_failed
+        }),
+        "NoPath did not publish"
+    );
     assert_eq!(queued(&navs), None, "NoPath never arms a route");
 
     // A reachable request arms asynchronously on the worker.
@@ -28232,13 +28245,16 @@ fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
         false,
     );
     assert!(
-        wait_settled(|| queued(&navs)
-            == Some(WorldTile {
-                x: 2,
-                z: 0,
-                level: 0
-            })),
-        "the worker armed the queued route"
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending()
+                && bot.route_destination()
+                    == Some(WorldTile {
+                        x: 2,
+                        z: 0,
+                        level: 0,
+                    })
+        }),
+        "route work did not publish the queued route"
     );
 
     // A second walk cannot replace a route already owned by this run.
@@ -28525,7 +28541,7 @@ fn abort_walk_request_stops_only_the_machines_own_follow() {
     abort(7);
     let bot = &navs.lock().unwrap()["alice"];
     assert_eq!(bot.route_generation, 4, "the follow's route is superseded");
-    assert!(bot.route.is_none());
+    assert!(!bot.has_route());
     assert!(bot.requested_route.is_none());
 }
 
@@ -28936,6 +28952,7 @@ mod host_batch_tests {
         let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let cheats = Arc::new(Mutex::new(HashMap::new()));
         let navs = Arc::new(Mutex::new(HashMap::new()));
+        bind_test_route_scope(&navs, "alice");
         let statuses = Arc::new(Mutex::new(vec![SlotStatus {
             username: "alice".into(),
             ..SlotStatus::default()
@@ -29082,7 +29099,12 @@ mod host_batch_tests {
             bank: BankRows::default(),
         };
         assert!(arm.route_with_radius(4, 0, 0, nav::router::FindOptions::default(), 0));
-        assert!(wait_settled(|| queued(&rig.navs).is_some()));
+        assert!(
+            wait_for_route_work(&rig.navs, "alice", |bot| {
+                !bot.route_work_pending() && bot.has_route()
+            }),
+            "route work did not publish a route"
+        );
     }
 
     fn step_nav(rig: &mut BatchRig) {

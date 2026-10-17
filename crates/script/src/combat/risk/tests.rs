@@ -10,7 +10,10 @@ use nav::contract::{
 use nav::router::{Leg, Route};
 use nav::transport::{TransportEdge, TransportKind, WildernessRules, WildernessZone};
 use nav::zones::{Zone, ZoneClass, ZoneKind, ZoneTable};
+use std::future::Future;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::task::{Context, Poll, Waker};
 
 /// A synthetic zone table and wilderness served through the contract views,
 /// as the host serves the real pack. The lease comes from the one script
@@ -217,6 +220,71 @@ fn context<'a>(fx: &'a Fixture, risk: &'a RiskTables, tables: &'a CombatTables) 
     }
 }
 
+fn poll_ready<F: Future>(future: F) -> F::Output {
+    let mut future = std::pin::pin!(future);
+    let mut context = Context::from_waker(Waker::noop());
+    match future.as_mut().poll(&mut context) {
+        Poll::Ready(output) => output,
+        Poll::Pending => panic!("ready checkpoint suspended"),
+    }
+}
+
+fn assert_assessments_equal(expected: &RouteAssessment, actual: &RouteAssessment) {
+    assert_eq!(expected.verdict, actual.verdict);
+    assert_eq!(expected.plan.complete, actual.plan.complete);
+    assert_eq!(expected.plan.pack, actual.plan.pack);
+    assert_eq!(expected.plan.intervals, actual.plan.intervals);
+    assert_eq!(expected.plan.crossings, actual.plan.crossings);
+    assert_eq!(expected.crossings, actual.crossings);
+    assert_eq!(expected.more, actual.more);
+    assert_eq!(expected.supplies, actual.supplies);
+    assert_eq!(expected.hp_after, actual.hp_after);
+    assert_eq!(expected.volley, actual.volley);
+    assert_eq!(expected.input, actual.input);
+    assert_eq!(expected.generation, actual.generation);
+    assert_eq!(expected.reason, actual.reason);
+}
+
+fn assert_assessment_equivalence(
+    route: RouteView<'_>,
+    estimate: &Estimate<'_>,
+    input: RiskInput,
+) -> Arc<RouteAssessment> {
+    let synchronous = assess(route, estimate, input);
+    let mut checkpoint = || std::future::ready(());
+    let cooperative = poll_ready(assess_cooperative(route, estimate, input, &mut checkpoint));
+    assert_assessments_equal(&synchronous, &cooperative);
+    synchronous
+}
+
+struct DropProbe(Arc<AtomicUsize>);
+
+impl Drop for DropProbe {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+struct YieldOnce {
+    yielded: bool,
+    probe: Option<DropProbe>,
+}
+
+impl Future for YieldOnce {
+    type Output = ();
+
+    fn poll(self: std::pin::Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        if this.yielded {
+            this.probe.take();
+            Poll::Ready(())
+        } else {
+            this.yielded = true;
+            Poll::Pending
+        }
+    }
+}
+
 fn wizard_kind(tables: &CombatTables) -> ZoneKind {
     let npc = tables.selected().npc_by_config("wizard").unwrap();
     ZoneKind::new("wizard", "Wizard", npc.id, 1, npc.ap_attack, false)
@@ -402,6 +470,19 @@ fn u2_admission_omits_fully_granted_unknown_physics_and_preserves_assessment() {
         ),
         Ok(true)
     );
+    let mut checkpoint = || std::future::ready(());
+    assert_eq!(
+        poll_ready(admission_passes_cooperative(
+            fx.route(&walk),
+            &assessment,
+            fx.zones(),
+            &tables,
+            WalkAllow::default(),
+            Grants::named(grants),
+            &mut checkpoint,
+        )),
+        Ok(true)
+    );
     assert_eq!(assessment.plan.intervals.len(), 2);
     assert!(assessment.plan.intervals[0].unknown());
     assert_eq!(assessment.plan.intervals[0].rate, 0);
@@ -433,17 +514,26 @@ fn u2_admission_rejects_a_mixed_granted_unknown_crossing() {
     );
     let grants = fx.exempt(&[ZoneKey::Zone(0)]);
 
-    assert_eq!(
-        admission_passes(
-            fx.route(&walk),
-            &assessment,
-            fx.zones(),
-            &tables,
-            WalkAllow::default(),
-            Grants::named(grants)
-        ),
-        Err(UnknownWhy::Kind(UnknownKind::Mixed))
+    let synchronous = admission_passes(
+        fx.route(&walk),
+        &assessment,
+        fx.zones(),
+        &tables,
+        WalkAllow::default(),
+        Grants::named(grants),
     );
+    assert_eq!(synchronous, Err(UnknownWhy::Kind(UnknownKind::Mixed)));
+    let mut checkpoint = || std::future::ready(());
+    let cooperative = poll_ready(admission_passes_cooperative(
+        fx.route(&walk),
+        &assessment,
+        fx.zones(),
+        &tables,
+        WalkAllow::default(),
+        Grants::named(grants),
+        &mut checkpoint,
+    ));
+    assert_eq!(cooperative, synchronous);
 }
 
 #[test]
@@ -505,6 +595,19 @@ fn u2_admission_keeps_known_granted_damage_before_ungranted_crossings() {
         Ok(false),
         "the granted first crossing's landed hit remains in the later floor"
     );
+    let mut checkpoint = || std::future::ready(());
+    assert_eq!(
+        poll_ready(admission_passes_cooperative(
+            fx.route(&walk),
+            &assessment,
+            fx.zones(),
+            &tables,
+            WalkAllow::default(),
+            Grants::named(grants),
+            &mut checkpoint,
+        )),
+        Ok(false)
+    );
     assert_eq!(assessment.plan.intervals[0].max_hit, 6);
 }
 
@@ -563,6 +666,19 @@ fn u2_admission_checks_ninth_crossing_beyond_display_bound() {
         ),
         Ok(false),
         "the ninth ungranted crossing still participates in complete-plan replay"
+    );
+    let mut checkpoint = || std::future::ready(());
+    assert_eq!(
+        poll_ready(admission_passes_cooperative(
+            fx.route(&walk),
+            &assessment,
+            fx.zones(),
+            &tables,
+            WalkAllow::default(),
+            Grants::named(grants),
+            &mut checkpoint,
+        )),
+        Ok(false)
     );
 }
 
@@ -1468,17 +1584,16 @@ fn u4_u14_poison_through_safe_gap_and_no_crossing_exemption() {
     let safe = self::route(10, 20);
     let mut unknown = poisoned;
     unknown.poison = PoisonState::Unknown { since: 0 };
+    let safe_unknown = assert_assessment_equivalence(fx.route(&safe), &cx, unknown);
+    assert_eq!(safe_unknown.verdict, Verdict::Survivable);
+    let unknown_assessment = assert_assessment_equivalence(fx.route(&route), &cx, unknown);
     assert_eq!(
-        assess(fx.route(&safe), &cx, unknown).verdict,
-        Verdict::Survivable
-    );
-    assert_eq!(
-        assess(fx.route(&route), &cx, unknown).verdict,
+        unknown_assessment.verdict,
         Verdict::Unknown(UnknownWhy::Poison)
     );
+    let unknown_reason = unknown_assessment.reason.clone();
     // The operator reads one short sentence: no internal slice name, and none of
     // the debug-only explanation.
-    let unknown_reason = assess(fx.route(&route), &cx, unknown).reason.clone();
     assert!(
         unknown_reason.starts_with("Poison status is unknown until the bot can track it; "),
         "{unknown_reason}"
@@ -1492,10 +1607,8 @@ fn u4_u14_poison_through_safe_gap_and_no_crossing_exemption() {
     ] {
         assert!(!unknown_reason.contains(internal), "{unknown_reason}");
     }
-    assert_eq!(
-        assess(fx.route(&safe), &cx, poisoned).input.poison,
-        poisoned.poison
-    );
+    let poisoned_assessment = assert_assessment_equivalence(fx.route(&safe), &cx, poisoned);
+    assert_eq!(poisoned_assessment.input.poison, poisoned.poison);
 }
 
 #[test]
@@ -1753,6 +1866,9 @@ fn u1_geometry_activation_carves_origin_envelope_transport_and_nine_crossings() 
     let mut value = input(90, 90, 0, &tables);
     value.combat = Some(126);
     let route = route(90, 115);
+    let shaped_assessment =
+        assert_assessment_equivalence(fx.route(&route), &context(&fx, &risk, &tables), value);
+    assert!(shaped_assessment.plan.complete);
     let path = fx.path(&route);
     let plan = build_plan(path, fx.zones(), &risk, fx.wilderness(), &value).unwrap();
     assert_eq!(
@@ -1797,7 +1913,7 @@ fn u1_geometry_activation_carves_origin_envelope_transport_and_nine_crossings() 
         dest: tile(101),
         ticks: 8.0,
     };
-    let assessed = assess(
+    let assessed = assert_assessment_equivalence(
         fx.route(&ladder),
         &context(&fx, &r, &tables),
         input(90, 90, 0, &tables),
@@ -1837,7 +1953,8 @@ fn u1_geometry_activation_carves_origin_envelope_transport_and_nine_crossings() 
     let mut value = input(255, 255, 0, &tables);
     value.prayer_base = 99;
     value.prayer = 255;
-    let assessed = assess(fx.route(&route), &context(&fx, &risk, &tables), value);
+    let assessed =
+        assert_assessment_equivalence(fx.route(&route), &context(&fx, &risk, &tables), value);
     assert_eq!(assessed.plan.crossings.len(), 9);
     assert_eq!(assessed.crossings.len(), 8);
     assert_eq!(assessed.more, 1);
@@ -1949,7 +2066,8 @@ fn u1_u3_four_zone_crossing_keeps_distinct_ranges_rates_and_summed_hits() {
     )
     .unwrap();
     assert_eq!(damage, 68); // 2*12 + 3*4 + 4*3 + 5*4.
-    let assessed = assess(fx.route(&walk), &context(&fx, &risk, &tables), value);
+    let assessed =
+        assert_assessment_equivalence(fx.route(&walk), &context(&fx, &risk, &tables), value);
     assert_eq!(
         (assessed.verdict, assessed.hp_after),
         (Verdict::Survivable, 187)
@@ -1969,14 +2087,17 @@ fn u5_witnesses_unknown_overflow_and_multi_burst() {
     let cx = context(&fx, &risk, &tables);
     let route = route(88, 112);
     let missing = Estimate { zones: None, ..cx };
+    let missing_result =
+        assert_assessment_equivalence(fx.route(&route), &missing, input(40, 40, 0, &tables));
     assert_eq!(
-        assess(fx.route(&route), &missing, input(40, 40, 0, &tables)).verdict,
+        missing_result.verdict,
         Verdict::Unknown(UnknownWhy::NoZoneTable)
     );
     let mut bad = input(40, 40, 0, &tables);
     bad.unattributed = true;
+    let bad_result = assert_assessment_equivalence(fx.route(&route), &cx, bad);
     assert_eq!(
-        assess(fx.route(&route), &cx, bad).verdict,
+        bad_result.verdict,
         Verdict::Unknown(UnknownWhy::AlreadyEngaged)
     );
     let huge = Route {
@@ -1987,7 +2108,7 @@ fn u5_witnesses_unknown_overflow_and_multi_burst() {
         ticks: 0.0,
     };
     assert_eq!(
-        assess(fx.route(&huge), &cx, input(40, 40, 0, &tables)).verdict,
+        assert_assessment_equivalence(fx.route(&huge), &cx, input(40, 40, 0, &tables)).verdict,
         Verdict::Unknown(UnknownWhy::Overflow)
     );
     let burst = Fixture::new(
@@ -2003,7 +2124,7 @@ fn u5_witnesses_unknown_overflow_and_multi_burst() {
         w.clone(),
     );
     let risk = RiskTables::build(&tables);
-    let burst_assessment = assess(
+    let burst_assessment = assert_assessment_equivalence(
         burst.route(&route),
         &context(&burst, &risk, &tables),
         input(20, 40, 0, &tables),
@@ -2040,10 +2161,10 @@ fn u5_witnesses_unknown_overflow_and_multi_burst() {
     );
     let risk = RiskTables::build(&tables);
     assert_eq!(
-        assess(
+        assert_assessment_equivalence(
             overflow.route(&route),
             &context(&overflow, &risk, &tables),
-            input(255, 255, 0, &tables)
+            input(255, 255, 0, &tables),
         )
         .verdict,
         Verdict::Unknown(UnknownWhy::Overflow)
@@ -2572,8 +2693,10 @@ fn u5_b1_b3_live_classification_multi_and_input_limits() {
         dest: tile(100),
         ticks: 0.0,
     };
+    let enormous_result =
+        assert_assessment_equivalence(fx.route(&enormous), &cx, input(90, 90, 0, &tables));
     assert_eq!(
-        assess(fx.route(&enormous), &cx, input(90, 90, 0, &tables)).verdict,
+        enormous_result.verdict,
         Verdict::Unknown(UnknownWhy::Overflow)
     );
 }
@@ -2748,7 +2871,11 @@ fn u5_hand_examples_typed_verdict_and_least_additional_reference_food() {
     ] {
         let mut value = input(hp, cap, food, &tables);
         value.pos = tile(100 - r - 20);
-        let actual = assess(fx.route(&walk), &cx, value);
+        let actual = if hp == 40 && food == 0 {
+            assert_assessment_equivalence(fx.route(&walk), &cx, value)
+        } else {
+            assess(fx.route(&walk), &cx, value)
+        };
         assert_eq!(
             (actual.verdict, actual.hp_after),
             (verdict, after),
@@ -3104,7 +3231,7 @@ fn r3_admission_never_passes_an_incomplete_plan() {
         &input(99, 99, 0, &tables),
     )
     .is_ok_and(|plan| !plan.crossings.is_empty()));
-    let assessment = assess(
+    let assessment = assert_assessment_equivalence(
         fx.route(&walk),
         &context(&fx, &risk, &tables),
         input(99, 99, 0, &tables),
@@ -3112,17 +3239,26 @@ fn r3_admission_never_passes_an_incomplete_plan() {
     assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Overflow));
     assert!(!assessment.plan.complete);
     for grants in [fx.none(), fx.exempt_all()] {
-        assert_eq!(
-            admission_passes(
-                fx.route(&walk),
-                &assessment,
-                fx.zones(),
-                &tables,
-                WalkAllow::default(),
-                Grants::named(grants)
-            ),
-            Err(UnknownWhy::Overflow)
+        let synchronous = admission_passes(
+            fx.route(&walk),
+            &assessment,
+            fx.zones(),
+            &tables,
+            WalkAllow::default(),
+            Grants::named(grants),
         );
+        assert_eq!(synchronous, Err(UnknownWhy::Overflow));
+        let mut checkpoint = || std::future::ready(());
+        let cooperative = poll_ready(admission_passes_cooperative(
+            fx.route(&walk),
+            &assessment,
+            fx.zones(),
+            &tables,
+            WalkAllow::default(),
+            Grants::named(grants),
+            &mut checkpoint,
+        ));
+        assert_eq!(cooperative, synchronous);
     }
 }
 
@@ -3226,4 +3362,134 @@ fn t5_1_assessment_and_admission_refuse_another_pack() {
         Err(UnknownWhy::NavIdentity),
         "another pack's exemption"
     );
+}
+fn yielding_checkpoint(
+    calls: Arc<AtomicUsize>,
+    drops: Arc<AtomicUsize>,
+) -> impl FnMut() -> YieldOnce {
+    move || {
+        calls.fetch_add(1, Ordering::Relaxed);
+        YieldOnce {
+            yielded: false,
+            probe: Some(DropProbe(Arc::clone(&drops))),
+        }
+    }
+}
+
+#[test]
+fn t5w_assessment_yields_one_unit_and_drops_geometry_and_replay_state() {
+    let tables = tables();
+    let risk = RiskTables::build(&tables);
+    let walk = route(80, 139);
+    let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
+    let estimate = context(&fx, &risk, &tables);
+    let value = input(99, 99, 0, &tables);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let drops = Arc::new(AtomicUsize::new(0));
+    let mut checkpoint = yielding_checkpoint(Arc::clone(&calls), Arc::clone(&drops));
+    let route_view = fx.route(&walk);
+    let mut future = Box::pin(assess_cooperative(
+        route_view,
+        &estimate,
+        value,
+        &mut checkpoint,
+    ));
+    let mut task_context = Context::from_waker(Waker::noop());
+
+    assert!(future.as_mut().poll(&mut task_context).is_pending());
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    assert_eq!(drops.load(Ordering::Relaxed), 0);
+    assert!(future.as_mut().poll(&mut task_context).is_pending());
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+    drop(future);
+    assert_eq!(
+        calls.load(Ordering::Relaxed),
+        2,
+        "drop schedules no more work"
+    );
+    assert_eq!(
+        drops.load(Ordering::Relaxed),
+        2,
+        "suspended state is released"
+    );
+
+    let fx = Fixture::empty();
+    let walk = route(90, 119);
+    let mut estimate = context(&fx, &risk, &tables);
+    estimate.allow = WalkAllow {
+        prayer: false,
+        food: false,
+        escape: false,
+    };
+    let route_view = fx.route(&walk);
+    let mut clear = input(99, 99, 0, &tables);
+    clear.food_len = 0;
+    let baseline_calls = Arc::new(AtomicUsize::new(0));
+    let mut immediate = {
+        let baseline_calls = Arc::clone(&baseline_calls);
+        move || {
+            baseline_calls.fetch_add(1, Ordering::Relaxed);
+            std::future::ready(())
+        }
+    };
+    let _ = poll_ready(assess_cooperative(
+        route_view,
+        &estimate,
+        clear,
+        &mut immediate,
+    ));
+    let geometry_units = baseline_calls.load(Ordering::Relaxed);
+
+    let mut poisoned = clear;
+    poisoned.poison = PoisonState::Poisoned {
+        per_tick: 1,
+        last_tick: 0,
+    };
+    let calls = Arc::new(AtomicUsize::new(0));
+    let drops = Arc::new(AtomicUsize::new(0));
+    let mut checkpoint = yielding_checkpoint(Arc::clone(&calls), Arc::clone(&drops));
+    let mut future = Box::pin(assess_cooperative(
+        route_view,
+        &estimate,
+        poisoned,
+        &mut checkpoint,
+    ));
+    let mut task_context = Context::from_waker(Waker::noop());
+    let replay_units = geometry_units + 8; // seven fixed inventory rows, then the first tick.
+    for _ in 0..replay_units {
+        assert!(future.as_mut().poll(&mut task_context).is_pending());
+    }
+    assert_eq!(calls.load(Ordering::Relaxed), replay_units);
+    drop(future);
+    assert_eq!(
+        calls.load(Ordering::Relaxed),
+        replay_units,
+        "cancelled replay cannot continue"
+    );
+    assert_eq!(
+        drops.load(Ordering::Relaxed),
+        replay_units,
+        "geometry/replay checkpoint futures are dropped"
+    );
+}
+
+#[test]
+fn t5w_heap_bounds_cover_assessment_and_projection_payloads() {
+    let bounds = assessment_heap_bounds().expect("risk heap bound is representable");
+    assert_eq!(bounds.peak_bytes, bounds.retained_bytes);
+
+    let rows = usize::from(u16::MAX)
+        .checked_mul(std::mem::size_of::<ZoneInterval>())
+        .unwrap();
+    let crossings = usize::from(u16::MAX)
+        .checked_mul(std::mem::size_of::<CrossingGeom>())
+        .unwrap();
+    let projected_plan = rows.checked_add(crossings).unwrap();
+    let mask_words = usize::from(u16::MAX).div_ceil(64);
+    let mask = mask_words.checked_mul(std::mem::size_of::<u64>()).unwrap();
+    let expected = bounds
+        .peak_bytes
+        .checked_add(projected_plan)
+        .and_then(|bytes| bytes.checked_add(mask));
+    assert_eq!(admission_peak_heap_bytes(), expected);
 }

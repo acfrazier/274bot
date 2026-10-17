@@ -2059,6 +2059,10 @@
       "owner": "T5"
     },
     {
+      "path": "crates/nav/tests/arrival_candidate_parity.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/nav/tests/death_plateau_real_pack.rs",
       "owner": "T5"
     },
@@ -6556,6 +6560,10 @@
     },
     {
       "path": "crates/host-play/src/script_nav_facade_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/host-play/src/route_work_tests.rs",
       "owner": "T5"
     },
     {

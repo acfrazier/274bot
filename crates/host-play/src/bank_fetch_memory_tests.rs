@@ -352,6 +352,7 @@ fn a_script_walk_plans_from_the_slot_memory_with_the_bank_closed() {
     let state = WorldState::from_snapshot(&closed);
     let memory = RwLock::new(session_memory());
     let (navs, _) = empty_nav();
+    bind_test_route_scope(&navs, "alice");
     let walk: script::shim::InteractReq = serde_json::from_value(serde_json::json!({
         "op": "walk",
         "x": 4,
@@ -376,11 +377,13 @@ fn a_script_walk_plans_from_the_slot_memory_with_the_bank_closed() {
         None,
     ));
     assert!(
-        wait_until(2_000, || navs
-            .lock()
-            .unwrap()
-            .get("alice")
-            .is_some_and(|bot| bot.bank_fetch.is_some())),
+        wait_until(2_000, || {
+            crate::script_runtime::pump_route_work(&navs, "alice");
+            navs.lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| bot.bank_fetch.is_some())
+        }),
         "the script walk latched a BankBudget session from the memory"
     );
     let steps: Vec<BankStep> = navs.lock().unwrap()["alice"]
@@ -605,7 +608,7 @@ fn the_post_session_route_resumes_from_the_bank() {
                 steps: std::collections::VecDeque::from([BankStep::Close]),
                 dest,
                 opts: FindOptions::default(),
-                final_route,
+                final_route: crate::walk_plan::RoutePath::legacy(Arc::clone(&final_route)),
                 avoid: Vec::new(),
                 progress: Default::default(),
             }),
@@ -642,7 +645,7 @@ fn the_post_session_route_resumes_from_the_bank() {
 }
 
 /// The toll world with its far corner `(4, 4)` solid: a radius walk there
-/// takes the unmodeled-solid stand search (`calculate_solid`), and an Area
+/// uses the production route job's unmodeled-solid stand search, and an Area
 /// walk searches every standable tile around it at once.
 fn solid_toll_world() -> NavWorld {
     let mut world = knife_nav_world_with_target(KNIFE, true);
@@ -707,13 +710,13 @@ fn assert_one_trip_only_for_a_hint(arrival: nav::arrival::ArrivalKind) {
         state: Some(state.clone()),
         bank_origin,
         bank: rows.to_vec(),
-        live_candidates: None,
+        live_geometry: None,
         exclusions: None,
         compat_tile_intent: false,
         completion: Default::default(),
     };
     for rows in [&[][..], &[(KNIFE, 20)][..], &[(COINS, 3)][..]] {
-        let (outcome, targets) = request(Origin::Hint, rows).calculate();
+        let (outcome, targets) = request(Origin::Hint, rows).drive_route_job_for_test();
         let RouteOutcome::BankSession { pending, route } = outcome else {
             panic!("{arrival:?} with Hint rows {rows:?}: no verifying trip");
         };
@@ -722,13 +725,20 @@ fn assert_one_trip_only_for_a_hint(arrival: nav::arrival::ArrivalKind) {
             toll_trip(&world),
             "{arrival:?} with Hint rows {rows:?}"
         );
-        assert!(targets.contains(&route.dest), "{:?}", route.dest);
-        assert_eq!(pending.dest, route.dest);
-        assert_eq!(pending.final_route.dest, route.dest);
+        assert!(targets.contains(&pending.dest), "{:?}", pending.dest);
+        assert_eq!(pending.final_route.destination(), pending.dest);
+        let BankStep::Walk { x, z, level } = access_walk(&world) else {
+            panic!("the toll trip starts with a walk to bank access");
+        };
+        assert_eq!(
+            route.dest,
+            WorldTile { x, z, level },
+            "production publishes the bank-access route before the final route"
+        );
         for bank_origin in [Origin::Session, Origin::Unknown] {
             assert!(
                 matches!(
-                    request(bank_origin, rows).calculate().0,
+                    request(bank_origin, rows).drive_route_job_for_test().0,
                     RouteOutcome::NoPath
                 ),
                 "{arrival:?} with {bank_origin:?} rows {rows:?} is NoPath in place"
@@ -758,6 +768,7 @@ fn a_compat_walk_near_a_solid_tile_plans_the_hint_trip_with_the_bank_closed() {
     let state = WorldState::from_snapshot(&closed);
     let mut walk = |memory: Option<&RwLock<BankMemory>>| {
         let (navs, _) = empty_nav();
+        bind_test_route_scope(&navs, "alice");
         assert!(dispatch_script_interact_cached(
             &mut client,
             &closed,
@@ -785,10 +796,10 @@ fn a_compat_walk_near_a_solid_tile_plans_the_hint_trip_with_the_bank_closed() {
             None,
         ));
         assert!(
-            wait_until(2_000, || navs.lock().unwrap().get("alice").is_some_and(
-                |bot| bot.bank_fetch.is_some() || bot.walk_outcome_failed
-            )),
-            "the route worker settled"
+            wait_for_route_work(&navs, "alice", |bot| {
+                !bot.route_work_pending() && (bot.bank_fetch.is_some() || bot.walk_outcome_failed)
+            }),
+            "route work did not settle"
         );
         let navs = navs.lock().unwrap();
         let bot = &navs["alice"];
