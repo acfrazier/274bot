@@ -53,6 +53,51 @@ fn table() -> ZoneTable {
 }
 
 #[test]
+fn goal_row_bound_uses_bucket_population_on_each_plane() {
+    let zones = vec![
+        Zone::npc(tile(1, 1, 0), 1, ZoneClass::Always, u16::MAX, 0),
+        Zone::npc(tile(2, 1, 0), 1, ZoneClass::Always, u16::MAX, 0),
+        Zone::npc(tile(17, 1, 0), 1, ZoneClass::Always, u16::MAX, 0),
+        Zone::npc(tile(1, 1, 1), 1, ZoneClass::Always, u16::MAX, 0),
+        Zone::npc(tile(40, 1, 0), 1, ZoneClass::Always, u16::MAX, 0),
+    ];
+    let table = ZoneTable::from_parts(
+        zones,
+        vec![ZoneKind::new("ranger", "Ranger", 1, 0, false, false)],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        tile(0, 0, 0),
+        24,
+        8,
+        &WildernessRules::default(),
+    )
+    .unwrap();
+    assert_eq!(table.max_zones_per_tile(), 2);
+    assert_eq!(table.at(tile(1, 1, 0)).count(), 2);
+    for level in -1..=4 {
+        for z in -1..=8 {
+            for x in -1..=41 {
+                assert!(table.at(tile(x, z, level)).count() <= table.max_zones_per_tile());
+            }
+        }
+    }
+    let empty = ZoneTable::from_parts(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        tile(0, 0, 0),
+        1,
+        1,
+        &WildernessRules::default(),
+    )
+    .unwrap();
+    assert_eq!(empty.max_zones_per_tile(), 0);
+}
+
+#[test]
 fn blocking_detail_item_length_matches_formatter_without_allocating() {
     let table = table();
     for key in [

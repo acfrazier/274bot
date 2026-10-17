@@ -51,7 +51,7 @@ use crate::zones::{ZoneExempt, ZoneFilter, ZoneFilterOwned, ZoneKey, ZoneTable};
 mod resources;
 use resources::{
     BacktraceStep, Budget, PackedLookup, PackedMinMaxHeap, PackedSearchSlotExt, PackedSearchTable,
-    Predecessors, ResourceBudget, ResourceKey, SearchKey, Unmetered, PACKED_ROOT_ID,
+    Predecessors, ResourceBudget, SearchKey, Unmetered, PACKED_ROOT_ID,
 };
 
 thread_local! {
@@ -1916,13 +1916,16 @@ fn vector_storage_bound<T>(capacity: usize) -> Option<usize> {
         .checked_mul(std::mem::size_of::<T>())
 }
 
-fn hash_storage_peak<K, V>(capacity: usize) -> Option<usize> {
+fn hash_storage_bound<K, V>(capacity: usize) -> Option<usize> {
     crate::world_state::map_storage_bound(
         capacity,
         std::mem::size_of::<(K, V)>(),
         std::mem::align_of::<(K, V)>(),
-    )?
-    .checked_mul(2)
+    )
+}
+
+fn hash_storage_peak<K, V>(capacity: usize) -> Option<usize> {
+    hash_storage_bound::<K, V>(capacity)?.checked_mul(2)
 }
 
 fn set_storage_peak<K>(capacity: usize) -> Option<usize> {
@@ -2062,29 +2065,58 @@ fn search_worst_case_reservation(
                 | SearchRequestShape::BlockingZones { .. }
                 | SearchRequestShape::UnresolvedQuestGates { .. }
         ) {
-        let outer_rows = vector_storage_bound::<FirstZoneGoal>(target_count)?.max(
-            vector_storage_bound::<(Vec<u16>, usize, WorldTile)>(target_count)?,
-        );
-        outer_rows
-            .checked_add(
-                target_count
-                    .checked_mul(zone_count)?
-                    .checked_mul(std::mem::size_of::<u16>())?,
-            )?
-            .checked_add(vector_storage_bound::<WorldTile>(target_count)?.checked_mul(2)?)?
+        // Each partition and its goal/index arrays reserve their exact input
+        // capacities once. A key can contain only IDs from one spatial bucket.
+        let row_bytes = match shape {
+            SearchRequestShape::Many { .. } => std::mem::size_of::<IndexedZoneGoal>(),
+            SearchRequestShape::BlockingZones { .. } => {
+                std::mem::size_of::<(Vec<u16>, usize, WorldTile)>()
+            }
+            _ => std::mem::size_of::<FirstZoneGoal>(),
+        };
+        let goal_bytes = std::mem::size_of::<WorldTile>().checked_add(
+            if matches!(shape, SearchRequestShape::Many { .. }) {
+                std::mem::size_of::<usize>()
+            } else {
+                0
+            },
+        )?;
+        let zone_ids = graph.zones.as_ref()?.max_zones_per_tile();
+        target_count.checked_mul(
+            row_bytes
+                .checked_add(zone_ids.checked_mul(std::mem::size_of::<u16>())?)?
+                .checked_add(goal_bytes)?,
+        )?
     } else {
         0
     };
-    let first_target_sets = if matches!(
-        shape,
-        SearchRequestShape::First { .. }
-            | SearchRequestShape::MissingItemReqs { .. }
-            | SearchRequestShape::BlockingZones { .. }
-            | SearchRequestShape::UnresolvedQuestGates { .. }
-    ) {
-        set_storage_peak::<WorldTile>(target_count)?.checked_mul(2)?
-    } else {
-        0
+    // FirstTargets reserves each set once, without growth. Small sets borrow
+    // the input slice. Preferred and fallback capacities are separate.
+    let target_set_bytes = |capacity| {
+        if capacity <= 8 {
+            Some(0)
+        } else {
+            hash_storage_bound::<WorldTile, ()>(capacity)
+        }
+    };
+    let first_target_sets = match shape {
+        SearchRequestShape::First {
+            target_capacity,
+            fallback_capacity,
+            ..
+        }
+        | SearchRequestShape::MissingItemReqs {
+            target_capacity,
+            fallback_capacity,
+            ..
+        } => target_set_bytes(target_capacity)?
+            .checked_add(target_set_bytes(fallback_capacity)?)?
+            .checked_add(std::mem::size_of::<FirstGoals<'_>>())?,
+        SearchRequestShape::BlockingZones { .. }
+        | SearchRequestShape::UnresolvedQuestGates { .. } => {
+            target_set_bytes(target_count)?.checked_add(std::mem::size_of::<FirstGoals<'_>>())?
+        }
+        _ => 0,
     };
 
     let missing_sort_scratch = if matches!(shape, SearchRequestShape::MissingItemReqs { .. }) {
@@ -2121,10 +2153,8 @@ fn search_worst_case_reservation(
     // released when search_kernel returns.
     let mut common_bytes = 0usize;
     for bytes in [
-        hash_storage_peak::<WorldTile, ResourceKey>(target_count)?,
-        hash_storage_peak::<WorldTile, usize>(target_count)?,
-        vector_storage_bound::<usize>(target_count)?.checked_mul(2)?,
-        vector_storage_bound::<Result<TargetCost, TargetError>>(target_count)?.checked_mul(3)?,
+        // The metered reached map reserves once and stores only balances.
+        hash_storage_bound::<WorldTile, u32>(target_count)?,
         zone_filter_bytes,
         progress_counter_bytes,
         zone_partition_bytes,
@@ -2133,6 +2163,17 @@ fn search_worst_case_reservation(
         set_storage_peak::<u16>(zone_count)?,
     ] {
         add_reserved(&mut common_bytes, bytes)?;
+    }
+    // Only Many builds a unique-goal index and per-target cost/result arrays.
+    if matches!(shape, SearchRequestShape::Many { .. }) {
+        for bytes in [
+            hash_storage_peak::<WorldTile, usize>(target_count)?,
+            vector_storage_bound::<usize>(target_count)?.checked_mul(2)?,
+            vector_storage_bound::<Result<TargetCost, TargetError>>(target_count)?
+                .checked_mul(3)?,
+        ] {
+            add_reserved(&mut common_bytes, bytes)?;
+        }
     }
     let mut resource_bytes = 0usize;
     for bytes in [
@@ -3518,8 +3559,8 @@ async fn first_search_core_compact(
 }
 
 struct FirstZoneGoal {
-    key: Vec<u16>,
-    preferred: bool,
+    key: Box<[u16]>,
+    /// Index into preferred goals followed by fallback goals.
     index: usize,
 }
 
@@ -3653,8 +3694,7 @@ async fn first_cursor_search_with_output(
         let key = goal_zone_key_cooperative(graph, filter, target).await?;
         if !key.is_empty() || options.zones != ZoneExempt::NONE {
             partitions.push(FirstZoneGoal {
-                key,
-                preferred: true,
+                key: key.into_boxed_slice(),
                 index,
             });
         }
@@ -3664,16 +3704,14 @@ async fn first_cursor_search_with_output(
         let key = goal_zone_key_cooperative(graph, filter, target).await?;
         if !key.is_empty() || options.zones != ZoneExempt::NONE {
             partitions.push(FirstZoneGoal {
-                key,
-                preferred: false,
-                index,
+                key: key.into_boxed_slice(),
+                index: targets.len() + index,
             });
         }
     }
     sort_unstable_by_cooperative(&mut partitions, |left, right| {
         left.key
             .cmp(&right.key)
-            .then_with(|| right.preferred.cmp(&left.preferred))
             .then_with(|| left.index.cmp(&right.index))
     })
     .await;
@@ -3745,7 +3783,7 @@ async fn first_cursor_search_with_output(
             let mut fallback_count = 0usize;
             for goal in &partitions[start..end] {
                 work_unit().await;
-                if goal.preferred {
+                if goal.index < targets.len() {
                     preferred_count += 1;
                 } else {
                     fallback_count += 1;
@@ -3761,10 +3799,10 @@ async fn first_cursor_search_with_output(
                 .map_err(|_| SearchCursorError::Allocation)?;
             for goal in &partitions[start..end] {
                 work_unit().await;
-                if goal.preferred {
+                if goal.index < targets.len() {
                     preferred.push(targets[goal.index]);
                 } else {
-                    fallbacks.push(fallback[goal.index]);
+                    fallbacks.push(fallback[goal.index - targets.len()]);
                 }
             }
             let endpoint = preferred
@@ -7385,7 +7423,7 @@ impl KernelOutcome {
         reverse: ReverseReport,
         zone_mask_words: usize,
         resources: B,
-        reached: HashMap<WorldTile, B::Key>,
+        reached: HashMap<WorldTile, u32>,
     ) -> Self {
         let table_capacity = came_from.capacity();
         let capacities = if record_capacities {
@@ -8297,7 +8335,7 @@ async fn search_kernel_budget<B: Budget>(
         }
         expanded += 1;
         if B::METERED && goals.is_target(cur) {
-            reached.entry(cur).or_insert(current);
+            reached.entry(cur).or_insert(node.balance());
         }
         if expanded > budget && !matches!(goals, Goals::First(_)) {
             return KernelOutcome::finish(
