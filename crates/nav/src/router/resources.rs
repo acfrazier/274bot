@@ -343,6 +343,13 @@ impl PackedSearchTable {
         if self.buckets == 0 {
             return Err(());
         }
+        if SYNCHRONOUS_WORK.get() {
+            return self
+                .locate_sync(tile, balance)
+                .map(PackedLookup::Found)
+                .or_else(|| self.vacant_id().map(PackedLookup::Vacant))
+                .ok_or(());
+        }
         let bucket = packed_hash_index(tile, balance, self.buckets);
         let mut id = read_link(self.links[bucket]);
         while id != PACKED_ROOT_ID {
@@ -1400,6 +1407,51 @@ mod packed_search_tests {
         slot.set_settled(PACKED_ROOT_ID);
         assert_eq!(slot.state(), PACKED_SETTLED);
         assert_eq!(slot.parent(), PACKED_ROOT_ID);
+    }
+
+    #[test]
+    fn packed_lookup_preserves_collision_boundaries_and_synchronous_results() {
+        let mut table = PackedSearchTable::try_new_capacity(3).expect("one-bucket table");
+        assert_eq!(table.buckets, 1);
+        table.insert(0, tile(7), 3, 0, 0, 1.0);
+        table.insert(1, tile(7), 4, 0, 0, 2.0);
+        table.insert(2, tile(8), 3, 0, 0, 3.0);
+        for (tile, balance, expected_id, expected_pending) in [
+            (tile(7), 3, Some(0), 2),
+            (tile(7), 4, Some(1), 1),
+            (tile(8), 3, Some(2), 0),
+            (tile(9), 3, None, 2),
+        ] {
+            let cooperative = {
+                let mut lookup = std::pin::pin!(table.locate(tile, balance));
+                let mut context = Context::from_waker(Waker::noop());
+                let mut pending = 0;
+                loop {
+                    match lookup.as_mut().poll(&mut context) {
+                        Poll::Pending => pending += 1,
+                        Poll::Ready(result) => {
+                            assert_eq!(pending, expected_pending);
+                            break result;
+                        }
+                    }
+                }
+            };
+            let synchronous = super::super::drive_to_completion(async {
+                let mut lookup = std::pin::pin!(table.locate(tile, balance));
+                let mut context = Context::from_waker(Waker::noop());
+                match lookup.as_mut().poll(&mut context) {
+                    Poll::Ready(result) => result,
+                    Poll::Pending => panic!("synchronous lookup suspended"),
+                }
+            });
+            for result in [cooperative, synchronous] {
+                match (expected_id, result) {
+                    (Some(expected), Ok(PackedLookup::Found(id))) => assert_eq!(id, expected),
+                    (None, Err(())) => {}
+                    _ => panic!("lookup result changed with its execution mode"),
+                }
+            }
+        }
     }
 
     #[test]

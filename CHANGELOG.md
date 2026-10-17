@@ -306,6 +306,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - Synchronous route searches no longer suspend and immediately resume their
   internal futures at every work boundary. Admitted searches still yield at
   each boundary.
+- Synchronous packed-table lookups now scan each collision chain directly.
+  Cooperative lookups keep the same work boundaries.
 - One slow disk write no longer leaves script cards, the script catalogue or
   profiles stopped until 274bot restarts.
 - Windows now recovers damaged panel preferences and repairs duplicate loadout
