@@ -94,27 +94,90 @@ pub(crate) struct ProfilePreparation {
 impl ProfilePreparation {
     #[cfg(test)]
     pub(crate) fn run(self) -> Result<Arc<SharedClientTemplate>, String> {
-        self.run_with_progress(&ProfileProgressObserver::default())
+        let mut steps =
+            ProfilePreparationSteps::new(Arc::new(self), ProfileProgressObserver::default());
+        loop {
+            if let script::preparation::CooperativePreparationStep::Complete { output, .. } =
+                steps.step()
+            {
+                return output;
+            }
+        }
+    }
+}
+
+/// One cooperative profile preparation on the WorkAdmission worker
+/// (`script::preparation::submit_cooperative`): the first step resolves the
+/// server profile, later steps drive [`host_play::TemplatePreparation`].
+/// No step waits on the network or the cache lock past
+/// [`host_play::TEMPLATE_STEP_WAIT`], so a slow first-launch download never
+/// holds one step long enough to look like a lost worker.
+pub(crate) struct ProfilePreparationSteps {
+    preparation: Arc<ProfilePreparation>,
+    observer: ProfileProgressObserver,
+    template: Option<host_play::TemplatePreparation>,
+}
+
+impl ProfilePreparationSteps {
+    pub(crate) fn new(
+        preparation: Arc<ProfilePreparation>,
+        observer: ProfileProgressObserver,
+    ) -> Self {
+        Self {
+            preparation,
+            observer,
+            template: None,
+        }
     }
 
-    pub(crate) fn run_with_progress(
-        &self,
-        observer: &ProfileProgressObserver,
-    ) -> Result<Arc<SharedClientTemplate>, String> {
-        observer.report(ProfileProgress::steps(
-            ProfileProgressStage::SelectingServerProfile,
-            0,
-            1,
-        ));
-        let selection = self
-            .options
-            .resolve_with_env(Some(self.saved_revision), &self.environment)?;
-        observer.report(ProfileProgress::steps(
-            ProfileProgressStage::SelectingServerProfile,
-            1,
-            1,
-        ));
-        selection.prepare_template_with_progress(observer)
+    pub(crate) fn step(
+        &mut self,
+    ) -> script::preparation::CooperativePreparationStep<Result<Arc<SharedClientTemplate>, String>>
+    {
+        use script::preparation::CooperativePreparationStep as Step;
+        let Some(template) = self.template.as_mut() else {
+            self.observer.report(ProfileProgress::steps(
+                ProfileProgressStage::SelectingServerProfile,
+                0,
+                1,
+            ));
+            let preparation = &self.preparation;
+            return match preparation
+                .options
+                .resolve_with_env(Some(preparation.saved_revision), &preparation.environment)
+            {
+                Ok(selection) => {
+                    self.observer.report(ProfileProgress::steps(
+                        ProfileProgressStage::SelectingServerProfile,
+                        1,
+                        1,
+                    ));
+                    self.template = Some(selection.begin_template_preparation());
+                    Step::Continue {
+                        completed: 0,
+                        total: None,
+                    }
+                }
+                Err(error) => Step::Complete {
+                    output: Err(error),
+                    completed: 0,
+                    total: None,
+                },
+            };
+        };
+        match template.step(
+            Instant::now() + host_play::TEMPLATE_STEP_WAIT,
+            &self.observer,
+        ) {
+            host_play::TemplateStep::Continue { completed, total } => {
+                Step::Continue { completed, total }
+            }
+            host_play::TemplateStep::Complete(output) => Step::Complete {
+                output,
+                completed: 1,
+                total: Some(1),
+            },
+        }
     }
 }
 

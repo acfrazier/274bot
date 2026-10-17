@@ -1271,6 +1271,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/tests/cold_fill_lookups.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/tests/common/f2pd_fixture.rs",
       "owner": "T1"
     },
@@ -6031,6 +6035,18 @@
       "owner": "T1"
     },
     {
+      "path": "vendor/fr-client-rust/crates/client/src/unpack/fill.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/src/unpack/fill_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/src/unpack/http.rs",
+      "owner": "T1"
+    },
+    {
       "path": "vendor/fr-client-rust/crates/client/src/unpack/mod.rs",
       "owner": "T1"
     },
@@ -6092,6 +6108,14 @@
     },
     {
       "path": "vendor/fr-client-rust/crates/client/tests/client_stream.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/tests/cold_fill_resolver.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/tests/cold_fill_steps.rs",
       "owner": "T1"
     },
     {
