@@ -4479,6 +4479,18 @@
       "owner": "T1"
     },
     {
+      "path": "crates/script/src/work_admission/cancellation.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/work_admission/cancellation_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/work_admission/request_thread_tests.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/script/src/work_admission_tests.rs",
       "owner": "T1"
     },

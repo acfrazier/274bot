@@ -769,7 +769,7 @@ fn byte_and_handle_caps_return_full() {
     let incarnation = incarnation(1);
     let conditions = empty_conditions(incarnation);
     let mut bytes = AdmissionLedger::new(incarnation, bounds_full(8, 16, 8));
-    submit::<RouteSpec>(
+    submit::<CardSpec>(
         &mut bytes,
         ids.identity(incarnation),
         &conditions,
@@ -777,7 +777,7 @@ fn byte_and_handle_caps_return_full() {
         CountJob::new(1),
     )
     .unwrap();
-    match submit::<RouteSpec>(
+    match submit::<CardSpec>(
         &mut bytes,
         ids.identity(incarnation),
         &conditions,
@@ -807,6 +807,43 @@ fn byte_and_handle_caps_return_full() {
         Err(refused) if refused.refusal() == SubmissionRefusal::Full => {}
         other => panic!("expected handle Full, got {other:?}"),
     }
+}
+
+#[test]
+fn declared_navigation_custody_does_not_consume_background_bytes() {
+    let ids = Ids::new();
+    let incarnation = incarnation(1);
+    let conditions = empty_conditions(incarnation);
+    let mut ledger = AdmissionLedger::new(incarnation, bounds_full(16, 16, 8));
+    for _ in 0..10 {
+        submit::<RouteSpec>(
+            &mut ledger,
+            ids.identity(incarnation),
+            &conditions,
+            input(1024),
+            CountJob::new(1),
+        )
+        .unwrap();
+    }
+    submit::<CardSpec>(
+        &mut ledger,
+        ids.identity(incarnation),
+        &conditions,
+        input(16),
+        CountJob::new(1),
+    )
+    .unwrap();
+    let refused = submit::<CardSpec>(
+        &mut ledger,
+        ids.identity(incarnation),
+        &conditions,
+        input(1),
+        CountJob::new(1),
+    )
+    .expect_err("the background byte allowance still applies");
+    assert_eq!(refused.refusal(), SubmissionRefusal::Full);
+    assert_eq!(ledger.charged_jobs(), 11);
+    assert_eq!(ledger.charged_bytes(), 10 * 1024 + 16);
 }
 
 #[test]

@@ -794,6 +794,35 @@ These are product boundaries. The crate checker (in `274bot-arch`, run via `tool
 The JS shim must not grow its own API or shared policy. Compatibility maps
 the JavaScript surface onto Rust host APIs.
 
+### Admitted work execution
+
+`api::work::WorkFamily::policy` declares execution and byte admission for every
+registered family. `script::work_admission::WorkService` owns one identity and
+custody ledger, regardless of where a job executes.
+
+Route, Inspection, BankPick and MapBake use one short-lived thread per accepted
+request. Their original thread names and default stack sizes remain unchanged.
+A request drives its cooperative job to a terminal on that same thread.
+Yielded steps never enter the shared background queue. Card, catalogue, profile
+and walk-map decode jobs keep their existing background execution until their
+separate owner migrations.
+
+The ledger retains the 64-job and eight-operation-handle limits. It accounts
+for every declared input, scratch, result and progress reservation. Navigation
+families keep their 192 MiB per-job bounds without a global navigation byte cap.
+MapBake and background families consume the existing bounded byte allowance.
+The published byte total includes both categories.
+
+Thread creation precedes job transfer. A start gate prevents execution before
+registration completes. Spawn failure returns the original job with
+`ThreadStartFailed` and restores its capacity credit. Each request retains its
+own active state, cancellation and contained-panic boundary.
+
+Pump paths never wait for or join a thread. Shutdown uses one fixed deadline
+and joins only threads that already returned. Unreturned request threads are
+reported separately from the background worker. Their custody stays charged
+until actual return, even if shutdown must detach their handles.
+
 ## Behavioral invariants (review unless noted)
 
 The checker in `274bot-arch` does **not** pretend to prove the following. They remain

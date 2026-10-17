@@ -3,8 +3,8 @@ use api::identity::{Cancellation, ProcessIncarnation, Scope, Settlement};
 use api::process_condition::ProcessConditions;
 use api::work::{
     Checkpoint, CooperativeJob, CooperativeViolation, ForbiddenRetain, InputRevision, JobError,
-    MapBakePhase, RetainedState, StepContext, StepOutcome, SubmissionRefusal, WorkFamily,
-    WorkFamilySpec, WorkProgress, WorkTicket,
+    RetainedState, StepContext, StepOutcome, SubmissionRefusal, WorkFamily, WorkFamilySpec,
+    WorkProgress, WorkTicket,
 };
 use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -46,11 +46,11 @@ struct TestSpec;
 struct TestError;
 
 impl WorkFamilySpec for TestSpec {
-    const FAMILY: WorkFamily = WorkFamily::MapBake;
+    const FAMILY: WorkFamily = WorkFamily::CardPreparation;
     type Input = TestInput;
     type Output = u32;
     type Error = TestError;
-    type Phase = MapBakePhase;
+    type Phase = PreparationPhase;
 
     fn revision(_input: &Self::Input) -> InputRevision {
         InputRevision::FIRST
@@ -85,7 +85,7 @@ fn submit<J>(
     conditions: &ProcessConditions,
 ) -> WorkTicket<TestSpec>
 where
-    J: CooperativeJob<Output = u32, Error = TestError, Phase = MapBakePhase>,
+    J: CooperativeJob<Output = u32, Error = TestError, Phase = PreparationPhase>,
 {
     let mut service = shared.lock();
     let identity = service
@@ -147,7 +147,7 @@ impl QueueJob {
 impl CooperativeJob for QueueJob {
     type Output = u32;
     type Error = TestError;
-    type Phase = MapBakePhase;
+    type Phase = PreparationPhase;
 
     fn step(&mut self, context: &mut StepContext<'_, Self::Phase>) -> StepOutcome<u32, TestError> {
         self.trace.lock().push(self.id);
@@ -158,7 +158,7 @@ impl CooperativeJob for QueueJob {
             Checkpoint::Cancel(_) => return StepOutcome::Completed(u32::from(self.id)),
         }
         context.publish_progress(
-            MapBakePhase::BakingPlane,
+            PreparationPhase::Prepare,
             call as u32,
             Some((self.yields + 1) as u32),
         );
@@ -274,7 +274,7 @@ fn fifo_round_robin_runs_short_jobs_before_a_long_jobs_next_slice() {
         assert_eq!(service.capacity().jobs(), 3);
         let progress: &WorkProgress = service.progress(&long_ticket).expect("long progress");
         assert_eq!(progress.sequence(), 2);
-        assert_eq!(progress.phase(), MapBakePhase::BakingPlane.index());
+        assert_eq!(progress.phase(), PreparationPhase::Prepare.index());
         assert_eq!(progress.completed(), 2);
         assert_eq!(progress.total(), Some(2));
     }
@@ -309,7 +309,7 @@ struct SlowQueuedJob;
 impl CooperativeJob for SlowQueuedJob {
     type Output = u32;
     type Error = TestError;
-    type Phase = MapBakePhase;
+    type Phase = PreparationPhase;
 
     fn step(&mut self, context: &mut StepContext<'_, Self::Phase>) -> StepOutcome<u32, TestError> {
         if !matches!(context.checkpoint(), Checkpoint::Continue) {
@@ -708,7 +708,7 @@ struct ExcessiveJob;
 impl CooperativeJob for ExcessiveJob {
     type Output = u32;
     type Error = TestError;
-    type Phase = MapBakePhase;
+    type Phase = PreparationPhase;
 
     fn step(&mut self, context: &mut StepContext<'_, Self::Phase>) -> StepOutcome<u32, TestError> {
         for _ in 0..=WORK_UNITS_PER_SLICE {
@@ -727,7 +727,7 @@ struct ForbiddenRetainJob;
 impl CooperativeJob for ForbiddenRetainJob {
     type Output = u32;
     type Error = TestError;
-    type Phase = MapBakePhase;
+    type Phase = PreparationPhase;
 
     fn step(&mut self, context: &mut StepContext<'_, Self::Phase>) -> StepOutcome<u32, TestError> {
         let _ = context.checkpoint();
@@ -744,7 +744,7 @@ struct FailedJob;
 impl CooperativeJob for FailedJob {
     type Output = u32;
     type Error = TestError;
-    type Phase = MapBakePhase;
+    type Phase = PreparationPhase;
 
     fn step(&mut self, _context: &mut StepContext<'_, Self::Phase>) -> StepOutcome<u32, TestError> {
         StepOutcome::Failed(TestError)
@@ -817,7 +817,7 @@ struct PanickingJob;
 impl CooperativeJob for PanickingJob {
     type Output = u32;
     type Error = TestError;
-    type Phase = MapBakePhase;
+    type Phase = PreparationPhase;
 
     fn step(&mut self, _context: &mut StepContext<'_, Self::Phase>) -> StepOutcome<u32, TestError> {
         panic!("injected job panic")
@@ -1306,7 +1306,7 @@ struct StrandedJob {
 impl CooperativeJob for StrandedJob {
     type Output = u32;
     type Error = TestError;
-    type Phase = MapBakePhase;
+    type Phase = PreparationPhase;
 
     fn step(&mut self, _context: &mut StepContext<'_, Self::Phase>) -> StepOutcome<u32, TestError> {
         self.entered.send(()).expect("test observes active worker");
@@ -1770,7 +1770,10 @@ fn shutdown_timeout_retains_credit_until_late_worker_return_and_join() {
 
     assert_eq!(
         WorkService::shutdown_with_timeout(&shared, Duration::from_millis(25)),
-        Err(WorkShutdownError::WorkerNotReturned)
+        Err(WorkShutdownError::ThreadsNotReturned {
+            background_worker: true,
+            request_threads: 0,
+        })
     );
     let condition = {
         let mut service = shared.lock();
@@ -1802,3 +1805,9 @@ fn shutdown_timeout_retains_credit_until_late_worker_return_and_join() {
     assert!(shared.lock().worker_joined);
     assert_eq!(*trace.lock(), [9]);
 }
+
+#[path = "work_admission/cancellation_tests.rs"]
+mod cancellation;
+
+#[path = "work_admission/request_thread_tests.rs"]
+mod request_thread;
