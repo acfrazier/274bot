@@ -489,7 +489,10 @@ impl Play {
             .unwrap()
             .entry(username.clone())
             .or_default();
-        let work_scope = slot_script.lock().unwrap().work_scope();
+        let work_scope = slot_script
+            .lock()
+            .expect("slot script mutex is not poisoned")
+            .work_scope();
         {
             let mut navs = self.navs.lock().unwrap();
             let bot = navs.entry(username.clone()).or_default();

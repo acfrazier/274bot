@@ -415,7 +415,11 @@ pub(crate) fn script_observe_cached_with_channels(
         };
         slot.observe_lifecycle();
         let work_scope = slot.work_scope();
-        if let Some(bot) = navs.lock().unwrap().get_mut(name) {
+        if let Some(bot) = navs
+            .lock()
+            .expect("navigation state mutex is not poisoned")
+            .get_mut(name)
+        {
             bot.work_scope = work_scope;
         }
         // Only the random-event guardian holds the seat (`SessionHeld`,

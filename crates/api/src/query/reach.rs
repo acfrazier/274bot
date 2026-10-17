@@ -1988,11 +1988,15 @@ impl ArrivalLayers {
         }
         let local = offset % ARRIVAL_PAGE_CELLS;
         let needs_growth = {
-            let page = self.pages[page_slot].as_ref().unwrap();
+            let page = self.pages[page_slot]
+                .as_ref()
+                .expect("the arrival layer page was initialized above");
             page.slots[local] == u16::MAX && page.states.len() == page.states.capacity()
         };
         if needs_growth {
-            let page = self.pages[page_slot].as_ref().unwrap();
+            let page = self.pages[page_slot]
+                .as_ref()
+                .expect("the arrival layer page was initialized above");
             let additional = page
                 .states
                 .len()
@@ -2000,12 +2004,14 @@ impl ArrivalLayers {
                 .min(ARRIVAL_PAGE_CELLS - page.states.len());
             self.pages[page_slot]
                 .as_mut()
-                .unwrap()
+                .expect("the arrival layer page was initialized above")
                 .states
                 .reserve_exact(additional);
             yield_unit.yield_unit().await;
         }
-        let page = self.pages[page_slot].as_mut().unwrap();
+        let page = self.pages[page_slot]
+            .as_mut()
+            .expect("the arrival layer page was initialized above");
         let mut slot = page.slots[local];
         if slot == u16::MAX {
             slot = u16::try_from(page.states.len())
@@ -3044,7 +3050,7 @@ async fn retain_arrival_candidates_kernel<C, Y: ArrivalYield>(
                 }
                 let (accepted, undecided) = layers
                     .as_mut()
-                    .unwrap()
+                    .expect("arrival layers were initialized above")
                     .classify(
                         &starts[..chunk.len()],
                         ArrivalLayerContext {

@@ -2868,7 +2868,7 @@ fn route_ticket_is_current(
     identity: WorkIdentity,
     revision: InputRevision,
 ) -> bool {
-    let all = navs.lock().unwrap();
+    let all = navs.lock().expect("navigation state mutex is not poisoned");
     all.get(name).is_some_and(|bot| {
         bot.route_ticket
             .as_ref()
@@ -2880,7 +2880,7 @@ fn take_route_demand(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     name: &str,
 ) -> Option<(RouteDemand, Option<Scope>)> {
-    let mut all = navs.lock().unwrap();
+    let mut all = navs.lock().expect("navigation state mutex is not poisoned");
     let bot = all.get_mut(name)?;
     if bot.route_ticket.is_some() {
         return None;
@@ -2913,7 +2913,7 @@ fn route_demand_placeholder_is_current(
     generation: u64,
     request_id: u64,
 ) -> bool {
-    let all = navs.lock().unwrap();
+    let all = navs.lock().expect("navigation state mutex is not poisoned");
     all.get(name).is_some_and(|bot| {
         bot.route_ticket.is_none()
             && bot
@@ -2930,7 +2930,7 @@ fn restore_prepared_route_demand(
     request_id: u64,
     job: Box<RouteJob>,
 ) -> bool {
-    let mut all = navs.lock().unwrap();
+    let mut all = navs.lock().expect("navigation state mutex is not poisoned");
     let Some(bot) = all.get_mut(name) else {
         return false;
     };
@@ -2954,7 +2954,7 @@ fn publish_unsubmitted_route_failure(
     kind: RouteDemandKind,
     detail: &str,
 ) {
-    let mut all = navs.lock().unwrap();
+    let mut all = navs.lock().expect("navigation state mutex is not poisoned");
     let Some(bot) = all.get_mut(name) else {
         return;
     };
@@ -3141,7 +3141,7 @@ pub(crate) fn pump_route_work(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: 
                     active: true,
                 });
                 let installed = {
-                    let mut all = navs.lock().unwrap();
+                    let mut all = navs.lock().expect("navigation state mutex is not poisoned");
                     all.get_mut(name).is_some_and(|bot| {
                         if bot.route_ticket.is_some()
                             || !bot
@@ -3187,7 +3187,7 @@ fn take_route_ticket_owner(
     identity: WorkIdentity,
     revision: InputRevision,
 ) -> Option<RouteTicketOwner> {
-    let mut all = navs.lock().unwrap();
+    let mut all = navs.lock().expect("navigation state mutex is not poisoned");
     let bot = all.get_mut(name)?;
     if !bot
         .route_ticket
@@ -3219,7 +3219,7 @@ fn publish_accepted_route_refusal(
     detail: &str,
     refusal: Option<script::native::WalkRefusal>,
 ) {
-    let mut all = navs.lock().unwrap();
+    let mut all = navs.lock().expect("navigation state mutex is not poisoned");
     let Some(bot) = all.get_mut(name) else {
         return;
     };
@@ -3344,7 +3344,7 @@ fn apply_route_output(
                 detail,
                 route_ticks,
             };
-            let mut all = navs.lock().unwrap();
+            let mut all = navs.lock().expect("navigation state mutex is not poisoned");
             if let Some(bot) = all.get_mut(name) {
                 if bot.advisory_request_id == authority.request_id().get() && authority.live() {
                     bot.assess_result = Some(Box::new((authority, receipt)));
@@ -3435,7 +3435,7 @@ fn apply_route_output(
                 }
             };
 
-            let mut all = navs.lock().unwrap();
+            let mut all = navs.lock().expect("navigation state mutex is not poisoned");
             let Some(bot) = all.get_mut(name) else {
                 return;
             };
@@ -3565,7 +3565,7 @@ fn retain_route_continuation(
         return;
     }
     job.gap_custody = Some(reservation);
-    let mut all = navs.lock().unwrap();
+    let mut all = navs.lock().expect("navigation state mutex is not poisoned");
     let Some(bot) = all.get_mut(name) else {
         return;
     };
@@ -3593,7 +3593,7 @@ fn harvest_route_terminal(
     name: &str,
 ) {
     let (ticket, identity, revision, generation, request_id, kind) = {
-        let all = navs.lock().unwrap();
+        let all = navs.lock().expect("navigation state mutex is not poisoned");
         let Some(owner) = all.get(name).and_then(|bot| bot.route_ticket.as_ref()) else {
             return;
         };
@@ -4148,7 +4148,10 @@ impl ScriptWalkArm {
                 detail: Some(Arc::from(detail)),
             };
             let displaced = {
-                let mut navs = self.navs.lock().unwrap();
+                let mut navs = self
+                    .navs
+                    .lock()
+                    .expect("navigation state mutex is not poisoned");
                 let bot = navs.entry(self.name.clone()).or_default();
                 bot.advisory_request_id = authority.request_id().get();
                 let has_advisory = bot
@@ -4274,7 +4277,10 @@ impl ScriptWalkArm {
             },
         };
         let (queued, displaced) = {
-            let mut navs = self.navs.lock().unwrap();
+            let mut navs = self
+                .navs
+                .lock()
+                .expect("navigation state mutex is not poisoned");
             let bot = navs.entry(self.name.clone()).or_default();
             let replaceable = bot
                 .pending_route
@@ -4676,7 +4682,10 @@ impl ScriptWalkArm {
     }
 
     #[cfg(test)]
-    #[allow(clippy::too_many_arguments)] // deterministic route-work service seam for tests
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the deterministic route-work test seam supplies each service input explicitly"
+    )]
     pub(crate) fn queue_route_in_snapshot_synced(
         &self,
         snapshot: &GameSnapshot,
@@ -5115,7 +5124,10 @@ impl ScriptWalkArm {
         }) = displaced_kind
         {
             if authority.live() {
-                let mut navs = self.navs.lock().unwrap();
+                let mut navs = self
+                    .navs
+                    .lock()
+                    .expect("navigation state mutex is not poisoned");
                 if let Some(bot) = navs.get_mut(&self.name) {
                     if bot.advisory_request_id == authority.request_id().get() {
                         bot.assess_result = Some(Box::new((
