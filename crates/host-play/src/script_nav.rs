@@ -5092,6 +5092,9 @@ impl ScriptWalkArm {
                 Some(pending) => *pending = admission,
                 None => bot.admission = Some(Box::new(admission)),
             }
+            if bot.bank_pick.walking(bot.route_generation) {
+                bot.bank_pick.reset_for_route_replacement();
+            }
             bot.route_generation = admission.generation;
             bot.manual_walk_cancelled_detail = false;
             bot.walk_request_id = request_id;
@@ -6024,7 +6027,6 @@ impl NavBot {
         };
         slot_scope.contains(&scope).then_some(scope)
     }
-
     pub(crate) fn route_destination(&self) -> Option<WorldTile> {
         self.compact_route
             .as_ref()
@@ -6124,7 +6126,6 @@ impl NavBot {
         }
         self.requested_route = None;
     }
-
     pub(crate) fn route_projection(&self) -> Option<crate::walk_map::RouteProjectionPath<'_>> {
         self.compact_route
             .as_ref()
@@ -6140,6 +6141,7 @@ impl NavBot {
         self.route = None;
         self.compact_route = None;
     }
+
     fn bump_walk_outcome_seq(&mut self) {
         self.manual_walk_cancelled_detail = false;
         self.walk_outcome_seq = self.walk_outcome_seq.wrapping_add(1);

@@ -159,7 +159,10 @@ fn record_script_act(navs: &Arc<Mutex<HashMap<String, NavBot>>>, slot: &str, act
 /// the slot's observer leaves this frame (the loaded open bank, else an
 /// unobserved `Unknown` bank).
 #[cfg(test)]
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the test wrapper supplies the same observed inputs as scoped interaction dispatch"
+)]
 pub(crate) fn dispatch_script_interact(
     driver: &mut dyn Driver,
     snapshot: &GameSnapshot,
@@ -173,7 +176,7 @@ pub(crate) fn dispatch_script_interact(
 ) -> bool {
     let bank = RwLock::new(BankMemory::default());
     bank.write().track(snapshot, 0);
-    dispatch_script_interact_cached(
+    dispatch_script_interact_cached_scoped(
         driver,
         snapshot,
         obj_names,
@@ -183,6 +186,9 @@ pub(crate) fn dispatch_script_interact(
         state,
         Some(&bank),
         name,
+        Some(api::identity::Scope::Slot(
+            api::identity::SlotKey::from_incarnation(1).expect("test slot is bound"),
+        )),
         reqs,
         None,
         None,
@@ -238,7 +244,11 @@ pub(crate) fn dispatch_native_bank_deposit(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[cfg(test)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the test wrapper preserves cached inputs without constructing a live slot"
+)]
 pub(crate) fn dispatch_script_interact_cached<R>(
     driver: &mut dyn Driver,
     snapshot: &GameSnapshot,
@@ -249,6 +259,44 @@ pub(crate) fn dispatch_script_interact_cached<R>(
     state: Option<WorldState>,
     bank: Option<&RwLock<BankMemory>>,
     name: &str,
+    reqs: R,
+    cache: Option<Arc<Cache>>,
+    obj_names_arc: Option<Arc<api::obj_names::ObjNames>>,
+) -> bool
+where
+    R: AsRef<[script::shim::InteractReq]> + IntoIterator<Item = script::shim::InteractReq>,
+{
+    dispatch_script_interact_cached_scoped(
+        driver,
+        snapshot,
+        obj_names,
+        here,
+        navs,
+        world,
+        state,
+        bank,
+        name,
+        None,
+        reqs,
+        cache,
+        obj_names_arc,
+    )
+}
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scoped dispatch borrows the driver, snapshot, navigation and cache context"
+)]
+pub(crate) fn dispatch_script_interact_cached_scoped<R>(
+    driver: &mut dyn Driver,
+    snapshot: &GameSnapshot,
+    obj_names: Option<&api::obj_names::ObjNames>,
+    here: Option<(i32, i32, i32)>,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    world: &Option<Arc<NavWorld>>,
+    state: Option<WorldState>,
+    bank: Option<&RwLock<BankMemory>>,
+    name: &str,
+    compatibility_scope: Option<api::identity::Scope>,
     reqs: R,
     cache: Option<Arc<Cache>>,
     obj_names_arc: Option<Arc<api::obj_names::ObjNames>>,
@@ -548,30 +596,34 @@ where
                 use_zanaris_bank,
                 request_id,
             } => {
-                super::bank::queue_bank_pick(
-                    navs,
-                    name,
-                    world,
-                    state.clone(),
-                    WorldTile { x, z, level },
-                    allow_wilderness,
-                    request_id,
-                    api::named_banks::BankPreferences {
-                        use_mage_bank,
-                        use_zanaris_bank,
-                    },
-                    snapshot
-                        .stats()
-                        .iter()
-                        .find(|stat| stat.index == 10)
-                        .map(|stat| stat.base),
-                );
-            }
-            InteractReq::WalkNearestBank => {
-                if let Some((x, z, level)) = here {
-                    wrote |= super::bank::queue_bank_walk(
+                if let Some(scope) = compatibility_scope {
+                    super::bank::queue_bank_pick_scoped(
                         navs,
                         name,
+                        scope,
+                        world,
+                        state.clone(),
+                        WorldTile { x, z, level },
+                        allow_wilderness,
+                        request_id,
+                        api::named_banks::BankPreferences {
+                            use_mage_bank,
+                            use_zanaris_bank,
+                        },
+                        snapshot
+                            .stats()
+                            .iter()
+                            .find(|stat| stat.index == 10)
+                            .map(|stat| stat.base),
+                    );
+                }
+            }
+            InteractReq::WalkNearestBank => {
+                if let (Some((x, z, level)), Some(scope)) = (here, compatibility_scope) {
+                    wrote |= super::bank::queue_bank_walk_scoped(
+                        navs,
+                        name,
+                        scope,
                         world,
                         state.clone(),
                         WorldTile { x, z, level },

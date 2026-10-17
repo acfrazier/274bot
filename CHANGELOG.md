@@ -158,6 +158,21 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Gatherer and banking
 
+- Bank selection now runs on its own short-lived thread. Its whole-job charge
+  remains capped at 192 MiB, including captured inputs, cursor and result.
+  Admitted searches run independently, without a process-wide navigation byte cap.
+  The existing five-second selection window is preserved: walking selections then
+  use the route-only Single fallback; other selections keep the first bank
+  without a route, even when admission remains full. Full job admission or
+  owner-result pressure keeps valid demand for retry. A permanent admission
+  refusal or oversized request publishes a failed selection instead of
+  waiting without a result.
+  Walking selections keep the shared compact route for following and map
+  paint instead of rebuilding legacy route vectors.
+  Search checkpoints cover bounded expansions and queue operations, not each
+  neighbor or heap comparison. Variable-length chains still check live time
+  and cancellation.
+
 - A Gatherer that stalls on its return from the bank now replans once from
   its current position before stopping. It still requires arrival at the
   gathering site and reports routes that remain blocked.
@@ -343,6 +358,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   again within the same memory limit as other routes.
 - Cooperative route searches now check each work boundary once instead of
   repeating the same clock and cancellation check between work units.
+- Bank-pick live and CPU qualification can run in a separate integration
+  target with the product allocator, without the lib-test allocation counter.
+- The local Cook bank-choice check starts at the ingredient stage and waits
+  for its after-bank evidence before judging a failed lifecycle. A permitted
+  danger-zone refusal after bank arrival no longer races its CPU capture.
 - One slow disk write no longer leaves script cards, the script catalogue or
   profiles stopped until 274bot restarts.
 - Large route searches no longer slow sharply as their predecessor store fills.

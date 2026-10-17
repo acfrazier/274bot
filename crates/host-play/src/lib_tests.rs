@@ -24642,8 +24642,7 @@ fn nav_rig_with(world: Option<Arc<NavWorld>>) -> NavRig {
     }
 }
 
-/// The armed route's dest, `None` when the uid has no route. The pump
-/// and the walk-refusal gate read the same field.
+/// The armed route's destination, regardless of its backing representation.
 fn queued(navs: &Arc<Mutex<HashMap<String, NavBot>>>) -> Option<WorldTile> {
     navs.lock()
         .unwrap()
@@ -24812,7 +24811,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
     );
     let out_before = c.out.pos;
     assert!(
-        dispatch_script_interact_cached(
+        dispatch_script_interact_cached_scoped(
             &mut c,
             &snap,
             None,
@@ -24822,6 +24821,9 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
             Some(WorldState::empty()),
             None,
             "test",
+            Some(api::identity::Scope::Slot(
+                api::identity::SlotKey::from_incarnation(1).unwrap(),
+            )),
             requests,
             None,
             None,
@@ -24833,9 +24835,11 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
         "raw bank selection itself must not write a movement packet",
     );
     assert!(
-        wait_for_route_work(&navs, "test", |bot| !bot.route_work_pending()
-            && bot.has_route()),
-        "bank route work did not publish the selected stand"
+        wait_settled(|| {
+            super::script_runtime::poll_bank_pick_for_test(&navs, "test");
+            navs.lock().unwrap()["test"].has_route()
+        }),
+        "bank owner must publish the selected stand route after polling",
     );
 
     let flood = api::query::SceneQuery::new(snap.scene(), Some(start)).flood_reach();

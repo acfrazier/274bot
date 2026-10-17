@@ -1326,6 +1326,7 @@ fn compact_route_view_uses_the_same_clipped_leg_cache() {
     );
     assert_eq!(route_flatten_count(), 1);
 }
+
 #[test]
 fn route_cache_skips_completed_legs_and_stays_allocation_free_on_hit() {
     // Draws and Session drops rewrite the shared route cache under this lock.
