@@ -175,8 +175,6 @@ pub use resource_view::{
 pub use rss::{count_tcp_to, current_resident_bytes, parse_lsof_established, sample_process};
 pub use scatter::{scatter_tile_for, tele_args};
 use script_runtime::*;
-#[cfg(test)]
-use walk_plan::{fetch_stand, fetch_tile, fetchable_facts, route_or_bank_fetch};
 use walk_plan::{BankFetchFlight, FlightTarget, RouteOutcome};
 pub use walk_plan::{PendingBankFetch, StepProgress};
 

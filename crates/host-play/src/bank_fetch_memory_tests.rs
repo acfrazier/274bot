@@ -645,7 +645,7 @@ fn the_post_session_route_resumes_from_the_bank() {
 }
 
 /// The toll world with its far corner `(4, 4)` solid: a radius walk there
-/// takes the unmodeled-solid stand search (`calculate_solid`), and an Area
+/// uses the production route job's unmodeled-solid stand search, and an Area
 /// walk searches every standable tile around it at once.
 fn solid_toll_world() -> NavWorld {
     let mut world = knife_nav_world_with_target(KNIFE, true);
@@ -716,7 +716,7 @@ fn assert_one_trip_only_for_a_hint(arrival: nav::arrival::ArrivalKind) {
         completion: Default::default(),
     };
     for rows in [&[][..], &[(KNIFE, 20)][..], &[(COINS, 3)][..]] {
-        let (outcome, targets) = request(Origin::Hint, rows).calculate();
+        let (outcome, targets) = request(Origin::Hint, rows).drive_route_job_for_test();
         let RouteOutcome::BankSession { pending, route } = outcome else {
             panic!("{arrival:?} with Hint rows {rows:?}: no verifying trip");
         };
@@ -725,13 +725,20 @@ fn assert_one_trip_only_for_a_hint(arrival: nav::arrival::ArrivalKind) {
             toll_trip(&world),
             "{arrival:?} with Hint rows {rows:?}"
         );
-        assert!(targets.contains(&route.dest), "{:?}", route.dest);
-        assert_eq!(pending.dest, route.dest);
-        assert_eq!(pending.final_route.destination(), route.dest);
+        assert!(targets.contains(&pending.dest), "{:?}", pending.dest);
+        assert_eq!(pending.final_route.destination(), pending.dest);
+        let BankStep::Walk { x, z, level } = access_walk(&world) else {
+            panic!("the toll trip starts with a walk to bank access");
+        };
+        assert_eq!(
+            route.dest,
+            WorldTile { x, z, level },
+            "production publishes the bank-access route before the final route"
+        );
         for bank_origin in [Origin::Session, Origin::Unknown] {
             assert!(
                 matches!(
-                    request(bank_origin, rows).calculate().0,
+                    request(bank_origin, rows).drive_route_job_for_test().0,
                     RouteOutcome::NoPath
                 ),
                 "{arrival:?} with {bank_origin:?} rows {rows:?} is NoPath in place"
