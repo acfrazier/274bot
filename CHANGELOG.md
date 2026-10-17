@@ -298,6 +298,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   demand-driven proof storage.
 - Cooperative route searches now check each work boundary once instead of
   repeating the same clock and cancellation check between work units.
+- Single-target and multi-target route searches no longer copy an unused
+  first-goal proof future for every settled node.
 - One slow disk write no longer leaves script cards, the script catalogue or
   profiles stopped until 274bot restarts.
 - Windows now recovers damaged panel preferences and repairs duplicate loadout

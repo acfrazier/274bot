@@ -40,6 +40,40 @@ use crate::world_state::WorldState;
 use crate::zones::{Zone, ZoneClass, ZoneExempt, ZoneFilterOwned, ZoneKey, ZoneKind, ZoneTable};
 
 #[test]
+fn non_proof_goals_settle_without_a_future() {
+    use super::{Goals, Settle, TargetCost};
+
+    let target = WorldTile {
+        x: 2,
+        z: 0,
+        level: 0,
+    };
+    let other = WorldTile { x: 1, ..target };
+    let cost = TargetCost {
+        ticks: 3.0,
+        settled_at: 7,
+    };
+    let mut single = Goals::Single {
+        to: target,
+        cost: None,
+    };
+    assert!(matches!(single.settle_non_first(other, cost), Settle::Continue));
+    assert!(matches!(single.settle_non_first(target, cost), Settle::Stop));
+    assert!(matches!(single, Goals::Single { cost: Some(found), .. } if found == cost));
+
+    let unique = HashMap::from([(target, 0)]);
+    let mut costs = [Err(TargetError::NotSettled)];
+    let mut many = Goals::Many {
+        unique: &unique,
+        costs: &mut costs,
+        remaining: 1,
+    };
+    assert!(matches!(many.settle_non_first(other, cost), Settle::Continue));
+    assert!(matches!(many.settle_non_first(target, cost), Settle::Stop));
+    assert_eq!(costs, [Ok(cost)]);
+}
+
+#[test]
 fn cooperative_cursor_checks_the_clock_once_per_work_boundary() {
     struct CountingClock {
         now: Instant,
