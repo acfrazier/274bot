@@ -2395,7 +2395,9 @@ pub(super) fn queue_inspect(
         submission,
     };
     let replaced = {
-        let mut all = navs.lock().unwrap();
+        let mut all = navs
+            .lock()
+            .expect("inspection navigation state mutex poisoned");
         let bot = all.entry(name.to_string()).or_default();
         if bot.inspect.generation != generation || bot.inspect.is_duplicate(req.request_id) {
             return;
@@ -2442,7 +2444,9 @@ fn refuse_current(
     generation: u64,
     reason: &'static str,
 ) {
-    let mut all = navs.lock().unwrap();
+    let mut all = navs
+        .lock()
+        .expect("inspection navigation state mutex poisoned");
     let Some(bot) = all.get_mut(name) else {
         return;
     };
@@ -2458,7 +2462,9 @@ fn refuse_current(
 
 fn drive_pending(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
     let (pending, generation, request_id, world) = {
-        let mut all = navs.lock().unwrap();
+        let mut all = navs
+            .lock()
+            .expect("inspection navigation state mutex poisoned");
         let Some(bot) = all.get_mut(name) else {
             return;
         };
@@ -2522,7 +2528,9 @@ fn drive_pending(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
     let mut discard = None;
     let late_cancellation = {
         let mut attempt = Some(attempt);
-        let mut all = navs.lock().unwrap();
+        let mut all = navs
+            .lock()
+            .expect("inspection navigation state mutex poisoned");
         if let Some(bot) = all.get_mut(name) {
             if bot.inspect.generation != generation || bot.inspect.submitting_id != request_id {
                 if bot.inspect.submitting_id == request_id {
@@ -2803,7 +2811,9 @@ fn poll_inspection_with_ledger(
     let mut discarded = None;
     let mut drive = false;
     {
-        let mut all = navs.lock().unwrap();
+        let mut all = navs
+            .lock()
+            .expect("inspection navigation state mutex poisoned");
         if let Some(bot) = all.get_mut(name) {
             let active_matches = bot.inspect.active_ticket == Some(ticket)
                 && bot.inspect.active_generation == Some(generation)
