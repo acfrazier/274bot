@@ -219,26 +219,33 @@ fn seat_reserved_row(req: &crate::shim::InteractReq) -> bool {
 /// the seat's monotone watermark gives when it applies both in order. Rows
 /// fold as for every held batch.
 ///
-/// Accepted limit (R8-M1, T13B-R10): the order is kept inside each control
-/// class, not between classes. `apply_seat_batch` applies every start before
-/// every machine event. If one fold holds a terminal event of request A from
-/// an older batch and a new start of request B from a newer batch, resume
-/// tries B before A ends, and the seat can refuse a Session B as busy.
-/// Serial apply would end A first. The fold does not change, because these
-/// conditions make that sequence unreachable with guardian-only holds
-/// (`TRACK-T1/T1.3b/reachability/report.md`):
-/// - While the guardian holds, the seat does not complete or start a native:
+/// Accepted limit (R8-M1, T13B-R10, T13B-MERGE): the order is kept inside
+/// each control class, not between classes. `apply_seat_batch` applies
+/// every start before every machine event. If one fold holds a terminal
+/// event of request A from an older batch and a new start of request B from
+/// a newer batch, resume tries B before A ends. The seat then refuses a
+/// Session B as busy, and the script sees `Refused(Busy)` for B. Serial
+/// apply would end A first and admit B. The fold does not change.
+///
+/// The sequence is reachable through a callback start, but it is rare. It
+/// needs one guardian hold and both conditions below
+/// (`TRACK-T1/T1.3b/review-sol-final/review.md`, "Decision 3"):
+/// - The isolate emits the terminal of A before the guardian hold, and the
+///   host does not drain that batch before the hold starts. While the
+///   guardian holds, the seat does not complete or start a native:
 ///   `GameplaySeat::complete` and `GameplaySeat::start` return early
 ///   (`native/seat.rs:790-793`, `:1016-1018`). The isolate's machines do not
 ///   step (`machine::pass` returns while the host is held), so no native
 ///   gets a new terminal during the hold. The test
 ///   `guardian_hold_neither_completes_nor_starts_a_native` asserts this.
-/// - The script's `loop()` does not run during the hold
-///   (`load/isolate/thread.rs:1709`). Only `onPaint` and event callbacks run.
-/// - One player has at most one active random event (`macro_events.rs2:73-75`),
-///   and the next general event waits for the 500-tick event timer
-///   (`login.rs2:40`, `macro_events.rs2:2-12`). So a second guardian hold does
-///   not start while the pages of the first fold wait.
+/// - An `onPaint` or event callback starts B during the hold. The script's
+///   `loop()` does not run during the hold (`load/isolate/thread.rs:1709`).
+///
+/// A fold from two guardian holds does not occur: one player has at most
+/// one active random event (`macro_events.rs2:73-75`), and the next general
+/// event waits for the 500-tick event timer (`login.rs2:40`,
+/// `macro_events.rs2:2-12`). So a second guardian hold does not start while
+/// the pages of the first fold wait.
 #[cfg(feature = "load")]
 fn carry_waiting_controls(
     waiting: &mut crate::load::QueuedSeatBatch,
@@ -824,11 +831,17 @@ impl SlotScript {
     /// `27-decision-r5.md`). This hold is a held tick (`28-seat-sg.md:64`):
     /// the seat keeps applying controls, and gameplay of the held frames is
     /// dropped. The operator decision of 2026-10-16 amends that row: a held
-    /// tick keeps `AbortWalk`, `GatherStop`, `CombatStop` and the newest
-    /// `RunPolicyOverride`, and the first frame after the hold dispatches the
-    /// aborts in the order the script sent them, then the policy
-    /// ([`Self::seat_held_tick`], [`Self::keep_held_aborts`]). A watchdog
-    /// recovery hold keeps the same rows.
+    /// tick keeps `AbortWalk` and the newest `RunPolicyOverride` for the
+    /// first frame after the hold. That frame dispatches the aborts in the
+    /// order the script sent them, and the kept policy applies in the same
+    /// frame ([`Self::seat_held_tick`], [`Self::keep_held_aborts`]). The
+    /// drain applies a `GatherStop` or `CombatStop` at once, so the order
+    /// across these kinds is not kept. A watchdog recovery hold keeps the
+    /// same rows. Accepted limit (T13B-MERGE): if the host observes a scene
+    /// load in one frame only, no drain runs while this flag is set. A batch
+    /// that the isolate emitted before the load then keeps its gameplay, and
+    /// the first frame after the load delivers it. This path did the same
+    /// before T1.3b.
     pub fn seat_host_hold(&mut self, held: bool) {
         self.seat_host_held = held;
     }

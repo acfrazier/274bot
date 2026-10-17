@@ -1841,7 +1841,7 @@ fn watchdog_held_tick_keeps_the_newest_run_policy_for_after_the_hold() {
             floor_override(20),
             vec![InteractReq::AbortWalk { request_id: 4 }]
         ),
-        "the newest policy, after the kept abort"
+        "the newest policy and the kept abort, in the first frame after the hold"
     );
     assert_eq!(later, (None, Vec::new()), "the policy is delivered once");
 }
