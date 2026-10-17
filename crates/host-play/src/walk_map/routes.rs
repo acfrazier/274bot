@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 
 use api::snapshot::WorldTile;
+use nav::contract::RouteView;
 use nav::router::Route;
 
 use crate::{Play, ScriptNavPaint, WalkArm};
@@ -31,12 +32,31 @@ pub struct RouteStamp {
     pub generation: u64,
     pub destination: WorldTile,
 }
+/// A map projection keeps legacy routes borrowed and compact script routes in
+/// their bounded `RouteView`; neither branch expands compact storage.
+#[derive(Clone, Copy)]
+pub enum RouteProjectionPath<'a> {
+    /// Native live/manual route storage.
+    Legacy(&'a Route),
+    /// Script route storage published by the route owner.
+    Compact(RouteView<'a>),
+}
+
+impl RouteProjectionPath<'_> {
+    /// Destination without exposing or expanding the backing representation.
+    pub fn destination(self) -> WorldTile {
+        match self {
+            Self::Legacy(route) => route.dest,
+            Self::Compact(view) => view.destination(),
+        }
+    }
+}
 /// Borrow only during the callback. A renderer caches its clipped geometry by
 /// (focus lifetime, RouteStamp, view), not a hash/deep clone of every route frame.
 #[derive(Clone, Copy)]
 pub struct RouteProjection<'a> {
     pub stamp: RouteStamp,
-    pub route: &'a Route,
+    pub route: RouteProjectionPath<'a>,
     pub aim: Option<WorldTile>,
 }
 impl<'a> RouteProjection<'a> {
@@ -47,7 +67,7 @@ impl<'a> RouteProjection<'a> {
                 generation,
                 destination: route.dest,
             },
-            route,
+            route: RouteProjectionPath::Legacy(route),
             aim,
         }
     }
@@ -58,16 +78,17 @@ impl<'a> RouteProjection<'a> {
                 generation: arm.route_generation,
                 destination: route.dest,
             },
-            route,
+            route: RouteProjectionPath::Legacy(route),
             aim: arm.traveller.current_aim(),
         })
     }
     fn script(bot: &'a crate::script_runtime::NavBot) -> Option<Self> {
-        bot.route.as_ref().map(|route| Self {
+        let route = bot.route_projection()?;
+        Some(Self {
             stamp: RouteStamp {
                 source: RouteSource::Script,
                 generation: bot.map_route_generation,
-                destination: route.dest,
+                destination: route.destination(),
             },
             route,
             aim: bot.traveller.current_aim(),

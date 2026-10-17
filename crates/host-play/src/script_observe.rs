@@ -18,7 +18,7 @@ use script::{ScriptCtx, SlotScript};
 
 use super::{
     abort_script_walk, apply_watchdog_nav_action, dispatch_native_bank_deposit,
-    dispatch_observed_bank_op, dispatch_script_interact_cached, pack_cached_reach,
+    dispatch_observed_bank_op, dispatch_script_interact_cached_scoped, pack_cached_reach,
     recovery_walk_idle, reset_script_nav, resumed_walk, route_inspect, script_slot,
     take_carried_walk, with_script_snapshot_input_shorts, BankDepositDispatch, NavBot,
     PostedWalkOutcome, ScriptWall,
@@ -490,8 +490,8 @@ pub(crate) fn script_observe_cached_with_channels(
         // Deliver only the terminal belonging to this still-live native owner.
         // The slot repeats the run/action fence before accepting the receipt.
         let mut host_results_dirty = false;
+        let bank_selection = super::bank::poll_bank_pick(navs, name, std::time::Instant::now());
         if let Some(bot) = navs.lock().unwrap().get_mut(name) {
-            let bank_selection = bot.bank_pick.poll(std::time::Instant::now());
             host_results_dirty |= host_completion_changed(&slot, bot, bank_selection);
             let native_terminal =
                 bot.native_end.as_ref().is_some_and(|(owner, _)| {
@@ -778,7 +778,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                 b.user_move_intent_seq,
                                 b.walk_missing_carry.clone(),
                                 b.inspect.posted(),
-                                b.bank_pick.poll(std::time::Instant::now()),
+                                bank_selection,
                             );
                             // The live refusal guard is released only once
                             // the isolate accepts the snapshot carrying this
@@ -1247,6 +1247,7 @@ pub(crate) fn script_observe_cached_with_channels(
                         || slot.completed_seat_dispatch_open())
                     && Some(slot.work_epoch()) == slot_work_epoch
                 {
+                    let compatibility_work_scope = slot.work_scope();
                     {
                         let mut navs = navs.lock().unwrap();
                         let bot = navs.entry(name.to_owned()).or_default();
@@ -1266,7 +1267,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                 matches!(queued.req, script::shim::InteractReq::AbortWalk { .. })
                             });
                         interact = remaining;
-                        wrote |= dispatch_script_interact_cached(
+                        wrote |= dispatch_script_interact_cached_scoped(
                             driver,
                             snapshot,
                             obj_names,
@@ -1276,6 +1277,7 @@ pub(crate) fn script_observe_cached_with_channels(
                             state.clone(),
                             bank_memory,
                             name,
+                            compatibility_work_scope,
                             releases
                                 .into_iter()
                                 .map(|queued| queued.req)
@@ -1406,7 +1408,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                         false
                                     }
                                 } else {
-                                    dispatch_script_interact_cached(
+                                    dispatch_script_interact_cached_scoped(
                                         driver,
                                         snapshot,
                                         obj_names,
@@ -1416,6 +1418,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                         state.clone(),
                                         bank_memory,
                                         name,
+                                        compatibility_work_scope,
                                         [request],
                                         cache.clone(),
                                         obj_names_arc.clone(),
@@ -1575,18 +1578,31 @@ pub(crate) fn script_observe_cached_with_channels(
                                 );
                             }
                             script::native::HostEffect::BankPick(request) => {
-                                super::bank::queue_native_bank_pick(
+                                let evidence = api::quest_progress::EvidenceStamp {
+                                    run: authority.run(),
+                                    tick,
+                                    sequence: tick,
+                                };
+                                let Some(scope) = compatibility_work_scope else {
+                                    slot.complete_native_bank_pick(
+                                        &authority,
+                                        script::native_bank::BankPickReceipt {
+                                            request_id: authority.request_id().get(),
+                                            evidence,
+                                            selected: super::bank::native_no_candidate(),
+                                        },
+                                    );
+                                    continue;
+                                };
+                                super::bank::queue_native_bank_pick_scoped(
                                     navs,
                                     name,
+                                    scope,
                                     world,
                                     state.clone(),
                                     request,
-                                    authority.clone(),
-                                    api::quest_progress::EvidenceStamp {
-                                        run: authority.run(),
-                                        tick,
-                                        sequence: tick,
-                                    },
+                                    authority,
+                                    evidence,
                                     slot.api_gather_walk_permissions(),
                                 );
                             }
@@ -1725,7 +1741,7 @@ pub(crate) fn script_observe_cached_with_channels(
                             req => dispatchable.push(req),
                         }
                     }
-                    wrote |= dispatch_script_interact_cached(
+                    wrote |= dispatch_script_interact_cached_scoped(
                         driver,
                         snapshot,
                         obj_names,
@@ -1735,6 +1751,7 @@ pub(crate) fn script_observe_cached_with_channels(
                         state.clone(),
                         bank_memory,
                         name,
+                        compatibility_work_scope,
                         dispatchable,
                         cache.clone(),
                         obj_names_arc.clone(),

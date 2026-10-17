@@ -1,10 +1,13 @@
+use std::any::Any;
 use std::borrow::Cow;
 use std::collections::VecDeque;
+use std::fmt;
 use std::sync::Arc;
 
 use api::bank_memory::Origin;
 use api::snapshot::WorldTile;
 use nav::bank_fetch::{fetchable_state, plan_bank_fetch, planning_rows, BankFetch, BankStep};
+use nav::contract::{LegView, NavLease, RoutePlanLease, RouteView};
 use nav::router::{
     find_first_missing_item_reqs_with_avoid, find_first_with_avoid, find_first_with_fallback_avoid,
     find_missing_item_reqs_with_avoid, find_with_avoid, missing_item_reqs, AvoidRect,
@@ -13,6 +16,128 @@ use nav::router::{
 use nav::transport::TransportEdge;
 use nav::world::NavWorld;
 use nav::WorldState;
+
+/// One route without expanding compact plans into legacy leg vectors.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "The compact branch shares existing backing and avoids another per-route heap allocation."
+)]
+#[derive(Clone)]
+pub(crate) enum RoutePath {
+    Legacy(Arc<Route>),
+    Compact {
+        plan: RoutePlanLease,
+        lease: NavLease,
+        _custody: Arc<dyn Any + Send + Sync>,
+    },
+}
+
+impl RoutePath {
+    pub(crate) fn legacy(route: Arc<Route>) -> Self {
+        Self::Legacy(route)
+    }
+
+    pub(crate) fn compact(
+        plan: RoutePlanLease,
+        lease: NavLease,
+        _custody: Arc<dyn Any + Send + Sync>,
+    ) -> Self {
+        Self::Compact {
+            plan,
+            lease,
+            _custody,
+        }
+    }
+
+    pub(crate) fn destination(&self) -> WorldTile {
+        match self {
+            Self::Legacy(route) => route.dest,
+            Self::Compact { plan, .. } => plan.destination(),
+        }
+    }
+
+    pub(crate) fn legacy_route(&self) -> Option<&Arc<Route>> {
+        match self {
+            Self::Legacy(route) => Some(route),
+            Self::Compact { .. } => None,
+        }
+    }
+
+    pub(crate) fn plan(&self) -> Option<&RoutePlanLease> {
+        match self {
+            Self::Legacy(_) => None,
+            Self::Compact { plan, .. } => Some(plan),
+        }
+    }
+
+    pub(crate) fn plan_for_follow(&self) -> Option<RoutePlanLease> {
+        self.plan().cloned()
+    }
+
+    pub(crate) fn view(&self) -> Option<RouteView<'_>> {
+        match self {
+            Self::Legacy(_) => None,
+            Self::Compact { plan, lease, .. } => plan.view(lease).ok(),
+        }
+    }
+
+    pub(crate) fn projection(&self) -> crate::walk_map::RouteProjectionPath<'_> {
+        match self {
+            Self::Legacy(route) => crate::walk_map::RouteProjectionPath::Legacy(route),
+            Self::Compact { .. } => crate::walk_map::RouteProjectionPath::Compact(
+                self.view().expect("compact route keeps its bound lease"),
+            ),
+        }
+    }
+
+    pub(crate) fn first_tile(&self) -> Option<WorldTile> {
+        match self {
+            Self::Legacy(route) => match route.legs.first()? {
+                nav::router::Leg::Walk { tiles } => tiles.first().copied(),
+                nav::router::Leg::Transport { edge } => Some(edge.at),
+            },
+            Self::Compact { plan, lease, .. } => match plan.view(lease).ok()?.leg(0).ok()? {
+                LegView::Walk(tiles) => tiles.first().copied(),
+                LegView::Transport(edge) => Some(edge.anchor()),
+            },
+        }
+    }
+}
+
+impl fmt::Debug for RoutePath {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Legacy(route) => formatter.debug_tuple("Legacy").field(route).finish(),
+            Self::Compact { plan, .. } => formatter
+                .debug_struct("Compact")
+                .field("identity", &plan.identity())
+                .field("revision", &plan.revision())
+                .field("destination", &plan.destination())
+                .finish(),
+        }
+    }
+}
+
+impl PartialEq for RoutePath {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Legacy(left), Self::Legacy(right)) => Arc::ptr_eq(left, right),
+            (Self::Compact { plan: left, .. }, Self::Compact { plan: right, .. }) => {
+                left.identity() == right.identity()
+                    && left.revision() == right.revision()
+                    && left.destination() == right.destination()
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Eq for RoutePath {}
+impl From<Arc<Route>> for RoutePath {
+    fn from(route: Arc<Route>) -> Self {
+        Self::legacy(route)
+    }
+}
 
 /// A latched BankBudget session: remaining [`BankStep`]s plus the dest
 /// the arm re-finds after the session lands. Follow freezes only for
