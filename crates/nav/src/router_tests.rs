@@ -1,4 +1,4 @@
-use api::identity::Deadline;
+use api::identity::{Cancellation, Deadline};
 use api::obj_names::LocDefs;
 use api::selected::QuestGate;
 use api::snapshot::WorldTile;
@@ -84,6 +84,53 @@ fn cooperative_cursor_checks_the_clock_once_per_work_boundary() {
         clock.reads.get(),
         65,
         "check once before the first poll and after each consumed unit"
+    );
+}
+
+#[test]
+fn cooperative_cursor_returns_cancelled_and_drops_the_future() {
+    let clock = SystemClock;
+    let cancellation = SharedCancellation::new();
+    let mut cursor = super::SearchCursor {
+        future: Some(Box::pin(async {
+            loop {
+                super::work_unit().await;
+            }
+        })),
+        progress: Arc::default(),
+        input_bytes: 0,
+        reservation: super::SearchReservation::default(),
+    };
+    let now = clock.now();
+    let budget = SliceBudget::new(
+        NonZeroU32::new(8).unwrap(),
+        Deadline::after(now, Duration::from_secs(1)),
+    );
+    let mut context = StepContext::<InspectionPhase>::new(&clock, budget, &cancellation);
+    assert!(matches!(
+        cursor.advance(&mut context),
+        super::CursorStep::Yielded
+    ));
+    assert!(
+        cursor.future.is_some(),
+        "a yielded search still owns its future"
+    );
+
+    cancellation
+        .register(Cancellation::Operator)
+        .expect("first cancellation wins");
+    let budget = SliceBudget::new(
+        NonZeroU32::new(8).unwrap(),
+        Deadline::after(now, Duration::from_secs(1)),
+    );
+    let mut context = StepContext::<InspectionPhase>::new(&clock, budget, &cancellation);
+    assert!(matches!(
+        cursor.advance(&mut context),
+        super::CursorStep::Cancelled(Cancellation::Operator)
+    ));
+    assert!(
+        cursor.future.is_none(),
+        "cancellation must drop the search future"
     );
 }
 
