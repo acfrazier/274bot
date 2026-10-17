@@ -211,12 +211,14 @@ fn emit_script_debug_logs(slot: &mut SlotScript, name: &str) {
 /// isolate post read. Queued effects require that observed frame and pass the
 /// single shared host dispatch fence. Walk find runs off-pump and follow stays
 /// on the slot pump; compiled cards no longer receive direct route closures.
-/// `hold` is the guardian's
-/// random-event freeze: while true the tick is not dispatched (follow is
+/// `hold` is the slot loop's frame hold (the scene is not ready, the
+/// welcome modal is up, the random-event guardian holds, or a session
+/// boundary applies): while true the tick is not dispatched (follow is
 /// frozen by the pump too), so a script cannot walk through an in-flight
 /// dialog or a trapped maze/mime/box — the snapshot blob still posts on
 /// the held tick edge, so EventSignal reads the freeze the script is
-/// frozen by. `ours` is the guardian's published
+/// frozen by. `guardian_hold` is the guardian's part of `hold`; only it
+/// freezes the seat (`SessionHeld`). `ours` is the guardian's published
 /// detected-ours flag (posted into the isolate for `EventSignal.pending()`).
 /// Returns whether the driver's
 /// out buffer was written (the slot's own `Client` sends on its next
@@ -298,6 +300,8 @@ pub(crate) fn script_observe_cached(
         navs,
         world,
         hold,
+        // The test wrappers model the guardian's hold.
+        hold,
         ours,
         canlight,
         slot_input,
@@ -373,6 +377,7 @@ pub(crate) fn script_observe_cached_with_channels(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     world: &Option<Arc<NavWorld>>,
     hold: bool,
+    guardian_hold: bool,
     ours: bool,
     canlight: Option<&[u64]>,
     slot_input: Option<&SlotInput>,
@@ -409,7 +414,17 @@ pub(crate) fn script_observe_cached_with_channels(
             break 'script_slot;
         };
         slot.observe_lifecycle();
-        slot.seat_guardian_hold(hold);
+        // Only the random-event guardian holds the seat (`SessionHeld`,
+        // `28-seat-sg.md:65`; `27-decision-r5.md` §6). Every other frame
+        // hold is a held tick (`28-seat-sg.md:64`): the seat is not frozen,
+        // it drops the held frames' gameplay, and it keeps the abort releases
+        // for the first frame after the hold (operator decision
+        // 2026-10-16, `SlotScript::seat_host_hold`). A session boundary
+        // reconnects or resets the seat (`SlotScript::reconnect_session_work`,
+        // `reset_session_work`); a native run's seat also holds through
+        // `align_seat_session`.
+        slot.seat_guardian_hold(guardian_hold);
+        slot.seat_host_hold(hold && !guardian_hold);
         let stop_prayers = slot.take_stop_prayer_cleanup();
         let prayer_cleanup_hold = if let Some(snapshot) = snapshot.filter(|_| up) {
             let mut bots = navs.lock().unwrap();
@@ -870,7 +885,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 slot.store_last_world_id(world_id);
             }
             if isolate_hold {
-                if !hold {
+                if !guardian_hold {
                     slot.seat_held_tick();
                 }
                 // Isolate: tick for onPaint only (hold gate inside V8 via

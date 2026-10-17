@@ -656,6 +656,10 @@ fn run_hold_cell(random_events: bool, trigger_maze: bool, reconnect: bool) {
     let mut held_state = None;
     let mut maze_status = Value::Null;
     if trigger_maze {
+        // Sample the seat only while the guardian is the one hold reason
+        // and the scene is ready: the Maze teleport also reloads the scene,
+        // and since round 9 a scene load is a held tick that does not hold
+        // the seat (`SlotScript::seat_host_hold`).
         wait_until(
             &live,
             "Maze SessionHeld seat hold",
@@ -671,6 +675,12 @@ fn run_hold_cell(random_events: bool, trigger_maze: bool, reconnect: bool) {
                     let inside_maze =
                         api::random::trapped_area(status.tile_x, status.tile_z, status.tile_level)
                             == Some(api::random::RandomKind::Maze);
+                    let reasons = live
+                        .play
+                        .arm(&live.account)
+                        .map(|arm| arm.session_hold_reasons())
+                        .unwrap_or_default();
+                    let guardian_only = reasons == [api::lifecycle::HoldReason::Guardian];
                     let probe = live.play.script_seat_probe(&live.account);
                     if let Some(probe) = probe {
                         maze_status = json!({
@@ -685,9 +695,10 @@ fn run_hold_cell(random_events: bool, trigger_maze: bool, reconnect: bool) {
                             "client_up": status.is_up(),
                             "ingame": status.ingame,
                             "scene_state": status.scene_state,
+                            "hold_reasons": format!("{reasons:?}"),
                             "seat": seat_json(probe),
                         });
-                        if inside_maze && probe.held {
+                        if inside_maze && guardian_only && status.is_up() && probe.held {
                             held_seat = Some(probe);
                             held_state = Some(live.play.script_state(&live.account));
                         }
@@ -698,16 +709,17 @@ fn run_hold_cell(random_events: bool, trigger_maze: bool, reconnect: bool) {
         );
         // A guardian hold changes seat custody, not the script lifecycle
         // (`SlotScript::seat_guardian_hold`), and the host ticks a held
-        // Running isolate for paint. The Maze teleport also reloads the
-        // scene: while the client is not up, `SlotScript::on_is_up(false)`
-        // reports Paused, and Running returns when the scene is up. So the
-        // hold allows exactly Running or Paused; it never ends the script.
+        // Running isolate for paint. The sample is taken with the scene
+        // ready, so the script is Running.
         let state = held_state.expect("lifecycle sampled with the held seat");
         maze_status["run_state"] = json!(format!("{state:?}"));
-        assert!(
-            matches!(state, script::RunState::Running | script::RunState::Paused),
-            "guardian hold keeps the script Running or Paused, not {state:?}"
+        assert_eq!(
+            state,
+            script::RunState::Running,
+            "a guardian hold with the scene ready keeps the script Running"
         );
+        assert_eq!(maze_status["scene_state"], 2, "the scene is ready");
+        assert_eq!(maze_status["hold_reasons"], "[Guardian]");
         let held = held_seat.expect("observed held seat");
         assert!(held.held, "the guardian holds the seat");
         assert_eq!(

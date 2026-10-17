@@ -1637,3 +1637,54 @@ fn held_rehold_merges_each_control_by_its_producer_key() {
          equal to a kept one, are repeats"
     );
 }
+
+// Round 9, operator decision 2026-10-16: a frame that the slot loop holds
+// for a scene load or the welcome modal is a held tick, not the guardian's
+// `SessionHeld`. The seat is not frozen, so the batch's start is admitted
+// during the hold. The batch's gameplay row is dropped and counted. The
+// walk abort is kept and leads the first frame after the hold. Synthetic
+// sequence: the batch enters the isolate queue directly.
+#[test]
+fn host_held_tick_keeps_the_walk_abort_and_drops_gameplay() {
+    let mut slot = with_seat(893);
+    slot.seat_host_hold(true);
+    let mut batch = page(
+        &slot,
+        vec![InteractReq::AbortWalk { request_id: 5 }, walk(6)],
+    );
+    batch.batch.starts = vec![start_input(&slot, 1, NativeKind::Hunt)];
+    slot.load
+        .as_ref()
+        .unwrap()
+        .restore_seat_batches(vec![batch]);
+    let before = dropped(&slot);
+    let (_, held, _) = slot.drain_host_interacts();
+    let (_, still, _) = slot.drain_host_interacts();
+    let seat = slot.seat.as_ref().unwrap();
+    let (frozen, admitted) = (
+        seat.held(),
+        seat.live().iter().any(|entry| entry.id == id(1)),
+    );
+    let held_dropped = dropped(&slot) - before;
+    slot.seat_host_hold(false);
+    let (_, after, _) = slot.drain_host_interacts();
+    let (_, later, _) = slot.drain_host_interacts();
+    slot.stop();
+    assert!(!frozen, "a host hold does not freeze the seat");
+    assert!(
+        admitted,
+        "the seat applies the batch's start during the hold"
+    );
+    assert!(requests(held).is_empty(), "the held frame delivers nothing");
+    assert!(requests(still).is_empty(), "the abort waits for the hold");
+    assert_eq!(
+        held_dropped, 1,
+        "the held gameplay row is dropped and counted"
+    );
+    assert_eq!(
+        requests(after),
+        [InteractReq::AbortWalk { request_id: 5 }],
+        "the first frame after the hold delivers the abort"
+    );
+    assert!(requests(later).is_empty(), "the abort is delivered once");
+}

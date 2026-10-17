@@ -193,6 +193,18 @@ fn seat_reserved_row(req: &crate::shim::InteractReq) -> bool {
     )
 }
 
+/// The abort releases that a held tick of a scene load or of the welcome
+/// modal keeps (operator decision 2026-10-16). `RunPolicyOverride` is the
+/// other reserved row (`seat_reserved_row`); a held tick does not keep it.
+fn seat_abort_release(req: &crate::shim::InteractReq) -> bool {
+    matches!(
+        req,
+        crate::shim::InteractReq::AbortWalk { .. }
+            | crate::shim::InteractReq::GatherStop { .. }
+            | crate::shim::InteractReq::CombatStop { .. }
+    )
+}
+
 /// A second guardian hold folds over a retained batch whose pages still
 /// wait, and whose controls the seat has not applied. Keep those controls
 /// ahead of the newer batch's controls, in order, so the merge applies as
@@ -459,6 +471,16 @@ pub struct SlotScript {
     seat_interact_delivery: Vec<crate::load::QueuedInteract>,
     /// Guardian hold is separate from the shared seat-held state.
     guardian_held: bool,
+    /// The slot loop holds the frame for a reason that is not the guardian:
+    /// the scene is not ready, the welcome modal is up, or a session boundary
+    /// applies. That is a held tick (`28-seat-sg.md:64`), not the guardian's
+    /// `SessionHeld` (`28-seat-sg.md:65`), so the seat is not frozen.
+    seat_host_held: bool,
+    /// Walk aborts that the script sent while the frame was held, oldest
+    /// first, for the first frame after the hold (operator decision
+    /// 2026-10-16). One for each walk request, at most `MAX_WALK_RELEASES`.
+    #[cfg(feature = "load")]
+    held_aborts: Vec<crate::load::QueuedInteract>,
     /// A missing host session also freezes the shared seat.
     seat_session_held: bool,
     /// Physical Walk terminals deferred until guardian hold lifts.
@@ -613,6 +635,9 @@ impl SlotScript {
             #[cfg(feature = "load")]
             seat_interact_delivery: Vec::new(),
             guardian_held: false,
+            seat_host_held: false,
+            #[cfg(feature = "load")]
+            held_aborts: Vec::new(),
             seat_session_held: false,
             held_walk_terminals: Vec::new(),
             #[cfg(feature = "load")]
@@ -775,6 +800,20 @@ impl SlotScript {
         }
     }
 
+    /// The slot loop's frame hold that is not the guardian's: the scene is
+    /// not ready, the welcome modal is up, or a session boundary applies.
+    /// Only the guardian freezes the seat (`28-seat-sg.md:65`, §27 §6 of
+    /// `27-decision-r5.md`). This hold is a held tick (`28-seat-sg.md:64`):
+    /// the seat keeps applying controls, and gameplay of the held frames is
+    /// dropped. The operator decision of 2026-10-16 amends that row for the
+    /// abort releases only: a held tick keeps `AbortWalk`, `GatherStop` and
+    /// `CombatStop`, and the first frame after the hold dispatches them in
+    /// the order the script sent them ([`Self::seat_held_tick`],
+    /// [`Self::keep_held_aborts`]).
+    pub fn seat_host_hold(&mut self, held: bool) {
+        self.seat_host_held = held;
+    }
+
     fn flush_held_walk_terminal(&mut self) {
         if self.guardian_held || self.seat_session_held {
             return;
@@ -824,27 +863,57 @@ impl SlotScript {
     }
 
     /// A non-guardian held tick discards one-shot script effects. Guardian
-    /// SessionHeld takes a different path: it keeps reserved releases.
+    /// SessionHeld takes a different path: it keeps reserved releases. A
+    /// held tick of a frame that the slot loop holds (the scene is not
+    /// ready, the welcome modal is up) keeps the abort releases too
+    /// (operator decision 2026-10-16, [`Self::seat_host_hold`]). The seat
+    /// keeps at most one release row for each reserved release slot
+    /// (`GameplaySeat::held_tick_keeping_releases`).
     pub fn seat_held_tick(&mut self) {
+        let keep = self.seat_host_held;
         let Some(seat) = self.seat.as_mut() else {
             return;
         };
         if seat.held() {
             return;
         }
-        seat.held_tick();
+        if keep {
+            seat.held_tick_keeping_releases();
+        } else {
+            seat.held_tick();
+        }
+        let abort = |req: &crate::shim::InteractReq| keep && seat_abort_release(req);
+        let abort_action = |action: &crate::native::HostAction| {
+            let crate::native::HostEffect::Interaction(req) = &action.effect else {
+                return false;
+            };
+            abort(req)
+        };
         let mut dropped = self.seat_native_delivery.len();
-        self.seat_native_delivery.clear();
+        self.seat_native_delivery.retain(abort_action);
+        dropped -= self.seat_native_delivery.len();
         #[cfg(feature = "load")]
         {
             dropped += self.seat_interact_delivery.len() + self.compiled_interacts.len();
-            self.seat_interact_delivery.clear();
-            self.compiled_interacts.clear();
-            self.compiled_interact_outcome_seqs.clear();
+            self.seat_interact_delivery
+                .retain(|queued| abort(&queued.req));
+            let mut at = 0;
+            let stamps = &mut self.compiled_interact_outcome_seqs;
+            self.compiled_interacts.retain(|req| {
+                let kept = abort(req);
+                if kept {
+                    at += 1;
+                } else {
+                    stamps.remove(at);
+                }
+                kept
+            });
+            dropped -= self.seat_interact_delivery.len() + self.compiled_interacts.len();
         }
         if let Some(ledger) = self.native_runtime.ledger.as_mut() {
             dropped += ledger.outbox.len();
-            ledger.outbox.clear();
+            ledger.outbox.retain(abort_action);
+            dropped -= ledger.outbox.len();
         }
         seat.count_dropped(dropped);
     }
@@ -906,6 +975,8 @@ impl SlotScript {
         self.seat_native_delivery.clear();
         #[cfg(feature = "load")]
         self.seat_interact_delivery.clear();
+        #[cfg(feature = "load")]
+        self.held_aborts.clear();
         #[cfg(feature = "load")]
         self.seat_lifecycle.clear();
         #[cfg(feature = "load")]
@@ -1566,6 +1637,8 @@ impl SlotScript {
         #[cfg(feature = "load")]
         self.seat_interact_delivery.clear();
         #[cfg(feature = "load")]
+        self.held_aborts.clear();
+        #[cfg(feature = "load")]
         self.seat_lifecycle.clear();
         #[cfg(feature = "load")]
         self.held_channel_refusals.clear();
@@ -1724,6 +1797,8 @@ impl SlotScript {
             self.seat_native_delivery.clear();
             #[cfg(feature = "load")]
             self.seat_interact_delivery.clear();
+            #[cfg(feature = "load")]
+            self.held_aborts.clear();
         }
         #[cfg(feature = "load")]
         self.seat_lifecycle.clear();
@@ -3314,6 +3389,27 @@ impl SlotScript {
                 carried.push(queued);
                 continue;
             }
+            if self.seat_host_held {
+                // A held tick of a frame that the slot loop holds
+                // (`28-seat-sg.md:64`): the frame's gameplay is dropped and
+                // counted, never dispatched after the hold. The seat is not
+                // frozen, so the batch's controls and other rows apply now.
+                let before = queued.batch.reqs.len();
+                queued.batch.reqs.retain(|row| {
+                    seat_interact_class(&row.request, row.lineage.or(row.mirror_owner)).0
+                        != api::script_contract::EmissionClass::Gameplay
+                });
+                if let Some(seat) = self.seat.as_mut() {
+                    seat.count_dropped(before - queued.batch.reqs.len());
+                }
+                if queued.held_fold {
+                    // The guardian's retained pages wait for the hold to
+                    // end, and later batches queue behind them.
+                    paging = true;
+                    carried.push(queued);
+                    continue;
+                }
+            }
             if self.watchdog.holds_script_actions() {
                 self.seat_held_tick();
                 let dropped = queued.rows();
@@ -3384,7 +3480,48 @@ impl SlotScript {
             }
             _ => true,
         });
+        self.keep_held_aborts(&mut reqs);
         (policy, reqs, self.api_owns_foreground())
+    }
+
+    /// While the slot loop holds the frame, the host dispatches no script
+    /// row (`script_observe.rs`, the `up && !hold` gate), so a walk abort
+    /// that reached this drain would be lost. Operator decision 2026-10-16
+    /// (amends `28-seat-sg.md:64` for the abort releases only): keep each
+    /// walk abort here, in order, and put the kept aborts in front of the
+    /// first frame after the hold. `GatherStop` and `CombatStop` never reach
+    /// this point: the drain applies them in the slot at once
+    /// (`consume_api_release`). The seat reserves one release slot for each
+    /// walk (`MAX_WALK_RELEASES`), so this keeps one abort for each walk
+    /// request and at most `MAX_WALK_RELEASES`; a further abort is counted
+    /// as dropped.
+    #[cfg(feature = "load")]
+    fn keep_held_aborts(&mut self, reqs: &mut Vec<crate::load::QueuedInteract>) {
+        if !(self.guardian_held || self.seat_host_held) {
+            if !self.held_aborts.is_empty() {
+                reqs.splice(0..0, self.held_aborts.drain(..));
+            }
+            return;
+        }
+        let mut dropped = 0;
+        let kept = &mut self.held_aborts;
+        reqs.retain(|queued| {
+            if !matches!(queued.req, crate::shim::InteractReq::AbortWalk { .. }) {
+                return true;
+            }
+            // Only aborts are kept, so an equal row is the same walk's abort.
+            if !kept.iter().any(|held| held.req == queued.req) {
+                if kept.len() < api::script_contract::MAX_WALK_RELEASES {
+                    kept.push(queued.clone());
+                } else {
+                    dropped += 1;
+                }
+            }
+            false
+        });
+        if let Some(seat) = self.seat.as_mut() {
+            seat.count_dropped(dropped);
+        }
     }
 
     /// Diagnostic/test injection: stamps raw rows with the runtime's current

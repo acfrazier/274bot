@@ -116,6 +116,7 @@ impl PaintRig {
             &self.navs,
             &None,
             hold,
+            hold,
             false,
             None,
             None,
