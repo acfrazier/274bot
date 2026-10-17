@@ -103,6 +103,7 @@ pub fn persist_map_bake_choice(
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MapBakePrompt {
     /// Nothing to show: terrain is ready, baking with consent, or not wanted.
+    /// An admitted probe can still be checking disk readiness.
     #[default]
     None,
     /// Show [`MAP_BAKE_WARNING`] with Bake / Always bake / Not now.
@@ -169,12 +170,10 @@ impl MapBakeGate {
         self.open(manager, descriptor, demand)
     }
 
-    /// Open `demand`. Only terrain readiness decides the prompt: terrain that
-    /// is published, or shipped for exactly this identity, opens an
-    /// adopt-only demand that never bakes (a missing or stale catalogue is
-    /// derived silently, it is cheap; shipped terrain is installed); terrain
-    /// that would need a local bake without consent returns a
-    /// catalogue-only handle and raises the prompt.
+    /// Open `demand`. With no consent, a known terrain lease is adopted or an
+    /// admitted adopt-only probe checks the disk cache. Neither path bakes
+    /// terrain. A missing catalogue is derived silently. Once the probe
+    /// settles without terrain, `note_ready_without_terrain` raises the prompt.
     pub fn open(
         &mut self,
         manager: &MapDemandManager,
@@ -192,14 +191,14 @@ impl MapBakeGate {
             self.prompt = MapBakePrompt::None;
             return Ok(handle);
         }
-        self.raise();
-        host_play::open_map_demand(manager, descriptor, MapDemand::CatalogueOnly)
+        if self.prompt != MapBakePrompt::Declined {
+            self.prompt = MapBakePrompt::None;
+        }
+        host_play::open_map_demand(manager, descriptor, MapDemand::ReadyImages)
     }
 
-    /// A ready demand settled without terrain. For an adopt-only demand (the
-    /// terrain it was admitted on vanished, or the shipped terrain proved
-    /// unusable) that means a bake is needed: raise the prompt instead of
-    /// baking. Cheap enough for every frame.
+    /// An adopt-only demand settled without usable terrain. Raise the prompt
+    /// instead of starting a local bake. Cheap enough for every frame.
     pub fn note_ready_without_terrain(&mut self, demand: MapDemand) {
         if demand == MapDemand::ReadyImages {
             self.raise();

@@ -236,9 +236,8 @@ impl ReadyImages {
         )?;
         Ok(Some(receipt.verify_png(buffer)?))
     }
-
-    /// Read one receipt-verified PNG directly into immutable shared custody.
-    /// Unlisted keys have no art; a missing or corrupt listed file is an error.
+    /// None is unlisted/no art. A listed missing or corrupt payload is an error.
+    /// The receipt bounds the allocation before the PNG is read.
     pub fn read_tile_arc(&self, key: TileKey) -> Result<Option<Arc<[u8]>>, MapError> {
         let Some(receipt) = self.manifest.tile(key) else {
             return Ok(None);
@@ -252,19 +251,18 @@ impl ReadyImages {
         if metadata.len() != u64::from(receipt.payload.bytes) {
             return Err(MapError::Invalid("file changed while reading"));
         }
-        // RepeatN is exact-length: Arc collects directly into its slice.
-        // The bytes are initialized before Read receives a mutable u8 slice.
         let mut bytes: Arc<[u8]> =
             std::iter::repeat_n(0u8, receipt.payload.bytes as usize).collect();
-        file.read_exact(Arc::get_mut(&mut bytes).expect("new Arc is uniquely owned"))
-            .map_err(|error| {
-                if error.kind() == std::io::ErrorKind::UnexpectedEof {
-                    MapError::Truncated
-                } else {
-                    error.into()
-                }
-            })?;
-        if file.read(&mut [0])? != 0 {
+        let output = Arc::get_mut(&mut bytes).expect("new Arc is uniquely owned");
+        file.read_exact(output).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::UnexpectedEof {
+                MapError::Truncated
+            } else {
+                error.into()
+            }
+        })?;
+        let mut trailing = [0u8; 1];
+        if file.read(&mut trailing)? != 0 {
             return Err(MapError::Invalid("file changed while reading"));
         }
         receipt.verify_png(&bytes)?;

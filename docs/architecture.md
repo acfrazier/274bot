@@ -451,11 +451,12 @@ are fixed to 256-pixel interiors with one-pixel gutters, RGBA8 noninterlaced PNG
 `TileReceipt::verify_png` verifies the receipt and IHDR before pixel allocation;
 the PNG decoder still owns full chunk/CRC validation.
 
-Only `PartialEntry` reads `.<key>.partial` checkpoints. Ready readers require a
-canonical complete directory and validated manifest; ordinary image open does
-not hash/decode the pyramid. Resume verifies completed units and their exact
-policy identity. The cache-job owner (`host-play`) owns the prepared-cache
-`Arc`, locks, atomic publication, cancellation and quotas.
+`PartialEntry` provides checked synchronous resume. The admitted host cache job
+decodes checkpoint metadata, then verifies one completed payload per host unit
+before exposing its receipt to the producer cursor. Ready readers require a
+canonical complete directory and validated manifest. Ordinary image open does
+not hash or decode the pyramid. The cache-job owner (`host-play`) owns the
+prepared-cache `Arc`, locks, atomic publication, cancellation and quotas.
 
 Release packages ship the 289 terrain: release packaging bakes the nav
 bundle's pinned client cache through the production map-cache path and ships
@@ -599,7 +600,7 @@ libtest exception.
 | `login_readiness.rs` | login-readiness gate | welcome-modal settle before script work |
 | `nav_identity.rs` | bundled nav identities | build-published table plus checked-in rows |
 | `walk_map.rs`, `walk_map/{actions,catalogue,observations,routes}.rs` | shared WalkTo map model | catalogue, selection, guarded Walk/Teleport, live/script/manual routes |
-| `map_cache.rs`, `map_cache/shipped.rs`, `map_cache/fixture.rs` (`test` / `test-support` fixtures), `map_producer.rs` | WalkTo map cache lifecycle | demand, bake/publication, installing release-shipped terrain that matches the bound image identity; the native producer |
+| `map_cache.rs`, `map_cache/shipped.rs`, `map_cache/fixture.rs` (`test` / `test-support` fixtures), `map_producer.rs` | WalkTo map cache lifecycle | one `WorkService` MapBake family with resumable bounded producer cursors; demand, bake/publication, installing release-shipped terrain that matches the bound image identity; no private bake worker |
 | `map_bind.rs` | process-wide map demand | manager at first open (shipped terrain under the install root's `map/`), packaging bake, bounded shared-worker terrain PNG decode (258×258 RGBA8; 512 KiB input plus inline job, Arc refcounts and refcount-alignment padding; `png::Limits` allowance of one additional raw RGBA row, 2 MiB scratch covering the overlapping ≤512 KiB eXIf buffer and metadata copy, ≤128 KiB raster buffer, row scratch and bounded inflater tables; 266,256-byte result; text/ICC metadata is skipped) |
 | `bundled-nav-identities.json`, `known-cache-identities.json` | checked-in identity rows | data, not code |
 | `external_loader.rs` | external loader smoke witness | proof infrastructure, disabled by default |
@@ -614,6 +615,56 @@ libtest exception.
 | `progress.rs` | preparation progress values | small, copy-free |
 | `quest_pair.rs` | Play-owned pair leases | bounded; never takes a slot lock or retains a world |
 | `*_live.rs`, `*_live_probe.rs`, `*_live_tests.rs` | live cells run through `cargo test` | ignored; see [the harness](harness.md) |
+
+Map-cache census retains at most 1,030 root summaries. Completion transfers that
+allocation without a replacement. A new scan releases previous census storage
+first. Mutation generations fence census, publication and bounded pruning. Entry
+caps are 3,490 per artifact root and 3,594,700 across the cache.
+Disk cache hits pass the same admitted preflight before the manager publishes a
+ready lease. Joined demand can add bake consent but cannot revoke it. Host
+progress uses the frozen map-bake phase indices in both directions.
+The generation counter and empty key-lock files coordinate live processes.
+They are not crash-durable artifact metadata and do not need file syncs.
+New artifact directories still synchronize their changed parent entries.
+A refreshed census resumes the exact producer/publication stage and rebases a
+live writer's whole-cache totals. If pruning removed its unpublished partial,
+the job discards the stale receipts before rebuilding. Clean cursor yields do
+not rewrite an unchanged checkpoint.
+A terrain probe that finds no published or matching shipped terrain creates
+no image directory or key-lock file. Later bake consent restarts path
+preparation and the census before mutation. Catalogue preparation writes no
+empty checkpoint. Normal completion writes its single-payload manifest directly.
+The manifest's parent sync also commits the already-synchronized payload rename,
+without first writing a publishing checkpoint that the manifest supersedes.
+Explicit checkpoints, observed cancellation and incomplete work keep their
+checkpoint flush. The payload and checkpoint file data reach disk first.
+One parent sync then commits both renames before the checkpoint is durable.
+Catalogue placement and marker-candidate work groups at most 64 operations
+per admission unit. Each operation checks the live deadline and cancellation.
+Archive reads, land decoding and finalization remain individual units.
+The shared unit allowance and the 10 ms deadline do not change.
+Catalogue derivation retains at most 32,768 tree or quest-location candidates
+in source order, with their original placement and bridge flag. The first
+scan also records each square's candidate end offset. The charge includes
+both fixed storage bounds, without vector growth overlap. The 274 and 289
+content census found 14,844 and 15,059 candidates. The limit rounds twice
+the larger count up to a power of two. Overflow releases that prefix and
+uses the existing second scan. It neither refuses input nor changes output.
+Each 64-tile terrain checkpoint batch synchronizes each changed tile directory
+and each newly created directory's parent once, from children to parents.
+At most 63 completed tiles await a batch checkpoint. Observed cancellation
+and completion flush the remainder.
+Individual PNG data reaches disk first. The checkpoint file is written and
+synchronized next. Its parent sync also commits the new terrain directory.
+The writer retains only fixed directory bitsets between worker invocations.
+Resume keeps valid partial tiles and regenerates missing or damaged payloads.
+Checkpoint rows remain sorted when regenerated tiles fill earlier holes.
+A payload that contradicts its durable checkpoint receipt is removed and its
+parent directory synced before the native cursor can adopt uncheckpointed tiles.
+Verification reuses one format-bounded payload buffer. Its reservation includes
+the decoded-row capacity and the verified rows while both allocations overlap.
+After admitted validation, publication reuses an immutable ready owner still
+retained by a consumer.
 
 ### scenario
 

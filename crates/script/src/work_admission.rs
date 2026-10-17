@@ -130,6 +130,16 @@ pub enum WorkShutdownError {
     #[error("the WorkAdmission worker panicked before shutdown acknowledgement")]
     WorkerPanicked,
 }
+/// Result of one bounded wait for any WorkAdmission publication or lifecycle change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublicationWaitOutcome {
+    /// The notification epoch changed; the caller should reread its publication.
+    Changed,
+    /// No publication or lifecycle change occurred before the supplied timeout.
+    TimedOut,
+    /// WorkAdmission is shutting down or unavailable for this process incarnation.
+    Unavailable,
+}
 
 static WORK_INITIALIZED: AtomicBool = AtomicBool::new(false);
 static SHARED_WORK: LazyLock<Result<Arc<Mutex<WorkService>>, WorkStartError>> =
@@ -540,6 +550,39 @@ impl WorkService {
         }
     }
 
+    /// Wait once for a publication change without holding the service mutex.
+    ///
+    /// The notifier's gate closes the check-to-wait race: if the epoch changed
+    /// before this call parks, the notifier returns immediately. `timeout`
+    /// bounds every wait; callers must handle `TimedOut` and `Unavailable`.
+    pub fn wait_for_publication_change(
+        shared: &Arc<parking_lot::Mutex<Self>>,
+        observed: u64,
+        timeout: Duration,
+    ) -> PublicationWaitOutcome {
+        let (notifier, epoch) = {
+            let service = shared.lock();
+            if service.stopping {
+                return PublicationWaitOutcome::Unavailable;
+            }
+            let epoch = service.publication_epoch();
+            if epoch != observed {
+                return PublicationWaitOutcome::Changed;
+            }
+            (Arc::clone(&service.shared.notifier), epoch)
+        };
+
+        let changed = notifier.wait_for_change(epoch, timeout);
+        let service = shared.lock();
+        if service.stopping {
+            PublicationWaitOutcome::Unavailable
+        } else if changed || service.publication_epoch() != observed {
+            PublicationWaitOutcome::Changed
+        } else {
+            PublicationWaitOutcome::TimedOut
+        }
+    }
+
     #[cfg(feature = "test-hooks")]
     #[doc(hidden)]
     pub fn with_clock_for_tests(
@@ -777,7 +820,7 @@ struct ServiceNotifier {
 }
 
 impl ServiceNotifier {
-    fn wait_for_change(&self, observed: u64, timeout: Duration) {
+    fn wait_for_change(&self, observed: u64, timeout: Duration) -> bool {
         let mut gate = self.gate.lock();
         if self.epoch.load(Ordering::Acquire) == observed {
             #[cfg(test)]
@@ -786,6 +829,7 @@ impl ServiceNotifier {
             }
             self.changed.wait_for(&mut gate, timeout);
         }
+        self.epoch.load(Ordering::Acquire) != observed
     }
 
     #[cfg(test)]

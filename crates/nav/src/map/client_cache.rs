@@ -3,8 +3,7 @@
 
 use super::poi::Footprint;
 use super::producer::ClientMapInput;
-use super::records::MapRecordIndex;
-use super::spatial::WorldBounds;
+use super::records::{MapRecordIndex, MapRecordIndexBuilder};
 use super::MapError;
 use client::config::{FloType, LocType};
 use client::graphics::Pix8;
@@ -15,11 +14,21 @@ use client::map_cache::{
 };
 use std::fs::File;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-const MAX_JAG_BYTES: u64 = 8 * 1024 * 1024;
-const MAPSCENE_COUNT: usize = 50;
-const TEXTURE_COUNT: usize = 50;
+pub(crate) const MAX_JAG_BYTES: u64 = 8 * 1024 * 1024;
+pub(crate) const MAX_JAG_UNPACKED_BYTES: u64 = 16 * 1024 * 1024;
+pub(crate) const MAX_JAG_INDEX_TRACKED_BYTES: usize =
+    u16::MAX as usize * (4 * std::mem::size_of::<i32>() + std::mem::size_of::<Option<Vec<u8>>>());
+pub(crate) const MAX_JAG_ARCHIVE_RETAINED_BYTES: u64 =
+    MAX_JAG_UNPACKED_BYTES + MAX_JAG_INDEX_TRACKED_BYTES as u64;
+pub(crate) const MAX_JAG_READ_PEAK_BYTES: u64 =
+    MAX_JAG_ARCHIVE_RETAINED_BYTES + 2 * MAX_JAG_UNPACKED_BYTES;
+pub(crate) const MAX_JAG_MEMBER_PEAK_BYTES: u64 =
+    MAX_JAG_ARCHIVE_RETAINED_BYTES + 4 * MAX_JAG_UNPACKED_BYTES;
+pub(crate) const MAX_MAP_INDEX_ROWS: usize = 256 * 256;
+pub(crate) const MAPSCENE_COUNT: usize = 50;
+pub(crate) const TEXTURE_COUNT: usize = 50;
 const CELL_COUNT: usize = MAP_PLANES as usize * MAP_SQUARE_SIZE as usize * MAP_SQUARE_SIZE as usize;
 
 #[derive(Debug, Clone, Copy)]
@@ -64,7 +73,7 @@ pub(crate) struct LandSquare {
 }
 
 impl LandSquare {
-    fn decode(square_x: i32, square_z: i32, bytes: &[u8]) -> Result<Self, MapError> {
+    pub(super) fn decode(square_x: i32, square_z: i32, bytes: &[u8]) -> Result<Self, MapError> {
         let mut cells = vec![GroundCell::default(); CELL_COUNT];
         visit_land(bytes, |encoded| {
             let index = cell_index(encoded.plane, encoded.x, encoded.z);
@@ -116,53 +125,112 @@ pub(crate) struct RasterAssets {
     pub texture_colours: [u32; TEXTURE_COUNT],
 }
 
+/// Incremental archive/index setup. Each `advance` performs one bounded
+/// operation: a guarded JAG open, one member read, map-index decode, one
+/// maps.bin header scan, or the final bounded sort. It never retains a File.
+pub(crate) struct CacheReaderCursor {
+    jag_dir: PathBuf,
+    snapshot_dir: PathBuf,
+    phase: CacheReaderPhase,
+}
+
+enum CacheReaderPhase {
+    ReadVersionList,
+    ReadMapIndex(JagFile),
+    DecodeMapIndex(Vec<u8>),
+    ScanMapRecords {
+        entries: Vec<MapIndexEntry>,
+        builder: MapRecordIndexBuilder,
+    },
+    Complete,
+}
+
+impl CacheReaderCursor {
+    pub(crate) fn new(input: ClientMapInput<'_>) -> Self {
+        Self {
+            jag_dir: input.jag_dir.to_owned(),
+            snapshot_dir: input.snapshot_dir.to_owned(),
+            phase: CacheReaderPhase::ReadVersionList,
+        }
+    }
+
+    /// Advance exactly one setup unit. File handles are invocation-local.
+    pub(crate) fn advance(&mut self) -> Result<Option<CacheReader>, MapError> {
+        let phase = std::mem::replace(&mut self.phase, CacheReaderPhase::Complete);
+        match phase {
+            CacheReaderPhase::ReadVersionList => {
+                let jag = read_jag(&self.jag_dir.join("versionlist"), "versionlist JAG")?;
+                self.phase = CacheReaderPhase::ReadMapIndex(jag);
+            }
+            CacheReaderPhase::ReadMapIndex(jag) => {
+                let index = jag
+                    .read("map_index")
+                    .ok_or(MapError::Invalid("missing versionlist map_index"))?;
+                self.phase = CacheReaderPhase::DecodeMapIndex(index);
+            }
+            CacheReaderPhase::DecodeMapIndex(bytes) => {
+                let entries = decode_map_index(&bytes).map_err(map_client_error)?;
+                self.phase = CacheReaderPhase::ScanMapRecords {
+                    entries,
+                    builder: MapRecordIndexBuilder::default(),
+                };
+            }
+            CacheReaderPhase::ScanMapRecords {
+                entries,
+                mut builder,
+            } => {
+                if builder.is_complete() {
+                    let records = builder.finish()?;
+                    return Ok(Some(CacheReader {
+                        entries,
+                        maps_path: self.snapshot_dir.join("maps.bin"),
+                        records,
+                        buffer: Vec::new(),
+                        #[cfg(test)]
+                        land_decode_calls: 0,
+                        #[cfg(test)]
+                        loc_read_calls: 0,
+                    }));
+                }
+                let mut maps = File::open(self.snapshot_dir.join("maps.bin"))?;
+                builder.step(&mut maps)?;
+                drop(maps);
+                self.phase = CacheReaderPhase::ScanMapRecords { entries, builder };
+            }
+            CacheReaderPhase::Complete => {
+                return Err(MapError::Invalid("cache reader cursor complete"));
+            }
+        }
+        Ok(None)
+    }
+}
+
+impl CacheReaderCursor {
+    pub(crate) fn tracked_bytes(&self) -> usize {
+        match &self.phase {
+            CacheReaderPhase::ReadVersionList | CacheReaderPhase::Complete => 0,
+            CacheReaderPhase::ReadMapIndex(_) => MAX_JAG_READ_PEAK_BYTES as usize,
+            CacheReaderPhase::DecodeMapIndex(bytes) => bytes.capacity(),
+            CacheReaderPhase::ScanMapRecords { entries, builder } => {
+                entries.capacity() * std::mem::size_of::<MapIndexEntry>() + builder.tracked_bytes()
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct CacheReader {
     pub entries: Vec<MapIndexEntry>,
-    maps: File,
+    maps_path: PathBuf,
     records: MapRecordIndex,
     buffer: Vec<u8>,
+    #[cfg(test)]
+    land_decode_calls: usize,
+    #[cfg(test)]
+    loc_read_calls: usize,
 }
 
 impl CacheReader {
-    pub(crate) fn open(input: ClientMapInput<'_>) -> Result<Self, MapError> {
-        let versionlist = read_jag(&input.jag_dir.join("versionlist"), "versionlist JAG")?;
-        let map_index = versionlist
-            .read("map_index")
-            .ok_or(MapError::Invalid("missing versionlist map_index"))?;
-        let entries = decode_map_index(&map_index).map_err(map_client_error)?;
-        let mut maps = File::open(input.snapshot_dir.join("maps.bin"))?;
-        let records = MapRecordIndex::read(&mut maps)?;
-        Ok(Self {
-            entries,
-            maps,
-            records,
-            buffer: Vec::new(),
-        })
-    }
-
-    pub(crate) fn extent(&self) -> Result<WorldBounds, MapError> {
-        let first = self
-            .entries
-            .first()
-            .ok_or(MapError::Invalid("empty map index"))?;
-        let mut west = i32::from(first.square_x);
-        let mut south = i32::from(first.square_z);
-        let mut east = west + 1;
-        let mut north = south + 1;
-        for entry in &self.entries[1..] {
-            west = west.min(i32::from(entry.square_x));
-            south = south.min(i32::from(entry.square_z));
-            east = east.max(i32::from(entry.square_x) + 1);
-            north = north.max(i32::from(entry.square_z) + 1);
-        }
-        Ok(WorldBounds {
-            west: west * i32::from(MAP_SQUARE_SIZE),
-            south: south * i32::from(MAP_SQUARE_SIZE),
-            east: east * i32::from(MAP_SQUARE_SIZE),
-            north: north * i32::from(MAP_SQUARE_SIZE),
-        })
-    }
-
     pub(crate) fn entry(&self, square_x: i32, square_z: i32) -> Option<MapIndexEntry> {
         let x = u8::try_from(square_x).ok()?;
         let z = u8::try_from(square_z).ok()?;
@@ -174,20 +242,19 @@ impl CacheReader {
     }
 
     pub(crate) fn read_land(&mut self, entry: MapIndexEntry) -> Result<LandSquare, MapError> {
-        if entry.land_file == u16::MAX
-            || !self.records.read_record(
-                &mut self.maps,
-                u32::from(entry.land_file),
-                &mut self.buffer,
-            )?
-        {
+        if entry.land_file == u16::MAX || !self.read_map_record(u32::from(entry.land_file))? {
             return Err(MapError::Invalid("missing listed land record"));
         }
-        LandSquare::decode(
+        let land = LandSquare::decode(
             i32::from(entry.square_x),
             i32::from(entry.square_z),
             &self.buffer,
-        )
+        )?;
+        #[cfg(test)]
+        {
+            self.land_decode_calls += 1;
+        }
+        Ok(land)
     }
 
     pub(crate) fn visit_locs(
@@ -198,13 +265,33 @@ impl CacheReader {
         if entry.loc_file == u16::MAX {
             return Ok(());
         }
-        if !self
-            .records
-            .read_record(&mut self.maps, u32::from(entry.loc_file), &mut self.buffer)?
-        {
+        if !self.read_map_record(u32::from(entry.loc_file))? {
             return Err(MapError::Invalid("missing listed location record"));
         }
         visit_locations(&self.buffer, visit).map_err(map_client_error)
+    }
+
+    pub(crate) fn read_locs(
+        &mut self,
+        entry: MapIndexEntry,
+    ) -> Result<Vec<LocPlacement>, MapError> {
+        let mut placements = Vec::new();
+        self.visit_locs(entry, |placement| placements.push(placement))?;
+        #[cfg(test)]
+        {
+            self.loc_read_calls += 1;
+        }
+        Ok(placements)
+    }
+
+    fn read_map_record(&mut self, id: u32) -> Result<bool, MapError> {
+        let mut maps = File::open(&self.maps_path)?;
+        self.records.read_record(&mut maps, id, &mut self.buffer)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn decoded_read_counts(&self) -> (usize, usize) {
+        (self.land_decode_calls, self.loc_read_calls)
     }
 
     pub(crate) fn max_buffer_bytes(&self) -> u32 {
@@ -213,7 +300,7 @@ impl CacheReader {
 
     pub(crate) fn tracked_bytes(&self) -> usize {
         self.entries.capacity() * std::mem::size_of::<MapIndexEntry>()
-            + std::mem::size_of_val(self.records.records())
+            + self.records.tracked_bytes()
             + self.buffer.capacity()
     }
 }
@@ -222,9 +309,8 @@ pub(crate) fn load_config(input: ClientMapInput<'_>) -> Result<JagFile, MapError
     read_jag(&input.jag_dir.join("config"), "config JAG")
 }
 
-pub(crate) fn load_definitions(input: ClientMapInput<'_>) -> Result<Definitions, MapError> {
-    let jag = load_config(input)?;
-    let decoded_locs = catch_unwind(AssertUnwindSafe(|| LocType::unpack(&jag)))
+pub(crate) fn load_raster_locs(jag: &JagFile) -> Result<Vec<RasterLocDefinition>, MapError> {
+    let decoded_locs = catch_unwind(AssertUnwindSafe(|| LocType::unpack(jag)))
         .map_err(|_| MapError::Invalid("location definitions"))?;
     if decoded_locs.is_empty() {
         return Err(MapError::Invalid("missing location definitions"));
@@ -241,12 +327,16 @@ pub(crate) fn load_definitions(input: ClientMapInput<'_>) -> Result<Definitions,
             mapscene: optional_u16(loc.mapscene, "mapscene id")?,
         });
     }
-    let decoded_floors = catch_unwind(AssertUnwindSafe(|| FloType::unpack(&jag)))
+    Ok(locs)
+}
+
+pub(crate) fn load_floor_definitions(jag: &JagFile) -> Result<Vec<FloorDefinition>, MapError> {
+    let decoded = catch_unwind(AssertUnwindSafe(|| FloType::unpack(jag)))
         .map_err(|_| MapError::Invalid("floor definitions"))?;
-    if decoded_floors.is_empty() {
+    if decoded.is_empty() {
         return Err(MapError::Invalid("missing floor definitions"));
     }
-    let floors = decoded_floors
+    Ok(decoded
         .into_iter()
         .map(|floor| FloorDefinition {
             colour: floor.colour as u32 & 0x00ff_ffff,
@@ -256,36 +346,34 @@ pub(crate) fn load_definitions(input: ClientMapInput<'_>) -> Result<Definitions,
             chroma: floor.chroma,
             underlay_hue: floor.underlay_hue,
         })
-        .collect();
-    Ok(Definitions { locs, floors })
+        .collect())
 }
 
-pub(crate) fn load_raster_assets(input: ClientMapInput<'_>) -> Result<RasterAssets, MapError> {
-    let media = read_jag(&input.jag_dir.join("media"), "media JAG")?;
-    let mut mapscenes = Vec::with_capacity(MAPSCENE_COUNT);
-    for id in 0..MAPSCENE_COUNT {
-        let sprite = catch_unwind(AssertUnwindSafe(|| {
-            Pix8::depack(&media, "mapscene", id as i32)
-        }))
-        .map_err(|_| MapError::Invalid("mapscene sprite"))?;
-        mapscenes.push(sprite);
-    }
+pub(crate) fn depack_mapscene(jag: &JagFile, id: usize) -> Result<Option<Pix8>, MapError> {
+    catch_unwind(AssertUnwindSafe(|| {
+        Pix8::depack(jag, "mapscene", id as i32)
+    }))
+    .map_err(|_| MapError::Invalid("mapscene sprite"))
+}
 
-    let textures = read_jag(&input.jag_dir.join("textures"), "textures JAG")?;
-    let mut texture_colours = [0; TEXTURE_COUNT];
-    for (id, colour) in texture_colours.iter_mut().enumerate() {
-        let texture = catch_unwind(AssertUnwindSafe(|| {
-            Pix8::depack(&textures, &id.to_string(), 0)
-        }))
-        .map_err(|_| MapError::Invalid("texture sprite"))?;
-        if let Some(texture) = texture {
-            *colour = texture_average(&texture);
-        }
-    }
-    Ok(RasterAssets {
-        mapscenes,
-        texture_colours,
-    })
+const TEXTURE_NAMES: [&str; TEXTURE_COUNT] = [
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16",
+    "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32",
+    "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48",
+    "49",
+];
+
+pub(crate) fn depack_texture(jag: &JagFile, id: usize) -> Result<Option<Pix8>, MapError> {
+    let name = TEXTURE_NAMES
+        .get(id)
+        .copied()
+        .ok_or(MapError::Invalid("texture id"))?;
+    catch_unwind(AssertUnwindSafe(|| Pix8::depack(jag, name, 0)))
+        .map_err(|_| MapError::Invalid("texture sprite"))
+}
+
+pub(crate) fn average_texture(texture: &Pix8) -> u32 {
+    texture_average(texture)
 }
 
 fn optional_u16(value: i32, what: &'static str) -> Result<Option<u16>, MapError> {
@@ -306,13 +394,77 @@ fn cell_index(plane: u8, x: u8, z: u8) -> usize {
     usize::from(plane) * 64 * 64 + usize::from(x) * 64 + usize::from(z)
 }
 
-fn read_jag(path: &Path, what: &'static str) -> Result<JagFile, MapError> {
+pub(crate) fn read_jag(path: &Path, what: &'static str) -> Result<JagFile, MapError> {
     let metadata = std::fs::metadata(path)?;
     if metadata.len() == 0 || metadata.len() > MAX_JAG_BYTES {
         return Err(MapError::Limit(what));
     }
     let bytes = std::fs::read(path)?;
+    if bytes.len() as u64 > MAX_JAG_BYTES {
+        return Err(MapError::Limit(what));
+    }
+    validate_jag_header(&bytes)?;
     catch_unwind(AssertUnwindSafe(|| JagFile::new(bytes))).map_err(|_| MapError::Invalid(what))
+}
+
+/// Check outer and inner declared sizes before native JagFile construction or
+/// member decompression. Inputs are the immutable revision's CRC-verified JAGs.
+fn validate_jag_header(bytes: &[u8]) -> Result<(), MapError> {
+    if bytes.len() < 6 {
+        return Err(MapError::Truncated);
+    }
+    let declared_unpacked = read_u24(&bytes[..3]);
+    let declared_packed = read_u24(&bytes[3..6]);
+    if declared_unpacked > 0x00ff_ffff || u64::from(declared_unpacked) > MAX_JAG_UNPACKED_BYTES {
+        return Err(MapError::Limit("JAG declared unpacked bytes"));
+    }
+    if u64::from(declared_packed) > MAX_JAG_BYTES {
+        return Err(MapError::Limit("JAG declared packed bytes"));
+    }
+    let available = bytes.len().saturating_sub(6);
+    if declared_packed as usize > available {
+        return Err(MapError::Truncated);
+    }
+    if declared_unpacked != declared_packed {
+        return Ok(());
+    }
+    if available < 2 {
+        return Err(MapError::Truncated);
+    }
+    let file_count = usize::from(u16::from_be_bytes([bytes[6], bytes[7]]));
+    let table_bytes = 2usize
+        .checked_add(
+            file_count
+                .checked_mul(10)
+                .ok_or(MapError::Limit("JAG index bytes"))?,
+        )
+        .ok_or(MapError::Limit("JAG index bytes"))?;
+    if table_bytes > declared_packed as usize {
+        return Err(MapError::Truncated);
+    }
+    let table_end = 6 + table_bytes;
+    let mut packed_members = 0usize;
+    for row in bytes[8..table_end].as_chunks::<10>().0 {
+        let member_unpacked = read_u24(&row[4..7]);
+        let member_packed = read_u24(&row[7..10]);
+        if u64::from(member_unpacked) > MAX_JAG_UNPACKED_BYTES {
+            return Err(MapError::Limit("JAG member unpacked bytes"));
+        }
+        if u64::from(member_packed) > MAX_JAG_BYTES {
+            return Err(MapError::Limit("JAG member packed bytes"));
+        }
+        packed_members = packed_members
+            .checked_add(member_packed as usize)
+            .ok_or(MapError::Limit("JAG member extent"))?;
+    }
+    if packed_members > declared_packed as usize - table_bytes {
+        return Err(MapError::Truncated);
+    }
+    Ok(())
+}
+
+fn read_u24(bytes: &[u8]) -> u32 {
+    (u32::from(bytes[0]) << 16) | (u32::from(bytes[1]) << 8) | u32::from(bytes[2])
 }
 
 fn map_client_error(error: ClientMapError) -> MapError {

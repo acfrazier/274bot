@@ -583,6 +583,20 @@ fn bounded_sequences_refuse_extra_elements_before_decoding_them() {
     assert!(error.to_string().contains("record count limit"));
 }
 #[test]
+fn bounded_sequence_insertion_preserves_order_and_refuses_growth_at_capacity() {
+    let mut rows = Rows::<u8, 4>::new(vec![1, 4]).unwrap();
+    rows.insert(1, 2).unwrap();
+    rows.insert(2, 3).unwrap();
+    assert_eq!(rows.as_slice(), [1, 2, 3, 4]);
+    let pointer = rows.as_slice().as_ptr();
+    assert!(matches!(
+        rows.insert(0, 0),
+        Err(MapError::Limit("record count"))
+    ));
+    assert_eq!(rows.as_slice(), [1, 2, 3, 4]);
+    assert_eq!(rows.as_slice().as_ptr(), pointer);
+}
+#[test]
 fn maximum_image_documents_fit_the_json_contract() {
     const START: i32 = -33_000_000;
     let west = START * 64;
@@ -884,25 +898,12 @@ fn ready_images_distinguish_unlisted_art_from_a_damaged_listed_tile() {
     .unwrap();
     let image = ReadyImages::open(&ready, image_identity()).unwrap();
     let mut buffer = Vec::new();
-    assert_eq!(
-        image
-            .read_tile_into(
-                TileKey {
-                    x: 55,
-                    ..tile_key()
-                },
-                &mut buffer
-            )
-            .unwrap(),
-        None
-    );
-    assert!(image
-        .read_tile_arc(TileKey {
-            x: 55,
-            ..tile_key()
-        })
-        .unwrap()
-        .is_none());
+    let unlisted = TileKey {
+        x: 55,
+        ..tile_key()
+    };
+    assert_eq!(image.read_tile_into(unlisted, &mut buffer).unwrap(), None);
+    assert_eq!(image.read_tile_arc(unlisted).unwrap(), None);
     assert!(matches!(
         image.read_tile_into(tile_key(), &mut buffer),
         Err(MapError::Io(_))
@@ -919,13 +920,18 @@ fn ready_images_distinguish_unlisted_art_from_a_damaged_listed_tile() {
         Some(TILE_RGBA_BYTES)
     );
     let shared = image.read_tile_arc(tile_key()).unwrap().unwrap();
-    assert_eq!(&*shared, png.as_slice());
+    assert_eq!(&*shared, &png);
     assert!(std::sync::Arc::ptr_eq(
         &shared,
         &std::sync::Arc::clone(&shared)
     ));
+    drop(shared);
+
     std::fs::write(&tile, &png[..png.len() - 1]).unwrap();
-    assert!(image.read_tile_arc(tile_key()).is_err());
+    assert!(matches!(
+        image.read_tile_arc(tile_key()),
+        Err(MapError::Invalid("file changed while reading"))
+    ));
     let mut corrupt = png;
     corrupt[20] ^= 1;
     std::fs::write(&tile, &corrupt).unwrap();
