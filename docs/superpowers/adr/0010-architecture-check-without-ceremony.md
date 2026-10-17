@@ -77,5 +77,6 @@ Reward hacking is handled where it has been caught in practice:
 
   The GC-race fix dies with `trusted_gate.py`.
 - The checker still refuses ASCII case variants of `.cargo` configuration names, at every depth and through symlinks.
+- The checker also refuses an ASCII case variant of `Cargo.toml` anywhere in the tree, because it replaces the scanned manifest on a case-insensitive file system.
 - Unicode look-alike names are outside that refusal because Cargo on Linux does not read them.
 - A product build script can rewrite a vendored manifest on disk during a CI job, between steps. The checker reads committed manifests only. A new `build.rs` needs an ownership row, so a reviewer sees it.

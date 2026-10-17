@@ -94,6 +94,7 @@ Generate a reviewed replacement with
 The checker refuses `.cargo/config` and `.cargo/config.toml` anywhere in the
 candidate tree, including vendored trees and symlinks. Directory and file names
 are matched without ASCII case distinctions. These files can override the graph.
+The checker also refuses an ASCII case variant of `Cargo.toml` anywhere in the tree, because it replaces the scanned manifest on a case-insensitive file system.
 Unicode look-alike names are outside this refusal because Cargo on Linux does not read them.
 One limit stays with review. A product build script can rewrite a vendored
 manifest on disk during a CI job, between steps.
