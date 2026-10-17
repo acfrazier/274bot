@@ -15,9 +15,11 @@ pub(super) fn poll_bank_pick_for_test(navs: &Arc<Mutex<HashMap<String, NavBot>>>
 }
 #[path = "script_nav.rs"]
 mod script_nav;
+pub(crate) use script_nav::pump_route_work;
 #[cfg(test)]
 pub(super) use script_nav::{
-    approach_tiles, resolve_route_exclusions, route_world_state, CarriedWalk, ScriptRouteRequest,
+    approach_tiles, publish_route_owner_refusal, resolve_route_exclusions, route_world_state,
+    CarriedWalk, RouteDemandKind, ScriptRouteRequest,
 };
 pub(super) use script_nav::{
     blocked_zone_detail, hold_script_nav, reset_script_nav, NavBot, PostedWalkOutcome,

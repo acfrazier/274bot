@@ -1,4 +1,5 @@
 use super::*;
+use crate::admission::{RiskPolicy, WalkAllow, WalkRefusal};
 use api::quest_progress::EvidenceProvider;
 use api::selected::ClientRevision;
 use api::selected::{QuestGate, RunKey, Truth};
@@ -92,7 +93,7 @@ fn fixture_world(
     );
     let world = NavWorld::from_parts(collision, graph, Vec::new());
     let risks = RiskTables::build(&combat);
-    world.risk_facts(|| Some(Tables { combat, risks }));
+    prime_tables(&world, Some(Tables { combat, risks }));
     world
 }
 
@@ -1489,7 +1490,7 @@ fn c5_route_basis_keeps_hard_authority_through_replacement_and_revocation() {
     };
     let original_route = Arc::new(original_route);
     let original = Arc::new(RouteBasis {
-        route: Arc::clone(&original_route),
+        _route: crate::walk_plan::RoutePath::legacy(Arc::clone(&original_route)),
         options: frozen_options,
         avoid: Arc::clone(&avoid),
         quest_evidence: Some(evidence),
@@ -1508,10 +1509,13 @@ fn c5_route_basis_keeps_hard_authority_through_replacement_and_revocation() {
         dest: tile(2, 1),
         ticks: 1.0,
     };
-    assert!(Arc::ptr_eq(arm.route.as_ref().unwrap(), &retained.route));
+    assert!(Arc::ptr_eq(
+        arm.route.as_ref().unwrap(),
+        retained._route.legacy_route().unwrap()
+    ));
     let refreshed_route = Arc::new(refreshed_route);
     let refreshed = Arc::new(RouteBasis {
-        route: Arc::clone(&refreshed_route),
+        _route: crate::walk_plan::RoutePath::legacy(Arc::clone(&refreshed_route)),
         options: retained.options,
         avoid: Arc::clone(&retained.avoid),
         quest_evidence: retained.quest_evidence.clone(),
@@ -1531,7 +1535,7 @@ fn c5_route_basis_keeps_hard_authority_through_replacement_and_revocation() {
             .family(),
         &family
     );
-    assert_eq!(retained.route.dest, tile(1, 1));
+    assert_eq!(retained._route.destination(), tile(1, 1));
     assert_eq!(retained.options, frozen_options);
     assert_eq!(retained.avoid.as_ref(), avoid.as_ref());
     assert_eq!(
@@ -2288,7 +2292,7 @@ fn real_squire_walk(
         state: Some(state),
         bank_origin: api::bank_memory::Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         exclusions: None,
         compat_tile_intent: false,
         completion: Default::default(),

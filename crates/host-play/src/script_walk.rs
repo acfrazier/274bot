@@ -60,7 +60,7 @@ pub(super) fn abort_walk_on_bot_with_end(bot: &mut NavBot, end: script::native::
     }
     bot.route_generation = bot.route_generation.wrapping_add(1);
     bot.clear_route();
-    bot.route_worker = None;
+    bot.route_ticket = None;
     bot.pending_route = None;
     bot.requested_route = None;
     bot.end_native_walk(end);
@@ -543,8 +543,7 @@ pub(crate) fn take_manual_walk_ownership(
     // Retained request metadata also deduplicates completed walks; it is
     // not evidence of active work. Route-less families keep their own owner.
     let active_walk = bot.has_route()
-        || bot.route_worker.is_some()
-        || bot.pending_route.is_some()
+        || bot.route_work_pending()
         || bot.bank_fetch.is_some()
         || bot.carried_walk.is_some()
         || bot.native_walk.as_ref().is_some_and(|owner| owner.live());
@@ -661,7 +660,7 @@ pub(super) fn recovery_walk_idle(navs: &Arc<Mutex<HashMap<String, NavBot>>>, nam
     let Some(bot) = all.get(name) else {
         return true;
     };
-    bot.route_worker.is_none() && !bot.has_route() && bot.pending_route.is_none()
+    !bot.route_work_pending() && !bot.has_route()
 }
 
 #[allow(clippy::too_many_arguments)] // watchdog nav action packs driver/snapshot/nav handles
@@ -816,15 +815,14 @@ pub(crate) fn apply_nav_follow_outcome(
 /// first, then poll the armed route through [`Traveller::follow`] one step
 /// against `snapshot`. `here` is the player's world tile when the body
 /// decoded one (else the bot stands still). `world` is the shared, owned
-/// nav-world handle so a stale offscene endpoint can be re-queued on the
-/// existing background route worker without retaining a per-bot world copy.
+/// nav-world handle so a stale offscene endpoint can be re-queued through
+/// the route-work service without retaining a per-bot world copy.
 /// Mirrors the armed route's dest into the status row's `walk_*` fields
 /// (`-1` when idle). A live modeled loc's full-footprint arrival gates both
-/// early settlement and route-end receipts; an estimated endpoint is
-/// refreshed off-pump when the target enters scene. `reach` yields the slot's
+/// early settlement and route-end receipts; the route-work service refreshes
+/// an estimated endpoint when the target enters scene. `reach` yields the slot's
 /// cached reach view for ordinary destinations and is asked only when that
 /// rule needs a probe (`0 < dist <= radius` on the dest's level). `bank` is
-/// the account's bank memory, read only when a refresh re-arms the walk.
 // Shared handles threaded like `script_observe`; the arg count is allowed.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn step_nav_bot<D: Driver>(
@@ -997,9 +995,9 @@ pub(crate) fn step_nav_bot<D: Driver>(
             && bot.bank_fetch.is_none();
         if !still_owns_endpoint {
             (None, false)
-        } else if bot.route_worker.is_some() || bot.pending_route.is_some() || world.is_none() {
-            // A stale route cannot settle while an existing worker is
-            // calculating, or before a world is available to refresh it.
+        } else if bot.route_work_pending() || world.is_none() {
+            // A stale route cannot settle while route work is pending,
+            // or before a world is available to refresh it.
             (None, true)
         } else {
             let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch, zones) =
@@ -1023,7 +1021,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
                 compat_tile_intent: bot.route_compat_tile_intent,
             };
             // Keep the live owner and request correlation; only the old
-            // endpoint and its Traveller run are replaced by the worker.
+            // endpoint and its Traveller run are replaced by route work.
             bot.traveller.clear();
             bot.clear_route();
             (Some(refresh), true)
@@ -1671,7 +1669,6 @@ fn open_withdraw_x<D: Driver>(driver: &mut D, snapshot: &GameSnapshot, id: i32) 
         SendResult::Sent { .. }
     )
 }
-
 /// Whether a latched BankBudget session must freeze [`Traveller::follow`].
 /// Walk with the access sub-route armed does **not** freeze; Open /
 /// Withdraw / Withdraw-X / Wear / Close do. Mid-session `final_route` is

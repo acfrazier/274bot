@@ -119,6 +119,23 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   16 MiB of retained documents. Larger folders or documents report a typed
   validation error and leave the last successful registry available.
 
+### Navigation
+
+- Each admitted route plan now runs on its own short-lived thread. Its
+  whole-job charge remains capped at 192 MiB, without a process-wide navigation
+  byte cap. A request waits when job admission is full. Replacing or stopping a
+  walk cancels its old plan, so a late result cannot replace the new walk.
+  Refused routes cannot remain marked as waiting for admission.
+  Search checkpoints cover bounded expansions and queue operations, not each
+  neighbor or heap comparison. Variable-length chains still check live time
+  and cancellation.
+- Route plans keep compact references to transport facts instead of copying
+  those facts for every hop.
+  Bank-fetch plans account for carried and worn requirements without reducing
+  the route-search budget.
+- Single-tile walks and radius walks keep their existing zone-refusal rules,
+  even when a radius search has only one candidate.
+
 ### Random-event guardian
 
 - Disabling random-event handling no longer leaves Gatherer or other scripts
@@ -305,6 +322,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   work on slower connections, and "Preparing cache snapshot" now shows how
   far the download has got.
 
+- Native walks and route assessments no longer refuse valid requests because
+  their run context is missing. Concurrent submissions also avoid spurious
+  worker-admission failures.
 - Short route searches no longer allocate the full node-budget table.
   Cooperative routes reserve the same maximum storage, but initialize only
   the pages that the search uses. Small first-goal diagnostics also retain
@@ -318,6 +338,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   danger-zone refusal after bank arrival no longer races its CPU capture.
 - One slow disk write no longer leaves script cards, the script catalogue or
   profiles stopped until 274bot restarts.
+- Large route searches no longer slow sharply as their predecessor store fills.
+  Their existing search budget and route order stay unchanged.
+- Radius walks keep the requested center as their first goal when it is valid.
+  Missing-supply diagnostics retain space for the traversed transport edges,
+  not the full search budget, so later planning stages do not refuse short routes.
+- The first compiled walk now carries its slot's work scope when it creates
+  the navigation state. Bank-planned walks keep the selected stand destination
+  and can wear a carried item without requiring a bank visit.
 - Windows now recovers damaged panel preferences and repairs duplicate loadout
   names after preserving the original file in a flushed copy.
 - Windows now promptly cancels blocked login transport I/O when a login attempt

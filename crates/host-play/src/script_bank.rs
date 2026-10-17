@@ -2038,9 +2038,11 @@ fn queue_bank(
     );
     opts.essence = bot.traveller.essence();
     let first = order.first().map(|candidate| candidate.index);
+    let generation = pick.generation;
     let walk_generation = if walking && first.is_some() {
         bot.route_generation = bot.route_generation.wrapping_add(1);
         bot.walk_request_id = 0;
+        bot.supersede_route_work();
         bot.pending_route = None;
         Some(bot.route_generation)
     } else {

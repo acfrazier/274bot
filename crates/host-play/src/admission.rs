@@ -5,8 +5,10 @@
 //! zone table, wilderness and exemptions it judges are served here as
 //! `nav::contract` views over the storage host-play retains. Script's risk
 //! facts are keyed by NPC id, never by the pack's kind rows.
-use std::sync::Arc;
+use std::future::Future;
+use std::sync::{Arc, OnceLock};
 
+use crate::walk_plan::RoutePath;
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, SnapshotView};
 use nav::contract::BoundZoneKey;
@@ -18,14 +20,15 @@ use script::combat::frame::Frame;
 use script::combat::risk::{self, Estimate, RiskTables, RouteAssessment, UnknownWhy, Verdict};
 pub use script::combat::risk::{PoisonState, RiskInput};
 use script::combat::{CombatTables, ThreatSet};
-use script::native::{RiskPolicy, WalkAllow, WalkRefusal};
+pub use script::native::{RiskPolicy, WalkAllow, WalkRefusal};
 
 /// Immutable movement authority and tile basis, retained together with the
 /// estimate. A worker refresh cannot erase the original fallback corridor or
 /// broaden teleport/wilderness/avoid/quest authority for a later escape.
 #[derive(Clone)]
 pub struct RouteBasis {
-    pub route: Arc<Route>,
+    /// Retain the frozen route and its result custody for the estimate's lifetime.
+    pub(crate) _route: RoutePath,
     pub options: FindOptions,
     pub avoid: Arc<[AvoidRect]>,
     pub quest_evidence: Option<nav::quest_gates::QuestEvidence>,
@@ -70,6 +73,30 @@ impl Admission {
         }
     }
 }
+
+pub(crate) struct RouteYieldUnit(bool);
+
+impl Future for RouteYieldUnit {
+    type Output = ();
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        if self.0 {
+            std::task::Poll::Ready(())
+        } else {
+            self.0 = true;
+            std::task::Poll::Pending
+        }
+    }
+}
+
+pub(crate) fn route_yield_unit() -> RouteYieldUnit {
+    RouteYieldUnit(false)
+}
+
+pub(crate) type RouteYieldCallback = fn() -> RouteYieldUnit;
 
 pub struct RouteAdmission {
     pub(crate) outcome: crate::RouteOutcome,
@@ -173,14 +200,52 @@ struct Tables {
     risks: RiskTables,
 }
 
+fn tables_cell(world: &NavWorld) -> &OnceLock<Option<Tables>> {
+    world.risk_facts(OnceLock::new)
+}
+
+fn build_tables() -> Option<Tables> {
+    let combat = script::combat::guard::shared_tables().ok()?;
+    let risks = RiskTables::build(&combat);
+    Some(Tables { combat, risks })
+}
+
 fn tables(world: &NavWorld) -> Option<&Tables> {
-    world
-        .risk_facts(|| {
-            let combat = script::combat::guard::shared_tables().ok()?;
-            let risks = RiskTables::build(&combat);
-            Some(Tables { combat, risks })
-        })
-        .as_ref()
+    let cell = tables_cell(world);
+    if cell.get().is_none() {
+        let _ = cell.set(build_tables());
+    }
+    cell.get().and_then(Option::as_ref)
+}
+
+/// Reuse warm facts, but never hold the world's opaque cache initializer
+/// while a cold selected-NPC table is built cooperatively.
+async fn tables_cooperative<'a, F, U>(world: &'a NavWorld, yield_unit: &mut F) -> Option<&'a Tables>
+where
+    F: FnMut() -> U + Send,
+    U: Future<Output = ()> + Send,
+{
+    let cell = tables_cell(world);
+    if let Some(tables) = cell.get() {
+        return tables.as_ref();
+    }
+    let combat = match script::combat::guard::shared_tables() {
+        Ok(combat) => combat,
+        Err(_) => {
+            let _ = cell.set(None);
+            return cell.get().and_then(Option::as_ref);
+        }
+    };
+    let risks = RiskTables::build_cooperative(&combat, yield_unit)
+        .await
+        .ok()?;
+    let _ = cell.set(Some(Tables { combat, risks }));
+    cell.get().and_then(Option::as_ref)
+}
+
+#[cfg(test)]
+fn prime_tables(world: &NavWorld, tables: Option<Tables>) {
+    let _ = tables_cell(world).set(tables);
 }
 
 fn unknown_assessment(
@@ -322,6 +387,94 @@ pub fn permits(
     .unwrap_or(false)
 }
 
+/// Assess one borrowed compact route without synchronously initializing risk tables.
+pub(crate) async fn assess_view_cooperative<F, U>(
+    route: nav::contract::RouteView<'_>,
+    world: &NavWorld,
+    admission: &Admission,
+    yield_unit: &mut F,
+) -> Arc<RouteAssessment>
+where
+    F: FnMut() -> U + Send,
+    U: Future<Output = ()> + Send,
+{
+    let Some(tables) = tables_cooperative(world, yield_unit).await else {
+        return unknown_assessment(
+            UnknownWhy::MissingFacts,
+            "Route assessment unknown: selected combat facts unavailable",
+            admission,
+        );
+    };
+    let (Ok(Some(zones)), Ok(wilderness)) = (
+        producer::zones_view(world),
+        producer::wilderness_view(world),
+    ) else {
+        return unknown_assessment(
+            UnknownWhy::NavIdentity,
+            "Route assessment unknown: navigation lease identity unavailable",
+            admission,
+        );
+    };
+    risk::assess_cooperative(
+        route,
+        &Estimate {
+            zones: Some(zones),
+            wilderness,
+            risks: &tables.risks,
+            combat: &tables.combat,
+            allow: admission.allow,
+            generation: admission.generation,
+        },
+        admission.input,
+        yield_unit,
+    )
+    .await
+}
+
+/// Cooperative counterpart of [`permits`] over the same borrowed route view.
+pub(crate) async fn permits_view_cooperative<F, U>(
+    route: nav::contract::RouteView<'_>,
+    world: &NavWorld,
+    admission: &Admission,
+    assessment: &RouteAssessment,
+    yield_unit: &mut F,
+) -> bool
+where
+    F: FnMut() -> U + Send,
+    U: Future<Output = ()> + Send,
+{
+    if !admission.enforce || admission.compat_v1 || admission.policy == RiskPolicy::Proceed {
+        return true;
+    }
+    if !assessment.plan.complete {
+        return false;
+    }
+    if assessment.verdict == Verdict::Survivable || assessment.plan.crossings.is_empty() {
+        return true;
+    }
+    let (Ok(Some(zones)), Some(tables), Ok(wilderness)) = (
+        producer::zones_view(world),
+        tables_cooperative(world, yield_unit).await,
+        producer::wilderness_view(world),
+    ) else {
+        return false;
+    };
+    let Ok(named) = producer::bind_exempt(zones, admission.grants) else {
+        return false;
+    };
+    risk::admission_passes_cooperative(
+        route,
+        assessment,
+        zones,
+        &tables.combat,
+        admission.allow,
+        risk::Grants::request(named, wilderness),
+        yield_unit,
+    )
+    .await
+    .unwrap_or(false)
+}
+
 /// Check every member of a witness group; one unsupported or lethal member
 /// refuses the one-round expansion. This never relaxes any hard constraint.
 /// Each raw witness key is bound to the world's zone view (the identity its
@@ -385,11 +538,11 @@ pub(crate) fn publish(
     map_members: bool,
     slot: Option<&str>,
 ) {
-    if !std::mem::take(&mut bot.admission_pending) {
+    if bot.compact_route.is_some() || !std::mem::take(&mut bot.admission_pending) {
         return;
     }
     let (Some(route), Some(mut admission), Some(assessment)) = (
-        bot.route.as_ref(),
+        bot.route.as_deref(),
         bot.admission.as_deref().copied(),
         bot.assessment.as_ref(),
     ) else {

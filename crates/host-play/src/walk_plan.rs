@@ -1,4 +1,5 @@
 use std::any::Any;
+#[cfg(test)]
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::fmt;
@@ -6,13 +7,19 @@ use std::sync::Arc;
 
 use api::bank_memory::Origin;
 use api::snapshot::WorldTile;
-use nav::bank_fetch::{fetchable_state, plan_bank_fetch, planning_rows, BankFetch, BankStep};
+#[cfg(test)]
+use nav::bank_fetch::fetchable_state;
+use nav::bank_fetch::{plan_bank_fetch, planning_rows, BankFetch, BankStep};
 use nav::contract::{LegView, NavLease, RoutePlanLease, RouteView};
+#[cfg(test)]
 use nav::router::{
     find_first_missing_item_reqs_with_avoid, find_first_with_avoid, find_first_with_fallback_avoid,
-    find_missing_item_reqs_with_avoid, find_with_avoid, missing_item_reqs, AvoidRect,
-    FallbackRoute, FindOptions, Route,
+    missing_item_reqs, FallbackRoute,
 };
+use nav::router::{
+    find_missing_item_reqs_with_avoid, find_with_avoid, AvoidRect, FindOptions, Route,
+};
+#[cfg(test)]
 use nav::transport::TransportEdge;
 use nav::world::NavWorld;
 use nav::WorldState;
@@ -154,7 +161,7 @@ pub struct PendingBankFetch {
     pub steps: VecDeque<BankStep>,
     pub dest: WorldTile,
     pub opts: FindOptions,
-    pub final_route: Arc<Route>,
+    pub(crate) final_route: RoutePath,
     /// The walk's avoidance rectangles: the access sub-route keeps out of
     /// them as the walk does.
     pub avoid: Vec<AvoidRect>,
@@ -163,6 +170,24 @@ pub struct PendingBankFetch {
 }
 
 impl PendingBankFetch {
+    /// Build a legacy-route fixture without exposing the private route backing.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_test_with_route(
+        steps: VecDeque<BankStep>,
+        dest: WorldTile,
+        opts: FindOptions,
+        final_route: Arc<Route>,
+    ) -> Self {
+        Self {
+            steps,
+            dest,
+            opts,
+            final_route: RoutePath::legacy(final_route),
+            avoid: Vec::new(),
+            progress: StepProgress::default(),
+        }
+    }
+
     /// Pop the front step: the next one starts with a fresh budget and no
     /// send in flight.
     pub(crate) fn pop_step(&mut self) {
@@ -204,6 +229,10 @@ pub(crate) enum FlightTarget {
     Wear { id: i32, carried: i32, worn: bool },
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "The route result retains both bank routes inline without an extra result allocation."
+)]
 /// Outcome of a walk-arm route attempt: a direct route, a BankBudget
 /// session plus the post-session route, or no path.
 pub(super) enum RouteOutcome {
@@ -262,6 +291,7 @@ pub(super) fn route_or_bank_fetch(
     }
 }
 
+#[cfg(test)]
 /// The facts a BankBudget session can establish ([`fetchable_state`]) for
 /// a first-goal search over `stands` with the `tiles` fallback, when
 /// BankBudget is on and they open a gate the real state refuses. A search
@@ -312,6 +342,11 @@ pub(super) fn fetchable_facts(
     .then_some(fetchable)
 }
 
+#[cfg(test)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "The synchronous reference fixture retains its complete route outcome inline."
+)]
 /// What the search for a stand a session can reach established.
 pub(super) enum StandFetch {
     /// A session to a stand, or a strict route to one past the strict
@@ -321,6 +356,7 @@ pub(super) enum StandFetch {
     Tiles(Option<FallbackRoute>),
 }
 
+#[cfg(test)]
 /// After the strict search found no stand: one search under `fetchable`
 /// finds the cheapest stand whose item and worn gates the bank and backpack
 /// can meet, so a stand behind an obj the session cannot get never hides
@@ -369,6 +405,7 @@ pub(super) fn fetch_stand(
     }
 }
 
+#[cfg(test)]
 /// After no stand and no strict radius tile routed: the cheapest tile a
 /// session can reach, from what [`fetch_stand`] recorded (`known`) or a
 /// search over the tiles alone when that is undecided. A refused session
@@ -419,6 +456,7 @@ pub(super) fn fetch_tile(
     }
 }
 
+#[cfg(test)]
 /// A route found under the fetchable facts: taken as found when it needs no
 /// missing fact (the strict search only ran out of budget), else the
 /// planned session to its goal, if the post-state re-find allows it.
@@ -476,7 +514,7 @@ fn session_route(
         avoid,
     )
     .ok()?;
-    let final_route = Arc::new(route.clone());
+    let final_route = RoutePath::legacy(Arc::new(route.clone()));
     Some(RouteOutcome::BankSession {
         pending: PendingBankFetch {
             steps: fetch.steps.into(),

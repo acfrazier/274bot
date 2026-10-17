@@ -475,8 +475,15 @@ fn script_walk(play: &super::Play, account: &str) -> ScriptWalk {
     let pending = bot.and_then(|bot| bot.bank_fetch.as_ref());
     ScriptWalk {
         steps: pending.map(|pending| pending.steps.iter().cloned().collect()),
-        final_route: pending.map(|pending| leg_lines(&pending.final_route)),
-        routed: bot.is_some_and(|bot| bot.route.is_some() || bot.route_worker.is_some()),
+        final_route: pending.map(|pending| {
+            leg_lines(
+                pending
+                    .final_route
+                    .legacy_route()
+                    .expect("legacy bank plan owns a legacy final route"),
+            )
+        }),
+        routed: bot.is_some_and(|bot| bot.has_route() || bot.route_work_pending()),
         failed: bot.is_some_and(|bot| bot.walk_outcome_failed),
     }
 }
