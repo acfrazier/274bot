@@ -201,6 +201,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 - The architecture check refuses candidate Cargo configuration files without
   ASCII case distinctions, including files in vendored trees and symlinks.
+  The check also refuses an ASCII case variant of `Cargo.toml`, because it
+  replaces the scanned manifest on a case-insensitive file system.
   Every client `Cargo.toml` is now an exact protected input in `274bot-arch`.
   Added, removed, or changed manifests need an operator commit to update the pin.
   This replaces interpretation of vendored workspace membership and inheritance.
