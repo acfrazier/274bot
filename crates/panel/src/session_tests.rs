@@ -11,8 +11,8 @@ use crate::picker::{
     format_walkto_status, walkto_actions_enabled, walkto_footer_labels, walkto_selection_caption,
 };
 use crate::test_support::{
-    patiently, save_draft_patiently, save_store_patiently, set_patiently, thread_preferences,
-    thread_state_root, TestDir, TestPath,
+    patiently, save_store_patiently, set_patiently, thread_preferences, thread_state_root, TestDir,
+    TestPath,
 };
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::{Client, ClientConfig};
@@ -558,31 +558,58 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
 /// the panel's next save keeps them.
 #[test]
 fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
+    use api::local_state::{AccountKey, ContentScope, DomainIdentity, LocalStateDomain};
+
+    const WAIT: Duration = Duration::from_secs(60);
+    let await_readback = |service: &host_play::local_state::LocalStateService| {
+        for domain in [
+            LocalStateDomain::Preferences,
+            LocalStateDomain::LoadoutsReferences,
+        ] {
+            let identity = DomainIdentity::new(
+                domain,
+                AccountKey::try_new("operator", "operator").unwrap(),
+                ContentScope::try_new(client::io::ClientRevision::R289, "operator").unwrap(),
+            );
+            service
+                .readback_lease(&identity, WAIT)
+                .expect("initial operator-store readback must complete");
+        }
+    };
+
     let _iso = IsolatedEnv::enter("panel-state-round-trip");
     let mut session = Session::new();
+    await_readback(session.core.local_state().unwrap());
+    session.preferences.reload().unwrap();
+    session.loadouts.reload().unwrap();
+    assert!(
+        session.loadouts.load_error().is_none(),
+        "initial loadouts readback must complete"
+    );
     let state = crate::ui_state::PanelUiState {
         last_focus: Some("alice".into()),
         ..Default::default()
     };
-    patiently(|| {
-        crate::ui_state::save_to_checked(&session.preferences, &state)
-            .map_err(|error| error.to_string())
-    })
-    .unwrap();
+    crate::ui_state::save_to_checked(&session.preferences, &state).unwrap();
     session.loadouts_draft = Some(api::loadout::Loadout::new("roundtrip").with_carry("Lobster", 5));
     assert!(
-        save_draft_patiently(&mut session),
+        crate::loadouts::save_draft(&mut session),
         "{}",
         session.loadouts_status
     );
 
     // Another 274bot process on this home: its own service, same files.
     let peer = host_play::local_state::LocalStateService::open_process(thread_state_root());
+    await_readback(&peer);
     assert_eq!(
         peer.preferences().value("last_focus"),
         Some(serde_json::json!("alice"))
     );
     let mut peer_form = script::LoadoutsStore::over(Arc::new(peer.operator_loadouts()));
+    assert!(
+        peer_form.load_error().is_none(),
+        "the peer's initial loadouts readback must complete"
+    );
     assert_eq!(
         peer_form.get("roundtrip").unwrap().carry,
         vec![api::loadout::CarryEntry::new("Lobster", 5)]
@@ -594,13 +621,11 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
 
     // The peer's edits reach the panel through the panel's service (a key
     // the panel's own state does not hold, as another frontend's would be).
-    set_patiently(
-        &peer.preferences(),
-        "peer_marker",
-        serde_json::json!({"kept": 7}),
-    );
+    peer.preferences()
+        .set("peer_marker", serde_json::json!({"kept": 7}))
+        .unwrap();
     peer_form.upsert(api::loadout::Loadout::new("peer-row"));
-    save_store_patiently(&mut peer_form);
+    peer_form.save().unwrap();
     session.preferences.reload().unwrap();
     assert_eq!(
         session.preferences.value("peer_marker"),
@@ -613,7 +638,7 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
     session.loadouts_sel = 0;
     session.loadouts_draft = Some(api::loadout::Loadout::new("roundtrip").with_carry("Lobster", 6));
     assert!(
-        save_draft_patiently(&mut session),
+        crate::loadouts::save_draft(&mut session),
         "{}",
         session.loadouts_status
     );
@@ -621,11 +646,7 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
         last_focus: Some("bob".into()),
         ..state
     };
-    patiently(|| {
-        crate::ui_state::save_to_checked(&session.preferences, &state)
-            .map_err(|error| error.to_string())
-    })
-    .unwrap();
+    crate::ui_state::save_to_checked(&session.preferences, &state).unwrap();
     let mut reread = script::LoadoutsStore::over(Arc::new(peer.operator_loadouts()));
     reread.reload().unwrap();
     assert_eq!(reread.names(), ["roundtrip", "peer-row"]);

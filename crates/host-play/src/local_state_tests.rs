@@ -2838,9 +2838,19 @@ fn legacy(case: &str) -> Legacy {
         ],
     );
     let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
+    service
+        .readback_lease(&loadouts_identity(), WAIT)
+        .expect("initial legacy loadouts readback")
+        .expect("the legacy fixture has a saved loadouts file");
+    let editor = form(&service);
+    assert!(
+        editor.load_error().is_none(),
+        "legacy loadouts form failed to load: {:?}",
+        editor.load_error()
+    );
     Legacy {
         path,
-        editor: form(&service),
+        editor,
         _service: service,
         _scratch: scratch,
     }
