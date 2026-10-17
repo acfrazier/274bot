@@ -11,6 +11,25 @@ fn service() -> Arc<parking_lot::Mutex<WorkService>> {
     )))
 }
 
+// A request thread can publish its terminal before it returns and retires.
+fn wait_for_capacity(
+    shared: &Arc<parking_lot::Mutex<WorkService>>,
+    expected: api::work::WorkCapacity,
+) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let actual = shared.lock().capacity();
+        if actual == expected {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "route capacity did not retire: expected {expected:?}, got {actual:?}"
+        );
+        std::thread::yield_now();
+    }
+}
+
 fn scope() -> Scope {
     Scope::Slot(api::identity::SlotKey::from_incarnation(701).unwrap())
 }
@@ -175,6 +194,7 @@ fn route_admission_full_retains_demand_and_retries_only_after_capacity_changes()
     }
     finish(&shared, &navs, &ledger);
     assert_eq!(navs.lock().unwrap()["alice"].route_destination(), Some(to));
+    wait_for_capacity(&shared, api::work::WorkCapacity::EMPTY);
     assert_eq!(shared.lock().capacity(), api::work::WorkCapacity::EMPTY);
     navs.lock().unwrap().clear();
     assert_eq!(ledger.used_bytes(), 0);
@@ -264,14 +284,7 @@ fn running_owner_release(drop_bot: bool) {
     install_owner(&shared, &mut bot, replacement);
     assert_eq!(shared.lock().capacity().jobs(), 2);
     release.unwrap().send(()).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(60);
-    while shared.lock().capacity().jobs() != 1 {
-        assert!(
-            Instant::now() < deadline,
-            "abandoned running route did not release after return"
-        );
-        std::thread::yield_now();
-    }
+    wait_for_capacity(&shared, old_charge);
     assert_eq!(
         shared.lock().capacity(),
         old_charge,
@@ -292,6 +305,7 @@ fn running_owner_release(drop_bot: bool) {
         Settlement::Failed(api::work::JobError::Family(RouteJobError::Search))
     ));
     drop(bot);
+    wait_for_capacity(&shared, api::work::WorkCapacity::EMPTY);
     assert_eq!(
         shared.lock().capacity(),
         api::work::WorkCapacity::EMPTY,
