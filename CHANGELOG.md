@@ -272,6 +272,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   names after preserving the original file in a flushed copy.
 - Windows now promptly cancels blocked login transport I/O when a login attempt
   ends.
+- A loadout list that did not load can no longer save. Add, rename, remove
+  and Save in the panel and the TUI refuse, and the message says to reload
+  first. The saved loadouts stay as they were.
 ### Release engineering
 
 - The architecture check refuses candidate Cargo configuration files without

@@ -237,8 +237,17 @@ impl LoadoutsStore {
     /// applied on top (save again to retry them against it, or
     /// [`Self::discard`] them), so a retry never removes the other writer's
     /// rows. A rename whose row the other writer removed, or whose new name
-    /// it took, is not applied, and the error says so.
+    /// it took, is not applied, and the error says so. While a load
+    /// error stands, every save refuses and writes nothing. The form
+    /// never saw the saved rows, so a save from it could replace a
+    /// row it never saw. This is the only call that writes to the
+    /// backing, so the refusal covers adds, renames and removals.
     pub fn save(&mut self) -> Result<(), String> {
+        if let Some(error) = &self.load_error {
+            return Err(format!(
+                "the loadouts did not load ({error}). Reload the loadouts before you save."
+            ));
+        }
         if !self.dirty {
             return Ok(());
         }
@@ -1020,6 +1029,34 @@ mod tests {
         }
     }
 
+    /// A backing whose first load fails, as a frontend load that times
+    /// out does, while a later load and every commit would succeed. The
+    /// store behind it holds rows the failed form never saw.
+    struct FailedFirstLoad {
+        inner: Arc<Memory>,
+        fail_next_load: Mutex<bool>,
+    }
+
+    impl LoadoutsBacking for FailedFirstLoad {
+        fn load(&self) -> Result<LoadoutsBaseline, String> {
+            let mut fail = self.fail_next_load.lock().unwrap();
+            if *fail {
+                *fail = false;
+                return Err("the load timed out".into());
+            }
+            drop(fail);
+            self.inner.load()
+        }
+
+        fn commit(
+            &self,
+            ops: Vec<LoadoutOp>,
+            expected: StoreVersion,
+        ) -> Result<LoadoutsBaseline, LoadoutsSaveError> {
+            self.inner.commit(ops, expected)
+        }
+    }
+
     fn form() -> (Arc<Memory>, LoadoutsStore) {
         let memory = Arc::new(Memory::default());
         let store = LoadoutsStore::over(Arc::clone(&memory) as Arc<dyn LoadoutsBacking>);
@@ -1189,6 +1226,54 @@ mod tests {
         detached.upsert(Loadout::new("more"));
         assert_eq!(detached.save().unwrap_err(), NOT_BOUND);
         assert!(detached.is_dirty());
+    }
+
+    /// A form whose load failed holds no rows and the first store
+    /// version. A save from it must refuse and write nothing. Else an
+    /// Add of the default name can replace a saved row of that name
+    /// that the form never saw. A reload clears the refusal.
+    #[test]
+    fn a_form_that_failed_to_load_refuses_every_save_and_writes_nothing() {
+        let saved = Loadout::new("loadout").with_carry("Lobster", 8);
+        let memory = Arc::new(Memory::default());
+        // The row the store holds at its first version. A failed form
+        // carries that same version, so the version check alone does
+        // not stop its save.
+        memory.state.lock().unwrap().0.push(saved.clone());
+        let backing = Arc::new(FailedFirstLoad {
+            inner: Arc::clone(&memory),
+            fail_next_load: Mutex::new(true),
+        });
+        let mut store = LoadoutsStore::over(backing as Arc<dyn LoadoutsBacking>);
+        assert_eq!(store.load_error(), Some("the load timed out"));
+        assert!(store.loadouts().is_empty());
+
+        // Add, rename and remove each reach the backing only through
+        // a save. Each save refuses while the load error stands.
+        store.upsert(Loadout::new("loadout"));
+        let error = store.save().unwrap_err();
+        assert!(error.contains("did not load"), "{error}");
+        assert!(error.contains("Reload"), "{error}");
+        assert!(store.is_dirty(), "a refused save keeps the form dirty");
+        assert!(store.replace_at(0, Loadout::new("renamed")));
+        let error = store.save().unwrap_err();
+        assert!(error.contains("did not load"), "{error}");
+        assert!(store.remove("renamed"));
+        let error = store.save().unwrap_err();
+        assert!(error.contains("did not load"), "{error}");
+        assert!(
+            memory.commits.lock().unwrap().is_empty(),
+            "nothing reached the backing"
+        );
+        assert_eq!(memory.baseline().rows, [saved]);
+
+        // A reload that succeeds clears the error and the refusal.
+        store.reload().unwrap();
+        assert_eq!(store.load_error(), None);
+        assert_eq!(store.names(), ["loadout"]);
+        store.upsert(Loadout::new("range"));
+        store.save().unwrap();
+        assert_eq!(store.names(), ["loadout", "range"]);
     }
 
     #[test]
