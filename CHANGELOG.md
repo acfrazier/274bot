@@ -235,6 +235,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Panel
 
+- Each admitted map bake now runs on its own short-lived thread under the
+  shared admission ledger. Existing map caches rebuild once because the native
+  bake policies changed.
+  Progress advances through both catalogue preparation and terrain baking.
+- Map catalogue preparation no longer locks the output cache during input-only
+  work.
+- Map caches with too many files now recover through bounded pruning and
+  rebuilding.
+- Resuming an interrupted map bake checks saved batches and all later tiles.
+  It regenerates damaged files before publishing terrain.
+- A fresh map manager now checks existing terrain before it asks to bake.
+- Dropping a map manager releases its unconsumed terminal work reservation.
+- Cache pruning skips terrain held by a live admitted owner and removes
+  unleased entries in least-recently-used order.
 - WalkTo terrain tiles decode on a background worker using shared bounded work, rather
   than a separate map-decoding thread.
 - Panning the WalkTo map no longer redraws squares that you just scrolled past.
@@ -281,7 +295,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   look up that name again for the next world. Each such world costs one
   more wait for the name lookup. Before, 274bot took only the cache from
   the next world and kept the first world's game server.
-
 ### Fixed during development
 
 - Bots that need banked route supplies now choose an access tile they can reach.
@@ -300,6 +313,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   repeating the same clock and cancellation check between work units.
 - One slow disk write no longer leaves script cards, the script catalogue or
   profiles stopped until 274bot restarts.
+- Terrain checkpoints synchronize each changed directory and each new parent
+  once per 64-tile batch, after tile data and before the checkpoint write.
+  Cancellation and completion flush the remaining batch. New terrain roots and
+  catalogue payloads share their checkpoint's parent sync without a second flush.
+- Probing for missing terrain no longer creates image-cache directories or
+  lock files. Catalogue preparation avoids an empty checkpoint and redundant
+  directory syncs without changing payload durability.
+- Catalogue completion writes its durable manifest without first rewriting a
+  checkpoint that it immediately supersedes. Cancellation and incomplete work
+  still flush their checkpoints.
+- Catalogue preparation groups cheap placement operations into bounded work
+  units. It still checks cancellation and the deadline before each operation.
+- Catalogue preparation avoids a second world scan when its tree and quest
+  candidates fit bounded, charged storage. Larger inputs keep the second scan.
 - Windows now recovers damaged panel preferences and repairs duplicate loadout
   names after preserving the original file in a flushed copy.
 - Windows now promptly cancels blocked login transport I/O when a login attempt
