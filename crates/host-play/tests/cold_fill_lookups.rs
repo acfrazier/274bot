@@ -1,15 +1,15 @@
-//! The stepped template preparation's cold cache fill and the update
-//! servers' name lookups: the world fallback after a failed game-host
+//! The template preparations' cold cache fill and the update servers'
+//! name lookups: the world fallback after a failed game-host or asset-host
 //! lookup, and the host log of a slow lookup.
 //!
 //! This test executable defines its own `getaddrinfo`, which the standard
 //! library's name lookup calls in place of libc's. [`FAILED_GAME_HOST`]
-//! fails at once. [`SLOW_ASSET_HOST`] resolves to 127.0.0.1 after
-//! [`LOOKUP_DELAY`]. Every other name goes to libc's `getaddrinfo`
-//! unchanged. No system resolver setting changes, and no external server
-//! is contacted. The update servers listen on 127.0.0.1 only. The HTTPS
-//! servers use the client's throwaway `localhost` certificate, which only
-//! this test process trusts (`SSL_CERT_FILE`).
+//! and [`FAILED_ASSET_HOST`] fail at once. [`SLOW_ASSET_HOST`] resolves to
+//! 127.0.0.1 after [`LOOKUP_DELAY`]. Every other name goes to libc's
+//! `getaddrinfo` unchanged. No system resolver setting changes, and no
+//! external server is contacted. The update servers listen on 127.0.0.1
+//! only. The HTTPS servers use the client's throwaway `localhost`
+//! certificate, which only this test process trusts (`SSL_CERT_FILE`).
 #![cfg(target_os = "linux")]
 
 use std::ffi::{c_char, c_int, CStr};
@@ -29,11 +29,14 @@ use host_play::{ProfileOptions, TemplateStep, TEMPLATE_STEP_WAIT};
 
 /// A game host whose lookup fails at once.
 const FAILED_GAME_HOST: &str = "no-game.cold-fill-lookups.invalid";
+/// An asset host whose lookup fails at once.
+const FAILED_ASSET_HOST: &str = "no-asset.cold-fill-lookups.invalid";
 /// An asset host whose lookup takes [`LOOKUP_DELAY`].
 const SLOW_ASSET_HOST: &str = "slow-asset.cold-fill-lookups.invalid";
 const LOOKUP_DELAY: Duration = Duration::from_millis(350);
 
 static FAILED_LOOKUPS: AtomicUsize = AtomicUsize::new(0);
+static FAILED_ASSET_LOOKUPS: AtomicUsize = AtomicUsize::new(0);
 static SLOW_LOOKUPS: AtomicUsize = AtomicUsize::new(0);
 
 /// The resolver of this test executable (see the module documentation).
@@ -64,8 +67,15 @@ pub unsafe extern "C" fn getaddrinfo(
     if !node.is_null() {
         // SAFETY: a non-null `node` is a C string (`getaddrinfo` contract).
         let name = unsafe { CStr::from_ptr(node) }.to_bytes();
-        if name == FAILED_GAME_HOST.as_bytes() {
-            FAILED_LOOKUPS.fetch_add(1, Ordering::Relaxed);
+        let failed = if name == FAILED_GAME_HOST.as_bytes() {
+            Some(&FAILED_LOOKUPS)
+        } else if name == FAILED_ASSET_HOST.as_bytes() {
+            Some(&FAILED_ASSET_LOOKUPS)
+        } else {
+            None
+        };
+        if let Some(failed) = failed {
+            failed.fetch_add(1, Ordering::Relaxed);
             // SAFETY: `res` is the caller's result slot (`getaddrinfo`
             // contract).
             unsafe { *res = std::ptr::null_mut() };
@@ -411,9 +421,24 @@ fn a_failed_game_host_moves_the_fill_to_the_next_world_as_a_whole() {
         &root,
         &packs,
         &[
-            (FAILED_GAME_HOST, world_one.port, world_one.port),
-            (FAILED_GAME_HOST, world_two.port, world_two.port),
-            ("127.0.0.1", world_three_game.port, world_three_assets.port),
+            (
+                FAILED_GAME_HOST,
+                world_one.port,
+                "127.0.0.1",
+                world_one.port,
+            ),
+            (
+                FAILED_GAME_HOST,
+                world_two.port,
+                "127.0.0.1",
+                world_two.port,
+            ),
+            (
+                "127.0.0.1",
+                world_three_game.port,
+                "127.0.0.1",
+                world_three_assets.port,
+            ),
         ],
     );
     assert_eq!(selection.game_host(), FAILED_GAME_HOST);
@@ -482,8 +507,13 @@ fn an_unreachable_asset_server_moves_the_fill_to_the_next_world_as_a_whole() {
         &root,
         &packs,
         &[
-            ("127.0.0.1", world_one_game.port, closed_port),
-            ("127.0.0.1", world_two_game.port, world_two_assets.port),
+            ("127.0.0.1", world_one_game.port, "127.0.0.1", closed_port),
+            (
+                "127.0.0.1",
+                world_two_game.port,
+                "127.0.0.1",
+                world_two_assets.port,
+            ),
         ],
     );
     let (observer, attempts) = attempt_counter();
@@ -520,14 +550,71 @@ fn an_unreachable_asset_server_moves_the_fill_to_the_next_world_as_a_whole() {
     outcome.unwrap();
 }
 
-/// A wss profile with these worlds (game host, game port, asset port; the
-/// asset host is 127.0.0.1), and its selection. The source cache holds
-/// `packs`, so that the fill needs no JAG download but needs the update
-/// server for the entries.
+/// Three worlds use the same asset host name on different ports, and the
+/// name cannot be looked up. Each preparation, the stepped one and the
+/// one-call one (`bind_runtime_with_progress`), looks the name up once,
+/// attempts world 1 only and passes over worlds 2 and 3.
+#[test]
+fn a_failed_asset_host_is_looked_up_once_in_each_preparation() {
+    trust_test_certificate();
+    let root = TempRoot::new("failed-asset");
+    let selection = wss_selection(
+        &root,
+        &packs(),
+        &[
+            ("127.0.0.1", 1, FAILED_ASSET_HOST, 1),
+            ("127.0.0.1", 2, FAILED_ASSET_HOST, 2),
+            ("127.0.0.1", 3, FAILED_ASSET_HOST, 3),
+        ],
+    );
+    assert_eq!(selection.asset_host(), FAILED_ASSET_HOST);
+    let (observer, attempts) = attempt_counter();
+
+    let before = FAILED_ASSET_LOOKUPS.load(Ordering::Relaxed);
+    let started = Instant::now();
+    let mut preparation = selection.begin_template_preparation();
+    let stepped = loop {
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the preparation stalled"
+        );
+        if let TemplateStep::Complete(result) =
+            preparation.step(Instant::now() + TEMPLATE_STEP_WAIT, &observer)
+        {
+            break result.err().expect("the asset host lookup fails");
+        }
+    };
+    drop(preparation);
+    let stepped_lookups = FAILED_ASSET_LOOKUPS.load(Ordering::Relaxed) - before;
+    let stepped_attempts = attempts.swap(0, Ordering::Relaxed);
+
+    let before = FAILED_ASSET_LOOKUPS.load(Ordering::Relaxed);
+    let one_call = selection
+        .bind_runtime_with_progress(&observer)
+        .expect_err("the asset host lookup fails");
+    let one_call_lookups = FAILED_ASSET_LOOKUPS.load(Ordering::Relaxed) - before;
+    let one_call_attempts = attempts.load(Ordering::Relaxed);
+
+    eprintln!(
+        "failed asset host: stepped: attempts {stepped_attempts}, lookups \
+         {stepped_lookups}, error {stepped}; one-call: attempts \
+         {one_call_attempts}, lookups {one_call_lookups}, error {one_call}"
+    );
+    assert_eq!(stepped_lookups, 1, "stepped: the name is looked up once");
+    assert_eq!(stepped_attempts, 1, "stepped: world 1 only");
+    assert_eq!(one_call_lookups, 1, "one-call: the name is looked up once");
+    assert_eq!(one_call_attempts, 1, "one-call: world 1 only");
+    assert_eq!(one_call, stepped, "the same error");
+}
+
+/// A wss profile with these worlds (game host, game port, asset host,
+/// asset port), and its selection. The source cache holds `packs`, so that
+/// the fill needs no JAG download but needs the update server for the
+/// entries.
 fn wss_selection(
     root: &TempRoot,
     packs: &[Vec<u8>],
-    worlds: &[(&str, u16, u16)],
+    worlds: &[(&str, u16, &str, u16)],
 ) -> ProfileSelection {
     write_packs(&root.join("cache"), packs);
     let bot = root.join(".274bot");
@@ -535,10 +622,10 @@ fn wss_selection(
     let worlds: Vec<_> = worlds
         .iter()
         .zip(1..)
-        .map(|(&(host, port, asset_port), number)| {
+        .map(|(&(host, port, asset_host, asset_port), number)| {
             serde_json::json!({
                 "number": number, "host": host, "port": port, "node_id": number,
-                "asset_host": "127.0.0.1", "asset_port": asset_port
+                "asset_host": asset_host, "asset_port": asset_port
             })
         })
         .collect();

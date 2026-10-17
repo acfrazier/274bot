@@ -957,9 +957,9 @@ impl ProfileSelection {
 /// and its asset endpoint together. It passes over a world whose game host
 /// or asset host is a name that a fill could not look up
 /// (`RuntimeCacheError::failed_lookup`), so the chain never looks up that
-/// name again. The stepped fill reports a failed lookup of either host. The
-/// one-call fill reports the game host's only. Only a public (wss) roster
-/// has more than one world.
+/// name again. The stepped fill and the one-call fill both report a failed
+/// lookup of either host. Only a public (wss) roster has more than one
+/// world.
 struct WorldFallback {
     count: usize,
     /// The roster index of the selected world.
