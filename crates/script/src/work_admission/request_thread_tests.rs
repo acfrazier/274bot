@@ -179,6 +179,10 @@ fn request_spawn_failure_returns_the_original_job_and_rolls_back_admission() {
     let trace = Arc::clone(&job.trace);
     let mut service = shared.lock();
     let identity = service.mint_identity(Scope::Process, None).unwrap();
+    let published_before = service
+        .publications()
+        .capacity()
+        .read(|_, capacity| *capacity);
     let refused = service
         .try_submit_with_spawn::<RequestSpec, _>(
             identity,
@@ -196,6 +200,11 @@ fn request_spawn_failure_returns_the_original_job_and_rolls_back_admission() {
     assert_eq!(service.capacity().jobs(), 0);
     assert_eq!(service.capacity().bytes(), 0);
     assert_eq!(service.capacity().handles(), 0);
+    let published_after = service
+        .publications()
+        .capacity()
+        .read(|_, capacity| *capacity);
+    assert_eq!(published_after, published_before);
     assert!(service.jobs.is_empty());
     assert!(service.request_threads.is_empty());
     let ticket = service
@@ -298,4 +307,155 @@ fn request_shutdown_deadline_retains_custody_until_the_thread_returns() {
         Ok(())
     );
     assert!(shared.lock().request_threads.is_empty());
+}
+
+#[test]
+fn request_threads_keep_running_when_the_background_worker_stalls() {
+    let clock = Arc::new(ManualClock::new());
+    let shared = new_service(Arc::clone(&clock));
+    let conditions = conditions(&shared);
+    let background_input = TestInput {
+        charge: WorkCharge::new(4, 8, 16, 1),
+    };
+    let request_input = TestInput {
+        charge: WorkCharge::new(0, 0, 0, 0),
+    };
+    let (entered_tx, entered_rx) = mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = mpsc::sync_channel(0);
+    let (drop_entered_tx, drop_entered_rx) = mpsc::sync_channel(0);
+    let (drop_resume_tx, drop_resume_rx) = mpsc::sync_channel(0);
+    let background = submit(
+        &shared,
+        &background_input,
+        StrandedJob {
+            entered: entered_tx,
+            resume: resume_rx,
+            drop_entered: drop_entered_tx,
+            drop_resume: drop_resume_rx,
+        },
+        &conditions,
+    );
+    entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("background worker enters the stalled step");
+
+    let (request_entered_tx, request_entered_rx) = mpsc::sync_channel(0);
+    let (request_release_tx, request_release_rx) = mpsc::sync_channel(0);
+    let mut running = RequestJob::new("bank-pick-alice");
+    running.gate = Some((request_entered_tx, request_release_rx));
+    let running = submit_request(&shared, &request_input, running, &conditions);
+    request_entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("request thread enters its step");
+
+    clock.advance(WORKER_STALL_LIMIT + Duration::from_millis(1));
+    shared.lock().observe_health();
+    let condition = shared
+        .lock()
+        .health()
+        .expect("a stalled background worker latches the outage");
+    WorkService::wait_terminal(&shared, &background)
+        .expect("the background job ends as unavailable");
+    assert!(matches!(
+        shared.lock().borrow_terminal(&background).expect("borrow"),
+        Some(Settlement::Failed(JobError::Unavailable(terminal)))
+            if terminal.condition() == condition
+    ));
+
+    request_release_tx
+        .send(())
+        .expect("release the running request");
+    WorkService::wait_terminal(&shared, &running).expect("the running request keeps its result");
+    assert!(matches!(
+        shared.lock().consume(&running),
+        Ok(Settlement::Completed(7))
+    ));
+
+    let admitted = submit_request(
+        &shared,
+        &request_input,
+        RequestJob::new("bank-pick-bob"),
+        &conditions,
+    );
+    WorkService::wait_terminal(&shared, &admitted).expect("a new request is still admitted");
+    assert!(matches!(
+        shared.lock().consume(&admitted),
+        Ok(Settlement::Completed(7))
+    ));
+
+    {
+        let mut service = shared.lock();
+        let identity = service
+            .mint_identity(Scope::Process, None)
+            .expect("next identity mints");
+        let refused = match service.try_submit::<TestSpec, _>(
+            identity,
+            &background_input,
+            QueueJob::new(6, Arc::new(Mutex::new(Vec::new())), 0, None),
+            &conditions,
+        ) {
+            Ok(_) => panic!("unavailable background worker accepted new background work"),
+            Err(refused) => refused,
+        };
+        match refused.refusal() {
+            SubmissionRefusal::Unavailable(refusal) => {
+                assert_eq!(refusal.condition(), condition);
+            }
+            refusal => panic!("unexpected background refusal: {refusal:?}"),
+        }
+        assert!(matches!(
+            service.consume(&background).expect("consume background"),
+            Settlement::Failed(JobError::Unavailable(terminal))
+                if terminal.condition() == condition
+        ));
+    }
+
+    resume_tx
+        .send(())
+        .expect("release the stalled background step");
+    drop_entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("background cleanup waits before worker-return accounting");
+    drop_resume_tx
+        .send(())
+        .expect("allow the worker to record its actual return");
+    wait_for_jobs(&shared, 0);
+    assert_eq!(shared.lock().health(), Some(condition));
+    assert_eq!(WorkService::shutdown(&shared), Ok(()));
+}
+
+#[test]
+fn request_step_stall_warns_without_latching_outage() {
+    let clock = Arc::new(ManualClock::new());
+    let shared = new_service(Arc::clone(&clock));
+    let conditions = conditions(&shared);
+    let input = TestInput {
+        charge: WorkCharge::new(0, 0, 0, 0),
+    };
+    let (entered_tx, entered_rx) = mpsc::sync_channel(0);
+    let (release_tx, release_rx) = mpsc::sync_channel(0);
+    let mut job = RequestJob::new("bank-pick-alice");
+    job.gate = Some((entered_tx, release_rx));
+    let ticket = submit_request(&shared, &input, job, &conditions);
+    entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("request thread enters its step");
+
+    clock.advance(WORKER_STALL_LIMIT + Duration::from_millis(1));
+    shared.lock().observe_health();
+    shared.lock().observe_health();
+    assert!(
+        shared.lock().health().is_none(),
+        "a stalled request step must not latch the shared-worker outage"
+    );
+
+    release_tx.send(()).expect("release the request step");
+    WorkService::wait_terminal(&shared, &ticket).expect("the request keeps its result");
+    assert!(matches!(
+        shared.lock().consume(&ticket),
+        Ok(Settlement::Completed(7))
+    ));
+    assert!(shared.lock().health().is_none());
+    wait_for_jobs(&shared, 0);
+    assert_eq!(WorkService::shutdown(&shared), Ok(()));
 }
