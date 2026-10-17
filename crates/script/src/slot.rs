@@ -195,35 +195,85 @@ fn seat_reserved_row(req: &crate::shim::InteractReq) -> bool {
 
 /// A second guardian hold folds over a retained batch whose pages still
 /// wait, and whose controls the seat has not applied. Keep those controls
-/// ahead of the newer batch's controls, in order. A newer control equal to
-/// a kept one is the isolate's repeat and is carried once. The watermark is
-/// the higher of the two, which the seat's monotone watermark gives when
-/// it applies both in order. Rows fold as for every held batch.
+/// ahead of the newer batch's controls, in order, so the merge applies as
+/// the waiting controls and then the newer ones would. The isolate repeats
+/// every unacknowledged control in each batch, and keeps one control for
+/// each key, so a newer control with the key of a kept control is that
+/// control's repeat. Applied after it, the repeat is a duplicate or a late
+/// control, so it is carried once:
+/// - a start by its id (`Host::carry_typed_start` replaces the arguments of
+///   a pending start, and ids are never reused),
+/// - a decision by its request and prompt sequence,
+/// - a cancel by its target (`Host::queue_cancel` raises the reason of a
+///   pending cancel),
+/// - a mirror revoke by its owner (`validate_mirror_revokes` refuses one
+///   owner twice),
+/// - a terminal machine event by its id and kind.
+///
+/// A machine phase is the current value of its id, which the isolate
+/// replaces (`Host::queue_machine_event`). It repeats only the last kept
+/// phase of its id. A phase that returns to an earlier value is a new
+/// transition and is kept. The watermark is the higher of the two, which
+/// the seat's monotone watermark gives when it applies both in order. Rows
+/// fold as for every held batch.
 #[cfg(feature = "load")]
 fn carry_waiting_controls(
     waiting: &mut crate::load::QueuedSeatBatch,
     newer: &mut crate::load::QueuedSeatBatch,
 ) {
-    fn ahead<T: PartialEq>(newer: &mut Vec<T>, waiting: &mut Vec<T>) {
+    use crate::machine::{MachineEvent, MachineEventKind};
+    fn ahead<T>(newer: &mut Vec<T>, waiting: &mut Vec<T>, repeats: impl Fn(&[T], &T) -> bool) {
         let later = std::mem::replace(newer, std::mem::take(waiting));
         for control in later {
-            if !newer.contains(&control) {
+            if !repeats(newer, &control) {
                 newer.push(control);
             }
+        }
+    }
+    fn event_repeats(kept: &[MachineEvent], event: &MachineEvent) -> bool {
+        match event.kind {
+            MachineEventKind::Phase(_) => kept
+                .iter()
+                .rev()
+                .find(|kept| kept.id == event.id && matches!(kept.kind, MachineEventKind::Phase(_)))
+                .is_some_and(|kept| kept.kind == event.kind),
+            kind => kept
+                .iter()
+                .any(|kept| kept.id == event.id && kept.kind == kind),
         }
     }
     newer.batch.consumed_terminal_seq = newer
         .batch
         .consumed_terminal_seq
         .max(waiting.batch.consumed_terminal_seq);
-    ahead(&mut newer.batch.starts, &mut waiting.batch.starts);
-    ahead(&mut newer.batch.decisions, &mut waiting.batch.decisions);
-    ahead(&mut newer.batch.cancels, &mut waiting.batch.cancels);
+    ahead(
+        &mut newer.batch.starts,
+        &mut waiting.batch.starts,
+        |kept, start| kept.iter().any(|kept| kept.id == start.id),
+    );
+    ahead(
+        &mut newer.batch.decisions,
+        &mut waiting.batch.decisions,
+        |kept, decision| {
+            kept.iter()
+                .any(|kept| kept.of == decision.of && kept.sequence == decision.sequence)
+        },
+    );
+    ahead(
+        &mut newer.batch.cancels,
+        &mut waiting.batch.cancels,
+        |kept, cancel| kept.iter().any(|kept| kept.of == cancel.of),
+    );
     ahead(
         &mut newer.batch.mirror_revokes,
         &mut waiting.batch.mirror_revokes,
+        |kept, revoke| kept.iter().any(|kept| kept.owner == revoke.owner),
     );
-    ahead(&mut newer.machine_events, &mut waiting.machine_events);
+    ahead(
+        &mut newer.machine_events,
+        &mut waiting.machine_events,
+        event_repeats,
+    );
 }
 
 #[cfg(feature = "load")]
