@@ -9,6 +9,7 @@ use client::config::LocType;
 use client::dash3d::CollisionFlag;
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::future::Future;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -40,6 +41,34 @@ use crate::world_state::WorldState;
 use crate::zones::{Zone, ZoneClass, ZoneExempt, ZoneFilterOwned, ZoneKey, ZoneKind, ZoneTable};
 
 #[test]
+fn synchronous_driver_skips_suspension_and_restores_cooperative_mode() {
+    fn unit_is_ready() -> bool {
+        let mut unit = super::work_unit();
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        Future::poll(std::pin::Pin::new(&mut unit), &mut context).is_ready()
+    }
+
+    assert!(!unit_is_ready());
+    super::drive_to_completion(async {
+        assert!(unit_is_ready());
+        super::drive_to_completion(async {
+            assert!(unit_is_ready());
+        });
+        assert!(unit_is_ready());
+    });
+    assert!(!unit_is_ready());
+
+    let panicked = std::panic::catch_unwind(|| {
+        super::drive_to_completion(async {
+            assert!(unit_is_ready());
+            panic!("exercise the synchronous polling guard");
+        });
+    });
+    assert!(panicked.is_err());
+    assert!(!unit_is_ready());
+}
+
+#[test]
 fn non_proof_goals_settle_without_a_future() {
     use super::{Goals, Settle, TargetCost};
 
@@ -57,8 +86,14 @@ fn non_proof_goals_settle_without_a_future() {
         to: target,
         cost: None,
     };
-    assert!(matches!(single.settle_non_first(other, cost), Settle::Continue));
-    assert!(matches!(single.settle_non_first(target, cost), Settle::Stop));
+    assert!(matches!(
+        single.settle_non_first(other, cost),
+        Settle::Continue
+    ));
+    assert!(matches!(
+        single.settle_non_first(target, cost),
+        Settle::Stop
+    ));
     assert!(matches!(single, Goals::Single { cost: Some(found), .. } if found == cost));
 
     let unique = HashMap::from([(target, 0)]);
@@ -68,7 +103,10 @@ fn non_proof_goals_settle_without_a_future() {
         costs: &mut costs,
         remaining: 1,
     };
-    assert!(matches!(many.settle_non_first(other, cost), Settle::Continue));
+    assert!(matches!(
+        many.settle_non_first(other, cost),
+        Settle::Continue
+    ));
     assert!(matches!(many.settle_non_first(target, cost), Settle::Stop));
     assert_eq!(costs, [Ok(cost)]);
 }

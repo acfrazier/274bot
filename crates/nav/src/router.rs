@@ -54,6 +54,20 @@ use resources::{
     Predecessors, ResourceBudget, ResourceKey, SearchKey, Unmetered, PACKED_ROOT_ID,
 };
 
+thread_local! {
+    // Only the synchronous driver suppresses cooperative suspension. Cursor
+    // polls keep one Pending result per bounded work unit.
+    static SYNCHRONOUS_WORK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+struct SynchronousWorkGuard(bool);
+
+impl Drop for SynchronousWorkGuard {
+    fn drop(&mut self) {
+        SYNCHRONOUS_WORK.set(self.0);
+    }
+}
+
 struct YieldOnce(bool);
 
 impl Future for YieldOnce {
@@ -69,8 +83,8 @@ impl Future for YieldOnce {
     }
 }
 
-async fn work_unit() {
-    YieldOnce(false).await;
+fn work_unit() -> YieldOnce {
+    YieldOnce(SYNCHRONOUS_WORK.get())
 }
 
 async fn sift_down_by<T>(
@@ -138,6 +152,7 @@ async fn reverse_cooperative<T>(values: &mut [T]) {
 }
 
 fn drive_to_completion<F: Future>(future: F) -> F::Output {
+    let _synchronous_work = SynchronousWorkGuard(SYNCHRONOUS_WORK.replace(true));
     let mut future = std::pin::pin!(future);
     let mut context = Context::from_waker(Waker::noop());
     loop {
@@ -7113,7 +7128,11 @@ impl Goals<'_> {
             }
             Goals::Frontier { .. } => return Settle::Continue,
         };
-        if done { Settle::Stop } else { Settle::Continue }
+        if done {
+            Settle::Stop
+        } else {
+            Settle::Continue
+        }
     }
 
     /// Everything reachable has settled, `settled` nodes in all.
