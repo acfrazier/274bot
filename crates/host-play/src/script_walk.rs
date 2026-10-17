@@ -1482,6 +1482,7 @@ fn step_walk(
     }
     log_walk_arm_bot(|| format!("bank_fetch Walk armed sub-route dest={reached:?}"));
     bot.route = Some(Arc::new(route));
+    bot.compact_route = None;
     bot.map_route_generation = crate::walk_map::next_map_route_generation();
     bot.admission_pending = bot.assessment.is_some();
     crate::admission::publish(bot, w, snapshot, map_members, None);
@@ -1690,6 +1691,7 @@ pub(crate) fn session_freezes_follow(
 ) -> bool {
     session_freezes_follow_destination(pending, route.map(|route| route.dest))
 }
+
 pub(crate) fn session_freezes_follow_destination(
     pending: Option<&PendingBankFetch>,
     route: Option<WorldTile>,
