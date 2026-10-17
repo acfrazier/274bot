@@ -273,7 +273,7 @@ impl ProfileSelection {
         table: &[BundledNavIdentity],
         resource_root: Option<&Path>,
     ) -> Result<Arc<ServerProfile>, String> {
-        self.bind_inner(observer, table, resource_root, false, &mut false)
+        self.bind_inner(observer, table, resource_root, false, &mut None)
     }
 
     /// Negotiate the selected endpoint before freezing a complete owned cache.
@@ -287,11 +287,11 @@ impl ProfileSelection {
         &self,
         observer: &ProfileProgressObserver,
     ) -> Result<Arc<ServerProfile>, String> {
-        let (count, initial) = self.asset_worlds();
+        let mut fallback = WorldFallback::new(self);
         let mut selected = self.clone();
-        for attempt in 0..count {
-            let mut asset_connection_failed = false;
-            match selected.bind_inner(
+        loop {
+            let mut fill_error = None;
+            let error = match selected.bind_inner(
                 observer,
                 bundled_nav_identities(),
                 std::env::current_exe()
@@ -299,42 +299,15 @@ impl ProfileSelection {
                     .map(|exe| install_resource_root(&exe))
                     .as_deref(),
                 true,
-                &mut asset_connection_failed,
+                &mut fill_error,
             ) {
                 Ok(profile) => return Ok(profile),
-                Err(_) if attempt + 1 < count && asset_connection_failed => {
-                    selected.select_fallback_world(initial, attempt);
-                }
-                Err(error) => return Err(error),
+                Err(error) => error,
+            };
+            if !fill_error.is_some_and(|fill_error| fallback.next(&mut selected, &fill_error)) {
+                return Err(error);
             }
         }
-        unreachable!("at least one world or one local endpoint")
-    }
-
-    /// How many asset worlds a runtime bind may try, and the index of the
-    /// selected one. A connection failure moves on to the next world.
-    fn asset_worlds(&self) -> (usize, usize) {
-        let worlds = self.public_worlds.as_deref();
-        let count = worlds.map_or(1, |w| w.worlds.len());
-        let initial = worlds
-            .and_then(|w| {
-                w.worlds.iter().position(|world| {
-                    world.host == self.asset_host && world.port == self.asset_port
-                })
-            })
-            .unwrap_or(0);
-        (count, initial)
-    }
-
-    fn select_fallback_world(&mut self, initial: usize, attempt: usize) {
-        let worlds = &self
-            .public_worlds
-            .as_deref()
-            .expect("public worlds for fallback")
-            .worlds;
-        let world = &worlds[(initial + attempt + 1) % worlds.len()];
-        self.asset_host = world.host.clone();
-        self.asset_port = world.port;
     }
 
     fn bind_inner(
@@ -343,7 +316,7 @@ impl ProfileSelection {
         table: &[BundledNavIdentity],
         resource_root: Option<&Path>,
         runtime: bool,
-        asset_connection_failed: &mut bool,
+        fill_error: &mut Option<client::unpack::RuntimeCacheError>,
     ) -> Result<Arc<ServerProfile>, String> {
         let supplied = self.supplied_manifest(runtime)?;
         let runtime_cache = if runtime {
@@ -354,8 +327,9 @@ impl ProfileSelection {
             ));
             let prepared = client::unpack::prepare_runtime_cache(&self.runtime_cache_request())
                 .map_err(|error| {
-                    *asset_connection_failed = error.is_connection();
-                    error.to_string()
+                    let message = error.to_string();
+                    *fill_error = Some(error);
+                    message
                 })?;
             observer.report(ProfileProgress::steps(
                 ProfileProgressStage::PreparingCache,
@@ -785,12 +759,9 @@ impl ProfileSelection {
     /// [`Self::prepare_template_with_progress`] in bounded steps for the
     /// WorkAdmission worker. See [`TemplatePreparation`].
     pub fn begin_template_preparation(&self) -> TemplatePreparation {
-        let (worlds, initial) = self.asset_worlds();
         TemplatePreparation {
+            fallback: WorldFallback::new(self),
             selected: self.clone(),
-            worlds,
-            initial,
-            attempt: 0,
             last_total: None,
             stage: TemplateStage::Start,
         }
@@ -981,6 +952,95 @@ impl ProfileSelection {
     }
 }
 
+/// The world fallback of a runtime cache fill. After a connection failure,
+/// the fill moves on to the next roster world as a whole: its game endpoint
+/// and its asset endpoint together. It passes over a world whose game host
+/// or asset host is a name that a fill could not look up
+/// (`RuntimeCacheError::failed_lookup`), so the chain never looks up that
+/// name again. The stepped fill reports a failed lookup of either host. The
+/// one-call fill reports the game host's only. Only a public (wss) roster
+/// has more than one world.
+struct WorldFallback {
+    count: usize,
+    /// The roster index of the selected world.
+    initial: usize,
+    /// The number of roster worlds after `initial` that the chain passed.
+    passed: usize,
+    failed_lookups: Vec<String>,
+}
+
+impl WorldFallback {
+    fn new(selection: &ProfileSelection) -> Self {
+        let worlds = &selection.profile.worlds;
+        let count = selection.public_worlds.as_ref().map_or(1, |_| worlds.len());
+        let initial = worlds
+            .iter()
+            .position(|world| {
+                world.host == selection.game_host
+                    && world.port == selection.game_port
+                    && world.asset_host == selection.asset_host
+                    && world.asset_port == selection.asset_port
+            })
+            .unwrap_or(0);
+        Self {
+            count,
+            initial,
+            passed: 0,
+            failed_lookups: Vec::new(),
+        }
+    }
+
+    /// After the fill of `selection` failed with `error`, select the next
+    /// world in `selection`. False if `error` is not a connection failure
+    /// or no world is left to try.
+    fn next(
+        &mut self,
+        selection: &mut ProfileSelection,
+        error: &client::unpack::RuntimeCacheError,
+    ) -> bool {
+        if !error.is_connection() {
+            return false;
+        }
+        if let Some(host) = error.failed_lookup() {
+            self.failed_lookups.push(host.to_owned());
+        }
+        let worlds = &selection.profile.worlds;
+        while self.passed + 1 < self.count {
+            self.passed += 1;
+            let world = &worlds[(self.initial + self.passed) % worlds.len()];
+            if self
+                .failed_lookups
+                .iter()
+                .any(|name| *name == world.host || *name == world.asset_host)
+            {
+                continue;
+            }
+            selection.game_host.clone_from(&world.host);
+            selection.game_port = world.port;
+            selection.asset_host.clone_from(&world.asset_host);
+            selection.asset_port = world.asset_port;
+            return true;
+        }
+        false
+    }
+}
+
+/// Log a cache-fill name lookup step that ended after its deadline, the
+/// one exception to the step deadline ([`client::unpack::SlowLookup`]).
+fn log_slow_lookup(lookup: &client::unpack::SlowLookup<'_>) {
+    host_log!(
+        stderr;
+        Category::Lifecycle,
+        Level::Warn,
+        "cache preparation: name lookup of the {} {} took {:?}, {:?} past the step deadline \
+         (the system resolver cannot be interrupted)",
+        lookup.role,
+        lookup.host,
+        lookup.took,
+        lookup.past_deadline
+    );
+}
+
 /// Longest wait for the network or the preparation lock inside one
 /// [`TemplatePreparation::step`]. It stays below WorkAdmission's ordinary
 /// slice, so a cache-fill step returns before the slice ends.
@@ -992,15 +1052,15 @@ const _: () =
 /// ([`ProfileSelection::begin_template_preparation`]). The cache fill is a
 /// [`client::unpack::RuntimeCacheFill`]; each step reports
 /// `PreparingCache n/total` once the entry count is known. When the cache is
-/// ready, one step binds the profile and the next loads the template. An
-/// asset connection failure moves on to the next public world, as
-/// [`ProfileSelection::bind_runtime_with_progress`] does. Dropping the value
-/// cancels the fill and releases everything it holds.
+/// ready, one step binds the profile and the next loads the template. A
+/// connection failure to the asset host or the game host moves on to the
+/// next world as a whole ([`WorldFallback`]), as
+/// [`ProfileSelection::bind_runtime_with_progress`] does. A name lookup
+/// step that ends after its deadline is logged through `host_log!`.
+/// Dropping the value cancels the fill and releases everything it holds.
 pub struct TemplatePreparation {
     selected: ProfileSelection,
-    worlds: usize,
-    initial: usize,
-    attempt: usize,
+    fallback: WorldFallback,
     last_total: Option<u32>,
     stage: TemplateStage,
 }
@@ -1052,9 +1112,10 @@ impl TemplatePreparation {
                     0,
                     1,
                 ));
-                let fill = Box::new(client::unpack::RuntimeCacheFill::begin(
+                let mut fill = Box::new(client::unpack::RuntimeCacheFill::begin(
                     &self.selected.runtime_cache_request(),
                 ));
+                fill.observe_slow_lookups(log_slow_lookup);
                 self.stage = TemplateStage::Fill { supplied, fill };
                 waiting
             }
@@ -1084,10 +1145,7 @@ impl TemplatePreparation {
                     self.stage = TemplateStage::Bind { supplied, prepared };
                     self.progress()
                 }
-                Err(error) if self.attempt + 1 < self.worlds && error.is_connection() => {
-                    self.selected
-                        .select_fallback_world(self.initial, self.attempt);
-                    self.attempt += 1;
+                Err(error) if self.fallback.next(&mut self.selected, &error) => {
                     self.last_total = None;
                     self.stage = TemplateStage::Start;
                     waiting
