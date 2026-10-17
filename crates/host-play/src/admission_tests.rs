@@ -2587,6 +2587,33 @@ mod compact_final_route_tests {
             animation_update: None,
         });
         snapshot.seed_equipment(vec![wearable_item(2)]);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_stats(vec![api::snapshot::StatView {
+            index: 3,
+            name: "hitpoints".into(),
+            effective: 70,
+            base: 80,
+            xp: 0,
+            used: true,
+        }]);
+        snapshot.seed_world(api::snapshot::WorldStateView {
+            map_base_x: 0,
+            map_base_z: 0,
+            level: from.level,
+            members: false,
+            multi_combat: false,
+            player_count: 1,
+            npc_count: 0,
+            cycle: 1,
+        });
+        snapshot.seed_hitmarks(api::snapshot::HitmarksView {
+            marks: [api::snapshot::HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            }; 4],
+            loop_cycle: 0,
+        });
         snapshot
     }
 
@@ -2670,6 +2697,7 @@ mod compact_final_route_tests {
             after.input,
             capture(&snapshot, false, before.input.poison, false)
         );
+        assert_eq!(after.input.hp, 70);
         assert!(after.input.food_ids.contains(&379));
         assert_eq!(after.input.food_counts.iter().copied().sum::<u8>(), 2);
         assert!(!bot.admission_pending);
