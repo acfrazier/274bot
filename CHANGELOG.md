@@ -12,6 +12,21 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- Each admitted route inspection now runs strict routing, bank-fetch planning,
+  post-bank routing and danger-zone diagnosis on its own short-lived thread.
+  Its whole-job charge remains capped at 192 MiB, without a process-wide
+  navigation byte cap. It preserves existing transport names and actions in
+  each reported hop. Bank planning and post-fetch state growth use the loaded
+  graph's effective fetchable-item limit. Full missing-item diagnosis and its search budget are
+  unchanged.
+  Single-target zone refusals keep the selected relaxed route's witness.
+  Search checkpoints cover bounded expansions and queue operations, not each
+  neighbor or heap comparison. Variable-length chains still check live time
+  and cancellation.
+- Full job admission or result storage delays publication instead of refusing a
+  valid inspection. Reset cancels only the accepted job and prevents stale
+  output. Replay retains two terminals and one held terminal until
+  acknowledgement or eviction.
 - Script operations now share a bounded request seat across native cards and
   JavaScript. A second top-level Gatherer, combat, quest progress or Hunt
   Session reports **busy** while one Session is live. Capability roots started
@@ -86,7 +101,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   rather than the game-action dispatcher, including after a kept reconnect.
 - Per-slot diagnostics expose dropped seat actions and late control copies as
   read-only counters. Duplicate acknowledgements count without noisy error logs.
-
 - Reload and catalog refresh prepare source, siblings and settings off the UI
   thread. Their buttons show **Reloading…** or **Refreshing catalog…** through
   preparation and validation, rather than calling both stages validation.
@@ -287,6 +301,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - Bots that need banked route supplies now choose an access tile they can reach.
   An unreachable access at the nearest bank no longer prevents the bank trip.
   If no access is reachable, danger-zone refusals keep their explanation.
+  Route inspection checks each access before it applies banked supplies.
+  It releases the missing-item diagnosis before it searches bank access routes.
 
 - The first launch's game cache download no longer switches off background
   work on slower connections, and "Preparing cache snapshot" now shows how
@@ -296,6 +312,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   Cooperative routes reserve the same maximum storage, but initialize only
   the pages that the search uses. Small first-goal diagnostics also retain
   demand-driven proof storage.
+- Missing-supply diagnostics retain space for the route's transport edges,
+  not the full search budget, so later planning stages do not refuse short routes.
 - Cooperative route searches now check each work boundary once instead of
   repeating the same clock and cancellation check between work units.
 - One slow disk write no longer leaves script cards, the script catalogue or
