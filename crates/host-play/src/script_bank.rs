@@ -1799,7 +1799,10 @@ fn make_bank_pick_request(
     })
 }
 
-#[allow(clippy::too_many_arguments)] // Session permissions come from locked slot dispatch.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "native selection borrows the locked slot context and its session permissions"
+)]
 pub(super) fn queue_native_bank_pick_scoped(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
@@ -1843,7 +1846,10 @@ pub(super) fn queue_native_bank_pick_scoped(
     );
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the scoped compatibility selection borrows each captured request input"
+)]
 pub(super) fn queue_bank_pick_scoped(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
@@ -1902,7 +1908,10 @@ pub(super) fn queue_bank_walk_scoped(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one admission path serves native selection, compatibility selection and bank walking"
+)]
 fn queue_bank(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
@@ -1935,7 +1944,7 @@ fn queue_bank(
         },
         None => None,
     };
-    let mut all = navs.lock().unwrap();
+    let mut all = navs.lock().expect("navigation state mutex is not poisoned");
     let bot = all.entry(name.to_string()).or_default();
     if walking {
         if bot.bank_fetch.is_some() {
@@ -2132,7 +2141,7 @@ pub(super) fn drain_bank_pick_cancellation(
 ) {
     let pending = navs
         .lock()
-        .unwrap()
+        .expect("navigation state mutex is not poisoned")
         .get_mut(name)
         .and_then(|bot| bot.bank_pick.pending_cancel.take());
     if let Some((mut cancellation, reason)) = pending {
@@ -2146,7 +2155,7 @@ pub(super) fn drain_bank_pick_retired_owner(
 ) {
     let retired = navs
         .lock()
-        .unwrap()
+        .expect("navigation state mutex is not poisoned")
         .get_mut(name)
         .and_then(|bot| bot.bank_pick.retired_owner.take());
     drop(retired);
@@ -2175,7 +2184,7 @@ fn submit_pending_bank_pick_with_service(
     drain_bank_pick_retired_owner(navs, name);
     let observed_capacity = shared.lock().publications().capacity().sequence();
     let Some((generation, request_id, job)) = ({
-        let mut all = navs.lock().unwrap();
+        let mut all = navs.lock().expect("navigation state mutex is not poisoned");
         let Some(bot) = all.get_mut(name) else {
             return false;
         };
@@ -2238,7 +2247,7 @@ fn submit_pending_bank_pick_with_service(
     let mut accepted_to_abandon: Option<WorkCancellation<BankPickSpec>> = None;
     let mut submission_ok = false;
     {
-        let mut all = navs.lock().unwrap();
+        let mut all = navs.lock().expect("navigation state mutex is not poisoned");
         if let Some(bot) = all.get_mut(name) {
             let pick = &mut bot.bank_pick;
             let current = pick.current.as_mut().filter(|active| {
@@ -2343,10 +2352,14 @@ fn restore_pending_inline(
 ) {
     let mut pending = Some(pending);
     {
-        let mut all = navs.lock().unwrap();
+        let mut all = navs.lock().expect("navigation state mutex is not poisoned");
         if let Some(bot) = all.get_mut(name) {
             let pick = &mut bot.bank_pick;
-            if pick.generation == pending.as_ref().unwrap().generation
+            if pick.generation
+                == pending
+                    .as_ref()
+                    .expect("the pending result is not moved yet")
+                    .generation
                 && pick.pending_inline.is_none()
             {
                 pick.pending_inline = pending.take();
@@ -2400,7 +2413,7 @@ fn set_active_owner_result_full(
     ticket: WorkTicket<BankPickSpec>,
     full: bool,
 ) -> bool {
-    let mut all = navs.lock().unwrap();
+    let mut all = navs.lock().expect("navigation state mutex is not poisoned");
     let Some(active) = all
         .get_mut(name)
         .and_then(|bot| bot.bank_pick.current.as_mut())
@@ -2443,7 +2456,7 @@ fn bank_pick_terminal(
 fn publish_pending_inline(navs: &Arc<Mutex<HashMap<String, super::NavBot>>>, name: &str) {
     let pending = navs
         .lock()
-        .unwrap()
+        .expect("navigation state mutex is not poisoned")
         .get_mut(name)
         .and_then(|bot| bot.bank_pick.pending_inline.take());
     let Some(pending) = pending else {
@@ -2471,7 +2484,7 @@ fn expire_bank_pick_deadline(
     name: &str,
     now: Instant,
 ) {
-    let mut all = navs.lock().unwrap();
+    let mut all = navs.lock().expect("navigation state mutex is not poisoned");
     let Some(active) = all
         .get_mut(name)
         .and_then(|bot| bot.bank_pick.current.as_mut())
@@ -2499,7 +2512,7 @@ fn apply_bank_pick_result(
     let mut retired_owner = None;
     let mut route_rejected = false;
     {
-        let mut all = navs.lock().unwrap();
+        let mut all = navs.lock().expect("navigation state mutex is not poisoned");
         let Some(bot) = all.get_mut(name) else {
             return;
         };
@@ -2533,7 +2546,10 @@ fn apply_bank_pick_result(
                 return;
             };
             let ticket = ticket_ref.ticket();
-            let route_generation = job.request.walk_generation.unwrap();
+            let route_generation = job
+                .request
+                .walk_generation
+                .expect("the job was filtered to walking requests above");
             let route_is_current = route_generation == bot.route_generation
                 && bot.walk_request_id == 0
                 && bot.requested_route
@@ -2620,7 +2636,7 @@ fn active_bank_pick_is_current(
     ticket: WorkTicket<BankPickSpec>,
 ) -> bool {
     navs.lock()
-        .unwrap()
+        .expect("navigation state mutex is not poisoned")
         .get(name)
         .and_then(|bot| bot.bank_pick.current.as_ref())
         .is_some_and(|active| active_ticket_matches(active, scope, generation, request_id, ticket))
@@ -2676,7 +2692,7 @@ fn retire_active_bank_pick(
     ticket: WorkTicket<BankPickSpec>,
 ) -> bool {
     let retired = {
-        let mut all = navs.lock().unwrap();
+        let mut all = navs.lock().expect("navigation state mutex is not poisoned");
         let Some(bot) = all.get_mut(name) else {
             return false;
         };
@@ -2911,7 +2927,7 @@ fn poll_bank_pick_inner(
     drain_bank_pick_cancellation(navs, name);
     let scope = navs
         .lock()
-        .unwrap()
+        .expect("navigation state mutex is not poisoned")
         .get(name)
         .and_then(|bot| bot.bank_pick.current.as_ref())
         .map(|active| active.scope);
@@ -2922,7 +2938,7 @@ fn poll_bank_pick_inner(
     publish_pending_inline(navs, name);
     let active = navs
         .lock()
-        .unwrap()
+        .expect("navigation state mutex is not poisoned")
         .get(name)
         .and_then(|bot| bot.bank_pick.current.as_ref())
         .map(|active| {
@@ -2994,7 +3010,7 @@ fn poll_bank_pick_inner(
         }
     }
     navs.lock()
-        .unwrap()
+        .expect("navigation state mutex is not poisoned")
         .get(name)
         .map_or_else(BankSelectionInput::default, |bot| bot.bank_pick.posted)
 }

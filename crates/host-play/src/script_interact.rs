@@ -276,7 +276,10 @@ where
         obj_names_arc,
     )
 }
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scoped dispatch borrows the driver, snapshot, navigation and cache context"
+)]
 pub(crate) fn dispatch_script_interact_cached_scoped<R>(
     driver: &mut dyn Driver,
     snapshot: &GameSnapshot,
