@@ -195,6 +195,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   launch's game cache download now stops at once with a connection error,
   and 274bot tries the next world if there is one. Before, the download
   waited until it timed out.
+- When 274bot cannot reach a world's cache server, or cannot look up the
+  name of a world's server, while it prepares the game cache, it now moves
+  to the next world as a whole: it prepares the cache from that world, and
+  bots set to Auto start on that world. It skips a world whose server name
+  already failed to look up. Before, 274bot took only the cache from the
+  next world and kept the first world's game server.
 
 ### Fixed during development
 

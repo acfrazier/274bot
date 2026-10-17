@@ -1271,6 +1271,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/tests/cold_fill_lookups.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/tests/common/f2pd_fixture.rs",
       "owner": "T1"
     },

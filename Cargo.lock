@@ -2415,6 +2415,7 @@ dependencies = [
  "crossterm",
  "host",
  "libc",
+ "native-tls",
  "nav",
  "parking_lot",
  "png",
