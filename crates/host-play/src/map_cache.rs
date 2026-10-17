@@ -5632,11 +5632,31 @@ mod tests {
         assert!(shared.lock().capacity().jobs() > baseline.jobs());
         drop(handle);
         drop(manager);
-        assert_eq!(
-            shared.lock().capacity(),
-            baseline,
-            "the last manager must abandon its unconsumed terminal custody"
-        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let (released, observed) = {
+                let mut service = shared.lock();
+                service.observe_health();
+                (
+                    service.capacity() == baseline,
+                    service.publication_epoch(),
+                )
+            };
+            if released {
+                break;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !remaining.is_zero(),
+                "the last manager must eventually abandon its unconsumed terminal custody"
+            );
+            assert_ne!(
+                WorkService::wait_for_publication_change(&shared, observed, remaining),
+                script::work_admission::PublicationWaitOutcome::Unavailable,
+                "WorkAdmission became unavailable before the abandoned map job released capacity"
+            );
+        }
+        assert_eq!(shared.lock().capacity(), baseline);
     }
 
     fn temp_root(name: &str) -> MapCacheRoot {
