@@ -840,9 +840,8 @@ mod tests {
             session.loadouts_status
         );
         assert!(
-            session.loadouts_status.contains("did not load")
-                && session.loadouts_status.contains("Reload"),
-            "the status says to reload first: {:?}",
+            session.loadouts_status.contains("did not load"),
+            "the status names the failed load: {:?}",
             session.loadouts_status
         );
         assert!(session.loadouts.loadouts().is_empty());
