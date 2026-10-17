@@ -19,9 +19,9 @@ use nav::bank_fetch::{BankFetchCursor, BankFetchPlan, BankRows, PlanningRowsCurs
 #[cfg(test)]
 use nav::router::{
     find_missing_item_reqs_with_avoid, find_missing_item_reqs_with_avoid_bounded, find_with_avoid,
-    find_with_avoid_bounded, Leg, Route,
+    find_with_avoid_bounded, Leg, Route, RouteError,
 };
-use nav::router::{AvoidRect, FindOptions, RouteError};
+use nav::router::{AvoidRect, FindOptions};
 use nav::transport::TransportKind;
 use nav::world::NavWorld;
 use nav::world_state::WorldState;
@@ -1132,7 +1132,7 @@ impl InspectJob {
         Ok(())
     }
 
-    fn start_bank_access(&mut self, planning: InspectBankAccess) -> Result<(), InspectJobError> {
+    fn start_bank_access(&mut self, mut planning: InspectBankAccess) -> Result<(), InspectJobError> {
         let (from, options, budget) = {
             let capture = self.capture_ref();
             (
