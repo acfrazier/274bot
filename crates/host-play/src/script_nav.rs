@@ -47,7 +47,6 @@ use script::work_admission::{cancellation::WorkCancellation, WorkService};
 use crate::walk_plan::StandFetch;
 use crate::walk_plan::{PendingBankFetch, RouteOutcome, RoutePath};
 
-
 #[derive(Default)]
 pub(crate) struct RouteCompletion {
     #[cfg(test)]
