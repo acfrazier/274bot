@@ -3732,7 +3732,7 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
     };
     assert!(!world.collision.standable(centre));
     assert!(world.collision.standable(shore));
-    let request = |arrival| ScriptRouteRequest {
+    let request = |arrival, radius| ScriptRouteRequest {
         admission: crate::admission::Admission {
             enforce: true,
             ..crate::admission::Admission::manual(
@@ -3747,7 +3747,7 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
         world: Arc::clone(&world),
         from: shore,
         to: centre,
-        radius: 40,
+        radius,
         loc_id: None,
         arrival,
         opts: FindOptions::default(),
@@ -3759,14 +3759,16 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
         compat_tile_intent: false,
         completion: Default::default(),
     };
-    let (area, _) = request(ArrivalKind::Area).drive_route_job_for_test();
-    let RouteOutcome::Routed(route) = area else {
-        panic!("Area arrival must accept the real standable Catherby shoreline");
-    };
-    assert_eq!(route.dest, shore);
-    assert!(world.collision.standable(route.dest));
-    let (reach, _) = request(ArrivalKind::Reach).drive_route_job_for_test();
-    assert!(matches!(reach, RouteOutcome::NoPath));
+    for radius in [40, 104] {
+        let (area, _) = request(ArrivalKind::Area, radius).drive_route_job_for_test();
+        let RouteOutcome::Routed(route) = area else {
+            panic!("Area arrival must accept the real standable Catherby shoreline");
+        };
+        assert_eq!(route.dest, shore);
+        assert!(world.collision.standable(route.dest));
+        let (reach, _) = request(ArrivalKind::Reach, radius).drive_route_job_for_test();
+        assert!(matches!(reach, RouteOutcome::NoPath));
+    }
 }
 
 #[test]
