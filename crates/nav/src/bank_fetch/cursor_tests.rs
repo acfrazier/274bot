@@ -38,7 +38,7 @@ fn finish(
 ) -> Option<BankFetchPlan> {
     let collision = collision();
     let stands = stands();
-    let heap_bound = BankFetchCursor::heap_bound(bank.len(), missing.len()).unwrap();
+    let heap_bound = BankFetchCursor::heap_bound(bank.len(), missing.len(), stands.len()).unwrap();
     let steps_bound = BankFetchPlan::steps_heap_bound(missing.len()).unwrap();
     let plan_bound = BankFetchPlan::heap_bound(missing.len()).unwrap();
     assert!(plan_bound <= heap_bound);
@@ -280,7 +280,7 @@ fn bounded_cursors_keep_repeated_and_overlapping_missing_rows_within_u_eff() {
     ];
     assert_eq!(missing.len(), max_missing_requests);
 
-    let mut cursor = BankFetchCursor::with_limits(bank.len(), item_rows).unwrap();
+    let mut cursor = BankFetchCursor::with_limits(bank.len(), item_rows, stands().len()).unwrap();
     assert_eq!(cursor.retained_bytes(), 0, "construction does not allocate");
     let plan = finish(&mut cursor, &missing, &state, &bank).unwrap();
     assert_eq!(
@@ -299,7 +299,8 @@ fn bounded_cursors_keep_repeated_and_overlapping_missing_rows_within_u_eff() {
     assert_eq!(unique_plan_ids.as_slice(), &[10, 20, 30, 40]);
     assert!(unique_plan_ids.len() <= item_rows);
     assert!(
-        cursor.peak_retained_bytes() <= BankFetchCursor::heap_bound(bank.len(), item_rows).unwrap()
+        cursor.peak_retained_bytes()
+            <= BankFetchCursor::heap_bound(bank.len(), item_rows, stands().len()).unwrap()
     );
     assert!(plan.retained_bytes() <= BankFetchPlan::heap_bound(item_rows).unwrap());
 
@@ -330,13 +331,13 @@ fn bounded_bank_and_planned_row_buffers_use_bank_rows_independently() {
     bank.extend((100..164).map(|id| (id, 1)));
     let missing = [MissingReq::WearAny { ids: vec![10] }];
     assert!(bank.len() > 1);
-    let mut cursor = BankFetchCursor::with_limits(bank.len(), 1).unwrap();
+    let mut cursor = BankFetchCursor::with_limits(bank.len(), 1, stands().len()).unwrap();
     let plan = finish(&mut cursor, &missing, &state, &bank).unwrap();
     assert_eq!(plan.wear.as_slice(), &[10]);
 
     assert!(
         finish(
-            &mut BankFetchCursor::with_limits(bank.len() - 1, 1).unwrap(),
+            &mut BankFetchCursor::with_limits(bank.len() - 1, 1, stands().len()).unwrap(),
             &missing,
             &state,
             &bank,
@@ -346,7 +347,7 @@ fn bounded_bank_and_planned_row_buffers_use_bank_rows_independently() {
     );
     assert!(
         finish(
-            &mut BankFetchCursor::with_limits(bank.len(), 0).unwrap(),
+            &mut BankFetchCursor::with_limits(bank.len(), 0, stands().len()).unwrap(),
             &missing,
             &state,
             &bank,
@@ -376,15 +377,16 @@ fn bounded_bank_and_planned_row_buffers_use_bank_rows_independently() {
 
 #[test]
 fn bounded_cursor_limits_fail_closed_on_overflow_and_item_growth() {
-    assert!(BankFetchCursor::with_limits(usize::MAX, 1).is_some());
-    assert!(BankFetchCursor::with_limits(0, usize::MAX).is_none());
+    assert!(BankFetchCursor::with_limits(usize::MAX, 1, 1).is_some());
+    assert!(BankFetchCursor::with_limits(0, usize::MAX, 1).is_none());
+    assert!(BankFetchCursor::with_limits(0, 1, usize::MAX).is_none());
     assert!(PlanningRowsCursor::with_limits(usize::MAX, 1).is_none());
 
     let state = WorldState::default();
     let missing = [MissingReq::Carry { id: 10, count: 1 }];
     let bank = [(10, 1)];
     assert!(finish(
-        &mut BankFetchCursor::with_limits(bank.len(), 0).unwrap(),
+        &mut BankFetchCursor::with_limits(bank.len(), 0, stands().len()).unwrap(),
         &missing,
         &state,
         &bank,
@@ -407,7 +409,7 @@ fn bounded_cursor_limits_fail_closed_on_overflow_and_item_growth() {
 
 #[test]
 fn bounded_bulk_step_growth_fails_before_appending_a_partial_group() {
-    let mut cursor = BankFetchCursor::with_limits(1, 1).unwrap();
+    let mut cursor = BankFetchCursor::with_limits(1, 1, 1).unwrap();
     cursor.phase = super::Phase::WithdrawSteps;
     cursor.bank_counts.push((10, 100));
     cursor.withdrawals.push((10, 20));
@@ -429,12 +431,13 @@ fn bounded_bulk_step_growth_fails_before_appending_a_partial_group() {
 
 #[test]
 fn admission_bounds_reject_unrepresentable_counts_without_clamping() {
-    assert_eq!(BankFetchCursor::heap_bound(0, 0), Some(0));
+    assert_eq!(BankFetchCursor::heap_bound(0, 0, 0), Some(0));
     assert_eq!(BankFetchPlan::heap_bound(0), Some(0));
     assert_eq!(PlanningRowsCursor::heap_bound(0, 0), Some(0));
     assert_eq!(PlanningRowsCursor::rows_heap_bound(0, 0), Some(0));
-    assert_eq!(BankFetchCursor::heap_bound(usize::MAX, 1), None);
-    assert_eq!(BankFetchCursor::heap_bound(1, usize::MAX), None);
+    assert_eq!(BankFetchCursor::heap_bound(usize::MAX, 1, 1), None);
+    assert_eq!(BankFetchCursor::heap_bound(1, usize::MAX, 1), None);
+    assert_eq!(BankFetchCursor::heap_bound(1, 1, usize::MAX), None);
     assert_eq!(BankFetchPlan::heap_bound(usize::MAX), None);
     assert_eq!(PlanningRowsCursor::heap_bound(usize::MAX, 1), None);
     assert_eq!(PlanningRowsCursor::heap_bound(1, usize::MAX), None);
@@ -443,10 +446,10 @@ fn admission_bounds_reject_unrepresentable_counts_without_clamping() {
 }
 
 #[test]
-fn rejected_accesses_keep_tied_planes_and_reuse_selection_buffers() {
+fn access_goals_keep_air_order_and_tied_planes_then_transfer_without_copying() {
     let state = WorldState::default();
-    let mut missing = vec![MissingReq::Carry { id: 10, count: 1 }];
-    let mut bank = vec![(10, 1)];
+    let missing = [MissingReq::Carry { id: 10, count: 1 }];
+    let bank = [(10, 1)];
     let collision = collision();
     let stands: Vec<_> = [1, 2]
         .into_iter()
@@ -456,37 +459,47 @@ fn rejected_accesses_keep_tied_planes_and_reuse_selection_buffers() {
             access: BankAccess::Booth { op: 2 },
         })
         .collect();
-    let mut cursor = BankFetchCursor::with_limits(bank.len(), 1).unwrap();
-    let mut retained = None;
-    for (x, z) in [(3, 4), (4, 3), (4, 5), (5, 4)] {
-        for level in [1, 2] {
-            for _ in 0..1_000 {
-                if cursor.advance(&missing, &state, &bank, &stands, tile(0, 0), &collision) {
-                    break;
-                }
-            }
-            assert_eq!(cursor.planned_access(), Some(WorldTile { x, z, level }));
-            // The selected item targets survive without the original inputs.
-            missing.clear();
-            missing.shrink_to_fit();
-            bank.clear();
-            bank.shrink_to_fit();
-            let bytes = cursor.retained_bytes();
-            assert_eq!(*retained.get_or_insert(bytes), bytes);
-            assert!(cursor.reject_access());
-            assert_eq!(
-                cursor.retained_bytes(),
-                bytes,
-                "selection buffers stay owned"
-            );
-        }
-    }
+    let mut cursor = BankFetchCursor::with_limits(bank.len(), 1, stands.len()).unwrap();
+    let bound = BankFetchCursor::heap_bound(bank.len(), 1, stands.len()).unwrap();
     for _ in 0..1_000 {
         if cursor.advance(&missing, &state, &bank, &stands, tile(0, 0), &collision) {
             break;
         }
+        assert!(cursor.peak_retained_bytes() <= bound);
     }
-    assert!(cursor.planned_access().is_none());
-    assert!(cursor.take_plan().is_none());
-    assert!(!cursor.reject_access(), "all candidates were exhausted");
+    let expected: Vec<_> = [(3, 4), (4, 3), (4, 5), (5, 4)]
+        .into_iter()
+        .flat_map(|(x, z)| [1, 2].map(|level| WorldTile { x, z, level }))
+        .collect();
+    assert_eq!(cursor.access_targets(), expected);
+    assert_eq!(cursor.planned_access(), expected.first().copied());
+    assert!(cursor.accesses.is_empty(), "ranking scratch is released");
+    let before = cursor.retained_bytes();
+    let targets = cursor.take_access_targets();
+    assert!(cursor.access_targets().is_empty());
+    assert!(cursor.retained_bytes() < before);
+    let chosen = targets[7];
+    assert!(cursor.select_access(chosen));
+    let plan = cursor.take_plan().unwrap();
+    assert_eq!(
+        plan.steps()[0],
+        BankStep::Walk {
+            x: chosen.x,
+            z: chosen.z,
+            level: chosen.level,
+        }
+    );
+    assert_eq!(cursor.retained_bytes(), 0);
+}
+
+#[test]
+fn access_goal_growth_respects_the_captured_stand_limit() {
+    let mut cursor = BankFetchCursor::with_limits(1, 1, 0).unwrap();
+    assert!(finish(
+        &mut cursor,
+        &[MissingReq::Carry { id: 10, count: 1 }],
+        &WorldState::default(),
+        &[(10, 1)],
+    )
+    .is_none());
 }

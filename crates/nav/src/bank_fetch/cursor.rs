@@ -22,6 +22,8 @@ enum Phase {
     CarryTargets,
     WearTargets,
     Access,
+    AccessOrder,
+    AccessTargets,
     WithdrawSteps,
     Close,
     WearSteps,
@@ -93,8 +95,10 @@ pub struct BankFetchCursor {
     carried_choice: Option<i32>,
     available_choice: Option<i32>,
     withdrawals: Vec<(i32, i32)>,
-    nearest: Option<(AccessKey, WorldTile)>,
-    rejected_access: Option<AccessKey>,
+    nearest: Option<WorldTile>,
+    accesses: Vec<(AccessKey, WorldTile)>,
+    targets: Vec<WorldTile>,
+    access_rows_limit: Option<usize>,
     steps: Vec<BankStep>,
     shift: Option<(Index, usize, usize, Phase)>,
     peak_bytes: usize,
@@ -110,12 +114,13 @@ impl BankFetchCursor {
 
     /// Create a cursor whose owned row buffers fit the captured input and
     /// plan-item limits. Construction performs no allocation.
-    pub fn with_limits(bank_rows: usize, item_rows: usize) -> Option<Self> {
+    pub fn with_limits(bank_rows: usize, item_rows: usize, stand_rows: usize) -> Option<Self> {
         let step_rows = item_rows.checked_mul(3)?.checked_add(3)?;
         Some(Self {
             bank_rows_limit: Some(bank_rows),
             item_rows_limit: Some(item_rows),
             step_rows_limit: Some(step_rows),
+            access_rows_limit: Some(stand_rows.checked_mul(4)?),
             ..Self::default()
         })
     }
@@ -126,7 +131,7 @@ impl BankFetchCursor {
     /// adds at most one carry/index row, selected/wear row and withdrawal.
     /// A withdrawal emits at most two steps, a wear emits one, and access/close
     /// add at most three. The input, inline cursor and post-state are separate.
-    pub fn heap_bound(bank_rows: usize, missing_reqs: usize) -> Option<usize> {
+    pub fn heap_bound(bank_rows: usize, missing_reqs: usize, stand_rows: usize) -> Option<usize> {
         if missing_reqs == 0 {
             return Some(0);
         }
@@ -137,6 +142,8 @@ impl BankFetchCursor {
             growing_vec_bytes::<i32>(missing_reqs)?,
             growing_vec_bytes::<i32>(missing_reqs)?,
             growing_vec_bytes::<(i32, i32)>(missing_reqs)?,
+            growing_vec_bytes::<(AccessKey, WorldTile)>(stand_rows.checked_mul(4)?)?,
+            growing_vec_bytes::<WorldTile>(stand_rows.checked_mul(4)?)?,
             BankFetchPlan::steps_heap_bound(missing_reqs)?,
         ];
         let mut retained = 0usize;
@@ -164,9 +171,8 @@ impl BankFetchCursor {
 
     /// Advance one bounded unit. `true` means success or domain failure is
     /// settled; [`Self::take_plan`] then distinguishes them.
-    /// After a plan is ready, access retries no longer read `missing` or `bank`.
-    /// Callers may release those inputs and pass empty slices after
-    /// [`Self::reject_access`]. Keep the world, stands and origin unchanged.
+    /// Candidate collection and ordering use the same bounded units as item
+    /// selection. A completed cursor transfers its targets to one strict search.
     pub fn advance<M: MissingRequirementsView + ?Sized>(
         &mut self,
         missing: &M,
@@ -281,6 +287,36 @@ impl BankFetchCursor {
                 }
             }
             Phase::Access => self.check_access(collision, stands, from),
+            Phase::AccessOrder => self.order_access(),
+            Phase::AccessTargets => {
+                if let Some(&(_, tile)) = self.accesses.get(self.index) {
+                    if reserve_growth(&mut self.targets, 1, self.access_rows_limit) {
+                        self.targets.push(tile);
+                        self.index += 1;
+                    } else {
+                        self.phase = Phase::Failed;
+                    }
+                } else {
+                    self.accesses = Vec::new();
+                    self.nearest = self.targets.first().copied();
+                    if let Some(access) = self.nearest {
+                        if reserve_growth(&mut self.steps, 2, self.step_rows_limit) {
+                            self.steps.push(BankStep::Walk {
+                                x: access.x,
+                                z: access.z,
+                                level: access.level,
+                            });
+                            self.steps.push(BankStep::Open);
+                            self.index = 0;
+                            self.phase = Phase::WithdrawSteps;
+                        } else {
+                            self.phase = Phase::Failed;
+                        }
+                    } else {
+                        self.phase = Phase::Failed;
+                    }
+                }
+            }
             Phase::WithdrawSteps => {
                 if let Some(&(id, count)) = self.withdrawals.get(self.index) {
                     let simple = matches!(count, 1 | 5 | 10) || count == self.bank_count(id);
@@ -337,22 +373,34 @@ impl BankFetchCursor {
         if !matches!(self.phase, Phase::Done) {
             return None;
         }
-        self.nearest.map(|(_, tile)| tile)
+        self.nearest
     }
 
-    /// Continue the existing air-distance order after an unreachable access.
-    /// Keep the item selection and its buffers for the next candidate.
-    pub fn reject_access(&mut self) -> bool {
+    /// All strict search goals, in the existing air-distance order.
+    pub fn access_targets(&self) -> &[WorldTile] {
+        &self.targets
+    }
+
+    /// Move the goals into the search without copying their allocation.
+    pub fn take_access_targets(&mut self) -> Box<[WorldTile]> {
+        std::mem::take(&mut self.targets).into_boxed_slice()
+    }
+
+    /// Record the reached goal before transferring the completed plan.
+    /// The caller must pass a destination from the transferred goal set.
+    pub fn select_access(&mut self, access: WorldTile) -> bool {
         if !matches!(self.phase, Phase::Done) {
             return false;
         }
-        let Some((key, _)) = self.nearest.take() else {
+        let Some(step @ BankStep::Walk { .. }) = self.steps.first_mut() else {
             return false;
         };
-        self.rejected_access = Some(key);
-        self.steps.clear();
-        self.index = 0;
-        self.phase = Phase::Access;
+        *step = BankStep::Walk {
+            x: access.x,
+            z: access.z,
+            level: access.level,
+        };
+        self.nearest = Some(access);
         true
     }
 
@@ -366,6 +414,7 @@ impl BankFetchCursor {
         self.carry_index = Vec::new();
         self.carry = Vec::new();
         self.selected = Vec::new();
+        self.targets = Vec::new();
         Some(BankFetchPlan {
             steps: std::mem::take(&mut self.steps),
             withdrawals: std::mem::take(&mut self.withdrawals),
@@ -375,7 +424,7 @@ impl BankFetchCursor {
         })
     }
 
-    fn allocation_bytes(&self) -> [usize; 7] {
+    fn allocation_bytes(&self) -> [usize; 9] {
         [
             vec_bytes(&self.bank_counts),
             vec_bytes(&self.carry_index),
@@ -384,10 +433,12 @@ impl BankFetchCursor {
             vec_bytes(&self.selected),
             vec_bytes(&self.withdrawals),
             vec_bytes(&self.steps),
+            vec_bytes(&self.accesses),
+            vec_bytes(&self.targets),
         ]
     }
 
-    fn record_peak(&mut self, before: [usize; 7]) {
+    fn record_peak(&mut self, before: [usize; 9]) {
         let mut retained = 0usize;
         let mut overlap = 0usize;
         for (after, old) in self.allocation_bytes().into_iter().zip(before) {
@@ -532,8 +583,6 @@ impl BankFetchCursor {
 
     fn check_access(&mut self, collision: &WorldCollision, stands: &[BankStand], from: WorldTile) {
         if let Some(stand) = stands.get(self.index) {
-            // Preserve the first equal minimum. The stand index keeps a tied
-            // access on another plane eligible after the first query fails.
             for tile in bank_access_tiles(collision, stand) {
                 let key = (
                     i32::from(stand.tile.level != from.level),
@@ -545,29 +594,32 @@ impl BankFetchCursor {
                     tile.z,
                     self.index,
                 );
-                if self.rejected_access.is_some_and(|rejected| key <= rejected) {
-                    continue;
+                if !reserve_growth(&mut self.accesses, 1, self.access_rows_limit) {
+                    self.phase = Phase::Failed;
+                    return;
                 }
-                if self.nearest.as_ref().is_none_or(|(old, _)| key < *old) {
-                    self.nearest = Some((key, tile));
-                }
+                self.accesses.push((key, tile));
             }
             self.index += 1;
-        } else if let Some((_, access)) = self.nearest {
-            if reserve_growth(&mut self.steps, 2, self.step_rows_limit) {
-                self.steps.push(BankStep::Walk {
-                    x: access.x,
-                    z: access.z,
-                    level: access.level,
-                });
-                self.steps.push(BankStep::Open);
-                self.index = 0;
-                self.phase = Phase::WithdrawSteps;
-            } else {
-                self.phase = Phase::Failed;
-            }
         } else {
-            self.phase = Phase::Failed;
+            self.index = 1;
+            self.alternative = 1;
+            self.phase = Phase::AccessOrder;
+        }
+    }
+
+    fn order_access(&mut self) {
+        if self.index >= self.accesses.len() {
+            self.index = 0;
+            self.phase = Phase::AccessTargets;
+        } else if self.alternative > 0
+            && self.accesses[self.alternative].0 < self.accesses[self.alternative - 1].0
+        {
+            self.accesses.swap(self.alternative, self.alternative - 1);
+            self.alternative -= 1;
+        } else {
+            self.index += 1;
+            self.alternative = self.index;
         }
     }
 }

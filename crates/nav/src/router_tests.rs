@@ -5980,6 +5980,144 @@ fn zoned_first_keeps_preferred_priority_and_does_not_use_fallback_zones_for_tran
 }
 
 #[test]
+fn ordered_first_compares_destination_zones_with_safe_arrivals_and_keeps_ties() {
+    let collision = bake(5, 5, &[]);
+    let mut graph = TransportGraph::default();
+    install_zones(&collision, &mut graph, vec![rect_zone(1, 2, 0, 0)]);
+    let from = tile(0, 0, 0);
+    let zoned = tile(2, 0, 0);
+    let tied_safe = tile(0, 2, 0);
+    let farther_safe = tile(0, 4, 0);
+    let state = WorldState::empty();
+    let options = FindOptions {
+        prefer_target_order: true,
+        ..FindOptions::default()
+    };
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        collision,
+        graph,
+        Vec::new(),
+    ));
+    let lease = crate::producer::lease(&world).expect("ordered zone fixture lease");
+    for (targets, expected) in [
+        ([farther_safe, zoned], zoned),
+        ([zoned, tied_safe], zoned),
+        ([tied_safe, zoned], tied_safe),
+    ] {
+        let single = find_with(
+            &world.collision,
+            &world.graph,
+            from,
+            expected,
+            options,
+            &state,
+        )
+        .expect("the destination keeps its own-zone permission");
+        let synchronous = find_first_with(
+            &world.collision,
+            &world.graph,
+            from,
+            &targets,
+            options,
+            &state,
+        )
+        .into_route()
+        .expect("the ordered goal set has a route");
+        assert_eq!(
+            (synchronous.dest, synchronous.ticks),
+            (expected, single.ticks)
+        );
+        let completion = advance_real_route_completion(
+            super::SearchRequest::First {
+                from,
+                targets: Box::new(targets),
+                fallback: Box::new([]),
+                options,
+                avoid: Box::new([]),
+                max_settles: super::NODE_BUDGET,
+            },
+            &lease,
+            &state,
+        );
+        let super::SearchOutcome::First { search } = completion.into_parts().0 else {
+            panic!("ordered first-goal cursor returned the wrong result shape");
+        };
+        let (route, fallback) = search.into_routes();
+        let route = route.expect("the cooperative ordered goal set has a route");
+        assert_eq!(
+            (route.destination(), route.ticks()),
+            (expected, single.ticks)
+        );
+        assert!(fallback.is_none());
+    }
+}
+
+#[test]
+fn ordered_first_keeps_unrelated_zone_transit_grants_as_fallback_permissions() {
+    let collision = bake(5, 7, &[]);
+    let mut graph = TransportGraph::default();
+    install_zones(&collision, &mut graph, vec![rect_zone(1, 3, 0, 6)]);
+    let from = tile(0, 0, 0);
+    let safe = tile(0, 6, 0);
+    let past_zone = tile(4, 0, 0);
+    let state = WorldState::empty();
+    let options = FindOptions {
+        prefer_target_order: true,
+        zones: ZoneExempt::all(),
+        ..FindOptions::default()
+    };
+    let granted = find_with(&collision, &graph, from, past_zone, options, &state).unwrap();
+    let route = find_first_with(
+        &collision,
+        &graph,
+        from,
+        &[past_zone, safe],
+        options,
+        &state,
+    )
+    .into_route()
+    .unwrap();
+    assert_eq!((route.dest, route.ticks), (safe, 3.0));
+    assert!(granted.ticks < route.ticks);
+}
+
+#[test]
+fn ordered_bank_failure_keeps_the_first_access_zone_witness() {
+    let collision = bake(9, 1, &[]);
+    let mut graph = TransportGraph::default();
+    install_zones(&collision, &mut graph, vec![rect_zone(2, 3, 0, 0)]);
+    let stands = [BankStand {
+        name: "Fixture bank".into(),
+        tile: tile(6, 0, 0),
+        access: BankAccess::Booth { op: 2 },
+    }];
+    let from = tile(0, 0, 0);
+    let state = WorldState::empty();
+    let first = crate::bank_fetch::nearest_bank_access(&collision, &stands, from).unwrap();
+    assert_eq!(first, tile(5, 0, 0));
+    let error = crate::bank_fetch::plan_bank_fetch(
+        &[MissingReq::Carry { id: 995, count: 1 }],
+        &state,
+        &[(995, 1)],
+        &stands,
+        from,
+        &collision,
+        &graph,
+        FindOptions::default(),
+        &[],
+    )
+    .expect_err("every access needs unrelated danger-zone transit");
+    assert_eq!(
+        error,
+        crate::bank_fetch::BankFetchError::Access {
+            access: first,
+            error: RouteError::NoPath,
+            blocked_zones: vec![ZoneKey::Zone(0)],
+        }
+    );
+}
+
+#[test]
 fn expired_many_deadline_cannot_publish_a_completion_route() {
     let collision = bake(5, 1, &[]);
     let mut graph = TransportGraph::default();
