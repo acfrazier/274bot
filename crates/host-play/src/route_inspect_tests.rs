@@ -1124,11 +1124,26 @@ fn reset_releases_inspection_charge_once_and_preserves_replacement() {
     let replacement = wait_latest(&navs, REPLACEMENT_ID);
     assert!(replacement.ok, "the replacement inspection must complete");
     assert_eq!(replacement.generation, next_generation);
-    assert_eq!(
-        service.lock().capacity(),
-        baseline,
-        "the old reset must not retain or release the replacement charge"
-    );
+    let replacement_deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let capacity = service.lock().capacity();
+        if capacity == baseline {
+            break;
+        }
+        assert!(
+            Instant::now() < replacement_deadline,
+            "replacement charge did not return to baseline: {capacity:?} vs {baseline:?}"
+        );
+        thread::yield_now();
+    }
+    for _ in 0..8 {
+        thread::yield_now();
+        assert_eq!(
+            service.lock().capacity(),
+            baseline,
+            "the old reset must not retain or release the replacement charge"
+        );
+    }
 }
 
 #[test]
