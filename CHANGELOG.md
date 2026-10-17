@@ -158,21 +158,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Gatherer and banking
 
-- Bank selection now runs on its own short-lived thread. Its whole-job charge
-  remains capped at 192 MiB, including captured inputs, cursor and result.
-  Admitted searches run independently, without a process-wide navigation byte cap.
-  After five seconds, a walking selection switches to a fallback route search.
-  If it still waits for admission, it starts that search only after admission,
-  so the result can take longer than five seconds. Other selections keep the
-  first bank without a route, even when admission remains full. Full job admission
-  or owner-result pressure keeps valid demand for retry. A permanent admission
-  refusal or oversized request publishes a failed selection instead of
-  waiting without a result.
-  Walking selections keep the shared compact route for following and map
-  paint instead of rebuilding legacy route vectors.
-  Search checkpoints cover bounded expansions and queue operations, not each
-  neighbor or heap comparison. Variable-length chains still check live time
-  and cancellation.
+- Bank selection now runs independently of other searches, with a 192 MiB
+  memory limit for each selection. Busy search capacity or result storage
+  delays a selection instead of losing it.
+  After five seconds, a selection that will walk to the bank switches to a
+  fallback route search. If search capacity is still full, it waits for
+  capacity before that search starts. Its result can therefore take longer
+  than five seconds.
+  A selection that does not walk keeps the first bank without a route after
+  five seconds, even when search capacity is full.
+  An oversized request or a failure to start its search reports a failed
+  selection instead of waiting forever. Following a selected bank route and
+  displaying it on the map share one route, which avoids extra route copies.
 
 - A Gatherer that stalls on its return from the bank now replans once from
   its current position before stopping. It still requires arrival at the
