@@ -7,7 +7,7 @@ use api::bank_memory::Origin;
 use api::obj_names::ObjNames;
 use api::snapshot::WorldTile;
 use client::config::Cache;
-use nav::bank_fetch::{plan_bank_fetch, planning_rows, BankRows, BankStep};
+use nav::bank_fetch::{plan_bank_fetch, planning_rows, BankFetchError, BankRows, BankStep};
 use nav::router::{
     find_missing_item_reqs_with_avoid, find_missing_item_reqs_with_avoid_bounded, find_with_avoid,
     find_with_avoid_bounded, AvoidRect, FindOptions, Leg, Route, RouteError,
@@ -611,15 +611,37 @@ fn calculate_bank(
         let reason = no_path_reason(capture, capture.from, capture.to, capture.opts, pre, avoid);
         return InspectTerminal::refusal(capture.request_id, capture.generation, &reason);
     };
-    let Some(plan) = plan_bank_fetch(
+    let plan = match plan_bank_fetch(
         &missing,
         pre,
         &planning_rows(capture.bank_origin, &capture.bank, &missing),
         capture.world.banks(),
         capture.from,
         &capture.world.collision,
-    ) else {
-        return InspectTerminal::refusal(capture.request_id, capture.generation, "NoPath");
+        &capture.world.graph,
+        capture.opts,
+        avoid,
+    ) {
+        Ok(plan) => plan,
+        Err(failure) => {
+            let reason = match failure {
+                BankFetchError::Access {
+                    error: RouteError::BudgetExhausted,
+                    ..
+                } => "BudgetExhausted".into(),
+                BankFetchError::Access { blocked_zones, .. } if !blocked_zones.is_empty() => {
+                    capture
+                        .world
+                        .graph
+                        .zones
+                        .as_ref()
+                        .map(|table| crate::blocked_zone_detail(table, &blocked_zones))
+                        .unwrap_or_else(|| "NoPath".into())
+                }
+                _ => "NoPath".into(),
+            };
+            return InspectTerminal::refusal(capture.request_id, capture.generation, &reason);
+        }
     };
     let bank_planned = true;
     if let Some(stand) = plan.steps.iter().find_map(|step| match step {

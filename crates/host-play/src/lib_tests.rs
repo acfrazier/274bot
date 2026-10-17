@@ -14660,6 +14660,9 @@ fn bank_fetch_session_retains_pack_withdraws_wears_then_finds() {
         world.banks(),
         from,
         &world.collision,
+        &world.graph,
+        FindOptions::default(),
+        &[],
     )
     .expect("the banked knife plans a trip");
     let access = nav::bank_fetch::nearest_bank_access(&world.collision, world.banks(), from)
@@ -14969,6 +14972,9 @@ fn compat_walk_fetch_on_with_full_pack_preserves_non_route_items() {
             level: 0,
         },
         &world.collision,
+        &world.graph,
+        FindOptions::default(),
+        &[],
     )
     .unwrap()
     .state;
@@ -15012,6 +15018,9 @@ fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending()
         world.banks(),
         origin,
         &world.collision,
+        &world.graph,
+        FindOptions::default(),
+        &[],
     )
     .unwrap();
     assert!(plan.steps.contains(&BankStep::WithdrawX { id: 2 }));
@@ -15699,6 +15708,9 @@ fn bank_fetch_walk_targets_access_tile_not_blocked_booth() {
         world.banks(),
         from,
         &world.collision,
+        &world.graph,
+        FindOptions::default(),
+        &[],
     )
     .expect("plans a trip");
     assert_eq!(
@@ -16396,6 +16408,9 @@ fn unbound_inv_tab_bank_rows_are_not_carried_for_planning() {
         world.banks(),
         from,
         &world.collision,
+        &world.graph,
+        FindOptions::default(),
+        &[],
     )
     .expect("the banked knife plans a trip");
     let access = nav::bank_fetch::nearest_bank_access(&world.collision, world.banks(), from)

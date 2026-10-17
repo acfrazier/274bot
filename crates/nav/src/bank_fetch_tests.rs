@@ -115,7 +115,18 @@ fn plan_bank_fetch(
     stands: &[BankStand],
     from: WorldTile,
 ) -> Option<super::BankFetch> {
-    plan_with(missing, state, bank, stands, from, &open_grid())
+    plan_with(
+        missing,
+        state,
+        bank,
+        stands,
+        from,
+        &open_grid(),
+        &TransportGraph::default(),
+        FindOptions::default(),
+        &[],
+    )
+    .ok()
 }
 
 fn access_walk(stands: &[BankStand], from: WorldTile) -> BankStep {
@@ -876,8 +887,11 @@ fn packed_bank_fetch_walks_to_access_from_customer_streets() {
             world.banks(),
             from,
             &world.collision,
+            &world.graph,
+            opts,
+            &[],
         )
-        .unwrap_or_else(|| panic!("{name}: plan from {from:?}"));
+        .unwrap_or_else(|error| panic!("{name}: plan from {from:?}: {error}"));
         let BankStep::Walk { x, z, level } = fetch.steps[0] else {
             panic!("{name}: expected a Walk");
         };
@@ -1077,4 +1091,104 @@ fn assert_no_deposit(steps: &[BankStep]) {
             | BankStep::Close => {}
         }
     }
+}
+
+#[test]
+fn unreachable_bank_retains_the_first_strict_query_failure() {
+    let collision = walled_5x5();
+    let stands = [stand(4, 2)];
+    let from = tile(0, 2, 0);
+    let first = nearest_bank_access(&collision, &stands, from).expect("local access exists");
+    let failure = plan_with(
+        &[MissingReq::Carry {
+            id: KNIFE,
+            count: 1,
+        }],
+        &WorldState::empty(),
+        &[(KNIFE, 1)],
+        &stands,
+        from,
+        &collision,
+        &TransportGraph::default(),
+        FindOptions::default(),
+        &[],
+    )
+    .expect_err("no access crosses the closed wall");
+    assert_eq!(
+        failure,
+        super::BankFetchError::Access {
+            access: first,
+            error: RouteError::NoPath,
+            blocked_zones: Vec::new(),
+        }
+    );
+}
+
+#[test]
+fn unsupported_bank_supply_is_not_a_route_query_failure() {
+    let failure = plan_with(
+        &[MissingReq::Carry {
+            id: KNIFE,
+            count: 1,
+        }],
+        &WorldState::empty(),
+        &[],
+        &[stand(4, 2)],
+        tile(0, 2, 0),
+        &open_grid(),
+        &TransportGraph::default(),
+        FindOptions::default(),
+        &[],
+    )
+    .expect_err("no carried or banked supply exists");
+    assert_eq!(failure, super::BankFetchError::Unavailable);
+}
+
+#[test]
+fn sewer_bank_fetch_rejects_the_unreachable_nearest_access() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let from = tile(3202, 9909, 0);
+    let state = WorldState {
+        stats: (0..25).map(|skill| (skill, 99)).collect(),
+        combat_level: Some(126),
+        map_members: true,
+        ..WorldState::empty()
+    };
+    let fetch = plan_with(
+        &[MissingReq::Carry {
+            id: KNIFE,
+            count: 1,
+        }],
+        &state,
+        &[(KNIFE, 1)],
+        world.banks(),
+        from,
+        &world.collision,
+        &world.graph,
+        FindOptions {
+            allow_wilderness: true,
+            ..FindOptions::default()
+        },
+        &[],
+    )
+    .expect("the north sewer reaches a bank before crossing the knife-gated web");
+    let BankStep::Walk { x, z, level } = fetch.steps[0] else {
+        panic!("the banked knife requires a bank access route");
+    };
+    let access = tile(x, z, level);
+    assert_eq!(access, tile(2721, 3493, 0));
+    find_with(
+        &world.collision,
+        &world.graph,
+        from,
+        access,
+        FindOptions {
+            allow_wilderness: true,
+            ..FindOptions::default()
+        },
+        &state,
+    )
+    .expect("the selected bank must be reachable with the pre-withdrawal state");
 }

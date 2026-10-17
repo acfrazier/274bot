@@ -13,8 +13,8 @@
 //! behind for the post-session re-find. A `worn_req` alternative already
 //! carried plans a bare [`BankStep::Wear`] — no bank walk. Anything the plan
 //! cannot supply (neither carried nor bankable, or the relaxed diagnosis
-//! shows a skill/quest/varp/worn-all gate) is `None`: the caller reports
-//! `NoPath`.
+//! shows a skill/quest/varp/worn-all gate) is [`BankFetchError::Unavailable`].
+//! An unreachable bank retains its strict query failure and zone witness.
 
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -26,8 +26,83 @@ use client::dash3d::CollisionFlag;
 use crate::collision::WorldCollision;
 use crate::named_banks::{is_access_tile, AccessReach, Footprint};
 use crate::pack::BankStand;
-use crate::router::MissingReq;
+use crate::router::{
+    find_blocking_zones, find_with_avoid, AvoidRect, FindOptions, MissingReq, MissingReqView,
+    MissingRequirements, RouteError,
+};
+use crate::transport::TransportGraph;
 use crate::world_state::WorldState;
+use crate::zones::ZoneKey;
+/// Borrowed view of route requirements used by the fetch planners.
+///
+/// The legacy router result owns worn alternatives. A compact diagnosis borrows
+/// them from its retained graph lease. This view keeps one planning kernel for both.
+pub trait MissingRequirementsView {
+    /// Number of requirements in legacy diagnostic order.
+    fn len(&self) -> usize;
+
+    /// Borrow one requirement without copying a worn-alternative array.
+    fn requirement_at(&self, index: usize) -> Option<MissingReqView<'_>>;
+
+    /// Whether this view contains no requirements.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl MissingRequirementsView for [MissingReq] {
+    fn len(&self) -> usize {
+        <[MissingReq]>::len(self)
+    }
+
+    fn requirement_at(&self, index: usize) -> Option<MissingReqView<'_>> {
+        match self.get(index)? {
+            MissingReq::Carry { id, count } => Some(MissingReqView::Carry {
+                id: *id,
+                count: *count,
+            }),
+            MissingReq::WearAny { ids } => Some(MissingReqView::WearAny { ids }),
+        }
+    }
+}
+
+impl MissingRequirementsView for Vec<MissingReq> {
+    fn len(&self) -> usize {
+        self.as_slice().len()
+    }
+
+    fn requirement_at(&self, index: usize) -> Option<MissingReqView<'_>> {
+        self.as_slice().requirement_at(index)
+    }
+}
+
+impl<const N: usize> MissingRequirementsView for [MissingReq; N] {
+    fn len(&self) -> usize {
+        N
+    }
+
+    fn requirement_at(&self, index: usize) -> Option<MissingReqView<'_>> {
+        self.as_slice().requirement_at(index)
+    }
+}
+
+impl MissingRequirementsView for MissingRequirements {
+    fn len(&self) -> usize {
+        MissingRequirements::len(self)
+    }
+
+    fn requirement_at(&self, index: usize) -> Option<MissingReqView<'_>> {
+        MissingRequirements::requirement_at(self, index)
+    }
+}
+
+mod cursor;
+mod overlay;
+mod planning;
+
+pub use cursor::{BankFetchCursor, BankFetchPlan};
+pub use overlay::{FetchableCursorError, FetchableEdgeCursor, FetchableStateCursor};
+pub use planning::PlanningRowsCursor;
 
 /// Packed stands within this Chebyshev of each other belong to one bank
 /// building: the Walk arrives at any of their access tiles and Open may use
@@ -69,39 +144,17 @@ impl BankRows {
 /// The open bank then settles the trip (a withdraw it cannot serve aborts
 /// the session). Only the given diagnosis is overlaid; the rows stay sorted
 /// by id. One small owned `Vec` per plan, never per tick.
-pub fn planning_rows<'a>(
+pub fn planning_rows<'a, M: MissingRequirementsView + ?Sized>(
     origin: Origin,
     rows: &'a [(i32, i32)],
-    missing: &[MissingReq],
+    missing: &M,
 ) -> Cow<'a, [(i32, i32)]> {
     if origin != Origin::Hint {
         return Cow::Borrowed(rows);
     }
-    let hinted = |id: i32| rows.iter().any(|&(row, count)| row == id && count > 0);
-    let mut planned = rows.to_vec();
-    let mut raise =
-        |id: i32, count: i32, add: bool| match planned.binary_search_by_key(&id, |&(row, _)| row) {
-            Ok(at) if add => planned[at].1 = planned[at].1.saturating_add(count),
-            Ok(at) => planned[at].1 = planned[at].1.max(count),
-            Err(at) => planned.insert(at, (id, count)),
-        };
-    for req in missing {
-        if let MissingReq::Carry { id, count } = *req {
-            if count > 0 {
-                raise(id, count, false);
-            }
-        }
-    }
-    for req in missing {
-        if let MissingReq::WearAny { ids } = req {
-            if let Some(&first) = ids.first() {
-                if !ids.iter().any(|&id| hinted(id)) {
-                    raise(first, 1, true);
-                }
-            }
-        }
-    }
-    Cow::Owned(planned)
+    let mut cursor = PlanningRowsCursor::new();
+    while !cursor.advance(rows, missing) {}
+    Cow::Owned(cursor.take_rows().expect("the overlay cursor completed"))
 }
 
 /// The standable tiles `stand` is used from, by the access rule the C1
@@ -214,6 +267,25 @@ pub struct BankFetch {
     pub state: WorldState,
 }
 
+/// Why a synchronous BankBudget plan could not be built.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+pub enum BankFetchError {
+    /// The requirements cannot be supplied, or no usable bank access exists.
+    #[error("bank requirements or access unavailable")]
+    Unavailable,
+    /// No candidate access was reached. Retain the first rejected query in
+    /// the existing air-distance order, including its active-zone witness.
+    #[error("bank access {access:?} failed: {error:?}; blocked zones: {blocked_zones:?}")]
+    Access {
+        /// The first rejected access tile.
+        access: WorldTile,
+        /// The strict query's failure, without converting budget exhaustion.
+        error: RouteError,
+        /// Active zone identities witnessed on the unrestricted access route.
+        blocked_zones: Vec<ZoneKey>,
+    },
+}
+
 /// Plan a BankBudget session for a strict [`find_with`] `NoPath` whose
 /// diagnosis is `missing` ([`crate::router::find_missing_item_reqs`], or
 /// [`crate::router::missing_item_reqs`] of a route found under
@@ -225,11 +297,11 @@ pub struct BankFetch {
 /// `state` is the search's gating facts; `bank` is the rows the session is
 /// planned over — [`planning_rows`] of the account's bank memory
 /// (the live table while the bank is open); an item the rows do not cover
-/// cannot be proved and this returns `None`;
+/// cannot be proved and this returns [`BankFetchError::Unavailable`];
 /// `stands` is the packed bank stand table
 /// ([`crate::world::NavWorld::banks`]), booths and NPC tellers; `from`
-/// is the player's tile, which picks the nearest stand that has a
-/// standable access neighbour ([`nearest_bank_access`]).
+/// is the player's tile. The existing air-distance order picks the first access
+/// tile that the strict query reaches with `state`, `options`, and `avoid`.
 ///
 /// A `worn_req` alternative already carried plans only [`BankStep::Wear`]
 /// — no bank walk. Otherwise the plan walks to that access tile, opens the
@@ -238,161 +310,69 @@ pub struct BankFetch {
 /// the bank as it equips. If no Wear is needed, the plan closes after
 /// withdrawals. `worn_all_req` is never synthesized or worn by this session.
 /// Existing carried inventory is never deposited or cleared. Every required
-/// amount must be covered by bank + carried stacks combined. `None` when the
-/// plan cannot be built — the caller reports [`crate::router::RouteError::NoPath`].
-pub fn plan_bank_fetch(
-    missing: &[MissingReq],
+/// amount must be covered by bank + carried stacks combined. If every access
+/// query fails, return the first failure and its active-zone witness. Diagnose
+/// that witness only after all candidates fail, not on a successful plan.
+///
+/// Cooperative jobs use [`BankFetchCursor`] and move their owned pre-state
+/// through [`BankFetchPlan::apply_next`]. This synchronous adapter alone copies
+/// the borrowed pre-state after driving that same planning core.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The bank inputs and the caller's strict route query share one planning adapter."
+)]
+pub fn plan_bank_fetch<M: MissingRequirementsView + ?Sized>(
+    missing: &M,
     state: &WorldState,
     bank: &[(i32, i32)],
     stands: &[BankStand],
     from: WorldTile,
     collision: &WorldCollision,
-) -> Option<BankFetch> {
-    if missing.is_empty() {
-        return None;
-    }
-
-    let bank_count = |id: i32| {
-        bank.iter()
-            .find(|&&(i, _)| i == id)
-            .map_or(0, |&(_, count)| count.max(0))
+    graph: &TransportGraph,
+    options: FindOptions,
+    avoid: &[AvoidRect],
+) -> Result<BankFetch, BankFetchError> {
+    let mut cursor = BankFetchCursor::new();
+    let mut first_failure = None;
+    let strict = FindOptions {
+        allow_bank_fetch: false,
+        ..options
     };
-    let held_count = |id: i32| state.inv.get(&id).copied().unwrap_or(0).max(0);
-
-    // Carry rows describe total initial inventory needed along the route.
-    // Use one target per obj id so duplicate diagnoses do not plan duplicate
-    // withdrawals.
-    let mut carry = Vec::<(i32, i32)>::new();
-    for req in missing {
-        let MissingReq::Carry { id, count } = req else {
-            continue;
+    loop {
+        while !cursor.advance(missing, state, bank, stands, from, collision) {}
+        let Some(access) = cursor.planned_access() else {
+            break;
         };
-        if *count <= 0 {
-            continue;
-        }
-        if let Some((_, target)) = carry.iter_mut().find(|(held, _)| held == id) {
-            *target = (*target).max(*count);
-        } else {
-            carry.push((*id, *count));
-        }
-    }
-    let carry_count = |id: i32| {
-        carry
-            .iter()
-            .find(|&&(held, _)| held == id)
-            .map_or(0, |&(_, count)| count)
-    };
-
-    // Select one available alternative for each missing worn gate. Prefer a
-    // carried surplus, but reserve every Carry target first: a carried item
-    // that is also the selected wearer must have an extra unit beyond the
-    // count the route needs kept in inventory.
-    let mut wear = Vec::<i32>::new();
-    for req in missing {
-        let MissingReq::WearAny { ids } = req else {
-            continue;
-        };
-        if ids
-            .iter()
-            .any(|id| state.worn.contains(id) || wear.contains(id))
-        {
-            continue;
-        }
-
-        let mut carried_choice = None;
-        let mut available_choice = None;
-        for &id in ids {
-            let reserved = carry_count(id);
-            let held = held_count(id);
-            let total = held.saturating_add(bank_count(id));
-            if held > reserved && carried_choice.is_none() {
-                carried_choice = Some(id);
-            }
-            if total > reserved && available_choice.is_none() {
-                available_choice = Some(id);
+        match find_with_avoid(collision, graph, from, access, strict, state, avoid) {
+            Ok(_) => break,
+            Err(error) => {
+                first_failure.get_or_insert((access, error));
             }
         }
-        let id = carried_choice.or(available_choice)?;
-        wear.push(id);
-    }
-
-    // The route needs its initial Carry budget plus a separate item for
-    // every chosen wearable that shares an obj id with that budget.
-    let mut target_ids: Vec<i32> = carry.iter().map(|&(id, _)| id).collect();
-    for &id in &wear {
-        if !target_ids.contains(&id) {
-            target_ids.push(id);
+        if !cursor.reject_access() {
+            break;
         }
     }
-    let mut withdrawals = Vec::<(i32, i32)>::new();
-    for id in target_ids {
-        let target = carry_count(id).checked_add(i32::from(wear.contains(&id)))?;
-        let held = held_count(id);
-        if held.saturating_add(bank_count(id)) < target {
-            return None;
-        }
-        let count = target.saturating_sub(held);
-        if count > 0 {
-            withdrawals.push((id, count));
-        }
-    }
-
-    // When everything is already carried, wear in place and avoid a bank
-    // trip. A bank trip is needed only when there is a real shortage.
-    let needs_bank = !withdrawals.is_empty();
-    let mut steps = if needs_bank {
-        let access = nearest_bank_access(collision, stands, from)?;
-        vec![
-            BankStep::Walk {
-                x: access.x,
-                z: access.z,
-                level: access.level,
-            },
-            BankStep::Open,
-        ]
-    } else if wear.is_empty() {
-        return None;
-    } else {
-        Vec::new()
-    };
-
-    if needs_bank {
-        for &(id, count) in &withdrawals {
-            if matches!(count, 1 | 5 | 10) || count == bank_count(id) {
-                steps.push(BankStep::Withdraw { id, count });
+    let plan = cursor.take_plan();
+    let mut plan = plan.ok_or_else(|| match first_failure {
+        Some((access, error)) => BankFetchError::Access {
+            access,
+            error,
+            blocked_zones: if error == RouteError::NoPath {
+                find_blocking_zones(collision, graph, from, access, strict, state, avoid)
+                    .unwrap_or_default()
             } else {
-                steps.push(BankStep::WithdrawX { id });
-                steps.push(BankStep::WithdrawXAmount { id, count });
-            }
-        }
-        if wear.is_empty() {
-            steps.push(BankStep::Close);
-        }
-    }
-    for &id in &wear {
-        steps.push(BankStep::Wear { id });
-    }
-
-    // No step clears the backpack: retain its full snapshot and add only
-    // the calculated shortages before applying the selected wear moves.
+                Vec::new()
+            },
+        },
+        None => BankFetchError::Unavailable,
+    })?;
     let mut post = state.clone();
-    for &(id, count) in &withdrawals {
-        let held = post.inv.entry(id).or_insert(0);
-        *held = held.saturating_add(count);
-    }
-    for id in wear {
-        post.worn.insert(id);
-        let exhausted = if let Some(held) = post.inv.get_mut(&id) {
-            *held -= 1;
-            *held <= 0
-        } else {
-            false
-        };
-        if exhausted {
-            post.inv.remove(&id);
-        }
-    }
-    Some(BankFetch { steps, state: post })
+    while !plan.apply_next(&mut post) {}
+    Ok(BankFetch {
+        steps: plan.into_steps(),
+        state: post,
+    })
 }
 
 /// The facts a BankBudget session can establish from `state`, whichever

@@ -125,7 +125,11 @@ pub(super) fn route_or_bank_fetch(
                 world.banks(),
                 from,
                 &world.collision,
+                &world.graph,
+                opts,
+                avoid,
             )
+            .ok()
         })
         .and_then(|fetch| session_route(world, from, to, fetch, opts, avoid))
         .unwrap_or(RouteOutcome::NoPath),
@@ -315,7 +319,11 @@ fn session_for(
         world.banks(),
         from,
         &world.collision,
-    )?;
+        &world.graph,
+        opts,
+        avoid,
+    )
+    .ok()?;
     session_route(world, from, route.dest, fetch, opts, avoid)
 }
 

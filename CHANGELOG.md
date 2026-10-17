@@ -284,6 +284,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Fixed during development
 
+- Bots that need banked route supplies now choose an access tile they can reach.
+  An unreachable access at the nearest bank no longer prevents the bank trip.
+  If no access is reachable, danger-zone refusals keep their explanation.
+
 - The first launch's game cache download no longer switches off background
   work on slower connections, and "Preparing cache snapshot" now shows how
   far the download has got.
