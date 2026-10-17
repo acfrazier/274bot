@@ -2557,7 +2557,10 @@ async fn compact_route_from_predecessors(
     route.build_checkpoints(graph).await?;
     Ok(route)
 }
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the cooperative single search borrows the unchanged collision, graph and search inputs"
+)]
 async fn run_single_compact_search(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -2689,7 +2692,10 @@ async fn goal_requires_zone_completion(
     false
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the cooperative single search borrows the unchanged collision, graph and search inputs"
+)]
 async fn single_cursor_search(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -2809,7 +2815,10 @@ struct ManyCursorPass {
     forward_settled: usize,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the cooperative many-target pass borrows the unchanged collision, graph and search inputs"
+)]
 async fn many_cursor_pass(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -2977,7 +2986,10 @@ async fn consider_many_best(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the cooperative many-target search borrows the unchanged collision, graph and search inputs"
+)]
 async fn many_cursor_search(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -3196,7 +3208,6 @@ impl FirstRouteCandidate {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn first_route_candidate_from_predecessors(
     materialization: FirstRouteMaterialization,
     from: WorldTile,
@@ -3319,7 +3330,10 @@ async fn into_compact_first_search(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the compact first-goal search borrows the unchanged collision, graph and search inputs"
+)]
 async fn first_search_core_compact(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -3494,7 +3508,10 @@ struct FirstZoneGoal {
     index: usize,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the cooperative first-goal search borrows the unchanged collision, graph and search inputs"
+)]
 async fn first_cursor_search(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -3528,7 +3545,10 @@ async fn first_cursor_search(
     into_compact_first_search(pass, graph).await
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the cooperative first-goal search borrows the unchanged collision, graph and search inputs"
+)]
 async fn first_cursor_search_with_output(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -4313,7 +4333,10 @@ fn zone_goal_proof(
     .unwrap_or_default()
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the cooperative zone proof borrows the unchanged collision, graph and search inputs"
+)]
 async fn zone_goal_proof_cooperative(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -5429,7 +5452,10 @@ async fn blocking_single_target_cooperative(
     ))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the cooperative blocker diagnosis borrows the unchanged collision, graph and search inputs"
+)]
 async fn blocking_cursor_search(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -6260,7 +6286,10 @@ async fn missing_item_reqs_compact_route(
     accumulator.finish(state, graph).await
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the missing-requirement route borrows the unchanged collision, graph and search inputs"
+)]
 async fn missing_route_for_relaxation(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -6332,7 +6361,10 @@ async fn missing_route_for_relaxation(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the missing-requirement search borrows the unchanged collision, graph and search inputs"
+)]
 async fn missing_cursor_search(
     collision: &WorldCollision,
     graph: &TransportGraph,

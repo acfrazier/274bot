@@ -167,7 +167,6 @@ impl BankFetchCursor {
     /// After a plan is ready, access retries no longer read `missing` or `bank`.
     /// Callers may release those inputs and pass empty slices after
     /// [`Self::reject_access`]. Keep the world, stands and origin unchanged.
-    #[allow(clippy::too_many_arguments)] // borrows the same planner inputs without copying them
     pub fn advance<M: MissingRequirementsView + ?Sized>(
         &mut self,
         missing: &M,
