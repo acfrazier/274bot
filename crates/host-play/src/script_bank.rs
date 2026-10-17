@@ -2096,7 +2096,8 @@ fn queue_bank(
         } else {
             first
         };
-        pick.pending_inline = Some(job.pending_inline(scope, PickResult::plain(index, None, kind)));
+        bot.bank_pick.pending_inline =
+            Some(job.pending_inline(scope, PickResult::plain(index, None, kind)));
         drop(all);
         poll_bank_pick(navs, name, queued_at);
         return first.is_some();
@@ -2116,7 +2117,7 @@ fn queue_bank(
     if walking {
         bot.requested_route = first.map(|index| job.request.route_key(index));
     }
-    pick.current = Some(ActivePick {
+    bot.bank_pick.current = Some(ActivePick {
         job: job.clone(),
         scope,
         deadline,
