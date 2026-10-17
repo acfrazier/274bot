@@ -296,6 +296,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   Cooperative routes reserve the same maximum storage, but initialize only
   the pages that the search uses. Small first-goal diagnostics also retain
   demand-driven proof storage.
+- Walking to an area or to within reach of a tile with a radius of 17 tiles or
+  more no longer fails before the route search starts. Such walks are planned
+  again within the same memory limit as other routes.
 - Cooperative route searches now check each work boundary once instead of
   repeating the same clock and cancellation check between work units.
 - Single-target and multi-target route searches no longer copy an unused

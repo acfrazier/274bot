@@ -896,11 +896,7 @@ pub(super) trait Budget {
         state: &WorldState,
         relax: Relax,
     ) -> Result<Option<Self::Key>, ()>;
-    fn finish(
-        self,
-        tree: PackedSearchTable,
-        reached: HashMap<WorldTile, Self::Key>,
-    ) -> Predecessors;
+    fn finish(self, tree: PackedSearchTable, reached: HashMap<WorldTile, u32>) -> Predecessors;
 }
 
 pub(super) struct Unmetered;
@@ -922,7 +918,7 @@ impl Budget for Unmetered {
     ) -> Result<Option<WorldTile>, ()> {
         Ok(Some(key))
     }
-    fn finish(self, tree: PackedSearchTable, _: HashMap<WorldTile, WorldTile>) -> Predecessors {
+    fn finish(self, tree: PackedSearchTable, _: HashMap<WorldTile, u32>) -> Predecessors {
         Predecessors::Tiles(tree)
     }
 }
@@ -1182,11 +1178,7 @@ impl Budget for ResourceBudget {
             ..key
         }))
     }
-    fn finish(
-        self,
-        tree: PackedSearchTable,
-        reached: HashMap<WorldTile, ResourceKey>,
-    ) -> Predecessors {
+    fn finish(self, tree: PackedSearchTable, reached: HashMap<WorldTile, u32>) -> Predecessors {
         Predecessors::Resources { tree, reached }
     }
 }
@@ -1195,7 +1187,9 @@ pub(super) enum Predecessors {
     Tiles(PackedSearchTable),
     Resources {
         tree: PackedSearchTable,
-        reached: HashMap<WorldTile, ResourceKey>,
+        // The map key already holds the tile. Retain only its first settled
+        // resource balance, not another copy of the same coordinates.
+        reached: HashMap<WorldTile, u32>,
     },
 }
 
@@ -1261,10 +1255,10 @@ impl Predecessors {
                 tile: to,
             },
             Self::Resources { tree, reached } => {
-                let key = reached.get(&to)?;
+                let &balance = reached.get(&to)?;
                 RouteBacktrace {
                     tree,
-                    current: tree.locate_sync(key.tile, key.balance),
+                    current: tree.locate_sync(to, balance),
                     tile: to,
                 }
             }
@@ -1338,6 +1332,24 @@ mod packed_search_tests {
 
     fn tile(x: i32) -> WorldTile {
         WorldTile { x, z: -3, level: 0 }
+    }
+
+    #[test]
+    fn reached_balance_selects_the_original_resource_label_for_backtrace() {
+        let destination = tile(1);
+        let mut tree = PackedSearchTable::try_new(4).unwrap();
+        tree.insert(0, destination, 3, 0, 0, 1.0);
+        tree.settle(0, PACKED_ROOT_ID);
+        tree.insert(1, destination, 7, 0, 0, 2.0);
+        tree.settle(1, PACKED_ROOT_ID);
+        let predecessors = Predecessors::Resources {
+            tree,
+            reached: HashMap::from([(destination, 7)]),
+        };
+        let trace = predecessors.backtrace(destination).unwrap();
+        assert_eq!(trace.current, Some(1));
+        assert_eq!(trace.current_tile(), destination);
+        assert!(predecessors.backtrace(tile(2)).is_none());
     }
 
     #[test]
