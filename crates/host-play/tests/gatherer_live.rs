@@ -1697,6 +1697,15 @@ struct Witness {
     waiting_for_bank_yield: bool,
     waiting_for_return_yield: bool,
     tool_worn_observed: bool,
+    /// The selected tool was observed in the pack and not worn before it was
+    /// observed worn: the bank-close status row, a frame between the
+    /// withdrawal and the wear action, or the seeded Start pack. The bank
+    /// fixture banks the axe, so a correct run records this after the
+    /// withdrawal rather than at Start.
+    tool_held_not_worn_observed: bool,
+    /// The selected tool was already worn at Start (after seeding). A run
+    /// must fetch and wield it, so the oracle rejects this.
+    tool_worn_at_start: bool,
     coin_seed_count: i32,
     coin_balance_exact: bool,
     pause_observed: bool,
@@ -3122,11 +3131,21 @@ impl GatherSlot {
             self.case,
             LiveCase::WoodcuttingBank | LiveCase::WoodcuttingBankUnwieldable
         ) {
-            self.witness.tool_worn_observed |= self
+            let worn = self
                 .snapshot
                 .equipment()
                 .iter()
                 .any(|item| item.def.id == self.tool_id);
+            if !worn
+                && self
+                    .snapshot
+                    .inventory()
+                    .iter()
+                    .any(|item| item.def.id == self.tool_id && item.count > 0)
+            {
+                self.witness.tool_held_not_worn_observed = true;
+            }
+            self.witness.tool_worn_observed |= worn;
             if self.case == LiveCase::WoodcuttingBankUnwieldable && self.witness.tool_worn_observed
             {
                 return Err("unwieldable rune axe was equipped".into());
@@ -3807,6 +3826,19 @@ impl GatherSlot {
             ));
         }
         let baseline = self.latest.clone().ok_or("missing Start baseline")?;
+        if matches!(
+            self.case,
+            LiveCase::WoodcuttingBank | LiveCase::WoodcuttingBankUnwieldable
+        ) {
+            // After seeding, before the script starts. This fixture banks the
+            // axe, so a correct Start has it in neither the pack nor the
+            // equipment; the wield oracle requires it to be absent from the
+            // equipment here and observed unworn later.
+            self.witness.tool_worn_at_start = self.item_equipped();
+            if self.item_in_inventory() && !self.witness.tool_worn_at_start {
+                self.witness.tool_held_not_worn_observed = true;
+            }
+        }
         let seeded_gem = self.cell == Cell::Mining && self.case == LiveCase::Power;
         let seeded_count: i32 = baseline
             .inventory
@@ -4185,6 +4217,9 @@ impl GatherSlot {
                 let expected = self.tool_id.to_string();
                 if tool == expected {
                     self.witness.tool_selected_observed = true;
+                    // A bare id is the selected tool in the pack, unworn: the
+                    // bank-close row and any frame before the wear action.
+                    self.witness.tool_held_not_worn_observed = true;
                 } else if let Some(id) = tool.strip_suffix(" (worn)") {
                     if id == expected {
                         self.witness.tool_selected_observed = true;
@@ -4529,6 +4564,35 @@ impl GatherSlot {
         Ok(())
     }
 
+    /// The Woodcutting bank cells' tool fact: the selected axe was fetched
+    /// into the pack while not worn, and observed worn later. The old gate
+    /// sampled the transient `last_event = "wielding tool"`, which the
+    /// product may set and replace within one game tick; these facts are
+    /// durable because the bank-close row and the worn equipment persist.
+    /// A run that started with the axe already worn, or never wore it,
+    /// still fails.
+    fn qualifies_wield(&self) -> Result<(), String> {
+        if self.case == LiveCase::WoodcuttingBank
+            && (!self.witness.tool_worn_observed
+                || self.witness.tool_worn_at_start
+                || !self.witness.tool_held_not_worn_observed)
+        {
+            return Err(format!(
+                "{} did not fetch the selected bronze axe unworn and then wear it: {:?}",
+                self.name(),
+                self.witness
+            ));
+        }
+        if self.case == LiveCase::WoodcuttingBankUnwieldable && self.witness.tool_worn_observed {
+            return Err(format!(
+                "{} incorrectly marked the unwieldable rune axe worn: {:?}",
+                self.name(),
+                self.witness
+            ));
+        }
+        Ok(())
+    }
+
     fn qualifies(&self) -> Result<(), String> {
         match self.case {
             LiveCase::MazeRandom => {
@@ -4824,25 +4888,7 @@ impl GatherSlot {
                         self.witness
                     ));
                 }
-                if self.case == LiveCase::WoodcuttingBank
-                    && (!self.witness.tool_worn_observed
-                        || !self.status_seen("last_event", "wielding tool"))
-                {
-                    return Err(format!(
-                        "{} did not wield the selected bronze axe: {:?}",
-                        self.name(),
-                        self.witness
-                    ));
-                }
-                if self.case == LiveCase::WoodcuttingBankUnwieldable
-                    && self.witness.tool_worn_observed
-                {
-                    return Err(format!(
-                        "{} incorrectly marked the unwieldable rune axe worn: {:?}",
-                        self.name(),
-                        self.witness
-                    ));
-                }
+                self.qualifies_wield()?;
                 Ok(())
             }
             LiveCase::BankCost => {
@@ -5171,13 +5217,6 @@ impl GatherSlot {
             .as_ref()
             .map_or(0, |observation| observation.xp)
     }
-    fn status_seen(&self, key: &str, expected: &str) -> bool {
-        self.witness
-            .status_values
-            .get(key)
-            .is_some_and(|values| values.contains(expected))
-    }
-
     fn status_integer_seen(&self, key: &str, expected: i64) -> bool {
         self.witness.status_values.get(key).is_some_and(|values| {
             values
@@ -7149,6 +7188,8 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "bank_closed": witness.bank_closed_observed,
             "tool_selected": witness.tool_selected_observed,
             "tool_worn": witness.tool_worn_observed,
+            "tool_held_not_worn": witness.tool_held_not_worn_observed,
+            "tool_worn_at_start": witness.tool_worn_at_start,
             "bait_exact": witness.bait_exact,
             "coin_balance_exact": witness.coin_balance_exact,
             "reserve_runes_intact": witness.reserve_runes_intact,
@@ -9038,6 +9079,160 @@ fn mining_power_requires_seeded_gem_disposal_not_a_random_drop() {
         !power_complete(Cell::Mining, &witness),
         "seeded disposal cannot substitute for renewed gathering"
     );
+}
+
+#[cfg(test)]
+mod woodcutting_wield_oracle_tests {
+    use super::*;
+
+    fn slot_for(case: LiveCase) -> GatherSlot {
+        GatherSlot::new(
+            Cell::Woodcutting,
+            case,
+            OAK_RESPAWN_START,
+            FixturePlan::default(),
+            None,
+            false,
+        )
+    }
+
+    fn tool_status(tool: String) -> script::native::ScriptStatus {
+        use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
+        ScriptStatus {
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            card: script::CompiledId("Gatherer"),
+            phase: NativePhase::Working,
+            active_settings: 1,
+            pending_settings: None,
+            failure: None,
+            fields: Arc::from([StatusField {
+                key: "tool",
+                label: "Tool",
+                value: StatusValue::Text(tool.into()),
+            }]),
+        }
+    }
+
+    fn equipment_row(id: i32) -> api::snapshot::ItemView {
+        api::snapshot::ItemView {
+            def: api::ItemDefView {
+                id,
+                name: None,
+                stackable: false,
+                members: false,
+                base_value: 0,
+                noted: false,
+                certificate_link: -1,
+                certificate_template: -1,
+            },
+            container: api::snapshot::ItemContainer::Equipment,
+            action_family: api::snapshot::ItemActionFamily::Held,
+            slot: 3,
+            count: 1,
+            actions: vec![],
+            component_id: -1,
+        }
+    }
+
+    fn wielded_witness() -> Witness {
+        Witness {
+            tool_selected_observed: true,
+            tool_held_not_worn_observed: true,
+            tool_worn_observed: true,
+            ..Witness::default()
+        }
+    }
+
+    /// The failed WORLD-STATE-COST run in witness form: the axe was seen in
+    /// the pack and not worn (the bank-close row), then seen worn. No
+    /// `last_event = "wielding tool"` sample exists, and none is required.
+    #[test]
+    fn wield_oracle_accepts_a_fetched_axe_worn_without_an_event_sample() {
+        let mut slot = slot_for(LiveCase::WoodcuttingBank);
+        slot.witness = wielded_witness();
+        assert!(
+            slot.witness.status_values.is_empty(),
+            "no last_event sample may be required"
+        );
+        assert!(!slot.witness.tool_worn_at_start);
+        assert!(slot.qualifies_wield().is_ok());
+    }
+
+    /// An axe that never leaves the pack is a correct refusal.
+    #[test]
+    fn wield_oracle_rejects_an_axe_never_worn() {
+        let mut slot = slot_for(LiveCase::WoodcuttingBank);
+        let mut witness = wielded_witness();
+        witness.tool_worn_observed = false;
+        slot.witness = witness;
+        let error = slot.qualifies_wield().unwrap_err();
+        assert!(error.contains("did not fetch"), "{error}");
+    }
+
+    /// A run seeded with the axe already worn did not wield it, even though
+    /// the worn state is observed for the whole run.
+    #[test]
+    fn wield_oracle_rejects_an_axe_already_worn_at_start() {
+        let mut slot = slot_for(LiveCase::WoodcuttingBank);
+        let mut witness = wielded_witness();
+        witness.tool_worn_at_start = true;
+        slot.witness = witness;
+        let error = slot.qualifies_wield().unwrap_err();
+        assert!(error.contains("did not fetch"), "{error}");
+    }
+
+    /// The unwieldable sibling keeps its old rejection unchanged: the rune
+    /// axe observed worn always fails, and the same witness without the wear
+    /// passes.
+    #[test]
+    fn wield_oracle_keeps_the_unwieldable_gate() {
+        let mut slot = slot_for(LiveCase::WoodcuttingBankUnwieldable);
+        slot.witness = wielded_witness();
+        let error = slot.qualifies_wield().unwrap_err();
+        assert!(error.contains("unwieldable"), "{error}");
+        slot.witness.tool_worn_observed = false;
+        assert!(slot.qualifies_wield().is_ok());
+    }
+
+    /// The durable rows the real run delivered: bank close with the bare tool
+    /// id, then the worn id. Applying them in order satisfies the oracle
+    /// without any transient event sample.
+    #[test]
+    fn wield_witness_records_the_bank_close_row_then_the_worn_row() {
+        let mut slot = slot_for(LiveCase::WoodcuttingBank);
+        let tool_id = slot.tool_id;
+        slot.apply_status(&tool_status(tool_id.to_string()))
+            .unwrap();
+        assert!(slot.witness.tool_selected_observed);
+        assert!(slot.witness.tool_held_not_worn_observed);
+        assert!(!slot.witness.tool_worn_observed);
+        slot.apply_status(&tool_status(format!("{tool_id} (worn)")))
+            .unwrap();
+        assert!(slot.witness.tool_worn_observed);
+        assert!(slot.qualifies_wield().is_ok());
+    }
+
+    /// Start records the seeded state before the script runs: a worn axe sets
+    /// the start fact and the existing Start baseline check refuses the run.
+    #[test]
+    fn wield_witness_records_a_seeded_worn_axe_at_start() {
+        let mut slot = slot_for(LiveCase::WoodcuttingBank);
+        slot.phase = Prep::Ready;
+        slot.latest = Some(slot.capture());
+        let tool_id = slot.tool_id;
+        slot.snapshot.seed_equipment(vec![equipment_row(tool_id)]);
+        let error = slot.mark_started().unwrap_err();
+        assert!(
+            error.contains("Start baseline lacks its required held/banked tool fixture"),
+            "{error}"
+        );
+        assert!(slot.witness.tool_worn_at_start);
+        assert!(!slot.witness.tool_held_not_worn_observed);
+    }
 }
 
 #[cfg(test)]
