@@ -360,6 +360,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   search budget, so later planning stages do not refuse short routes.
 - A card's first walk now starts correctly. Bank-planned walks keep the selected
   approach tile and can equip a carried item without requiring a bank visit.
+- Route searches are faster, especially for large searches. They return the
+  same routes.
 
 #### Maps
 

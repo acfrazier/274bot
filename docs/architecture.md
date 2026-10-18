@@ -393,14 +393,31 @@ Public Search/Commit phases and Path/NoPath results do not change.
 
 All search goals use one packed table and one bounded doubling and rehash
 method. Records have dense IDs. Hashing selects a three-byte bucket head,
-not a position across the record array.
+not a position across the record array. There is one bucket per twelve records.
+The multiply-high reduction does not need a power-of-two bucket count.
 
 Cooperative cursors reserve their complete settle-cap backing once. Slot
 fields use a zero-valued tuple of primitive arrays and integers. Each record
-remains 28 bytes with four-byte alignment. Safe `Vec` construction obtains
-zeroed backing without an explicit initialization pass under the pinned
-toolchain. The operating system can make pages resident as the search touches
-them. Admission charges the complete backing, not the observed resident bytes.
+remains 28 bytes with four-byte alignment. Bucket heads and next links share
+a separate array of three-byte links. Each link uses only the ID bits its
+table capacity needs; the remaining bits hold a hash fingerprint. A fingerprint
+mismatch skips the full record read. Matching fingerprints still require full
+key equality. Growth rebuilds the collision chains for the new bucket count.
+It keeps the same dense IDs, but it can change the order of records in a chain.
+
+Each table also keeps 1,024 recent positive record IDs in a fixed 4 KiB array.
+The unused upper ID bits hold a ten-bit hash tag, so unrelated cache entries
+do not require a full record read. Matching tags still require the full tile
+and balance. Insertions and positive lookups refresh this array. Removal
+invalidates its entry, and growth preserves IDs. This avoids repeated collision
+scans without another allocation. The array is part of the admitted future's
+measured inline size, not the vector backing bound.
+
+Safe `Vec` construction obtains zeroed backing without an explicit
+initialization pass under the pinned toolchain. The operating system can make
+pages resident as the search touches them. Admission charges the complete
+backing, not the observed resident bytes. Fingerprints use existing link bits
+and do not increase that charge.
 
 Legacy synchronous facades start with six settles and grow the same table
 only when needed. Their reverse proofs also retain demand-driven storage.

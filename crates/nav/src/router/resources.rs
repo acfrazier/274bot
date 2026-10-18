@@ -185,12 +185,26 @@ fn write_u24(value: u32) -> [u8; 3] {
     [value as u8, (value >> 8) as u8, (value >> 16) as u8]
 }
 
-fn read_link(bytes: [u8; 3]) -> u32 {
-    read_u24(bytes).wrapping_sub(1) & PACKED_ID_MASK
+fn read_link(bytes: [u8; 3], id_mask: u32) -> u32 {
+    (read_u24(bytes) & id_mask).wrapping_sub(1) & PACKED_ID_MASK
 }
 
 fn write_link(id: u32) -> [u8; 3] {
     write_u24((id + 1) & PACKED_ID_MASK)
+}
+
+fn packed_link_id_mask(capacity: usize) -> u32 {
+    (1u32 << (usize::BITS - capacity.leading_zeros())) - 1
+}
+
+fn packed_fingerprint(hash: u32, id_mask: u32) -> u32 {
+    // Bucket reduction uses the upper hash bits. Rotate lower bits into the
+    // spare link bits: at least two bits, and more for smaller tables.
+    hash.rotate_left(16) & (0x00ff_ffff ^ id_mask)
+}
+
+fn write_tagged_link(id: u32, hash: u32, id_mask: u32) -> [u8; 3] {
+    write_u24(((id + 1) & PACKED_ID_MASK) | packed_fingerprint(hash, id_mask))
 }
 
 pub(super) enum PackedLookup {
@@ -198,14 +212,20 @@ pub(super) enum PackedLookup {
     Vacant(u32),
 }
 
+const PACKED_LOOKUP_CACHE_SIZE: usize = 1024;
+
 pub(super) struct PackedSearchTable {
     slots: Vec<PackedSearchSlot>,
-    // Bucket heads and slot links share one allocation. Chaining keeps
-    // misses bounded by their bucket, even when every record slot is used.
+    // Bucket heads and tagged next links share one allocation. A fingerprint
+    // mismatch skips the record read without changing chain order.
     links: Vec<[u8; 3]>,
     buckets: usize,
     next_unused: usize,
     free_head: u32,
+    link_id_mask: u32,
+    // Cached IDs carry a ten-bit hash tag in their unused upper bits.
+    // Matching tags still require full key equality. Removal invalidates IDs.
+    cached_ids: [u32; PACKED_LOOKUP_CACHE_SIZE],
 }
 
 impl PackedSearchTable {
@@ -216,6 +236,8 @@ impl PackedSearchTable {
             buckets: 0,
             next_unused: 0,
             free_head: PACKED_ROOT_ID,
+            link_id_mask: 0,
+            cached_ids: [PACKED_ROOT_ID; PACKED_LOOKUP_CACHE_SIZE],
         }
     }
 
@@ -230,7 +252,7 @@ impl PackedSearchTable {
         if capacity > PACKED_ID_MASK as usize {
             return None;
         }
-        let buckets = Self::bucket_count_for(capacity)?;
+        let buckets = Self::bucket_count_for(capacity);
         let link_count = buckets.checked_add(capacity)?;
         std::alloc::Layout::array::<PackedSearchSlot>(capacity).ok()?;
         std::alloc::Layout::array::<[u8; 3]>(link_count).ok()?;
@@ -242,6 +264,8 @@ impl PackedSearchTable {
             buckets,
             next_unused: 0,
             free_head: PACKED_ROOT_ID,
+            link_id_mask: packed_link_id_mask(capacity),
+            cached_ids: [PACKED_ROOT_ID; PACKED_LOOKUP_CACHE_SIZE],
         })
     }
 
@@ -257,16 +281,12 @@ impl PackedSearchTable {
         self.slots.len()
     }
 
-    fn bucket_count_for(capacity: usize) -> Option<usize> {
-        if capacity == 0 {
-            Some(0)
-        } else {
-            capacity.div_ceil(16).checked_next_power_of_two()
-        }
+    fn bucket_count_for(capacity: usize) -> usize {
+        capacity.div_ceil(12)
     }
 
     fn next(&self, id: u32) -> u32 {
-        read_link(self.links[self.buckets + id as usize])
+        read_link(self.links[self.buckets + id as usize], self.link_id_mask)
     }
 
     fn set_next(&mut self, id: u32, next: u32) {
@@ -299,16 +319,18 @@ impl PackedSearchTable {
         if new_capacity <= old_capacity {
             return Some(false);
         }
-        let buckets = Self::bucket_count_for(new_capacity)?;
+        let buckets = Self::bucket_count_for(new_capacity);
+        let link_id_mask = packed_link_id_mask(new_capacity);
         let link_count = buckets.checked_add(new_capacity)?;
         let mut links = Vec::new();
         links.try_reserve_exact(link_count).ok()?;
         links.resize(link_count, [0; 3]);
         for (id, slot) in self.slots[..self.next_unused].iter().enumerate() {
             if matches!(slot.state(), PACKED_OPEN | PACKED_SETTLED) {
-                let bucket = packed_hash_index(slot.tile(), slot.balance(), buckets);
+                let hash = packed_hash(slot.tile(), slot.balance());
+                let bucket = packed_bucket(hash, buckets);
                 links[buckets + id] = links[bucket];
-                links[bucket] = write_link(id as u32);
+                links[bucket] = write_tagged_link(id as u32, hash, link_id_mask);
             } else {
                 links[buckets + id] = self.links[self.buckets + id];
             }
@@ -322,6 +344,7 @@ impl PackedSearchTable {
         self.slots.resize(new_capacity, PackedSearchSlot::empty());
         self.links = links;
         self.buckets = buckets;
+        self.link_id_mask = link_id_mask;
         // Record ids never move. Settled and queued parents, including the
         // caller's currently expanding node, remain valid after growth.
         Some(true)
@@ -339,21 +362,42 @@ impl PackedSearchTable {
         self.slots[id as usize].state() == PACKED_SETTLED
     }
 
-    pub(super) async fn locate(&self, tile: WorldTile, balance: u32) -> Result<PackedLookup, ()> {
+    pub(super) async fn locate(
+        &mut self,
+        tile: WorldTile,
+        balance: u32,
+    ) -> Result<PackedLookup, ()> {
         if self.buckets == 0 {
             return Err(());
         }
-        let bucket = packed_hash_index(tile, balance, self.buckets);
-        let mut id = read_link(self.links[bucket]);
-        while id != PACKED_ROOT_ID {
-            let slot = &self.slots[id as usize];
-            if slot.tile() == tile && slot.balance() == balance {
+        let hash = packed_hash(tile, balance);
+        let cache_index = hash as usize & (PACKED_LOOKUP_CACHE_SIZE - 1);
+        if let Some(id) = self.cached_key(hash, tile, balance) {
+            return Ok(PackedLookup::Found(id));
+        }
+        if SYNCHRONOUS_WORK.get() {
+            if let Some(id) = self.locate_hashed(tile, balance, hash) {
+                self.cached_ids[cache_index] = id | (hash & !PACKED_ID_MASK);
                 return Ok(PackedLookup::Found(id));
             }
-            id = self.next(id);
+            return self.vacant_id().map(PackedLookup::Vacant).ok_or(());
+        }
+        let bucket = packed_bucket(hash, self.buckets);
+        let fingerprint = packed_fingerprint(hash, self.link_id_mask);
+        let mut link = read_u24(self.links[bucket]);
+        while link & self.link_id_mask != 0 {
+            let id = (link & self.link_id_mask) - 1;
+            if link & !self.link_id_mask == fingerprint {
+                let slot = &self.slots[id as usize];
+                if slot.tile() == tile && slot.balance() == balance {
+                    self.cached_ids[cache_index] = id | (hash & !PACKED_ID_MASK);
+                    return Ok(PackedLookup::Found(id));
+                }
+            }
+            link = read_u24(self.links[self.buckets + id as usize]);
             // The first fixed key check belongs to the caller's expansion
             // or transport unit. Every additional collision yields.
-            if id != PACKED_ROOT_ID {
+            if link & self.link_id_mask != 0 {
                 work_unit().await;
             }
         }
@@ -364,14 +408,34 @@ impl PackedSearchTable {
         if self.buckets == 0 {
             return None;
         }
-        let bucket = packed_hash_index(tile, balance, self.buckets);
-        let mut id = read_link(self.links[bucket]);
-        while id != PACKED_ROOT_ID {
-            let slot = &self.slots[id as usize];
-            if slot.tile() == tile && slot.balance() == balance {
-                return Some(id);
+        let hash = packed_hash(tile, balance);
+        self.cached_key(hash, tile, balance)
+            .or_else(|| self.locate_hashed(tile, balance, hash))
+    }
+
+    fn cached_key(&self, hash: u32, tile: WorldTile, balance: u32) -> Option<u32> {
+        let entry = self.cached_ids[hash as usize & (PACKED_LOOKUP_CACHE_SIZE - 1)];
+        let id = entry & PACKED_ID_MASK;
+        if id == PACKED_ROOT_ID || entry & !PACKED_ID_MASK != hash & !PACKED_ID_MASK {
+            return None;
+        }
+        let slot = &self.slots[id as usize];
+        (slot.tile() == tile && slot.balance() == balance).then_some(id)
+    }
+
+    fn locate_hashed(&self, tile: WorldTile, balance: u32, hash: u32) -> Option<u32> {
+        let bucket = packed_bucket(hash, self.buckets);
+        let fingerprint = packed_fingerprint(hash, self.link_id_mask);
+        let mut link = read_u24(self.links[bucket]);
+        while link & self.link_id_mask != 0 {
+            let id = (link & self.link_id_mask) - 1;
+            if link & !self.link_id_mask == fingerprint {
+                let slot = &self.slots[id as usize];
+                if slot.tile() == tile && slot.balance() == balance {
+                    return Some(id);
+                }
             }
-            id = self.next(id);
+            link = read_u24(self.links[self.buckets + id as usize]);
         }
         None
     }
@@ -391,12 +455,15 @@ impl PackedSearchTable {
             debug_assert_eq!(id as usize, self.next_unused);
             self.next_unused += 1;
         }
-        let bucket = packed_hash_index(tile, balance, self.buckets);
-        self.set_next(id, read_link(self.links[bucket]));
-        self.links[bucket] = write_link(id);
+        let hash = packed_hash(tile, balance);
+        let bucket = packed_bucket(hash, self.buckets);
+        self.links[self.buckets + id as usize] = self.links[bucket];
+        self.links[bucket] = write_tagged_link(id, hash, self.link_id_mask);
         let slot = &mut self.slots[id as usize];
         slot.set_key(tile, balance, action, action_index, cost);
         slot.set_open(0);
+        self.cached_ids[hash as usize & (PACKED_LOOKUP_CACHE_SIZE - 1)] =
+            id | (hash & !PACKED_ID_MASK);
     }
 
     pub(super) fn update(&mut self, id: u32, action: u8, action_index: u32, cost: f64) {
@@ -411,8 +478,9 @@ impl PackedSearchTable {
 
     pub(super) async fn tombstone(&mut self, id: u32) {
         let slot = self.slots[id as usize];
-        let bucket = packed_hash_index(slot.tile(), slot.balance(), self.buckets);
-        let mut current = read_link(self.links[bucket]);
+        let hash = packed_hash(slot.tile(), slot.balance());
+        let bucket = packed_bucket(hash, self.buckets);
+        let mut current = read_link(self.links[bucket], self.link_id_mask);
         let mut previous = PACKED_ROOT_ID;
         while current != id {
             work_unit().await;
@@ -420,17 +488,22 @@ impl PackedSearchTable {
             previous = current;
             current = self.next(current);
         }
-        let next = self.next(id);
+        let next = self.links[self.buckets + id as usize];
         if previous == PACKED_ROOT_ID {
-            self.links[bucket] = write_link(next);
+            self.links[bucket] = next;
         } else {
-            self.set_next(previous, next);
+            self.links[self.buckets + previous as usize] = next;
+        }
+        let cache_index = hash as usize & (PACKED_LOOKUP_CACHE_SIZE - 1);
+        if self.cached_ids[cache_index] & PACKED_ID_MASK == id {
+            self.cached_ids[cache_index] = PACKED_ROOT_ID;
         }
         self.slots[id as usize].set_tombstone();
         self.set_next(id, self.free_head);
         self.free_head = id;
     }
 
+    #[inline]
     pub(super) fn compare_candidate(
         &self,
         cost: f64,
@@ -447,7 +520,7 @@ impl PackedSearchTable {
     }
 }
 
-fn packed_hash_index(tile: WorldTile, balance: u32, capacity: usize) -> usize {
+fn packed_hash(tile: WorldTile, balance: u32) -> u32 {
     let mut hash = (u64::from(tile.x as u32) << 32) | u64::from(tile.z as u32);
     hash ^= u64::from(tile.level as u32).wrapping_mul(0x9e37_79b9_7f4a_7c15);
     hash ^= u64::from(balance).wrapping_mul(0xbf58_476d_1ce4_e5b9);
@@ -456,8 +529,16 @@ fn packed_hash_index(tile: WorldTile, balance: u32, capacity: usize) -> usize {
     hash ^= hash >> 27;
     hash = hash.wrapping_mul(0x94d0_49bb_1331_11eb);
     hash ^= hash >> 31;
-    let hash32 = (hash ^ (hash >> 32)) as u32;
-    ((u64::from(hash32) * capacity as u64) >> 32) as usize
+    (hash ^ (hash >> 32)) as u32
+}
+
+fn packed_bucket(hash: u32, capacity: usize) -> usize {
+    ((u64::from(hash) * capacity as u64) >> 32) as usize
+}
+
+#[cfg(test)]
+fn packed_hash_index(tile: WorldTile, balance: u32, capacity: usize) -> usize {
+    packed_bucket(packed_hash(tile, balance), capacity)
 }
 
 pub(super) fn packed_predecessor_storage_bound(settle_budget: usize) -> Option<usize> {
@@ -465,7 +546,7 @@ pub(super) fn packed_predecessor_storage_bound(settle_budget: usize) -> Option<u
     if capacity > PACKED_ID_MASK as usize {
         return None;
     }
-    let links = capacity.checked_add(PackedSearchTable::bucket_count_for(capacity)?)?;
+    let links = capacity.checked_add(PackedSearchTable::bucket_count_for(capacity))?;
     capacity
         .checked_mul(std::mem::size_of::<PackedSearchSlot>())?
         .checked_add(links.checked_mul(std::mem::size_of::<[u8; 3]>())?)
@@ -856,6 +937,8 @@ impl PackedMinMaxHeap {
         best
     }
 
+    // Keep borrowed record loads in the sift loop instead of spilling around a call.
+    #[inline(always)]
     fn compare_positions(&self, left: usize, right: usize, table: &PackedSearchTable) -> Ordering {
         let left = table.slot(self.entries[left].node());
         let right = table.slot(self.entries[right].node());
@@ -1355,6 +1438,7 @@ mod packed_search_tests {
     #[test]
     fn zeroed_packed_storage_has_empty_records_and_null_links() {
         let table = PackedSearchTable::try_new(4).expect("zeroed table");
+        assert_eq!(table.links.len(), table.buckets + table.capacity());
         assert!(table.links.iter().all(|link| *link == [0; 3]));
         for slot in &table.slots {
             assert_eq!(
@@ -1367,9 +1451,9 @@ mod packed_search_tests {
             );
             assert_eq!(*slot, PackedSearchSlot::empty());
         }
-        assert_eq!(read_link([0; 3]), PACKED_ROOT_ID);
+        assert_eq!(read_link([0; 3], PACKED_ID_MASK), PACKED_ROOT_ID);
         for id in [0, 1, PACKED_ID_MASK - 1, PACKED_ROOT_ID] {
-            assert_eq!(read_link(write_link(id)), id);
+            assert_eq!(read_link(write_link(id), PACKED_ID_MASK), id);
         }
         assert_eq!(
             PackedSearchTable::try_new_capacity(0)
@@ -1377,6 +1461,31 @@ mod packed_search_tests {
                 .capacity(),
             0
         );
+    }
+
+    #[test]
+    fn tagged_links_preserve_ids_and_fingerprints_at_each_capacity_width() {
+        for capacity in [
+            1,
+            2,
+            3,
+            8,
+            255,
+            256,
+            65_536,
+            131_072,
+            PACKED_ID_MASK as usize,
+        ] {
+            let id_mask = packed_link_id_mask(capacity);
+            assert!(capacity as u32 <= id_mask);
+            for id in [0, (capacity - 1) as u32, PACKED_ROOT_ID] {
+                for hash in [0, u32::MAX, 0x1234_5678] {
+                    let link = write_tagged_link(id, hash, id_mask);
+                    assert_eq!(read_link(link, id_mask), id);
+                    assert_eq!(read_u24(link) & !id_mask, packed_fingerprint(hash, id_mask));
+                }
+            }
+        }
     }
 
     #[test]
@@ -1400,6 +1509,63 @@ mod packed_search_tests {
         slot.set_settled(PACKED_ROOT_ID);
         assert_eq!(slot.state(), PACKED_SETTLED);
         assert_eq!(slot.parent(), PACKED_ROOT_ID);
+    }
+
+    #[test]
+    fn packed_lookup_preserves_collision_boundaries_and_synchronous_results() {
+        let mut table = PackedSearchTable::try_new_capacity(3).expect("one-bucket table");
+        assert_eq!(table.buckets, 1);
+        // Distinct keys with the same full hash also have the same fingerprint.
+        assert_eq!(packed_hash(tile(12_600), 3), 1_160_831_866);
+        assert_eq!(packed_hash(tile(112_017), 3), 1_160_831_866);
+        table.insert(0, tile(12_600), 3, 0, 0, 1.0);
+        table.insert(1, tile(112_017), 3, 0, 0, 2.0);
+        table.insert(2, tile(8), 3, 0, 0, 3.0);
+        for (tile, balance, expected_id, expected_pending) in [
+            (tile(12_600), 3, Some(0), 2),
+            (tile(112_017), 3, Some(1), 1),
+            (tile(8), 3, Some(2), 0),
+            (tile(9), 3, None, 2),
+        ] {
+            table.cached_ids.fill(PACKED_ROOT_ID);
+            let cooperative = {
+                let mut lookup = std::pin::pin!(table.locate(tile, balance));
+                let mut context = Context::from_waker(Waker::noop());
+                let mut pending = 0;
+                loop {
+                    match lookup.as_mut().poll(&mut context) {
+                        Poll::Pending => pending += 1,
+                        Poll::Ready(result) => {
+                            assert_eq!(pending, expected_pending);
+                            break result;
+                        }
+                    }
+                }
+            };
+            let synchronous = super::super::drive_to_completion(async {
+                let mut lookup = std::pin::pin!(table.locate(tile, balance));
+                let mut context = Context::from_waker(Waker::noop());
+                match lookup.as_mut().poll(&mut context) {
+                    Poll::Ready(result) => result,
+                    Poll::Pending => panic!("synchronous lookup suspended"),
+                }
+            });
+            for result in [cooperative, synchronous] {
+                match (expected_id, result) {
+                    (Some(expected), Ok(PackedLookup::Found(id))) => assert_eq!(id, expected),
+                    (None, Err(())) => {}
+                    _ => panic!("lookup result changed with its execution mode"),
+                }
+            }
+        }
+        super::super::drive_to_completion(async {
+            for (key, expected) in [(tile(12_600), 0), (tile(112_017), 1), (tile(12_600), 0)] {
+                assert!(matches!(
+                    table.locate(key, 3).await,
+                    Ok(PackedLookup::Found(id)) if id == expected
+                ));
+            }
+        });
     }
 
     #[test]
@@ -1435,8 +1601,17 @@ mod packed_search_tests {
                 PackedLookup::Found(id) => assert_eq!(id, live),
                 PackedLookup::Vacant(_) => panic!("second live packed key was not found"),
             }
+            assert!(matches!(
+                table.locate(first_tile, first_balance).await,
+                Ok(PackedLookup::Found(id)) if id == first
+            ));
 
             table.tombstone(first).await;
+            assert_eq!(table.locate_sync(first_tile, first_balance), None);
+            assert!(matches!(
+                table.locate(first_tile, first_balance).await,
+                Ok(PackedLookup::Vacant(id)) if id == first
+            ));
             let replacement_balance = 5;
             let replacement_tile = (8..100)
                 .map(tile)
@@ -1547,10 +1722,12 @@ mod packed_search_tests {
         super::super::drive_to_completion(async {
             let mut table = PackedSearchTable::try_new_capacity(32).expect("small table");
             let mut heap = PackedMinMaxHeap::try_new(32).expect("small heap");
+            let grown_buckets = PackedSearchTable::bucket_count_for(64);
             let origin = (0..100)
                 .map(tile)
                 .find(|&candidate| {
-                    packed_hash_index(candidate, 0, 2) != packed_hash_index(candidate, 0, 4)
+                    packed_hash_index(candidate, 0, table.buckets)
+                        != packed_hash_index(candidate, 0, grown_buckets)
                 })
                 .expect("a key that changes bucket on growth");
             let current = match table.locate(origin, 0).await.unwrap() {
@@ -1566,11 +1743,25 @@ mod packed_search_tests {
             };
             table.insert(child, child_tile, 0, 1, 7, 1.0);
             heap.push(&mut table, child, current);
+            for id in [2, 3] {
+                table.insert(id, tile(2000 + id as i32), 0, 0, 0, 2.0);
+                table.tombstone(id).await;
+            }
             let old_current = current;
             assert_eq!(table.try_grow(&mut heap, 64), Some(true));
+            assert_eq!(table.buckets, grown_buckets);
             assert_eq!(current, old_current, "the local expanding id stays valid");
             assert_eq!(table.slot(current).tile(), origin);
             assert_eq!(table.slot(current).parent(), PACKED_ROOT_ID);
+            assert_eq!(table.locate_sync(origin, 0), Some(current));
+            assert_eq!(table.locate_sync(child_tile, 0), Some(child));
+            for id in [3, 2] {
+                assert_eq!(table.vacant_id(), Some(id));
+                let replacement = tile(3000 + id as i32);
+                table.insert(id, replacement, 0, 0, 0, 2.0);
+                assert_eq!(table.locate_sync(replacement, 0), Some(id));
+            }
+            assert_eq!(table.vacant_id(), Some(4));
             let (child, parent) = heap.pop_min(&mut table).expect("queued child");
             assert_eq!(table.slot(child).tile(), child_tile);
             assert_eq!(parent, current);
@@ -1622,6 +1813,44 @@ mod packed_search_tests {
     }
 
     #[test]
+    fn packed_recent_key_lookup_does_not_rescan_unchanged_collision_links() {
+        let mut table = PackedSearchTable::try_new_capacity(32).unwrap();
+        let first = tile(0);
+        let second = (1..1024)
+            .map(tile)
+            .find(|&key| {
+                packed_hash_index(key, 0, table.buckets)
+                    == packed_hash_index(first, 0, table.buckets)
+                    && packed_hash(key, 0) & 1023 != packed_hash(first, 0) & 1023
+            })
+            .expect("two distinct recent-key positions in one collision chain");
+        table.insert(0, first, 0, 0, 0, 0.0);
+        table.insert(1, second, 0, 0, 0, 0.0);
+        for key in [first, second, first] {
+            let mut lookup = std::pin::pin!(table.locate(key, 0));
+            let mut context = Context::from_waker(Waker::noop());
+            assert!(
+                matches!(
+                    lookup.as_mut().poll(&mut context),
+                    Poll::Ready(Ok(PackedLookup::Found(_)))
+                ),
+                "a recent positive lookup must finish in its caller's work unit"
+            );
+        }
+        table.cached_ids.fill(PACKED_ROOT_ID);
+        assert!(matches!(
+            super::super::drive_to_completion(table.locate(first, 0)),
+            Ok(PackedLookup::Found(0))
+        ));
+        let mut lookup = std::pin::pin!(table.locate(first, 0));
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(matches!(
+            lookup.as_mut().poll(&mut context),
+            Poll::Ready(Ok(PackedLookup::Found(0)))
+        ));
+    }
+
+    #[test]
     fn packed_lookup_bundles_the_first_key_and_yields_between_further_collisions() {
         let mut table = PackedSearchTable::try_new_capacity(32).unwrap();
         let keys: Vec<_> = (0..1024)
@@ -1635,6 +1864,7 @@ mod packed_search_tests {
         }
         let mut context = std::task::Context::from_waker(std::task::Waker::noop());
         for (id, expected_pending) in [(15, 0), (0, 15)] {
+            table.cached_ids.fill(PACKED_ROOT_ID);
             let mut pending = 0;
             let mut future = std::pin::pin!(table.locate(keys[id], 0));
             loop {
@@ -1666,8 +1896,8 @@ mod packed_search_tests {
         );
         assert_eq!(
             packed_search_storage_bound(NODE_BUDGET),
-            Some(148_786_506),
-            "cooperative backing keeps the existing full-budget reservation"
+            Some(149_000_076),
+            "cooperative backing includes one bucket per twelve records"
         );
         assert!(packed_search_storage_bound(usize::MAX).is_none());
     }
