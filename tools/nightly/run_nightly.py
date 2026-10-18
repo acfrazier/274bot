@@ -275,16 +275,149 @@ def git_env() -> dict:
     return dict(os.environ, GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
 
 
+def _is_junction(path: Path) -> bool:
+    isjunction = getattr(os.path, "isjunction", None)
+    return bool(isjunction and isjunction(path))
+
+
+def _is_link(path: Path) -> bool:
+    """True for a symlink or a Windows junction. Neither is ever followed."""
+    return os.path.islink(path) or _is_junction(path)
+
+
+def _unlink_link(path: Path) -> None:
+    """Remove a link itself, never the thing it points to."""
+    if _is_junction(path):
+        try:
+            # Windows removes a directory junction with rmdir, not unlink.
+            os.rmdir(path)
+            return
+        except OSError:
+            pass
+    os.unlink(path)
+
+
+def _chmod_real(path: Path, root: Path) -> None:
+    """Add the permissions that removal needs to one real file or directory.
+
+    `lstat` decides what `path` is, so a link is never chmod-ed through to
+    the file or directory it points to, and only paths at or under `root`
+    (the tree that is being removed) are touched. A directory gets owner
+    read, write and search. A file gets owner write.
+    """
+    info = path.lstat()
+    if _is_link(path):
+        raise OSError(f"refusing to change permissions through a link: {path}")
+    root_abs = os.path.abspath(root)
+    target_abs = os.path.abspath(path)
+    try:
+        under_root = os.path.commonpath((root_abs, target_abs)) == root_abs
+    except ValueError:
+        under_root = False
+    if not under_root:
+        raise OSError(f"refusing to change permissions outside {root}: {path}")
+    if stat.S_ISDIR(info.st_mode):
+        os.chmod(path, stat.S_IMODE(info.st_mode) | stat.S_IRWXU)
+    else:
+        os.chmod(path, stat.S_IMODE(info.st_mode) | stat.S_IWRITE)
+
+
+def _fix_permissions(root: Path) -> None:
+    """Make a real directory tree removable before `shutil.rmtree` walks it.
+
+    A directory that cannot be listed makes `rmtree` give up on the whole
+    tree, and a read-only file cannot be unlinked on Windows (git's object
+    files), so both get their permissions fixed up front, top down. Links
+    are left alone. `rmtree` unlinks them without following them. Raise
+    OSError when a directory still cannot be listed after the fix.
+    """
+    def onerror(error: OSError) -> None:
+        raise error
+
+    info = root.lstat()
+    if stat.S_ISDIR(info.st_mode) and stat.S_IMODE(info.st_mode) & stat.S_IRWXU != stat.S_IRWXU:
+        _chmod_real(root, root)
+    for current, dirs, files in os.walk(root, onerror=onerror):
+        for name in dirs + files:
+            entry = Path(current) / name
+            if _is_link(entry):
+                continue
+            try:
+                info = entry.lstat()
+            except FileNotFoundError:
+                continue
+            mode = stat.S_IMODE(info.st_mode)
+            if stat.S_ISDIR(info.st_mode):
+                if mode & stat.S_IRWXU != stat.S_IRWXU:
+                    _chmod_real(entry, root)
+            elif not mode & stat.S_IWRITE:
+                _chmod_real(entry, root)
+
+
 def rmtree(path: Path) -> None:
-    """Remove a tree, including git's read-only object files on Windows."""
-    def retry(func, target, _exc):
-        os.chmod(target, stat.S_IWRITE)
-        func(target)
-    if path.exists():
+    """Remove a tree, including git's read-only object files on Windows.
+
+    A symlink or a Windows junction, at the top or nested, is unlinked and
+    never followed, so nothing outside `path` is changed or removed.
+    Permission fixes go only to real files and directories under `path`.
+    Raise OSError when the tree cannot be removed. Return only when `path`
+    no longer exists.
+    """
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return
+    if _is_link(path):
+        _unlink_link(path)
+    elif not stat.S_ISDIR(info.st_mode):
+        try:
+            os.unlink(path)
+        except OSError:
+            _chmod_real(path, path)
+            os.unlink(path)
+    else:
+        _fix_permissions(path)
+        failures: list[OSError] = []
+
+        def retry(func, target, _exc):
+            # This hook must not raise. Python 3.14's shutil calls the hook
+            # again, for the parent folder, when the hook raises an OSError
+            # from a step inside its own try block. A failed retry is
+            # recorded here. shutil then removes what it can, and the
+            # checks below raise one OSError for the whole tree.
+            if func is os.close:
+                return
+            target = Path(target)
+            try:
+                target.lstat()
+            except FileNotFoundError:
+                return
+            except OSError as error:
+                failures.append(error)
+                return
+            try:
+                if _is_link(target):
+                    _unlink_link(target)
+                    return
+                _chmod_real(target, path)
+                if func in (os.unlink, os.rmdir):
+                    func(target)
+                # For a failed listing or open, shutil has already given up
+                # on that folder and cannot resume it from here. The folder
+                # stays in place, and the check below raises. The permission
+                # pass above makes this case rare. It fixed every folder
+                # that could not be listed before shutil started.
+            except OSError as error:
+                failures.append(error)
+
         if sys.version_info >= (3, 12):
             shutil.rmtree(path, onexc=retry)
         else:
             shutil.rmtree(path, onerror=retry)
+        if failures:
+            raise OSError(f"could not remove {path}: {failures[0]}")
+    if os.path.lexists(path):
+        raise OSError(f"could not remove {path}: the path still exists")
 
 
 def read_list(path: Path) -> list[str]:
@@ -333,14 +466,27 @@ def fmt_gb(nbytes: int) -> str:
 
 
 def dir_size(path: Path) -> int:
-    """Total size of the files under `path` in bytes; 0 when it does not exist."""
+    """Total size of the files under `path` in bytes; 0 when it does not exist.
+
+    Never follow a symlink or a junction. A link counts as its own `lstat`
+    size, and a linked directory is not walked. Raise OSError when any part
+    of the tree cannot be listed or measured. A partial total is never
+    returned as if it were the true size.
+    """
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return 0
+    if _is_link(path) or not stat.S_ISDIR(info.st_mode):
+        return info.st_size
+
+    def onerror(error: OSError) -> None:
+        raise error
+
     total = 0
-    for root, _dirs, files in os.walk(path, onerror=lambda _error: None):
+    for root, _dirs, files in os.walk(path, onerror=onerror):
         for name in files:
-            try:
-                total += os.lstat(os.path.join(root, name)).st_size
-            except OSError:
-                pass
+            total += os.lstat(os.path.join(root, name)).st_size
     return total
 
 
@@ -357,11 +503,16 @@ def disk_guard(targets: list[Path], cap_bytes: int | None = None, min_free_bytes
     """Keep the Cargo target directories from filling the disk.
 
     Remove a target that is bigger than the cap (`NIGHTLY_TARGET_CAP_GB`).
+    A target whose size cannot be read completely counts as bigger than
+    the cap and is removed too. The target folders are disposable Cargo
+    output, and a partial size must never keep an over-cap folder alive.
     If the drive then still has less free space than the floor
     (`NIGHTLY_MIN_FREE_GB`), remove the remaining targets too, the first one
     first. Return the reason the night is UNAVAILABLE when free space is
     still below the floor after that, else None. A cap or floor of 0 turns
     that check off (the Linux defaults, so nothing is measured or removed).
+    Raise OSError when a removal fails or leaves the target in place.
+    `guard_disk` turns that error into an UNAVAILABLE night.
     """
     if cap_bytes is None:
         cap_bytes = TARGET_CAP_GB * GB
@@ -378,25 +529,36 @@ def disk_guard(targets: list[Path], cap_bytes: int | None = None, min_free_bytes
     cap_text = f"{fmt_gb(cap_bytes)} GB" if cap_bytes > 0 else "off"
     floor_text = f"{fmt_gb(min_free_bytes)} GB" if min_free_bytes > 0 else "off"
 
-    def drop(target: Path, size: int, why: str) -> None:
+    def drop(target: Path, size: int | None, why: str) -> None:
         nonlocal free
         before = free
         remove(target)
+        if os.path.lexists(target):
+            raise OSError(f"disk guard could not remove {target}: the path still exists")
         removed.add(target)
         free = free_of(target)
-        log(f"disk guard: removed {target} ({why}: size {fmt_gb(size)} GB, cap {cap_text}, "
+        size_text = f"{fmt_gb(size)} GB" if size is not None else "unknown"
+        log(f"disk guard: removed {target} ({why}: size {size_text}, cap {cap_text}, "
             f"free {fmt_gb(before)} -> {fmt_gb(free)} GB, floor {floor_text})")
 
     for target in targets:
-        if cap_bytes > 0 and target.exists():
-            size = size_of(target)
+        if cap_bytes > 0 and os.path.lexists(target):
+            try:
+                size = size_of(target)
+            except OSError:
+                drop(target, None, "size could not be read, counted as over the cap")
+                continue
             if size > cap_bytes:
                 drop(target, size, "over the cap")
     for target in targets:
         if min_free_bytes <= 0 or free >= min_free_bytes:
             break
-        if target not in removed and target.exists():
-            drop(target, size_of(target), "free space below the floor")
+        if target not in removed and os.path.lexists(target):
+            try:
+                size = size_of(target)
+            except OSError:
+                size = None
+            drop(target, size, "free space below the floor")
     if min_free_bytes > 0 and free < min_free_bytes:
         return (f"not enough free disk space: {fmt_gb(free)} GB free on the drive that holds "
                 f"{targets[0]}, the floor is {fmt_gb(min_free_bytes)} GB (NIGHTLY_MIN_FREE_GB); "
@@ -1331,11 +1493,15 @@ def run_dir_for(branch: str, commit: str, date: dt.date | None = None) -> Path:
 
 
 def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: list[str] | None,
-               unavailable: str | None = None, date: dt.date | None = None) -> Path:
+               unavailable: str | None = None, date: dt.date | None = None,
+               summary_only: bool = False) -> Path:
     """One branch: sources, the steps in order, summary, DONE.
 
     `unavailable` writes a complete run where every lane and cell is
     UNAVAILABLE with that reason (nothing is built or started).
+    `summary_only` is the logon catch-up for a missed night. It writes
+    that same UNAVAILABLE run and does no other work. In particular it
+    does not run the disk guard. See the guard call below.
     """
     ident = platform_id()
     target = ROOT / "target" / slug(branch)
@@ -1358,8 +1524,18 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         if not ok:
             unavailable = detail
     # The disk guard runs before the sources too, so a full disk cannot fail
-    # the clone that the UNAVAILABLE summary needs for its cell list.
-    disk_reason = guard_disk(branch, ROOT / "target" / f"{slug(branch)}-ci" if "lanes" in STEPS else target)
+    # the clone that the UNAVAILABLE summary needs for its cell list. A
+    # summary-only catch-up skips the guard. Catch-up runs in a 30-minute
+    # task (windows/install-tasks.ps1). A large removal there could be
+    # killed at that limit before the summary exists, and the missed night
+    # would leave no record at all. Catch-up builds nothing, so it needs no
+    # cleared disk. The next scheduled night runs the guard again, inside
+    # its 11-hour task, and removes any over-cap target then.
+    if summary_only:
+        log(f"{branch}: summary only; the disk guard does not run")
+        disk_reason = None
+    else:
+        disk_reason = guard_disk(branch, ROOT / "target" / f"{slug(branch)}-ci" if "lanes" in STEPS else target)
     if unavailable is None:
         unavailable = disk_reason
     try:
@@ -1602,7 +1778,8 @@ def main() -> int:
                   f"(the interactive task cannot run without it; recorded at logon {moment.isoformat(timespec='seconds')})")
         wtext(started_marker(night), moment.isoformat(timespec="seconds") + " catch-up\n")
         for branch in branches:
-            run_branch(branch, args.parallel, only, only_lanes, unavailable=reason, date=night)
+            run_branch(branch, args.parallel, only, only_lanes, unavailable=reason, date=night,
+                       summary_only=True)
         return 0
     wtext(started_marker(night_of(moment)), moment.isoformat(timespec="seconds") + "\n")
     global _run_deadline
