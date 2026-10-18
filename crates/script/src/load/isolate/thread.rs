@@ -202,7 +202,10 @@ pub(super) fn isolate_main(
     let _runtime_lifetime: RuntimeLifetime;
     let mut runtime = match Runtime::with_tokio_runtime_handle(
         RuntimeOptions {
-            extensions: vec![isolate_timer_guards::init()],
+            extensions: vec![
+                isolate_timer_guards::init(),
+                super::super::crypto_stub::script_crypto::init(),
+            ],
             timeout: RUNTIME_TIMEOUT,
             max_heap_size: Some(MAX_HEAP),
             ..Default::default()
