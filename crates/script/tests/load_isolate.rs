@@ -6588,7 +6588,11 @@ fn nearest_bank_isolate() -> LoadIsolate {
     LoadIsolate::spawn_with_content(
         r#"
 import { nearestBank } from '../../api/bank/BankLocations.js';
+import { nearestUsableBank as moduleNearestUsableBank } from '../../api/bank/BankLocations.js';
+import { nearestUsableBank as publicNearestUsableBank } from '@rs2b0t/api';
 globalThis.pick = origin => nearestBank(origin)?.name ?? null;
+globalThis.moduleUsablePick = (origin, usable) => moduleNearestUsableBank(origin, usable);
+globalThis.publicUsablePick = (origin, usable) => publicNearestUsableBank(origin, usable);
 export default class T extends LoopingBot { loop() {} }
 "#
         .to_string(),
@@ -6655,6 +6659,53 @@ fn isolate_nearest_bank_requires_an_origin_even_when_player_and_booth_are_known(
     );
     iso.join();
 }
+#[test]
+fn isolate_root_nearest_usable_bank_matches_module_and_preserves_predicate_order_and_throw() {
+    let iso = nearest_bank_isolate();
+    post_snapshot_input(&iso, &base_snapshot());
+    let result: serde_json::Value = iso
+        .probe(
+            r#"(() => {
+                const origin = { x: 101, z: 100, level: 0 };
+                const publicOrder = [];
+                const moduleOrder = [];
+                const publicBank = publicUsablePick(origin, bank => {
+                    publicOrder.push(bank.name);
+                    return bank.name === 'East';
+                });
+                const moduleBank = moduleUsablePick(origin, bank => {
+                    moduleOrder.push(bank.name);
+                    return bank.name === 'East';
+                });
+                const sentinel = {};
+                let sameThrownValue = false;
+                try {
+                    publicUsablePick(origin, () => { throw sentinel; });
+                } catch (error) {
+                    sameThrownValue = error === sentinel;
+                }
+                return {
+                    publicName: publicBank?.name,
+                    moduleName: moduleBank?.name,
+                    publicTile: publicBank?.tile.toString(),
+                    moduleTile: moduleBank?.tile.toString(),
+                    publicOrder,
+                    moduleOrder,
+                    sameThrownValue,
+                };
+            })()"#,
+        )
+        .unwrap();
+    assert_eq!(result["publicName"], "East");
+    assert_eq!(result["moduleName"], "East");
+    assert_eq!(result["publicTile"], "(120, 100, 0)");
+    assert_eq!(result["moduleTile"], "(120, 100, 0)");
+    assert_eq!(result["publicOrder"], serde_json::json!(["West", "East"]));
+    assert_eq!(result["moduleOrder"], serde_json::json!(["West", "East"]));
+    assert_eq!(result["sameThrownValue"], true);
+    iso.join();
+}
+
 
 /// Post `snap` at ticks `1..=ticks`, run each game tick, and collect every
 /// interact the isolate sent.
@@ -8454,6 +8505,248 @@ export default class T extends LoopingBot {
     iso.on_game_tick(1);
     let probe = iso.probe("__probe").unwrap();
     assert_eq!(probe, 12, "Bank.countById sums posted bank row ids");
+    iso.join();
+}
+
+#[test]
+fn bank_snapshot_methods_read_posted_native_rows_and_preserve_shape() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__bankRead = {
+            isOpen: Bank.isOpen(),
+            loaded: Bank.loaded(),
+            ready: Bank.ready(),
+            snapshotReady: Bank.snapshotReady(),
+            snapshotGeneration: Bank.snapshotGeneration(),
+            items: Bank.items(),
+            count: Bank.count('STRAẞE'),
+            countById: Bank.countById(526),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let ops = ["Withdraw 1".to_string(), "Deposit-All".to_string()];
+    let first = script::isolate_fb::ItemRowInput {
+        slot: 4,
+        ..item_row(526, Some("Straße"), 3, &ops, true, 105, 701)
+    };
+    let second = script::isolate_fb::ItemRowInput {
+        slot: 5,
+        ..item_row(526, Some("Straße"), 2, &ops, false, 106, 702)
+    };
+    let bank = [first, second];
+    let mut snap = base_snapshot();
+    snap.bank = &bank;
+    snap.bank_open = true;
+    snap.bank_loaded = false;
+    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
+        &snap,
+        script::isolate_fb::NativeFactsInput {
+            bank_snapshot_generation: Some(17),
+            ..Default::default()
+        },
+    ));
+    iso.on_game_tick(1);
+    let result: serde_json::Value = iso.probe("__bankRead").unwrap();
+    assert_eq!(
+        result,
+        serde_json::json!({
+            "isOpen": true,
+            "loaded": true,
+            "ready": true,
+            "snapshotReady": false,
+            "snapshotGeneration": 17,
+            "items": [
+                {
+                    "name": "Straße",
+                    "count": 3,
+                    "id": 526,
+                    "slot": 4,
+                    "comId": 701,
+                    "ops": ["Withdraw 1", "Deposit-All"],
+                    "noted": true,
+                    "cert": 105
+                },
+                {
+                    "name": "Straße",
+                    "count": 2,
+                    "id": 526,
+                    "slot": 5,
+                    "comId": 702,
+                    "ops": ["Withdraw 1", "Deposit-All"],
+                    "noted": false,
+                    "cert": 106
+                }
+            ],
+            "count": 5,
+            "countById": 5
+        })
+    );
+    iso.join();
+}
+
+#[test]
+fn bank_count_by_id_keeps_missing_id_failure_and_empty_result() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    loop() {
+        try {
+            globalThis.__countById = Bank.countById(526);
+        } catch (error) {
+            globalThis.__countById = error.message;
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let bank = [item_row(0, Some("Bones"), 12, &[], false, -1, -1)];
+    let mut snap = base_snapshot();
+    snap.bank = &bank;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert_eq!(
+        iso.probe("__countById").unwrap(),
+        "not impl: Bank.countById"
+    );
+
+    snap.tick = 2;
+    snap.bank = &[];
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("__countById").unwrap(), 0);
+    iso.join();
+}
+
+#[test]
+fn banking_native_predicates_preserve_callbacks_and_settings() {
+    let src = r#"
+import {
+    depositMatcher,
+    depositAllExcept,
+    PERIODIC_BANK_SETTINGS,
+    RANDOM_EVENT_CASKET_ID,
+} from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    loop() {
+        if (globalThis.__bankingNative) return;
+        let nameCoercions = 0;
+        const shortInput = {
+            toString() {
+                nameCoercions += 1;
+                return 'Uncut ruby';
+            },
+        };
+        const marker = { marker: true };
+        let sawOriginal = false;
+        const shortMatcher = depositMatcher((name) => {
+            sawOriginal = name === shortInput;
+            return marker;
+        }, true);
+        const shortResult = shortMatcher(shortInput, RANDOM_EVENT_CASKET_ID);
+
+        const commonInput = {
+            toString() {
+                nameCoercions += 1;
+                return 'Mystery box';
+            },
+        };
+        let commonSawOriginal = false;
+        const commonMatcher = depositMatcher((name) => {
+            commonSawOriginal = name === commonInput;
+            return 0;
+        }, true);
+        const commonById = commonMatcher(commonInput, RANDOM_EVENT_CASKET_ID);
+        const missingId = commonMatcher('Mystery box');
+        const explicitUndefinedId = commonMatcher('Mystery box', undefined);
+        const noCommonMatcher = depositMatcher(() => false, false);
+        const noCommon = noCommonMatcher({
+            toString() {
+                nameCoercions += 1;
+                return 'Mystery box';
+            },
+        }, RANDOM_EVENT_CASKET_ID);
+
+        const thrown = { thrown: true };
+        let sameThrownValue = false;
+        try {
+            depositMatcher(() => { throw thrown; }, true)('Uncut sapphire');
+        } catch (error) {
+            sameThrownValue = error === thrown;
+        }
+
+        const except = depositAllExcept(['Straße']);
+        globalThis.__bankingNative = {
+            settings: PERIODIC_BANK_SETTINGS,
+            shortValuePreserved: shortResult === marker,
+            sawOriginal,
+            commonById,
+            commonSawOriginal,
+            missingId,
+            explicitUndefinedId,
+            noCommon,
+            sameThrownValue,
+            nameCoercions,
+            keptCaseInsensitive: except('STRAẞE'),
+            otherName: except('Bones'),
+            emptyName: except(''),
+        };
+    }
+}
+"#;
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::CompatClass, vec![], data)
+            .unwrap();
+    post_snapshot_input(&iso, &base_snapshot());
+    iso.on_game_tick(1);
+    let result: serde_json::Value = iso.probe("__bankingNative").unwrap();
+    assert_eq!(result["shortValuePreserved"], true);
+    assert_eq!(result["sawOriginal"], true);
+    assert_eq!(result["commonById"], true);
+    assert_eq!(result["commonSawOriginal"], true);
+    assert_eq!(result["missingId"], false);
+    assert_eq!(result["explicitUndefinedId"], false);
+    assert_eq!(result["noCommon"], false);
+    assert_eq!(result["sameThrownValue"], true);
+    assert_eq!(result["nameCoercions"], 1);
+    assert_eq!(result["keptCaseInsensitive"], false);
+    assert_eq!(result["otherName"], true);
+    assert_eq!(result["emptyName"], false);
+    assert_eq!(
+        result["settings"],
+        serde_json::json!({
+            "bankStrategy": {
+                "type": "string",
+                "default": "Off",
+                "options": ["Off", "Loot count", "Time", "Either"],
+                "label": "Periodic bank",
+                "help": "save accumulated loot so a death does not lose it all"
+            },
+            "bankEveryItems": {
+                "type": "number",
+                "default": 15,
+                "min": 1,
+                "max": 27,
+                "label": "Bank at N loot items"
+            },
+            "bankEveryMinutes": {
+                "type": "number",
+                "default": 10,
+                "min": 1,
+                "max": 120,
+                "label": "Bank every N minutes"
+            },
+            "bankCommonJunk": {
+                "type": "boolean",
+                "default": true,
+                "label": "Also bank gems/fruit/beer/kebabs/caskets"
+            }
+        })
+    );
     iso.join();
 }
 
