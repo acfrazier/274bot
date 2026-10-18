@@ -1822,6 +1822,54 @@ mod tests {
         QuestCatalog::from_identity(data.quest_identity()).unwrap_or_else(|_| QuestCatalog::empty())
     }
 
+    /// Reproducible release-build measurements for the admitted Path compile
+    /// allowance: a complex bundled Path, the largest bundled document, and
+    /// a valid Path padded to the 1 MiB input ceiling. A new digest keeps each
+    /// measurement off the process compile cache.
+    #[test]
+    fn quester_compile_policy_timing() {
+        let _home = crate::IsolatedEnv::enter("quester-compile-policy-timing");
+        FamilyPreparation::run(move |worker| {
+            let data = selected();
+            let quests = quests(&data);
+            let largest = crate::quester::registry::PathRegistry::Bundled
+                .ids()
+                .into_iter()
+                .filter_map(|id| path_bytes(&id).map(|bytes| (id, bytes)))
+                .max_by_key(|(_, bytes)| bytes.len())
+                .expect("bundled Path documents");
+            let mut maximal = path_bytes("elena").expect("complex bundled Path").to_vec();
+            maximal.resize(crate::quester::registry::MAX_REGISTRY_FILE_BYTES, b' ');
+            for (index, (name, source)) in [
+                ("elena", path_bytes("elena").unwrap()),
+                (largest.0.as_str(), largest.1),
+                ("padded-1mib", maximal.as_slice()),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let mut bytes = source.to_vec();
+                bytes.resize(
+                    (bytes.len() + index + 1)
+                        .min(crate::quester::registry::MAX_REGISTRY_FILE_BYTES),
+                    b' ',
+                );
+                let started = std::time::Instant::now();
+                let result =
+                    compile_path(&bytes, &data, &quests, worker, &OperatorLoadouts::absent());
+                eprintln!(
+                    "QUESTER_COMPILE_POLICY name={name} bytes={} elapsed={:?}",
+                    bytes.len(),
+                    started.elapsed()
+                );
+                result.unwrap();
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    }
+
     #[test]
     fn compile_cache_reuses_identical_bytes_and_separates_changed_paths() {
         let _home = crate::IsolatedEnv::enter("quester-compile-cache");

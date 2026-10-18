@@ -393,7 +393,7 @@ fn pause_hold_and_session_reset_drop_stale_walk() {
     assert_eq!(number(&iso, "globalThis.__recovered || 0"), 0);
 
     iso.resume();
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     snap.tick = 5;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 5);

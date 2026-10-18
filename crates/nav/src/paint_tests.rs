@@ -72,6 +72,93 @@ fn route(legs: Vec<Leg>) -> Route {
     }
 }
 
+fn view(route: &Route) -> RouteView<'_> {
+    let world =
+        crate::world::NavWorld::from_parts(bake(1, 1, &[]), TransportGraph::default(), vec![]);
+    crate::producer::route_view(&world, route).unwrap()
+}
+
+#[test]
+fn legacy_and_compact_routes_keep_identical_paint_outputs() {
+    use crate::router::{CompactCheckpoint, CompactRoute};
+    use crate::world::NavWorld;
+    use std::sync::Arc;
+
+    for (kind, loc_id, caption, loc_backed) in [
+        (TransportKind::Door, 1530, Some("Door"), true),
+        (TransportKind::Door, 733, Some("Web"), true),
+        (TransportKind::Ladder, 1111, Some("Ladder"), true),
+        (TransportKind::Stairs, 1112, Some("Stairs"), true),
+        (TransportKind::AgilityShortcut, 1113, Some("Shortcut"), true),
+        (TransportKind::Boat, 1114, Some("Boat"), false),
+        (TransportKind::Glider, 1115, Some("Glider"), false),
+        (TransportKind::SpiritTree, 1116, Some("Spirit tree"), false),
+        (TransportKind::Npc, 1117, Some("Npc"), false),
+        (TransportKind::Teleport, 1118, None, false),
+        (TransportKind::EssenceExit, 1119, None, false),
+    ] {
+        let world = Arc::new(NavWorld::from_parts(
+            bake(5, 1, &[]),
+            TransportGraph {
+                edges: vec![edge(kind, tile(1, 0, 0), tile(3, 0, 0), loc_id)],
+                ..TransportGraph::default()
+            },
+            vec![],
+        ));
+        let lease = crate::producer::lease(&world).unwrap();
+        // Walk 0→1, graph hop 1→3, walk 3→4. Two-bit tags are
+        // walk (0), graph hop (1), walk (0), in transition order.
+        let mut compact = CompactRoute::from_compact_parts(
+            tile(0, 0, 0),
+            tile(4, 0, 0),
+            2.0,
+            vec![tile(0, 0, 0), tile(1, 0, 0), tile(3, 0, 0), tile(4, 0, 0)].into_boxed_slice(),
+            Box::new([0b0000_0100]),
+            3,
+            3,
+            Box::new([0]),
+            None,
+            Box::new([CompactCheckpoint {
+                transition: 0,
+                walk_tile: 0,
+                edge: 0,
+                tile: tile(0, 0, 0),
+            }]),
+        );
+        compact.retain_lease(lease.clone());
+        let legacy = compact.to_route(&world.graph);
+        let legacy = crate::producer::route_view(&lease, &legacy).unwrap();
+        let compact = crate::producer::compact_route_view(&lease, &compact).unwrap();
+        assert_eq!(
+            hop_captions(legacy, None),
+            caption
+                .map(|text| HopCaption {
+                    at: tile(1, 0, 0),
+                    text: text.into()
+                })
+                .into_iter()
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(hull_targets(legacy, None, 0).len(), usize::from(loc_backed));
+        for here in [None, Some(tile(99, 0, 0))]
+            .into_iter()
+            .chain((0..5).map(|x| Some(tile(x, 0, 0))))
+        {
+            assert_eq!(
+                remaining_path_tiles(legacy, here),
+                remaining_path_tiles(compact, here)
+            );
+            assert_eq!(hop_captions(legacy, here), hop_captions(compact, here));
+            for window in [0, 2, 48] {
+                assert_eq!(
+                    hull_targets(legacy, here, window),
+                    hull_targets(compact, here, window)
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn remaining_path_includes_transport_at_to() {
     // Walk then Door; here on first tile → remaining has walk + at + to
@@ -88,7 +175,7 @@ fn remaining_path_includes_transport_at_to() {
             )),
         },
     ]);
-    let tiles = remaining_path_tiles(&r, Some(tile(0, 0, 0)));
+    let tiles = remaining_path_tiles(view(&r), Some(tile(0, 0, 0)));
     let flat: Vec<WorldTile> = tiles.iter().map(|p| p.tile).collect();
     assert_eq!(
         flat,
@@ -128,7 +215,7 @@ fn hop_captions_label_at_only_and_skip_teleports() {
             )),
         },
     ]);
-    let caps = hop_captions(&r, Some(tile(0, 0, 0)));
+    let caps = hop_captions(view(&r), Some(tile(0, 0, 0)));
     assert_eq!(caps.len(), 1, "one caption per loc hop, none for teleport");
     assert_eq!(caps[0].at, tile(2, 0, 0));
     assert_eq!(caps[0].text, "Door");
@@ -154,7 +241,7 @@ fn remaining_path_tiles_skips_done_legs_and_trims_here() {
     ]);
     // Mid-leg: the current walk leg trims to here onward; the transport
     // and following walk leg stay; the crossing tile dedups to one.
-    let tiles = remaining_path_tiles(&r, Some(tile(1, 0, 0)));
+    let tiles = remaining_path_tiles(view(&r), Some(tile(1, 0, 0)));
     let flat: Vec<WorldTile> = tiles.iter().map(|p| p.tile).collect();
     assert_eq!(
         flat,
@@ -168,7 +255,7 @@ fn remaining_path_tiles_skips_done_legs_and_trims_here() {
     );
     assert_eq!(tiles.len(), 5, "the crossing tile must dedup to one");
     // At a leg end the done walk leg is skipped entirely.
-    let tiles = remaining_path_tiles(&r, Some(tile(2, 0, 0)));
+    let tiles = remaining_path_tiles(view(&r), Some(tile(2, 0, 0)));
     let flat: Vec<WorldTile> = tiles.iter().map(|p| p.tile).collect();
     assert_eq!(flat, vec![tile(3, 0, 0), tile(4, 0, 0), tile(5, 0, 0)]);
 }
@@ -300,7 +387,7 @@ fn hull_skips_teleport_and_missing_loc() {
         )),
     }]);
     assert!(
-        hull_targets(&r, None, 12).is_empty(),
+        hull_targets(view(&r), None, 12).is_empty(),
         "teleport hops have no hull"
     );
     // NPC hops (boat/glider) have no loc either.
@@ -308,7 +395,7 @@ fn hull_skips_teleport_and_missing_loc() {
         edge: Box::new(edge(TransportKind::Boat, tile(0, 0, 0), tile(1, 0, 0), 0)),
     }]);
     assert!(
-        hull_targets(&r, None, 12).is_empty(),
+        hull_targets(view(&r), None, 12).is_empty(),
         "NPC hops have no hull"
     );
     // A door with a loc id resolves to one target.
@@ -321,7 +408,7 @@ fn hull_skips_teleport_and_missing_loc() {
         )),
     }]);
     assert_eq!(
-        hull_targets(&r, None, 12),
+        hull_targets(view(&r), None, 12),
         vec![HullTarget {
             loc_id: 1530,
             at: tile(2, 0, 0)
@@ -358,7 +445,7 @@ fn hull_targets_keeps_window_hops_and_always_the_next() {
         },
     ]);
     assert_eq!(
-        hull_targets(&r, None, 12),
+        hull_targets(view(&r), None, 12),
         vec![HullTarget {
             loc_id: 1111,
             at: tile(50, 0, 0)
@@ -394,7 +481,7 @@ fn hull_targets_keeps_in_window_hops() {
         },
     ]);
     assert_eq!(
-        hull_targets(&r, None, 12),
+        hull_targets(view(&r), None, 12),
         vec![
             HullTarget {
                 loc_id: 1530,
@@ -440,7 +527,7 @@ fn hull_targets_window_counts_from_the_trimmed_start() {
         },
     ]);
     assert_eq!(
-        hull_targets(&r, Some(tile(3, 0, 0)), 12),
+        hull_targets(view(&r), Some(tile(3, 0, 0)), 12),
         vec![
             HullTarget {
                 loc_id: 1530,
@@ -477,7 +564,7 @@ fn hull_targets_collapses_duplicate_door_targets() {
         },
     ]);
     assert_eq!(
-        hull_targets(&r, None, 12).len(),
+        hull_targets(view(&r), None, 12).len(),
         1,
         "duplicate targets collapse"
     );

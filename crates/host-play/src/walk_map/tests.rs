@@ -1011,7 +1011,10 @@ fn bound_host_walk_arms_and_rejects_a_foreign_nav_without_replacing_the_route() 
 
 #[test]
 fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_identity() {
-    use crate::map_cache::{MapCacheRoot, ReadyMap};
+    use crate::map_cache::{
+        fixture::CountingMapProducer, MapCacheRoot, MapDemand, MapDemandManager, MapJobStatus,
+        MapProfileDescriptor,
+    };
     use nav::map::formats::{CatalogueManifest, PayloadReceipt};
 
     let world = Arc::new(world(t(0, 0, 0), 8, &[(3, 3, 0)]));
@@ -1055,11 +1058,33 @@ fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_iden
         serde_json::to_vec(&receipt).unwrap(),
     )
     .unwrap();
-    let ready = cache_root.open_catalogue(identity).unwrap().unwrap();
-    let ready_map = ReadyMap {
-        catalogue: Arc::clone(&ready),
-        images: None,
-    };
+    let descriptor = MapProfileDescriptor::new(
+        identity.revision,
+        identity.content,
+        digest(4),
+        identity.policy,
+    )
+    .unwrap();
+    let manager = MapDemandManager::new(cache_root, Arc::new(CountingMapProducer::default()));
+    let handle = manager
+        .request(descriptor, MapDemand::CatalogueOnly)
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match handle.status() {
+            MapJobStatus::Ready => break,
+            MapJobStatus::Queued | MapJobStatus::Running(_) => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "catalogue did not settle"
+                );
+                handle.wait_for_change(std::time::Duration::from_millis(100));
+            }
+            other => panic!("catalogue ended {other:?}"),
+        }
+    }
+    let ready_map = handle.ready().unwrap();
+    let ready = Arc::clone(&ready_map.catalogue);
     assert!(matches!(
         Catalogue::from_ready(
             Arc::clone(&world),
@@ -1127,7 +1152,7 @@ fn actual_route_projection_follows_live_script_manual_precedence_and_focus() {
     );
     let manual = Mutex::new(crate::WalkArm::default());
     let read = |projection: Option<RouteProjection<'_>>| {
-        projection.map(|p| (p.stamp.source, p.stamp.generation, p.route.dest))
+        projection.map(|p| (p.stamp.source, p.stamp.generation, p.route.destination()))
     };
     assert_eq!(
         play.with_map_route("alice", Some(&manual), None, read),

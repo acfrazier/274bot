@@ -1397,10 +1397,10 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
     let root = fake_rs2b0t_tree(&iso.dir, false);
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("274bot headless");
-    let n = session
-        .import_rs2b0t_catalog(&mut app, &root)
-        .expect("import");
-    assert_eq!(n, 1);
+    session.import_rs2b0t_catalog(&root).expect("import");
+    assert!(session.scripts.catalog_work_pending());
+    assert!(!iso.home.join(".274bot/rs2b0t-path").exists());
+    settle_catalog_work(&mut session, &mut app);
     assert!(iso.home.join(".274bot/rs2b0t-path").is_file());
     let card = session
         .scripts
@@ -1436,6 +1436,21 @@ fn settle_starts(session: &mut TuiSession, app: &mut TuiApp) {
     );
 }
 
+fn settle_catalog_work(session: &mut TuiSession, app: &mut TuiApp) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while session.scripts.catalog_work_pending() && Instant::now() < deadline {
+        session.core.poll();
+        session.poll_scripts(app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    session.core.poll();
+    session.poll_scripts(app);
+    assert!(
+        !session.scripts.catalog_work_pending(),
+        "catalog work did not settle"
+    );
+}
+
 #[test]
 fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     let iso = IsolatedEnv::enter("tui-initial-load");
@@ -1456,6 +1471,8 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     play.attach_arm("alice", SlotArm::new(7, false));
     play.attach_arm("bob", SlotArm::new(8, false));
     session.inject_play(play);
+    session.core.fleet_mut().add("alice");
+    session.core.fleet_mut().add("bob");
     let mut app = TuiApp::new("initial load proof");
     app.names = vec!["alice".into(), "bob".into(), "missing".into()];
     app.focused = Some(0);
@@ -2195,18 +2212,16 @@ fn player_at_plane_one_follow_uses_level() {
         legs: vec![],
         ticks: 0.0,
     });
-    let pending = PendingBankFetch {
-        steps: VecDeque::from([BankStep::Walk {
+    let pending = PendingBankFetch::for_test_with_route(
+        VecDeque::from([BankStep::Walk {
             x: here.0,
             z: here.1,
             level: 1,
         }]),
-        dest: final_route.dest,
-        opts: FindOptions::default(),
-        final_route: final_route.clone(),
-        avoid: Vec::new(),
-        progress: Default::default(),
-    };
+        final_route.dest,
+        FindOptions::default(),
+        final_route.clone(),
+    );
 
     let mut arm = WalkArm {
         bank_fetch: Some(pending.clone()),
@@ -2273,18 +2288,16 @@ fn follow_tick_pumps_bank_budget_step() {
         ticks: 0.0,
     });
     let mut arm = WalkArm {
-        bank_fetch: Some(PendingBankFetch {
-            steps: VecDeque::from([BankStep::Withdraw { id: 2, count: 1 }, BankStep::Close]),
-            dest: WorldTile {
+        bank_fetch: Some(PendingBankFetch::for_test_with_route(
+            VecDeque::from([BankStep::Withdraw { id: 2, count: 1 }, BankStep::Close]),
+            WorldTile {
                 x: 4,
                 z: 4,
                 level: 0,
             },
-            opts: FindOptions::default(),
-            final_route: final_route.clone(),
-            avoid: Vec::new(),
-            progress: Default::default(),
-        }),
+            FindOptions::default(),
+            final_route.clone(),
+        )),
         route: Some(Arc::new(Route {
             dest: WorldTile {
                 x: 0,
@@ -2341,18 +2354,16 @@ fn bank_stand_subroute_does_not_emit_operator_terminal_receipt() {
         ticks: 1.0,
     });
     let mut arm = WalkArm {
-        bank_fetch: Some(PendingBankFetch {
-            steps: VecDeque::from([BankStep::Walk {
+        bank_fetch: Some(PendingBankFetch::for_test_with_route(
+            VecDeque::from([BankStep::Walk {
                 x: stand.x,
                 z: stand.z,
                 level: stand.level,
             }]),
-            dest: destination,
-            opts: FindOptions::default(),
-            final_route: final_route.clone(),
-            avoid: Vec::new(),
-            progress: Default::default(),
-        }),
+            destination,
+            FindOptions::default(),
+            final_route.clone(),
+        )),
         route: Some(Arc::new(Route {
             dest: stand,
             legs: vec![Leg::Walk {
@@ -3984,10 +3995,19 @@ fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
     );
 
     dispatch(&mut session, &mut app, AppAction::ScriptReload);
-    assert!(matches!(
-        session.scripts.take_reload_outcome(),
-        Some(outcome) if matches!(outcome.applied_counts(), Some((2, _, 0)))
-    ));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let outcome = loop {
+        session.pump(&mut app);
+        if let Some(outcome) = session.scripts.take_reload_outcome() {
+            break outcome;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "confirmed reload preparation did not settle"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert!(matches!(outcome.applied_counts(), Some((2, _, 0))));
     settle_starts(&mut session, &mut app);
     for name in ["alice", "bob"] {
         wait_script_state(
@@ -4148,7 +4168,7 @@ fn tui_start_all_paces_admission_through_the_shared_coordinator() {
         starting <= frontend_core::scripts::START_ADMIT_PER_FRAME,
         "TUI Start all dispatched {starting} in the click frame"
     );
-    assert!(starting > 0);
+    assert!(starting > 0 || session.scripts.starts_pending());
     settle_starts(&mut session, &mut app);
     for name in names {
         wait_script_state(
@@ -4522,8 +4542,18 @@ fn memory_relog_confirms_while_a_script_runs() {
         &mut app,
         AppAction::MemoryRelogNow("alice".into()),
     );
-    assert!(alice.login_latched(), "the confirmed relog logs out");
-    assert!(alice.wants_logout());
+    assert!(
+        !alice.login_latched(),
+        "RelogNow does not make a Logout latch"
+    );
+    assert!(
+        !alice.wants_logout(),
+        "the fixture has no owner session to leave"
+    );
+    assert!(
+        alice.wants_login(),
+        "the confirmed offline relog arms Login"
+    );
 }
 
 /// Review R3-H3: the import overlay built from a real preview of an export
@@ -4578,6 +4608,47 @@ fn import_overlay_debug_holds_no_export_password() {
     );
     let shown = format!("{view:?}");
     assert!(!shown.contains(SECRET), "{shown}");
+}
+
+#[test]
+fn profile_import_preview_waits_for_first_catalog_scan() {
+    let iso = IsolatedEnv::enter("tui-import-catalog-pending");
+    let root = fake_rs2b0t_tree(&iso.dir, false);
+    iso.set_rs2b0t(&root);
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_vault(Some(
+        Vault::create(&iso.dir.join("vault"), "test-passphrase-01").unwrap(),
+    ));
+    let mut app = TuiApp::new("274bot headless");
+    let path = iso.dir.join("profiles.json");
+    std::fs::write(
+        &path,
+        serde_json::json!({
+            "kind": frontend_core::rs2b0t_import::PROFILE_FILE_KIND,
+            "v": 1,
+            "profiles": [],
+            "tabs": [],
+            "activeTab": "Main",
+            "storage": {},
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    session.profile_import(&mut app, ImportAction::Preview(path.display().to_string()));
+    assert!(session.scripts.catalog_work_pending());
+    assert!(session.profile_import_preview_pending);
+    assert_eq!(
+        session.profile_import.stage(),
+        frontend_core::rs2b0t_import::Stage::Path
+    );
+
+    settle_catalog_work(&mut session, &mut app);
+    assert!(!session.profile_import_preview_pending);
+    assert_eq!(
+        session.profile_import.stage(),
+        frontend_core::rs2b0t_import::Stage::Preview
+    );
 }
 
 /// One headless fleet session end to end: type a filter, mark the shown

@@ -394,7 +394,7 @@ fn reset_clears_store_pause_and_stale_generation_reject() {
     tick(&iso, 2);
     assert_eq!(iso.probe("__page").unwrap().as_str(), Some("Options"));
 
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     let mut snap = base_snapshot();
     snap.tick = 3;
     post_snapshot_input(&iso, &snap);
@@ -416,7 +416,7 @@ fn reset_clears_store_pause_and_stale_generation_reject() {
     );
 
     iso.paint_select("strip:k", "Options");
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     snap.tick = 5;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 5);

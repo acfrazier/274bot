@@ -1175,17 +1175,17 @@ pub(super) fn dispatch_native_events(
     // — a flush that stalls must not grow the isolate heap without
     // bound. The oldest entries fall off first, matching the flush's
     // in-order drain.
-    runtime
-        .eval::<()>(
-            "(() => {
+    super::lineage_v8::eval::<()>(
+        runtime,
+        "(() => {
     const b = globalThis.__rs2b0t_native_event_batch;
     globalThis.__rs2b0t_native_event_batch = null;
     const q = globalThis.__rs2b0t_pending_native_event_batch || (globalThis.__rs2b0t_pending_native_event_batch = []);
     for (let i = 0; i < b.length; i++) q.push(b[i]);
     if (q.length > 256) q.splice(0, q.length - 256);
 })()",
-        )
-        .map_err(|e| format!("{e}"))
+    )
+    .map_err(|e| format!("{e}"))
 }
 
 fn js_string<'s>(

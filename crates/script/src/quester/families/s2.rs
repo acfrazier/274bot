@@ -930,23 +930,26 @@ pub(super) fn compile_loadout(
         let Some(name) = candidate.name.as_deref() else {
             continue;
         };
-        let canonical = cx
-            .selected
-            .resolve_item_name(name)
-            .is_some_and(|item| item.id == candidate.id);
-        let relevant = canonical
-            && (carry.iter().any(|entry| entry.item.id == candidate.id)
-                || worn_items.iter().any(|(slot, wanted)| {
-                    wanted.id == candidate.id
-                        || (wanted.name.eq_ignore_ascii_case("dragon longsword")
-                            && name.eq_ignore_ascii_case("rune sword"))
-                        || (wanted.name.eq_ignore_ascii_case("rune platebody")
-                            && name.eq_ignore_ascii_case("rune chainbody"))
-                        || crate::melee_weapons::same_or_lower_metal_item(name, &wanted.name)
-                        || (slot.eq_ignore_ascii_case("righthand")
-                            && crate::melee_weapons::same_or_lower_melee_weapon(name, &wanted.name))
-                }));
-        if relevant && !resolved.iter().any(|known| known.id == candidate.id) {
+        // Name resolution can scan aliases and ambiguous display rows. Only
+        // candidates that match this loadout need that canonicality check.
+        let relevant = carry.iter().any(|entry| entry.item.id == candidate.id)
+            || worn_items.iter().any(|(slot, wanted)| {
+                wanted.id == candidate.id
+                    || (wanted.name.eq_ignore_ascii_case("dragon longsword")
+                        && name.eq_ignore_ascii_case("rune sword"))
+                    || (wanted.name.eq_ignore_ascii_case("rune platebody")
+                        && name.eq_ignore_ascii_case("rune chainbody"))
+                    || crate::melee_weapons::same_or_lower_metal_item(name, &wanted.name)
+                    || (slot.eq_ignore_ascii_case("righthand")
+                        && crate::melee_weapons::same_or_lower_melee_weapon(name, &wanted.name))
+            });
+        if relevant
+            && cx
+                .selected
+                .resolve_item_name(name)
+                .is_some_and(|item| item.id == candidate.id)
+            && !resolved.iter().any(|known| known.id == candidate.id)
+        {
             resolved.push(BankItem {
                 id: candidate.id,
                 name: Arc::from(name),

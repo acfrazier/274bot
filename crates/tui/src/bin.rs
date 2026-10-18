@@ -115,10 +115,21 @@ const USAGE: &str = "usage: tui-play [--profile NAME|--rs2b2t] [--revision 274|2
          release packaging: tui-play --map-bundle OUT --revision 274|289 --cache JAG_DIR \
          --unpack SNAPSHOT_ROOT (bakes the shipped WalkTo map terrain into OUT/map/<revision>)";
 
+fn exit_after_work_shutdown(code: i32) -> ! {
+    let code = match script::work_admission::WorkService::shutdown_if_started() {
+        Ok(()) => code,
+        Err(error) => {
+            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "background work shutdown: {error}");
+            1
+        }
+    };
+    std::process::exit(code)
+}
+
 /// Usage on stderr for a bad invocation (exit 2, the CLI family's convention).
 fn usage() -> ! {
     eprintln!("{USAGE}");
-    std::process::exit(2);
+    exit_after_work_shutdown(2);
 }
 
 fn need_value(
@@ -152,7 +163,7 @@ pub fn parse_args() -> Args {
         Ok(args) => args,
         Err(msg) if msg == "usage" => {
             println!("{USAGE}");
-            std::process::exit(0);
+            exit_after_work_shutdown(0);
         }
         Err(msg) => {
             eprintln!("{msg}");
@@ -483,6 +494,8 @@ pub struct TuiSession {
     rs2b0t_catalog_dir: PathBuf,
     /// The rs2b0t profile import shown by [`Modal::ProfileImport`].
     profile_import: frontend_core::rs2b0t_import::ProfileImport,
+    /// Preview waiting for the first asynchronous catalog scan.
+    profile_import_preview_pending: bool,
     /// Browse category order keys (in-memory; panel persists to panel-ui.json).
     script_category_order: Vec<String>,
     /// The process local-state service's shared operator preferences
@@ -597,6 +610,7 @@ impl TuiSession {
             rs2b0t_catalog_open: false,
             rs2b0t_catalog_dir: Self::default_catalog_browse_dir(),
             profile_import: frontend_core::rs2b0t_import::ProfileImport::new(),
+            profile_import_preview_pending: false,
             script_category_order: Vec::new(),
             preferences: preferences.clone(),
             loadouts: script::LoadoutsStore::over(Arc::new(service.operator_loadouts())),
@@ -1172,7 +1186,11 @@ impl TuiSession {
         // catalog from `$RS2B0T`, then Start on StartScript after seed.
         // A fleet launch Starts the scenario's own card on each member slot.
         if let Some(fleet) = fleet_start {
-            self.fill_rs2b0t_cards_once();
+            self.fill_rs2b0t_cards_for_live_start()?;
+            for member in fleet.members(&names)? {
+                self.scripts
+                    .transpile_blocking(script::ScriptSource::Catalog, member.card)?;
+            }
             let scripts = &mut self.scripts;
             let (js, legacy, inject) = scripts.live_start_parts();
             let starts = live_start::fleet_catalog_starts(
@@ -1226,11 +1244,9 @@ impl TuiSession {
                 *self.pending_script.lock().unwrap() =
                     vec![PendingCatalogStart::compiled(names[0].clone(), id, bag)];
             } else {
-                self.fill_rs2b0t_cards_once();
+                self.fill_rs2b0t_cards_for_live_start()?;
                 self.scripts
-                    .js_mut()
-                    .ensure_js(script::ScriptSource::Catalog, card_name)
-                    .map_err(|e| format!("transpile {card_name}: {e}"))?;
+                    .transpile_blocking(script::ScriptSource::Catalog, card_name)?;
                 let card = self
                     .scripts
                     .js()
@@ -1749,6 +1765,19 @@ impl TuiSession {
         }
     }
 
+    fn fill_rs2b0t_cards_for_live_start(&mut self) -> Result<(), String> {
+        if self.scripts.catalog_filled() {
+            return Ok(());
+        }
+        let Some(root) = self.catalog_root() else {
+            self.scripts.mark_catalog_filled();
+            return Ok(());
+        };
+        self.scripts
+            .fill_catalog_blocking(&root, &script::default_rs2b0t_path_file())
+            .map_err(|error| error.to_string())
+    }
+
     /// Fill the JS library's cards from the `$RS2B0T` registry once when
     /// the env/persisted root is already known (live boot). Errors are
     /// debug-only.
@@ -1794,12 +1823,25 @@ impl TuiSession {
     /// Run one step of the rs2b0t profile import on the shared flow, then
     /// show the result in the overlay.
     fn profile_import(&mut self, app: &mut TuiApp, action: ImportAction) {
-        // Script names map through the catalog: register it from its known
-        // root first (no folder prompt; without a root the preview says so).
-        if matches!(action, ImportAction::Preview(_)) && !self.scripts.catalog_filled() {
-            if let Some(root) = self.catalog_root() {
-                self.scripts.fill_catalog_once(Some(&root));
+        // Script names map through the catalog. If its first scan is still
+        // running, hold this preview until the worker publishes the catalog.
+        if let ImportAction::Preview(path) = &action {
+            if !self.scripts.catalog_filled() {
+                if let Some(root) = self.catalog_root() {
+                    self.scripts.fill_catalog_once(Some(&root));
+                    if self.scripts.catalog_work_pending() {
+                        *self.profile_import.path_mut() = path.clone();
+                        self.profile_import_preview_pending = true;
+                        self.show_profile_import(app);
+                        return;
+                    }
+                }
             }
+            self.profile_import_preview_pending = false;
+        }
+        if self.profile_import_preview_pending && !matches!(&action, ImportAction::Close) {
+            self.show_profile_import(app);
+            return;
         }
         let flow = &mut self.profile_import;
         match action {
@@ -1817,6 +1859,7 @@ impl TuiSession {
             ImportAction::CancelDelete => flow.cancel_delete(),
             ImportAction::ConfirmDelete => flow.confirm_delete(&self.core),
             ImportAction::Close => {
+                self.profile_import_preview_pending = false;
                 *flow = frontend_core::rs2b0t_import::ProfileImport::new();
                 return;
             }
@@ -1835,6 +1878,7 @@ impl TuiSession {
                 }
             }
             _ if !self.profile_import.is_fresh() => {
+                self.profile_import_preview_pending = false;
                 self.profile_import = frontend_core::rs2b0t_import::ProfileImport::new();
             }
             _ => {}
@@ -1867,20 +1911,16 @@ impl TuiSession {
         view.delete_asked = flow.delete_asked();
     }
 
-    fn import_rs2b0t_catalog(&mut self, app: &mut TuiApp, root: &Path) -> Result<usize, String> {
+    fn import_rs2b0t_catalog(&mut self, root: &Path) -> Result<(), String> {
         if !rs2b0t_root_has_index(root) {
             return Err(format!(
                 "no catalog at {}",
                 script::registry_index_path(root).display()
             ));
         }
-        let n = self
-            .scripts
-            .register_catalog(root, &script::default_rs2b0t_path_file())?;
-        let _ = script::clear_rs2b0t_import_at(&script::default_rs2b0t_import_file());
-        self.rs2b0t_catalog_open = false;
-        app.rs2b0t_catalog_open = false;
-        Ok(n)
+        self.scripts
+            .request_catalog_import(root, &script::default_rs2b0t_path_file())
+            .map_err(|error| error.to_string())
     }
 
     /// Show the script coordinator's latest notice on the strip.
@@ -1928,6 +1968,22 @@ impl TuiSession {
     /// pump.
     fn poll_scripts(&mut self, app: &mut TuiApp) {
         self.scripts.poll(&mut self.core);
+        if let Some((_, result)) = self.scripts.take_catalog_import_result() {
+            match result {
+                Ok(_) => {
+                    let _ = script::clear_rs2b0t_import_at(&script::default_rs2b0t_import_file());
+                    self.rs2b0t_catalog_open = false;
+                    app.rs2b0t_catalog_open = false;
+                    app.error = None;
+                }
+                Err(error) => app.error = Some(error.to_string()),
+            }
+        }
+        if self.profile_import_preview_pending && !self.scripts.catalog_work_pending() {
+            self.profile_import_preview_pending = false;
+            self.profile_import.preview(&self.core, &self.scripts);
+            self.show_profile_import(app);
+        }
         self.scripts.take_start_failures();
         self.apply_script_notice(app);
         app.reload_confirm = self.scripts.reload_awaiting_confirm();
@@ -2509,13 +2565,13 @@ impl TuiSession {
                     Ok(true) => {
                         restore_terminal();
                         eprintln!("PASS: memory tui observation complete");
-                        std::process::exit(0);
+                        exit_after_work_shutdown(0);
                     }
                     Ok(false) => {}
                     Err(error) => {
                         restore_terminal();
                         eprintln!("FAIL: memory tui: {error}");
-                        std::process::exit(1);
+                        exit_after_work_shutdown(1);
                     }
                 }
             }
@@ -3571,7 +3627,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::ScriptUseCatalog => {
             let root = app.rs2b0t_catalog_dir.clone();
             session.rs2b0t_catalog_dir = root.clone();
-            app.error = match session.import_rs2b0t_catalog(app, &root) {
+            app.error = match session.import_rs2b0t_catalog(&root) {
                 Ok(_) => {
                     if session.scripts.js().load_failures().is_empty() {
                         None

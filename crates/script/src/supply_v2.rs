@@ -55,30 +55,67 @@ pub(crate) fn random_event_casket_id() -> Option<i32> {
     RANDOM_EVENT_CASKET_ID.with(Cell::get)
 }
 
-/// The selected gathering catalog, prepared lazily on first use and retained by this isolate thread until the
-/// slot is reconfigured or the thread ends.
+/// The selected gathering catalogue, prepared lazily on first use and
+/// retained by this isolate thread until reconfiguration. `Ok(None)` means
+/// the selected family is genuinely absent; a work refusal or outage is an
+/// error, never an empty catalogue.
 #[cfg(feature = "load")]
-pub(crate) fn gathering() -> Option<Arc<GatherCatalog>> {
+pub(crate) fn gathering() -> Result<Option<Arc<GatherCatalog>>, String> {
     if let Some(held) = GATHERING.with(|slot| slot.borrow().clone()) {
-        return Some(held);
+        return Ok(Some(held));
     }
     let catalog = acquire_gathering()?;
-    GATHERING.with(|slot| *slot.borrow_mut() = Some(Arc::clone(&catalog)));
-    Some(catalog)
+    if let Some(catalog) = &catalog {
+        GATHERING.with(|slot| *slot.borrow_mut() = Some(Arc::clone(catalog)));
+    }
+    Ok(catalog)
 }
 
-/// A holder elsewhere makes this a cache hit; a cold cache is prepared on a preparation worker (the only place
-/// the family decodes) and joined. `None` is an unavailable family: no selected data, or the embedded family
-/// failed its pin, manifest or schema checks.
+/// The isolate is neither UI nor slot pump. On temporary Full it retains one
+/// Arc input, parks for a capacity notification and retries with a fresh
+/// WorkIdentity. Accepted work is joined without a fixed busy-queue timeout.
 #[cfg(feature = "load")]
-fn acquire_gathering() -> Option<Arc<GatherCatalog>> {
-    let data = selected_data()?;
-    data.try_gathering().or_else(|| {
-        let data = Arc::clone(&data);
-        api::selected::FamilyPreparation::run(move |worker| data.prepare_gathering(worker))
-            .ok()?
-            .join()
-            .ok()?
-            .ok()
-    })
+fn acquire_gathering() -> Result<Option<Arc<GatherCatalog>>, String> {
+    let data = selected_data().ok_or("missing-selected-data")?;
+    if let Some(catalogue) = data.try_gathering() {
+        return Ok(Some(catalogue));
+    }
+    let revision = u64::try_from(data.revision()).map_err(|error| error.to_string())?;
+    let input = crate::preparation::PreparationInput::new(
+        revision,
+        std::mem::size_of::<Arc<SelectedGameData>>(),
+        2 * 1024 * 1024,
+        2 * 1024 * 1024,
+    )
+    .map_err(|error| format!("work-admission-refused:{error}"))?
+    .with_gathering_family_decode();
+    let service = crate::work_admission::WorkService::shared()
+        .map_err(|error| format!("work-admission-unavailable:{error}"))?;
+    loop {
+        let observed = service.lock().publications().capacity().sequence();
+        match crate::preparation::submit(
+            crate::preparation::PreparationKind::Profile,
+            api::identity::Scope::Process,
+            input,
+            {
+                let data = Arc::clone(&data);
+                move |worker| data.prepare_gathering(worker)
+            },
+        ) {
+            Ok(job) => {
+                return match job
+                    .join()
+                    .map_err(|error| format!("work-admission-job:{error}"))?
+                {
+                    Ok(catalog) => Ok(Some(catalog)),
+                    Err(api::selected::FactError::FamilyUnavailable(_)) => Ok(None),
+                    Err(error) => Err(format!("gathering-family:{error:?}")),
+                };
+            }
+            Err(crate::preparation::PreparationError::Refused(
+                api::work::SubmissionRefusal::Full,
+            )) => crate::work_admission::WorkService::wait_for_capacity_change(&service, observed),
+            Err(error) => return Err(format!("work-admission-refused:{error}")),
+        }
+    }
 }

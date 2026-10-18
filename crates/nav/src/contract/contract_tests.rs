@@ -8,7 +8,6 @@ use std::mem::size_of;
 use std::num::NonZeroU16;
 use std::sync::Arc;
 
-use api::identity::{ProcessIncarnation, RequestIdMinter, Scope, WorkIdentity};
 use api::selected::{FactKey, QuestGate};
 use api::snapshot::WorldTile;
 use api::work::{InputRevision, Track, WorkFamily, WorkFamilySpec, WorkPhase};
@@ -71,16 +70,6 @@ fn lease_from(collision: WorldCollision) -> NavLease {
             Vec::new(),
         )),
         digest(b"fixture"),
-    )
-    .unwrap()
-}
-
-fn work_identity() -> WorkIdentity {
-    WorkIdentity::new(
-        RequestIdMinter::new().mint().unwrap(),
-        ProcessIncarnation::from_start_nonce(std::num::NonZeroU64::MIN),
-        Scope::Process,
-        None,
     )
     .unwrap()
 }
@@ -493,38 +482,14 @@ fn step_ok_diagonal_uses_orthogonal_faces() {
 }
 
 #[test]
-fn a_lease_used_against_another_pack_is_refused() {
-    let a = lease_from(grid(tile(3200, 3200, 0), 1, 1, vec![0]));
-    let b = lease_from(grid(tile(3200, 3200, 0), 1, 1, vec![0]));
-    assert_ne!(a.identity().pack(), b.identity().pack());
-    let dest = tile(3200, 3200, 0);
-    let plan = a.publish_route(
-        work_identity(),
-        InputRevision::FIRST,
-        Route {
-            legs: vec![Leg::Walk { tiles: vec![dest] }],
-            dest,
-            ticks: 0.0,
-        },
-    );
-    assert!(plan.view(&a).is_ok());
-    assert_eq!(plan.view(&b).unwrap_err(), ContractError::PackMismatch);
-}
-
-#[test]
-fn route_plan_lease_reports_the_production_route_and_binds_to_its_pack() {
+fn borrowed_route_view_reports_the_production_route() {
     let (collision, here) = reach_fixture();
     let graph = TransportGraph::default();
     let dest = tile(3205, 3203, 0);
     let route = crate::router::find(&collision, &graph, here, dest).expect("open path");
     let lease = lease_from(collision);
-    let other = lease_from(grid(tile(3200, 3200, 0), 1, 1, vec![0]));
-    let identity = work_identity();
-    let plan = lease.publish_route(identity, InputRevision::new(3), route.clone());
-    assert_eq!(plan.pack(), lease.identity().pack());
-    assert_eq!(plan.identity(), identity);
-    assert_eq!(plan.revision(), InputRevision::new(3));
-    let view = plan.view(&lease).unwrap();
+    let view = crate::producer::route_view(&lease, &route).unwrap();
+    assert_eq!(view.pack(), lease.identity().pack());
     assert_eq!(view.destination(), route.dest);
     assert_eq!(view.ticks(), route.ticks);
     assert_eq!(view.leg_count(), route.legs.len());
@@ -541,13 +506,10 @@ fn route_plan_lease_reports_the_production_route_and_binds_to_its_pack() {
         view.leg(route.legs.len()).unwrap_err(),
         ContractError::NoSuchLeg
     );
-    // Real values: a walk from here to the face tile ends on it and runs
-    // through the open row, never the solid column.
     let walk = view.leg(0).unwrap().walk_tiles().unwrap();
     assert!(!walk.is_empty());
     assert!(walk.iter().all(|t| t.x != 3202));
     assert!(route.ticks > 0.0);
-    assert_eq!(plan.view(&other).unwrap_err(), ContractError::PackMismatch);
 }
 
 #[test]
@@ -564,23 +526,19 @@ fn route_view_keeps_exact_half_tick_cost_and_borrowed_legs() {
         )
         .unwrap(),
     );
-    let plan = lease.publish_route(
-        work_identity(),
-        InputRevision::FIRST,
-        Route {
-            legs: vec![
-                Leg::Walk {
-                    tiles: vec![from, to],
-                },
-                Leg::Transport {
-                    edge: Box::new(edge),
-                },
-            ],
-            dest: from,
-            ticks: 0.5,
-        },
-    );
-    let view = plan.view(&lease).unwrap();
+    let route = Route {
+        legs: vec![
+            Leg::Walk {
+                tiles: vec![from, to],
+            },
+            Leg::Transport {
+                edge: Box::new(edge),
+            },
+        ],
+        dest: from,
+        ticks: 0.5,
+    };
+    let view = crate::producer::route_view(&lease, &route).unwrap();
     assert_eq!(view.destination(), from);
     assert_eq!(view.ticks(), 0.5);
     assert_ne!(view.ticks(), view.ticks().trunc());
@@ -947,8 +905,8 @@ fn route_service_binds_the_family_and_maps_current_router_errors() {
         Ok(route) => {
             assert!(route.ticks > 0.0);
             let lease = lease_from(open);
-            let result = RouteService::path(&lease, work_identity(), InputRevision::FIRST, route);
-            assert!(matches!(result, RouteFamilyResult::Path(_)));
+            let view = crate::producer::route_view(&lease, &route).expect("borrowed route view");
+            assert_eq!(view.destination(), adjacent);
         }
         Err(error) => panic!("open adjacent tiles must route, got {error:?}"),
     }
@@ -1380,8 +1338,7 @@ fn transport_legs_report_the_router_edges_and_the_production_admission_facts() {
         crate::router::find_with(&collision, &graph, from, to, FindOptions::default(), &rich)
             .expect("both doors open with the proven facts");
     let lease = lease_from(collision);
-    let plan = lease.publish_route(work_identity(), InputRevision::FIRST, route.clone());
-    let view = plan.view(&lease).unwrap();
+    let view = crate::producer::route_view(&lease, &route).unwrap();
     let after_first = WorldState {
         inv: HashMap::from([(1, 2), (996, 1)]),
         ..rich.clone()
@@ -1557,8 +1514,7 @@ fn real_pack_transport_legs_match_the_router_and_admission_facts() {
     let empty = WorldState::empty();
     let route = crate::router::find(collision, graph, LUMBRIDGE, upstairs)
         .expect("the castle stairs route");
-    let plan = lease.publish_route(work_identity(), InputRevision::FIRST, route.clone());
-    let view = plan.view(&lease).unwrap();
+    let view = crate::producer::route_view(&lease, &route).unwrap();
     let hops = check_route_view_against_router(view, &route, collision, graph, &[&empty]);
     assert!(hops >= 1, "a plane change needs a transport leg");
     let stairs = view
@@ -1597,8 +1553,7 @@ fn real_pack_transport_legs_match_the_router_and_admission_facts() {
     let route =
         crate::router::find_with(collision, graph, LUMBRIDGE, edgeville, teleports, &charged)
             .expect("a glory teleport to Edgeville");
-    let plan = lease.publish_route(work_identity(), InputRevision::FIRST, route.clone());
-    let view = plan.view(&lease).unwrap();
+    let view = crate::producer::route_view(&lease, &route).unwrap();
     assert_eq!(
         check_route_view_against_router(view, &route, collision, graph, &[&charged]),
         1

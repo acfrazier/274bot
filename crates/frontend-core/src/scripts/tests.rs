@@ -6,7 +6,9 @@ use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use super::{parse_parameter_text, Notice, ParameterCommit, ParameterEditKey, Scripts};
+use super::{
+    parse_parameter_text, CatalogError, Notice, ParameterCommit, ParameterEditKey, Scripts,
+};
 use crate::command::{
     CardKind, CommandBook, CommandFailure, Completion, OperatorCommand, Pending, Stage, Subject,
 };
@@ -110,6 +112,18 @@ impl Fixture {
             "script Start did not settle"
         );
     }
+    fn settle_catalog_work(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while self.scripts.catalog_work_pending() && Instant::now() < deadline {
+            self.core.poll();
+            self.scripts.poll(&mut self.core);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            !self.scripts.catalog_work_pending(),
+            "catalog work did not settle"
+        );
+    }
 
     fn wait_state(&mut self, name: &str, want: script::RunState) {
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -177,11 +191,15 @@ impl Fixture {
         if let Some(run) = play.script_native_run(name) {
             let id = script::compiled_id(identity.strip_prefix("compiled:").unwrap()).unwrap();
             let revision = play.script_native_settings_revision(name).unwrap() + 1;
-            let config = play
+            let worker = play
                 .script_prepare_config(id, revision, std::sync::Arc::new(bag.clone()))
-                .unwrap()
+                .unwrap();
+            let work_identity = worker.identity();
+            let config = worker
                 .join()
                 .unwrap()
+                .unwrap()
+                .commit(work_identity)
                 .unwrap();
             return play.script_configure_compiled(name, config, run)
                 == script::CompiledDelivery::Unchanged;
@@ -1463,9 +1481,23 @@ fn a_start_carries_its_operation_to_the_row_and_the_log() {
     f.scripts
         .start_selected(&mut f.core, "opid-bob", None, None)
         .unwrap();
-    f.core.poll();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while f
+        .core
+        .fleet_view()
+        .row("opid-alice")
+        .and_then(|row| row.last_op())
+        .is_none_or(|op| op.action() != crate::ActionKind::ScriptStart)
+    {
+        assert!(
+            Instant::now() < deadline,
+            "Start preparation did not publish"
+        );
+        f.core.poll();
+        f.scripts.poll(&mut f.core);
+        std::thread::sleep(Duration::from_millis(5));
+    }
     let accepted = op_of(&f, "opid-alice");
-    // Accepted (it may already have settled if the isolate was quick).
     assert_eq!(accepted.action(), crate::ActionKind::ScriptStart);
     f.settle();
     f.core.poll();
@@ -2940,33 +2972,29 @@ fn start_all_over_n_members_dispatches_at_most_the_permit_budget_in_the_click_fr
         "Start all dispatched {starting} in the click frame (budget {})",
         super::START_ADMIT_PER_FRAME
     );
-    assert!(starting > 0, "Start all granted nobody in the click frame");
+    assert!(f.scripts.starts_pending(), "Start all admitted no work");
+    assert_eq!(shown_bulk(&f), "Start all: started 1, queued 4, skipped 0");
     assert_eq!(starting + idle.len(), names.len());
-    if let Some(name) = idle.first() {
-        let brief = f
-            .core
-            .fleet_view()
-            .row(name)
-            .map(|row| row.brief())
-            .unwrap_or("");
-        assert!(
-            brief.starts_with("queued "),
-            "{name} should reuse the login-queue brief, got {brief:?}"
-        );
-    }
+    let waiting = names
+        .iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("a second member still waits for a permit");
+    let brief = f
+        .core
+        .fleet_view()
+        .row(waiting)
+        .map(|row| row.brief())
+        .unwrap_or("");
+    assert!(
+        brief.starts_with("queued "),
+        "{waiting} should reuse the login-queue brief, got {brief:?}"
+    );
     f.core.poll();
     f.scripts.poll(&mut f.core);
-    let admitted = names
-        .iter()
-        .filter(|name| f.state(name) != script::RunState::Idle)
-        .count();
+    let after_poll = shown_bulk(&f);
     assert!(
-        admitted > starting,
-        "later frames must admit waiting members: click={starting} after_poll={admitted}"
-    );
-    assert!(
-        admitted <= super::START_ADMIT_PER_FRAME * 2,
-        "the second frame exceeded the permit budget: {admitted}"
+        after_poll.starts_with("Start all: started 2, queued 3, skipped 0"),
+        "the later frame grants another waiting member: {after_poll}"
     );
     let notice = f.scripts.take_notice();
     let text = match notice.as_ref().and_then(Notice::text) {
@@ -3035,11 +3063,11 @@ fn reassign_while_queued_does_not_start_stale_work() {
     }
 
     f.scripts.start_all(&mut f.core, None);
-    let queued = idle_among(&f, &names)
-        .first()
-        .copied()
-        .expect("need a queued member")
-        .to_string();
+    let queued = names
+        .iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("need a member still waiting for a permit")
+        .clone();
     f.assign(&queued, &second);
 
     f.settle();
@@ -3058,6 +3086,63 @@ fn reassign_while_queued_does_not_start_stale_work() {
     );
 }
 
+/// Once the permit has admitted a worker but before it publishes the Start,
+/// a changed assignment or departing member must still fence the old card.
+#[test]
+fn prepared_start_rechecks_assignment_removal_and_logout_before_dispatch() {
+    for (scenario, reason) in [
+        ("reassigned", "reassigned"),
+        ("removed", "removed"),
+        ("logged-out", "logged out"),
+    ] {
+        let mut f = fixture(
+            &format!("pace-inflight-{scenario}"),
+            &["inflight-alice", "inflight-bob"],
+        );
+        let first = f.card("first.ts", LOOPING);
+        let replacement = f.card("replacement.ts", LOOPING);
+        for name in ["inflight-alice", "inflight-bob"] {
+            f.assign(name, &first);
+        }
+        f.scripts.start_all(&mut f.core, None);
+        assert!(
+            f.scripts.start_queue_place("inflight-alice").is_none(),
+            "first member already has the worker permit"
+        );
+        assert_eq!(f.state("inflight-alice"), script::RunState::Idle);
+        match scenario {
+            "reassigned" => f.assign("inflight-alice", &replacement),
+            "removed" => {
+                let mut surface = HeadlessSurface::new();
+                f.core
+                    .remove("inflight-alice", Instant::now(), &mut surface);
+            }
+            "logged-out" => f
+                .core
+                .play()
+                .unwrap()
+                .arm("inflight-alice")
+                .unwrap()
+                .request_logout(),
+            _ => unreachable!(),
+        }
+        f.settle();
+        let report = shown_bulk(&f);
+        assert!(
+            report.contains(&format!("inflight-alice: {reason}")),
+            "{scenario}: {report}"
+        );
+        assert_eq!(start_accepted(&f, "inflight-alice"), 0, "{scenario}");
+        assert_ne!(
+            f.state("inflight-alice"),
+            script::RunState::Running,
+            "{scenario}: stale card was dispatched"
+        );
+        f.wait_state("inflight-bob", script::RunState::Running);
+        f.core.play().unwrap().script_stop("inflight-bob");
+    }
+}
+
 /// Removing a member that still holds a Start-all place must not start it.
 #[test]
 fn remove_while_queued_does_not_start_stale_work() {
@@ -3070,11 +3155,11 @@ fn remove_while_queued_does_not_start_stale_work() {
     }
 
     f.scripts.start_all(&mut f.core, None);
-    let queued = idle_among(&f, &names)
-        .first()
-        .copied()
-        .expect("need a queued member")
-        .to_string();
+    let queued = names
+        .iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("need a member still waiting for a permit")
+        .clone();
     let mut surface = crate::surface::HeadlessSurface::new();
     f.core.remove(&queued, Instant::now(), &mut surface);
 
@@ -3116,11 +3201,11 @@ fn logout_while_queued_does_not_start_stale_work() {
     }
 
     f.scripts.start_all(&mut f.core, None);
-    let queued = idle_among(&f, &names)
-        .first()
-        .copied()
-        .expect("need a queued member")
-        .to_string();
+    let queued = names
+        .iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("need a member still waiting for a permit")
+        .clone();
     f.core
         .play()
         .unwrap()
@@ -3148,17 +3233,18 @@ fn single_start_of_a_queued_member_is_immediate() {
     }
 
     f.scripts.start_all(&mut f.core, None);
-    let queued = idle_among(&f, &names)
-        .first()
-        .copied()
-        .expect("need a queued member")
-        .to_string();
+    let queued = names
+        .iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("need a member still waiting for a permit")
+        .clone();
     f.scripts.start_profile(&mut f.core, &queued, None).unwrap();
     assert_eq!(
         f.state(&queued),
-        script::RunState::Starting,
-        "{queued} should start without waiting for later frames"
+        script::RunState::Idle,
+        "the single Start is accepted without waiting for another permit frame"
     );
+    assert!(f.scripts.starts_pending());
     f.settle();
     f.wait_state(&queued, script::RunState::Running);
     assert_eq!(
@@ -3221,6 +3307,7 @@ fn assigned_catalog_card_missing_from_loaded_catalog_names_scanned_root() {
     std::fs::write(present_dir.join("PresentBot.ts"), LOOPING).unwrap();
 
     f.scripts.fill_catalog_once(Some(&root));
+    f.settle_catalog_work();
     let present = f
         .scripts
         .js
@@ -3257,6 +3344,7 @@ fn failed_catalog_fill_does_not_latch_root_or_block_later_fill() {
     std::fs::write(failed_scripts.join("index.ts"), "const x = 1;\n").unwrap();
 
     f.scripts.fill_catalog_once(Some(&failed_root));
+    f.settle_catalog_work();
     assert!(
         !f.scripts.catalog_filled,
         "a failed registry parse must not mark the catalog filled"
@@ -3279,6 +3367,7 @@ fn failed_catalog_fill_does_not_latch_root_or_block_later_fill() {
     std::fs::write(present_dir.join("PresentBot.ts"), LOOPING).unwrap();
 
     f.scripts.fill_catalog_once(Some(&root));
+    f.settle_catalog_work();
     assert!(f.scripts.catalog_filled);
     assert_eq!(f.scripts.catalog_root.as_deref(), Some(root.as_path()));
     assert!(
@@ -3288,6 +3377,364 @@ fn failed_catalog_fill_does_not_latch_root_or_block_later_fill() {
             .is_some(),
         "a later valid $RS2B0T root must still register its cards"
     );
+}
+
+#[test]
+fn catalog_request_refusals_name_their_failure_kind() {
+    let mut f = fixture("catalog-typed-errors", &["alice"]);
+    let root = f.dir.join("catalog-root");
+    let other = f.dir.join("other-catalog-root");
+    let path_file = script::default_rs2b0t_path_file();
+    f.scripts
+        .request_catalog_import(&root, &path_file)
+        .expect("first import queues");
+    assert_eq!(
+        f.scripts
+            .request_catalog_import(&root, &path_file)
+            .unwrap_err()
+            .to_string(),
+        "catalog preparation is already pending",
+        "a second import while work is queued must report Busy"
+    );
+    assert_eq!(
+        f.scripts
+            .request_catalog_fill(&other, &path_file)
+            .unwrap_err()
+            .to_string(),
+        "catalog preparation is already pending for another root",
+        "a fill for another root while work is queued must report BusyForAnotherRoot"
+    );
+    f.settle_catalog_work();
+    assert_eq!(
+        f.scripts
+            .request_catalog_fill(&other, &path_file)
+            .unwrap_err()
+            .to_string(),
+        "the previous catalog import result has not been collected",
+        "a fill must report UncollectedImportResult until the import receipt is taken"
+    );
+    assert!(
+        f.scripts.take_catalog_import_result().is_some(),
+        "the settled import receipt stays available as a typed result"
+    );
+}
+
+#[test]
+fn catalog_typed_failures_keep_their_byte_identical_display() {
+    use script::load::{CatalogSnapshotError, CatalogWorkerError};
+
+    let snapshots = [
+        (
+            CatalogSnapshotError::SnapshotTooLarge,
+            "catalog snapshot is too large",
+        ),
+        (
+            CatalogSnapshotError::RegistryIndexSizeOverflow,
+            "catalog registry index size overflow",
+        ),
+        (
+            CatalogSnapshotError::SourceEstimateTooLarge,
+            "catalog source estimate is too large",
+        ),
+        (
+            CatalogSnapshotError::CardMetadataTooLarge,
+            "catalog card metadata is too large",
+        ),
+        (
+            CatalogSnapshotError::CardMetadataExceedsSnapshotBound,
+            "catalog card metadata exceeds the 8 MiB snapshot bound",
+        ),
+        (
+            CatalogSnapshotError::SourceChargeOverflow,
+            "catalog source charge overflow",
+        ),
+        (
+            CatalogSnapshotError::SnapshotExceedsInputBound,
+            "catalog snapshot exceeds the input charge bound",
+        ),
+        (
+            CatalogSnapshotError::InputChargeOverflow,
+            "catalog input charge overflow",
+        ),
+        (
+            CatalogSnapshotError::ScratchChargeOverflow,
+            "catalog scratch charge overflow",
+        ),
+        (
+            CatalogSnapshotError::ResultChargeOverflow,
+            "catalog result charge overflow",
+        ),
+    ];
+    assert_eq!(snapshots.len(), 10, "every snapshot variant is covered");
+    for (error, expected) in snapshots {
+        let wrapped = CatalogError::from(error);
+        assert_eq!(wrapped.to_string(), expected);
+    }
+
+    let workers = [
+        (
+            CatalogWorkerError::Registry {
+                path: "/root/index.ts".into(),
+                reason: "missing /root/index.ts: gone".into(),
+            },
+            "$RS2B0T registry /root/index.ts: missing /root/index.ts: gone",
+        ),
+        (
+            CatalogWorkerError::TooManyRegistrations,
+            "catalog has more than 4096 registrations",
+        ),
+        (
+            CatalogWorkerError::RegistrySizeOverflow,
+            "catalog registry size overflow",
+        ),
+        (
+            CatalogWorkerError::RegistryMetadataExceedsInputBound,
+            "catalog registry metadata exceeds its charged input bound",
+        ),
+        (
+            CatalogWorkerError::InputsExceedInputBound,
+            "catalog inputs exceed the charged input bound",
+        ),
+        (
+            CatalogWorkerError::TooManySourceFiles,
+            "catalog source graph exceeds 8192 files",
+        ),
+        (
+            CatalogWorkerError::SourcesExceedInputBound,
+            "catalog sources exceed the charged input bound",
+        ),
+        (
+            CatalogWorkerError::SourcesExceedBoundedInputLimit,
+            "catalog sources exceed the bounded input limit",
+        ),
+        (
+            CatalogWorkerError::SourceFile {
+                reason: "not a regular file".into(),
+            },
+            "not a regular file",
+        ),
+        (
+            CatalogWorkerError::TooManySiblings {
+                relative: "./src/bot/scripts/Big/Big.ts".into(),
+            },
+            "catalog source ./src/bot/scripts/Big/Big.ts has more than 128 sibling modules",
+        ),
+        (
+            CatalogWorkerError::SiblingIndexSizeOverflow,
+            "catalog sibling index size overflow",
+        ),
+        (
+            CatalogWorkerError::ScratchExceedsBound,
+            "catalog preparation scratch exceeds its charged scratch bound",
+        ),
+        (
+            CatalogWorkerError::TooManySiblingModules,
+            "catalog source graph exceeds 8192 sibling modules",
+        ),
+        (
+            CatalogWorkerError::ParsedRegistrationMissing {
+                name: "GoneBot".into(),
+            },
+            "catalog GoneBot: parsed registration is missing",
+        ),
+        (
+            CatalogWorkerError::ExistingSnapshotMissing {
+                name: "GoneBot".into(),
+            },
+            "catalog GoneBot: existing card snapshot is missing",
+        ),
+        (
+            CatalogWorkerError::CardBounded {
+                name: "GoneBot".into(),
+                reason: "registry entry no longer resolves".into(),
+            },
+            "catalog GoneBot: registry entry no longer resolves",
+        ),
+        (
+            CatalogWorkerError::FailureIndexSizeOverflow,
+            "catalog failure index size overflow",
+        ),
+        (
+            CatalogWorkerError::DiffCompletedMoreThanOnce,
+            "catalog diff work completed more than once",
+        ),
+        (
+            CatalogWorkerError::PreparationCompletedMoreThanOnce,
+            "catalog preparation work completed more than once",
+        ),
+        (
+            CatalogWorkerError::CandidateCountOverflow,
+            "catalog candidate count overflow",
+        ),
+        (
+            CatalogWorkerError::ResultSizeOverflow,
+            "catalog result size overflow",
+        ),
+        (
+            CatalogWorkerError::PreparedResultExceedsBound,
+            "prepared catalog result exceeds its charged result bound",
+        ),
+        (
+            CatalogWorkerError::PreparedCardSizeOverflow,
+            "prepared catalog card size overflow",
+        ),
+        (
+            CatalogWorkerError::FailureSizeOverflow,
+            "catalog failure size overflow",
+        ),
+        (
+            CatalogWorkerError::ResultSizeUnderflow,
+            "catalog result size accounting underflow",
+        ),
+        (
+            CatalogWorkerError::UnchangedCandidateIndexInvalid,
+            "catalog unchanged candidate index is invalid",
+        ),
+        (
+            CatalogWorkerError::ScratchSizeOverflow,
+            "catalog scratch size overflow",
+        ),
+        (
+            CatalogWorkerError::CardTaskAlreadyComplete,
+            "card preparation task is already complete",
+        ),
+        (
+            CatalogWorkerError::DiffSizeOverflow,
+            "catalog diff size overflow",
+        ),
+        (
+            CatalogWorkerError::DiffSizeUnderflow,
+            "catalog diff size accounting underflow",
+        ),
+        (
+            CatalogWorkerError::DiffExceedsResultBound,
+            "catalog diff exceeds its charged result bound",
+        ),
+        (
+            CatalogWorkerError::FingerprintInsertionDisappeared,
+            "catalog fingerprint insertion disappeared",
+        ),
+        (
+            CatalogWorkerError::IncomingInsertionDisappeared,
+            "catalog incoming insertion disappeared",
+        ),
+        (
+            CatalogWorkerError::DiffStateUnavailable,
+            "catalog diff state is unavailable",
+        ),
+    ];
+    assert_eq!(workers.len(), 34, "every worker variant is covered");
+    for (error, expected) in workers {
+        let wrapped = CatalogError::from(error);
+        assert_eq!(wrapped.to_string(), expected);
+    }
+}
+
+#[test]
+fn loaded_start_preparation_bounds_pending_demands_and_preserves_accepted_work() {
+    const LIMIT: usize = 64;
+    let mut f = fixture("loaded-start-bound", &["alice"]);
+    let root = f.dir.join("catalog-root");
+    std::fs::create_dir_all(&root).unwrap();
+    let selected = script::ScriptSel::Loaded(script::ScriptSource::Catalog, "BoneBurier".into());
+    let accepted = (0..LIMIT)
+        .map(|index| format!("profile-{index}"))
+        .collect::<Vec<_>>();
+
+    for profile in &accepted {
+        f.scripts
+            .queue_loaded_start(
+                &f.core,
+                profile,
+                &selected,
+                Some(&root),
+                super::StartKind::Start,
+                false,
+            )
+            .expect("demand within the pending bound");
+    }
+
+    f.scripts
+        .queue_loaded_start(
+            &f.core,
+            &accepted[0],
+            &selected,
+            Some(&root),
+            super::StartKind::Start,
+            false,
+        )
+        .expect("a duplicate Start reuses its admitted preparation");
+    assert!(matches!(
+        f.scripts.queue_loaded_start(
+            &f.core,
+            "profile-over-limit",
+            &selected,
+            Some(&root),
+            super::StartKind::Start,
+            false,
+        ),
+        Err(script::StartLoadError::Refused(error))
+            if error.contains("limit") && error.contains("64")
+    ));
+    for profile in &accepted {
+        f.scripts
+            .queue_loaded_start(
+                &f.core,
+                profile,
+                &selected,
+                Some(&root),
+                super::StartKind::Start,
+                false,
+            )
+            .expect("admitted Start demand is not replaced by a duplicate");
+        assert!(
+            f.scripts.has_start_preparation(profile),
+            "accepted Start demand for {profile} must remain pending"
+        );
+    }
+
+    for profile in accepted {
+        f.scripts.cancel_start_preparation(&profile);
+    }
+    f.settle_catalog_work();
+}
+
+#[test]
+fn marked_catalog_assignment_reports_pending_until_scan_settles() {
+    let mut f = fixture("marked-catalog-assignment-pending", &["alice", "bob"]);
+    let root = f.dir.join("catalog-root");
+    let scripts = root.join("src/bot/scripts");
+    let card_dir = scripts.join("BoneBurier");
+    std::fs::create_dir_all(&card_dir).unwrap();
+    std::fs::write(
+        scripts.join("index.ts"),
+        "import BoneBurier from './BoneBurier/BoneBurier.js';\n\
+         ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });\n",
+    )
+    .unwrap();
+    std::fs::write(card_dir.join("BoneBurier.ts"), LOOPING).unwrap();
+    let selection = mark_uids(&[1, 2]);
+    let card = script::ScriptSel::Loaded(script::ScriptSource::Catalog, "BoneBurier".into());
+
+    let report =
+        crate::marked::assign_marked(&selection, &mut f.core, &mut f.scripts, &card, Some(&root));
+    assert_eq!(report.pending_count(), 2);
+    assert_eq!(report.failed_count(), 0);
+    assert!(
+        report.summary().contains("pending 2")
+            && report.summary().contains("alice: catalog scan pending"),
+        "{}",
+        report.summary()
+    );
+    assert!(report.rows().iter().all(|row| row.outcome().is_pending()));
+    for profile in ["alice", "bob"] {
+        assert_eq!(Scripts::assignment(&f.core, profile), None);
+    }
+
+    f.settle_catalog_work();
+    for profile in ["alice", "bob"] {
+        assert!(Scripts::assignment(&f.core, profile).is_some(), "{profile}");
+    }
 }
 
 /// A member removed while waiting for a marked Start is named as skipped
@@ -3309,8 +3756,8 @@ fn marked_start_removed_member_is_named_and_never_dispatched() {
     );
     let queued = ["alice", "bob", "carol"]
         .into_iter()
-        .find(|name| f.state(name) == script::RunState::Idle)
-        .expect("need a queued member")
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("need a member still waiting for a permit")
         .to_string();
     let mut surface = crate::surface::HeadlessSurface::new();
     f.core.remove(&queued, Instant::now(), &mut surface);
@@ -3511,14 +3958,18 @@ fn stop_on_marked_rows_reports_waiting_rows_as_cancelled() {
     let stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
     assert_eq!(
         stop.summary(),
-        "Stop selected: stopped 1, cancelled 2, skipped 0"
+        "Stop selected: stopped 0, cancelled 3, skipped 0"
     );
-    assert_eq!(
-        shown_bulk(&f),
-        "Start selected: started 1, skipped 2: bob: cancelled, carol: cancelled"
+    let report = shown_bulk(&f);
+    assert!(
+        report.starts_with("Start selected: started 0, skipped 3"),
+        "{report}"
     );
+    for name in ["alice", "bob", "carol"] {
+        assert!(report.contains(&format!("{name}: cancelled")), "{report}");
+    }
     f.settle();
-    for name in ["bob", "carol"] {
+    for name in ["alice", "bob", "carol"] {
         assert_eq!(start_accepted(&f, name), 0, "{name}");
         assert_eq!(f.state(name), script::RunState::Idle, "{name}");
     }

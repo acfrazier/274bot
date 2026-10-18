@@ -87,6 +87,9 @@ fn bank_supply_sixty_withdraws_both_fares() {
         &stands,
         tile(0, 0, 0),
         &bank_collision,
+        &TransportGraph::default(),
+        FindOptions::default(),
+        &[],
     )
     .unwrap();
     assert_eq!(
@@ -420,6 +423,9 @@ fn missing_worn_gate_exposes_the_satisfied_carry_reservation() {
         &stands,
         tile(0, 0, 0),
         &bake(3, 3, &[]),
+        &TransportGraph::default(),
+        FindOptions::default(),
+        &[],
     )
     .unwrap();
     assert_eq!(plan.state.inv.get(&983), Some(&1));

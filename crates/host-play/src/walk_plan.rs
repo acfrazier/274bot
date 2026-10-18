@@ -1,18 +1,139 @@
-use std::borrow::Cow;
+use std::any::Any;
 use std::collections::VecDeque;
+use std::fmt;
 use std::sync::Arc;
 
 use api::bank_memory::Origin;
 use api::snapshot::WorldTile;
-use nav::bank_fetch::{fetchable_state, plan_bank_fetch, planning_rows, BankFetch, BankStep};
+use nav::bank_fetch::{plan_bank_fetch, planning_rows, BankFetch, BankStep};
+use nav::contract::{LegView, NavLease, RoutePlanLease, RouteView};
 use nav::router::{
-    find_first_missing_item_reqs_with_avoid, find_first_with_avoid, find_first_with_fallback_avoid,
-    find_missing_item_reqs_with_avoid, find_with_avoid, missing_item_reqs, AvoidRect,
-    FallbackRoute, FindOptions, Route,
+    find_missing_item_reqs_with_avoid, find_with_avoid, AvoidRect, FindOptions, Route,
 };
-use nav::transport::TransportEdge;
 use nav::world::NavWorld;
 use nav::WorldState;
+
+/// One route without expanding compact plans into legacy leg vectors.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "The compact branch shares existing backing and avoids another per-route heap allocation."
+)]
+#[derive(Clone)]
+pub(crate) enum RoutePath {
+    Legacy(Arc<Route>),
+    Compact {
+        plan: RoutePlanLease,
+        lease: NavLease,
+        _custody: Arc<dyn Any + Send + Sync>,
+    },
+}
+
+impl RoutePath {
+    pub(crate) fn legacy(route: Arc<Route>) -> Self {
+        Self::Legacy(route)
+    }
+
+    pub(crate) fn compact(
+        plan: RoutePlanLease,
+        lease: NavLease,
+        _custody: Arc<dyn Any + Send + Sync>,
+    ) -> Self {
+        Self::Compact {
+            plan,
+            lease,
+            _custody,
+        }
+    }
+
+    pub(crate) fn destination(&self) -> WorldTile {
+        match self {
+            Self::Legacy(route) => route.dest,
+            Self::Compact { plan, .. } => plan.destination(),
+        }
+    }
+
+    pub(crate) fn legacy_route(&self) -> Option<&Arc<Route>> {
+        match self {
+            Self::Legacy(route) => Some(route),
+            Self::Compact { .. } => None,
+        }
+    }
+
+    pub(crate) fn plan(&self) -> Option<&RoutePlanLease> {
+        match self {
+            Self::Legacy(_) => None,
+            Self::Compact { plan, .. } => Some(plan),
+        }
+    }
+
+    pub(crate) fn plan_for_follow(&self) -> Option<RoutePlanLease> {
+        self.plan().cloned()
+    }
+
+    pub(crate) fn view(&self) -> Option<RouteView<'_>> {
+        match self {
+            Self::Legacy(_) => None,
+            Self::Compact { plan, lease, .. } => plan.view(lease).ok(),
+        }
+    }
+
+    pub(crate) fn projection(&self) -> crate::walk_map::RouteProjectionPath<'_> {
+        match self {
+            Self::Legacy(route) => crate::walk_map::RouteProjectionPath::Legacy(route),
+            Self::Compact { .. } => crate::walk_map::RouteProjectionPath::Compact(
+                self.view().expect("compact route keeps its bound lease"),
+            ),
+        }
+    }
+
+    pub(crate) fn first_tile(&self) -> Option<WorldTile> {
+        match self {
+            Self::Legacy(route) => match route.legs.first()? {
+                nav::router::Leg::Walk { tiles } => tiles.first().copied(),
+                nav::router::Leg::Transport { edge } => Some(edge.at),
+            },
+            Self::Compact { plan, lease, .. } => match plan.view(lease).ok()?.leg(0).ok()? {
+                LegView::Walk(tiles) => tiles.first().copied(),
+                LegView::Transport(edge) => Some(edge.anchor()),
+            },
+        }
+    }
+}
+
+impl fmt::Debug for RoutePath {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Legacy(route) => formatter.debug_tuple("Legacy").field(route).finish(),
+            Self::Compact { plan, .. } => formatter
+                .debug_struct("Compact")
+                .field("identity", &plan.identity())
+                .field("revision", &plan.revision())
+                .field("destination", &plan.destination())
+                .finish(),
+        }
+    }
+}
+
+impl PartialEq for RoutePath {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Legacy(left), Self::Legacy(right)) => Arc::ptr_eq(left, right),
+            (Self::Compact { plan: left, .. }, Self::Compact { plan: right, .. }) => {
+                left.identity() == right.identity()
+                    && left.revision() == right.revision()
+                    && left.destination() == right.destination()
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Eq for RoutePath {}
+impl From<Arc<Route>> for RoutePath {
+    fn from(route: Arc<Route>) -> Self {
+        Self::legacy(route)
+    }
+}
 
 /// A latched BankBudget session: remaining [`BankStep`]s plus the dest
 /// the arm re-finds after the session lands. Follow freezes only for
@@ -29,7 +150,7 @@ pub struct PendingBankFetch {
     pub steps: VecDeque<BankStep>,
     pub dest: WorldTile,
     pub opts: FindOptions,
-    pub final_route: Arc<Route>,
+    pub(crate) final_route: RoutePath,
     /// The walk's avoidance rectangles: the access sub-route keeps out of
     /// them as the walk does.
     pub avoid: Vec<AvoidRect>,
@@ -38,6 +159,24 @@ pub struct PendingBankFetch {
 }
 
 impl PendingBankFetch {
+    /// Build a legacy-route fixture without exposing the private route backing.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_test_with_route(
+        steps: VecDeque<BankStep>,
+        dest: WorldTile,
+        opts: FindOptions,
+        final_route: Arc<Route>,
+    ) -> Self {
+        Self {
+            steps,
+            dest,
+            opts,
+            final_route: RoutePath::legacy(final_route),
+            avoid: Vec::new(),
+            progress: StepProgress::default(),
+        }
+    }
+
     /// Pop the front step: the next one starts with a fresh budget and no
     /// send in flight.
     pub(crate) fn pop_step(&mut self) {
@@ -79,6 +218,10 @@ pub(crate) enum FlightTarget {
     Wear { id: i32, carried: i32, worn: bool },
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "The route result retains both bank routes inline without an extra result allocation."
+)]
 /// Outcome of a walk-arm route attempt: a direct route, a BankBudget
 /// session plus the post-session route, or no path.
 pub(super) enum RouteOutcome {
@@ -125,198 +268,16 @@ pub(super) fn route_or_bank_fetch(
                 world.banks(),
                 from,
                 &world.collision,
+                &world.graph,
+                opts,
+                avoid,
             )
+            .ok()
         })
         .and_then(|fetch| session_route(world, from, to, fetch, opts, avoid))
         .unwrap_or(RouteOutcome::NoPath),
         Err(_) => RouteOutcome::NoPath,
     }
-}
-
-/// The facts a BankBudget session can establish ([`fetchable_state`]) for
-/// a first-goal search over `stands` with the `tiles` fallback, when
-/// BankBudget is on and they open a gate the real state refuses. A search
-/// under facts that open nothing would only repeat the strict one.
-/// `Session` and `Unknown` rows are the supply as they are. A `Hint` is
-/// advisory (design-bank-snapshot §2.4): before its stock can reject a
-/// goal, one goal-set diagnosis ([`find_first_missing_item_reqs_with_avoid`],
-/// the strict first-goal search's budgets) names what the chosen goal's
-/// route misses, and that diagnosis is overlaid on the hint
-/// ([`planning_rows`]), so a goal whose only route crosses a gate the hint
-/// lacks still reaches [`session_for`] and its one verifying trip.
-#[allow(clippy::too_many_arguments)] // goal set, search surface and the memory's origin and rows
-pub(super) fn fetchable_facts(
-    world: &NavWorld,
-    from: WorldTile,
-    stands: &[WorldTile],
-    tiles: &[WorldTile],
-    opts: FindOptions,
-    state: &WorldState,
-    origin: Origin,
-    bank: &[(i32, i32)],
-    avoid: &[AvoidRect],
-) -> Option<WorldState> {
-    if !opts.allow_bank_fetch {
-        return None;
-    }
-    let diagnosis = (origin == Origin::Hint && !world.banks().is_empty())
-        .then(|| {
-            find_first_missing_item_reqs_with_avoid(
-                &world.collision,
-                &world.graph,
-                from,
-                stands,
-                tiles,
-                opts,
-                state,
-                avoid,
-            )
-        })
-        .flatten();
-    let rows = diagnosis.as_deref().map_or(Cow::Borrowed(bank), |missing| {
-        planning_rows(origin, bank, missing)
-    });
-    let fetchable = fetchable_state(state, &rows, world.banks());
-    let opens_gate = |edge: &TransportEdge| fetchable.allows(edge) && !state.allows(edge);
-    (world.graph.edges.iter().any(opens_gate)
-        || opts.allow_teleports && world.graph.teleports.iter().any(opens_gate))
-    .then_some(fetchable)
-}
-
-/// What the search for a stand a session can reach established.
-pub(super) enum StandFetch {
-    /// A session to a stand, or a strict route to one past the strict
-    /// search's budget.
-    Outcome(RouteOutcome),
-    /// No stand: the same search's answer for the radius tiles, if any.
-    Tiles(Option<FallbackRoute>),
-}
-
-/// After the strict search found no stand: one search under `fetchable`
-/// finds the cheapest stand whose item and worn gates the bank and backpack
-/// can meet, so a stand behind an obj the session cannot get never hides
-/// one it can, recording `tiles` on the way as the strict search did. When a
-/// session's post-state re-find refuses its stand (no session for its
-/// missing facts, or the post state still misses a gate), only that stand
-/// is dropped and the rest searched again, so every round shrinks the
-/// stands. A session never deposits (design-bank-snapshot D7).
-#[allow(clippy::too_many_arguments)] // search surface plus the session's facts
-pub(super) fn fetch_stand(
-    world: &NavWorld,
-    from: WorldTile,
-    stands: &[WorldTile],
-    tiles: &[WorldTile],
-    opts: FindOptions,
-    state: &WorldState,
-    fetchable: &WorldState,
-    origin: Origin,
-    bank: &[(i32, i32)],
-    avoid: &[AvoidRect],
-) -> StandFetch {
-    let mut stands = stands.to_vec();
-    loop {
-        let search = find_first_with_fallback_avoid(
-            &world.collision,
-            &world.graph,
-            from,
-            &stands,
-            tiles,
-            opts,
-            fetchable,
-            avoid,
-        );
-        let route = match search.into_routes() {
-            (Ok(route), _) => route,
-            (Err(_), tile) => return StandFetch::Tiles(tile),
-        };
-        let target = route.dest;
-        if let Some(outcome) = session_for(world, from, route, opts, state, origin, bank, avoid) {
-            return StandFetch::Outcome(outcome);
-        }
-        stands.retain(|&tile| tile != target);
-        if stands.is_empty() {
-            return StandFetch::Tiles((!tiles.is_empty()).then_some(FallbackRoute::Undecided));
-        }
-    }
-}
-
-/// After no stand and no strict radius tile routed: the cheapest tile a
-/// session can reach, from what [`fetch_stand`] recorded (`known`) or a
-/// search over the tiles alone when that is undecided. A refused session
-/// drops only its tile, as in [`fetch_stand`].
-#[allow(clippy::too_many_arguments)] // search surface plus the session's facts
-pub(super) fn fetch_tile(
-    world: &NavWorld,
-    from: WorldTile,
-    tiles: &[WorldTile],
-    known: Option<FallbackRoute>,
-    opts: FindOptions,
-    state: &WorldState,
-    fetchable: &WorldState,
-    origin: Origin,
-    bank: &[(i32, i32)],
-    avoid: &[AvoidRect],
-) -> RouteOutcome {
-    let mut tiles = tiles.to_vec();
-    let mut known = known;
-    loop {
-        let route = match known.take() {
-            Some(FallbackRoute::Routed(route)) => route,
-            Some(FallbackRoute::Undecided) => match find_first_with_avoid(
-                &world.collision,
-                &world.graph,
-                from,
-                &tiles,
-                opts,
-                fetchable,
-                avoid,
-            )
-            .into_route()
-            {
-                Ok(route) => route,
-                Err(_) => return RouteOutcome::NoPath,
-            },
-            Some(FallbackRoute::Failed(_)) | None => return RouteOutcome::NoPath,
-        };
-        let target = route.dest;
-        if let Some(outcome) = session_for(world, from, route, opts, state, origin, bank, avoid) {
-            return outcome;
-        }
-        tiles.retain(|&tile| tile != target);
-        if tiles.is_empty() {
-            return RouteOutcome::NoPath;
-        }
-        known = Some(FallbackRoute::Undecided);
-    }
-}
-
-/// A route found under the fetchable facts: taken as found when it needs no
-/// missing fact (the strict search only ran out of budget), else the
-/// planned session to its goal, if the post-state re-find allows it.
-#[allow(clippy::too_many_arguments)] // search surface plus the session's facts
-fn session_for(
-    world: &NavWorld,
-    from: WorldTile,
-    route: Route,
-    opts: FindOptions,
-    state: &WorldState,
-    origin: Origin,
-    bank: &[(i32, i32)],
-    avoid: &[AvoidRect],
-) -> Option<RouteOutcome> {
-    let missing = missing_item_reqs(&route, state);
-    if missing.is_empty() {
-        return Some(RouteOutcome::Routed(route));
-    }
-    let fetch = plan_bank_fetch(
-        &missing,
-        state,
-        &planning_rows(origin, bank, &missing),
-        world.banks(),
-        from,
-        &world.collision,
-    )?;
-    session_route(world, from, route.dest, fetch, opts, avoid)
 }
 
 /// Re-find `to` against a planned session's post state (ADR 0005: find
@@ -343,7 +304,7 @@ fn session_route(
         avoid,
     )
     .ok()?;
-    let final_route = Arc::new(route.clone());
+    let final_route = RoutePath::legacy(Arc::new(route.clone()));
     Some(RouteOutcome::BankSession {
         pending: PendingBankFetch {
             steps: fetch.steps.into(),

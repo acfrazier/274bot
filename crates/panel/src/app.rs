@@ -1,9 +1,10 @@
 //! Panel shell: docking enabled, multi-viewport disabled, amber chrome,
 //! running on the panel-owned window loop in `crate::window`.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
 
@@ -48,7 +49,8 @@ use host_play::progress::{
 use crate::input_capture::{discard_unconsumed_native_capture, stream_capture, KeyboardOwner};
 use crate::session::{
     debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, script_active,
-    script_pause_enabled, script_stop_enabled, PanelWindow, ProfilePreparationCompletion, Session,
+    script_pause_enabled, script_stop_enabled, PanelWindow, ProfilePreparation,
+    ProfilePreparationCompletion, ProfilePreparationSteps, Session,
 };
 use crate::theme::{
     applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title, native_applet,
@@ -223,16 +225,36 @@ enum Boot {
 
 struct ProfilePrepareJob {
     generation: u64,
-    receiver: Receiver<Result<Arc<host_play::SharedClientTemplate>, String>>,
+    task: script::preparation::PreparedTask<Result<Arc<host_play::SharedClientTemplate>, String>>,
     progress: LatestProgress,
 }
 
 struct ProfileValidateJob {
     generation: u64,
     boot: Boot,
-    receiver: Receiver<Result<host_play::ValidatedTemplate, String>>,
+    task: script::preparation::PreparedTask<Result<host_play::ValidatedTemplate, String>>,
     progress: LatestProgress,
 }
+struct ProfilePreparePending {
+    generation: u64,
+    preparation: Arc<ProfilePreparation>,
+    observer: ProfileProgressObserver,
+    progress: LatestProgress,
+}
+
+struct ProfileValidatePending {
+    generation: u64,
+    boot: Boot,
+    template: Arc<host_play::SharedClientTemplate>,
+    observer: ProfileProgressObserver,
+    progress: LatestProgress,
+}
+
+/// One capped process-profile reservation for captured inputs, decode scratch,
+/// and the prepared shared-client template.
+const PROFILE_PREPARATION_INPUT_BYTES: usize = 64 * 1024 * 1024;
+const PROFILE_PREPARATION_SCRATCH_BYTES: usize = 32 * 1024 * 1024;
+const PROFILE_PREPARATION_RESULT_BYTES: usize = 32 * 1024 * 1024;
 
 type LatestProgress = Arc<Mutex<Option<ProfileProgress>>>;
 
@@ -261,7 +283,9 @@ fn progress_channel(initial: ProfileProgress) -> (ProfileProgressObserver, Lates
 
 struct StartupPreparation {
     prepare: Option<ProfilePrepareJob>,
+    prepare_pending: Option<ProfilePreparePending>,
     validate: Option<ProfileValidateJob>,
+    validate_pending: Option<ProfileValidatePending>,
     pending_boot: Option<Boot>,
     failed_generation: Option<u64>,
 }
@@ -270,14 +294,19 @@ impl StartupPreparation {
     fn new(pending_boot: Option<Boot>) -> Self {
         Self {
             prepare: None,
+            prepare_pending: None,
             validate: None,
+            validate_pending: None,
             pending_boot,
             failed_generation: None,
         }
     }
 
     fn in_flight(&self) -> bool {
-        self.prepare.is_some() || self.validate.is_some()
+        self.prepare.is_some()
+            || self.prepare_pending.is_some()
+            || self.validate.is_some()
+            || self.validate_pending.is_some()
     }
 }
 
@@ -288,12 +317,24 @@ fn startup_progress(startup: &StartupPreparation, generation: u64) -> Option<Sta
         .filter(|job| job.generation == generation)
     {
         (ProgressPhase::FinalChecks, &job.progress)
-    } else {
-        let job = startup
-            .prepare
-            .as_ref()
-            .filter(|job| job.generation == generation)?;
+    } else if let Some(pending) = startup
+        .validate_pending
+        .as_ref()
+        .filter(|pending| pending.generation == generation)
+    {
+        (ProgressPhase::FinalChecks, &pending.progress)
+    } else if let Some(job) = startup
+        .prepare
+        .as_ref()
+        .filter(|job| job.generation == generation)
+    {
         (ProgressPhase::Preparing, &job.progress)
+    } else {
+        let pending = startup
+            .prepare_pending
+            .as_ref()
+            .filter(|pending| pending.generation == generation)?;
+        (ProgressPhase::Preparing, &pending.progress)
     };
     let progress = latest.lock().ok()?.as_ref().copied()?;
     Some(StartupProgressView { phase, progress })
@@ -359,17 +400,28 @@ fn boot_failure_is_fatal(boot: &Boot) -> bool {
     !matches!(boot, Boot::Unlock { .. })
 }
 
+fn exit_after_work_shutdown(code: i32) -> ! {
+    let code = match script::work_admission::WorkService::shutdown_if_started() {
+        Ok(()) => code,
+        Err(error) => {
+            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "background work shutdown: {error}");
+            1
+        }
+    };
+    std::process::exit(code)
+}
+
 fn fail_startup(session: &mut Session, fatal: bool, error: String) {
     session.set_profile_preparing(false);
     session.error = Some(error.clone());
     if fatal {
         eprintln!("FAIL: {error}");
-        std::process::exit(1);
+        exit_after_work_shutdown(1);
     }
 }
 
-/// Poll the two sequential startup workers. Both resource-heavy phases run
-/// away from the event loop; profile/template installation and all vault,
+/// Poll the two sequential WorkAdmission preparations. Resource-heavy phases
+/// run away from the event loop; profile/template installation and all vault,
 /// Play, GPU, JS-store and slot ownership remain on this UI thread.
 fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
     if let Some(pass) = state.session.take_requested_unlock() {
@@ -379,6 +431,12 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
             .filter(|job| matches!(&job.boot, Boot::Unlock { .. }))
         {
             job.boot = Boot::Unlock { pass };
+        } else if let Some(pending) = startup
+            .validate_pending
+            .as_mut()
+            .filter(|pending| matches!(&pending.boot, Boot::Unlock { .. }))
+        {
+            pending.boot = Boot::Unlock { pass };
         } else if startup
             .pending_boot
             .as_ref()
@@ -394,8 +452,13 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
         .prepare
         .as_ref()
         .is_some_and(|job| job.generation != generation)
+        || startup
+            .prepare_pending
+            .as_ref()
+            .is_some_and(|pending| pending.generation != generation)
     {
         startup.prepare = None;
+        startup.prepare_pending = None;
         startup.failed_generation = None;
         state.session.set_profile_preparing(false);
     }
@@ -403,15 +466,14 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
     let prepared = startup
         .prepare
         .as_ref()
-        .and_then(|job| match job.receiver.try_recv() {
-            Ok(result) => Some(result),
-            Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => {
-                Some(Err("profile preparation worker stopped".into()))
-            }
-        });
-    if let Some(result) = prepared {
+        .is_some_and(|job| job.task.is_finished());
+    if prepared {
         let job = startup.prepare.take().expect("polled preparation job");
+        let result = job
+            .task
+            .join()
+            .map_err(|error| error.to_string())
+            .and_then(|result| result);
         match state
             .session
             .finish_profile_preparation(job.generation, result)
@@ -437,15 +499,14 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
     let validated = startup
         .validate
         .as_ref()
-        .and_then(|job| match job.receiver.try_recv() {
-            Ok(result) => Some(result),
-            Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => {
-                Some(Err("profile validation worker stopped".into()))
-            }
-        });
-    if let Some(result) = validated {
+        .is_some_and(|job| job.task.is_finished());
+    if validated {
         let job = startup.validate.take().expect("polled validation job");
+        let result = job
+            .task
+            .join()
+            .map_err(|error| error.to_string())
+            .and_then(|result| result);
         state.session.set_profile_preparing(false);
         if job.generation != state.session.profile_generation() {
             return;
@@ -465,43 +526,98 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
         && startup.prepare.is_none()
         && startup.failed_generation != Some(generation)
     {
-        match state.session.profile_preparation() {
-            Ok((generation, preparation)) => {
-                let (sender, receiver) = mpsc::sync_channel(1);
-                let (observer, progress) = progress_channel(ProfileProgress::steps(
-                    ProfileProgressStage::SelectingServerProfile,
-                    0,
-                    1,
-                ));
-                state.session.error = None;
-                state.session.set_profile_preparing(true);
-                std::thread::spawn(move || {
-                    let _ = sender.send(preparation.run_with_progress(&observer));
-                });
-                startup.prepare = Some(ProfilePrepareJob {
-                    generation,
-                    receiver,
-                    progress,
-                });
+        if startup.prepare_pending.is_none() {
+            match state.session.profile_preparation() {
+                Ok((generation, preparation)) => {
+                    let (observer, progress) = progress_channel(ProfileProgress::steps(
+                        ProfileProgressStage::SelectingServerProfile,
+                        0,
+                        1,
+                    ));
+                    state.session.error = None;
+                    state.session.set_profile_preparing(true);
+                    startup.prepare_pending = Some(ProfilePreparePending {
+                        generation,
+                        preparation: Arc::new(preparation),
+                        observer,
+                        progress,
+                    });
+                }
+                Err(error) => {
+                    startup.failed_generation = Some(generation);
+                    let fatal = startup
+                        .pending_boot
+                        .as_ref()
+                        .is_some_and(boot_failure_is_fatal);
+                    fail_startup(&mut state.session, fatal, error);
+                }
             }
-            Err(error) => {
-                startup.failed_generation = Some(generation);
-                let fatal = startup
-                    .pending_boot
-                    .as_ref()
-                    .is_some_and(boot_failure_is_fatal);
-                fail_startup(&mut state.session, fatal, error);
+        }
+
+        if let Some(pending) = startup.prepare_pending.as_ref() {
+            let generation = pending.generation;
+            let preparation = Arc::clone(&pending.preparation);
+            let observer = pending.observer.clone();
+            let progress = Arc::clone(&pending.progress);
+            let input = script::preparation::PreparationInput::new(
+                generation,
+                PROFILE_PREPARATION_INPUT_BYTES,
+                PROFILE_PREPARATION_SCRATCH_BYTES,
+                PROFILE_PREPARATION_RESULT_BYTES,
+            );
+            match input {
+                Ok(input) => match script::preparation::submit_cooperative(
+                    script::preparation::PreparationKind::Profile,
+                    api::identity::Scope::Process,
+                    input,
+                    {
+                        let mut steps = ProfilePreparationSteps::new(preparation, observer);
+                        move |_| steps.step()
+                    },
+                ) {
+                    Ok(task) => {
+                        startup.prepare_pending = None;
+                        startup.prepare = Some(ProfilePrepareJob {
+                            generation,
+                            task,
+                            progress,
+                        });
+                    }
+                    Err(script::preparation::PreparationError::Refused(
+                        api::work::SubmissionRefusal::Full,
+                    )) => {}
+                    Err(error) => {
+                        startup.prepare_pending = None;
+                        startup.failed_generation = Some(generation);
+                        let fatal = startup
+                            .pending_boot
+                            .as_ref()
+                            .is_some_and(boot_failure_is_fatal);
+                        fail_startup(&mut state.session, fatal, error.to_string());
+                    }
+                },
+                Err(error) => {
+                    startup.prepare_pending = None;
+                    startup.failed_generation = Some(generation);
+                    let fatal = startup
+                        .pending_boot
+                        .as_ref()
+                        .is_some_and(boot_failure_is_fatal);
+                    fail_startup(&mut state.session, fatal, error.to_string());
+                }
             }
         }
     }
 
-    if state.session.profile_bound() && startup.validate.is_none() && startup.pending_boot.is_some()
+    if state.session.profile_bound()
+        && startup.validate.is_none()
+        && startup.validate_pending.is_none()
+        && startup.pending_boot.is_some()
     {
         let boot = startup.pending_boot.take().expect("pending boot");
         let fatal = boot_failure_is_fatal(&boot);
         match state.session.template_for_validation() {
             Ok(template) => {
-                let (sender, receiver) = mpsc::sync_channel(1);
                 let (observer, progress) = progress_channel(ProfileProgress::steps(
                     ProfileProgressStage::FinalChecks,
                     0,
@@ -509,17 +625,68 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
                 ));
                 state.session.error = None;
                 state.session.set_profile_preparing(true);
-                std::thread::spawn(move || {
-                    let _ = sender.send(template.validate_for_play_with_progress(&observer));
-                });
-                startup.validate = Some(ProfileValidateJob {
+                startup.validate_pending = Some(ProfileValidatePending {
                     generation,
                     boot,
-                    receiver,
+                    template,
+                    observer,
                     progress,
                 });
             }
             Err(error) => fail_startup(&mut state.session, fatal, error),
+        }
+    }
+
+    if let Some(pending) = startup.validate_pending.as_ref() {
+        let generation = pending.generation;
+        let template = Arc::clone(&pending.template);
+        let observer = pending.observer.clone();
+        let progress = Arc::clone(&pending.progress);
+        let input = script::preparation::PreparationInput::new(
+            generation,
+            std::mem::size_of::<Arc<host_play::SharedClientTemplate>>(),
+            0,
+            std::mem::size_of::<host_play::ValidatedTemplate>(),
+        );
+        match input {
+            Ok(input) => match script::preparation::submit(
+                script::preparation::PreparationKind::Profile,
+                api::identity::Scope::Process,
+                input,
+                move |_| template.validate_for_play_with_progress(&observer),
+            ) {
+                Ok(task) => {
+                    let pending = startup
+                        .validate_pending
+                        .take()
+                        .expect("validation demand retained");
+                    startup.validate = Some(ProfileValidateJob {
+                        generation,
+                        boot: pending.boot,
+                        task,
+                        progress,
+                    });
+                }
+                Err(script::preparation::PreparationError::Refused(
+                    api::work::SubmissionRefusal::Full,
+                )) => {}
+                Err(error) => {
+                    let pending = startup
+                        .validate_pending
+                        .take()
+                        .expect("validation demand retained");
+                    let fatal = boot_failure_is_fatal(&pending.boot);
+                    fail_startup(&mut state.session, fatal, error.to_string());
+                }
+            },
+            Err(error) => {
+                let pending = startup
+                    .validate_pending
+                    .take()
+                    .expect("validation demand retained");
+                let fatal = boot_failure_is_fatal(&pending.boot);
+                fail_startup(&mut state.session, fatal, error.to_string());
+            }
         }
     }
 }
@@ -2255,11 +2422,11 @@ fn script_section(ui: &Ui, session: &mut Session) {
         gap_line(ui);
     }
     let confirming = session.script_reload_confirmation_pending();
-    let validating = session.reload_validation_pending();
+    let pending = session.reload_validation_pending();
     {
-        let _validating = validating.then(|| ui.begin_disabled());
-        let label = if validating {
-            "Validating…"
+        let _pending = pending.then(|| ui.begin_disabled());
+        let label = if pending {
+            "Reloading…"
         } else if confirming {
             "Confirm"
         } else {
@@ -2269,14 +2436,14 @@ fn script_section(ui: &Ui, session: &mut Session) {
             session.begin_script_reload_clicked();
         }
     }
-    ui.set_item_tooltip(if validating {
-        "validating candidate script off the UI thread"
+    ui.set_item_tooltip(if pending {
+        "preparing and validating candidate script off the UI thread"
     } else if confirming {
         "confirm reload: restart listed running bots and stop listed paused bots"
     } else {
         "hash source and supported siblings; unchanged skips transpile"
     });
-    if (confirming || validating) && ui.button_with_size("Cancel reload", [avail, 0.0]) {
+    if (confirming || pending) && ui.button_with_size("Cancel reload", [avail, 0.0]) {
         session.cancel_reload();
     }
 
@@ -2594,21 +2761,21 @@ fn browse_card_grid(
 }
 fn browse_window_body(ui: &Ui, session: &mut Session) {
     let w = ui.content_region_avail()[0];
-    let validating = session.reload_validation_pending();
-    let label = if validating {
-        "Validating catalog…"
+    let pending = session.reload_validation_pending();
+    let label = if pending {
+        "Refreshing catalog…"
     } else if session.scripts.catalog_refresh_confirm() {
         "Confirm catalog reload"
     } else {
         "Refresh catalog"
     };
     {
-        let _validating = validating.then(|| ui.begin_disabled());
+        let _pending = pending.then(|| ui.begin_disabled());
         if ui.button_with_size(label, [w, 0.0]) {
             session.begin_refresh_catalog();
         }
     }
-    if (session.scripts.catalog_refresh_confirm() || validating)
+    if (session.scripts.catalog_refresh_confirm() || pending)
         && ui.button_with_size("Cancel reload", [w, 0.0])
     {
         session.cancel_reload();
@@ -6263,7 +6430,7 @@ fn init_panel_running(
             Ok(pass) => Some(pass),
             Err(msg) => {
                 eprintln!("FAIL: {msg}");
-                std::process::exit(1);
+                exit_after_work_shutdown(1);
             }
         }
     } else {
@@ -6282,14 +6449,14 @@ fn init_panel_running(
                 .map(|profile| profile.profile_class());
             if let Err(error) = class.and_then(host_play::memory::require_live_benchmark) {
                 eprintln!("FAIL: {error}");
-                std::process::exit(1);
+                exit_after_work_shutdown(1);
             }
             Some(Boot::Memory(config))
         }
         Ok(None) => boot,
         Err(error) => {
             eprintln!("FAIL: {error}");
-            std::process::exit(1);
+            exit_after_work_shutdown(1);
         }
     };
     Ok((state, StartupPreparation::new(boot)))
@@ -6361,7 +6528,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     if let Some(scenario) = args.mode.prepare_fixture_name() {
         return run_offline_prepare_fixture(&args, scenario).map_err(|e| {
             eprintln!("FAIL: {e}");
-            std::process::exit(1);
+            exit_after_work_shutdown(1);
         });
     }
     let skip_lock = !matches!(args.mode, RunMode::Interactive);
@@ -6383,13 +6550,15 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
         }
         Err(e) => {
             eprintln!("panel: instance lock: {e}");
-            std::process::exit(1);
+            exit_after_work_shutdown(1);
         }
     }
+    let running = Rc::new(RefCell::new(running));
     let mut presented = false;
 
     let mut cfg = runner_config();
     let mut window_title = running
+        .borrow()
         .as_ref()
         .map(|(state, _)| state.session.app_title())
         .unwrap_or_else(|| "274bot".into());
@@ -6398,6 +6567,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     let os_window_init = Arc::clone(&os_window);
     let live_failure = Arc::new(Mutex::new(None));
     let live_failure_frame = Arc::clone(&live_failure);
+    let frame_running = Rc::clone(&running);
     let result = window::run(
         cfg,
         amber_style,
@@ -6405,6 +6575,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
             client::render::backend::inject_device(device.clone(), queue.clone());
             *os_window_init.lock().unwrap() = Some(Arc::clone(window));
         },
+        panel_gpu_shutdown(Rc::clone(&running)),
         Arc::clone(&shot_state),
         move |ui, gpu| {
             let _profile_draw = client::profiling::UI_DRAW.start();
@@ -6419,15 +6590,16 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
                             Arc::clone(&shot_state),
                             host_play::InstancePermit::skip(),
                         ) {
-                            Ok(ready) => running = Some(ready),
+                            Ok(ready) => *frame_running.borrow_mut() = Some(ready),
                             Err(e) => {
                                 eprintln!("panel: {e}");
-                                std::process::exit(1);
+                                exit_after_work_shutdown(1);
                             }
                         }
                     }
                 }
             }
+            let mut running = frame_running.borrow_mut();
             let Some((state, startup)) = running.as_mut() else {
                 return false;
             };
@@ -6459,6 +6631,18 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     );
     let failure = live_failure.lock().unwrap().take();
     finish_panel_run(result, failure)
+}
+
+/// The window's GPU shutdown hook: release the walk map's textures while
+/// the renderer that registered them is still live.
+fn panel_gpu_shutdown(
+    running: Rc<RefCell<Option<(PanelState, StartupPreparation)>>>,
+) -> impl FnMut(&mut Gpu) + 'static {
+    move |gpu| {
+        if let Some((state, _)) = running.borrow_mut().as_mut() {
+            state.walk_map.release(Some(gpu));
+        }
+    }
 }
 
 /// Whole-window shots (the 377 harness pattern): write completed captures
@@ -6741,12 +6925,12 @@ fn ui_frame(
             match run.poll(play) {
                 Ok(true) => {
                     eprintln!("PASS: memory panel observation complete");
-                    std::process::exit(0);
+                    exit_after_work_shutdown(0);
                 }
                 Ok(false) => {}
                 Err(error) => {
                     eprintln!("FAIL: memory panel: {error}");
-                    std::process::exit(1);
+                    exit_after_work_shutdown(1);
                 }
             }
         }
@@ -6988,3 +7172,7 @@ mod tests;
 #[cfg(test)]
 #[path = "app_window_tests.rs"]
 mod window_tests;
+
+#[cfg(test)]
+#[path = "app_teardown_tests.rs"]
+mod teardown_tests;

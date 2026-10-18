@@ -34,7 +34,8 @@ pub use nav_identity::{
 };
 pub use profile::{
     parse_profile_args, parse_revision, GameDataStatus, ProfileClass, ProfileOptions,
-    ProfileSelection, ServerProfile, WorldMembersFact, WorldMembersSource,
+    ProfileSelection, ServerProfile, TemplatePreparation, TemplateStep, WorldMembersFact,
+    WorldMembersSource, TEMPLATE_STEP_WAIT,
 };
 pub use servers::{proposed_vault, LaunchProfile, LaunchTransport, LaunchWorld, LoginKey, Servers};
 
@@ -68,6 +69,8 @@ pub use host::{RandomClaim, RandomStatus};
 #[cfg(test)]
 use parking_lot::Mutex as QueueMutex;
 mod debug_replies;
+#[cfg(test)]
+mod gatherer_recovery_live;
 mod instance_lock;
 #[cfg(any(test, feature = "live-probe"))]
 mod manual_click_live_probe;
@@ -103,7 +106,7 @@ pub use walk_arm::{
 };
 pub use walk_permissions::{DangerLevel, WalkGlobals, NET_AVAILABLE};
 mod play_scripts;
-pub use play_scripts::{ScriptNavPaint, ScriptStartHandle};
+pub use play_scripts::{PreparedScriptConfig, ScriptNavPaint, ScriptStartHandle};
 mod play_slots;
 #[cfg(test)]
 use api::snapshot::{GameSnapshot, WorldTile};
@@ -136,9 +139,9 @@ pub use play_bootstrap::{
 };
 #[cfg(test)]
 use play_login::{
-    apply_queue_wait, configure_slot_world, drop_queue_place, enqueue_queue_place,
-    granted_permit_may_start_login, granted_permit_world_is_current, login_retry_wait,
-    on_login_success, permit_wait_cancelled, plan_login_retry, publish_login_latched_from_arm,
+    apply_queue_wait, capture_login_authorization, configure_slot_world, drop_queue_place,
+    enqueue_queue_place, granted_permit_world_is_current, login_retry_wait, on_login_success,
+    permit_wait_cancelled, plan_login_retry, publish_login_latched_from_arm,
     refresh_slot_world_preference, server_hold, should_handshake, tick_flags, wait_for_permit,
     wait_for_transfer_response, GrantedReservation, PermitWait, WorldChoice,
     UNEXPECTED_LOGOUT_THRESHOLD, UNEXPECTED_LOGOUT_WINDOW,
@@ -172,10 +175,7 @@ pub use resource_view::{
 pub use rss::{count_tcp_to, current_resident_bytes, parse_lsof_established, sample_process};
 pub use scatter::{scatter_tile_for, tele_args};
 use script_runtime::*;
-use walk_plan::{
-    fetch_stand, fetch_tile, fetchable_facts, route_or_bank_fetch, BankFetchFlight, FlightTarget,
-    RouteOutcome, StandFetch,
-};
+use walk_plan::{BankFetchFlight, FlightTarget, RouteOutcome};
 pub use walk_plan::{PendingBankFetch, StepProgress};
 
 #[cfg(test)]
@@ -517,14 +517,19 @@ impl Play {
         let Some(arm) = self.arms.get(name) else {
             return;
         };
-        let mut q = self.queue.lock();
-        q.prefer_owner(arm.queue_owner);
-        publish_queue_place(
-            &q,
-            &mut lock_statuses(&self.statuses),
-            name,
-            arm.queue_owner,
-        );
+        let event = {
+            let mut q = self.queue.lock();
+            q.prefer_owner(arm.queue_owner);
+            publish_queue_place(
+                &q,
+                &mut lock_statuses(&self.statuses),
+                name,
+                arm.queue_owner,
+            )
+        };
+        if let Some(event) = event {
+            arm.publish_queued(event);
+        }
     }
 
     /// Snapshot of the worker-owned login FIFO (front first).
@@ -590,10 +595,15 @@ mod bank_core_live;
 mod bank_fetch_closed_live;
 #[cfg(test)]
 mod bank_memory_live;
-#[cfg(test)]
-mod bank_npc_live;
+#[cfg(any(test, all(feature = "live-harness", feature = "test-support")))]
+pub mod bank_npc_live;
+
+#[cfg(all(target_os = "linux", feature = "test-support"))]
+pub use script_runtime::measures_captured_native_bank_pick_cpu;
 #[cfg(test)]
 mod gather_bait_live;
+#[cfg(test)]
+mod gather_held_live;
 #[cfg(test)]
 mod gather_return_live;
 #[cfg(test)]

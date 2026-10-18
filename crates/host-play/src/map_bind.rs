@@ -11,9 +11,13 @@ use crate::map_producer::{map_artifact_policies, NativeMapProducer};
 use crate::nav_identity::install_resource_root;
 use crate::walk_map::AuthenticatedServices;
 use crate::ServerProfile;
+use api::work::{
+    Checkpoint, CooperativeJob, RetainedState, StepContext, StepOutcome, WalkMapDecodePhase,
+};
 use nav::map::formats::{ServicePois, ShippedImages, NAVPOIS_HEADER_BYTES};
 use nav::map::identity::Digest;
 use std::fs;
+use std::io::Cursor;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -46,8 +50,8 @@ pub fn map_demand_manager() -> Result<&'static MapDemandManager, MapCacheError> 
     Ok(MANAGER.get_or_init(|| created))
 }
 
-/// Join a finished bake thread on close. Never creates the manager: a map
-/// that was never opened leaves nothing to reap.
+/// Reap published map-job terminals on a UI cadence. Never creates the
+/// manager: a map that was never opened leaves nothing to reap.
 pub fn reap_map_demand() {
     if let Some(manager) = MANAGER.get() {
         manager.reap();
@@ -63,9 +67,9 @@ pub fn map_profile_descriptor(
     MapProfileDescriptor::from_profile(profile, image, catalogue)
 }
 
-/// Request `demand` for `descriptor`, starting or joining the local worker
-/// when it is not ready. Images demand always runs catalogue first (D's
-/// worker).
+/// Request `demand` for `descriptor`, starting or joining the shared
+/// WorkAdmission job when it is not ready. Images demand always derives the
+/// catalogue before the image stage.
 ///
 /// Reopening a failed/paused identity is an explicit retry, not an automatic
 /// loop: ordinary `request` keeps the terminal status.
@@ -84,14 +88,15 @@ pub fn open_map_demand(
     }
 }
 
-/// Open terrain that needs no local bake for `descriptor` without ever
-/// baking it: terrain already published, or shipped with this release for
-/// exactly its image identity (the worker installs that). `None` when there
-/// is neither. A published terrain stays leased for the handle, so capacity
-/// pruning cannot remove it while the worker derives a missing catalogue,
-/// and the [`MapDemand::ReadyImages`] image stage never starts a bake: it
-/// settles catalogue-only if the terrain is gone or the shipped files are
-/// unusable, and the front end asks before baking.
+/// Open terrain already leased by this manager, or shipped for exactly this
+/// image identity, without a local bake. `None` means readiness is unknown,
+/// not that the disk cache is absent. The caller can submit an admitted
+/// [`MapDemand::ReadyImages`] probe to check the disk cache.
+///
+/// A known terrain lease stays with the handle while the worker derives a
+/// missing catalogue. The adopt-only image stage never starts a local bake.
+/// It settles catalogue-only when no usable terrain exists, so the front end
+/// can ask before baking.
 pub fn open_map_ready_terrain(
     manager: &MapDemandManager,
     descriptor: MapProfileDescriptor,
@@ -106,11 +111,9 @@ pub fn open_map_ready_terrain(
     Ok(None)
 }
 
-/// Release packaging: bake `revision` terrain for an offline client cache
-/// (`jag_dir` and the decoded snapshot under `snapshot_root`, as the nav
-/// build reads them) through the production image path, then ship it under
-/// `out/map/<revision>/` for the install resource root `out`. `progress`
-/// sees every worker status until the bake settles.
+/// Bake map images for `revision` below `out/map/<revision>`, where `out` is
+/// the install resource root. `progress` receives each published WorkAdmission
+/// status until the bake settles.
 pub fn bake_shipped_map_images(
     revision: u16,
     jag_dir: &Path,
@@ -156,13 +159,33 @@ pub(crate) fn ship_map_images(
                 }
                 MapJobStatus::Queued | MapJobStatus::Running(_) => {}
             }
-            std::thread::sleep(Duration::from_millis(100));
+            if handle.wait_for_change(Duration::from_millis(100))
+                == script::work_admission::PublicationWaitOutcome::Unavailable
+            {
+                // Shutdown can return before a request thread exits. Keep the
+                // scratch cache until its terminal status arrives.
+                handle.cancel();
+                loop {
+                    let status = handle.status();
+                    progress(&status);
+                    if matches!(
+                        &status,
+                        MapJobStatus::Ready
+                            | MapJobStatus::Paused
+                            | MapJobStatus::Cancelled
+                            | MapJobStatus::Failed(_)
+                    ) {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                return Err(MapCacheError::Message(
+                    "WorkAdmission is unavailable".into(),
+                ));
+            }
         }
         drop(handle);
-        // Join the worker so none of its leases outlives the scratch cache.
-        while !manager.reap_idle() {
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        manager.reap();
         shipped.ship_from(&root, descriptor.image_identity())
     })();
     match (result, fs::remove_dir_all(&scratch)) {
@@ -173,7 +196,8 @@ pub(crate) fn ship_map_images(
     }
 }
 
-/// Catalogue published independently of terrain. `None` while still baking.
+/// Previously admitted catalogue lease, or `None` until bounded preflight has
+/// published one independently of terrain.
 pub fn peek_map_catalogue(profile: &ServerProfile) -> Option<Arc<ReadyCatalogue>> {
     let descriptor = map_profile_descriptor(profile).ok()?;
     map_demand_manager()
@@ -199,6 +223,179 @@ pub fn map_ready_images(
     handle: &MapDemandHandle,
 ) -> Result<Option<Arc<ReadyImages>>, MapCacheError> {
     Ok(handle.ready()?.images)
+}
+
+/// Maximum compressed terrain bytes admitted to the shared walk-map decoder.
+pub const WALK_MAP_DECODE_PNG_LIMIT: usize = 512 * 1024;
+/// Inline job storage, the shared PNG's reference counts, and their maximum alignment padding.
+pub const WALK_MAP_DECODE_INPUT_OVERHEAD: usize = std::mem::size_of::<WalkMapDecodeJob>()
+    + 2 * std::mem::size_of::<usize>()
+    + std::mem::align_of::<std::sync::atomic::AtomicUsize>()
+    - 1;
+/// WorkAdmission scratch for png 0.18.1. Text/ICC chunks are skipped; the 512 KiB whole-file
+/// input cap bounds the only unbounded copied chunk (eXIf) and its Info clone (both ≤512 KiB).
+/// Include their overlap, ≤128 KiB unfilter data, ≤1,033-byte row scratch, and bounded inflater
+/// tables; png::Limits allows the input cap plus one raw RGBA row (including its filter byte).
+pub const WALK_MAP_DECODE_SCRATCH_LIMIT: usize = 2 * 1024 * 1024;
+const PNG_DECODER_LIMIT_BYTES: usize =
+    WALK_MAP_DECODE_PNG_LIMIT + nav::map::spatial::TILE_PIXELS as usize * 4 + 1;
+
+/// Stable, allocation-free failures from the bounded walk-map PNG decoder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum WalkMapDecodeFailure {
+    #[error("truncated map data")]
+    Truncated,
+    #[error("invalid map PNG header")]
+    PngHeader,
+    #[error("invalid map PNG dimensions/format")]
+    DimensionsOrFormat,
+    #[error("map limit exceeded: png bytes")]
+    PngBytesLimit,
+    #[error("invalid map png decode info")]
+    PngInfo,
+    #[error("map limit exceeded: png output")]
+    PngOutputLimit,
+    #[error("invalid map png output size")]
+    PngOutputSize,
+    #[error("invalid map png frame")]
+    PngFrame,
+    #[error("invalid map png frame size")]
+    PngFrameSize,
+    #[error("walk map decode job was already run")]
+    AlreadyRun,
+}
+
+/// One bounded PNG decode on the process-wide WorkAdmission worker.
+pub struct WalkMapDecodeJob {
+    png: Option<Arc<[u8]>>,
+    decoded: Option<Result<Vec<u8>, WalkMapDecodeFailure>>,
+}
+
+impl WalkMapDecodeJob {
+    /// Transfer immutable cache bytes into the cooperative decode job.
+    pub fn new(png: Arc<[u8]>) -> Self {
+        Self {
+            png: Some(png),
+            decoded: None,
+        }
+    }
+
+    fn publish_decoded(
+        &mut self,
+        ctx: &mut StepContext<'_, WalkMapDecodePhase>,
+    ) -> StepOutcome<Vec<u8>, WalkMapDecodeFailure> {
+        let Some(decoded) = self.decoded.take() else {
+            return StepOutcome::Failed(WalkMapDecodeFailure::AlreadyRun);
+        };
+        ctx.publish_progress(WalkMapDecodePhase::Publish, 1, Some(1));
+        match ctx.checkpoint() {
+            Checkpoint::Continue => match decoded {
+                Ok(rgba) => StepOutcome::Completed(rgba),
+                Err(error) => StepOutcome::Failed(error),
+            },
+            Checkpoint::Yield | Checkpoint::Cancel(_) => {
+                self.decoded = Some(decoded);
+                StepOutcome::Yielded
+            }
+        }
+    }
+}
+
+impl CooperativeJob for WalkMapDecodeJob {
+    type Output = Vec<u8>;
+    type Error = WalkMapDecodeFailure;
+    type Phase = WalkMapDecodePhase;
+
+    fn step(
+        &mut self,
+        ctx: &mut StepContext<'_, WalkMapDecodePhase>,
+    ) -> StepOutcome<Self::Output, Self::Error> {
+        match ctx.checkpoint() {
+            Checkpoint::Continue => {}
+            Checkpoint::Yield | Checkpoint::Cancel(_) => return StepOutcome::Yielded,
+        }
+        if self.decoded.is_some() {
+            return self.publish_decoded(ctx);
+        }
+        ctx.publish_progress(WalkMapDecodePhase::Receive, 0, Some(1));
+        match ctx.consume_unit() {
+            Checkpoint::Continue => {}
+            Checkpoint::Yield | Checkpoint::Cancel(_) => return StepOutcome::Yielded,
+        }
+        let Some(png) = self.png.take() else {
+            return StepOutcome::Failed(WalkMapDecodeFailure::AlreadyRun);
+        };
+        ctx.publish_progress(WalkMapDecodePhase::Decode, 0, Some(1));
+        self.decoded = Some(decode_walk_map_png(&png));
+        drop(png);
+        match ctx.checkpoint() {
+            Checkpoint::Continue => self.publish_decoded(ctx),
+            Checkpoint::Yield | Checkpoint::Cancel(_) => StepOutcome::Yielded,
+        }
+    }
+
+    fn retained(&self) -> RetainedState {
+        let input_bytes = self.png.as_ref().map_or(0, |png| {
+            png.len().saturating_add(2 * std::mem::size_of::<usize>())
+        });
+        let result_bytes = self
+            .decoded
+            .as_ref()
+            .and_then(|decoded| decoded.as_ref().ok())
+            .map_or(0, Vec::capacity);
+        RetainedState::clean(input_bytes + result_bytes + std::mem::size_of::<Self>())
+    }
+}
+
+fn decode_walk_map_png(bytes: &[u8]) -> Result<Vec<u8>, WalkMapDecodeFailure> {
+    use nav::map::spatial::{TILE_PIXELS, TILE_RGBA_BYTES};
+
+    if bytes.len() < 33 {
+        return Err(WalkMapDecodeFailure::Truncated);
+    }
+    if &bytes[..8] != b"\x89PNG\r\n\x1a\n"
+        || bytes[8..12] != 13u32.to_be_bytes()
+        || &bytes[12..16] != b"IHDR"
+    {
+        return Err(WalkMapDecodeFailure::PngHeader);
+    }
+    let width = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
+    let height = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
+    if width != TILE_PIXELS || height != TILE_PIXELS || bytes[24..29] != [8, 6, 0, 0, 0] {
+        return Err(WalkMapDecodeFailure::DimensionsOrFormat);
+    }
+    if bytes.len() > WALK_MAP_DECODE_PNG_LIMIT {
+        return Err(WalkMapDecodeFailure::PngBytesLimit);
+    }
+    // The former decoder applied no ICC/gamma transformation, so unused text
+    // and ICC metadata cannot affect RGBA. Skip text/ICC parsing and inflation;
+    // png retains one bounded eXIf copy, included in the WorkAdmission charge.
+    let mut decoder = png::Decoder::new(Cursor::new(bytes));
+    decoder.set_ignore_text_chunk(true);
+    decoder.set_ignore_iccp_chunk(true);
+    decoder.set_limits(png::Limits {
+        bytes: PNG_DECODER_LIMIT_BYTES,
+    });
+    let mut reader = decoder
+        .read_info()
+        .map_err(|_| WalkMapDecodeFailure::PngInfo)?;
+    let size = reader
+        .output_buffer_size()
+        .ok_or(WalkMapDecodeFailure::PngOutputLimit)?;
+    if size != TILE_RGBA_BYTES {
+        return Err(WalkMapDecodeFailure::PngOutputSize);
+    }
+    let mut rgba = vec![0u8; TILE_RGBA_BYTES];
+    let info = reader
+        .next_frame(&mut rgba)
+        .map_err(|_| WalkMapDecodeFailure::PngFrame)?;
+    if info.width != TILE_PIXELS
+        || info.height != TILE_PIXELS
+        || info.buffer_size() != TILE_RGBA_BYTES
+    {
+        return Err(WalkMapDecodeFailure::PngFrameSize);
+    }
+    Ok(rgba)
 }
 
 /// Authenticated navpois next to the bound pack. Missing/stale/wrong-identity
@@ -234,9 +431,8 @@ pub fn load_navpois(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map_cache::{MapCacheRoot, MapJobStatus, MapProfileDescriptor};
+    use crate::map_cache::{MapCacheRoot, MapProfileDescriptor};
     use nav::map::identity::Digest;
-    use std::time::{Duration, Instant};
 
     #[test]
     fn artifact_policies_are_stable() {
@@ -254,27 +450,9 @@ mod tests {
         let manager = MapDemandManager::new(root, Arc::new(NativeMapProducer::new()));
         let (image, catalogue) = map_artifact_policies().unwrap();
         let descriptor = MapProfileDescriptor::new(289, Digest([1; 32]), image, catalogue).unwrap();
-        let handle = manager.request_catalogue(descriptor).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(2);
-        let status = loop {
-            let status = handle.status();
-            if !matches!(status, MapJobStatus::Queued | MapJobStatus::Running(_)) {
-                break status;
-            }
-            if Instant::now() > deadline {
-                panic!("producer did not finish: {status:?}");
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        };
-        match status {
-            MapJobStatus::Failed(message) => {
-                assert!(
-                    message.contains("prepared client cache")
-                        || message.contains("map assets unavailable"),
-                    "{message}"
-                );
-            }
-            other => panic!("expected failed without cache, got {other:?}"),
-        }
+        assert!(matches!(
+            manager.request_catalogue(descriptor),
+            Err(MapCacheError::NoPreparedCache)
+        ));
     }
 }

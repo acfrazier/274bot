@@ -397,7 +397,10 @@ impl<'a, F: FnMut(Tile)> Widget for Map<'a, F> {
             }
         }
 
-        if let Some(route) = self.route {
+        if let Some(route) = self
+            .route
+            .and_then(|route| nav::producer::route_view(self.world, route).ok())
+        {
             for pt in remaining_path_tiles(route, self.here) {
                 if pt.tile.level != c.level {
                     continue;

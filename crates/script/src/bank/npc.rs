@@ -305,3 +305,97 @@ pub(crate) fn option_matches(actual: &str, wanted: &str) -> bool {
             .all(|wanted| actual.next() == Some(wanted))
     })
 }
+
+/// The banker both adapters pick from their scene rows: named `name`,
+/// carrying `op` (by label or by packed 1-based index), nearest first.
+/// A row with no posted name reads as empty, so it can only match an
+/// empty wanted name; adapters never ask for one.
+pub(crate) fn banker_scan<'a, R: crate::bank::ops::NpcRow>(
+    rows: &'a [R],
+    name: &str,
+    op: NpcOp<'_>,
+) -> Option<(&'a R, &'a str)> {
+    rows.iter()
+        .filter(|row| name_matches(row.name().unwrap_or_default(), name))
+        .filter_map(|row| {
+            let action = (1..=row.op_len()).find_map(|slot| {
+                let label = row.op_label(slot)?;
+                let index = usize::try_from(slot).ok()?.checked_sub(1)?;
+                action_matches(label, index, op).then_some(label)
+            })?;
+            Some((row, action))
+        })
+        .min_by_key(|(row, _)| row.distance())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use api::snapshot::{NpcView, WorldTile};
+
+    fn npc(index: usize, name: &str, distance: i32, actions: &[&str]) -> NpcView {
+        let tile = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        NpcView {
+            index,
+            r#type: None,
+            name: Some(name.to_owned()),
+            actions: actions
+                .iter()
+                .map(|action| Some((*action).to_owned()))
+                .collect(),
+            tile,
+            distance,
+            animation: -1,
+            animation_frame: 0,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: -1,
+            health: 0,
+            total_health: 0,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+            level: 0,
+            size: 1,
+            network: tile,
+            x: tile.x,
+            z: tile.z,
+            yaw: 0,
+        }
+    }
+
+    /// Characterization (T2.2 r2): the shared banker scan is
+    /// nearest-first, over rows passing the name and op filters; the
+    /// first row wins an equal-distance tie.
+    #[test]
+    fn banker_scan_picks_the_nearest_named_banker_with_the_op() {
+        let rows = [
+            npc(1, "Trader", 0, &["Bank"]),
+            npc(2, "Banker", 1, &["Talk-to"]),
+            npc(3, "Banker", 9, &["Talk-to", "Bank"]),
+            npc(4, " banker ", 2, &["Bank"]),
+            npc(5, "Banker", 5, &["hidden", "Bank"]),
+            npc(6, "Banker", 2, &["Bank"]),
+        ];
+        let (row, action) = banker_scan(&rows, "Banker", NpcOp::Name("Bank"))
+            .expect("a banker with the Bank op is in the scene");
+        assert_eq!(row.index, 4, "nearest matching banker, first on a tie");
+        assert_eq!(action, "Bank");
+        // By packed index the same nearest rule holds; the empty and
+        // `hidden` labels never carry an op.
+        let (row, _) =
+            banker_scan(&rows, "Banker", NpcOp::Index(2)).expect("a banker carries a second op");
+        assert_eq!(row.index, 5, "distance 5 beats the distance-9 row");
+        assert!(banker_scan(&rows, "Fremennik", NpcOp::Name("Bank")).is_none());
+        assert!(banker_scan(&rows, "Banker", NpcOp::Name("Collect")).is_none());
+    }
+}

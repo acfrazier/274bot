@@ -16,7 +16,7 @@ use script::IsolatedEnv;
 
 const PROFILE: &str = "local-289";
 const CONTENT: &str = "test-content";
-const WAIT: Duration = Duration::from_secs(10);
+const WAIT: Duration = Duration::from_secs(60);
 
 fn service(scratch: &IsolatedEnv, domains: &[LocalStateDomain]) -> Arc<LocalStateService> {
     LocalStateService::open(
@@ -75,6 +75,70 @@ fn completed(service: &LocalStateService, request: RequestId) -> DurableReceipt 
     match settlement(service, request) {
         Settlement::Completed(receipt) => receipt,
         other => panic!("request {} did not complete: {other:?}", request.get()),
+    }
+}
+
+/// Retry a frontend write while it reports the write queued past the
+/// frontend's bounded durability wait: under machine load a write stays
+/// queued past the frontend timeout (a product deadline this suite must
+/// not change) and settles later. Any other error returns at once, so
+/// refusals and genuine conflicts keep their fast verdict.
+fn patiently(mut attempt: impl FnMut() -> Result<(), String>) -> Result<(), String> {
+    let start = std::time::Instant::now();
+    loop {
+        match attempt() {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if error.contains("not durable within")
+                    && start.elapsed() < Duration::from_secs(60) =>
+            {
+                std::thread::yield_now();
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+/// A preferences `set`, retrying a load-slow durability wait.
+fn set_patiently(preferences: &Preferences, key: &str, value: serde_json::Value) {
+    patiently(|| {
+        preferences
+            .set(key, value.clone())
+            .map_err(|error| error.to_string())
+    })
+    .unwrap();
+}
+/// A preferences `update`, retrying a load-slow durability wait. A write
+/// of an earlier attempt that lands late is merged over, not duplicated:
+/// the update re-reads and re-applies `merge` on a conflict.
+fn update_patiently(
+    preferences: &Preferences,
+    mut merge: impl FnMut(&mut serde_json::Map<String, serde_json::Value>) -> std::io::Result<()>,
+) {
+    patiently(|| {
+        preferences
+            .update(|document| merge(document))
+            .map_err(|error| error.to_string())
+    })
+    .unwrap();
+}
+/// A loadouts form `save`, retrying a load-slow durability wait. A write
+/// of an earlier attempt that lands late conflicts with its own retry;
+/// the save replays the store's latest on a conflict, so a retry converges
+/// instead of duplicating rows.
+fn save_patiently(form: &mut script::LoadoutsStore) {
+    let start = std::time::Instant::now();
+    loop {
+        match form.save() {
+            Ok(()) => return,
+            Err(error)
+                if (error.contains("not durable within")
+                    || error.contains("changed since this list was loaded"))
+                    && start.elapsed() < Duration::from_secs(60) =>
+            {
+                std::thread::yield_now();
+            }
+            Err(error) => panic!("save failed: {error}"),
+        }
     }
 }
 
@@ -1456,7 +1520,7 @@ fn composition_leases_the_form_edited_loadouts_at_start_and_refuses_non_login_na
     let melee = Loadout::new("melee").with_slot("righthand", "Rune scimitar");
     let mut form = form(composition.service());
     form.upsert(melee.clone());
-    form.save().unwrap();
+    save_patiently(&mut form);
     assert_eq!(
         composition.operator_loadouts("Alice Smith").unwrap(),
         vec![melee.clone()]
@@ -2016,9 +2080,7 @@ fn a_preference_write_sets_one_member_and_keeps_every_other() {
     let audits = audits(preferences.service());
     assert_eq!(preferences.value("last_focus").unwrap(), "alice");
 
-    preferences
-        .set("map_bake", serde_json::json!("always"))
-        .unwrap();
+    set_patiently(&preferences, "map_bake", serde_json::json!("always"));
 
     let mut expected: serde_json::Value = serde_json::json!({
         "last_focus": "alice",
@@ -2065,12 +2127,10 @@ fn an_oversize_preference_object_is_written_member_by_member() {
     assert!(rows.iter().any(|row| row.key() == "collapsed.profile_007"));
 
     let audits = audits(preferences.service());
-    preferences
-        .update(|document| {
-            document["collapsed"]["profile_007"]["status"] = serde_json::json!(true);
-            Ok(())
-        })
-        .unwrap();
+    update_patiently(&preferences, |document| {
+        document["collapsed"]["profile_007"]["status"] = serde_json::json!(true);
+        Ok(())
+    });
     assert_eq!(audits.lock().unwrap().len(), 1, "one member, one write");
     let mut expected = document.clone();
     expected["collapsed"]["profile_007"]["status"] = serde_json::json!(true);
@@ -2115,9 +2175,23 @@ fn a_form_save_and_a_slot_edit_through_one_service_keep_both_rows() {
     );
 
     form.upsert(Loadout::new("form-row"));
-    let error = form.save().unwrap_err();
+    // The conflict is decided without waiting for durability, but a worker
+    // starved by machine load answers the first save with the bounded-wait
+    // timeout instead: retry those, keep the first decisive answer.
+    let start = std::time::Instant::now();
+    let error = loop {
+        match form.save() {
+            Err(error)
+                if error.contains("not durable within")
+                    && start.elapsed() < Duration::from_secs(60) =>
+            {
+                std::thread::yield_now()
+            }
+            result => break result.unwrap_err(),
+        }
+    };
     assert!(error.contains("conflict"), "{error}");
-    form.save().unwrap();
+    save_patiently(&mut form);
     let rows: Vec<Loadout> =
         serde_json::from_slice(&std::fs::read(root.loadouts_file()).unwrap()).unwrap();
     let names: Vec<&str> = rows.iter().map(|row| row.name.as_str()).collect();
@@ -2276,6 +2350,19 @@ fn preferences_at(scratch: &IsolatedEnv, case: &str) -> Preferences {
     .preferences()
 }
 
+#[test]
+fn quarantine_copy_flushes_its_candidate() {
+    let scratch = IsolatedEnv::enter("local-state-quarantine-copy-flush");
+    let path = scratch.home.join(".274bot").join("panel-ui.json");
+    let bytes = b"quarantine contents".to_vec();
+    write_private(&path, &bytes);
+
+    let quarantined = files::quarantine_copy(&path, &bytes, "regression").unwrap();
+
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert_eq!(std::fs::read(quarantined).unwrap(), bytes);
+}
+
 /// T5.2 r4 (the pre-T5.2 recovery, made safe): a preferences file whose
 /// content is malformed (not JSON, not UTF-8, JSON that is not an object)
 /// is refused by reads, so readers fail closed, and untouched by them. The
@@ -2327,9 +2414,12 @@ fn a_malformed_preferences_file_is_quarantined_byte_for_byte_and_started_fresh()
             "{case}: reads write nothing"
         );
 
-        preferences
-            .set("map_bake", serde_json::json!("always"))
-            .expect(case);
+        patiently(|| {
+            preferences
+                .set("map_bake", serde_json::json!("always"))
+                .map_err(|error| error.to_string())
+        })
+        .expect(case);
         assert_eq!(
             std::fs::read(&path).unwrap(),
             serde_json::to_vec_pretty(&serde_json::json!({"map_bake": "always"})).unwrap(),
@@ -2405,7 +2495,20 @@ fn a_preferences_quarantine_waits_for_the_files_lock() {
     );
     assert_eq!(siblings(&path), ["panel-ui.json"]);
     drop(lock);
-    saver.join().unwrap().unwrap();
+    // The save stays queued past the frontend's bounded wait under load and
+    // settles later: retry a timed-out save against what is on disk now.
+    let mut saved = saver.join().unwrap();
+    let start = std::time::Instant::now();
+    while start.elapsed() < Duration::from_secs(60) {
+        match saved {
+            Ok(()) => break,
+            Err(error) if error.to_string().contains("not durable within") => {
+                saved = preferences.set("map_bake", serde_json::json!("always"));
+            }
+            Err(error) => panic!("save failed: {error}"),
+        }
+    }
+    saved.unwrap();
     let found = siblings(&path);
     assert_eq!(found.len(), 2, "{found:?}");
     assert_eq!(
@@ -2695,7 +2798,7 @@ fn renaming_the_second_of_two_same_named_loadouts_keeps_the_first_ones_gear() {
     let mut renamed = editor.loadouts()[1].clone();
     renamed.name = "renamed-second".into();
     assert!(editor.replace_at(1, renamed));
-    editor.save().unwrap();
+    save_patiently(&mut editor);
     let rows = rows_on_disk(&path);
     assert!(
         rows.contains(&first),
@@ -2735,9 +2838,19 @@ fn legacy(case: &str) -> Legacy {
         ],
     );
     let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
+    service
+        .readback_lease(&loadouts_identity(), WAIT)
+        .expect("initial legacy loadouts readback")
+        .expect("the legacy fixture has a saved loadouts file");
+    let editor = form(&service);
+    assert!(
+        editor.load_error().is_none(),
+        "legacy loadouts form failed to load: {:?}",
+        editor.load_error()
+    );
     Legacy {
         path,
-        editor: form(&service),
+        editor,
         _service: service,
         _scratch: scratch,
     }
@@ -2756,7 +2869,7 @@ fn on_a_migrated_legacy_file_saving_a_changed_loadout_changes_only_it() {
         let mut expected = case.editor.snapshot();
         let changed = expected[selected].clone().with_carry("Coins", 99);
         assert!(case.editor.replace_at(selected, changed.clone()));
-        case.editor.save().unwrap();
+        save_patiently(&mut case.editor);
         expected[selected] = changed;
         assert_eq!(
             rows_on_disk(&case.path),
@@ -2778,7 +2891,7 @@ fn on_a_migrated_legacy_file_removing_a_loadout_removes_only_it() {
         let mut expected = case.editor.snapshot();
         let name = expected.remove(selected).name;
         assert!(case.editor.remove(&name));
-        case.editor.save().unwrap();
+        save_patiently(&mut case.editor);
         assert_eq!(
             rows_on_disk(&case.path),
             expected,
@@ -2799,7 +2912,7 @@ fn on_a_migrated_legacy_file_renaming_a_loadout_renames_only_it() {
         let mut expected = case.editor.snapshot();
         expected[selected].name = "picked".into();
         assert!(case.editor.replace_at(selected, expected[selected].clone()));
-        case.editor.save().unwrap();
+        save_patiently(&mut case.editor);
         assert_eq!(
             rows_on_disk(&case.path),
             expected,

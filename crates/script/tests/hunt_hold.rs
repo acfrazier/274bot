@@ -395,7 +395,7 @@ fn first_actions_are_status_then_walk_never_walk_to_or_npc() {
 }
 
 #[test]
-fn arrival_after_walk_ack_yields_without_rotate() {
+fn arrival_after_reconnect_reissues_walk_then_new_ack_yields_without_rotate() {
     reset();
     hunt_fight::set_observation(obs_at(off_anchor()));
     let token = begin();
@@ -403,11 +403,22 @@ fn arrival_after_walk_ack_yields_without_rotate() {
     assert_eq!(call("next", token, p.clone(), None)["kind"], "status");
     assert_eq!(call("next", token, p.clone(), None)["kind"], "walk");
     hunt_fight::set_observation(obs_at(melee_anchor()));
+    // set_observation replaces the synthetic scene, like a session reset.
+    // The old Walk's queued ack must not complete work in the new scene.
+    let reissued = call(
+        "next",
+        token,
+        p.clone(),
+        Some(json!({ "queued": true, "walkToken": 11 })),
+    );
+    assert_eq!(reissued["kind"], "walk");
+    assert_eq!(reissued["x"], 2900);
+    assert_eq!(reissued["z"], 9808);
     let step = call(
         "next",
         token,
         p,
-        Some(json!({ "queued": true, "walkToken": 11 })),
+        Some(json!({ "queued": true, "walkToken": 19 })),
     );
     assert_eq!(step["kind"], "yield");
     assert_ne!(step["kind"], "set-safespot");
@@ -516,7 +527,7 @@ fn pause_hold_does_not_elapse_return_ms() {
 }
 
 #[test]
-fn event_signal_mid_wait_yields_without_rotate() {
+fn event_signal_after_reconnect_reissues_walk_then_yields_without_rotate() {
     reset();
     hunt_fight::set_observation(obs_at(off_anchor()));
     let token = begin();
@@ -526,11 +537,18 @@ fn event_signal_mid_wait_yields_without_rotate() {
     let mut held = obs_at(off_anchor());
     held.hold = true;
     hunt_fight::set_observation(held);
+    let reissued = call(
+        "next",
+        token,
+        p.clone(),
+        Some(json!({ "queued": true, "walkToken": 16 })),
+    );
+    assert_eq!(reissued["kind"], "walk");
     let step = call(
         "next",
         token,
         p,
-        Some(json!({ "queued": true, "walkToken": 16 })),
+        Some(json!({ "queued": true, "walkToken": 20 })),
     );
     assert_eq!(step["kind"], "yield");
 }
@@ -611,7 +629,7 @@ fn wrong_token_aborts_and_session_reset_drops_hold() {
 }
 
 #[test]
-fn timeout_at_tile_yields_without_rotate() {
+fn timeout_at_tile_after_reconnect_reissues_walk_then_yields_without_rotate() {
     reset();
     hunt_fight::set_observation(obs_at(off_anchor()));
     let token = begin();
@@ -620,11 +638,18 @@ fn timeout_at_tile_yields_without_rotate() {
     assert_eq!(call("next", token, p.clone(), None)["kind"], "walk");
     hunt_fight::set_observation(obs_at(safespot_a()));
     assert!(hold_force_bound_reached(token));
+    let reissued = call(
+        "next",
+        token,
+        p.clone(),
+        Some(json!({ "queued": true, "walkToken": 18 })),
+    );
+    assert_eq!(reissued["kind"], "walk");
     let step = call(
         "next",
         token,
         p,
-        Some(json!({ "queued": true, "walkToken": 18 })),
+        Some(json!({ "queued": true, "walkToken": 21 })),
     );
     assert_eq!(step["kind"], "yield");
 }

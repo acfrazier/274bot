@@ -697,7 +697,7 @@ fn reset_session_drops_pending_and_reseeds() {
     snap.inv = &[];
     snap.tick = 2;
     post_snapshot_input(&iso, &snap);
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     iso.on_game_tick(2);
     let _ = iso.probe("1");
     assert_eq!(probe_i64(&iso, "globalThis.__buried||0"), 0);

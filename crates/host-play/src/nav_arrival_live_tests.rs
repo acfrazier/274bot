@@ -646,7 +646,12 @@ pub(super) fn write_capture(
         serde_json::to_vec_pretty(&report).expect("serialize NAV-ARRIVAL live evidence"),
     )
     .unwrap_or_else(|error| panic!("write evidence {}: {error}", json_path.display()));
-    std::fs::File::open(&json_path)
+    // Windows `FlushFileBuffers` needs a handle with write access: a
+    // read-only handle fails with error 5. Open for writing, without
+    // truncating, as `local_state::files` does for its quarantine copy.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&json_path)
         .and_then(|file| file.sync_all())
         .unwrap_or_else(|error| panic!("fsync evidence {}: {error}", json_path.display()));
     println!("nav-arrival-evidence-json={}", json_path.display());
@@ -663,6 +668,34 @@ pub(super) fn live_profile(name: String, password: String) -> Profile {
         uid: 274_279_311,
         settings: ProfileSettings::default(),
     }
+}
+
+/// The evidence JSON is flushed through a handle that can write. On
+/// Windows, `sync_all` on a read-only handle fails with error 5.
+#[test]
+fn write_capture_flushes_its_json_without_a_frame() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let run_dir =
+        std::env::temp_dir().join(format!("nav-arrival-sync-{}-{stamp}", std::process::id()));
+    std::fs::create_dir_all(&run_dir).unwrap();
+    let mailbox = FrameBuf::new();
+    let written = write_capture(
+        &run_dir,
+        "stamp",
+        "sync",
+        false,
+        json!({ "step": "sync" }),
+        &mailbox,
+    );
+    assert!(!written, "no frame arrived, so no PNG");
+    let report: Value =
+        serde_json::from_slice(&std::fs::read(run_dir.join("stamp_sync.json")).unwrap()).unwrap();
+    assert_eq!(report["step"], "sync");
+    assert_eq!(report["capture"]["png_written"], false);
+    std::fs::remove_dir_all(&run_dir).unwrap();
 }
 
 #[test]
@@ -711,13 +744,21 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
     ));
     std::fs::create_dir_all(&run_dir).expect("create per-account capture directory");
 
+    let port = std::env::var("BOT_GAME_PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(45594);
+    let http_port = std::env::var("BOT_HTTP_PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(2080);
     let options = ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(45594),
-        http_port: Some(2080),
+        port: Some(port),
+        http_port: Some(http_port),
         engine_dir: Some(engine_dir),
         cache_dir: Some(copied_cache.clone()),
         unpack_dir: Some(copied_cache),

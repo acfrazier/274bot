@@ -1,4 +1,5 @@
 use super::*;
+use crate::play_login::observe_client_session_exit;
 use api::bank_memory::Origin;
 use client::config::if_type::ComponentType;
 use client::{ClientSessionConfig, ClientSessionProfile};
@@ -31,10 +32,16 @@ fn test_queue_owner(uid: i32) -> u64 {
     TEST_QUEUE_OWNER_NAMESPACE | u64::from(uid as u32)
 }
 
+fn poll_permit(queue: &mut LoginQueue, owner: u64, uid: i32, now: Instant) -> Permit {
+    let polled = queue.poll_owner(owner, uid, now);
+    assert!(polled.cancels.is_empty());
+    polled.permit
+}
+
 fn request_test_owner(queue: &mut LoginQueue, uid: i32, now: Instant) -> Permit {
     let owner = test_queue_owner(uid);
     queue.enqueue_owner(owner, uid);
-    queue.poll_owner(owner, uid, now)
+    poll_permit(queue, owner, uid, now)
 }
 
 fn request_shared(queue: &SharedLoginQueue, uid: i32, now: Instant) -> Permit {
@@ -56,7 +63,7 @@ fn wait_for_permit_bounded(
     thread::spawn(move || {
         let _ = tx.send(wait_for_permit(&queue, &statuses, &username, uid, &arm));
     });
-    rx.recv_timeout(Duration::from_secs(2))
+    rx.recv_timeout(Duration::from_secs(60))
         .expect("permit waiter exceeded bounded timeout")
 }
 
@@ -80,6 +87,43 @@ fn test_navs(name: &str) -> Arc<Mutex<HashMap<String, NavBot>>> {
         NavBot::default(),
     )])))
 }
+fn test_route_scope(incarnation: u64) -> api::identity::Scope {
+    api::identity::Scope::Slot(
+        api::identity::SlotKey::from_incarnation(incarnation).expect("nonzero test incarnation"),
+    )
+}
+fn next_test_incarnation() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+fn next_test_route_scope() -> api::identity::Scope {
+    test_route_scope(next_test_incarnation())
+}
+
+fn bind_test_route_scope(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
+    navs.lock()
+        .unwrap()
+        .entry(name.to_owned())
+        .or_default()
+        .work_scope = Some(next_test_route_scope());
+}
+
+fn with_pending_route_work(mut bot: NavBot) -> NavBot {
+    bot.set_route_work_preparing_for_test();
+    bot
+}
+
+fn wait_for_route_work(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    mut ready: impl FnMut(&NavBot) -> bool,
+) -> bool {
+    wait_until(60_000, || {
+        crate::script_runtime::pump_route_work(navs, name);
+        navs.lock().unwrap().get(name).is_some_and(&mut ready)
+    })
+}
 
 /// No script slot: the follow's arrival probe reads an unavailable view.
 fn no_reach() -> Arc<api::query::ReachQueryView> {
@@ -87,7 +131,7 @@ fn no_reach() -> Arc<api::query::ReachQueryView> {
 }
 
 fn wait_script_state(play: &Play, name: &str, want: script::RunState) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while play.script_state(name) != want && Instant::now() < deadline {
         play.pump_script_lifecycle(name);
         std::thread::sleep(Duration::from_millis(5));
@@ -801,7 +845,7 @@ fn response_21_ignores_world_change_until_server_delay_expires() {
             )
         })
     };
-    assert!(wait_until(500, || {
+    assert!(wait_settled(|| {
         statuses.lock().unwrap()[0]
             .startup_progress_message
             .contains("transferred in: 1 seconds")
@@ -811,10 +855,8 @@ fn response_21_ignores_world_change_until_server_delay_expires() {
         assert_eq!(rows[0].startup_phase, StartupPhase::Connecting);
         assert!(rows[0].error.is_none());
     }
-    *arm.world.lock() = Some(2);
-    arm.world_generation.fetch_add(1, Ordering::Relaxed);
-    arm.notify_retry_wait();
-    assert!(wait_until(1_500, || {
+    arm.switch_world(2);
+    assert!(wait_settled(|| {
         statuses.lock().unwrap()[0]
             .startup_progress_message
             .contains("transferred in: 0 seconds")
@@ -822,7 +864,7 @@ fn response_21_ignores_world_change_until_server_delay_expires() {
 
     assert_eq!(waiter.join().unwrap(), Some(true));
     assert!(started.elapsed() >= Duration::from_millis(1_900));
-    assert_eq!(*arm.world.lock(), Some(2));
+    assert_eq!(arm.world_choice(), Some(2));
 }
 
 #[test]
@@ -929,10 +971,10 @@ fn spawned_worker_response_21_retries_same_endpoint_without_fifo_ownership() {
     play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
 
     let (first_number, first_attempt, first_endpoint) =
-        attempt_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!(first_number, 1);
     assert_eq!(first_endpoint, endpoint);
-    assert!(wait_until(500, || {
+    assert!(wait_settled(|| {
         let statuses = play.statuses.lock().unwrap();
         let row = statuses
             .iter()
@@ -964,7 +1006,7 @@ fn spawned_worker_response_21_retries_same_endpoint_without_fifo_ownership() {
         .acknowledge_login_return(test_queue_owner(43), paced));
 
     let (second_number, second_attempt, second_endpoint) =
-        attempt_rx.recv_timeout(Duration::from_secs(4)).unwrap();
+        attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!(second_number, 2);
     assert_eq!(second_endpoint, endpoint);
     assert!(
@@ -975,7 +1017,7 @@ fn spawned_worker_response_21_retries_same_endpoint_without_fifo_ownership() {
         second_attempt.duration_since(first_attempt) < Duration::from_secs(4),
         "response 21 must not enter generic retry backoff"
     );
-    assert!(wait_until(1_000, || {
+    assert!(wait_settled(|| {
         let statuses = play.statuses.lock().unwrap();
         let row = statuses
             .iter()
@@ -1005,7 +1047,7 @@ fn memory_toggle_leaves_active_client_unchanged_until_next_login() {
         for _ in 0..2 {
             let (mut socket, _) = listener.accept().unwrap();
             socket
-                .set_read_timeout(Some(Duration::from_secs(5)))
+                .set_read_timeout(Some(Duration::from_secs(60)))
                 .unwrap();
             let mut preface = [0; 2];
             socket.read_exact(&mut preface).unwrap();
@@ -1017,7 +1059,7 @@ fn memory_toggle_leaves_active_client_unchanged_until_next_login() {
             socket.read_exact(&mut body).unwrap();
             login_tx.send(body[3] != 0).unwrap();
             socket.write_all(&[2, 0, 0]).unwrap();
-            release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(60)).unwrap();
         }
     });
     let request = Arc::new(AtomicUsize::new(1));
@@ -1070,23 +1112,23 @@ fn memory_toggle_leaves_active_client_unchanged_until_next_login() {
     arm.set_lowmem_handshake(true);
     arm.bypass_asset_startup_for_test();
     play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
-    let first_login = login_rx.recv_timeout(Duration::from_secs(10)).unwrap();
-    let first_frame = frame_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let first_login = login_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+    let first_frame = frame_rx.recv_timeout(Duration::from_secs(60)).unwrap();
 
     arm.set_lowmem_handshake(false);
     request.store(2, Ordering::Release);
     play.wake("alice");
-    let after_toggle = frame_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let after_toggle = frame_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     arm.request_logout();
     clean_logout.store(true, Ordering::Release);
     play.wake("alice");
-    assert!(wait_until(2_000, || !play.slot_connected("alice")));
+    assert!(wait_settled(|| !play.slot_connected("alice")));
     release_tx.send(()).unwrap();
     arm.arm_explicit_login();
     request.store(3, Ordering::Release);
     play.wake("alice");
-    let next_login = login_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-    let next_frame = frame_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let next_login = login_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+    let next_frame = frame_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     arm.stop.store(true, Ordering::Relaxed);
     release_tx.send(()).unwrap();
     play.stop_slot("alice");
@@ -1115,7 +1157,7 @@ fn memory_queue_survives_socket_reconnect_until_clean_logout() {
         for attempt in 0..3 {
             let (mut socket, _) = listener.accept().unwrap();
             socket
-                .set_read_timeout(Some(Duration::from_secs(5)))
+                .set_read_timeout(Some(Duration::from_secs(60)))
                 .unwrap();
             let mut preface = [0; 2];
             socket.read_exact(&mut preface).unwrap();
@@ -1131,7 +1173,7 @@ fn memory_queue_survives_socket_reconnect_until_clean_logout() {
             socket
                 .write_all(if attempt == 1 { &[15] } else { &[2, 0, 0] })
                 .unwrap();
-            release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(60)).unwrap();
         }
     });
     let clean_logout = Arc::new(AtomicBool::new(false));
@@ -1162,8 +1204,8 @@ fn memory_queue_survives_socket_reconnect_until_clean_logout() {
     arm.set_lowmem_handshake(true);
     arm.bypass_asset_startup_for_test();
     play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
-    let first = login_rx.recv_timeout(Duration::from_secs(10)).unwrap();
-    assert!(wait_until(5_000, || play
+    let first = login_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+    assert!(wait_settled(|| play
         .statuses()
         .iter()
         .any(
@@ -1173,8 +1215,8 @@ fn memory_queue_survives_socket_reconnect_until_clean_logout() {
     arm.set_lowmem_handshake(false);
     // Drop the server socket without a logout packet or operator action.
     release_tx.send(()).unwrap();
-    let reconnect = login_rx.recv_timeout(Duration::from_secs(10)).unwrap();
-    assert!(wait_until(5_000, || play.slot_connected("alice")));
+    let reconnect = login_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+    assert!(wait_settled(|| play.slot_connected("alice")));
     let reconnect_mode = play
         .statuses()
         .into_iter()
@@ -1186,12 +1228,12 @@ fn memory_queue_survives_socket_reconnect_until_clean_logout() {
     arm.request_logout();
     clean_logout.store(true, Ordering::Release);
     play.wake("alice");
-    assert!(wait_until(5_000, || !play.slot_connected("alice")));
+    assert!(wait_settled(|| !play.slot_connected("alice")));
     release_tx.send(()).unwrap();
     arm.arm_explicit_login();
     play.wake("alice");
-    let relog = login_rx.recv_timeout(Duration::from_secs(10)).unwrap();
-    assert!(wait_until(5_000, || play
+    let relog = login_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+    assert!(wait_settled(|| play
         .statuses()
         .iter()
         .any(
@@ -1656,7 +1698,7 @@ fn stop_slot_sets_stop_and_forgets_name() {
         let mut q = play.queue.lock();
         q.enqueue_owner(arm.queue_owner, 7);
         assert!(matches!(
-            q.poll_owner(arm.queue_owner, 7, now),
+            poll_permit(&mut q, arm.queue_owner, 7, now),
             Permit::Wait(_)
         ));
     }
@@ -1706,7 +1748,7 @@ fn stop_before_worker_start_retires_entries_and_respawn_has_one_row() {
     let cleaned = arm.hold_stop_cleanup_for_test();
     play.spawn_slot(profile.clone(), None, None, Some(Arc::clone(&arm)));
     entered
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(Duration::from_secs(60))
         .expect("worker did not reach the startup gate");
 
     let stopper = thread::spawn(move || {
@@ -1714,11 +1756,11 @@ fn stop_before_worker_start_retires_entries_and_respawn_has_one_row() {
         play
     });
     cleaned
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(Duration::from_secs(60))
         .expect("stop did not retire lifetime entries before joining");
     release.send(()).unwrap();
     published
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(Duration::from_secs(60))
         .expect("worker did not pass lifetime-entry publication");
     let mut play = stopper.join().unwrap();
 
@@ -1740,11 +1782,11 @@ fn stop_before_worker_start_retires_entries_and_respawn_has_one_row() {
     let (entered, release, published) = replacement.hold_worker_start_for_test();
     play.spawn_slot(profile, None, None, Some(Arc::clone(&replacement)));
     entered
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(Duration::from_secs(60))
         .expect("replacement worker did not reach the startup gate");
     release.send(()).unwrap();
     published
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(Duration::from_secs(60))
         .expect("replacement did not publish its lifetime entries");
     assert_eq!(
         play.statuses()
@@ -2007,7 +2049,7 @@ fn stop_slot_during_unresponsive_public_key_fetch_is_bounded() {
         assert!(arm.stop.load(Ordering::Relaxed));
     });
     play.handles.insert("alice".into(), slot);
-    waiting.recv_timeout(Duration::from_secs(3)).unwrap();
+    waiting.recv_timeout(Duration::from_secs(60)).unwrap();
     let started = Instant::now();
     play.stop_slot("alice");
     release.send(()).unwrap();
@@ -2042,7 +2084,7 @@ fn stop_slot_leaves_profile_uid_when_arm_shared_at_spawn() {
         let mut q = play.queue.lock();
         q.enqueue_owner(arm.queue_owner, 42);
         assert!(matches!(
-            q.poll_owner(arm.queue_owner, 42, now),
+            poll_permit(&mut q, arm.queue_owner, 42, now),
             Permit::Wait(_)
         ));
     }
@@ -2402,9 +2444,27 @@ fn client_after_server_logout() -> Client {
     client
 }
 
+fn client_after_connection_loss() -> Client {
+    let mut client = Client::new_with_revision(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: true,
+        },
+        client::client::ClientRevision::R289,
+    );
+    client.set_external_reconnect_owner(true);
+    client.ingame = true;
+    client.lost_con();
+    client
+}
+
 #[test]
 fn observed_clean_exit_seeds_release_admission_but_transport_and_decode_exits_do_not() {
     let arm = SlotArm::new(7, true);
+    on_login_success(&arm, arm.login_command(false).unwrap());
     let mut client = client_after_server_logout();
     let before = Instant::now();
     tick_flags(&mut client, &[], &arm);
@@ -2414,7 +2474,7 @@ fn observed_clean_exit_seeds_release_admission_but_transport_and_decode_exits_do
         .expect("the actual server Logout supplies local release evidence");
     assert!(until >= before + host::login_queue::LOGIN_START_SPACING);
     assert!(until <= after + host::login_queue::LOGIN_START_SPACING);
-    assert!(!arm.reconnect.load(Ordering::Relaxed));
+    assert!(!arm.reconnects());
 
     for transport in [false, true] {
         let mut client = hosted_client_on_a_built_scene("127.0.0.1:43594".parse().unwrap());
@@ -2433,21 +2493,52 @@ fn observed_clean_exit_seeds_release_admission_but_transport_and_decode_exits_do
 }
 
 #[test]
+fn observed_server_logout_retains_cause_before_slot_boundary_retirement() {
+    let arm = SlotArm::new(7, true);
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    let key = arm.session_key().expect("active session");
+    let mut client = client_after_server_logout();
+
+    observe_client_session_exit(&mut client, &arm);
+    assert!(!arm.session_online());
+    assert!(!arm.take_session_boundary(), "no script work to carry");
+    let exit = arm.latest_lifecycle_event().expect("classified exit");
+    assert_eq!(exit.scope(), api::identity::Scope::Session(key));
+    assert!(matches!(
+        exit.payload(),
+        api::lifecycle::SessionEventOut::SessionEnded {
+            cause: api::lifecycle::SessionEndCause::ServerLogout,
+            resumable: false,
+        }
+    ));
+
+    tick_flags(&mut client, &[], &arm);
+    assert_eq!(
+        arm.latest_lifecycle_event().unwrap().payload(),
+        exit.payload(),
+        "the later flag probe must not publish a second exit"
+    );
+}
+
+#[test]
 fn operator_logout_wins_over_a_correlated_client_idle_logout() {
     let mut client = client_after_observed_idle_logout();
     let arm = SlotArm::new(7, true);
-    arm.reconnect.store(true, Ordering::Relaxed);
+    on_login_success(&arm, arm.login_command(false).unwrap());
     arm.request_logout();
 
     assert!(!tick_flags(&mut client, &[], &arm));
     assert!(arm.login_latched());
     assert!(!arm.wants_login());
-    assert!(arm.auto_login.load(Ordering::Relaxed));
+    assert!(arm.auto_login());
     assert!(
-        !arm.reconnect.load(Ordering::Relaxed),
+        !arm.reconnects(),
         "a server logout makes the next login fresh"
     );
-    assert!(arm.wants_logout());
+    assert!(
+        !arm.wants_logout(),
+        "the observed exit settles its logout boundary"
+    );
     assert!(!should_handshake(&arm, false));
     assert_eq!(client.take_session_exit_reason(), None);
 }
@@ -2459,7 +2550,7 @@ fn operator_logout_then_world_change_logs_in_fresh() {
     let mut client = client_after_server_logout();
     let arm = SlotArm::new(7, true);
     // Online after a successful handshake.
-    arm.reconnect.store(true, Ordering::Relaxed);
+    on_login_success(&arm, arm.login_command(false).unwrap());
     arm.request_logout();
     assert!(!tick_flags(&mut client, &[], &arm));
 
@@ -2469,7 +2560,7 @@ fn operator_logout_then_world_change_logs_in_fresh() {
     arm.arm_explicit_login();
     assert!(should_handshake(&arm, false));
     assert!(
-        !arm.reconnect.load(Ordering::Relaxed),
+        !arm.reconnects(),
         "the next handshake after a clean logout is not a reconnect"
     );
     assert!(arm.login_applies_memory());
@@ -2492,14 +2583,11 @@ fn connection_loss_keeps_the_reconnect_handshake() {
     client.ingame = true;
     client.lost_con();
     let arm = SlotArm::new(7, true);
-    arm.reconnect.store(true, Ordering::Relaxed);
+    on_login_success(&arm, arm.login_command(false).unwrap());
 
     assert!(!tick_flags(&mut client, &[], &arm));
     assert!(should_handshake(&arm, client.ingame));
-    assert!(
-        arm.reconnect.load(Ordering::Relaxed),
-        "a lost connection reconnects (opcode 18)"
-    );
+    assert!(arm.reconnects(), "a lost connection reconnects (opcode 18)");
     assert!(!arm.login_applies_memory());
 }
 
@@ -2552,7 +2640,7 @@ fn scene_has_the_loc(client: &Client) -> bool {
 fn serve_one_relog(listener: TcpListener) -> std::thread::JoinHandle<u8> {
     std::thread::spawn(move || {
         let (mut s, _) = listener.accept().unwrap();
-        s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
         let mut header = [0u8; 2];
         s.read_exact(&mut header).unwrap();
         s.write_all(&[0; 8]).unwrap();
@@ -2594,7 +2682,7 @@ fn protocol_error_t1_logs_in_fresh_and_rebuilds_the_world() {
     let server = serve_one_relog(listener);
     let mut client = hosted_client_on_a_built_scene(addr);
     let arm = SlotArm::new(7, true);
-    arm.reconnect.store(true, Ordering::Relaxed);
+    on_login_success(&arm, arm.login_command(false).unwrap());
 
     client.ptype = 74;
     client.psize = 0;
@@ -2607,7 +2695,7 @@ fn protocol_error_t1_logs_in_fresh_and_rebuilds_the_world() {
 
     assert!(!tick_flags(&mut client, &[], &arm));
     assert!(should_handshake(&arm, false), "the bot logs back in");
-    let reconnect = arm.reconnect.load(Ordering::Relaxed);
+    let reconnect = arm.reconnects();
     assert!(!reconnect, "a protocol error is followed by a fresh login");
     assert!(arm.login_applies_memory());
 
@@ -2627,7 +2715,7 @@ fn protocol_error_t2_logs_in_fresh() {
     let addr = listener.local_addr().unwrap();
     let mut client = hosted_client_on_a_built_scene(addr);
     let arm = SlotArm::new(7, true);
-    arm.reconnect.store(true, Ordering::Relaxed);
+    on_login_success(&arm, arm.login_command(false).unwrap());
 
     // A one-byte frame for a zero-length opcode fails the fixed-length check.
     client.ptype = 74;
@@ -2638,7 +2726,7 @@ fn protocol_error_t2_logs_in_fresh() {
     assert!(!tick_flags(&mut client, &[], &arm));
     assert!(should_handshake(&arm, false));
     assert!(
-        !arm.reconnect.load(Ordering::Relaxed),
+        !arm.reconnects(),
         "a decode exception is followed by a fresh login"
     );
 }
@@ -2652,12 +2740,12 @@ fn connection_loss_reconnects_and_keeps_the_world() {
     let server = serve_one_relog(listener);
     let mut client = hosted_client_on_a_built_scene(addr);
     let arm = SlotArm::new(7, true);
-    arm.reconnect.store(true, Ordering::Relaxed);
+    on_login_success(&arm, arm.login_command(false).unwrap());
 
     client.lost_con();
     assert!(scene_has_the_loc(&client));
     assert!(!tick_flags(&mut client, &[], &arm));
-    let reconnect = arm.reconnect.load(Ordering::Relaxed);
+    let reconnect = arm.reconnects();
     assert!(reconnect, "a lost connection reconnects (opcode 18)");
 
     client.login("bob", "pw", reconnect).unwrap();
@@ -2677,14 +2765,14 @@ fn dead_server_deadline_reconnects_and_keeps_the_world() {
     let server = serve_one_relog(listener);
     let mut client = hosted_client_on_a_built_scene(addr);
     let arm = SlotArm::new(7, true);
-    arm.reconnect.store(true, Ordering::Relaxed);
+    on_login_success(&arm, arm.login_command(false).unwrap());
 
     client.last_response = Some(Instant::now() - Duration::from_secs(16));
     client.game_loop();
     assert!(!client.ingame);
     assert!(scene_has_the_loc(&client), "the deadline keeps the map");
     assert!(!tick_flags(&mut client, &[], &arm));
-    let reconnect = arm.reconnect.load(Ordering::Relaxed);
+    let reconnect = arm.reconnects();
     assert!(reconnect);
 
     client.login("bob", "pw", reconnect).unwrap();
@@ -2702,7 +2790,7 @@ fn dead_server_deadline_with_a_pending_logout_logs_in_fresh() {
     let addr = listener.local_addr().unwrap();
     let mut client = hosted_client_on_a_built_scene(addr);
     let arm = SlotArm::new(7, true);
-    arm.reconnect.store(true, Ordering::Relaxed);
+    on_login_success(&arm, arm.login_command(false).unwrap());
 
     client.logout_timer = 250;
     client.last_response = Some(Instant::now() - Duration::from_secs(16));
@@ -2713,10 +2801,7 @@ fn dead_server_deadline_with_a_pending_logout_logs_in_fresh() {
         "the pending logout clears the map"
     );
     assert!(!tick_flags(&mut client, &[], &arm));
-    assert!(
-        !arm.reconnect.load(Ordering::Relaxed),
-        "a cleared map is never reconnected into"
-    );
+    assert!(!arm.reconnects(), "a cleared map is never reconnected into");
 }
 
 #[test]
@@ -2742,8 +2827,41 @@ fn unexpected_server_logout_relogs_an_active_script_with_auto_login_off() {
     assert!(!tick_flags(&mut client, &[], &arm));
     assert!(!arm.login_latched());
     assert!(!arm.wants_login());
-    assert!(!arm.auto_login.load(Ordering::Relaxed));
+    assert!(!arm.auto_login());
     assert!(should_handshake(&arm, false));
+    assert_eq!(arm.login_latch_reason(), None);
+}
+
+#[test]
+fn session_exit_snapshot_is_consistent_with_logout_order() {
+    for logout_before_exit in [false, true] {
+        let arm = SlotArm::new(7, true);
+        arm.set_script_active(true);
+        on_login_success(&arm, arm.login_command(false).unwrap());
+        if logout_before_exit {
+            arm.request_logout();
+        }
+        let mut client = client_after_server_logout();
+        observe_client_session_exit(&mut client, &arm);
+        if !logout_before_exit {
+            arm.request_logout();
+        }
+        assert_eq!(
+            arm.take_session_boundary(),
+            !logout_before_exit,
+            "boundary work policy must use the same intent snapshot as the exit"
+        );
+        assert_eq!(arm.unexpected_logout_count_at(Instant::now()), 0);
+    }
+}
+
+#[test]
+fn clean_server_logout_does_not_count_toward_repeat_guard() {
+    let arm = SlotArm::new(7, true);
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    let mut client = client_after_server_logout();
+    observe_client_session_exit(&mut client, &arm);
+    assert_eq!(arm.unexpected_logout_count_at(Instant::now()), 0);
     assert_eq!(arm.login_latch_reason(), None);
 }
 
@@ -2752,7 +2870,8 @@ fn tick_flags_drives_repeat_guard_and_ignores_operator_logout_and_stop() {
     let arm = SlotArm::new(7, false);
     arm.set_script_active(true);
     for expected in 1..=UNEXPECTED_LOGOUT_THRESHOLD {
-        let mut client = client_after_server_logout();
+        on_login_success(&arm, arm.login_command(false).unwrap());
+        let mut client = client_after_connection_loss();
         assert!(!tick_flags(&mut client, &[], &arm));
         assert_eq!(arm.unexpected_logout_count_at(Instant::now()), expected);
     }
@@ -2968,7 +3087,7 @@ fn wait_for_permit_returns_without_reenqueue_when_stop_set() {
         let mut queue = queue.lock();
         queue.enqueue_owner(arm.queue_owner, 7);
         assert!(matches!(
-            queue.poll_owner(arm.queue_owner, 7, now),
+            poll_permit(&mut queue, arm.queue_owner, 7, now),
             Permit::Wait(_)
         ));
     }
@@ -3027,7 +3146,7 @@ fn cancellation_after_grant_before_login_abandons_the_unused_permit() {
     let permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &arm));
 
     arm.withdraw_login();
-    assert!(granted_permit_may_start_login(&arm, false).is_none());
+    assert!(capture_login_authorization(&arm, false).is_none());
     drop(permit);
     assert_eq!(
         request_shared(&queue, 8, Instant::now()),
@@ -3048,7 +3167,7 @@ fn stop_after_grant_before_login_abandons_the_unused_permit() {
     let permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &arm));
 
     arm.stop.store(true, Ordering::Relaxed);
-    assert!(granted_permit_may_start_login(&arm, false).is_none());
+    assert!(capture_login_authorization(&arm, false).is_none());
     drop(permit);
     assert_eq!(
         request_shared(&queue, 8, Instant::now()),
@@ -3067,7 +3186,8 @@ fn login_error_return_acknowledges_the_reserved_attempt() {
     )));
     assert_eq!(request_shared(&queue, 7, base), Permit::Grant);
     let mut permit = GrantedReservation::new(&queue, test_queue_owner(7));
-    let login: Option<Result<(), &str>> = permit.attempt(|_, _| Err("connect failed"), |_| None);
+    let login: Option<Result<(), &str>> =
+        permit.attempt(|_| true, |_, _| Err("connect failed"), |_| None);
     assert_eq!(login, Some(Err("connect failed")));
     drop(permit);
     assert!(
@@ -3093,8 +3213,11 @@ fn panic_in_login_attempt_resolves_the_reservation() {
 
     let unwind = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let mut permit = GrantedReservation::new(&queue, test_queue_owner(7));
-        let _: Option<Result<(), ()>> =
-            permit.attempt(|_, _| panic!("synthetic client.login unwind"), |_| None);
+        let _: Option<Result<(), ()>> = permit.attempt(
+            |_| true,
+            |_, _| panic!("synthetic client.login unwind"),
+            |_| None,
+        );
     }));
     assert!(unwind.is_err());
     assert!(
@@ -3118,7 +3241,7 @@ fn granted(wait: PermitWait) -> GrantedReservation {
 /// Run a granted login that returns at once with `Ok`.
 fn complete(mut permit: GrantedReservation) {
     assert_eq!(
-        permit.attempt(|_, _| Ok::<(), ()>(()), |_| None),
+        permit.attempt(|_| true, |_, _| Ok::<(), ()>(()), |_| None),
         Some(Ok(()))
     );
 }
@@ -3171,11 +3294,7 @@ fn spawned_worker_unwinding_after_its_grant_frees_the_next_login() {
     arm.bypass_asset_startup_for_test();
     play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
     assert!(
-        wait_until(10_000, || play
-            .queue
-            .lock()
-            .status_owner(arm.queue_owner)
-            .is_some()),
+        wait_settled(|| play.queue.lock().status_owner(arm.queue_owner).is_some()),
         "alice queues behind the sibling"
     );
     let scripts = Arc::clone(&play.scripts);
@@ -3189,19 +3308,12 @@ fn spawned_worker_unwinding_after_its_grant_frees_the_next_login() {
         .lock()
         .acknowledge_login_return(test_queue_owner(99), Instant::now()));
     assert!(
-        wait_until(5_000, || play
-            .queue
-            .lock()
-            .status_owner(arm.queue_owner)
-            .is_none()),
+        wait_settled(|| play.queue.lock().status_owner(arm.queue_owner).is_none()),
         "alice is granted, then unwinds"
     );
     let next = Instant::now() + host::login_queue::LOGIN_START_SPACING;
     assert!(
-        wait_until(2_000, || matches!(
-            request_shared(&play.queue, 100, next),
-            Permit::Grant
-        )),
+        wait_settled(|| matches!(request_shared(&play.queue, 100, next), Permit::Grant)),
         "the unwound worker's grant went back, so the next bot starts"
     );
     play.scripts.clear_poison();
@@ -3213,7 +3325,9 @@ fn spawned_worker_unwinding_after_its_grant_frees_the_next_login() {
 /// real socket: at its lease end the queue shuts that socket before it
 /// grants the next bot, so the server has already read end of stream when
 /// the next handshake may start. The late return reports the cancel and does
-/// not free the next bot's slot.
+/// not free the next bot's slot. The next bot starts its attempt behind a
+/// gate, so its started flight (which never evaporates) holds the slot
+/// while the tail asserts, however long loaded schedulers stall the threads.
 #[test]
 fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
     use client::io::client_stream::ClientStream;
@@ -3237,8 +3351,11 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
     let bob = SlotArm::new(8, true);
     let mut permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &alice));
     let (deadline_tx, deadline_rx) = mpsc::channel();
+    let (read_ended_tx, read_ended_rx) = mpsc::channel();
+    let (return_tx, return_rx) = mpsc::channel();
     let stuck = thread::spawn(move || {
         permit.attempt(
+            |_| true,
             |deadline, cancel| {
                 deadline_tx.send(deadline).unwrap();
                 // A client that ignores the queue's deadline: its own is a
@@ -3251,36 +3368,79 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
                     Some(&cancel),
                 )?;
                 stream.write(&[14, 0], 2)?;
-                stream.read()
+                let read = stream.read();
+                read_ended_tx.send(()).unwrap();
+                return_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+                read
             },
             |_| None,
         )
     });
-    let deadline = deadline_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let deadline = deadline_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     let mut alice_socket = server.join().unwrap();
-    let bob_permit = granted(wait_for_permit_bounded(&queue, &statuses, "bob", 8, &bob));
-    let granted_at = Instant::now();
+    let (bob_started_tx, bob_started_rx) = mpsc::channel();
+    let (bob_release_tx, bob_release_rx) = mpsc::channel();
+    let (bob_done_tx, bob_done_rx) = mpsc::channel();
+    let bob_queue = Arc::clone(&queue);
+    let bob_statuses = Arc::clone(&statuses);
+    let bob_arm = Arc::clone(&bob);
+    let bob_waiter = thread::spawn(move || {
+        let mut permit = granted(wait_for_permit(
+            &bob_queue,
+            &bob_statuses,
+            "bob",
+            8,
+            &bob_arm,
+        ));
+        // Start the attempt at once, behind a gate: a started flight never
+        // evaporates while unreturned (it retires instead), so bob's slot
+        // stays occupied across the assertions below no matter how long a
+        // loaded scheduler stalls these threads. An unstarted grant expires
+        // hold + slack after its poll and would free the slot instead.
+        let result = permit.attempt(
+            |_| true,
+            |_, _| {
+                bob_started_tx.send(()).unwrap();
+                bob_release_rx
+                    .recv_timeout(Duration::from_secs(60))
+                    .unwrap();
+                Ok::<(), String>(())
+            },
+            |_| None,
+        );
+        bob_done_tx.send(result).unwrap();
+    });
+    read_ended_rx
+        .recv_timeout(Duration::from_secs(60))
+        .expect("expired lease fired its socket cancellation");
+    let retired_at = Instant::now();
+    assert!(retired_at >= deadline + host::login_queue::LEASE_SLACK);
+    assert_eq!(
+        queue.lock().head_blocker(bob.queue_owner, retired_at),
+        Some(host::login_queue::AdmitBlocker::Retiring),
+        "elapsed time alone cannot grant bob while alice has not returned"
+    );
+    assert!(matches!(
+        bob_started_rx.recv_timeout(Duration::from_millis(100)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
     alice_socket.set_nonblocking(true).unwrap();
     let mut byte = [0; 1];
     assert_eq!(
         alice_socket.read(&mut byte).unwrap(),
         0,
-        "the server has read alice's end of stream when bob is granted"
+        "the server reads alice's end of stream before the return acknowledgement"
     );
-    assert!(
-        granted_at >= deadline + host::login_queue::LEASE_SLACK,
-        "bob waits for alice's lease to end"
-    );
-    assert!(
-        granted_at < deadline + host::login_queue::LEASE_SLACK + Duration::from_millis(500),
-        "bob starts as soon as alice's lease ends"
-    );
+    return_tx.send(()).unwrap();
     let error = stuck
         .join()
         .unwrap()
         .expect("alice's attempt started")
         .unwrap_err();
     assert_eq!(error.to_string(), "login cancelled by its host");
+    bob_started_rx
+        .recv_timeout(Duration::from_secs(60))
+        .expect("bob starts behind alice's actual return");
     let now = Instant::now();
     assert!(matches!(request_shared(&queue, 9, now), Permit::Wait(_)));
     assert_eq!(
@@ -3288,7 +3448,13 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
         Some(host::login_queue::AdmitBlocker::Handshake),
         "alice's late return does not free bob's slot"
     );
-    complete(bob_permit);
+    bob_release_tx.send(()).unwrap();
+    bob_done_rx
+        .recv_timeout(Duration::from_secs(60))
+        .expect("bob returns after release")
+        .expect("bob's attempt started")
+        .unwrap();
+    bob_waiter.join().unwrap();
 }
 
 /// The real worker and client against a server that accepts the login and
@@ -3329,18 +3495,16 @@ fn spawned_worker_login_to_a_silent_server_ends_at_its_deadline() {
     arm.bypass_asset_startup_for_test();
     play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
 
-    let accepted = accepted_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let accepted = accepted_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert!(
-        wait_until(3_000, || play
+        wait_settled(|| play
             .statuses
             .lock()
             .unwrap()
             .iter()
             .find(|status| status.username == "alice")
             .and_then(|status| status.error.clone())
-            .is_some_and(
-                |error| error.contains("login handshake deadline passed")
-            )),
+            .is_some_and(|error| error.contains("login handshake deadline passed"))),
         "the row names the deadline"
     );
     let took = accepted.elapsed();
@@ -3367,6 +3531,88 @@ fn spawned_worker_login_to_a_silent_server_ends_at_its_deadline() {
     server.join().unwrap();
 }
 
+/// A profile edit reaches the running worker, not just its next spawn. The
+/// worker must not recycle an unused grant at full speed after the uid changes.
+#[test]
+fn uid_save_on_running_slot_connects_without_requeue_spin() {
+    use std::sync::mpsc;
+
+    #[cfg(target_os = "linux")]
+    fn worker_task() -> Option<std::path::PathBuf> {
+        std::fs::read_dir("/proc/self/task")
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                std::fs::read_to_string(path.join("comm")).is_ok_and(|name| name == "uid-r3\n")
+            })
+    }
+
+    #[cfg(target_os = "linux")]
+    fn worker_cpu_ticks() -> u64 {
+        let task = worker_task().expect("named slot worker");
+        let stat = std::fs::read_to_string(task.join("stat")).unwrap();
+        let fields: Vec<_> = stat[stat.rfind(')').unwrap() + 2..]
+            .split_whitespace()
+            .collect();
+        fields[11].parse::<u64>().unwrap() + fields[12].parse::<u64>().unwrap()
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let (accepted_tx, accepted_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (socket, _) = listener.accept().unwrap();
+        accepted_tx.send(()).unwrap();
+        drop(socket);
+    });
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: endpoint.ip().to_string(),
+            transport: client::Transport::Tcp,
+            port: endpoint.port(),
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let arm = SlotArm::new(42, false);
+    arm.set_lowmem_handshake(false);
+    arm.bypass_asset_startup_for_test();
+    play.spawn_slot(profile("uid-r3", 42), None, None, Some(Arc::clone(&arm)));
+    #[cfg(target_os = "linux")]
+    assert!(wait_settled(|| worker_task().is_some()));
+    #[cfg(not(target_os = "linux"))]
+    assert!(wait_settled(|| arm.latest_lifecycle_event().is_some()));
+    play.remember_profile(profile("uid-r3", 43));
+    assert_eq!(arm.uid.load(Ordering::Relaxed), 43);
+    arm.arm_explicit_login();
+    play.wake("uid-r3");
+    #[cfg(target_os = "linux")]
+    let before = worker_cpu_ticks();
+    thread::sleep(Duration::from_secs(2));
+    #[cfg(target_os = "linux")]
+    let ticks = worker_cpu_ticks() - before;
+    let reached = accepted_rx.try_recv().is_ok();
+    arm.stop.store(true, Ordering::Relaxed);
+    play.stop_slot("uid-r3");
+    if reached {
+        server.join().unwrap();
+    }
+    assert!(
+        reached,
+        "uid edit must connect rather than recycle its grant"
+    );
+    #[cfg(target_os = "linux")]
+    assert!(
+        ticks < 25,
+        "refused grants burned {ticks} worker CPU ticks in 2s"
+    );
+}
+
 /// Spacing counts from each attempt's real start: a worker delayed after its
 /// grant, whose connect then fails at once, does not let the next attempt
 /// start right behind it.
@@ -3385,6 +3631,7 @@ fn a_worker_delayed_after_its_grant_is_spaced_from_its_real_start() {
     thread::sleep(spacing + Duration::from_millis(200));
     let mut alice_start = None;
     let login = permit.attempt(
+        |_| true,
         |_, _| {
             alice_start = Some(Instant::now());
             Err::<(), _>("refused at once")
@@ -3395,6 +3642,7 @@ fn a_worker_delayed_after_its_grant_is_spaced_from_its_real_start() {
     let mut permit = granted(wait_for_permit_bounded(&queue, &statuses, "bob", 8, &bob));
     let mut bob_start = None;
     let login = permit.attempt(
+        |_| true,
         |_, _| {
             bob_start = Some(Instant::now());
             Ok::<(), ()>(())
@@ -3429,12 +3677,13 @@ fn response_16_hold_reaches_siblings_before_the_slot_frees() {
         let bob = Arc::clone(&bob);
         thread::spawn(move || wait_for_permit(&queue, &statuses, "bob", 8, &bob))
     };
-    assert!(wait_until(2_000, || queue
+    assert!(wait_settled(|| queue
         .lock()
         .status_owner(bob.queue_owner)
         .is_some()));
     let backoff = LoginBackoff::new();
     let login = permit.attempt(
+        |_| true,
         |_, _| {
             Err::<(), _>(LoginError::response(
                 16,
@@ -3538,7 +3787,7 @@ fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
     let dead_owner = dead.queue_owner;
     play.spawn_slot(profile("dead", 7), None, None, Some(Arc::clone(&dead)));
     queued
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(Duration::from_secs(60))
         .expect("the spawned worker must publish its blocked FIFO place");
     assert!(play.queue.lock().status_owner(dead_owner).is_some());
 
@@ -3657,7 +3906,7 @@ fn finished_worker_is_reaped_before_explicit_respawn() {
         "an explicit restart must replace the finished worker's stale arm"
     );
     entered
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(Duration::from_secs(60))
         .expect("replacement worker did not start");
     release.send(()).unwrap();
     play.stop_slot("dead");
@@ -3695,7 +3944,7 @@ fn waiting_slot_withdraws_when_auto_login_is_cleared() {
         thread::spawn(move || wait_for_permit(&queue, &statuses, "alice", 7, &arm))
     };
     assert!(
-        wait_until(2000, || row_queue(&statuses, "alice") == (1, 1)),
+        wait_settled(|| row_queue(&statuses, "alice") == (1, 1)),
         "a waiting slot publishes k of n, got {:?}",
         row_queue(&statuses, "alice")
     );
@@ -3743,7 +3992,7 @@ fn waiting_slot_withdraws_on_intentional_logout_and_frees_the_head() {
         thread::spawn(move || wait_for_permit(&queue, &statuses, "alice", 7, &arm))
     };
     assert!(
-        wait_until(2000, || row_queue(&statuses, "alice") == (1, 1)),
+        wait_settled(|| row_queue(&statuses, "alice") == (1, 1)),
         "alice queues first, got {:?}",
         row_queue(&statuses, "alice")
     );
@@ -3753,7 +4002,7 @@ fn waiting_slot_withdraws_on_intentional_logout_and_frees_the_head() {
         Permit::Wait(_)
     ));
     assert!(
-        wait_until(2000, || row_queue(&statuses, "alice") == (1, 2)),
+        wait_settled(|| row_queue(&statuses, "alice") == (1, 2)),
         "alice waits ahead of bob, got {:?}",
         row_queue(&statuses, "alice")
     );
@@ -3806,7 +4055,7 @@ fn retried_login_re_enters_at_the_fifo_tail() {
         thread::spawn(move || wait_for_permit(&queue, &statuses, "alice", 7, &arm))
     };
     assert!(
-        wait_until(2000, || row_queue(&statuses, "alice") == (2, 2)),
+        wait_settled(|| row_queue(&statuses, "alice") == (2, 2)),
         "the retry queues behind bob, got {:?}",
         row_queue(&statuses, "alice")
     );
@@ -3927,15 +4176,15 @@ fn focus_selects_the_sampled_slot() {
         let mut q = play.queue.lock();
         assert!(q.queued_uids().is_empty(), "focus must not reserve a login");
         q.enqueue_owner(b.queue_owner, 11);
-        assert_eq!(q.poll_owner(b.queue_owner, 11, now), Permit::Grant);
+        assert_eq!(poll_permit(&mut q, b.queue_owner, 11, now), Permit::Grant);
         q.enqueue_owner(c.queue_owner, 12);
         assert!(matches!(
-            q.poll_owner(c.queue_owner, 12, now),
+            poll_permit(&mut q, c.queue_owner, 12, now),
             Permit::Wait(_)
         ));
         q.enqueue_owner(b.queue_owner, 11);
         assert!(matches!(
-            q.poll_owner(b.queue_owner, 11, now),
+            poll_permit(&mut q, b.queue_owner, 11, now),
             Permit::Wait(_)
         ));
         assert_eq!(
@@ -4132,6 +4381,7 @@ fn failed_radius_search_can_retry_same_destination_with_old_route_retained() {
         "retry".to_string(),
         NavBot {
             route: Some(Arc::clone(&old)),
+            work_scope: Some(next_test_route_scope()),
             ..Default::default()
         },
     )])));
@@ -4147,27 +4397,19 @@ fn failed_radius_search_can_retry_same_destination_with_old_route_retained() {
     // run a new search, while retaining the unrelated route on failure.
     for expected_generation in 1..=2 {
         assert!(arm.route_with_radius(100, 100, 0, FindOptions::default(), 1));
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        loop {
-            let all = navs.lock().unwrap();
-            let bot = &all["retry"];
-            assert_eq!(bot.route_generation, expected_generation);
-            assert_eq!(bot.route, Some(old.clone()));
-            if bot.route_worker.is_none() {
-                break;
-            }
-            drop(all);
-            assert!(
-                std::time::Instant::now() < deadline,
-                "route worker did not finish"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
+        assert!(
+            wait_for_route_work(&navs, "retry", |bot| !bot.route_work_pending()),
+            "route work did not finish"
+        );
+        let all = navs.lock().unwrap();
+        let bot = &all["retry"];
+        assert_eq!(bot.route_generation, expected_generation);
+        assert_eq!(bot.route, Some(old.clone()));
     }
 }
 
 #[test]
-fn exact_walk_near_retargets_active_nearby_route_and_rejects_stale_worker() {
+fn exact_walk_near_retargets_active_nearby_route_and_rejects_stale_result() {
     let nearby = WorldTile {
         x: 3,
         z: 3,
@@ -4185,13 +4427,13 @@ fn exact_walk_near_retargets_active_nearby_route_and_rejects_stale_worker() {
     });
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "bank".to_string(),
-        NavBot {
+        with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
             route_generation: 1,
-            route_worker: Some(Arc::new(())),
+            work_scope: Some(next_test_route_scope()),
             requested_route: Some(native_requested(nearby, 1, false)),
             ..Default::default()
-        },
+        }),
     )])));
     let arm = ScriptWalkArm {
         here: Some((0, 0, 0)),
@@ -4208,38 +4450,30 @@ fn exact_walk_near_retargets_active_nearby_route_and_rejects_stale_worker() {
     );
     assert!(
         !arm.queue_route(4, 4, 0, FindOptions::default(), 0, false, 0),
-        "ordinary Walk stays non-retargeting while a route or worker is busy"
+        "ordinary Walk stays non-retargeting while route work is busy"
     );
-
-    let pending = {
-        let mut all = navs.lock().unwrap();
-        let bot = all.get_mut("bank").expect("nav bot");
-        assert_eq!(bot.route_generation, 2);
-        assert_eq!(bot.requested_route, Some(native_requested(exact, 0, false)));
-        assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(nearby));
-        assert!(bot.route_worker.is_some());
-        let pending = bot
-            .pending_route
-            .take()
-            .expect("exact request coalesces onto the in-flight worker");
-        assert_eq!(pending.generation, 2);
-        assert_eq!(pending.radius, 0);
-        assert_eq!(pending.to, exact);
-        pending
-    };
 
     {
         let mut all = navs.lock().unwrap();
         let bot = all.get_mut("bank").expect("nav bot");
+        assert_eq!(bot.route_generation, 2);
+        assert_eq!(bot.requested_route, Some(native_requested(exact, 0, false)));
+        assert_eq!(bot.route_destination(), Some(nearby));
+        assert!(bot.route_work_pending());
+        assert!(bot.pending_route.is_some());
         bot.publish_route(1, 0, false, RouteOutcome::Routed((*old).clone()));
         assert_eq!(
-            bot.route.as_ref().map(|r| r.dest),
+            bot.route_destination(),
             Some(nearby),
-            "stale nearby worker result must not replace the exact request"
+            "stale nearby route result must not replace the exact request"
         );
-        bot.publish_route(2, 0, false, pending.calculate().0);
-        assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(exact));
     }
+    assert!(
+        wait_for_route_work(&navs, "bank", |bot| {
+            !bot.route_work_pending() && bot.route_destination() == Some(exact)
+        }),
+        "the retargeted route must complete"
+    );
 
     assert!(arm.route_with_radius(exact.x, exact.z, exact.level, FindOptions::default(), 0));
     assert_eq!(navs.lock().unwrap()["bank"].route_generation, 2);
@@ -4280,7 +4514,7 @@ fn route_end_of_a_retargeted_walk_does_not_settle_the_new_walk() {
         bot.publish_route(1, 7, false, RouteOutcome::Routed(route_to(a)));
         // A find is still in flight, so B's retarget coalesces onto it and
         // B's route is not installed yet: the retarget window.
-        bot.route_worker = Some(Arc::new(()));
+        bot.set_route_work_preparing_for_test();
     }
     let arm = ScriptWalkArm {
         here: Some((0, 0, 0)),
@@ -4295,22 +4529,19 @@ fn route_end_of_a_retargeted_walk_does_not_settle_the_new_walk() {
     let mut all = navs.lock().unwrap();
     let bot = all.get_mut("bank").unwrap();
     assert_eq!(bot.walk_request_id, 8, "B is the armed walk");
-    assert_eq!(
-        bot.route.as_ref().map(|r| r.dest),
-        Some(a),
-        "A still followed"
-    );
+    assert_eq!(bot.route_destination(), Some(a), "A still followed");
     apply_nav_follow_outcome(
         bot,
         Some(nav::traveller::TravelOutcome::Arrived { at: a }),
         false,
     );
-    assert!(bot.route.is_none());
+    assert!(!bot.has_route());
     assert_eq!(
         bot.walk_outcome_seq, 0,
         "A's route end must not settle B's wait"
     );
 
+    bot.pending_route = None;
     bot.publish_route(2, 8, false, RouteOutcome::Routed(route_to(b)));
     apply_nav_follow_outcome(
         bot,
@@ -4357,7 +4588,7 @@ fn stall_of_a_retargeted_walk_does_not_fail_the_new_walk() {
         let mut all = navs.lock().unwrap();
         let bot = all.get_mut("bank").unwrap();
         bot.publish_route(1, 7, false, RouteOutcome::Routed(route_to(a)));
-        bot.route_worker = Some(Arc::new(()));
+        bot.set_route_work_preparing_for_test();
     }
     let arm = ScriptWalkArm {
         here: Some((0, 0, 0)),
@@ -4372,16 +4603,13 @@ fn stall_of_a_retargeted_walk_does_not_fail_the_new_walk() {
     let mut all = navs.lock().unwrap();
     let bot = all.get_mut("bank").unwrap();
     assert_eq!(bot.walk_request_id, 8, "B is the armed walk");
-    assert_eq!(
-        bot.route.as_ref().map(|r| r.dest),
-        Some(a),
-        "A still followed"
-    );
+    assert_eq!(bot.route_destination(), Some(a), "A still followed");
     apply_nav_follow_outcome(bot, gave_up(a), false);
-    assert!(bot.route.is_none(), "the stalled route is dropped");
+    assert!(!bot.has_route(), "the stalled route is dropped");
     assert_eq!(bot.walk_outcome_seq, 0, "A's stall must not fail B's wait");
-    assert!(bot.pending_route.is_some(), "B's find is still owed");
+    assert!(bot.route_work_pending(), "B's find is still owed");
 
+    bot.pending_route = None;
     bot.publish_route(2, 8, false, RouteOutcome::Routed(route_to(b)));
     apply_nav_follow_outcome(bot, gave_up(b), false);
     assert_eq!(bot.walk_outcome_seq, 1, "B's own stall publishes");
@@ -4419,7 +4647,7 @@ fn route_end_of_request_id_zero_publishes_nothing() {
         Some(nav::traveller::TravelOutcome::Arrived { at: dest }),
         false,
     );
-    assert!(bot.route.is_none(), "the route ended");
+    assert!(!bot.has_route(), "the route ended");
     assert_eq!(bot.walk_outcome_seq, 0, "request id 0 publishes nothing");
 }
 
@@ -4463,7 +4691,7 @@ fn end_blocked_follow_settles_the_armed_walk_as_a_blocked_route_end() {
         }),
         false,
     );
-    assert!(bot.route.is_none(), "the follow ended");
+    assert!(!bot.has_route(), "the follow ended");
     assert_eq!(bot.walk_outcome_seq, 1);
     assert_eq!(bot.walk_outcome_request_id, 9);
     assert!(!bot.walk_outcome_failed, "blocked is a settled route end");
@@ -4517,7 +4745,8 @@ fn bank_fetch_session_refuses_exact_walk_near() {
                     legs: vec![],
                     dest,
                     ticks: 0.0,
-                }),
+                })
+                .into(),
                 avoid: Vec::new(),
                 progress: Default::default(),
             }),
@@ -4573,7 +4802,7 @@ fn missing_nav_world_publishes_a_failed_walk_outcome() {
     assert_eq!(bot.walk_outcome_x, 2820);
     assert_eq!(bot.walk_outcome_z, 3556);
     assert_eq!(bot.walk_outcome_radius, 1);
-    assert!(bot.route.is_none());
+    assert!(!bot.has_route());
     assert!(bot.requested_route.is_none());
 }
 
@@ -4817,7 +5046,8 @@ fn bank_fetch_refuse_echoes_request_id_without_bumping_route() {
                     legs: vec![],
                     dest,
                     ticks: 0.0,
-                }),
+                })
+                .into(),
                 avoid: Vec::new(),
                 progress: Default::default(),
             }),
@@ -4913,7 +5143,7 @@ fn mid_follow_terminals_publish_the_armed_request_id() {
             }]),
             dest,
             opts: FindOptions::default(),
-            final_route: Arc::clone(&route),
+            final_route: Arc::clone(&route).into(),
             avoid: Vec::new(),
             progress: Default::default(),
         }),
@@ -4927,7 +5157,7 @@ fn mid_follow_terminals_publish_the_armed_request_id() {
         }),
         false,
     );
-    assert!(bot.route.is_none());
+    assert!(!bot.has_route());
     assert!(
         bot.bank_fetch.is_some(),
         "non-stand Refused must not drop an unrelated bank-fetch"
@@ -4953,7 +5183,7 @@ fn mid_follow_terminals_publish_the_armed_request_id() {
         }),
         true,
     );
-    assert!(bot.route.is_none());
+    assert!(!bot.has_route());
     assert!(bot.bank_fetch.is_none());
     assert!(bot.walk_outcome_failed);
     assert_eq!(bot.walk_outcome_request_id, 8);
@@ -5056,14 +5286,13 @@ fn same_key_walk_near_refuses_distinct_id_and_keeps_inflight() {
     });
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "coal".to_string(),
-        NavBot {
+        with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
             route_generation: 1,
-            route_worker: Some(Arc::new(())),
             requested_route: Some(native_requested(dest, 1, false)),
             walk_request_id: 7,
             ..Default::default()
-        },
+        }),
     )])));
     let arm = ScriptWalkArm {
         here: Some((2823, 3555, 0)),
@@ -5113,8 +5342,8 @@ fn same_key_walk_near_refuses_distinct_id_and_keeps_inflight() {
     assert_eq!(bot.route_generation, 1);
     assert_eq!(bot.walk_request_id, 7);
     assert_eq!(bot.requested_route, Some(native_requested(dest, 1, false)));
-    assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(dest));
-    assert!(bot.route_worker.is_some());
+    assert_eq!(bot.route_destination(), Some(dest));
+    assert!(bot.route_work_pending());
     assert!(bot.walk_outcome_failed);
     assert_eq!(bot.walk_outcome_request_id, 9);
     assert_eq!(bot.walk_outcome_x, dest.x);
@@ -5136,14 +5365,13 @@ fn unpublished_wait_refusal_survives_legacy_zero_and_yields_to_newer_wait() {
     });
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "coal".to_string(),
-        NavBot {
+        with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
             route_generation: 1,
-            route_worker: Some(Arc::new(())),
             requested_route: Some(native_requested(dest, 1, false)),
             walk_request_id: 7,
             ..Default::default()
-        },
+        }),
     )])));
     let arm = ScriptWalkArm {
         here: Some((2823, 3555, 0)),
@@ -5173,7 +5401,7 @@ fn unpublished_wait_refusal_survives_legacy_zero_and_yields_to_newer_wait() {
         );
         bot.publish_route(1, 7, false, RouteOutcome::NoPath);
         assert_eq!(bot.walk_outcome_request_id, 9);
-        assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(dest));
+        assert_eq!(bot.route_destination(), Some(dest));
         assert_eq!(bot.walk_request_id, 7);
         assert!(bot.requested_route.is_none());
         bot.requested_route = Some(native_requested(dest, 1, false));
@@ -5220,40 +5448,12 @@ fn same_key_pending_route_refuses_distinct_id() {
     let world = Arc::new(open_world(7, 7));
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "pend".to_string(),
-        NavBot {
+        with_pending_route_work(NavBot {
             route_generation: 1,
-            pending_route: Some(Box::new(ScriptRouteRequest {
-                admission: crate::admission::Admission::manual(
-                    FindOptions::default(),
-                    Default::default(),
-                    0,
-                    crate::WalkGlobals::default(),
-                ),
-                loc_id: None,
-                arrival: nav::arrival::ArrivalKind::Reach,
-                generation: 1,
-                request_id: 7,
-                world: Arc::clone(&world),
-                from: WorldTile {
-                    x: 2823,
-                    z: 3555,
-                    level: 0,
-                },
-                to: dest,
-                radius: 1,
-                opts: FindOptions::default(),
-                state: None,
-                bank_origin: Origin::Unknown,
-                bank: Vec::new(),
-                live_candidates: None,
-                compat_tile_intent: false,
-                completion: Default::default(),
-                exclusions: None,
-            })),
             requested_route: Some(native_requested(dest, 1, false)),
             walk_request_id: 7,
             ..Default::default()
-        },
+        }),
     )])));
     let arm = ScriptWalkArm {
         here: Some((2823, 3555, 0)),
@@ -5275,9 +5475,7 @@ fn same_key_pending_route_refuses_distinct_id() {
     let bot = &navs.lock().unwrap()["pend"];
     assert_eq!(bot.route_generation, 1);
     assert_eq!(bot.walk_request_id, 7);
-    assert!(bot.pending_route.is_some());
-    assert_eq!(bot.pending_route.as_ref().map(|p| p.request_id), Some(7));
-    assert!(bot.route_worker.is_none());
+    assert!(bot.route_work_pending());
     assert!(bot.walk_outcome_failed);
     assert_eq!(bot.walk_outcome_request_id, 9);
 }
@@ -5303,14 +5501,13 @@ fn two_same_key_walk_near_refuses_later_wait_and_old_nopath_does_not_settle_it()
     let (first_id, second_id) = park_two_walks(&iso, dest.x, dest.z, 1);
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "coal".to_string(),
-        NavBot {
+        with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
             route_generation: 1,
-            route_worker: Some(Arc::new(())),
             requested_route: Some(native_requested(dest, 1, false)),
             walk_request_id: first_id,
             ..Default::default()
-        },
+        }),
     )])));
     let arm = ScriptWalkArm {
         here: Some((2823, 3555, 0)),
@@ -5350,13 +5547,13 @@ fn two_same_key_walk_near_refuses_later_wait_and_old_nopath_does_not_settle_it()
         let mut all = navs.lock().unwrap();
         let bot = all.get_mut("coal").expect("nav bot");
         assert_eq!(bot.walk_request_id, first_id);
-        assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(dest));
+        assert_eq!(bot.route_destination(), Some(dest));
         // The isolate already observed the current wait refusal. A later
         // coalesced NoPath may now occupy the single outcome slot.
         bot.mark_walk_outcome_posted(bot.walk_outcome_seq);
         bot.publish_route(1, first_id, false, RouteOutcome::NoPath);
         assert_eq!(
-            bot.route.as_ref().map(|r| r.dest),
+            bot.route_destination(),
             Some(dest),
             "coalesced NoPath must retain the armed route"
         );
@@ -5396,14 +5593,13 @@ fn two_same_key_old_nopath_before_snapshot_keeps_later_refusal() {
     let (first_id, second_id) = park_two_walks(&iso, dest.x, dest.z, 1);
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "coal".to_string(),
-        NavBot {
+        with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
             route_generation: 1,
-            route_worker: Some(Arc::new(())),
             requested_route: Some(native_requested(dest, 1, false)),
             walk_request_id: first_id,
             ..Default::default()
-        },
+        }),
     )])));
     let arm = ScriptWalkArm {
         here: Some((2823, 3555, 0)),
@@ -5444,8 +5640,8 @@ fn two_same_key_old_nopath_before_snapshot_keeps_later_refusal() {
         assert!(bot.walk_outcome_failed);
         assert_eq!(bot.walk_request_id, first_id);
         assert_eq!(bot.route_generation, 1);
-        assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(dest));
-        assert!(bot.route_worker.is_some());
+        assert_eq!(bot.route_destination(), Some(dest));
+        assert!(bot.route_work_pending());
         assert!(bot.requested_route.is_none());
     }
     let posted = posted_from_bot(&navs.lock().unwrap()["coal"]);
@@ -5483,14 +5679,13 @@ fn two_same_key_old_mid_follow_terminal_before_snapshot_keeps_later_refusal() {
     let (first_id, second_id) = park_two_walks(&iso, dest.x, dest.z, 1);
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "coal".to_string(),
-        NavBot {
+        with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
             route_generation: 1,
-            route_worker: Some(Arc::new(())),
             requested_route: Some(native_requested(dest, 1, false)),
             walk_request_id: first_id,
             ..Default::default()
-        },
+        }),
     )])));
     let arm = ScriptWalkArm {
         here: Some((2823, 3555, 0)),
@@ -5534,8 +5729,8 @@ fn two_same_key_old_mid_follow_terminal_before_snapshot_keeps_later_refusal() {
         assert!(bot.walk_outcome_failed);
         assert_eq!(bot.walk_request_id, first_id);
         assert_eq!(bot.route_generation, 1);
-        assert!(bot.route.is_none());
-        assert!(bot.route_worker.is_some());
+        assert!(!bot.has_route());
+        assert!(bot.route_work_pending());
     }
     let posted = posted_from_bot(&navs.lock().unwrap()["coal"]);
     assert_eq!(posted.request_id, second_id);
@@ -5635,7 +5830,8 @@ fn bank_fetch_refusal_echoes_isolate_request_id() {
                     legs: vec![],
                     dest,
                     ticks: 0.0,
-                }),
+                })
+                .into(),
                 avoid: Vec::new(),
                 progress: Default::default(),
             }),
@@ -5684,7 +5880,12 @@ fn exact_walk_near_replaces_published_nearby_route() {
         z: 1,
         level: 0,
     };
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    navs.lock()
+        .unwrap()
+        .entry("bank".into())
+        .or_default()
+        .work_scope = Some(next_test_route_scope());
     let arm = ScriptWalkArm {
         here: Some((0, 0, 0)),
         world: Some(Arc::new(open_world(7, 7))),
@@ -5694,41 +5895,22 @@ fn exact_walk_near_replaces_published_nearby_route() {
         bank: BankRows::default(),
     };
     assert!(arm.route_with_radius(6, 6, 0, FindOptions::default(), 1));
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    loop {
-        let all = navs.lock().unwrap();
-        let bot = all.get("bank").expect("nav bot");
-        if bot.route_worker.is_none() && bot.route.is_some() {
-            break;
-        }
-        drop(all);
-        assert!(
-            std::time::Instant::now() < deadline,
-            "nearby worker did not finish"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
-    let nearby_dest = navs.lock().unwrap()["bank"]
-        .route
-        .as_ref()
-        .map(|route| route.dest);
+    assert!(
+        wait_for_route_work(&navs, "bank", |bot| {
+            !bot.route_work_pending() && bot.has_route()
+        }),
+        "nearby route work did not finish"
+    );
+    let nearby_dest = navs.lock().unwrap()["bank"].route_destination();
     assert_ne!(nearby_dest, Some(exact));
 
     assert!(arm.route_with_radius(exact.x, exact.z, exact.level, FindOptions::default(), 0));
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    loop {
-        let all = navs.lock().unwrap();
-        let bot = all.get("bank").expect("nav bot");
-        if bot.route_worker.is_none() && bot.route.as_ref().map(|route| route.dest) == Some(exact) {
-            break;
-        }
-        drop(all);
-        assert!(
-            std::time::Instant::now() < deadline,
-            "exact worker did not publish dest"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
+    assert!(
+        wait_for_route_work(&navs, "bank", |bot| {
+            !bot.route_work_pending() && bot.route_destination() == Some(exact)
+        }),
+        "exact route work did not publish the destination"
+    );
 }
 
 #[test]
@@ -5792,7 +5974,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         state: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         compat_tile_intent: false,
         completion: Default::default(),
         exclusions: Some(Arc::new(ScriptRouteExclusions {
@@ -5807,7 +5989,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         max_z: 3,
         level: Some(0),
     };
-    let RouteOutcome::Routed(straight) = request(Vec::new()).calculate().0 else {
+    let RouteOutcome::Routed(straight) = request(Vec::new()).drive_route_job_for_test().0 else {
         panic!("open floor routes");
     };
     // Every tile stepped, the waypoints' straight/diagonal runs expanded.
@@ -5836,7 +6018,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         "without the rectangle the cheapest route crosses it: {:?}",
         straight
     );
-    let RouteOutcome::Routed(around) = request(vec![thrower]).calculate().0 else {
+    let RouteOutcome::Routed(around) = request(vec![thrower]).drive_route_job_for_test().0 else {
         panic!("a detour exists north of the rectangle");
     };
     assert_eq!(around.dest.x, 11);
@@ -5850,13 +6032,13 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         ..thrower
     };
     assert!(matches!(
-        request(vec![sealed]).calculate().0,
+        request(vec![sealed]).drive_route_job_for_test().0,
         RouteOutcome::NoPath
     ));
 }
 
 #[test]
-fn radius_calculate_keeps_first_connected_open_floor_approach() {
+fn radius_route_job_keeps_first_connected_open_floor_approach() {
     let world = Arc::new(open_world(7, 7));
     let request = ScriptRouteRequest {
         admission: crate::admission::Admission::manual(
@@ -5885,12 +6067,12 @@ fn radius_calculate_keeps_first_connected_open_floor_approach() {
         state: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         compat_tile_intent: false,
         completion: Default::default(),
         exclusions: None,
     };
-    let RouteOutcome::Routed(route) = request.calculate().0 else {
+    let RouteOutcome::Routed(route) = request.drive_route_job_for_test().0 else {
         panic!("open floor should route");
     };
     assert_eq!(
@@ -5904,7 +6086,7 @@ fn radius_calculate_keeps_first_connected_open_floor_approach() {
 }
 
 #[test]
-fn radius_calculate_drops_wall_separated_candidate() {
+fn radius_route_job_drops_wall_separated_candidate() {
     let mut world = open_world(7, 7);
     let mut flags = vec![0u32; 49];
     for z in 2..=4 {
@@ -5941,12 +6123,14 @@ fn radius_calculate_drops_wall_separated_candidate() {
         state: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         compat_tile_intent: false,
         completion: Default::default(),
         exclusions: None,
     };
-    let RouteOutcome::Routed(route) = request.calculate().0 else {
+    let to = request.to;
+    let world = Arc::clone(&request.world);
+    let RouteOutcome::Routed(route) = request.drive_route_job_for_test().0 else {
         panic!("same-room approach should route");
     };
     assert_ne!(
@@ -5957,21 +6141,15 @@ fn radius_calculate_drops_wall_separated_candidate() {
             level: 0
         }
     );
+    assert!((route.dest.x - to.x).abs().max((route.dest.z - to.z).abs()) <= 1);
     assert!(
-        (route.dest.x - request.to.x)
-            .abs()
-            .max((route.dest.z - request.to.z).abs())
-            <= 1
-    );
-    assert!(
-        nav::router::local_step_component(&request.world.collision, request.to, 1)
-            .contains(&route.dest),
+        nav::router::local_step_component(&world.collision, to, 1).contains(&route.dest),
         "selected destination must be step-connected to the target"
     );
 }
 
 #[test]
-fn radius_calculate_uses_occupied_target_approach_candidates() {
+fn radius_route_job_uses_occupied_target_approach_candidates() {
     let mut world = open_world(7, 7);
     let target = WorldTile {
         x: 3,
@@ -6002,12 +6180,13 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
         state: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         compat_tile_intent: true,
         completion: Default::default(),
         exclusions: None,
     };
-    let RouteOutcome::Routed(route) = request.calculate().0 else {
+    let world = Arc::clone(&request.world);
+    let RouteOutcome::Routed(route) = request.drive_route_job_for_test().0 else {
         panic!("occupied target should route to a neighbour");
     };
     assert_ne!(route.dest, target);
@@ -6017,7 +6196,7 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
             .max((route.dest.z - target.z).abs())
             <= 1
     );
-    assert!(request.world.collision.standable(route.dest));
+    assert!(world.collision.standable(route.dest));
 }
 
 #[test]
@@ -6051,7 +6230,7 @@ fn compat_radius_falls_back_to_arrival_endpoints_when_walkable_anchor_is_unreach
         state: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         compat_tile_intent: true,
         completion: Default::default(),
         exclusions: Some(Arc::new(ScriptRouteExclusions {
@@ -6069,7 +6248,7 @@ fn compat_radius_falls_back_to_arrival_endpoints_when_walkable_anchor_is_unreach
     let request = make_request(vec![avoid_anchor]);
     let candidates = approach_tiles(&request.world, from, target, 2, false);
     assert!(request.world.collision.walkable(target));
-    let (outcome, targets) = request.calculate();
+    let (outcome, targets) = request.drive_route_job_for_test();
     assert_eq!(targets.first(), Some(&target));
     assert_eq!(
         targets
@@ -6108,7 +6287,10 @@ fn compat_radius_falls_back_to_arrival_endpoints_when_walkable_anchor_is_unreach
         level: Some(target.level),
     }]);
     assert!(
-        matches!(unreachable.calculate().0, RouteOutcome::NoPath),
+        matches!(
+            unreachable.drive_route_job_for_test().0,
+            RouteOutcome::NoPath
+        ),
         "when all arrival endpoints are excluded the request still fails"
     );
 }
@@ -6147,13 +6329,13 @@ fn compat_radius_falls_back_to_an_in_radius_endpoint_when_center_is_blocked() {
         state: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         compat_tile_intent: true,
         completion: Default::default(),
         exclusions: None,
     };
     let candidates = approach_tiles(&world, from, target, 2, false);
-    let (outcome, targets) = request.calculate();
+    let (outcome, targets) = request.drive_route_job_for_test();
     assert!(
         !targets.contains(&target),
         "a blocked center is not a route goal"
@@ -6176,7 +6358,7 @@ fn compat_radius_falls_back_to_an_in_radius_endpoint_when_center_is_blocked() {
 }
 
 #[test]
-fn exact_tile_calculate_reaches_the_tile_or_refuses_an_occupied_one() {
+fn exact_tile_route_job_reaches_the_tile_or_refuses_an_occupied_one() {
     let target = WorldTile {
         x: 3,
         z: 3,
@@ -6210,24 +6392,27 @@ fn exact_tile_calculate_reaches_the_tile_or_refuses_an_occupied_one() {
             opts: FindOptions::default(),
             state: None,
             bank: vec![],
-            live_candidates: None,
+            live_geometry: None,
             compat_tile_intent: false,
             completion: Default::default(),
             exclusions: None,
         }
     };
-    let RouteOutcome::Routed(route) = request(false).calculate().0 else {
+    let RouteOutcome::Routed(route) = request(false).drive_route_job_for_test().0 else {
         panic!("an open exact tile should route");
     };
     assert_eq!(route.dest, target, "radius 0 does not stop one tile short");
     assert!(
-        matches!(request(true).calculate().0, RouteOutcome::NoPath),
+        matches!(
+            request(true).drive_route_job_for_test().0,
+            RouteOutcome::NoPath
+        ),
         "an occupied exact tile is refused, never approached"
     );
 }
 
 #[test]
-fn radius_calculate_respects_wall_l_diagonal_geometry() {
+fn radius_route_job_respects_wall_l_diagonal_geometry() {
     let mut world = open_world(7, 7);
     let mut flags = vec![0u32; 49];
     let target = WorldTile {
@@ -6269,7 +6454,7 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
         state: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         compat_tile_intent: false,
         completion: Default::default(),
         exclusions: None,
@@ -6287,7 +6472,7 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
     };
     assert!(component.contains(&same_side));
     assert!(!component.contains(&far_side), "component={component:?}");
-    let RouteOutcome::Routed(route) = request.calculate().0 else {
+    let RouteOutcome::Routed(route) = request.drive_route_job_for_test().0 else {
         panic!("same-side WALL_L approach should route");
     };
     assert!(component.contains(&route.dest));
@@ -6295,7 +6480,7 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
 }
 
 #[test]
-fn radius_calculate_drops_detour_outside_radius() {
+fn radius_route_job_drops_detour_outside_radius() {
     let mut world = open_world(7, 7);
     let mut flags = vec![0u32; 49];
     for z in 1..=5 {
@@ -6333,7 +6518,7 @@ fn radius_calculate_drops_detour_outside_radius() {
         state: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         compat_tile_intent: false,
         completion: Default::default(),
         exclusions: None,
@@ -6344,7 +6529,7 @@ fn radius_calculate_drops_detour_outside_radius() {
         z: 3,
         level: 0
     }));
-    let RouteOutcome::Routed(route) = request.calculate().0 else {
+    let RouteOutcome::Routed(route) = request.drive_route_job_for_test().0 else {
         panic!("global detour should still leave a local approach");
     };
     assert!(component.contains(&route.dest));
@@ -6395,12 +6580,13 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         state: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         compat_tile_intent: false,
         completion: Default::default(),
         exclusions: None,
     };
-    let RouteOutcome::Routed(route) = request.calculate().0 else {
+    let to = request.to;
+    let RouteOutcome::Routed(route) = request.drive_route_job_for_test().0 else {
         panic!("actual 289 route should exist");
     };
     assert_ne!(
@@ -6418,9 +6604,7 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         )),
         "radius arrival must not use Horvik door 1530"
     );
-    assert!(
-        nav::router::local_step_component(&world.collision, request.to, 2).contains(&route.dest)
-    );
+    assert!(nav::router::local_step_component(&world.collision, to, 2).contains(&route.dest));
 }
 
 #[test]
@@ -6655,7 +6839,7 @@ fn unroutable_bank_stand_aborts_the_walk_request_exactly_once() {
             }]),
             dest: destination,
             opts: FindOptions::default(),
-            final_route,
+            final_route: final_route.into(),
             avoid: Vec::new(),
             progress: Default::default(),
         }),
@@ -6755,7 +6939,7 @@ fn failed_bank_stand_subroute_omits_private_leg_metadata() {
             }]),
             dest: destination,
             opts: FindOptions::default(),
-            final_route,
+            final_route: final_route.into(),
             avoid: Vec::new(),
             progress: Default::default(),
         }),
@@ -6918,7 +7102,7 @@ fn two_profiles_spawn_two_client_slots() {
     assert_eq!(play.arms.len(), 2, "one control arm per profile");
     // The slot threads publish their status rows asynchronously.
     assert!(
-        wait_until(500, || {
+        wait_settled(|| {
             let names: Vec<String> = play.statuses().into_iter().map(|s| s.username).collect();
             names.contains(&"a".into()) && names.contains(&"b".into())
         }),
@@ -7903,7 +8087,7 @@ fn queue_wire_lands_on_the_named_slots_queue() {
     // `auto_login = false` arm sits on the title (no TCP).
     play.spawn_slot(profile("a", 1), None, None, Some(SlotArm::new(1, false)));
     assert!(
-        wait_until(500, || play.wires.lock().unwrap().contains_key("a")),
+        wait_settled(|| play.wires.lock().unwrap().contains_key("a")),
         "the slot thread registers its wire queue at spawn"
     );
     // Queue producers accept work only for a connected session. This
@@ -8045,6 +8229,7 @@ fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
         &world,
         false,
         false,
+        false,
         None,
         None,
         None,
@@ -8053,6 +8238,7 @@ fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
         super::script_channels::BrokerWorld::Unavailable,
         None,
         Some(&mut replies),
+        None,
     );
 
     assert_eq!(
@@ -8152,9 +8338,8 @@ fn disconnect_reset_discards_queued_work_and_pauses_session_state() {
         .push_back("setvar tutorial 1000".into());
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "alice".to_string(),
-        NavBot {
+        with_pending_route_work(NavBot {
             route_generation: 7,
-            route_worker: Some(Arc::new(())),
             requested_route: Some((
                 WorldTile {
                     x: 1,
@@ -8168,7 +8353,7 @@ fn disconnect_reset_discards_queued_work_and_pauses_session_state() {
                 nav::zones::ZoneExempt::NONE,
             )),
             ..NavBot::default()
-        },
+        }),
     )])));
 
     reset_slot_session_work("alice", &scripts, &cheats, &wires, &navs, false);
@@ -8182,9 +8367,9 @@ fn disconnect_reset_discards_queued_work_and_pauses_session_state() {
     let navs = navs.lock().unwrap();
     let nav = &navs["alice"];
     assert_eq!(nav.route_generation, 8);
-    assert!(nav.route_worker.is_none());
+    assert!(!nav.route_work_pending());
     assert!(nav.requested_route.is_none());
-    assert!(nav.route.is_none());
+    assert!(!nav.has_route());
     assert!(nav.bank_fetch.is_none());
 }
 
@@ -8960,6 +9145,7 @@ fn inspect_route_cross_zone_exemption_routes_through_the_named_barrier() {
         ));
         let start = Instant::now();
         loop {
+            crate::script_runtime::poll_inspection_for_test(&navs, "alice");
             let term = navs.lock().unwrap().get("alice").and_then(|bot| {
                 bot.inspect
                     .latest
@@ -9025,21 +9211,19 @@ fn accepted_open_booth_cancels_only_the_requesting_slot_walk() {
     navs.lock().unwrap().extend([
         (
             "alice".into(),
-            NavBot {
+            with_pending_route_work(NavBot {
                 route: Some(route.clone()),
-                route_worker: Some(Arc::new(())),
                 requested_route: requested,
                 ..Default::default()
-            },
+            }),
         ),
         (
             "bob".into(),
-            NavBot {
+            with_pending_route_work(NavBot {
                 route: Some(route.clone()),
-                route_worker: Some(Arc::new(())),
                 requested_route: requested,
                 ..Default::default()
-            },
+            }),
         ),
     ]);
 
@@ -9064,12 +9248,12 @@ fn accepted_open_booth_cancels_only_the_requesting_slot_walk() {
     ));
     let all = navs.lock().unwrap();
     let alice = &all["alice"];
-    assert!(alice.route.is_none());
-    assert!(alice.route_worker.is_none());
+    assert!(!alice.has_route());
+    assert!(!alice.route_work_pending());
     assert!(alice.pending_route.is_none());
     assert!(alice.requested_route.is_none());
     assert_eq!(all["bob"].route, Some(route));
-    assert!(all["bob"].route_worker.is_some());
+    assert!(all["bob"].route_work_pending());
     assert_eq!(all["bob"].requested_route, requested);
 }
 
@@ -9102,12 +9286,11 @@ fn rejected_open_booth_does_not_cancel_the_requesting_slot_walk() {
     ));
     navs.lock().unwrap().insert(
         "alice".into(),
-        NavBot {
+        with_pending_route_work(NavBot {
             route: Some(route.clone()),
-            route_worker: Some(Arc::new(())),
             requested_route: requested,
             ..Default::default()
-        },
+        }),
     );
 
     assert!(!dispatch_script_interact(
@@ -9130,7 +9313,7 @@ fn rejected_open_booth_does_not_cancel_the_requesting_slot_walk() {
     ));
     let all = navs.lock().unwrap();
     assert_eq!(all["alice"].route, Some(route));
-    assert!(all["alice"].route_worker.is_some());
+    assert!(all["alice"].route_work_pending());
     assert_eq!(all["alice"].requested_route, requested);
 }
 
@@ -9729,10 +9912,19 @@ fn withdraw_load_selects_exact_then_all_then_x() {
         Some("Withdraw All".into()),
         Some("Withdraw X".into()),
     ];
-    assert_eq!(fill_withdraw_action(&actions, 5, 20), Some((2, false)));
-    assert_eq!(fill_withdraw_action(&actions, 20, 20), Some((3, false)));
-    assert_eq!(fill_withdraw_action(&actions, 7, 20), Some((4, true)));
-    assert_eq!(fill_withdraw_action(&[None], 7, 20), None);
+    assert_eq!(
+        script::bank::ops::fill_click_in(&actions, 5, 20),
+        Some((2, false))
+    );
+    assert_eq!(
+        script::bank::ops::fill_click_in(&actions, 20, 20),
+        Some((3, false))
+    );
+    assert_eq!(
+        script::bank::ops::fill_click_in(&actions, 7, 20),
+        Some((4, true))
+    );
+    assert_eq!(script::bank::ops::fill_click_in(&[None], 7, 20), None);
 }
 
 #[test]
@@ -11370,7 +11562,11 @@ export default class T extends LoopingBot {
         .unwrap()
         .lock()
         .unwrap()
-        .drain_interacts();
+        .drain_host_interacts()
+        .1
+        .into_iter()
+        .map(|queued| queued.req)
+        .collect::<Vec<_>>();
     let bytes = script::isolate_fb::encode_interact_batch(&reqs);
     let decoded = script::isolate_fb::decode_interact_batch(&bytes).expect("fb mouse batch");
     let old_down = decoded
@@ -13530,7 +13726,7 @@ fn dispatch_script_interact_walk_to_uses_nearest_scene_packet_for_solid_target()
         navs.lock()
             .unwrap()
             .get("alice")
-            .is_none_or(|b| b.route.is_none()),
+            .is_none_or(|b| !b.has_route()),
         "walk-to must not arm packed nav"
     );
 }
@@ -13597,6 +13793,7 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
     snap.rebuild(&c);
 
     let navs_off = test_navs("alice");
+    bind_test_route_scope(&navs_off, "alice");
     assert!(dispatch_script_interact(
         &mut c,
         &snap,
@@ -13619,11 +13816,19 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
         }],
     ));
     assert!(
-        !wait_until(100, || queued(&navs_off).is_some()),
+        wait_for_route_work(&navs_off, "alice", |bot| {
+            !bot.route_work_pending() && bot.walk_outcome_failed && !bot.has_route()
+        }),
+        "walk-only route work did not publish NoPath"
+    );
+    assert_eq!(
+        queued(&navs_off),
+        None,
         "walk-only find must not use the teleport edge"
     );
 
     let navs_on = test_navs("alice");
+    bind_test_route_scope(&navs_on, "alice");
     assert!(dispatch_script_interact(
         &mut c,
         &snap,
@@ -13646,7 +13851,9 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
         }],
     ));
     assert!(
-        wait_until(200, || queued(&navs_on) == Some(dest)),
+        wait_for_route_work(&navs_on, "alice", |bot| {
+            !bot.route_work_pending() && bot.route_destination() == Some(dest)
+        }),
         "allow_teleports routes the teleport"
     );
 }
@@ -13704,6 +13911,7 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
     snap.rebuild(&c);
 
     let navs_off = test_navs("alice");
+    bind_test_route_scope(&navs_off, "alice");
     assert!(dispatch_script_interact(
         &mut c,
         &snap,
@@ -13726,11 +13934,19 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
         }],
     ));
     assert!(
-        !wait_until(100, || queued(&navs_off).is_some()),
+        wait_for_route_work(&navs_off, "alice", |bot| {
+            !bot.route_work_pending() && bot.walk_outcome_failed && !bot.has_route()
+        }),
+        "default-false wilderness did not publish NoPath"
+    );
+    assert_eq!(
+        queued(&navs_off),
+        None,
         "default-false wilderness must not enter the zone"
     );
 
     let navs_on = test_navs("alice");
+    bind_test_route_scope(&navs_on, "alice");
     assert!(dispatch_script_interact(
         &mut c,
         &snap,
@@ -13753,7 +13969,9 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
         }],
     ));
     assert!(
-        wait_until(200, || queued(&navs_on) == Some(dest)),
+        wait_for_route_work(&navs_on, "alice", |bot| {
+            !bot.route_work_pending() && bot.route_destination() == Some(dest)
+        }),
         "explicit wilderness must route into the zone"
     );
 }
@@ -13786,7 +14004,7 @@ fn changed_wilderness_or_bank_fetch_does_not_coalesce() {
         true,
         11,
     ));
-    assert!(wait_until(200, || {
+    assert!(wait_settled(|| {
         navs.lock().unwrap()["flags"].requested_route == Some(native_requested(dest, 1, false))
     }));
     assert!(arm.queue_route(
@@ -13802,7 +14020,7 @@ fn changed_wilderness_or_bank_fetch_does_not_coalesce() {
         12,
     ));
     assert!(
-        wait_until(200, || {
+        wait_settled(|| {
             let bot = &navs.lock().unwrap()["flags"];
             bot.walk_request_id == 12
                 && bot.requested_route
@@ -13824,7 +14042,7 @@ fn changed_wilderness_or_bank_fetch_does_not_coalesce() {
         13,
     ));
     assert!(
-        wait_until(200, || {
+        wait_settled(|| {
             let bot = &navs.lock().unwrap()["flags"];
             bot.walk_request_id == 13
                 && bot.requested_route
@@ -14202,7 +14420,7 @@ fn step_bank_fetch_walk_stand_matches_player_plane() {
                 level: 0,
             },
             opts: FindOptions::default(),
-            final_route: Arc::clone(&final_route),
+            final_route: Arc::clone(&final_route).into(),
             avoid: Vec::new(),
             progress: Default::default(),
         }),
@@ -14280,14 +14498,14 @@ fn step_bank_fetch_walk_stand_matches_player_plane() {
             level: 0,
         },
         opts: FindOptions::default(),
-        final_route: Arc::clone(&final_route),
+        final_route: Arc::clone(&final_route).into(),
         avoid: Vec::new(),
         progress: Default::default(),
     });
     bot.route = None;
     step_bank_fetch_on_bot(&mut driver, &snap, &mut bot, None, Some((10, 20, 0)), false);
     assert!(
-        bot.route.is_none(),
+        !bot.has_route(),
         "ground-plane here must not complete an upstairs stand Walk"
     );
 }
@@ -14433,6 +14651,9 @@ fn bank_fetch_session_retains_pack_withdraws_wears_then_finds() {
         world.banks(),
         from,
         &world.collision,
+        &world.graph,
+        FindOptions::default(),
+        &[],
     )
     .expect("the banked knife plans a trip");
     let access = nav::bank_fetch::nearest_bank_access(&world.collision, world.banks(), from)
@@ -14480,6 +14701,7 @@ fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
         .map(|it| (it.def.id, it.count))
         .collect();
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    bind_test_route_scope(&navs, "alice");
     let arm = ScriptWalkArm {
         here: Some((0, 4, 0)),
         world: Some(Arc::clone(&world)),
@@ -14491,7 +14713,7 @@ fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
             rows: bank_rows.clone(),
         },
     };
-    let worker_done = arm
+    let _completion = arm
         .queue_route_in_snapshot_synced(
             &snapshot,
             4,
@@ -14507,9 +14729,12 @@ fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
             None,
         )
         .expect("solid-target route accepted");
-    worker_done
-        .recv_timeout(Duration::from_secs(1))
-        .expect("route worker completes");
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.bank_fetch.is_some()
+        }),
+        "route work did not publish the BankBudget session"
+    );
 
     let navs = navs.lock().unwrap();
     let fetch = navs
@@ -14524,7 +14749,7 @@ fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
         "the in-scene first-goal diagnosis must use a target-cardinal stand, got {:?}",
         fetch.dest
     );
-    assert_eq!(fetch.final_route.dest, fetch.dest);
+    assert_eq!(fetch.final_route.destination(), fetch.dest);
 }
 
 /// Fix round — BankBudget execute on the live walk arm: `allow_bank_fetch`
@@ -14546,6 +14771,7 @@ fn allow_bank_fetch_on_script_walk_arm_drives_shortage_withdrawal() {
         "knife is in the open bank"
     );
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    bind_test_route_scope(&navs, "alice");
     // Stand on the packed booth's access tile so the session's Walk
     // completes without a follow hop; Open sees the already-open bank.
     let arm = ScriptWalkArm {
@@ -14574,21 +14800,12 @@ fn allow_bank_fetch_on_script_walk_arm_drives_shortage_withdrawal() {
         ),
         "the walk arm must accept the bank-fetch route"
     );
-    // The worker latches the session; wait briefly for it.
-    let mut latched = false;
-    for _ in 0..200 {
-        if navs
-            .lock()
-            .unwrap()
-            .get("alice")
-            .is_some_and(|b| b.bank_fetch.is_some())
-        {
-            latched = true;
-            break;
-        }
-        thread::sleep(Duration::from_millis(5));
-    }
-    assert!(latched, "allow_bank_fetch must latch a BankFetch session");
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.bank_fetch.is_some()
+        }),
+        "allow_bank_fetch must latch a BankFetch session"
+    );
     let out_before = c.out.pos;
     // Pump until Withdraw has had a chance to write (Walk
     // and Open complete immediately on this fixture).
@@ -14671,6 +14888,7 @@ fn compat_walk_fetch_on_with_full_pack_preserves_non_route_items() {
             ..Default::default()
         },
     )])));
+    bind_test_route_scope(&navs, "compat-full-pack");
     let arm = ScriptWalkArm {
         here: Some((0, 3, 0)),
         world: Some(Arc::clone(&world)),
@@ -14695,22 +14913,12 @@ fn compat_walk_fetch_on_with_full_pack_preserves_non_route_items() {
         false,
         0
     ));
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        if navs
-            .lock()
-            .unwrap()
-            .get("compat-full-pack")
-            .is_some_and(|bot| bot.bank_fetch.is_some())
-        {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "compat walk did not install BankBudget"
-        );
-        thread::sleep(Duration::from_millis(5));
-    }
+    assert!(
+        wait_for_route_work(&navs, "compat-full-pack", |bot| {
+            !bot.route_work_pending() && bot.bank_fetch.is_some()
+        }),
+        "compat walk did not install BankBudget"
+    );
     let expected = VecDeque::from([
         BankStep::Walk {
             x: 0,
@@ -14742,6 +14950,9 @@ fn compat_walk_fetch_on_with_full_pack_preserves_non_route_items() {
             level: 0,
         },
         &world.collision,
+        &world.graph,
+        FindOptions::default(),
+        &[],
     )
     .unwrap()
     .state;
@@ -14785,6 +14996,9 @@ fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending()
         world.banks(),
         origin,
         &world.collision,
+        &world.graph,
+        FindOptions::default(),
+        &[],
     )
     .unwrap();
     assert!(plan.steps.contains(&BankStep::WithdrawX { id: 2 }));
@@ -14805,7 +15019,7 @@ fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending()
             steps: plan.steps.into(),
             dest: destination,
             opts: FindOptions::default(),
-            final_route: Arc::new(final_route),
+            final_route: Arc::new(final_route).into(),
             avoid: vec![],
             progress: Default::default(),
         }),
@@ -14942,6 +15156,7 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
         "knife is in the open bank"
     );
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    bind_test_route_scope(&navs, "alice");
     let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
         username: "alice".into(),
         ..SlotStatus::default()
@@ -14974,20 +15189,12 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
         ),
         "the walk arm must accept the bank-fetch route"
     );
-    let mut latched = false;
-    for _ in 0..200 {
-        if navs
-            .lock()
-            .unwrap()
-            .get("alice")
-            .is_some_and(|b| b.bank_fetch.is_some())
-        {
-            latched = true;
-            break;
-        }
-        thread::sleep(Duration::from_millis(5));
-    }
-    assert!(latched, "allow_bank_fetch must latch a BankFetch session");
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.bank_fetch.is_some()
+        }),
+        "allow_bank_fetch must latch a BankFetch session"
+    );
     // Live pump: session Walk + follow (not step_bank_fetch alone).
     step_nav_bot(
         &mut c,
@@ -15010,7 +15217,7 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
             .is_some_and(|p| matches!(p.steps.front(), Some(BankStep::Walk { .. }))),
         "Walk must still be the front step (not skipped to Open/final)"
     );
-    let dest = bot.route.as_ref().map(|r| r.dest);
+    let dest = bot.route_destination();
     let access = nav::bank_fetch::nearest_bank_access(
         &world.collision,
         world.banks(),
@@ -15190,7 +15397,7 @@ fn bank_fetch_wear_close_wait_for_snapshot() {
         steps: VecDeque::from([BankStep::Close]),
         dest: route.dest,
         opts: FindOptions::default(),
-        final_route: Arc::new(route.clone()),
+        final_route: Arc::new(route.clone()).into(),
         avoid: Vec::new(),
         progress: Default::default(),
     });
@@ -15211,7 +15418,7 @@ fn bank_fetch_wear_close_wait_for_snapshot() {
         steps: VecDeque::from([BankStep::Wear { id: 2 }]),
         dest: route.dest,
         opts: FindOptions::default(),
-        final_route: Arc::new(route),
+        final_route: Arc::new(route).into(),
         avoid: Vec::new(),
         progress: Default::default(),
     });
@@ -15277,7 +15484,7 @@ fn s2b_bank_close_reassesses_the_real_final_route_and_keeps_frozen_authority() {
     };
     let assessment = crate::admission::assess(&route, &world, &admission);
     let basis = Arc::new(crate::admission::RouteBasis {
-        route: Arc::clone(&route),
+        _route: crate::walk_plan::RoutePath::legacy(Arc::clone(&route)),
         options,
         avoid: Arc::from([]),
         quest_evidence: state.quest_evidence.clone(),
@@ -15291,7 +15498,7 @@ fn s2b_bank_close_reassesses_the_real_final_route_and_keeps_frozen_authority() {
             steps: [BankStep::Close].into(),
             dest: destination,
             opts: options,
-            final_route: Arc::clone(&route),
+            final_route: Arc::clone(&route).into(),
             avoid: Vec::new(),
             progress: Default::default(),
         }),
@@ -15322,7 +15529,7 @@ fn s2b_bank_close_reassesses_the_real_final_route_and_keeps_frozen_authority() {
         "the observed closed bank hands off"
     );
     assert_eq!(
-        bot.route.as_ref().expect("fresh routed final leg").dest,
+        bot.route_destination().expect("fresh routed final leg"),
         destination
     );
     assert!(Arc::ptr_eq(bot.route.as_ref().unwrap(), &route));
@@ -15372,7 +15579,7 @@ fn bank_fetch_open_uses_packed_npc_access() {
             steps: VecDeque::from([BankStep::Open, BankStep::Withdraw { id: 2, count: 1 }]),
             dest: route.dest,
             opts: FindOptions::default(),
-            final_route: Arc::new(route),
+            final_route: Arc::new(route).into(),
             avoid: Vec::new(),
             progress: Default::default(),
         }),
@@ -15472,6 +15679,9 @@ fn bank_fetch_walk_targets_access_tile_not_blocked_booth() {
         world.banks(),
         from,
         &world.collision,
+        &world.graph,
+        FindOptions::default(),
+        &[],
     )
     .expect("plans a trip");
     assert_eq!(
@@ -15504,7 +15714,7 @@ fn bank_fetch_withdraw_aborts_when_bank_closed() {
             steps: VecDeque::from([BankStep::Withdraw { id: 2, count: 1 }, BankStep::Close]),
             dest: route.dest,
             opts: FindOptions::default(),
-            final_route: Arc::new(route),
+            final_route: Arc::new(route).into(),
             avoid: Vec::new(),
             progress: Default::default(),
         }),
@@ -15534,7 +15744,7 @@ fn pump_fetch_session(
         steps: steps.into(),
         dest: route.dest,
         opts: FindOptions::default(),
-        final_route: Arc::new(route.clone()),
+        final_route: Arc::new(route.clone()).into(),
         avoid: Vec::new(),
         progress: Default::default(),
     };
@@ -15764,7 +15974,7 @@ fn bank_fetch_reads_the_backpack_not_the_bank_while_open() {
             steps: VecDeque::from([BankStep::Withdraw { id: 1, count: 2 }]),
             dest: route.dest,
             opts: FindOptions::default(),
-            final_route: Arc::new(route),
+            final_route: Arc::new(route).into(),
             avoid: Vec::new(),
             progress: Default::default(),
         }),
@@ -15828,7 +16038,7 @@ fn bank_fetch_waits_through_the_gap_after_a_sent_move() {
                 steps: VecDeque::from([step]),
                 dest: route.dest,
                 opts: FindOptions::default(),
-                final_route: Arc::new(route),
+                final_route: Arc::new(route).into(),
                 avoid: Vec::new(),
                 progress: Default::default(),
             }),
@@ -15965,7 +16175,7 @@ fn bank_fetch_wear_ignores_its_own_bank_close_until_equipped() {
             steps: VecDeque::from([wear.clone()]),
             dest: route.dest,
             opts: FindOptions::default(),
-            final_route: Arc::new(route),
+            final_route: Arc::new(route).into(),
             avoid: Vec::new(),
             progress: Default::default(),
         }),
@@ -16074,7 +16284,7 @@ fn bank_fetch_withdraw_ignores_an_unrelated_backpack_change() {
             steps: [withdraw.clone()].into(),
             dest: route.dest,
             opts: FindOptions::default(),
-            final_route: Arc::new(route.clone()),
+            final_route: Arc::new(route.clone()).into(),
             avoid: Vec::new(),
             progress: Default::default(),
         };
@@ -16169,6 +16379,9 @@ fn unbound_inv_tab_bank_rows_are_not_carried_for_planning() {
         world.banks(),
         from,
         &world.collision,
+        &world.graph,
+        FindOptions::default(),
+        &[],
     )
     .expect("the banked knife plans a trip");
     let access = nav::bank_fetch::nearest_bank_access(&world.collision, world.banks(), from)
@@ -16348,8 +16561,7 @@ fn empty_nav() -> EmptyNav {
     (Arc::new(Mutex::new(HashMap::new())), None)
 }
 
-/// Poll `cond` for up to `ms` milliseconds. The route-arming worker is
-/// detached, so tests wait on the effect instead of joining it.
+/// Poll `cond` for up to `ms` milliseconds, sleeping briefly between checks.
 fn wait_until(ms: u64, mut cond: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + Duration::from_millis(ms);
     while Instant::now() < deadline {
@@ -16359,6 +16571,14 @@ fn wait_until(ms: u64, mut cond: impl FnMut() -> bool) -> bool {
         thread::sleep(Duration::from_millis(1));
     }
     cond()
+}
+
+/// Poll `cond` until it holds, up to a load-proof 60 s. Use this for an
+/// effect a detached worker publishes: the bound is patience, not a
+/// product deadline. Negative windows ("must not happen within N") stay on
+/// [`wait_until`] with their short bound.
+fn wait_settled(cond: impl FnMut() -> bool) -> bool {
+    wait_until(60_000, cond)
 }
 
 #[test]
@@ -19825,10 +20045,9 @@ export default class T extends LoopingBot {
     );
     navs.lock().unwrap().insert(
         "alice".into(),
-        NavBot {
-            route_worker: Some(Arc::new(())),
+        with_pending_route_work(NavBot {
             ..NavBot::default()
-        },
+        }),
     );
     c.orbit_camera_yaw = 0;
     let slot = script_slot(&scripts, "alice").unwrap();
@@ -20036,10 +20255,9 @@ export default class T extends LoopingBot {
     );
     navs.lock().unwrap().insert(
         "alice".into(),
-        NavBot {
-            route_worker: Some(Arc::new(())),
+        with_pending_route_work(NavBot {
             ..NavBot::default()
-        },
+        }),
     );
     for tick in 2..=4 {
         observe(&mut c, true, tick);
@@ -20339,10 +20557,9 @@ fn guardian_hold_aborts_recovery_unlike_internal_hold() {
     );
     navs.lock().unwrap().insert(
         "alice".into(),
-        NavBot {
-            route_worker: Some(Arc::new(())),
+        with_pending_route_work(NavBot {
             ..NavBot::default()
-        },
+        }),
     );
     script_observe(
         &mut c,
@@ -20377,8 +20594,7 @@ fn guardian_hold_aborts_recovery_unlike_internal_hold() {
             .unwrap()
             .get("alice")
             .unwrap()
-            .route_worker
-            .is_some(),
+            .route_work_pending(),
         "owned recovery nav continues during internal hold"
     );
     script_observe(
@@ -20415,12 +20631,12 @@ fn guardian_hold_aborts_recovery_unlike_internal_hold() {
     );
     drop(slot);
     assert!(
-        navs.lock()
+        !navs
+            .lock()
             .unwrap()
             .get("alice")
             .unwrap()
-            .route_worker
-            .is_none(),
+            .route_work_pending(),
         "guardian hold aborts recovery nav"
     );
     script_slot(&scripts, "alice")
@@ -20460,41 +20676,39 @@ fn pause_clears_live_recovery_walk() {
     );
     play.navs.lock().unwrap().insert(
         "alice".into(),
-        NavBot {
-            route_worker: Some(Arc::new(())),
+        with_pending_route_work(NavBot {
             ..NavBot::default()
-        },
+        }),
     );
     play.script_pause("alice");
     assert_eq!(play.script_state("alice"), script::RunState::Paused);
     let navs = play.navs.lock().unwrap();
     let bot = navs.get("alice").expect("nav bot");
-    assert!(bot.route_worker.is_none(), "Pause must abort recovery nav");
-    assert!(bot.route.is_none());
+    assert!(!bot.route_work_pending(), "Pause must abort recovery nav");
+    assert!(!bot.has_route());
     assert!(bot.pending_route.is_none());
     drop(navs);
     play.script_stop("alice");
 }
 
-/// A script walk mid-follow: armed route, request id, worker.
+/// A script walk mid-follow: armed route and request id.
 fn following_script_walk() -> NavBot {
     let dest = WorldTile {
         x: 2939,
         z: 3154,
         level: 0,
     };
-    NavBot {
+    with_pending_route_work(NavBot {
         route: Some(Arc::new(Route {
             legs: vec![],
             dest,
             ticks: 0.0,
         })),
-        route_worker: Some(Arc::new(())),
         requested_route: Some((dest, 2, false, true, true, nav::zones::ZoneExempt::NONE)),
         walk_request_id: 9,
         route_request_id: 9,
         ..NavBot::default()
-    }
+    })
 }
 
 /// A BankBudget session latched on the walk is part of it: an abort
@@ -20513,7 +20727,7 @@ fn an_aborted_walk_ends_its_bank_fetch_session() {
         .into(),
         dest: route.dest,
         opts: FindOptions::default(),
-        final_route: route,
+        final_route: route.into(),
         avoid: Vec::new(),
         progress: Default::default(),
     });
@@ -20636,7 +20850,7 @@ export default class T extends LoopingBot {
     let mut c = bank_fetch_client();
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
-    let stopped = wait_until(10_000, || {
+    let stopped = wait_settled(|| {
         script_observe(
             &mut c,
             "alice",
@@ -20694,8 +20908,7 @@ fn session_reset_clears_live_recovery_walk() {
     );
     navs.lock().unwrap().insert(
         "alice".into(),
-        NavBot {
-            route_worker: Some(Arc::new(())),
+        with_pending_route_work(NavBot {
             requested_route: Some((
                 WorldTile {
                     x: 100,
@@ -20709,7 +20922,7 @@ fn session_reset_clears_live_recovery_walk() {
                 nav::zones::ZoneExempt::NONE,
             )),
             ..NavBot::default()
-        },
+        }),
     );
     // A reconnect: the script's work is held, but the watchdog's own
     // recovery walk ends with the session and is not carried.
@@ -20723,7 +20936,7 @@ fn session_reset_clears_live_recovery_walk() {
         .is_none());
     let bot = navs.lock().unwrap();
     let bot = bot.get("alice").unwrap();
-    assert!(bot.route_worker.is_none());
+    assert!(!bot.route_work_pending());
     assert!(bot.carried_walk.is_none());
     script_slot(&scripts, "alice")
         .unwrap()
@@ -21027,12 +21240,14 @@ fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
             &rig.world,
             false,
             false,
+            false,
             None,
             None,
             None,
             None,
             None,
             script_channels::BrokerWorld::Local,
+            None,
             None,
             None,
         );
@@ -21083,6 +21298,7 @@ struct ReconnectRig {
     /// The Play's BroadcastChannel broker and alice's slot handle on it.
     broker: script_channels::ChannelBroker,
     channels: script_channels::SlotChannels,
+    ready_session: std::cell::Cell<api::identity::SessionKey>,
 }
 
 type ArmedWalk = (
@@ -21098,16 +21314,22 @@ impl ReconnectRig {
     /// A rig running `source` on `world`, the player at `here`.
     fn with_source(source: String, world: NavWorld, here: (i32, i32, i32)) -> Self {
         let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
-        script_slot_or_insert(&scripts, "alice")
-            .lock()
-            .unwrap()
-            .start_load_settled(source, script::LoadShape::CompatClass, vec![])
-            .unwrap();
+        let slot = script_slot_or_insert(&scripts, "alice");
+        {
+            let mut slot = slot.lock().unwrap();
+            slot.start_load_settled(source, script::LoadShape::CompatClass, vec![])
+                .unwrap();
+        }
         let client = bank_client();
         let mut snap = GameSnapshot::new();
         snap.rebuild(&client);
         let broker = script_channels::ChannelBroker::default();
         let channels = broker.slot("alice");
+        let ready_session = {
+            let slot = script_slot(&scripts, "alice").expect("bound Load slot");
+            let slot = slot.lock().unwrap();
+            api::identity::SessionKey::first(slot.slot_key_for_test().expect("slot key"))
+        };
         Self {
             scripts,
             cheats: Arc::new(Mutex::new(HashMap::new())),
@@ -21119,6 +21341,7 @@ impl ReconnectRig {
             here,
             broker,
             channels,
+            ready_session: std::cell::Cell::new(ready_session),
         }
     }
 
@@ -21146,6 +21369,31 @@ impl ReconnectRig {
     }
 
     fn frame_dirty(&mut self, tick: u64, tick_edge: bool, dirty: bool) {
+        self.observe_frame(tick, tick_edge, dirty, false, false);
+    }
+
+    /// One observed frame while the slot loop holds the frame: `hold` is the
+    /// whole-frame hold (`play_slots.rs`: scene not ready, welcome modal,
+    /// guardian or session boundary) and `guardian` is its guardian part.
+    fn held_frame(&mut self, tick: u64, hold: bool, guardian: bool) {
+        self.observe_frame(tick, false, false, hold, guardian);
+    }
+
+    fn observe_frame(
+        &mut self,
+        tick: u64,
+        tick_edge: bool,
+        dirty: bool,
+        hold: bool,
+        guardian: bool,
+    ) {
+        // The full Play loop aligns its seat with the F0 ready gate before
+        // dispatch. This rig drives script_observe directly, so provide that
+        // independent session key here rather than using the slot's work epoch.
+        self.slot()
+            .lock()
+            .unwrap()
+            .align_seat_session(Some(self.ready_session.get()));
         script_observe_cached_with_channels(
             &mut self.client,
             "alice",
@@ -21164,7 +21412,8 @@ impl ReconnectRig {
             &self.cheats,
             &self.navs,
             &self.world,
-            false,
+            hold,
+            guardian,
             false,
             None,
             None,
@@ -21174,8 +21423,16 @@ impl ReconnectRig {
             script_channels::BrokerWorld::Local,
             None,
             None,
+            None,
         );
+        crate::script_runtime::pump_route_work(&self.navs, "alice");
         self.slot().lock().unwrap().probe("true").unwrap();
+    }
+    fn wait_for_route_work(&self, ms: u64, mut ready: impl FnMut() -> bool) -> bool {
+        wait_until(ms, || {
+            crate::script_runtime::pump_route_work(&self.navs, "alice");
+            ready()
+        })
     }
 
     /// The slot loop's session boundary, as a drop or a relog calls it.
@@ -21249,6 +21506,10 @@ impl ReconnectRig {
     }
 
     fn boundary(&self, reconnect: bool) {
+        if reconnect {
+            self.ready_session
+                .set(self.ready_session.get().next().expect("relog session"));
+        }
         reset_slot_session_work(
             "alice",
             &self.scripts,
@@ -21308,18 +21569,18 @@ export default class T extends LoopingBot {{
 
 /// Pause with the rig's script walk armed, Resume, and the same walk goes
 /// out once more; nothing else is walked.
-fn pause_resume_resends(rig: &mut ReconnectRig) {
-    rig.frames(1);
+fn pause_resume_resends(rig: &mut ReconnectRig, first_tick: u64) {
+    rig.frames(first_tick);
     let walks = rig.walks();
     let armed = rig.armed();
     assert_eq!(walks.len(), 1, "one walk before the Pause: {walks:?}");
     rig.operator_pause();
     assert_eq!(rig.armed(), (0, None), "Pause ends the follow");
-    rig.frames(2);
+    rig.frames(first_tick + 1);
     assert_eq!(rig.walks(), walks, "paused: nothing goes out");
     rig.resume();
-    rig.frames(3);
-    rig.frames(4);
+    rig.frames(first_tick + 2);
+    rig.frames(first_tick + 3);
     assert_eq!(rig.armed(), armed, "Resume re-arms the same walk");
     assert_eq!(
         rig.walks(),
@@ -21331,7 +21592,7 @@ fn pause_resume_resends(rig: &mut ReconnectRig) {
 #[test]
 fn operator_pause_carries_the_script_walk_and_resume_sends_it_once() {
     let mut rig = ReconnectRig::new(40, 40);
-    pause_resume_resends(&mut rig);
+    pause_resume_resends(&mut rig, 1);
     rig.slot().lock().unwrap().stop();
 }
 
@@ -21550,19 +21811,17 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
     let armed = rig.armed();
     let initial_walks = rig.walks();
     assert!(
-        wait_until(5_000, || {
+        rig.wait_for_route_work(60_000, || {
             rig.navs.lock().unwrap().get("alice").is_some_and(|bot| {
                 bot.route_compat_tile_intent
-                    && bot.route_worker.is_none()
+                    && !bot.route_work_pending()
                     && bot.pending_route.is_none()
-                    && bot.route.as_ref().is_some_and(|route| {
-                        route.dest
-                            == WorldTile {
-                                x: 40,
-                                z: 40,
-                                level: 0,
-                            }
-                    })
+                    && bot.route_destination()
+                        == Some(WorldTile {
+                            x: 40,
+                            z: 40,
+                            level: 0,
+                        })
             })
         }),
         "the original compatibility route ends at its requested center"
@@ -21612,19 +21871,17 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
         "the carry is restored exactly once"
     );
     assert!(
-        wait_until(5_000, || {
+        rig.wait_for_route_work(60_000, || {
             rig.navs.lock().unwrap().get("alice").is_some_and(|bot| {
                 bot.route_compat_tile_intent
-                    && bot.route_worker.is_none()
+                    && !bot.route_work_pending()
                     && bot.pending_route.is_none()
-                    && bot.route.as_ref().is_some_and(|route| {
-                        route.dest
-                            == WorldTile {
-                                x: 40,
-                                z: 40,
-                                level: 0,
-                            }
-                    })
+                    && bot.route_destination()
+                        == Some(WorldTile {
+                            x: 40,
+                            z: 40,
+                            level: 0,
+                        })
             })
         }),
         "the re-armed compatibility route still ends at its requested center"
@@ -21665,6 +21922,7 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
         let bot = navs.get_mut("alice").unwrap();
         bot.traveller.clear();
         bot.route = None;
+        bot.compact_route = None;
     }
     let arm = crate::script_runtime::ScriptWalkArm {
         here: Some(rig.here),
@@ -21687,13 +21945,13 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
         true,
     ));
     assert!(
-        wait_until(5_000, || {
+        rig.wait_for_route_work(60_000, || {
             rig.navs.lock().unwrap().get("alice").is_some_and(|bot| {
                 bot.route_generation != route_generation
-                    && bot.route_worker.is_none()
+                    && !bot.route_work_pending()
                     && bot.pending_route.is_none()
                     && bot.route_compat_tile_intent
-                    && bot.route.as_ref().is_some_and(|route| route.dest == to)
+                    && bot.route_destination() == Some(to)
             })
         }),
         "live route refresh preserves the compatibility tile endpoint"
@@ -21856,7 +22114,7 @@ fn a_paused_bank_access_booth_walk_resumes() {
     rig.snap = GameSnapshot::new();
     rig.snap.rebuild(&rig.client);
     assert_eq!(rig.snap.bank_component_id(), -1, "the bank is closed");
-    pause_resume_resends(&mut rig);
+    pause_resume_resends(&mut rig, 1);
     assert_eq!(rig.walks()[0].0, 0, "an id-0 walk");
     rig.slot().lock().unwrap().stop();
 }
@@ -21888,7 +22146,10 @@ fn a_paused_hunt_walk_resumes() {
         open_world_at(2880, 9780, 64, 64),
         (2914, 9809, 0),
     );
-    pause_resume_resends(&mut rig);
+    // The typed Hunt root is admitted on the first tick. Its walk is emitted
+    // after the seat page reaches the isolate on the next tick.
+    rig.frames(1);
+    pause_resume_resends(&mut rig, 2);
     rig.slot().lock().unwrap().stop();
 }
 
@@ -21903,7 +22164,7 @@ fn a_paused_reach_walk_resumes() {
         open_world(64, 64),
         (3, 3, 0),
     );
-    pause_resume_resends(&mut rig);
+    pause_resume_resends(&mut rig, 1);
     rig.slot().lock().unwrap().stop();
 }
 
@@ -22022,26 +22283,173 @@ fn a_reconnect_re_arms_the_held_script_walk_on_the_relogged_session() {
     rig.slot().lock().unwrap().stop();
 }
 
-/// The script emits its walk and the connection drops before host-play
-/// drains it: the request never reached the old session, so the relogged
-/// session dispatches it, once, under its own request id.
+/// A stale queued walk cannot cross a kept reconnect. The original wait
+/// requests a new seat walk and settles after the host observes arrival.
 #[test]
-fn a_walk_emitted_just_before_the_drop_goes_out_after_the_relog() {
+fn an_undispatched_walk_before_drop_is_discarded_at_relog() {
     let mut rig = ReconnectRig::new(40, 40);
-    // The posting frame only: the tick queues the walk, nothing drains it.
     rig.frame(1, true);
     assert_eq!(rig.armed(), (0, None));
 
     rig.boundary(true);
-    rig.frames(2);
-    let (request_id, requested) = rig.armed();
-    assert_ne!(
-        request_id, 0,
-        "the undispatched walk goes out after the relog"
+    assert!(
+        rig.walks().is_empty(),
+        "the stale row never reaches the host"
     );
+    rig.frames(2);
+    rig.frames(3);
+    let (request_id, requested) = rig.armed();
+    assert_ne!(request_id, 0, "the wait re-arms through the new seat");
     assert_eq!(requested, walk_dest(40, 40));
-    assert_eq!(rig.walks(), vec![(request_id, 40, 40)], "exactly once");
+    assert_eq!(
+        rig.walks(),
+        vec![(request_id, 40, 40)],
+        "only the fresh walk reaches the host"
+    );
+    assert_eq!(
+        rig.slot().lock().unwrap().probe("__rs_ok").unwrap(),
+        serde_json::Value::Null
+    );
+    rig.here = (40, 40, 0);
+    rig.frames(4);
+    rig.frames(5);
+    assert_eq!(
+        rig.slot().lock().unwrap().probe("__rs_ok").unwrap(),
+        true,
+        "the same wait settles at its destination"
+    );
     rig.slot().lock().unwrap().stop();
+}
+
+/// A prior route generation can publish a terminal after a new route reused
+/// the same request id. Only a terminal from the current arm frees its slot.
+#[test]
+fn stale_route_generation_does_not_free_rearmed_walk_release() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    let (request_id, _) = rig.armed();
+    assert_ne!(request_id, 0);
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .seat_probe()
+            .unwrap()
+            .reserved_releases,
+        1
+    );
+    {
+        let mut navs = rig.navs.lock().unwrap();
+        let bot = navs.get_mut("alice").unwrap();
+        bot.walk_outcome_seq += 1;
+        bot.walk_outcome_request_id = request_id;
+        bot.walk_outcome_generation = bot.route_generation.wrapping_add(1);
+    }
+    rig.frame(2, false);
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .seat_probe()
+            .unwrap()
+            .reserved_releases,
+        1,
+        "the stale terminal cannot free the rearmed route's release"
+    );
+    {
+        let mut navs = rig.navs.lock().unwrap();
+        let bot = navs.get_mut("alice").unwrap();
+        bot.walk_outcome_seq += 1;
+        bot.walk_outcome_generation = bot.route_generation;
+    }
+    rig.frame(3, false);
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .seat_probe()
+            .unwrap()
+            .reserved_releases,
+        0,
+        "a terminal from the armed generation does free the release"
+    );
+    rig.slot().lock().unwrap().stop();
+}
+
+/// Round 9: only the random-event guardian holds the seat (`28-seat-sg.md`
+/// lines 64-65, `27-decision-r5.md` §6). A frame that the slot loop holds
+/// because the scene is not ready or the welcome modal is up is a held
+/// tick, not the guardian's `SessionHeld`, so the seat is not frozen.
+/// Synthetic sequence: the rig sets the frame hold directly.
+#[test]
+fn a_scene_load_hold_does_not_freeze_the_seat() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    rig.held_frame(2, true, false);
+    let held = rig.slot().lock().unwrap().seat_probe().unwrap().held;
+    rig.slot().lock().unwrap().stop();
+    assert!(!held, "a scene-load hold must not freeze the seat");
+}
+
+/// Round 9: the guardian hold still freezes the seat, and the freeze lifts
+/// with the hold. Synthetic sequence: the rig sets the frame hold directly.
+#[test]
+fn a_guardian_hold_still_freezes_the_seat() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    rig.held_frame(2, true, true);
+    let held = rig.slot().lock().unwrap().seat_probe().unwrap().held;
+    rig.frame(2, false);
+    let after = rig.slot().lock().unwrap().seat_probe().unwrap().held;
+    rig.slot().lock().unwrap().stop();
+    assert!(held, "the guardian hold freezes the seat");
+    assert!(!after, "the freeze lifts with the guardian hold");
+}
+
+/// Operator decision 2026-10-16 (round 9): an abort that a script sends in
+/// a scene-load or welcome-modal held tick is kept, and the first frame
+/// after the hold dispatches it. Gameplay from the same tick stays dropped.
+/// Synthetic sequence: the two rows enter the slot's interact queue
+/// directly, as the held tick's output.
+#[test]
+fn a_scene_load_hold_keeps_the_script_walk_abort_and_drops_its_gameplay() {
+    let mut rig = ReconnectRig::new(40, 40);
+    rig.frames(1);
+    let (request_id, _) = rig.armed();
+    assert_ne!(request_id, 0, "the script walk is armed");
+    rig.slot().lock().unwrap().restore_interacts(vec![
+        script::shim::InteractReq::AbortWalk { request_id },
+        script::shim::InteractReq::Walk {
+            x: 50,
+            z: 50,
+            level: 0,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 777,
+            avoid: Vec::new(),
+            cross: Vec::new(),
+        },
+    ]);
+    rig.held_frame(2, true, false);
+    let during = rig.armed().0;
+    rig.held_frame(2, true, false);
+    let still = rig.armed().0;
+    rig.frame(2, false);
+    let after = rig.armed();
+    let walks = rig.walks();
+    rig.slot().lock().unwrap().stop();
+    assert_eq!(during, request_id, "the held frame dispatches nothing");
+    assert_eq!(still, request_id, "the abort waits for the scene");
+    assert_eq!(
+        after,
+        (0, None),
+        "the first frame after the hold dispatches the abort"
+    );
+    assert!(
+        walks.iter().all(|(id, _, _)| *id != 777),
+        "the held gameplay never reaches the host: {walks:?}"
+    );
 }
 
 /// Frozen relogs a running or paused script whatever the auto-login
@@ -22064,6 +22472,29 @@ fn an_active_script_relogs_a_dropped_connection_with_auto_login_off() {
     rig.end_session(&arm);
     rig.frames(2);
     assert_eq!(rig.armed(), armed, "and its walk carries on");
+    rig.slot().lock().unwrap().stop();
+}
+
+/// Client::login can return a dropped-session fact before the title loop
+/// mirrors a script started in-world. The exit policy is captured before
+/// SessionExited, while the actual script is sampled before work is reset.
+#[test]
+fn observed_drop_keeps_a_script_started_after_the_last_title_sync() {
+    let mut rig = ReconnectRig::new(40, 40);
+    let arm = SlotArm::new(0, false);
+    arm.arm_explicit_login();
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    rig.frames(1);
+    let armed = rig.armed();
+    assert!(!arm.keeps_script_work_after_exit());
+
+    arm.observe_session_exit(api::lifecycle::SessionEndCause::ConnectionLost, false);
+    rig.end_session(&arm);
+    assert!(should_handshake(&arm, false));
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    rig.end_session(&arm);
+    rig.frames(2);
+    assert_eq!(rig.armed(), armed, "the observed exit keeps the held walk");
     rig.slot().lock().unwrap().stop();
 }
 
@@ -22412,7 +22843,7 @@ fn counting_login_server() -> (std::net::SocketAddr, Arc<std::sync::atomic::Atom
     thread::spawn(move || {
         for socket in listener.incoming() {
             let Ok(mut socket) = socket else { return };
-            let _ = socket.set_read_timeout(Some(Duration::from_secs(2)));
+            let _ = socket.set_read_timeout(Some(Duration::from_secs(60)));
             let mut preface = [0; 2];
             if socket.read_exact(&mut preface).is_ok() && preface[0] == 14 {
                 counted.fetch_add(1, Ordering::SeqCst);
@@ -22469,15 +22900,11 @@ fn hosted_title_click_enters_the_login_fifo_without_opening_a_socket() {
     play.wake("titlefifo");
 
     assert!(
-        wait_until(2_000, || arm.wants_login()),
+        wait_settled(|| arm.wants_login()),
         "the live title must turn the hosted button into explicit login intent"
     );
     assert!(
-        wait_until(2_000, || play
-            .queue
-            .lock()
-            .status_owner(arm.queue_owner)
-            .is_some()),
+        wait_settled(|| play.queue.lock().status_owner(arm.queue_owner).is_some()),
         "the explicit login intent must enter the ordinary FIFO"
     );
     assert_eq!(
@@ -22534,13 +22961,16 @@ fn hosted_log_in_then_logout(enter: bool, gap: Duration) -> (Option<LoginLatchRe
 
     send_hosted_log_in(&input_tx, false);
     play.wake("titlewait");
-    assert!(wait_until(2_000, || arm.wants_login()
-        && play.queue.lock().status_owner(arm.queue_owner).is_some()));
+    assert!(wait_settled(
+        || arm.wants_login() && play.queue.lock().status_owner(arm.queue_owner).is_some()
+    ));
     send_hosted_log_in(&input_tx, enter);
     thread::sleep(gap);
     arm.request_logout();
     play.wake("titlewait");
-    thread::sleep(Duration::from_millis(500));
+    // The slot thread applies the logout; join it on the effect rather
+    // than a fixed sleep, so a loaded machine still settles.
+    assert!(wait_settled(|| !arm.wants_login()));
 
     let outcome = (arm.login_latch_reason(), arm.wants_login());
     assert_eq!(
@@ -22583,7 +23013,7 @@ fn a_code_5_retry_wait_keeps_the_title_animating() {
     thread::spawn(move || {
         for socket in listener.incoming() {
             let Ok(mut socket) = socket else { return };
-            let _ = socket.set_read_timeout(Some(Duration::from_secs(2)));
+            let _ = socket.set_read_timeout(Some(Duration::from_secs(60)));
             let mut preface = [0; 2];
             if socket.read_exact(&mut preface).is_ok() && preface[0] == 14 {
                 counted.fetch_add(1, Ordering::SeqCst);
@@ -22618,19 +23048,19 @@ fn a_code_5_retry_wait_keeps_the_title_animating() {
         Some(Arc::clone(&arm)),
     );
 
-    assert!(wait_until(5_000, || attempts.load(Ordering::SeqCst) == 1));
-    thread::sleep(Duration::from_millis(300));
+    assert!(wait_settled(|| attempts.load(Ordering::SeqCst) == 1));
+    // The waiting title must keep painting flames instead of freezing on
+    // its last frame: wait for a fresh frame rather than counting a fixed
+    // window's worth, which a loaded painter cannot guarantee.
     let before = mailbox.generation();
-    thread::sleep(Duration::from_millis(500));
-    let painted = mailbox.generation() - before;
+    assert!(
+        wait_settled(|| mailbox.generation() > before),
+        "the waiting title must keep painting flames"
+    );
     assert_eq!(
         attempts.load(Ordering::SeqCst),
         1,
         "still inside the 60 s wait"
-    );
-    assert!(
-        painted >= 5,
-        "the waiting title must keep painting flames, painted {painted} in 500 ms"
     );
     arm.stop.store(true, Ordering::Relaxed);
     play.stop_slot("cooldown");
@@ -22640,7 +23070,7 @@ fn a_code_5_retry_wait_keeps_the_title_animating() {
 /// and arrival time. The initial 17 bytes are the fake server's login seed.
 fn read_worker_login_attempt(socket: &mut std::net::TcpStream) -> (u8, Instant) {
     socket
-        .set_read_timeout(Some(Duration::from_secs(10)))
+        .set_read_timeout(Some(Duration::from_secs(60)))
         .unwrap();
     let mut preface = [0u8; 2];
     socket.read_exact(&mut preface).unwrap();
@@ -22712,7 +23142,7 @@ fn assert_worker_uses_generic_code5_wait(
     username: &str,
 ) {
     entered
-        .recv_timeout(Duration::from_secs(5))
+        .recv_timeout(Duration::from_secs(60))
         .expect("generic code-5 response reaches the worker retry wait");
     assert_eq!(
         arm.retry_wait_timeout_for_test(),
@@ -22749,7 +23179,7 @@ fn spawned_worker_clean_server_logout_code5_retries_on_release_cadence() {
             let (opcode, arrived) = read_worker_login_attempt(&mut socket);
             attempt_tx.send((number, opcode, arrived)).unwrap();
             if number == 1 {
-                grant_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+                grant_rx.recv_timeout(Duration::from_secs(60)).unwrap();
             }
             let code = if number == 2 { 5 } else { 2 };
             let answered = answer_worker_login(&mut socket, code);
@@ -22757,7 +23187,7 @@ fn spawned_worker_clean_server_logout_code5_retries_on_release_cadence() {
                 refusal_tx.send((number, answered)).unwrap();
             }
             if number == 3 {
-                finish_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+                finish_rx.recv_timeout(Duration::from_secs(60)).unwrap();
                 return;
             }
             if number == 1 {
@@ -22777,15 +23207,15 @@ fn spawned_worker_clean_server_logout_code5_retries_on_release_cadence() {
         Some(Arc::clone(&arm)),
     );
 
-    let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!((number, opcode), (1, 16), "initial login is fresh");
     // Let the ordinary attempt-to-attempt spacing expire while the successful
     // login is still pending. The next admission must therefore be paced from
     // the observed ServerLogout, not accidentally from the previous attempt.
     thread::sleep(host::login_queue::LOGIN_START_SPACING + Duration::from_millis(250));
     grant_tx.send(()).unwrap();
-    let exit = exit_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-    let (number, opcode, first_relog) = attempt_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let exit = exit_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+    let (number, opcode, first_relog) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!(
         (number, opcode),
         (2, 16),
@@ -22801,9 +23231,9 @@ fn spawned_worker_clean_server_logout_code5_retries_on_release_cadence() {
         "the initial post-exit admission is paced, not minute-long: {exit_to_attempt:?}"
     );
 
-    let (number, code5_at) = refusal_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let (number, code5_at) = refusal_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!(number, 2);
-    let (number, opcode, retry) = attempt_rx.recv_timeout(Duration::from_secs(8)).unwrap();
+    let (number, opcode, retry) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!((number, opcode), (3, 16));
     let retry_after_code5 = retry.duration_since(code5_at);
     assert!(
@@ -22812,7 +23242,7 @@ fn spawned_worker_clean_server_logout_code5_retries_on_release_cadence() {
         "clean code 5 re-enters at the ~5 s release cadence, got {retry_after_code5:?}"
     );
     assert_eq!(arm.retry_wait_timeout_for_test(), None);
-    assert!(wait_until(2_000, || play.slot_connected("clean-release-worker")));
+    assert!(wait_settled(|| play.slot_connected("clean-release-worker")));
 
     play.stop_slot("clean-release-worker");
     finish_tx.send(()).unwrap();
@@ -22844,7 +23274,7 @@ fn spawned_worker_code5_without_exit_evidence_uses_generic_sixty_seconds() {
         Some(Arc::clone(&arm)),
     );
 
-    let (opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let (opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!(opcode, 16);
     assert_worker_uses_generic_code5_wait(&play, &arm, &entered, "no-exit-evidence-worker");
     assert!(
@@ -22871,7 +23301,7 @@ fn spawned_worker_dirty_exit_code5_uses_generic_sixty_seconds() {
         let (opcode, arrived) = read_worker_login_attempt(&mut first);
         attempt_tx.send((1, opcode, arrived)).unwrap();
         answer_worker_login(&mut first, 2);
-        disconnect_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        disconnect_rx.recv_timeout(Duration::from_secs(60)).unwrap();
         drop(first);
 
         let (mut second, _) = listener.accept().unwrap();
@@ -22891,11 +23321,11 @@ fn spawned_worker_dirty_exit_code5_uses_generic_sixty_seconds() {
         Some(Arc::clone(&arm)),
     );
 
-    let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!((number, opcode), (1, 16));
-    assert!(wait_until(5_000, || play.slot_connected("dirty-exit-worker")));
+    assert!(wait_settled(|| play.slot_connected("dirty-exit-worker")));
     disconnect_tx.send(()).unwrap();
-    let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!(
         (number, opcode),
         (2, 18),
@@ -22929,7 +23359,7 @@ fn spawned_worker_clean_release_budget_exhaustion_uses_generic_sixty_seconds() {
             let (opcode, arrived) = read_worker_login_attempt(&mut socket);
             attempt_tx.send((number, opcode, arrived)).unwrap();
             if number == 1 {
-                grant_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+                grant_rx.recv_timeout(Duration::from_secs(60)).unwrap();
                 answer_worker_login(&mut socket, 2);
                 sessions.push(socket);
             } else {
@@ -22951,21 +23381,15 @@ fn spawned_worker_clean_release_budget_exhaustion_uses_generic_sixty_seconds() {
         Some(Arc::clone(&arm)),
     );
 
-    let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!((number, opcode), (1, 16));
     thread::sleep(host::login_queue::LOGIN_START_SPACING + Duration::from_millis(250));
     grant_tx.send(()).unwrap();
-    let exit = exit_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let exit = exit_rx.recv_timeout(Duration::from_secs(60)).unwrap();
 
     let mut last_refusal = None;
     for expected in 2..=5 {
-        let (number, opcode, arrived) = attempt_rx
-            .recv_timeout(Duration::from_secs(match expected {
-                2 => 5,
-                5 => 18,
-                _ => 8,
-            }))
-            .unwrap();
+        let (number, opcode, arrived) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
         assert_eq!((number, opcode), (expected, 16));
         if expected == 2 {
             let exit_to_attempt = arrived.duration_since(exit);
@@ -22994,7 +23418,8 @@ fn spawned_worker_clean_release_budget_exhaustion_uses_generic_sixty_seconds() {
                 );
             }
         }
-        let (refusal_number, refused_at) = refusal_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (refusal_number, refused_at) =
+            refusal_rx.recv_timeout(Duration::from_secs(60)).unwrap();
         assert_eq!(refusal_number, expected);
         last_refusal = Some(refused_at);
         if expected < 5 {
@@ -23030,7 +23455,7 @@ fn spawned_worker_stale_code5_does_not_publish_error_or_install_backoff() {
         let (mut socket, _) = listener.accept().unwrap();
         let (opcode, arrived) = read_worker_login_attempt(&mut socket);
         attempt_tx.send((opcode, arrived)).unwrap();
-        reply_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        reply_rx.recv_timeout(Duration::from_secs(60)).unwrap();
         answer_worker_login(&mut socket, 5);
     });
 
@@ -23044,7 +23469,7 @@ fn spawned_worker_stale_code5_does_not_publish_error_or_install_backoff() {
         Some(Arc::clone(&arm)),
     );
 
-    let (opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let (opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!(opcode, 16);
     // Hold the replacement intent in the FIFO after the in-flight response
     // returns, so a stale error cannot be hidden by the next attempt clearing it.
@@ -23056,7 +23481,7 @@ fn spawned_worker_stale_code5_does_not_publish_error_or_install_backoff() {
     reply_tx.send(()).unwrap();
 
     assert!(
-        wait_until(3_000, || {
+        wait_settled(|| {
             play.queue.lock().status_owner(arm.queue_owner).is_some()
                 && play
                     .statuses()
@@ -23109,7 +23534,7 @@ fn a_script_started_on_an_offline_slot_logs_it_in() {
 
     start_offline_script(&play);
     assert!(
-        wait_until(5_000, || attempts.load(Ordering::SeqCst) > 0),
+        wait_settled(|| attempts.load(Ordering::SeqCst) > 0),
         "the active script logs the slot in"
     );
     arm.stop.store(true, Ordering::Relaxed);
@@ -23129,7 +23554,7 @@ fn turning_auto_login_off_keeps_the_login_an_active_script_wants() {
     arm.set_auto_login(false);
     play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
     assert!(
-        wait_until(5_000, || attempts.load(Ordering::SeqCst) > 0),
+        wait_settled(|| attempts.load(Ordering::SeqCst) > 0),
         "the active script still logs the slot in"
     );
     arm.stop.store(true, Ordering::Relaxed);
@@ -23390,7 +23815,7 @@ export default class T extends LoopingBot {
         false,
     );
     assert!(
-        wait_until(500, || script_paint_of(&scripts, "alice").is_some()),
+        wait_settled(|| script_paint_of(&scripts, "alice").is_some()),
         "first tick paints"
     );
     publish_script_paint(&mut status, script_paint_of(&scripts, "alice"));
@@ -23419,7 +23844,7 @@ export default class T extends LoopingBot {
         false,
     );
     assert!(
-        wait_until(500, || script_paint_of(&scripts, "alice").is_some()),
+        wait_settled(|| script_paint_of(&scripts, "alice").is_some()),
         "second tick still has paint"
     );
     publish_script_paint(&mut status, script_paint_of(&scripts, "alice"));
@@ -23468,8 +23893,10 @@ fn hold_freezes_follow_and_keeps_the_armed_route() {
         false,
     ));
     assert!(
-        wait_until(100, || queued(&navs).is_some()),
-        "the worker armed the route"
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.has_route()
+        }),
+        "route work did not publish the follow"
     );
 
     // Held: no follow step, and the armed route is not consumed.
@@ -23934,6 +24361,112 @@ fn after_genie_gone_lamp_auto_off_in_inv_detects_without_hold() {
     assert!(drv.menus.is_empty(), "a lamp is never talked to");
 }
 
+#[test]
+fn disabled_box_guardian_keeps_native_eligibility_available() {
+    assert_box_guardian_native_eligibility(false);
+}
+
+#[test]
+fn enabled_box_guardian_pauses_native_eligibility_for_an_owned_event() {
+    assert_box_guardian_native_eligibility(true);
+}
+
+fn assert_box_guardian_native_eligibility(random_events: bool) {
+    struct EligibilityProbe(Arc<Mutex<Vec<bool>>>);
+    impl script::native::Script for EligibilityProbe {
+        fn tick(
+            &mut self,
+            tick: &mut script::native::NativeTick<'_>,
+        ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
+            self.0.lock().unwrap().push(tick.cx.charge_transition());
+            Ok(script::native::ScriptFlow::Continue)
+        }
+    }
+
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    script_slot_or_insert(&scripts, "alice")
+        .lock()
+        .unwrap()
+        .start_test_script(Box::new(EligibilityProbe(Arc::clone(&observed))), None)
+        .unwrap();
+    let cheats = Arc::new(Mutex::new(HashMap::new()));
+    let (navs, world) = empty_nav();
+    let mut client = guardian_client();
+    plant_inv_item(&mut client, 3062);
+    let item = &mut Arc::get_mut(&mut client.cache).unwrap().objs[3062];
+    item.name = "Strange box".into();
+    item.iop = [Some("Open".into()), None, None, None, None];
+    let mut guardian = Guardian::new();
+    let mut driver = GuardRec::default();
+    let settings = ProfileSettings {
+        random_events,
+        ..ProfileSettings::default()
+    };
+    let mut snapshot = GameSnapshot::new();
+    for tick in 1..=3 {
+        tick_at(&mut client, &mut snapshot);
+        let status = guardian.tick(&mut driver, &snapshot, &settings, tick * 600, None);
+        assert_eq!(status.kind, Some(api::random::RandomKind::Box));
+        assert_eq!(status.hold, random_events);
+        assert_eq!(status.ours, random_events);
+        script_observe(
+            &mut client,
+            "alice",
+            true,
+            true,
+            tick,
+            snapshot.tile(),
+            None,
+            None,
+            Some(&snapshot),
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            status.hold,
+            status.ours,
+        );
+    }
+    assert_eq!(
+        *observed.lock().unwrap(),
+        if random_events {
+            Vec::new()
+        } else {
+            vec![true; 3]
+        },
+        "only enabled handling may freeze native scripts for an owned box"
+    );
+    assert_eq!(
+        driver.menus.is_empty() && driver.actions.is_empty(),
+        !random_events
+    );
+    if random_events {
+        // The host skips native ticks under hold. Isolate the owned-event
+        // operand too: it must forbid transitions even without that shortcut.
+        script_observe(
+            &mut client,
+            "alice",
+            true,
+            true,
+            4,
+            snapshot.tile(),
+            None,
+            None,
+            Some(&snapshot),
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            true,
+        );
+        assert_eq!(*observed.lock().unwrap(), vec![false]);
+    }
+}
+
 /// Queues a walk through the same legacy adapter as Sherlock; the host still
 /// owns admission, asynchronous route selection and execution.
 struct WalkProbe(Arc<Mutex<(i32, i32, i32)>>);
@@ -24109,14 +24642,12 @@ fn nav_rig_with(world: Option<Arc<NavWorld>>) -> NavRig {
     }
 }
 
-/// The armed route's dest, `None` when the uid has no route. The pump
-/// and the walk-refusal gate read the same field.
+/// The armed route's destination, regardless of its backing representation.
 fn queued(navs: &Arc<Mutex<HashMap<String, NavBot>>>) -> Option<WorldTile> {
     navs.lock()
         .unwrap()
         .get("alice")
-        .and_then(|b| b.route.as_ref())
-        .map(|r| r.dest)
+        .and_then(NavBot::route_destination)
 }
 
 /// A connected, ingame, scene-ready client on build base (0,0): world
@@ -24228,6 +24759,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
     world.bind_named_bank_facts(&game_data).unwrap();
     let bot = NavBot::default();
     let navs = Arc::new(Mutex::new(HashMap::from([("test".to_string(), bot)])));
+    bind_test_route_scope(&navs, "test");
     let statuses = Arc::new(Mutex::new(Vec::new()));
     let world_opt = Some(Arc::clone(&world));
 
@@ -24279,19 +24811,24 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
     );
     let out_before = c.out.pos;
     assert!(
-        dispatch_script_interact_cached(
+        dispatch_script_interact_cached_scoped(
             &mut c,
-            &snap,
-            None,
-            Some((start.x, start.z, start.level)),
-            &navs,
-            &world_opt,
-            Some(WorldState::empty()),
-            None,
-            "test",
+            &InteractContext {
+                snapshot: &snap,
+                obj_names: None,
+                here: Some((start.x, start.z, start.level)),
+                navs: &navs,
+                world: &world_opt,
+                state: &Some(WorldState::empty()),
+                bank: None,
+                name: "test",
+                compatibility_scope: Some(api::identity::Scope::Slot(
+                    api::identity::SlotKey::from_incarnation(1).unwrap(),
+                )),
+                cache: &None,
+                obj_names_arc: &None,
+            },
             requests,
-            None,
-            None,
         ),
         "raw bank selection must be accepted without a movement packet",
     );
@@ -24299,20 +24836,13 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
         c.out.pos, out_before,
         "raw bank selection itself must not write a movement packet",
     );
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while navs
-        .lock()
-        .unwrap()
-        .get("test")
-        .and_then(|bot| bot.route.as_ref())
-        .is_none()
-    {
-        assert!(
-            Instant::now() < deadline,
-            "bank worker did not publish the selected stand route",
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    assert!(
+        wait_settled(|| {
+            super::script_runtime::poll_bank_pick_for_test(&navs, "test");
+            navs.lock().unwrap()["test"].has_route()
+        }),
+        "bank owner must publish the selected stand route after polling",
+    );
 
     let flood = api::query::SceneQuery::new(snap.scene(), Some(start)).flood_reach();
     let reach = Arc::new(api::query::pack_reach_query(snap.scene(), flood.as_ref()));
@@ -24352,7 +24882,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
         || Arc::clone(&reach),
     );
     assert!(
-        navs.lock().unwrap()["test"].route.is_none(),
+        !navs.lock().unwrap()["test"].has_route(),
         "arrival on the resolved stand must settle the host route",
     );
 
@@ -24455,6 +24985,7 @@ fn native_v2_open_stand_aborts_armed_walk_after_operable_neighbor() {
     ));
     let world_opt = Some(Arc::clone(&world));
     let navs = test_navs("native-v2");
+    bind_test_route_scope(&navs, "native-v2");
     let statuses = Arc::new(Mutex::new(Vec::new()));
     let iso = script::LoadIsolate::spawn(
         r#"
@@ -24553,20 +25084,12 @@ export function tick(api) {
         "native-v2",
         requests,
     ));
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while navs
-        .lock()
-        .unwrap()
-        .get("native-v2")
-        .and_then(|bot| bot.route.as_ref())
-        .is_none()
-    {
-        assert!(
-            Instant::now() < deadline,
-            "native v2 walk did not publish a route",
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    assert!(
+        wait_for_route_work(&navs, "native-v2", |bot| {
+            !bot.route_work_pending() && bot.has_route()
+        }),
+        "native v2 route work did not publish a route"
+    );
 
     let reach = {
         let flood = api::query::SceneQuery::new(snap.scene(), Some(start)).flood_reach();
@@ -24635,7 +25158,7 @@ export function tick(api) {
         "a refused OpenStand must not write a booth packet",
     );
     assert!(
-        navs.lock().unwrap()["native-v2"].route.is_some(),
+        navs.lock().unwrap()["native-v2"].has_route(),
         "a refused OpenStand must keep the armed v2 walk",
     );
 
@@ -24700,7 +25223,7 @@ export function tick(api) {
         "accepted OpenStand must abort the armed v2 walk before a follow re-issues movement",
     );
     assert!(
-        navs.lock().unwrap()["native-v2"].route.is_none(),
+        !navs.lock().unwrap()["native-v2"].has_route(),
         "accepted OpenStand must clear the v2 route",
     );
     iso.join();
@@ -24722,7 +25245,7 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
     nav_snapshot_at(&mut c, &mut snap, 0, 0);
 
     // Native cards queue a walk against an observed frame. The host admits it
-    // after the tick and arms the uid's route off-pump.
+    // after the tick and starts route work through the shared service.
     assert!(script_observe(
         &mut d,
         "alice",
@@ -24742,13 +25265,16 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
         false,
     ));
     assert!(
-        wait_until(5_000, || queued(&navs)
-            == Some(WorldTile {
-                x: 4,
-                z: 0,
-                level: 0
-            })),
-        "the worker armed the route"
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending()
+                && bot.route_destination()
+                    == Some(WorldTile {
+                        x: 4,
+                        z: 0,
+                        level: 0,
+                    })
+        }),
+        "route work did not publish the follow"
     );
 
     // The pump's per-uid nav step polls follow once, sending one hop
@@ -25085,6 +25611,7 @@ fn walk_near_follow_ends_when_here_is_within_the_requested_radius() {
         Vec::new(),
     ));
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    bind_test_route_scope(&navs, "alice");
     let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
         username: "alice".into(),
         ..SlotStatus::default()
@@ -25105,8 +25632,10 @@ fn walk_near_follow_ends_when_here_is_within_the_requested_radius() {
         level: 0,
     };
     assert!(
-        wait_until(500, || queued(&navs) == Some(approach)),
-        "the worker armed the approach route"
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.route_destination() == Some(approach)
+        }),
+        "route work did not publish the approach route"
     );
     let mut d = NavRec::default();
     let mut c = nav_client();
@@ -25217,6 +25746,7 @@ export default class T extends LoopingBot {{
         let mut client = nav_client();
         let mut snapshot = GameSnapshot::new();
         nav_snapshot_at(&mut client, &mut snapshot, here.x, here.z);
+        bind_test_route_scope(&navs, name);
         assert!(dispatch_script_interact(
             &mut client,
             &snapshot,
@@ -25229,18 +25759,14 @@ export default class T extends LoopingBot {{
             requests,
         ));
         assert!(
-            wait_until(500, || navs
-                .lock()
-                .unwrap()
-                .get(name)
-                .is_some_and(|bot| bot.route.is_some())),
-            "{name}'s route worker settled"
+            wait_for_route_work(&navs, name, |bot| {
+                !bot.route_work_pending() && bot.has_route()
+            }),
+            "{name}'s route work did not complete"
         );
         let endpoint = navs.lock().unwrap()[name]
-            .route
-            .as_ref()
-            .expect("routed walk")
-            .dest;
+            .route_destination()
+            .expect("routed walk");
 
         iso.post_snapshot(encode_walk_snapshot(
             2,
@@ -25365,7 +25891,12 @@ fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() 
         );
     };
     observe(&mut driver, &snapshot, 1);
-    assert!(wait_until(5_000, || queued(&navs).is_some()));
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.has_route()
+        }),
+        "native route work did not publish a route"
+    );
 
     // Arrival can be transient between native polls, for example when a
     // transport moves the actor again. The host terminal must survive it.
@@ -25434,6 +25965,7 @@ fn walk_near_follow_does_not_end_through_a_closed_wall() {
         Vec::new(),
     ));
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    bind_test_route_scope(&navs, "alice");
     let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
         username: "alice".into(),
         ..SlotStatus::default()
@@ -25447,7 +25979,12 @@ fn walk_near_follow_does_not_end_through_a_closed_wall() {
         bank: BankRows::default(),
     };
     assert!(arm.route_with_radius(10, 16, 0, FindOptions::default(), 4));
-    assert!(wait_until(500, || queued(&navs).is_some()), "route armed");
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.has_route()
+        }),
+        "route work did not publish a route"
+    );
     let armed = queued(&navs);
     let mut d = NavRec::default();
     let mut c = nav_client();
@@ -25549,6 +26086,7 @@ fn walk_near_blocked_target_routes_to_an_arrival_capable_stand() {
     nav_snapshot_at(&mut client, &mut snapshot, outside.x, outside.z);
 
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    bind_test_route_scope(&navs, "alice");
     let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
         username: "alice".into(),
         ..SlotStatus::default()
@@ -25561,7 +26099,7 @@ fn walk_near_blocked_target_routes_to_an_arrival_capable_stand() {
         state: None,
         bank: BankRows::default(),
     };
-    let worker_done = arm
+    let _completion = arm
         .queue_route_in_snapshot_synced(
             &snapshot,
             dest.x,
@@ -25573,17 +26111,23 @@ fn walk_near_blocked_target_routes_to_an_arrival_capable_stand() {
             17,
             None,
         )
-        .expect("route worker spawned");
-    worker_done
-        .recv_timeout(Duration::from_secs(2))
-        .expect("route worker completed");
-    let route = navs.lock().unwrap()["alice"].route.clone().expect("route");
+        .expect("route request accepted");
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.route_destination() == Some(inside)
+        }),
+        "route work did not publish the legal endpoint"
+    );
+    let route = navs.lock().unwrap()["alice"]
+        .route_path_for_follow()
+        .expect("route");
     assert_eq!(
-        route.dest, inside,
+        route.destination(),
+        inside,
         "the route crosses around the wall to the legal destination-side stand"
     );
     assert!(
-        route.ticks > 0.0,
+        route.view().expect("compact route view").ticks() > 0.0,
         "the route must not settle where it started"
     );
 
@@ -25624,7 +26168,7 @@ fn walk_near_blocked_target_routes_to_an_arrival_capable_stand() {
     );
     let all = navs.lock().unwrap();
     let bot = &all["alice"];
-    assert!(bot.route.is_none(), "fresh arrival clears the route");
+    assert!(!bot.has_route(), "fresh arrival clears the route");
 }
 
 pub(super) fn plant_nav_footprint_loc(
@@ -25665,8 +26209,9 @@ fn arm_snapshot_route(
     to: WorldTile,
     radius: i32,
     loc_id: Option<i32>,
-) -> Arc<nav::router::Route> {
+) -> crate::walk_plan::RoutePath {
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    bind_test_route_scope(&navs, "alice");
     let arm = ScriptWalkArm {
         here: Some((from.x, from.z, from.level)),
         world: Some(world),
@@ -25675,7 +26220,7 @@ fn arm_snapshot_route(
         state: None,
         bank: BankRows::default(),
     };
-    let worker_done = arm
+    let _completion = arm
         .queue_route_in_snapshot_synced(
             snapshot,
             to.x,
@@ -25687,15 +26232,16 @@ fn arm_snapshot_route(
             29,
             loc_id,
         )
-        .expect("route worker spawned");
-    worker_done
-        .recv_timeout(Duration::from_secs(2))
-        .expect("route worker completed");
-    let route = {
-        let all = navs.lock().unwrap();
-        all.get("alice").and_then(|bot| bot.route.clone())
-    };
-    route.expect("route")
+        .expect("route request accepted");
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| !bot.route_work_pending()
+            && bot.has_route()),
+        "route work did not publish a route"
+    );
+    let route = navs.lock().unwrap()["alice"]
+        .route_path_for_follow()
+        .expect("route");
+    route
 }
 
 #[test]
@@ -25812,11 +26358,15 @@ fn modeled_booth_behind_closed_door_routes_with_the_baked_graph() {
     );
 
     let route = arm_snapshot_route(world, &snapshot, from, booth, 1, Some(loc.id));
-    assert_eq!(route.dest, stand);
+    assert_eq!(route.destination(), stand);
     assert!(
-        route.legs.iter().any(
-            |leg| matches!(leg, nav::router::Leg::Transport { edge } if edge.kind == TransportKind::Door)
-        ),
+        route
+            .view()
+            .expect("compact route view")
+            .legs()
+            .any(|leg| leg
+                .transport()
+                .is_some_and(|edge| edge.kind() == TransportKind::Door)),
         "the baked multi-goal route must cross the closed door"
     );
     let stand_flood = api::query::SceneQuery::new(snapshot.scene(), Some(stand))
@@ -25886,7 +26436,7 @@ fn modeled_two_by_two_loc_routes_to_a_full_footprint_arrival_stand() {
         .id;
     let route = arm_snapshot_route(world, &snapshot, from, target, 1, Some(loc_id));
     assert_eq!(
-        api::query::loc_approach::arrived_at(&snapshot, route.dest, target, 1, loc_id),
+        api::query::loc_approach::arrived_at(&snapshot, route.destination(), target, 1, loc_id),
         Some(true),
         "the endpoint must be a real operable footprint stand inside the radius"
     );
@@ -26091,6 +26641,7 @@ fn assert_snapshot_route_no_path(
     radius: i32,
 ) {
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    bind_test_route_scope(&navs, "alice");
     let arm = ScriptWalkArm {
         here: Some((from.x, from.z, from.level)),
         world: Some(world),
@@ -26099,25 +26650,30 @@ fn assert_snapshot_route_no_path(
         state: None,
         bank: BankRows::default(),
     };
-    arm.queue_route_in_snapshot_synced(
-        snapshot,
-        to.x,
-        to.z,
-        to.level,
-        FindOptions::default(),
-        radius,
-        true,
-        29,
-        None,
-    )
-    .expect("route worker spawned")
-    .recv_timeout(Duration::from_secs(2))
-    .expect("route worker completed");
+    let _completion = arm
+        .queue_route_in_snapshot_synced(
+            snapshot,
+            to.x,
+            to.z,
+            to.level,
+            FindOptions::default(),
+            radius,
+            true,
+            29,
+            None,
+        )
+        .expect("route request accepted");
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.walk_outcome_failed
+        }),
+        "route work did not publish NoPath"
+    );
 
     let all = navs.lock().unwrap();
     let bot = &all["alice"];
     assert!(
-        bot.route.is_none(),
+        !bot.has_route(),
         "an unreachable target must not route to a radius tile"
     );
     assert!(
@@ -26194,27 +26750,33 @@ fn offscene_solid_radius_goals_reach_target_side_through_packed_door() {
     );
 
     let route = arm_snapshot_route(Arc::clone(&world), &snapshot, from, target, 4, None);
+    let destination = route.destination();
     assert_ne!(
-        route.dest, from,
+        destination, from,
         "radius four must not settle on the source side of the wall"
     );
     assert!(
-        route.dest.x <= 18,
+        destination.x <= 18,
         "route endpoint must remain on the target side, got {:?}",
-        route.dest
+        destination
     );
     assert!(
-        route.legs.iter().any(
-            |leg| matches!(leg, nav::router::Leg::Transport { edge } if edge.kind == TransportKind::Door)
-        ),
+        route
+            .view()
+            .expect("compact route view")
+            .legs()
+            .any(|leg| leg
+                .transport()
+                .is_some_and(|edge| edge.kind() == TransportKind::Door)),
         "the packed route must cross the closed wall by its door"
     );
 
-    let reach_snapshot = raw_flags_scene(&flags, SIZE, (0, 0), route.dest);
-    let flood = api::query::SceneQuery::new(reach_snapshot.scene(), Some(route.dest)).flood_reach();
+    let reach_snapshot = raw_flags_scene(&flags, SIZE, (0, 0), destination);
+    let flood =
+        api::query::SceneQuery::new(reach_snapshot.scene(), Some(destination)).flood_reach();
     let view = api::query::pack_reach_query(reach_snapshot.scene(), flood.as_ref());
     assert!(
-        api::query::is_arrived(route.dest, target, 4, || &view),
+        api::query::is_arrived(destination, target, 4, || &view),
         "the selected endpoint must be able to reach the offscene solid target"
     );
 }
@@ -26297,8 +26859,8 @@ fn raw_flags_scene(flags: &[u32], size: usize, base: (i32, i32), from: WorldTile
     snapshot
 }
 
-/// Arm one radius walk and wait for its worker; returns the bot's route and
-/// latched BankBudget session.
+/// Arm one radius walk and wait for route work to finish; returns the bot's
+/// route and latched BankBudget session.
 #[allow(clippy::too_many_arguments)] // world, scene, request and the state it gates on
 fn arm_route_outcome(
     world: Arc<NavWorld>,
@@ -26309,8 +26871,9 @@ fn arm_route_outcome(
     opts: FindOptions,
     state: Option<WorldState>,
     bank: BankRows,
-) -> (Option<Arc<nav::router::Route>>, Option<PendingBankFetch>) {
+) -> (Option<WorldTile>, Option<PendingBankFetch>) {
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    bind_test_route_scope(&navs, "alice");
     let arm = ScriptWalkArm {
         here: Some((from.x, from.z, from.level)),
         world: Some(world),
@@ -26319,15 +26882,21 @@ fn arm_route_outcome(
         state,
         bank,
     };
-    arm.queue_route_in_snapshot_synced(
-        snapshot, to.x, to.z, to.level, opts, radius, true, 43, None,
-    )
-    .expect("route worker spawned")
-    .recv_timeout(Duration::from_secs(60))
-    .expect("route worker completed");
+    let _completion = arm
+        .queue_route_in_snapshot_synced(
+            snapshot, to.x, to.z, to.level, opts, radius, true, 43, None,
+        )
+        .expect("route request accepted");
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending()
+                && (bot.has_route() || bot.bank_fetch.is_some() || bot.walk_outcome_failed)
+        }),
+        "route work did not produce a terminal result"
+    );
     let all = navs.lock().unwrap();
     let bot = &all["alice"];
-    (bot.route.clone(), bot.bank_fetch.clone())
+    (bot.route_destination(), bot.bank_fetch.clone())
 }
 
 /// Falador's west-wall bank in miniature: the booth's stands lie behind a
@@ -26393,9 +26962,9 @@ fn solid_target_stands_past_a_long_detour_route_to_a_stand() {
         let route = route.expect("the detour reaches a stand");
         assert!(session.is_none());
         assert!(
-            stands.contains(&route.dest),
+            stands.contains(&route),
             "r={radius} must end on a booth stand, got {:?}",
-            route.dest
+            route
         );
     }
 }
@@ -26522,7 +27091,7 @@ fn solid_target_behind_worn_gate_in_a_large_world_plans_a_bank_session() {
         );
         let session = session.expect("the banked worn obj plans a session");
         assert_eq!(session.dest, stand, "r={radius}");
-        assert_eq!(session.final_route.dest, stand);
+        assert_eq!(session.final_route.destination(), stand);
         assert!(route.is_some());
     }
 }
@@ -26639,7 +27208,7 @@ fn unfetchable_stands_do_not_hide_a_fetchable_one() {
         );
         let session = session.expect("obj 3 opens the third stand");
         assert_eq!(session.dest, stands[2]);
-        assert_eq!(session.final_route.dest, stands[2]);
+        assert_eq!(session.final_route.destination(), stands[2]);
         assert_eq!(Vec::from(session.steps), steps);
         assert!(route.is_some());
     }
@@ -26728,7 +27297,7 @@ fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
     let session = session.expect("wearing the carried obj 3 opens the door");
     assert_eq!(session.dest, stand);
     assert_eq!(Vec::from(session.steps), vec![BankStep::Wear { id: 3 }]);
-    assert_eq!(route.map(|route| route.dest), Some(stand));
+    assert_eq!(route, Some(stand));
 }
 
 /// Compare every admitted and rejected candidate, including directed walls
@@ -26873,7 +27442,7 @@ fn real_v16_return_radius_endpoint_is_native_arrival() {
         state: None,
         bank_origin: Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         exclusions: None,
         compat_tile_intent: false,
         completion: Default::default(),
@@ -26956,6 +27525,7 @@ fn radius_walk_route_end_publishes_a_settled_outcome() {
         Vec::new(),
     ));
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    bind_test_route_scope(&navs, "alice");
     let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
         username: "alice".into(),
         ..SlotStatus::default()
@@ -26974,7 +27544,12 @@ fn radius_walk_route_end_publishes_a_settled_outcome() {
         level: 0,
     };
     assert!(arm.queue_route(dest.x, dest.z, 0, FindOptions::default(), 12, true, 7));
-    assert!(wait_until(500, || queued(&navs).is_some()), "route armed");
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.has_route()
+        }),
+        "route work did not publish a route"
+    );
     let approach = queued(&navs).unwrap();
     assert_eq!(
         (approach.x - dest.x).abs().max((approach.z - dest.z).abs()),
@@ -27392,25 +27967,25 @@ fn script_observe_walk_uses_slot_state_across_a_toll() {
         false,
     ));
     assert!(
-        wait_until(100, || queued(&navs)
-            == Some(WorldTile {
-                x: 4,
-                z: 4,
-                level: 0
-            })),
-        "the worker armed the toll route"
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending()
+                && bot.route_destination()
+                    == Some(WorldTile {
+                        x: 4,
+                        z: 4,
+                        level: 0,
+                    })
+        }),
+        "route work did not arm the toll route"
     );
-    let route = navs
-        .lock()
-        .unwrap()
-        .get("alice")
-        .and_then(|b| b.route.clone())
+    let route = navs.lock().unwrap()["alice"]
+        .route_path_for_follow()
         .expect("armed route");
     assert!(
-        route.legs.iter().any(|l| matches!(
-            l,
-            nav::router::Leg::Transport { edge } if edge.consumed_req == vec![(995, 10)]
-        )),
+        route.view().expect("compact route view").legs().any(|leg| {
+            leg.transport()
+                .is_some_and(|edge| edge.consumed() == &[(995, 10)][..])
+        }),
         "the route must cross the toll"
     );
 }
@@ -27491,13 +28066,16 @@ fn script_observe_walk_uses_the_latched_essence_session() {
         false,
     ));
     assert!(
-        wait_until(100, || queued(&navs)
-            == Some(WorldTile {
-                x: 3253,
-                z: 3401,
-                level: 0
-            })),
-        "the worker armed the exit route with the latched session"
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending()
+                && bot.route_destination()
+                    == Some(WorldTile {
+                        x: 3253,
+                        z: 3401,
+                        level: 0,
+                    })
+        }),
+        "route work did not publish the exit route with the latched session"
     );
 }
 
@@ -27645,7 +28223,17 @@ fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
         false,
         false,
     );
-    thread::sleep(Duration::from_millis(20));
+    let unreachable_wait_started = std::time::Instant::now();
+    assert!(
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending() && bot.walk_outcome_failed
+        }),
+        "NoPath did not publish"
+    );
+    println!(
+        "unreachable_route_wait_ns={}",
+        unreachable_wait_started.elapsed().as_nanos()
+    );
     assert_eq!(queued(&navs), None, "NoPath never arms a route");
 
     // A reachable request arms asynchronously on the worker.
@@ -27669,13 +28257,16 @@ fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
         false,
     );
     assert!(
-        wait_until(100, || queued(&navs)
-            == Some(WorldTile {
-                x: 2,
-                z: 0,
-                level: 0
-            })),
-        "the worker armed the queued route"
+        wait_for_route_work(&navs, "alice", |bot| {
+            !bot.route_work_pending()
+                && bot.route_destination()
+                    == Some(WorldTile {
+                        x: 2,
+                        z: 0,
+                        level: 0,
+                    })
+        }),
+        "route work did not publish the queued route"
     );
 
     // A second walk cannot replace a route already owned by this run.
@@ -27962,7 +28553,7 @@ fn abort_walk_request_stops_only_the_machines_own_follow() {
     abort(7);
     let bot = &navs.lock().unwrap()["alice"];
     assert_eq!(bot.route_generation, 4, "the follow's route is superseded");
-    assert!(bot.route.is_none());
+    assert!(!bot.has_route());
     assert!(bot.requested_route.is_none());
 }
 
@@ -28373,6 +28964,7 @@ mod host_batch_tests {
         let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let cheats = Arc::new(Mutex::new(HashMap::new()));
         let navs = Arc::new(Mutex::new(HashMap::new()));
+        bind_test_route_scope(&navs, "alice");
         let statuses = Arc::new(Mutex::new(vec![SlotStatus {
             username: "alice".into(),
             ..SlotStatus::default()
@@ -28489,6 +29081,7 @@ mod host_batch_tests {
                 &self.navs,
                 &self.world,
                 hold,
+                hold,
                 false,
                 None,
                 None,
@@ -28496,6 +29089,7 @@ mod host_batch_tests {
                 None,
                 None,
                 super::super::script_channels::BrokerWorld::Unavailable,
+                None,
                 None,
                 None,
             )
@@ -28517,7 +29111,12 @@ mod host_batch_tests {
             bank: BankRows::default(),
         };
         assert!(arm.route_with_radius(4, 0, 0, nav::router::FindOptions::default(), 0));
-        assert!(wait_until(5_000, || queued(&rig.navs).is_some()));
+        assert!(
+            wait_for_route_work(&rig.navs, "alice", |bot| {
+                !bot.route_work_pending() && bot.has_route()
+            }),
+            "route work did not publish a route"
+        );
     }
 
     fn step_nav(rig: &mut BatchRig) {

@@ -15,7 +15,12 @@ fn run_exact_child(test: &str, env: &str) {
         .env(env, "1")
         .spawn()
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(15);
+    // Harness liveness bound only: the product deadline oracle is the inner
+    // per-attempt `< 3s` assertion inside the child. The heaviest child does
+    // three such attempts (~9s of owned work) plus test-binary spawn and V8
+    // bootstrap, which stretches under machine load, so the outer bound stays
+    // generous while still killing (never hanging on) a truly stuck child.
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         if let Some(status) = child.try_wait().unwrap() {
             assert!(status.success(), "{test} child failed: {status}");
@@ -210,7 +215,7 @@ fn paint_generation_allocator_separates_reset_and_replacement() {
         let initial = old
             .paint_generation
             .load(std::sync::atomic::Ordering::Acquire);
-        old.reset_session_work();
+        old.reset_session_work(None);
         let after_reset = old
             .paint_generation
             .load(std::sync::atomic::Ordering::Acquire);
@@ -247,7 +252,7 @@ fn reset_rejects_a_tick_queued_with_the_previous_session_generation() {
         vec![],
     )
     .unwrap();
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     // A sender captured this tick before reset but enqueued it late.
     assert!(iso.send(IsolateCmd::Tick {
         tick: 1,
@@ -285,6 +290,43 @@ fn shim_prelude_defines_globals_for_compat_fixture() {
         .eval("(() => { try { defineBot({}); return false; } catch { return true; } })()")
         .unwrap();
     assert!(err, "defineBot throws without a name/create pair");
+}
+
+#[test]
+fn enter_root_clears_cped_after_throw_without_changing_default_termination() {
+    crate::load::platform::bootstrap_test_v8_platform();
+    let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+    super::super::lineage_v8::install(&mut runtime, false).unwrap();
+    assert!(!runtime
+        .deno_runtime()
+        .v8_isolate()
+        .is_execution_terminating());
+
+    let failed = super::super::lineage_v8::enter_root(&mut runtime, |runtime| {
+        {
+            let scope = &mut runtime.deno_runtime().handle_scope();
+            let poison = rustyscript::deno_core::v8::Object::new(scope);
+            scope.set_continuation_preserved_embedder_data(poison.into());
+        }
+        runtime.eval::<()>("throw new Error('root-entry probe')")
+    });
+    assert!(failed.is_err(), "the guarded JavaScript entry must throw");
+    assert!(!runtime
+        .deno_runtime()
+        .v8_isolate()
+        .is_execution_terminating());
+
+    let undefined = super::super::lineage_v8::enter_root(&mut runtime, |runtime| {
+        let scope = &mut runtime.deno_runtime().handle_scope();
+        scope
+            .get_continuation_preserved_embedder_data()
+            .is_undefined()
+    });
+    assert!(undefined, "the next root entry must observe undefined CPED");
+    assert!(!runtime
+        .deno_runtime()
+        .v8_isolate()
+        .is_execution_terminating());
 }
 
 #[test]
@@ -402,7 +444,7 @@ loop() {
 
     iso.on_game_tick(2);
     iso.probe("true").unwrap();
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     let stale = iso.drain_interacts();
     assert!(
         stale
@@ -462,7 +504,7 @@ loop() {
 
     iso.on_game_tick(2);
     iso.probe("true").unwrap();
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     let stale = iso.drain_interacts();
     assert!(
         stale
@@ -859,7 +901,7 @@ loop() {
         Some(1),
         "the xp diff reached the compat queue"
     );
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     let cleared = iso
         .probe("globalThis.__rs2b0t_pending_native_event_batch === null")
         .unwrap();
@@ -965,6 +1007,34 @@ fn machine_tick(iso: &LoadIsolate, n: u64) {
     let _ = iso.probe("true");
 }
 
+#[test]
+fn unbound_v2_guarded_queue_delivers_held_request() {
+    let source = r#"export const apiVersion = 2;
+export function tick(api) {
+  api.request({ op: 'held', name: 'Bones', action: 'Bury' });
+}"#;
+    let iso = LoadIsolate::spawn(source.into(), LoadShape::NativeTick, vec![]).unwrap();
+    wait_ready(&iso);
+    let snapshot = crate::isolate_fb::tests::empty_input(1);
+    iso.post_snapshot(crate::isolate_fb::encode_snapshot_with_native(
+        &snapshot,
+        crate::isolate_fb::NativeFactsInput::default(),
+    ));
+    machine_tick(&iso, 1);
+    let reqs = iso.drain_interacts();
+    assert!(
+        reqs.iter().any(|req| matches!(
+            req,
+            crate::shim::InteractReq::Held { name, action, .. }
+                if name == "Bones" && action == "Bury"
+        )),
+        "unbound native-v2 guarded queue lost Held request: {reqs:?}; logs={:?}; lifecycle={:?}",
+        iso.drain_logs(),
+        iso.drain_lifecycle()
+    );
+    iso.join();
+}
+
 fn if_button(id: i32) -> crate::shim::InteractReq {
     crate::shim::InteractReq::IfButton { component_id: id }
 }
@@ -1033,7 +1103,7 @@ fn reset_session_aborts_a_running_machine_and_settles_its_await() {
     );
     machine_tick(&iso, 1);
     assert_eq!(iso.drain_interacts(), vec![if_button(10)]);
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     machine_tick(&iso, 2);
     assert_eq!(
         iso.probe("globalThis.__out").unwrap(),
@@ -1481,7 +1551,7 @@ fn reset_and_stop_release_a_machine_waiting_on_a_callback_promise() {
     let iso = spawn_machine_card(src);
     machine_tick(&iso, 1);
     machine_tick(&iso, 2);
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     machine_tick(&iso, 3);
     assert_eq!(
         iso.probe("globalThis.__out").unwrap(),
@@ -1757,7 +1827,12 @@ fn v2_journal_read_hides_paint_until_observed_close_and_reset() {
     let lines = ["@dre@The Cook's Quest".to_owned()];
     post(2, 77, &lines);
     assert_eq!(iso.drain_interacts(), vec![InteractReq::CloseModal]);
-    assert!(iso.compat_journal_paint_hidden(Instant::now()));
+    assert!(
+        iso.compat_journal_paint_hidden(Instant::now()),
+        "paint lease was revoked after CloseModal; tick errors: {:?}; logs: {:?}",
+        iso.tick_errors.lock().unwrap(),
+        iso.drain_logs()
+    );
     post(3, 77, &lines);
     assert!(iso.drain_interacts().is_empty());
     assert!(iso.compat_journal_paint_hidden(Instant::now()));
@@ -1768,7 +1843,7 @@ fn v2_journal_read_hides_paint_until_observed_close_and_reset() {
     );
     assert!(!iso.compat_journal_paint_hidden(Instant::now()));
 
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     iso.probe("globalThis.__started = false; true").unwrap();
     post(5, -1, &[]);
     assert_eq!(iso.drain_interacts(), vec![if_button(1234)]);
@@ -1776,10 +1851,713 @@ fn v2_journal_read_hides_paint_until_observed_close_and_reset() {
         iso.compat_journal_paint_hidden(Instant::now()),
         "reset binds the new generation"
     );
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     assert!(
         !iso.compat_journal_paint_hidden(Instant::now()),
         "reset clears before another tick"
     );
     iso.join();
+}
+
+fn post_execution_seat_page<'a>(
+    isolate: &LoadIsolate,
+    buffer: &mut crate::isolate_fb::IsolateBuf,
+    tick: u64,
+    live: &'a [crate::native::seat::SeatEntry],
+    results: &'a [crate::native::seat::SeatResult],
+    details: &'a [crate::isolate_fb::SeatLiveDetails<'a>],
+    api_progress: Option<&'a crate::api_progress::ProgressPage>,
+) {
+    let page =
+        crate::isolate_fb::SeatPageInput::new(live, results, details, 0).expect("valid seat page");
+    let snapshot = crate::isolate_fb::tests::empty_input(tick);
+    let bytes = buffer.encode_snapshot_with_native(
+        &snapshot,
+        crate::isolate_fb::NativeFactsInput {
+            api_progress,
+            seat_page: Some(page),
+            ..Default::default()
+        },
+    );
+    isolate.post_snapshot(bytes);
+    machine_tick(isolate, tick);
+}
+
+fn post_execution_gather_page<'a>(
+    isolate: &LoadIsolate,
+    buffer: &mut crate::isolate_fb::IsolateBuf,
+    tick: u64,
+    live: &'a [crate::native::seat::SeatEntry],
+    results: &'a [crate::native::seat::SeatResult],
+    details: &'a [crate::isolate_fb::SeatLiveDetails<'a>],
+    (gather, terminal): (
+        Option<&'a crate::api_gather::GatherPage>,
+        Option<&'a crate::api_gather::GatherEnd>,
+    ),
+) {
+    let page =
+        crate::isolate_fb::SeatPageInput::new(live, results, details, 0).expect("valid seat page");
+    let snapshot = crate::isolate_fb::tests::empty_input(tick);
+    let bytes = buffer.encode_snapshot_with_native(
+        &snapshot,
+        crate::isolate_fb::NativeFactsInput {
+            api_gather: gather,
+            api_gather_outcome: terminal,
+            seat_page: Some(page),
+            ..Default::default()
+        },
+    );
+    isolate.post_snapshot(bytes);
+    machine_tick(isolate, tick);
+}
+
+#[test]
+fn v2_execution_seat_start_waits_for_live_ack_and_repeats_terminal_watermark() {
+    use crate::api_progress::ProgressPage;
+    use crate::isolate_fb::{SeatInteractDecoded, SeatLiveDetails, SeatStartArgs};
+    use crate::machine::MachineEventKind;
+    use crate::native::request::NativeKind;
+    use crate::native::{seat::SeatTerminal, NativePhase};
+    use api::identity::ExecutionId;
+    use api::script_contract::ChildOrigin;
+    use api::selected::RunKey;
+
+    fn assert_root_loop_settled(rows: &[SeatInteractDecoded]) {
+        assert!(
+            matches!(
+                rows,
+                [SeatInteractDecoded {
+                    lineage: None,
+                    mirror_owner: None,
+                    request: crate::shim::InteractReq::LoopSettled,
+                }]
+            ),
+            "a synchronous v2 tick reports one root loop settlement: {rows:?}"
+        );
+    }
+
+    let source = r#"
+export const apiVersion = 2;
+let started = false;
+globalThis.__questSettles = 0;
+globalThis.__questResult = null;
+export function tick(api) {
+  if (started) return;
+  started = true;
+  api.questProgress({ quest: "Cook's Assistant" }).then((result) => {
+    globalThis.__questSettles += 1;
+    globalThis.__questResult = result;
+  });
+}
+"#;
+    let execution = ExecutionId::first(RunKey {
+        slot: 13,
+        run: 28,
+        session: 0,
+    });
+    let isolate =
+        LoadIsolate::spawn_with_execution(source.into(), LoadShape::NativeTick, vec![], execution)
+            .unwrap();
+    wait_ready(&isolate);
+
+    let mut buffer = crate::isolate_fb::IsolateBuf::new();
+    let empty: [crate::native::seat::SeatEntry; 0] = [];
+    let no_results: [crate::native::seat::SeatResult; 0] = [];
+    let no_details: [SeatLiveDetails<'_>; 0] = [];
+    post_execution_seat_page(
+        &isolate,
+        &mut buffer,
+        1,
+        &empty,
+        &no_results,
+        &no_details,
+        None,
+    );
+    assert!(isolate.drain_interacts_stamped().is_empty());
+    let pending = isolate.drain_seat_batches();
+    assert_eq!(pending.len(), 1, "the root start is carried immediately");
+    let start = pending[0]
+        .batch
+        .starts
+        .first()
+        .expect("one typed quest-progress start");
+    let id = start.id;
+    assert_eq!(start.kind, NativeKind::QuestProgress);
+    assert!(matches!(
+        &start.args,
+        SeatStartArgs::QuestProgress(name) if name == "Cook's Assistant"
+    ));
+    assert_eq!((start.run, start.session), (28, 0));
+    assert_eq!(pending[0].batch.consumed_terminal_seq, 0);
+    assert!(
+        matches!(
+            pending[0].batch.reqs.as_slice(),
+            [
+                SeatInteractDecoded {
+                    lineage: None,
+                    mirror_owner: None,
+                    request: crate::shim::InteractReq::LoopSettled,
+                },
+                SeatInteractDecoded {
+                    lineage: None,
+                    mirror_owner: None,
+                    request: crate::shim::InteractReq::WaitEnqueued,
+                }
+            ]
+        ),
+        "the synchronous tick settles its loop and parks exactly one watchdog wait: {:?}",
+        pending[0].batch.reqs
+    );
+    assert!(pending[0].machine_events.is_empty());
+    assert_eq!(isolate.probe("globalThis.__questSettles").unwrap(), 0);
+
+    // The owner retries the same start until its id appears in the live page.
+    post_execution_seat_page(
+        &isolate,
+        &mut buffer,
+        2,
+        &empty,
+        &no_results,
+        &no_details,
+        None,
+    );
+    assert!(isolate.drain_interacts_stamped().is_empty());
+    let retry = isolate.drain_seat_batches();
+    assert_eq!(retry.len(), 1);
+    assert_eq!(retry[0].batch.starts.len(), 1);
+    assert_eq!(retry[0].batch.starts[0].id, id);
+    assert_root_loop_settled(&retry[0].batch.reqs);
+    assert_eq!(isolate.probe("globalThis.__questSettles").unwrap(), 0);
+
+    let live = [crate::native::seat::SeatEntry {
+        id,
+        parent: None,
+        kind: NativeKind::QuestProgress,
+        origin: ChildOrigin::Started,
+        depth: 0,
+        decisions_consumed: 0,
+        prompt: None,
+    }];
+    let details = [SeatLiveDetails {
+        id,
+        phase: NativePhase::Working,
+        prompt: None,
+    }];
+    let reading = ProgressPage::Reading { token: id.get() };
+    post_execution_seat_page(
+        &isolate,
+        &mut buffer,
+        3,
+        &live,
+        &no_results,
+        &details,
+        Some(&reading),
+    );
+    assert!(isolate.drain_interacts_stamped().is_empty());
+    let admitted = isolate.drain_seat_batches();
+    assert!(
+        admitted
+            .iter()
+            .flat_map(|batch| &batch.batch.starts)
+            .all(|start| start.id != id),
+        "live acknowledgement retires the pending start retry"
+    );
+    assert_eq!(isolate.probe("globalThis.__questSettles").unwrap(), 0);
+
+    // The host's retained API page completes the local machine and publishes
+    // its terminal event; the seat's retained result is acknowledged below.
+    let refused = ProgressPage::Refused {
+        token: id.get(),
+        reason: std::sync::Arc::from("fixture"),
+    };
+    post_execution_seat_page(
+        &isolate,
+        &mut buffer,
+        4,
+        &live,
+        &no_results,
+        &details,
+        Some(&refused),
+    );
+    assert!(isolate.drain_interacts_stamped().is_empty());
+    let terminal = isolate.drain_seat_batches();
+    assert!(
+        terminal.iter().any(|batch| {
+            batch
+                .machine_events
+                .iter()
+                .any(|event| event.id == id && event.kind == MachineEventKind::Done)
+        }),
+        "local terminal is published against the admitted native owner"
+    );
+    assert!(terminal
+        .iter()
+        .flat_map(|batch| &batch.batch.starts)
+        .all(|start| start.id != id));
+    assert_eq!(isolate.probe("globalThis.__questSettles").unwrap(), 1);
+    assert_eq!(
+        isolate.probe("globalThis.__questResult").unwrap(),
+        serde_json::json!({
+            "kind": "done",
+            "value": { "end": "refused", "token": id.get(), "reason": "fixture" }
+        })
+    );
+
+    let result = [crate::native::seat::SeatResult {
+        id,
+        seq: 1,
+        outcome: SeatTerminal::Done,
+        prior_parent: None,
+        session: None,
+        authority_revoked: false,
+    }];
+    for tick in [5, 6] {
+        post_execution_seat_page(
+            &isolate,
+            &mut buffer,
+            tick,
+            &empty,
+            &result,
+            &no_details,
+            Some(&refused),
+        );
+        assert!(isolate.drain_interacts_stamped().is_empty());
+        let receipt = isolate.drain_seat_batches();
+        assert_eq!(
+            receipt.len(),
+            1,
+            "retained terminal is acked on tick {tick}"
+        );
+        assert_eq!(receipt[0].batch.consumed_terminal_seq, 1);
+        assert!(receipt[0].batch.starts.is_empty());
+        assert_root_loop_settled(&receipt[0].batch.reqs);
+        assert!(receipt[0].machine_events.is_empty());
+    }
+    assert_eq!(isolate.probe("globalThis.__questSettles").unwrap(), 1);
+
+    post_execution_seat_page(
+        &isolate,
+        &mut buffer,
+        7,
+        &empty,
+        &no_results,
+        &no_details,
+        Some(&refused),
+    );
+    assert!(isolate.drain_interacts_stamped().is_empty());
+    let after_retirement = isolate.drain_seat_batches();
+    assert_eq!(
+        after_retirement.len(),
+        1,
+        "the synchronous tick still reports its root loop settlement"
+    );
+    assert_eq!(
+        after_retirement[0].batch.consumed_terminal_seq, 1,
+        "the highest consumed sequence remains monotonic on later lifecycle rows"
+    );
+    assert!(after_retirement[0].batch.starts.is_empty());
+    assert_root_loop_settled(&after_retirement[0].batch.reqs);
+    isolate.join();
+}
+
+#[test]
+fn execution_owned_gather_promise_waits_for_typed_terminal_after_seat_done() {
+    use crate::api_gather::{GatherCounts, GatherEnd, GatherPage, GatherPhase};
+    use crate::isolate_fb::SeatLiveDetails;
+    use crate::native::request::NativeKind;
+    use crate::native::{seat::SeatTerminal, NativePhase};
+    use api::identity::{ExecutionId, RequestId};
+    use api::script_contract::ChildOrigin;
+    use api::selected::RunKey;
+
+    let source = r#"
+export const apiVersion = 2;
+let started = false;
+globalThis.__gatherSettles = 0;
+globalThis.__gatherResult = null;
+export function tick(api) {
+  if (started) return;
+  started = true;
+  api.gather.run({
+    skill: 'Woodcutting', woodcuttingResources: ['normal'],
+    location: 'Custom', customTile: { x: 3190, z: 3245, level: 0 },
+    disposition: 'Power', radius: 12
+  }).then(result => {
+    globalThis.__gatherResult = result;
+    globalThis.__gatherSettles += 1;
+  });
+}
+"#;
+    let execution = ExecutionId::first(RunKey {
+        slot: 14,
+        run: 29,
+        session: 0,
+    });
+    let isolate =
+        LoadIsolate::spawn_with_execution(source.into(), LoadShape::NativeTick, vec![], execution)
+            .unwrap();
+    wait_ready(&isolate);
+    let mut buffer = crate::isolate_fb::IsolateBuf::new();
+    let empty: [crate::native::seat::SeatEntry; 0] = [];
+    let no_results: [crate::native::seat::SeatResult; 0] = [];
+    let no_details: [SeatLiveDetails<'_>; 0] = [];
+    post_execution_gather_page(
+        &isolate,
+        &mut buffer,
+        1,
+        &empty,
+        &no_results,
+        &no_details,
+        (None, None),
+    );
+    let starts = isolate.drain_seat_batches();
+    let id: RequestId = starts[0].batch.starts[0].id;
+    assert_eq!(starts[0].batch.starts[0].kind, NativeKind::Gather);
+    assert_eq!(isolate.probe("globalThis.__gatherSettles").unwrap(), 0);
+
+    let live = [crate::native::seat::SeatEntry {
+        id,
+        parent: None,
+        kind: NativeKind::Gather,
+        origin: ChildOrigin::Started,
+        depth: 0,
+        decisions_consumed: 0,
+        prompt: None,
+    }];
+    let details = [SeatLiveDetails {
+        id,
+        phase: NativePhase::Working,
+        prompt: None,
+    }];
+    let gather = GatherPage {
+        token: id.get(),
+        phase: GatherPhase::Running,
+        status: None,
+    };
+    post_execution_gather_page(
+        &isolate,
+        &mut buffer,
+        2,
+        &live,
+        &no_results,
+        &details,
+        (Some(&gather), None),
+    );
+    let _ = isolate.drain_seat_batches();
+    let result = [crate::native::seat::SeatResult {
+        id,
+        seq: 1,
+        outcome: SeatTerminal::Done,
+        prior_parent: None,
+        session: None,
+        authority_revoked: false,
+    }];
+    post_execution_gather_page(
+        &isolate,
+        &mut buffer,
+        3,
+        &empty,
+        &result,
+        &no_details,
+        (None, None),
+    );
+    let receipt = isolate.drain_seat_batches();
+    assert!(receipt
+        .iter()
+        .any(|batch| batch.batch.consumed_terminal_seq == 1));
+    assert_eq!(
+        isolate.probe("globalThis.__gatherSettles").unwrap(),
+        0,
+        "a bare seat Done cannot invent the family's GatherEnd"
+    );
+
+    let terminal = GatherEnd::Stopped {
+        token: id.get(),
+        counts: GatherCounts {
+            yielded: 1,
+            dropped: 1,
+            ..GatherCounts::default()
+        },
+    };
+    post_execution_gather_page(
+        &isolate,
+        &mut buffer,
+        4,
+        &empty,
+        &result,
+        &no_details,
+        (None, Some(&terminal)),
+    );
+    assert_eq!(isolate.probe("globalThis.__gatherSettles").unwrap(), 1);
+    assert_eq!(
+        isolate.probe("globalThis.__gatherResult").unwrap(),
+        serde_json::json!({
+            "kind": "done",
+            "value": {
+                "end": "stopped", "token": id.get(),
+                "counts": {"yielded": 1, "dropped": 1, "deposited": 0, "trips": 0, "xp": 0}
+            }
+        })
+    );
+    isolate.join();
+}
+
+#[test]
+fn execution_owned_v8_caps_rows_and_reserves_controls() {
+    use crate::isolate_fb::MAX_SEAT_GAMEPLAY_ROWS;
+    use crate::shim::InteractReq;
+    use api::identity::ExecutionId;
+    use api::selected::RunKey;
+
+    let source = r#"
+import { Execution } from '../../api/execution/Execution.js';
+import { RunManager } from '../../runtime/RunManager.js';
+export const apiVersion = 2;
+export function tick() {
+  for (let i = 0; i < 300; i++) Execution.noteProgress();
+  globalThis.__rs2b0t_host.interact.push({ op: 'abort-walk', request_id: 123 });
+  RunManager.override({ runAuto: false, energyMin: 55 });
+}
+"#;
+    let execution = ExecutionId::first(RunKey {
+        slot: 14,
+        run: 29,
+        session: 0,
+    });
+    let isolate =
+        LoadIsolate::spawn_with_execution(source.into(), LoadShape::NativeTick, vec![], execution)
+            .unwrap();
+    wait_ready(&isolate);
+
+    let empty: [crate::native::seat::SeatEntry; 0] = [];
+    let no_results: [crate::native::seat::SeatResult; 0] = [];
+    let no_details: [crate::isolate_fb::SeatLiveDetails<'_>; 0] = [];
+    let mut buffer = crate::isolate_fb::IsolateBuf::new();
+    post_execution_seat_page(
+        &isolate,
+        &mut buffer,
+        1,
+        &empty,
+        &no_results,
+        &no_details,
+        None,
+    );
+
+    assert!(
+        isolate.drain_interacts_stamped().is_empty(),
+        "execution-owned rows must not leak to the legacy interact drain"
+    );
+    let batches = isolate.drain_seat_batches();
+    assert_eq!(
+        batches.len(),
+        1,
+        "one owner batch carries the tick output; tick errors: {:?}; logs: {:?}",
+        isolate.tick_errors.lock().unwrap(),
+        isolate.drain_logs()
+    );
+    let requests = &batches[0].batch.reqs;
+    assert_eq!(requests.len(), MAX_SEAT_GAMEPLAY_ROWS + 2);
+    assert!(matches!(
+        &requests[0].request,
+        InteractReq::AbortWalk { request_id: 123 }
+    ));
+    assert!(matches!(
+        &requests[1].request,
+        InteractReq::RunPolicyOverride {
+            policy: Some(policy),
+        } if policy.run_auto == Some(false)
+            && policy.energy_min == Some(api::run_policy::RunEnergyMin::Floor(55))
+    ));
+    assert_eq!(
+        requests[2..]
+            .iter()
+            .filter(|row| matches!(&row.request, InteractReq::NoteProgress))
+            .count(),
+        MAX_SEAT_GAMEPLAY_ROWS,
+        "the first 141 gameplay rows survive the owner cap"
+    );
+    assert!(requests[2..]
+        .iter()
+        .all(|row| matches!(&row.request, InteractReq::NoteProgress)));
+    let logs = isolate.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|line| line.contains("dropped 160 over-cap seat interact rows")),
+        "{logs:?}"
+    );
+    isolate.join();
+}
+
+#[test]
+fn execution_owned_reset_restates_parked_waits_on_the_seat_lane() {
+    use crate::shim::InteractReq;
+    use api::identity::ExecutionId;
+    use api::selected::RunKey;
+
+    let source = r#"
+import { Execution } from '../../api/execution/Execution.js';
+export const apiVersion = 2;
+let waiting = false;
+export function tick() {
+  if (waiting) return;
+  waiting = true;
+  void Execution.delayTicks(100);
+}
+"#;
+    let execution = ExecutionId::first(RunKey {
+        slot: 15,
+        run: 30,
+        session: 0,
+    });
+    let isolate =
+        LoadIsolate::spawn_with_execution(source.into(), LoadShape::NativeTick, vec![], execution)
+            .unwrap();
+    wait_ready(&isolate);
+
+    let empty: [crate::native::seat::SeatEntry; 0] = [];
+    let no_results: [crate::native::seat::SeatResult; 0] = [];
+    let no_details: [crate::isolate_fb::SeatLiveDetails<'_>; 0] = [];
+    let mut buffer = crate::isolate_fb::IsolateBuf::new();
+    post_execution_seat_page(
+        &isolate,
+        &mut buffer,
+        1,
+        &empty,
+        &no_results,
+        &no_details,
+        None,
+    );
+    let first = isolate.drain_seat_batches();
+    assert_eq!(
+        first.len(),
+        1,
+        "initial parked wait is carried on the owner lane; tick errors: {:?}; logs: {:?}",
+        isolate.tick_errors.lock().unwrap(),
+        isolate.drain_logs()
+    );
+    assert_eq!(
+        first[0]
+            .batch
+            .reqs
+            .iter()
+            .filter(|row| matches!(&row.request, InteractReq::WaitEnqueued))
+            .count(),
+        1
+    );
+    assert!(isolate.drain_interacts_stamped().is_empty());
+
+    isolate.reset_session_work(Some(execution));
+    assert_eq!(isolate.probe("true").unwrap(), serde_json::json!(true));
+    assert!(isolate.drain_interacts_stamped().is_empty());
+    let reset = isolate.drain_seat_batches();
+    assert_eq!(
+        reset.len(),
+        1,
+        "reset wait facts use the execution owner lane"
+    );
+    assert_eq!(reset[0].batch.reqs.len(), 1);
+    assert!(matches!(
+        &reset[0].batch.reqs[0].request,
+        InteractReq::WaitEnqueued
+    ));
+    isolate.join();
+}
+
+#[test]
+fn execution_owned_recovery_anchor_bypasses_seat_on_host_lane() {
+    use crate::shim::InteractReq;
+    use api::identity::ExecutionId;
+    use api::selected::RunKey;
+
+    let execution = ExecutionId::first(RunKey {
+        slot: 16,
+        run: 31,
+        session: 0,
+    });
+    let isolate = LoadIsolate::spawn_with_execution(
+        "export const apiVersion = 2; export function tick() {}".into(),
+        LoadShape::NativeTick,
+        vec![],
+        execution,
+    )
+    .unwrap();
+    wait_ready(&isolate);
+    isolate
+        .probe(
+            "globalThis.__rs_bot = { recoveryAnchor() { return { x: 10, z: 20, level: 1 }; } }; true",
+        )
+        .unwrap();
+
+    isolate.request_recovery_anchor();
+    assert_eq!(isolate.probe("true").unwrap(), serde_json::json!(true));
+    assert!(isolate.drain_interacts_stamped().is_empty());
+    let rows = isolate.drain_lifecycle();
+    assert_eq!(rows.len(), 1);
+    assert!(matches!(
+        &rows[0],
+        InteractReq::RecoveryAnchor {
+            x: 10,
+            z: 20,
+            level: 1
+        }
+    ));
+    assert!(
+        isolate.drain_seat_batches().is_empty(),
+        "the host-owned watchdog reply must bypass the gameplay seat"
+    );
+    isolate.join();
+}
+
+#[test]
+fn execution_owned_inspect_ack_uses_the_seat_lane() {
+    use crate::isolate_fb::{
+        IsolateBuf, NativeFactsInput, RouteInspectFactsInput, RouteInspectTerminalInput,
+    };
+    use crate::shim::InteractReq;
+    use api::identity::ExecutionId;
+    use api::selected::RunKey;
+
+    let execution = ExecutionId::first(RunKey {
+        slot: 17,
+        run: 32,
+        session: 0,
+    });
+    let isolate = LoadIsolate::spawn_with_execution(
+        "export const apiVersion = 2; export function tick() {}".into(),
+        LoadShape::NativeTick,
+        vec![],
+        execution,
+    )
+    .unwrap();
+    wait_ready(&isolate);
+
+    let snapshot = crate::isolate_fb::tests::empty_input(1);
+    let facts = NativeFactsInput {
+        route_inspect: RouteInspectFactsInput {
+            latest: RouteInspectTerminalInput {
+                seq: 7,
+                generation: 4,
+                request_id: 88,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut buffer = IsolateBuf::new();
+    isolate.post_snapshot(buffer.encode_snapshot_with_native(&snapshot, facts));
+    assert_eq!(isolate.probe("true").unwrap(), serde_json::json!(true));
+
+    assert!(isolate.drain_interacts_stamped().is_empty());
+    let batches = isolate.drain_seat_batches();
+    assert_eq!(batches.len(), 1);
+    assert_eq!(batches[0].batch.reqs.len(), 1);
+    assert!(matches!(
+        &batches[0].batch.reqs[0].request,
+        InteractReq::InspectAck {
+            seq: 7,
+            generation: 4
+        }
+    ));
+    isolate.join();
 }

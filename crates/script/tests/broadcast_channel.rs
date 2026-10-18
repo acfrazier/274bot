@@ -129,7 +129,7 @@ fn held_deliveries_are_bounded_logged_and_survive_a_reconnect() {
         }])
         .collect::<Vec<_>>();
     assert!(isolate.post_channel_events(encode_interact_batch(&rows)));
-    isolate.reconnect_session_work();
+    isolate.reconnect_session_work(None);
     isolate.on_game_tick(2);
 
     let messages = isolate.probe("globalThis.__messages").unwrap();

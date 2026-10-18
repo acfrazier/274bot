@@ -11,7 +11,7 @@ mod geom;
 mod raster;
 mod style;
 
-#[cfg(all(test, feature = "load"))]
+#[cfg(test)]
 #[path = "canvas_tests.rs"]
 mod tests;
 

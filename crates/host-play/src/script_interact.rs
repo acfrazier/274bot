@@ -12,10 +12,7 @@ use nav::world::NavWorld;
 use nav::WorldState;
 use parking_lot::RwLock;
 
-use super::{
-    abort_script_walk, action_slot, all_slot, route_inspect, NavBot, ScriptRouteExclusions,
-    ScriptWalkArm,
-};
+use super::{abort_script_walk, route_inspect, NavBot, ScriptRouteExclusions, ScriptWalkArm};
 use crate::catalog_core::ScriptAct;
 #[cfg(feature = "memory-profile")]
 use crate::memory_diagnostics;
@@ -162,7 +159,10 @@ fn record_script_act(navs: &Arc<Mutex<HashMap<String, NavBot>>>, slot: &str, act
 /// the slot's observer leaves this frame (the loaded open bank, else an
 /// unobserved `Unknown` bank).
 #[cfg(test)]
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the test wrapper supplies the same observed inputs as scoped interaction dispatch"
+)]
 pub(crate) fn dispatch_script_interact(
     driver: &mut dyn Driver,
     snapshot: &GameSnapshot,
@@ -176,19 +176,24 @@ pub(crate) fn dispatch_script_interact(
 ) -> bool {
     let bank = RwLock::new(BankMemory::default());
     bank.write().track(snapshot, 0);
-    dispatch_script_interact_cached(
+    dispatch_script_interact_cached_scoped(
         driver,
-        snapshot,
-        obj_names,
-        here,
-        navs,
-        world,
-        state,
-        Some(&bank),
-        name,
+        &InteractContext {
+            snapshot,
+            obj_names,
+            here,
+            navs,
+            world,
+            state: &state,
+            bank: Some(&bank),
+            name,
+            compatibility_scope: Some(api::identity::Scope::Slot(
+                api::identity::SlotKey::from_incarnation(1).expect("test slot is bound"),
+            )),
+            cache: &None,
+            obj_names_arc: &None,
+        },
         reqs,
-        None,
-        None,
     )
 }
 
@@ -241,7 +246,11 @@ pub(crate) fn dispatch_native_bank_deposit(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[cfg(test)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the test wrapper preserves cached inputs without constructing a live slot"
+)]
 pub(crate) fn dispatch_script_interact_cached<R>(
     driver: &mut dyn Driver,
     snapshot: &GameSnapshot,
@@ -259,8 +268,67 @@ pub(crate) fn dispatch_script_interact_cached<R>(
 where
     R: AsRef<[script::shim::InteractReq]> + IntoIterator<Item = script::shim::InteractReq>,
 {
+    dispatch_script_interact_cached_scoped(
+        driver,
+        &InteractContext {
+            snapshot,
+            obj_names,
+            here,
+            navs,
+            world,
+            state: &state,
+            bank,
+            name,
+            compatibility_scope: None,
+            cache: &cache,
+            obj_names_arc: &obj_names_arc,
+        },
+        reqs,
+    )
+}
+
+/// The slot context of one interaction dispatch pass. An observe pass makes
+/// it once and every dispatch in that pass reads it; the driver stays a
+/// separate argument because the pass also writes through it between
+/// dispatches.
+#[derive(Clone, Copy)]
+pub(crate) struct InteractContext<'a> {
+    pub(crate) snapshot: &'a GameSnapshot,
+    pub(crate) obj_names: Option<&'a api::obj_names::ObjNames>,
+    pub(crate) here: Option<(i32, i32, i32)>,
+    pub(crate) navs: &'a Arc<Mutex<HashMap<String, NavBot>>>,
+    pub(crate) world: &'a Option<Arc<NavWorld>>,
+    pub(crate) state: &'a Option<WorldState>,
+    pub(crate) bank: Option<&'a RwLock<BankMemory>>,
+    pub(crate) name: &'a str,
+    pub(crate) compatibility_scope: Option<api::identity::Scope>,
+    pub(crate) cache: &'a Option<Arc<Cache>>,
+    pub(crate) obj_names_arc: &'a Option<Arc<api::obj_names::ObjNames>>,
+}
+
+pub(crate) fn dispatch_script_interact_cached_scoped<R>(
+    driver: &mut dyn Driver,
+    context: &InteractContext<'_>,
+    reqs: R,
+) -> bool
+where
+    R: AsRef<[script::shim::InteractReq]> + IntoIterator<Item = script::shim::InteractReq>,
+{
     use api::interact::{ActionSpec, OpTarget, SendResult};
     use script::shim::InteractReq;
+    let InteractContext {
+        snapshot,
+        obj_names,
+        here,
+        navs,
+        world,
+        state,
+        bank,
+        name,
+        compatibility_scope,
+        cache,
+        obj_names_arc,
+    } = *context;
     #[cfg(feature = "memory-profile")]
     memory_diagnostics::requests(name, reqs.as_ref());
     let mut wrote = false;
@@ -336,18 +404,19 @@ where
                 ..
             } => {
                 let accepted = if kind == "booth" {
-                    let loc = snapshot.locs().iter().find(|loc| {
-                        loc.tile.x == x
-                            && loc.tile.z == z
-                            && loc.tile.level == level
-                            && name.as_deref().is_none_or(|wanted| {
-                                loc.name
-                                    .as_deref()
-                                    .is_some_and(|actual| actual.eq_ignore_ascii_case(wanted))
-                            })
-                    });
+                    let loc = script::bank::ops::booth_at(
+                        snapshot.locs(),
+                        WorldTile { x, z, level },
+                        name.as_deref(),
+                    );
                     loc.is_some_and(|loc| {
-                        let op = stand_op.or_else(|| action_slot(&loc.actions, "Use-quickly"));
+                        let op = stand_op.or_else(|| {
+                            script::bank::ops::op_slot(
+                                loc,
+                                "Use-quickly",
+                                script::bank::ops::LabelMatch::Normalized,
+                            )
+                        });
                         op.is_some_and(|op| {
                             matches!(
                                 ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(op)),
@@ -356,27 +425,23 @@ where
                         })
                     })
                 } else if kind == "npc" {
-                    let npc = snapshot.npcs().iter().find(|npc| {
-                        npc.tile.x == x
-                            && npc.tile.z == z
-                            && npc.tile.level == level
-                            && name.as_deref().is_some_and(|wanted| {
-                                npc.name
-                                    .as_deref()
-                                    .is_some_and(|actual| actual.eq_ignore_ascii_case(wanted))
-                            })
+                    let npc = name.as_deref().and_then(|wanted| {
+                        script::bank::ops::npc_at(
+                            snapshot.npcs(),
+                            WorldTile { x, z, level },
+                            wanted,
+                        )
                     });
                     npc.is_some_and(|npc| {
                         let op = stand_op
-                            .filter(|&op| {
-                                op >= 1
-                                    && npc
-                                        .actions
-                                        .get((op as usize).saturating_sub(1))
-                                        .and_then(|action| action.as_deref())
-                                        .is_some_and(|action| !action.is_empty())
-                            })
-                            .or_else(|| action_slot(&npc.actions, "Bank"));
+                            .and_then(|op| script::bank::ops::packed_op(npc, op))
+                            .or_else(|| {
+                                script::bank::ops::op_slot(
+                                    npc,
+                                    "Bank",
+                                    script::bank::ops::LabelMatch::Normalized,
+                                )
+                            });
                         op.is_some_and(|op| {
                             matches!(
                                 ix.interact(OpTarget::Npc(npc), ActionSpec::Operation(op)),
@@ -554,30 +619,34 @@ where
                 use_zanaris_bank,
                 request_id,
             } => {
-                super::bank::queue_bank_pick(
-                    navs,
-                    name,
-                    world,
-                    state.clone(),
-                    WorldTile { x, z, level },
-                    allow_wilderness,
-                    request_id,
-                    api::named_banks::BankPreferences {
-                        use_mage_bank,
-                        use_zanaris_bank,
-                    },
-                    snapshot
-                        .stats()
-                        .iter()
-                        .find(|stat| stat.index == 10)
-                        .map(|stat| stat.base),
-                );
-            }
-            InteractReq::WalkNearestBank => {
-                if let Some((x, z, level)) = here {
-                    wrote |= super::bank::queue_bank_walk(
+                if let Some(scope) = compatibility_scope {
+                    super::bank::queue_bank_pick_scoped(
                         navs,
                         name,
+                        scope,
+                        world,
+                        state.clone(),
+                        WorldTile { x, z, level },
+                        allow_wilderness,
+                        request_id,
+                        api::named_banks::BankPreferences {
+                            use_mage_bank,
+                            use_zanaris_bank,
+                        },
+                        snapshot
+                            .stats()
+                            .iter()
+                            .find(|stat| stat.index == 10)
+                            .map(|stat| stat.base),
+                    );
+                }
+            }
+            InteractReq::WalkNearestBank => {
+                if let (Some((x, z, level)), Some(scope)) = (here, compatibility_scope) {
+                    wrote |= super::bank::queue_bank_walk_scoped(
+                        navs,
+                        name,
+                        scope,
                         world,
                         state.clone(),
                         WorldTile { x, z, level },
@@ -695,7 +764,7 @@ where
                     obj_names
                         .and_then(|names| names.name(item.def.id))
                         .is_some_and(|actual| actual.eq_ignore_ascii_case(&name))
-                        .then(|| all_slot(&item.actions).map(|op| (item, op)))
+                        .then(|| script::bank::ops::all_op_in(&item.actions).map(|op| (item, op)))
                         .flatten()
                 }) {
                     wrote |= matches!(
@@ -711,7 +780,7 @@ where
                         .and_then(|n| n.name(it.def.id))
                         .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
                 }) {
-                    if let Some(op) = action_slot(&item.actions, &action) {
+                    if let Some(op) = script::bank::ops::action_op_in(&item.actions, &action) {
                         let res = ix.interact(OpTarget::Item(item), ActionSpec::Operation(op));
                         match &res {
                             SendResult::Sent { .. } => {

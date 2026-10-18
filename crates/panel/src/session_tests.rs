@@ -4,14 +4,21 @@ use super::{
     parse_getvar_line, publish_frontend_slot, publish_nav_debug, reset_frontend_slot_lifetime,
     retire_client_trail, script_active, script_pause_enabled, script_stop_enabled,
     seed_on_first_world, stress_live_entries, temp_live_vault_from, ProfilePreparationCompletion,
-    Session, SlotIo, WalkArm,
+    SceneRoutePaint, Session, SlotIo, WalkArm,
 };
 use crate::focus::draw_for_slot;
 use crate::picker::{
     format_walkto_status, walkto_actions_enabled, walkto_footer_labels, walkto_selection_caption,
 };
-use crate::test_support::{thread_preferences, thread_state_root, TestDir, TestPath};
+use crate::test_support::{
+    patiently, save_store_patiently, set_patiently, thread_preferences, thread_state_root, TestDir,
+    TestPath,
+};
+use api::identity::Deadline;
 use api::snapshot::{GameSnapshot, WorldTile};
+use api::work::{
+    InspectionPhase, MonotonicClock, SharedCancellation, SliceBudget, StepContext, SystemClock,
+};
 use client::client::{Client, ClientConfig};
 use client::config::if_type::{ComponentType, IfType, IfTypeMut};
 use client::dash3d::CollisionFlag;
@@ -23,7 +30,9 @@ use host_play::profile::ProfileEnvironment;
 use host_play::{ProfileOptions, SlotArm, SlotStatus, StartupPhase};
 use nav::collision::WorldCollision;
 use nav::paint::{MAX_DRAW_TILES, NEAR_FULL_DENSITY};
-use nav::router::{Leg, Route};
+use nav::router::{
+    CursorStep, FindOptions, Leg, Route, SearchCompletion, SearchCursor, SearchRequest,
+};
 use nav::tile::Tile;
 use nav::transport::{TransportEdge, TransportGraph, TransportKind};
 use nav::traveller::Traveller;
@@ -32,6 +41,7 @@ use nav::zones::ZoneExempt;
 use nav::WorldState;
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -203,14 +213,28 @@ fn crc_body(packs: &[(String, Vec<u8>)]) -> Vec<u8> {
 }
 
 fn plant_snapshot(unpack: &Path, revision: u16, packs: &[(String, Vec<u8>)]) {
-    struct FixtureEntries;
+    struct FixtureEntries(Vec<(i32, i32)>);
     impl client::unpack::EntrySource for FixtureEntries {
-        fn fetch_entries(
+        fn request_entry(&mut self, archive: i32, file: i32) -> Result<(), String> {
+            self.0.push((archive, file));
+            Ok(())
+        }
+
+        fn take_entries(
             &mut self,
-            _archive: i32,
-            files: &[i32],
-        ) -> Result<Vec<(i32, Vec<u8>)>, String> {
-            Ok(files.iter().map(|&file| (file, b"body".to_vec())).collect())
+            _until: std::time::Instant,
+            out: &mut Vec<client::unpack::FetchedEntry>,
+        ) -> Result<(), String> {
+            out.extend(
+                self.0
+                    .drain(..)
+                    .map(|(archive, file)| client::unpack::FetchedEntry {
+                        archive,
+                        file,
+                        payload: b"body".to_vec(),
+                    }),
+            );
+            Ok(())
         }
     }
     let versionlist = &packs
@@ -234,7 +258,7 @@ fn plant_snapshot(unpack: &Path, revision: u16, packs: &[(String, Vec<u8>)]) {
     client::unpack::fetch_snapshot(
         &input.to_string_lossy(),
         &out.to_string_lossy(),
-        &mut FixtureEntries,
+        &mut FixtureEntries(Vec::new()),
     )
     .unwrap();
 }
@@ -504,7 +528,7 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
         crate::test_support::scratch_service(&own_root).operator_loadouts(),
     ));
     own.upsert(api::loadout::Loadout::new("melee"));
-    own.save().unwrap();
+    save_store_patiently(&mut own);
 
     assert!(session.unlock("prepared-pass"));
     let handle = session
@@ -530,7 +554,7 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
     // The Loadouts form saves through the session's service: the Start
     // leases that row.
     session.loadouts.upsert(api::loadout::Loadout::new("melee"));
-    session.loadouts.save().unwrap();
+    save_store_patiently(&mut session.loadouts);
     start().expect("the Start leases the row the form saved");
 }
 
@@ -541,8 +565,34 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
 /// the panel's next save keeps them.
 #[test]
 fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
+    use api::local_state::{AccountKey, ContentScope, DomainIdentity, LocalStateDomain};
+
+    const WAIT: Duration = Duration::from_secs(60);
+    let await_readback = |service: &host_play::local_state::LocalStateService| {
+        for domain in [
+            LocalStateDomain::Preferences,
+            LocalStateDomain::LoadoutsReferences,
+        ] {
+            let identity = DomainIdentity::new(
+                domain,
+                AccountKey::try_new("operator", "operator").unwrap(),
+                ContentScope::try_new(client::io::ClientRevision::R289, "operator").unwrap(),
+            );
+            service
+                .readback_lease(&identity, WAIT)
+                .expect("initial operator-store readback must complete");
+        }
+    };
+
     let _iso = IsolatedEnv::enter("panel-state-round-trip");
     let mut session = Session::new();
+    await_readback(session.core.local_state().unwrap());
+    session.preferences.reload().unwrap();
+    session.loadouts.reload().unwrap();
+    assert!(
+        session.loadouts.load_error().is_none(),
+        "initial loadouts readback must complete"
+    );
     let state = crate::ui_state::PanelUiState {
         last_focus: Some("alice".into()),
         ..Default::default()
@@ -557,11 +607,16 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
 
     // Another 274bot process on this home: its own service, same files.
     let peer = host_play::local_state::LocalStateService::open_process(thread_state_root());
+    await_readback(&peer);
     assert_eq!(
         peer.preferences().value("last_focus"),
         Some(serde_json::json!("alice"))
     );
     let mut peer_form = script::LoadoutsStore::over(Arc::new(peer.operator_loadouts()));
+    assert!(
+        peer_form.load_error().is_none(),
+        "the peer's initial loadouts readback must complete"
+    );
     assert_eq!(
         peer_form.get("roundtrip").unwrap().carry,
         vec![api::loadout::CarryEntry::new("Lobster", 5)]
@@ -863,8 +918,40 @@ fn write_looping_catalog(dir: &Path, cards: &[(&str, &str)]) -> PathBuf {
     root
 }
 
+fn settle_catalog_work(session: &mut Session) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while session.scripts.catalog_work_pending() && Instant::now() < deadline {
+        session.core.poll();
+        session.poll_scripts();
+        session.pump_script_transpile();
+        thread::sleep(Duration::from_millis(5));
+    }
+    session.core.poll();
+    session.poll_scripts();
+    session.pump_script_transpile();
+    assert!(
+        !session.scripts.catalog_work_pending(),
+        "catalog preparation did not settle"
+    );
+}
+
+fn settle_transpile_queue(session: &mut Session) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !session.transpile_queue.is_empty() && Instant::now() < deadline {
+        session.core.poll();
+        session.poll_scripts();
+        session.pump_script_transpile();
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        session.transpile_queue.is_empty(),
+        "transpile queue did not settle"
+    );
+}
+
 #[test]
 fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
+    let _work_service_guard = crate::work_service_test_lock();
     let iso = IsolatedEnv::enter("prebind-catalog");
     let explicit = write_looping_catalog(&iso.dir.join("explicit"), &[("Chosen", "Chosen")]);
     let ambient = write_looping_catalog(&iso.dir.join("ambient"), &[("Ambient", "Ambient")]);
@@ -889,6 +976,7 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
         .unwrap();
     assert_eq!(session.catalog_root().unwrap(), Some(explicit.clone()));
     session.fill_rs2b0t_cards_once();
+    settle_catalog_work(&mut session);
     assert!(session
         .scripts
         .js()
@@ -908,6 +996,7 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
     .unwrap();
     session.scripts.js_mut().load(&custom).unwrap();
     session.import_rs2b0t_catalog(&ambient).unwrap();
+    settle_catalog_work(&mut session);
     assert!(session
         .scripts
         .js()
@@ -922,6 +1011,7 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
 
 #[test]
 fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
+    let _work_service_guard = crate::work_service_test_lock();
     let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
     let catalog = write_looping_catalog(&root.join("catalog"), &[("Chosen", "Chosen")]);
     let source = catalog.join("src/bot/scripts/Chosen/Chosen.ts");
@@ -950,6 +1040,7 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
         )
         .unwrap();
     session.fill_rs2b0t_cards_once();
+    settle_catalog_work(&mut session);
     session
         .scripts
         .js_mut()
@@ -970,6 +1061,7 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
     session.bind_profile_with_env(&env).unwrap();
     let another = write_looping_catalog(&root.join("another"), &[("Another", "Another")]);
     session.import_rs2b0t_catalog(&another).unwrap();
+    settle_catalog_work(&mut session);
     assert!(session
         .scripts
         .js()
@@ -989,15 +1081,11 @@ fn live_follow_route_wins_over_empty_walkto_arm() {
         dest,
         ticks: 1.0,
     };
-    let (route, click) = live_or_walk_paint(
-        true,
-        (Some(live_route.clone()), Some(dest)),
-        (None, None),
-        (None, None),
-    );
-    assert_eq!(route.unwrap().dest, dest);
+    let (route, click) =
+        live_or_walk_paint(true, (Some(&live_route), Some(dest)), (None, None), None);
+    assert_eq!(route.unwrap().projection().destination(), dest);
     assert_eq!(click, Some(dest));
-    let (route, _) = live_or_walk_paint(true, (None, None), (None, None), (None, None));
+    let (route, _) = live_or_walk_paint(true, (None, None), (None, None), None);
     assert!(route.is_none(), "no live route falls back to WalkTo");
     let script_dest = WorldTile {
         x: 3185,
@@ -1011,18 +1099,23 @@ fn live_follow_route_wins_over_empty_walkto_arm() {
         dest: script_dest,
         ticks: 1.0,
     };
-    let (route, click) = live_or_walk_paint(
-        false,
-        (None, None),
-        (None, None),
-        (Some(script_route), Some(script_dest)),
-    );
+    let script_projection = map_host::walk_map::RouteProjection {
+        stamp: map_host::walk_map::RouteStamp {
+            source: map_host::walk_map::RouteSource::Script,
+            generation: 1,
+            destination: script_dest,
+        },
+        route: map_host::walk_map::RouteProjectionPath::Legacy(&script_route),
+        aim: Some(script_dest),
+    };
+    let (route, click) =
+        live_or_walk_paint(false, (None, None), (None, None), Some(script_projection));
     assert_eq!(
         click,
         Some(script_dest),
         "catalog walk paints when WalkTo is idle"
     );
-    assert_eq!(route.unwrap().dest, script_dest);
+    assert_eq!(route.unwrap().projection().destination(), script_dest);
 }
 
 #[test]
@@ -1663,6 +1756,109 @@ fn walled_world() -> NavWorld {
     )
 }
 
+fn compact_route_completion(
+    world: &Arc<NavWorld>,
+    from: WorldTile,
+    to: WorldTile,
+) -> (nav::contract::NavLease, SearchCompletion) {
+    let lease = nav::producer::lease(world).expect("fixture pack lease");
+    let mut cursor = SearchCursor::new(
+        SearchRequest::Single {
+            from,
+            to,
+            options: FindOptions::default(),
+            avoid: Box::default(),
+            max_settles: 1_024,
+        },
+        lease.clone(),
+        Arc::new(WorldState::default()),
+    )
+    .expect("small route cursor");
+    let clock = SystemClock;
+    let cancellation = SharedCancellation::new();
+    let units = NonZeroU32::new(64).expect("nonzero slice");
+    loop {
+        let budget = SliceBudget::new(units, Deadline::after(clock.now(), Duration::from_secs(5)));
+        let mut context = StepContext::<InspectionPhase>::new(&clock, budget, &cancellation);
+        match cursor.advance(&mut context) {
+            CursorStep::Complete(completion) => return (lease, completion),
+            CursorStep::Yielded => {}
+            CursorStep::Cancelled(reason) => panic!("fixture route cancelled: {reason:?}"),
+            CursorStep::Failed(error) => panic!("fixture route failed: {error:?}"),
+        }
+    }
+}
+
+#[test]
+fn compact_script_route_paints_its_scene_path_and_click_ahead_of_walkto() {
+    let mut client = paint_client();
+    let world = Arc::new(walled_world());
+    let from = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let destination = WorldTile { x: 3202, ..from };
+    let (lease, completion) = compact_route_completion(&world, from, destination);
+    let view = completion
+        .route_view(&lease)
+        .expect("same-pack compact route view")
+        .expect("completed route");
+    let script = map_host::walk_map::RouteProjection {
+        stamp: map_host::walk_map::RouteStamp {
+            source: map_host::walk_map::RouteSource::Script,
+            generation: 9,
+            destination,
+        },
+        route: map_host::walk_map::RouteProjectionPath::Compact(view),
+        aim: Some(destination),
+    };
+    let manual_destination = WorldTile { x: 3210, ..from };
+    let manual = Route {
+        legs: vec![Leg::Walk {
+            tiles: vec![manual_destination],
+        }],
+        dest: manual_destination,
+        ticks: 1.0,
+    };
+    let (route, click) = live_or_walk_paint(
+        false,
+        (None, None),
+        (Some(&manual), Some(manual_destination)),
+        Some(script),
+    );
+    let route = route.expect("script route beats a manual WalkTo fallback");
+    assert_eq!(route.projection().destination(), destination);
+    assert_eq!(click, Some(destination));
+
+    let settings = NavSettings {
+        show_nav_path: true,
+        ..NavSettings::default()
+    };
+    let outputs = SceneRoutePaint::build(&world, Some(route.projection()), Some(from), true, true);
+    // The scene painter consumes only outputs. It does not retain the compact
+    // route borrow or require the route owner to remain locked or alive.
+    drop(completion);
+    drop(lease);
+    publish_nav_debug(
+        &mut client,
+        &world,
+        Some(outputs),
+        &[],
+        false,
+        click,
+        &settings,
+        true,
+        false,
+    );
+    let paint = client.nav_debug_paint().expect("focused scene paint");
+    assert_eq!(
+        paint.path,
+        vec![(0, 0, false), (1, 0, false), (2, 0, false)]
+    );
+    assert_eq!(paint.click, Some((2, 0)));
+}
+
 #[test]
 fn focused_slot_publishes_scene_collision_for_loaded_map() {
     let mut c = paint_client();
@@ -1717,8 +1913,13 @@ fn focused_slot_publishes_scene_collision_for_loaded_map() {
     publish_nav_debug(
         &mut c,
         &world,
-        Some(&route),
-        here,
+        Some(SceneRoutePaint::build(
+            &world,
+            Some(map_host::walk_map::RouteProjectionPath::Legacy(&route)),
+            here,
+            true,
+            true,
+        )),
         &[],
         false,
         click,
@@ -1837,18 +2038,7 @@ fn publish_nav_debug_carries_reach_from_the_bitset() {
         nsew_labels: true,
         ..NavSettings::default()
     };
-    publish_nav_debug(
-        &mut c,
-        &world,
-        None,
-        None,
-        &[],
-        false,
-        None,
-        &layers,
-        true,
-        true,
-    );
+    publish_nav_debug(&mut c, &world, None, &[], false, None, &layers, true, true);
     let paint = c.nav_debug_paint().expect("focused drawing slot publishes");
     // The blocked door loc is a reach seed: reached despite the ground
     // block, so the client keeps its collision fill.
@@ -1887,25 +2077,13 @@ fn unfocused_slot_clears_nav_debug_paint() {
     let mut c = paint_client();
     let world = walled_world();
     let layers = effective(&NavSettings::default(), true);
-    publish_nav_debug(
-        &mut c,
-        &world,
-        None,
-        None,
-        &[],
-        false,
-        None,
-        &layers,
-        true,
-        true,
-    );
+    publish_nav_debug(&mut c, &world, None, &[], false, None, &layers, true, true);
     assert!(c.nav_debug_paint().is_some());
     // Unfocused / skip-paint / renderer-off slots must not linger on a
     // stale paint.
     publish_nav_debug(
         &mut c,
         &world,
-        None,
         None,
         &[],
         false,
@@ -1954,7 +2132,6 @@ fn saved_collision_prefs_without_drawing_do_not_load_navflags() {
         &mut c,
         &world,
         None,
-        None,
         &[],
         false,
         None,
@@ -1974,18 +2151,7 @@ fn saved_collision_prefs_without_drawing_do_not_load_navflags() {
     assert!(c.nav_debug_paint().is_none());
 
     // Enabling a drawn layer loads exactly once.
-    publish_nav_debug(
-        &mut c,
-        &world,
-        None,
-        None,
-        &[],
-        false,
-        None,
-        &layers,
-        true,
-        true,
-    );
+    publish_nav_debug(&mut c, &world, None, &[], false, None, &layers, true, true);
     assert_eq!(crate::picker::flags_load_count(), 1);
     assert_eq!(
         crate::picker::flags_sidecar_state(),
@@ -1994,33 +2160,11 @@ fn saved_collision_prefs_without_drawing_do_not_load_navflags() {
     assert!(c.nav_debug_paint().is_some());
 
     // Second drawn frame does not reload.
-    publish_nav_debug(
-        &mut c,
-        &world,
-        None,
-        None,
-        &[],
-        false,
-        None,
-        &layers,
-        true,
-        true,
-    );
+    publish_nav_debug(&mut c, &world, None, &[], false, None, &layers, true, true);
     assert_eq!(crate::picker::flags_load_count(), 1);
 
     // Last drawer off releases ownership.
-    publish_nav_debug(
-        &mut c,
-        &world,
-        None,
-        None,
-        &[],
-        false,
-        None,
-        &layers,
-        false,
-        true,
-    );
+    publish_nav_debug(&mut c, &world, None, &[], false, None, &layers, false, true);
     assert_eq!(
         crate::picker::flags_sidecar_state(),
         crate::picker::FlagsSidecarState::Unloaded
@@ -2107,7 +2251,6 @@ fn focused_slot_publishes_client_trail_tones() {
         &mut c,
         &world,
         None,
-        None,
         &trail_world,
         true,
         None,
@@ -2149,16 +2292,7 @@ fn live_client_trail_retires_after_arrival_so_offpath_cannot_resurrect() {
     let arrived = live_client_trail(&mut c, Some(wt(3202, 3200)));
     assert!(arrived.is_empty(), "dest occupancy must hide the trail");
     publish_nav_debug(
-        &mut c,
-        &world,
-        None,
-        Some(wt(3202, 3200)),
-        &arrived,
-        false,
-        None,
-        &layers,
-        true,
-        true,
+        &mut c, &world, None, &arrived, false, None, &layers, true, true,
     );
     let paint = c.nav_debug_paint().expect("arrival still publishes");
     assert!(
@@ -2186,16 +2320,7 @@ fn live_client_trail_retires_after_arrival_so_offpath_cannot_resurrect() {
     );
     assert!(c.try_move_path.is_empty());
     publish_nav_debug(
-        &mut c,
-        &world,
-        None,
-        Some(wt(3201, 3200)),
-        &revisit,
-        false,
-        None,
-        &layers,
-        true,
-        true,
+        &mut c, &world, None, &revisit, false, None, &layers, true, true,
     );
     let paint = c.nav_debug_paint().expect("off-path still publishes");
     assert!(
@@ -2341,18 +2466,7 @@ fn face_only_cells_publish_with_fill_without_labels() {
         nsew_labels: false,
         ..NavSettings::default()
     };
-    publish_nav_debug(
-        &mut c,
-        &world,
-        None,
-        None,
-        &[],
-        false,
-        None,
-        &layers,
-        true,
-        true,
-    );
+    publish_nav_debug(&mut c, &world, None, &[], false, None, &layers, true, true);
     let paint = c.nav_debug_paint().expect("focused drawing slot publishes");
     let face_only = paint
         .collision
@@ -2405,8 +2519,13 @@ fn show_nav_path_masters_hulls_click_and_trail() {
     publish_nav_debug(
         &mut c,
         &world,
-        Some(&route),
-        None,
+        Some(SceneRoutePaint::build(
+            &world,
+            Some(map_host::walk_map::RouteProjectionPath::Legacy(&route)),
+            None,
+            true,
+            true,
+        )),
         &trail_world,
         false,
         click,
@@ -2436,8 +2555,13 @@ fn show_nav_path_masters_hulls_click_and_trail() {
     publish_nav_debug(
         &mut c,
         &world,
-        Some(&route),
-        None,
+        Some(SceneRoutePaint::build(
+            &world,
+            Some(map_host::walk_map::RouteProjectionPath::Legacy(&route)),
+            None,
+            true,
+            true,
+        )),
         &trail_world,
         false,
         click,
@@ -2470,8 +2594,13 @@ fn show_nav_path_masters_hulls_click_and_trail() {
     publish_nav_debug(
         &mut c,
         &world,
-        Some(&route),
-        None,
+        Some(SceneRoutePaint::build(
+            &world,
+            Some(map_host::walk_map::RouteProjectionPath::Legacy(&route)),
+            None,
+            true,
+            true,
+        )),
         &trail_world,
         true,
         click,
@@ -2555,8 +2684,13 @@ fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
     publish_nav_debug(
         &mut c,
         &world,
-        Some(&route),
-        None,
+        Some(SceneRoutePaint::build(
+            &world,
+            Some(map_host::walk_map::RouteProjectionPath::Legacy(&route)),
+            None,
+            true,
+            true,
+        )),
         &[],
         false,
         None,
@@ -3078,7 +3212,7 @@ fn restored_enabled_folder_loads_when_game_data_becomes_ready() {
         session.quester_paths.is_running(),
         "saved folder starts a reload without a user action"
     );
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while session.quester_paths.is_running() {
         assert!(
             Instant::now() < deadline,
@@ -3234,17 +3368,21 @@ fn walk_permissions_projection_follows_a_peer_write() {
 
     // The peer's write lands next to a key the panel knows nothing about;
     // the projection follows once the session's preferences re-read.
-    frontend_core::nav_preference(
-        &peer,
-        frontend_core::NavPreference::AllowTeleports,
-        Some(true),
-    )
+    patiently(|| {
+        frontend_core::nav_preference(
+            &peer,
+            frontend_core::NavPreference::AllowTeleports,
+            Some(true),
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+    })
     .unwrap();
-    peer.set(
+    set_patiently(
+        &peer,
         "peer_marker",
         serde_json::json!("written by the other frontend"),
-    )
-    .unwrap();
+    );
     session.preferences.reload().unwrap();
     session.refresh_walk_permissions();
     assert!(session.walk_permissions.globals.allow_teleports);
@@ -4804,7 +4942,7 @@ fn flat_model_spawns_every_member_as_a_client() {
     s.load("carol");
     // ensure_slot registers the IO map synchronously; wait only for the
     // slot threads to publish their status rows.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < deadline {
         if s.core.play().unwrap().statuses().len() == 3 {
             break;
@@ -4918,7 +5056,7 @@ fn logout_all_arms_every_wall_member() {
     s.load("bob");
     s.core.fleet_mut().add("alice");
     s.core.fleet_mut().add("bob");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < deadline {
         if s.core.play().unwrap().arm("bob").is_some() {
             break;
@@ -4944,7 +5082,7 @@ fn headed_stress_spawns_every_member_prefers_and_arms_s00() {
     });
     let mut s = Session::new();
     s.live_prepare_stress(3, false).expect("prepare");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < deadline {
         if s.core.play().unwrap().statuses().len() == 3 {
             break;
@@ -6047,7 +6185,7 @@ fn explicit_login_arms_a_fresh_non_auto_profile() {
         .and_then(|play| play.arm("alice"))
         .expect("fresh explicit login creates an arm");
     assert!(arm.wants_login());
-    assert!(!arm.auto_login.load(Ordering::Relaxed));
+    assert!(!arm.auto_login());
     assert!(!arm.login_latched());
 }
 
@@ -6369,7 +6507,7 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
         Some(2)
     );
     assert_eq!(
-        *arm.world.lock(),
+        arm.world_choice(),
         Some(2),
         "the profile-save path must update a running slot's next handshake"
     );
@@ -6393,7 +6531,7 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
         "a credentials save outside the editor must not unpin an account"
     );
     assert_eq!(
-        *arm.world.lock(),
+        arm.world_choice(),
         Some(2),
         "a non-editor save must preserve the running slot's pin"
     );
@@ -6956,10 +7094,10 @@ fn set_auto_login_mirrors_running_arm() {
     s.core.set_play(Some(play));
     assert!(s.set_auto_login("alice", true));
     s.core.flush_writes();
-    assert!(arm.auto_login.load(Ordering::Relaxed));
+    assert!(arm.auto_login());
     assert!(s.set_auto_login("alice", false));
     s.core.flush_writes();
-    assert!(!arm.auto_login.load(Ordering::Relaxed));
+    assert!(!arm.auto_login());
 }
 
 #[test]
@@ -7119,14 +7257,11 @@ fn arm_for_profile_respects_auto_login_and_latch() {
     s.core.vault_mut().unwrap().upsert(p).unwrap();
     let arm = s.core.arm_for_profile("alice").expect("arm");
     assert!(arm.wants_login());
-    assert!(arm.auto_login.load(Ordering::Relaxed));
+    assert!(arm.auto_login());
     s.core.fleet_mut().latch_logout("alice");
     let arm = s.core.arm_for_profile("alice").expect("arm");
     assert!(!arm.wants_login(), "latch blocks handshake");
-    assert!(
-        arm.auto_login.load(Ordering::Relaxed),
-        "profile auto_login stays on the arm"
-    );
+    assert!(arm.auto_login(), "profile auto_login stays on the arm");
 }
 
 #[test]
@@ -8154,6 +8289,7 @@ fn script_start_selected_refuses_unloadable_import() {
     let mut play = empty_play();
     play.attach_arm("alice", SlotArm::new(42, false));
     s.core.set_play(Some(play));
+    s.core.fleet_mut().add("alice");
     s.set_focus_for_test("alice");
     s.load_js(&path);
     assert_eq!(
@@ -8221,6 +8357,7 @@ fn fill_rs2b0t_cards_once_happens_on_first_browse_not_session_new() {
     // catalog-free: the fill is first Load/Browse only, so panel unit
     // tests that merely construct a `Session` never parse a real
     // catalog or rewrite `~/.274bot/rs2b0t-path`.
+    let _work_service_guard = crate::work_service_test_lock();
     let iso = IsolatedEnv::enter("rs2b0t-fill");
     let root = write_looping_catalog(&iso.dir, &[("BoneBurier", "BoneBurier")]);
     iso.set_rs2b0t(&root);
@@ -8237,6 +8374,18 @@ fn fill_rs2b0t_cards_once_happens_on_first_browse_not_session_new() {
         "Session::new must not rewrite the persisted root"
     );
     s.fill_rs2b0t_cards_once();
+    assert!(
+        s.scripts.catalog_work_pending(),
+        "first browse queues catalog work"
+    );
+    assert!(
+        s.scripts
+            .js()
+            .get(script::ScriptSource::Catalog, "BoneBurier")
+            .is_none(),
+        "catalog cards are not parsed on the browse frame"
+    );
+    settle_catalog_work(&mut s);
     let card = s
         .scripts
         .js()
@@ -8325,11 +8474,20 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
 
 #[test]
 fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
+    let _work_service_guard = crate::work_service_test_lock();
     let iso = IsolatedEnv::enter("import");
     let root = fake_rs2b0t_tree(&iso.dir);
     let mut s = Session::new();
-    let n = s.import_rs2b0t_catalog(&root).expect("import");
-    assert_eq!(n, 1);
+    s.import_rs2b0t_catalog(&root).expect("import");
+    assert!(
+        s.scripts.catalog_work_pending(),
+        "catalog import is admitted as worker work"
+    );
+    assert!(
+        !iso.home.join(".274bot/rs2b0t-path").exists(),
+        "root is persisted only after preparation settles"
+    );
+    settle_catalog_work(&mut s);
     assert!(iso.home.join(".274bot/rs2b0t-path").is_file());
     let card = s
         .scripts
@@ -8343,11 +8501,14 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
 
 #[test]
 fn on_script_browse_open_with_rs2b0t_env_still_fills_catalog() {
+    let _work_service_guard = crate::work_service_test_lock();
     let iso = IsolatedEnv::enter("browse-env");
     let root = fake_rs2b0t_tree(&iso.dir);
     iso.set_rs2b0t(&root);
     let mut s = Session::new();
     s.on_script_browse_open();
+    assert!(s.scripts.catalog_work_pending());
+    settle_catalog_work(&mut s);
     assert!(
         s.scripts
             .js()
@@ -8366,7 +8527,8 @@ fn write_two_card_catalog(dir: &Path) -> PathBuf {
 }
 
 #[test]
-fn select_script_card_queues_only_that_card_and_pumps_one_per_two_frames() {
+fn select_script_card_queues_only_that_card_through_worker() {
+    let _work_service_guard = crate::work_service_test_lock();
     let iso = IsolatedEnv::enter("transpile-click");
     let root = write_two_card_catalog(&iso.dir);
     let mut s = Session::new();
@@ -8420,10 +8582,20 @@ fn select_script_card_queues_only_that_card_and_pumps_one_per_two_frames() {
             .unwrap()
             .js
             .is_empty(),
-        "first pump only arms so the UI can paint transpiling…"
+        "first pump only arms so the UI can paint transpiling"
     );
-
     s.pump_script_transpile();
+    assert!(
+        s.scripts
+            .js()
+            .get(script::ScriptSource::Catalog, "BoneBurier")
+            .unwrap()
+            .js
+            .is_empty(),
+        "second pump submits worker work; it does not compile inline"
+    );
+    assert!(s.scripts.transpile_pending());
+    settle_transpile_queue(&mut s);
     assert!(!s
         .scripts
         .js()
@@ -8438,11 +8610,11 @@ fn select_script_card_queues_only_that_card_and_pumps_one_per_two_frames() {
         .unwrap()
         .js
         .is_empty());
-    assert!(s.transpile_queue.is_empty());
 }
 
 #[test]
-fn queue_transpile_all_warms_one_card_per_armed_frame() {
+fn queue_transpile_all_uses_the_shared_worker_slot() {
+    let _work_service_guard = crate::work_service_test_lock();
     let iso = IsolatedEnv::enter("transpile-all");
     let root = write_two_card_catalog(&iso.dir);
     let mut s = Session::new();
@@ -8462,51 +8634,98 @@ fn queue_transpile_all_warms_one_card_per_armed_frame() {
 
     s.pump_script_transpile();
     s.pump_script_transpile();
-    let warmed = s
-        .scripts
-        .js()
-        .cards()
-        .iter()
-        .filter(|c| !c.js.is_empty())
-        .count();
-    assert_eq!(warmed, 1, "all-at-once still one file per armed frame");
-    assert_eq!(s.transpile_queue.len(), 1);
-
-    s.pump_script_transpile();
-    s.pump_script_transpile();
+    assert!(
+        s.scripts.transpile_pending(),
+        "the first request is queued on WorkAdmission"
+    );
     assert_eq!(
         s.scripts
             .js()
             .cards()
             .iter()
-            .filter(|c| !c.js.is_empty())
+            .filter(|card| !card.js.is_empty())
+            .count(),
+        0,
+        "the click frame does not compile any card"
+    );
+    assert_eq!(s.transpile_queue.len(), 2);
+
+    settle_transpile_queue(&mut s);
+    assert_eq!(
+        s.scripts
+            .js()
+            .cards()
+            .iter()
+            .filter(|card| !card.js.is_empty())
             .count(),
         2
     );
-    assert!(s.transpile_queue.is_empty());
 }
 
 #[test]
-fn select_script_card_skips_queue_on_cache_hit() {
+fn select_script_card_queues_cached_output_through_worker() {
+    let _work_service_guard = crate::work_service_test_lock();
     let iso = IsolatedEnv::enter("transpile-hit");
     let root = write_two_card_catalog(&iso.dir);
+    let store = iso.dir.join("js-scripts.json");
+    let cache = iso.dir.join("js-cache");
+    let mut warm = script::JsLibrary::with_cache(store.clone(), cache.clone());
+    warm.register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
+        .expect("catalog");
+    warm.ensure_js(script::ScriptSource::Catalog, "BoneBurier")
+        .unwrap();
+    drop(warm);
+
     let mut s = Session::new();
     s.persist_ui = false;
-    s.scripts.set_js(script::JsLibrary::with_cache(
-        iso.dir.join("js-scripts.json"),
-        iso.dir.join("js-cache"),
-    ));
+    s.scripts
+        .set_js(script::JsLibrary::with_cache(store, cache));
     s.scripts
         .js_mut()
         .register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
         .expect("catalog");
-    s.scripts
-        .js_mut()
-        .ensure_js(script::ScriptSource::Catalog, "BoneBurier")
-        .unwrap();
+    assert!(s
+        .scripts
+        .js()
+        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .unwrap()
+        .js
+        .is_empty());
+    assert!(s.scripts.js().cache().is_cached(
+        s.scripts
+            .js()
+            .get(script::ScriptSource::Catalog, "BoneBurier")
+            .unwrap()
+            .origin
+            .as_bytes()
+    ));
 
     s.select_script_card(script::ScriptSource::Catalog, "BoneBurier");
-    assert!(s.transpile_queue.is_empty());
+    assert_eq!(s.transpile_queue.len(), 1);
+    assert!(s
+        .scripts
+        .js()
+        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .unwrap()
+        .js
+        .is_empty());
+    s.pump_script_transpile();
+    s.pump_script_transpile();
+    assert!(s
+        .scripts
+        .js()
+        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .unwrap()
+        .js
+        .is_empty());
+    settle_transpile_queue(&mut s);
+    assert!(!s
+        .scripts
+        .js()
+        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .unwrap()
+        .js
+        .is_empty());
 }
 
 fn two_live_session(label: &str) -> (Session, script::IsolatedEnv) {
@@ -8910,7 +9129,7 @@ fn memory_relog_starts_at_once_without_a_running_script() {
     assert!(!s.mem_relog_armed());
     assert!(s.request_focused_memory_relog());
     let arm = s.core.play().unwrap().arm("alice").unwrap();
-    assert!(arm.login_latched() && arm.wants_logout());
+    assert!(!arm.login_latched() && !arm.wants_logout() && arm.wants_login());
     assert!(
         s.core.memory_status("alice").unwrap().relog_pending,
         "the poll must see the armed relog"

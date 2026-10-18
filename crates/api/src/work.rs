@@ -108,10 +108,8 @@
 //! }
 //! ```
 //!
-//! Current producers this vocabulary will migrate (characterization in the
-//! producers' own crates, not cooperation): T5 map bake `run_job`
-//! (`crates/host-play/src/map_cache.rs:1960-2043`, `MapJobStatus`/`MapProgress`
-//! at `:844-869,1939-1946`, `finish_job` at `:2045-2053`); T4 walk-map decode
+//! Remaining producers that will migrate (characterization in the
+//! producers' own crates, not cooperation): T4 walk-map decode
 //! (`crates/panel/src/walk_map.rs:109-126,1165-1187`); T1 `script_bank.rs`
 //! bank-pick; T5 `route_inspect.rs` inspection; card preparation
 //! (`crates/api/src/selected.rs:310-330`).
@@ -189,6 +187,79 @@ pub enum WorkFamily {
     ProfilePreparation,
 }
 
+/// Where an admitted family executes its cooperative steps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkExecution {
+    /// The existing background worker drives the job.
+    BackgroundWorker,
+    /// One new thread drives only this request and exits at its terminal.
+    RequestThread,
+}
+
+/// Whether declared custody consumes the shared background byte allowance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkByteAdmission {
+    /// Account custody and enforce the shared background byte allowance.
+    Bounded,
+    /// Account custody without a global byte cap. Family-local bounds remain.
+    Declared,
+}
+
+/// The registered family's execution and byte-admission policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkFamilyPolicy {
+    execution: WorkExecution,
+    bytes: WorkByteAdmission,
+}
+
+impl WorkFamilyPolicy {
+    /// Where the family's admitted jobs execute.
+    pub const fn execution(self) -> WorkExecution {
+        self.execution
+    }
+
+    /// Whether the shared background byte allowance applies.
+    pub const fn bytes(self) -> WorkByteAdmission {
+        self.bytes
+    }
+}
+
+/// A request's original thread name and optional explicit stack size.
+///
+/// A missing stack size preserves `std::thread::Builder`'s default.
+/// The service copies the name once when it creates the request thread.
+#[derive(Debug, Clone, Copy)]
+pub struct RequestThread<'a> {
+    name: &'a str,
+    stack_bytes: Option<NonZeroUsize>,
+}
+
+impl<'a> RequestThread<'a> {
+    /// Preserve the request producer's thread name and default stack size.
+    pub const fn new(name: &'a str) -> Self {
+        Self {
+            name,
+            stack_bytes: None,
+        }
+    }
+
+    /// Preserve an explicit stack size used by the request producer.
+    pub const fn with_stack_bytes(mut self, stack_bytes: NonZeroUsize) -> Self {
+        self.stack_bytes = Some(stack_bytes);
+        self
+    }
+
+    /// The name passed to `std::thread::Builder`.
+    pub const fn name(self) -> &'a str {
+        self.name
+    }
+
+    /// An explicit stack size, or the platform default.
+    pub const fn stack_bytes(self) -> Option<NonZeroUsize> {
+        self.stack_bytes
+    }
+}
+
 impl WorkFamily {
     /// Every registered family.
     pub const ALL: [WorkFamily; 8] = [
@@ -201,6 +272,30 @@ impl WorkFamily {
         WorkFamily::CataloguePreparation,
         WorkFamily::ProfilePreparation,
     ];
+
+    /// Execution and byte admission for the registered family.
+    ///
+    /// T5.W activates four request-thread families. The other owners retain
+    /// their existing execution until their separate migrations land.
+    pub const fn policy(self) -> WorkFamilyPolicy {
+        match self {
+            Self::Route | Self::Inspection | Self::BankPick => WorkFamilyPolicy {
+                execution: WorkExecution::RequestThread,
+                bytes: WorkByteAdmission::Declared,
+            },
+            Self::MapBake => WorkFamilyPolicy {
+                execution: WorkExecution::RequestThread,
+                bytes: WorkByteAdmission::Bounded,
+            },
+            Self::WalkMapDecode
+            | Self::CardPreparation
+            | Self::CataloguePreparation
+            | Self::ProfilePreparation => WorkFamilyPolicy {
+                execution: WorkExecution::BackgroundWorker,
+                bytes: WorkByteAdmission::Bounded,
+            },
+        }
+    }
 
     /// Track that produces this family's job.
     pub const fn producer(self) -> Track {
@@ -288,13 +383,11 @@ impl WorkFamily {
     }
 
     /// Cancellation mapping. Every WorkAdmission reason settles as
-    /// [`Settlement::Cancelled`]; the family adapter decides what today's
-    /// consumers observe. For map bake the real producer has exactly one
-    /// stopped-before-done ending, the resumable `MapJobStatus::Paused`:
-    /// `finish_job` maps `MapCacheError::Cancelled` or a set cancel flag to
-    /// `Paused` (`host-play/src/map_cache.rs:2045-2053`), `map_bind.rs:82`
-    /// retries `Paused`, and `MapJobStatus::Cancelled` is matched but never
-    /// constructed. See [`MapBakeStatus::cancellation_observed_as`].
+    /// [`Settlement::Cancelled`]; the family adapter decides what consumers
+    /// observe. Map-bake cancellation appears as the resumable
+    /// `MapJobStatus::Paused`, with its checkpoint receipt retained for retry.
+    /// `MapJobStatus::Cancelled` is matched but never constructed today.
+    /// See [`MapBakeStatus::cancellation_observed_as`].
     pub const fn cancellation_mapping(self) -> &'static str {
         match self {
             Self::MapBake => {
@@ -319,7 +412,10 @@ impl WorkFamily {
             Self::MapBake => {
                 "input identity + retained checkpoint receipt bytes + result map handle"
             }
-            Self::WalkMapDecode => "PNG input bytes (capped) + decoded RGBA result bytes; 0 handles after yield",
+            Self::WalkMapDecode => {
+                "PNG input bytes (capped) + 2 MiB decode scratch + decoded RGBA result bytes; \
+                 0 handles after yield"
+            }
             Self::BankPick | Self::Inspection => {
                 "request + world-lease (not copied) + result snapshot bytes"
             }
@@ -410,9 +506,8 @@ impl WorkPhase for MapBakePhase {
     }
 }
 
-/// Characterizes `MapJobStatus` (`map_cache.rs:861-869`) one variant per
-/// variant. The host-play producer's tests map every real variant onto this
-/// enum and drive `finish_job` to pin the cancellation observation.
+/// Characterizes the host map-bake status with one variant per family status.
+/// Host-play tests map each real status to this frozen result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MapBakeStatus {
     /// Accepted, not yet running.
@@ -421,11 +516,9 @@ pub enum MapBakeStatus {
     Running,
     /// Domain success.
     Ready,
-    /// Today's one stopped-before-done ending, resumable from the checkpoint
-    /// receipt: `finish_job` maps `MapCacheError::Cancelled` or a set cancel
-    /// flag here (`map_cache.rs:2045-2053`); the bake's own pause
-    /// (`ImageBakeOutcome::Paused` → `MapCacheError::Cancelled`,
-    /// `map_producer.rs:148`) lands here too. `map_bind.rs:82` retries it.
+    /// Today's stopped-before-done ending. The host keeps the checkpoint
+    /// receipt after cancellation. The map-demand adapter exposes `Paused`
+    /// for an explicit retry after a cancelled bake.
     Paused,
     /// Matched by consumers (`map_bind.rs:154`, `panel/src/session.rs:4612`,
     /// `tui/src/bin.rs:1415`) but never constructed by the producer.
@@ -464,10 +557,8 @@ impl MapBakeStatus {
         matches!(self, Self::Ready | Self::Paused)
     }
 
-    /// Today's status a WorkAdmission [`Settlement::Cancelled`] is observed
-    /// as: `finish_job` lands a set cancel flag on `Paused`
-    /// (`map_cache.rs:2045-2053`). The T5.W(map-bake) adapter translates;
-    /// it does not produce `Cancelled`.
+    /// A WorkAdmission [`Settlement::Cancelled`] is observed as `Paused`.
+    /// The host retains its checkpoint receipt for an explicit retry.
     pub const fn cancellation_observed_as() -> Self {
         Self::Paused
     }
@@ -751,9 +842,9 @@ impl WorkCharge {
     }
 }
 
-/// Finite admission bounds. Every limit is nonzero; a caller cannot
-/// request an unlimited slice or an unbounded job table. Numerical values
-/// are G2b policy; F0 only freezes that they are finite.
+/// Finite shared job and handle bounds, plus a bounded-family byte cap.
+/// Declared-only families retain checked custody accounting without consuming
+/// that byte cap. Their domain-specific per-job bounds still apply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AdmissionBounds {
     max_jobs: NonZeroUsize,
@@ -780,7 +871,7 @@ impl AdmissionBounds {
         self.max_jobs
     }
 
-    /// Byte cap, including retained yielded/terminal state.
+    /// Byte cap for bounded families, including yielded and terminal custody.
     pub const fn max_bytes(self) -> NonZeroUsize {
         self.max_bytes
     }
@@ -803,6 +894,9 @@ pub enum SubmissionRefusal {
     /// The service is stopping; no new job is accepted.
     #[error("work admission stopping")]
     Stopping,
+    /// The OS refused this request's thread. No job was accepted or lost.
+    #[error("work admission could not start the request thread")]
+    ThreadStartFailed,
     /// The identity, or the conditions ledger it was checked against,
     /// belongs to another process incarnation.
     #[error("work admission invalid authority")]
@@ -1260,13 +1354,16 @@ pub enum CooperativeViolation {
     ChargeExceeded,
 }
 
-/// Error side of a job terminal: family error, cooperation, or the
-/// process-unavailable failure of an already-accepted job.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+/// Error side of a job terminal: family error, a contained internal failure,
+/// cooperation, or the process-unavailable failure of an accepted job.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum JobError<E: fmt::Debug + std::error::Error> {
     /// Family-typed error.
     #[error(transparent)]
     Family(E),
+    /// A returned job panic was caught and contained by its worker.
+    #[error("background work job failed internally")]
+    FailedInternally,
     /// The step violated the cooperative bound.
     #[error(transparent)]
     Cooperation(CooperativeViolation),
@@ -1412,7 +1509,7 @@ impl WorkCapacity {
         self.jobs
     }
 
-    /// Occupied bytes.
+    /// All declared custody bytes, including families without a global byte cap.
     pub const fn bytes(self) -> usize {
         self.bytes
     }
@@ -1473,6 +1570,14 @@ pub trait CooperativeJob: Send + 'static {
     /// Progress phases this job reports; submission requires the family's
     /// [`WorkFamilySpec::Phase`].
     type Phase: WorkPhase;
+
+    /// Original thread settings for a request-thread family.
+    ///
+    /// The service refuses a request-thread submission without these
+    /// settings. Background jobs do not need request-thread settings.
+    fn request_thread(&self) -> Option<RequestThread<'_>> {
+        None
+    }
 
     /// Perform at most one declared interruptible unit before the next
     /// checkpoint. Check cancellation and the budget at entry, at each
@@ -1716,6 +1821,7 @@ mod ledger {
         revision: InputRevision,
         state: JobState,
         charge: WorkCharge,
+        byte_admission: WorkByteAdmission,
         /// `None` while a dispatched [`Slice`] holds the job.
         job: Option<Box<dyn ErasedJob>>,
         /// How many times the job was dispatched; the current dispatch's
@@ -1997,23 +2103,37 @@ mod ledger {
                 }
             }
             let charge = F::charge(input);
-            self.admit_capacity(charge)?;
+            self.admit_capacity(charge, F::FAMILY.policy().bytes())?;
             Ok((charge, F::revision(input)))
         }
 
-        fn admit_capacity(&self, charge: WorkCharge) -> Result<(), SubmissionRefusal> {
+        fn admit_capacity(
+            &self,
+            charge: WorkCharge,
+            byte_admission: WorkByteAdmission,
+        ) -> Result<(), SubmissionRefusal> {
             let total = charge
                 .total_bytes()
                 .ok_or(SubmissionRefusal::InvalidArgument)?;
             if self.jobs.len() >= self.bounds.max_jobs.get() {
                 return Err(SubmissionRefusal::Full);
             }
-            let bytes = self
-                .charged_bytes()
+            self.charged_bytes()
                 .checked_add(total)
                 .ok_or(SubmissionRefusal::InvalidArgument)?;
-            if bytes > self.bounds.max_bytes.get() {
-                return Err(SubmissionRefusal::Full);
+            if byte_admission == WorkByteAdmission::Bounded {
+                let bounded_bytes = self
+                    .jobs
+                    .values()
+                    .filter(|slot| slot.byte_admission == WorkByteAdmission::Bounded)
+                    .map(|slot| slot.charge.total_bytes().expect("admitted charge"))
+                    .sum::<usize>();
+                let next_bounded = bounded_bytes
+                    .checked_add(total)
+                    .ok_or(SubmissionRefusal::InvalidArgument)?;
+                if next_bounded > self.bounds.max_bytes.get() {
+                    return Err(SubmissionRefusal::Full);
+                }
             }
             let handles = self
                 .charged_handles()
@@ -2233,6 +2353,7 @@ mod ledger {
                     identity,
                     spec: TypeId::of::<F>(),
                     revision,
+                    byte_admission: F::FAMILY.policy().bytes(),
                     state: JobState::Queued,
                     charge,
                     job: Some(Box::new(Typed::<F, J> {

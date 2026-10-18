@@ -357,7 +357,7 @@ fn reset_session_work_skips_until_next_snapshot_tick() {
     let iso = spawn(COUNTING);
     post_tick(&iso, 1, false);
     assert_eq!(fires(&iso), 0);
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     assert_eq!(
         fires(&iso),
         0,

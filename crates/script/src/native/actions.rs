@@ -900,6 +900,15 @@ mod tests {
             gate.begin(session).unwrap();
             gate.observe(session, &SessionEventOut::SceneReady).unwrap();
             let mut actions = NativeActions { _private: () };
+            let id = api::identity::RequestId::from_raw(api::identity::RequestId::HOST_FIRST + 500)
+                .expect("host request id");
+            let point = crate::native::PromptPoint::from_contract_row(
+                crate::native::abi::HOOK_CHARACTERIZATIONS
+                    .iter()
+                    .find(|row| row.member() == "sustain")
+                    .expect("awaited sustain contract row"),
+            )
+            .expect("awaited hook point");
             {
                 let mut services = ScriptServices::new(
                     ServiceAuthority::new(execution, &fence, &gate),
@@ -918,7 +927,63 @@ mod tests {
                     services.with_state(|_, _, _| panic!("no state port was injected")),
                     Err(ServiceError::StateUnavailable)
                 ));
+                assert!(matches!(
+                    services.prompt(id, point, &[1]),
+                    Err(ServiceError::PromptPortUnavailable)
+                ));
             }
+            // The same real owner frame binds the native prompt port, but
+            // nothing in this build produces callbacks from a JS family.
+            let mut seat = crate::native::seat::GameplaySeat::<u8>::new(cx.run());
+            assert_eq!(
+                seat.start(
+                    api::script_contract::RequestStamp::new(id, None, None, execution).unwrap(),
+                    crate::native::request::NativeKind::Hunt,
+                    false,
+                )
+                .unwrap(),
+                crate::native::seat::Admission::Admitted
+            );
+            {
+                let mut services = ScriptServices::new(
+                    ServiceAuthority::new(execution, &fence, &gate),
+                    &mut actions,
+                    cx,
+                    None,
+                )
+                .unwrap()
+                .with_prompt_port(&mut seat)
+                .unwrap();
+                assert!(matches!(
+                    services.prompt(id, point, &[0; api::script_contract::HOOK_CHARGE + 1],),
+                    Err(ServiceError::Seat(
+                        crate::native::seat::SeatError::PromptTooLarge
+                    ))
+                ));
+                assert_eq!(
+                    services.prompt(id, point, &[1, 2, 3]).unwrap(),
+                    api::script_contract::DecisionSequence::FIRST
+                );
+            }
+            assert_eq!(seat.prompt_payload(id).unwrap().args, [1, 2, 3]);
+            assert_eq!(
+                seat.decide_with_answer(
+                    id,
+                    api::script_contract::DecisionSequence::FIRST,
+                    vec![9],
+                ),
+                crate::native::seat::SeatDecisionStatus::Consumed
+            );
+            let mut services = ScriptServices::new(
+                ServiceAuthority::new(execution, &fence, &gate),
+                &mut actions,
+                cx,
+                None,
+            )
+            .unwrap()
+            .with_prompt_port(&mut seat)
+            .unwrap();
+            assert_eq!(services.take_decision(id).unwrap().unwrap().answer, [9]);
             let queued = cx.ledger.as_mut().unwrap().outbox.pop().unwrap();
             assert!(
                 queued.live(),
@@ -969,6 +1034,21 @@ mod tests {
                     Err(ServiceError::ContextMismatch)
                 ),
                 "an ExecutionId for another run is a context mismatch"
+            );
+            let mut foreign_seat = crate::native::seat::GameplaySeat::<u8>::new(other_run.run());
+            let services = ScriptServices::new(
+                ServiceAuthority::new(execution, &fence, &gate),
+                &mut actions,
+                cx,
+                None,
+            )
+            .unwrap();
+            assert!(
+                matches!(
+                    services.with_prompt_port(&mut foreign_seat),
+                    Err(ServiceError::ContextMismatch)
+                ),
+                "a seat from another run cannot be bound to this authority"
             );
 
             let mut stale_fence = Fence::new();

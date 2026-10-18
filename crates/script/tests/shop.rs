@@ -1169,7 +1169,7 @@ fn pause_hold_and_session_reset_abort_a_parked_transfer() {
     );
 
     // A session abort drops the operation without a late packet.
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     snap.hold = false;
     snap.tick = 6;
     post(&iso, &snap, Some(&[]));
@@ -1185,4 +1185,66 @@ fn pause_hold_and_session_reset_abort_a_parked_transfer() {
         "a reset session must not click again"
     );
     iso.join();
+}
+
+/// §28.7 row 12: the actual Shop.sell promise retains the 12 already credited
+/// before a kept reconnect. A closed-shop keyframe cannot credit two more
+/// missing items or issue a post-relog shop button.
+#[test]
+fn sell_kept_reconnect_preserves_partial_count_without_a_post_relog_click() {
+    for post_relog_count in [8, 6] {
+        let iso = spawn(SELL);
+        let stock = [row("Shark", 385, 50, 3900, 1)];
+        let player = [row("Shark", 385, 20, 3823, 2)];
+        let held = [row("Shark", 385, 20, 0, 0)];
+        let credited = [row("Shark", 385, 8, 0, 0)];
+        let after_relog = [row("Shark", 385, post_relog_count, 0, 0)];
+        let mut snap = base();
+        snap.shop_open = true;
+        snap.shop_stock = &stock;
+        snap.inv = &held;
+        iso.probe("globalThis.__qty = 20").unwrap();
+        post(&iso, &snap, Some(&player));
+        tick(&iso, 1);
+        assert_eq!(iso.drain_interacts().len(), 2, "two 10-item Sell buttons");
+
+        snap.tick = 2;
+        snap.inv = &credited;
+        post(&iso, &snap, Some(&player));
+        tick(&iso, 2);
+        assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
+
+        iso.reconnect_session_work(None);
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "an old-session queued Sell must not reach the new session"
+        );
+        snap.tick = 3;
+        snap.hold = true;
+        snap.shop_open = false;
+        snap.shop_stock = &[];
+        snap.inv = &after_relog;
+        post(&iso, &snap, Some(&[]));
+        tick(&iso, 3);
+        assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
+        assert!(iso.drain_interacts().is_empty());
+
+        snap.hold = false;
+        snap.tick = 4;
+        post(&iso, &snap, Some(&[]));
+        tick(&iso, 4);
+        snap.tick = 5;
+        post(&iso, &snap, Some(&[]));
+        tick(&iso, 5);
+        assert_eq!(
+            iso.probe("__ok").unwrap(),
+            Value::from(12),
+            "the closed-shop keyframe cannot credit another backpack loss"
+        );
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "the kept sale must not click the closed shop after relog"
+        );
+        iso.join();
+    }
 }

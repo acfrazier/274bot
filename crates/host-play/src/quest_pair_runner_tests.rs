@@ -813,7 +813,12 @@ fn quest_pair_r2_runner_mismatched_queue_waits_for_solo_row_without_reserving_pe
         "the solo peer's watchdog stays live"
     );
     // The completed solo row advances through the real queue into Arrav.
-    for tick in 5u64..20_000 {
+    // Wait for reciprocal admission, not a fixed number of synthetic ticks.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    for tick in 5u64.. {
+        if Instant::now() >= deadline {
+            break;
+        }
         run_slot_tick(&mut bob, &selected, &snapshot, tick);
         while let Some(action) = bob.take_native_action() {
             let authority = action.authority();

@@ -309,7 +309,8 @@ impl FollowRun {
         refused: &mut (u32, Option<u32>),
     ) -> bool {
         let adjacent = self.hops == 0
-            && self.legs.is_empty()
+            && self.pending_leg.is_none()
+            && self.legs.remaining_is_empty()
             && end.is_some_and(|end| {
                 end != here
                     && end.level == here.level

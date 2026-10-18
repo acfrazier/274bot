@@ -1,26 +1,45 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::task::{Context, Poll, Waker};
+#[cfg(test)]
 use std::time::Instant;
 
+use super::route_inspect;
 use api::bank_memory::Origin;
+use api::identity::{Cancellation, PublishSequence, RequestId, Scope, Settlement, WorkIdentity};
+use api::process_condition::ProcessConditions;
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, SnapshotView, WorldTile};
+use api::work::{
+    Checkpoint, CooperativeJob, InputRevision, RetainedState, StepContext, StepOutcome,
+    SubmissionRefusal, WorkAdmission, WorkTicket,
+};
 use nav::arrival::ArrivalKind;
-use nav::bank_fetch::{plan_bank_fetch, planning_rows, BankRows, BankStep};
+#[cfg(test)]
+use nav::bank_fetch::{plan_bank_fetch, planning_rows, BankFetchError};
+use nav::bank_fetch::{
+    BankFetchCursor, BankFetchPlan, BankRows, BankStep, FetchableEdgeCursor, FetchableStateCursor,
+    PlanningRowsCursor,
+};
+use nav::contract::{NavLease, RoutePlanLease};
+use nav::producer::{lease as nav_lease, OwnerResultLedger, OwnerResultReservation};
+#[cfg(test)]
+use nav::router::find_missing_item_reqs_with_avoid;
 use nav::router::{
-    find_first_with_avoid, find_first_with_fallback_avoid, find_missing_item_reqs_with_avoid,
-    AvoidRect, FallbackRoute, FindOptions, MissingReq, Route,
+    AvoidRect, BlockerDiagnosis, CompactFallbackRoute, CompactRoute, CursorStep, FindOptions,
+    MissingReqView, MissingRequirements, Route, SearchCursor, SearchOutcome, SearchPreflight,
+    SearchRequest, SearchRequestShape, NODE_BUDGET,
 };
 use nav::traveller::Traveller;
 use nav::world::NavWorld;
-use nav::zones::{ZoneExempt, ZoneKey};
+use nav::zones::{ZoneExempt, ZoneFilterOwned, ZoneKey};
 use nav::WorldState;
+use script::work_admission::{cancellation::WorkCancellation, WorkService};
 
-use super::{
-    debug_enabled, fetch_stand, fetch_tile, fetchable_facts, route_inspect, route_or_bank_fetch,
-    PendingBankFetch, RouteOutcome, StandFetch,
-};
+use crate::walk_plan::{PendingBankFetch, RouteOutcome, RoutePath};
+
 #[derive(Default)]
 pub(crate) struct RouteCompletion {
     #[cfg(test)]
@@ -40,13 +59,3744 @@ impl RouteCompletion {
     }
 
     fn signal(self) {
+        drop(self);
+    }
+}
+
+impl Drop for RouteCompletion {
+    fn drop(&mut self) {
         #[cfg(test)]
-        if let Some(sender) = self.sender {
+        if let Some(sender) = self.sender.take() {
             let _ = sender.send(());
         }
     }
 }
+/// The one route-family result owner retained by a slot.
+pub(crate) struct RouteTicketOwner {
+    identity: WorkIdentity,
+    revision: InputRevision,
+    generation: u64,
+    request_id: u64,
+    kind: RouteDemandKind,
+    cancellation: WorkCancellation<RouteWorkSpec>,
+    active: bool,
+}
+impl RouteTicketOwner {
+    fn ticket(&self) -> WorkTicket<RouteWorkSpec> {
+        WorkTicket::new(self.identity, self.revision)
+    }
 
+    fn abandon(&mut self, reason: Cancellation) {
+        if self.active {
+            self.active = false;
+            self.cancellation.abandon(reason);
+        }
+    }
+
+    fn settled(&mut self) {
+        self.active = false;
+    }
+}
+impl Drop for RouteTicketOwner {
+    fn drop(&mut self) {
+        self.abandon(Cancellation::ScopeInvalidated);
+    }
+}
+
+pub(crate) enum RouteDemand {
+    Pending {
+        request: Box<ScriptRouteRequest>,
+        kind: RouteDemandKind,
+    },
+    Preparing {
+        generation: u64,
+        request_id: u64,
+    },
+    Prepared(Box<RouteJob>),
+}
+
+#[derive(Clone)]
+pub(crate) enum RouteDemandKind {
+    Walk {
+        authority: Option<script::native::HostAuthority>,
+    },
+    Advisory {
+        authority: script::native::HostAuthority,
+        evidence: EvidenceStamp,
+    },
+}
+
+impl RouteDemandKind {
+    fn origin(&self) -> Option<RequestId> {
+        match self {
+            Self::Walk {
+                authority: Some(authority),
+            }
+            | Self::Advisory { authority, .. } => RequestId::from_raw(authority.request_id().get()),
+            Self::Walk { authority: None } => None,
+        }
+    }
+}
+
+impl RouteDemand {
+    fn generation(&self) -> u64 {
+        match self {
+            Self::Pending { request, .. } => request.generation,
+            Self::Preparing { generation, .. } => *generation,
+            Self::Prepared(job) => job.generation(),
+        }
+    }
+
+    fn request_id(&self) -> u64 {
+        match self {
+            Self::Pending { request, .. } => request.request_id,
+            Self::Preparing { request_id, .. } => *request_id,
+            Self::Prepared(job) => job.request_id(),
+        }
+    }
+
+    fn matches(&self, generation: u64, request_id: u64) -> bool {
+        self.generation() == generation && self.request_id() == request_id
+    }
+
+    fn signal_completion(self) {
+        match self {
+            Self::Pending { request, .. } => request.completion.signal(),
+            Self::Prepared(job) => job.request.completion.signal(),
+            Self::Preparing { .. } => {}
+        }
+    }
+    fn kind(&self) -> Option<RouteDemandKind> {
+        match self {
+            Self::Pending { kind, .. } => Some(kind.clone()),
+            Self::Preparing { .. } => None,
+            Self::Prepared(job) => job.kind.as_ref().cloned(),
+        }
+    }
+}
+
+struct RouteWorkSpec;
+
+#[expect(
+    clippy::large_enum_variant,
+    reason = "A completed result retains its charged inline state without another allocation."
+)]
+enum RouteStageResult {
+    Continue(Box<RouteJob>),
+    Complete(RouteJobOutput),
+}
+
+struct RouteWorkJob {
+    job: Option<Box<RouteJob>>,
+}
+
+impl RouteWorkJob {
+    fn new(job: Box<RouteJob>) -> Self {
+        Self { job: Some(job) }
+    }
+
+    fn into_job(mut self) -> Box<RouteJob> {
+        self.job.take().expect("unsubmitted route job is present")
+    }
+}
+
+impl CooperativeJob for RouteWorkJob {
+    type Output = RouteStageResult;
+    type Error = RouteJobError;
+    type Phase = nav::contract::RoutePhase;
+
+    fn request_thread(&self) -> Option<api::work::RequestThread<'_>> {
+        self.job
+            .as_ref()
+            .map(|job| api::work::RequestThread::new(&job.thread_name))
+    }
+
+    fn step(
+        &mut self,
+        context: &mut StepContext<'_, Self::Phase>,
+    ) -> StepOutcome<Self::Output, Self::Error> {
+        let job = self.job.as_mut().expect("active route job is present");
+        job.gap_custody = None;
+        match job.step(context) {
+            StepOutcome::Yielded if job.boundary_ready => {
+                job.boundary_ready = false;
+                StepOutcome::Completed(RouteStageResult::Continue(
+                    self.job.take().expect("continuation moves once"),
+                ))
+            }
+            StepOutcome::Yielded => StepOutcome::Yielded,
+            StepOutcome::Completed(output) => {
+                StepOutcome::Completed(RouteStageResult::Complete(output))
+            }
+            StepOutcome::Failed(error) => StepOutcome::Failed(error),
+        }
+    }
+
+    fn retained(&self) -> RetainedState {
+        self.job
+            .as_ref()
+            .map_or_else(|| RetainedState::clean(0), |job| job.retained())
+    }
+}
+
+const _: fn() = || {
+    fn assert_send_sync<T: Send + Sync>() {}
+    let _ = assert_send_sync::<WorkCancellation<RouteWorkSpec>>;
+};
+
+#[derive(Clone, Copy)]
+struct RouteSubmission {
+    revision: InputRevision,
+    input_bytes: usize,
+    scratch_bytes: usize,
+    result_bytes: usize,
+    assessment_future_bytes: usize,
+}
+
+struct RoutePreflights {
+    single: SearchPreflight,
+    post_bank_single: SearchPreflight,
+    first: SearchPreflight,
+    bank_access_first: SearchPreflight,
+    missing: SearchPreflight,
+    missing_route: SearchPreflight,
+    blocking: SearchPreflight,
+    unresolved: SearchPreflight,
+}
+
+fn route_search_options(request: &ScriptRouteRequest) -> FindOptions {
+    if request.admission.compat_v1
+        || request.admission.policy == crate::admission::RiskPolicy::Proceed
+    {
+        FindOptions {
+            zones: ZoneExempt::all(),
+            ..request.opts
+        }
+    } else {
+        request.opts
+    }
+}
+
+fn strict_bank_access_options(mut options: FindOptions) -> FindOptions {
+    options.allow_bank_fetch = false;
+    options.prefer_target_order = true;
+    options
+}
+
+fn route_blocker_diagnosis(request: &ScriptRouteRequest) -> BlockerDiagnosis {
+    if request.radius <= 0 {
+        BlockerDiagnosis::SingleTarget
+    } else {
+        BlockerDiagnosis::FirstGoal
+    }
+}
+
+fn copy_boxed_slice<T: Copy>(values: &[T]) -> Result<Box<[T]>, RouteJobError> {
+    let mut copy = Vec::new();
+    copy.try_reserve_exact(values.len())
+        .map_err(|_| RouteJobError::Allocation)?;
+    copy.extend_from_slice(values);
+    Ok(copy.into_boxed_slice())
+}
+
+impl RouteSubmission {
+    fn prepare(
+        request: &ScriptRouteRequest,
+        state: &Arc<WorldState>,
+        lease: &NavLease,
+        bank_rows: usize,
+        thread_name_bytes: usize,
+    ) -> Result<(Self, RoutePreflights), RouteJobError> {
+        let candidate_capacity = RouteTargetCursor::capacity(request)?;
+        let avoid_capacity = request
+            .exclusions
+            .as_ref()
+            .map_or(0, |exclusions| exclusions.avoid.len());
+        let options = route_search_options(request);
+        let stand_rows = request.world.banks().len();
+        let bank_access_target_capacity = stand_rows.checked_mul(4).ok_or(RouteJobError::Budget)?;
+        let bank_access_options = strict_bank_access_options(options);
+        let diagnosis = route_blocker_diagnosis(request);
+        let mut post_bank_options = options;
+        post_bank_options.allow_bank_fetch = false;
+        let max_settles = NODE_BUDGET;
+        let maximum_goals = candidate_capacity.max(4);
+        let zone_count = request
+            .world
+            .graph
+            .zones
+            .as_ref()
+            .map_or(0, |zones| zones.zones().len());
+        let zone_filter_bytes =
+            ZoneFilterOwned::worst_case_bytes(zone_count).ok_or(RouteJobError::Budget)?;
+        let route_bytes =
+            CompactRoute::storage_upper_bound(max_settles).ok_or(RouteJobError::Budget)?;
+        let edge_capacity = request
+            .world
+            .graph
+            .edges
+            .len()
+            .checked_add(request.world.graph.teleports.len())
+            .ok_or(RouteJobError::Budget)?;
+        let route_pack = lease.identity().pack();
+        let preflight =
+            |shape| SearchCursor::preflight(shape, lease, state).ok_or(RouteJobError::Budget);
+        let single = preflight(SearchRequestShape::Single {
+            options,
+            avoid_capacity,
+            max_settles,
+        })?;
+        let post_bank_single = preflight(SearchRequestShape::Single {
+            options: post_bank_options,
+            avoid_capacity,
+            max_settles,
+        })?;
+        let bank_access_first = preflight(SearchRequestShape::First {
+            target_capacity: bank_access_target_capacity,
+            fallback_capacity: 0,
+            options: bank_access_options,
+            avoid_capacity,
+            max_settles,
+        })?;
+        let first = preflight(SearchRequestShape::First {
+            target_capacity: maximum_goals,
+            fallback_capacity: candidate_capacity,
+            options,
+            avoid_capacity,
+            max_settles,
+        })?;
+        let missing = preflight(SearchRequestShape::MissingItemReqs {
+            target_capacity: maximum_goals,
+            fallback_capacity: candidate_capacity,
+            options,
+            avoid_capacity,
+            max_settles,
+        })?;
+        let missing_route = preflight(SearchRequestShape::MissingItemReqsForRoute {
+            route_bytes,
+            edge_capacity,
+            route_pack,
+        })?;
+        let blocking = preflight(SearchRequestShape::BlockingZones {
+            target_capacity: candidate_capacity,
+            diagnosis,
+            options,
+            avoid_capacity,
+            zone_filter_bytes,
+            max_settles,
+        })?;
+        let unresolved = preflight(SearchRequestShape::UnresolvedQuestGates {
+            target_capacity: candidate_capacity,
+            options,
+            avoid_capacity,
+            max_settles,
+        })?;
+        let preflights = RoutePreflights {
+            single,
+            post_bank_single,
+            first,
+            bank_access_first,
+            missing,
+            missing_route,
+            blocking,
+            unresolved,
+        };
+
+        let plan_item_rows = preflights
+            .missing
+            .reservation()
+            .max_plan_item_rows
+            .max(preflights.missing_route.reservation().max_plan_item_rows);
+        let carry_capacity = preflights
+            .missing
+            .reservation()
+            .max_missing_carry_ids
+            .max(preflights.missing_route.reservation().max_missing_carry_ids);
+        let missing_result_bytes = preflights
+            .missing
+            .reservation()
+            .result_bytes
+            .max(preflights.missing_route.reservation().result_bytes);
+        let bank_plan_bytes =
+            BankFetchPlan::heap_bound(plan_item_rows).ok_or(RouteJobError::Budget)?;
+        let planner_bytes = PlanningRowsCursor::heap_bound(bank_rows, plan_item_rows)
+            .ok_or(RouteJobError::Budget)?;
+        let planned_rows_bytes = PlanningRowsCursor::rows_heap_bound(bank_rows, plan_item_rows)
+            .ok_or(RouteJobError::Budget)?;
+        let planned_rows = bank_rows
+            .checked_add(plan_item_rows)
+            .ok_or(RouteJobError::Budget)?;
+        let bank_direct_bytes = BankFetchCursor::heap_bound(bank_rows, plan_item_rows, stand_rows)
+            .ok_or(RouteJobError::Budget)?;
+        let bank_planned_bytes =
+            BankFetchCursor::heap_bound(planned_rows, plan_item_rows, stand_rows)
+                .ok_or(RouteJobError::Budget)?;
+        let has_stands = !request.world.banks().is_empty();
+        let fetchable_state_bytes =
+            FetchableStateCursor::heap_bound(state, planned_rows, has_stands)
+                .ok_or(RouteJobError::Budget)?;
+        let fetchable_edge_bytes =
+            FetchableEdgeCursor::heap_bound(&request.world.graph, options.allow_teleports)
+                .ok_or(RouteJobError::Budget)?;
+        let state_growth = state
+            .growth_bound(plan_item_rows, plan_item_rows)
+            .ok_or(RouteJobError::Budget)?;
+        let post_bank_state_bytes = state_growth
+            .inventory_new_bytes
+            .checked_add(state_growth.worn_new_bytes)
+            .ok_or(RouteJobError::Budget)?;
+        let bank_undo_bytes = plan_item_rows
+            .checked_mul(2)
+            .and_then(|rows| rows.checked_mul(std::mem::size_of::<RouteBankUndo>()))
+            .ok_or(RouteJobError::Budget)?;
+        let risk = script::combat::risk::assessment_heap_bounds().ok_or(RouteJobError::Budget)?;
+        let risk_admission_bytes =
+            script::combat::risk::admission_peak_heap_bytes().ok_or(RouteJobError::Budget)?;
+        let assessment_future_bytes =
+            route_assessment_future_layout_bytes(&request.world, lease, request.admission)
+                .ok_or(RouteJobError::Budget)?;
+        let risk_tables_bytes = risk_tables_build_peak_bytes().ok_or(RouteJobError::Budget)?;
+        let candidate_bytes = candidate_capacity
+            .checked_mul(std::mem::size_of::<WorldTile>())
+            .ok_or(RouteJobError::Budget)?;
+        let (arrival_heap_bytes, arrival_future_bytes) =
+            arrival_filter_charge(request, candidate_capacity)?;
+        let basis_avoid_bytes =
+            arc_slice_heap_bytes::<AvoidRect>(avoid_capacity).ok_or(RouteJobError::Budget)?;
+
+        let input_bytes =
+            route_capture_bytes(request, state, thread_name_bytes).ok_or(RouteJobError::Budget)?;
+
+        let mut result_bytes = std::mem::size_of::<RouteJobOutput>()
+            .checked_add(route_bytes.checked_mul(2).ok_or(RouteJobError::Budget)?)
+            .and_then(|bytes| bytes.checked_add(bank_plan_bytes))
+            .and_then(|bytes| bytes.checked_add(risk.retained_bytes))
+            .and_then(|bytes| {
+                carry_capacity
+                    .checked_mul(std::mem::size_of::<MissingCarry>())
+                    .and_then(|missing| bytes.checked_add(missing))
+            })
+            .and_then(|bytes| {
+                preflights
+                    .blocking
+                    .reservation()
+                    .result_bytes
+                    .checked_add(bytes)
+            })
+            .and_then(|bytes| {
+                route_output_detail_bound(request, carry_capacity)
+                    .and_then(|detail| bytes.checked_add(detail))
+            })
+            .and_then(|bytes| {
+                basis_avoid_bytes
+                    .checked_mul(2)
+                    .and_then(|avoid| bytes.checked_add(avoid))
+            })
+            .ok_or(RouteJobError::Budget)?;
+        result_bytes = result_bytes.max(preflights.unresolved.reservation().result_bytes);
+
+        let mut peak = input_bytes
+            .checked_add(result_bytes)
+            .ok_or(RouteJobError::Budget)?;
+        let mut include_peak = |extra: usize| -> Result<(), RouteJobError> {
+            let total = input_bytes
+                .checked_add(extra)
+                .ok_or(RouteJobError::Budget)?;
+            peak = peak.max(total);
+            Ok(())
+        };
+        let search_working_bytes = bank_plan_bytes
+            .checked_add(planned_rows_bytes)
+            .and_then(|bytes| bytes.checked_add(fetchable_state_bytes))
+            .and_then(|bytes| bytes.checked_add(fetchable_edge_bytes))
+            .and_then(|bytes| bytes.checked_add(post_bank_state_bytes))
+            .and_then(|bytes| bytes.checked_add(bank_undo_bytes))
+            .ok_or(RouteJobError::Budget)?;
+        include_peak(
+            candidate_bytes
+                .checked_add(arrival_heap_bytes)
+                .and_then(|bytes| bytes.checked_add(arrival_future_bytes))
+                .ok_or(RouteJobError::Budget)?,
+        )?;
+        for search in [
+            &preflights.single,
+            &preflights.post_bank_single,
+            &preflights.first,
+            &preflights.missing,
+            &preflights.missing_route,
+            &preflights.blocking,
+            &preflights.unresolved,
+        ] {
+            include_peak(
+                search
+                    .input_bytes()
+                    .checked_add(search.reservation().peak_bytes)
+                    .and_then(|bytes| bytes.checked_add(search.reservation().future_layout_bytes))
+                    .and_then(|bytes| bytes.checked_add(candidate_bytes))
+                    .and_then(|bytes| bytes.checked_add(search_working_bytes))
+                    .ok_or(RouteJobError::Budget)?,
+            )?;
+        }
+        include_peak(
+            preflights
+                .bank_access_first
+                .input_bytes()
+                .checked_add(preflights.bank_access_first.reservation().peak_bytes)
+                .and_then(|bytes| {
+                    bytes.checked_add(
+                        preflights
+                            .bank_access_first
+                            .reservation()
+                            .future_layout_bytes,
+                    )
+                })
+                .and_then(|bytes| bytes.checked_add(candidate_bytes))
+                .and_then(|bytes| bytes.checked_add(search_working_bytes))
+                .and_then(|bytes| bytes.checked_add(bank_direct_bytes.max(bank_planned_bytes)))
+                .ok_or(RouteJobError::Budget)?,
+        )?;
+        include_peak(
+            missing_result_bytes
+                .checked_add(planner_bytes)
+                .ok_or(RouteJobError::Budget)?,
+        )?;
+        include_peak(
+            missing_result_bytes
+                .checked_add(planned_rows_bytes)
+                .and_then(|bytes| bytes.checked_add(bank_planned_bytes))
+                .ok_or(RouteJobError::Budget)?,
+        )?;
+        include_peak(
+            missing_result_bytes
+                .checked_add(bank_direct_bytes)
+                .ok_or(RouteJobError::Budget)?,
+        )?;
+        include_peak(
+            planned_rows_bytes
+                .checked_add(fetchable_state_bytes)
+                .and_then(|bytes| bytes.checked_add(fetchable_edge_bytes))
+                .and_then(|bytes| bytes.checked_add(candidate_bytes))
+                .ok_or(RouteJobError::Budget)?,
+        )?;
+        include_peak(
+            planned_rows_bytes
+                .checked_add(fetchable_state_bytes)
+                .and_then(|bytes| {
+                    preflights
+                        .first
+                        .input_bytes()
+                        .checked_add(preflights.first.reservation().peak_bytes)
+                        .and_then(|bytes| {
+                            bytes.checked_add(preflights.first.reservation().future_layout_bytes)
+                        })
+                        .and_then(|search| bytes.checked_add(search))
+                })
+                .ok_or(RouteJobError::Budget)?,
+        )?;
+        include_peak(
+            bank_plan_bytes
+                .checked_add(post_bank_state_bytes)
+                .and_then(|bytes| bytes.checked_add(bank_undo_bytes))
+                .and_then(|bytes| {
+                    preflights
+                        .post_bank_single
+                        .input_bytes()
+                        .checked_add(preflights.post_bank_single.reservation().peak_bytes)
+                        .and_then(|bytes| {
+                            bytes.checked_add(
+                                preflights
+                                    .post_bank_single
+                                    .reservation()
+                                    .future_layout_bytes,
+                            )
+                        })
+                        .and_then(|search| bytes.checked_add(search))
+                })
+                .ok_or(RouteJobError::Budget)?,
+        )?;
+        include_peak(
+            route_bytes
+                .checked_add(bank_plan_bytes)
+                .and_then(|bytes| {
+                    risk_tables_bytes
+                        .checked_add(risk.peak_bytes)
+                        .and_then(|risk| risk.checked_add(assessment_future_bytes))
+                        .and_then(|risk| bytes.checked_add(risk))
+                })
+                .ok_or(RouteJobError::Budget)?,
+        )?;
+        include_peak(
+            route_bytes
+                .checked_add(bank_plan_bytes)
+                .and_then(|bytes| {
+                    risk_tables_bytes
+                        .checked_add(risk_admission_bytes)
+                        .and_then(|risk| risk.checked_add(assessment_future_bytes))
+                        .and_then(|risk| bytes.checked_add(risk))
+                })
+                .ok_or(RouteJobError::Budget)?,
+        )?;
+        let available = peak.checked_sub(input_bytes).ok_or(RouteJobError::Budget)?;
+        if peak > ROUTE_WORK_LIMIT_BYTES || result_bytes > available {
+            return Err(RouteJobError::Budget);
+        }
+        let scratch_bytes = peak
+            .checked_sub(input_bytes)
+            .and_then(|bytes| bytes.checked_sub(result_bytes))
+            .ok_or(RouteJobError::Budget)?;
+        Ok((
+            Self {
+                revision: InputRevision::FIRST,
+                input_bytes,
+                scratch_bytes,
+                result_bytes,
+                assessment_future_bytes,
+            },
+            preflights,
+        ))
+    }
+}
+
+fn route_vec_bytes<T>(values: &Vec<T>) -> Option<usize> {
+    values.capacity().checked_mul(std::mem::size_of::<T>())
+}
+
+fn route_capture_bytes(
+    request: &ScriptRouteRequest,
+    state: &WorldState,
+    thread_name_bytes: usize,
+) -> Option<usize> {
+    let mut bytes = std::mem::size_of::<RouteJob>()
+        .checked_add(std::mem::size_of::<RouteWorkJob>())?
+        .checked_add(std::mem::size_of::<ScriptRouteRequest>())?
+        .checked_add(thread_name_bytes)?
+        .checked_add(state.try_shared_retained_bytes()?)?
+        .checked_add(route_vec_bytes(&request.bank)?)?
+        .checked_add(arc_slice_heap_bytes::<AvoidRect>(request.avoid().len())?)?;
+    if let Some(geometry) = &request.live_geometry {
+        bytes = bytes.checked_add(route_vec_bytes(&geometry.flags)?)?;
+    }
+    if let Some(exclusions) = request.exclusions.as_deref() {
+        bytes = bytes.checked_add(route_exclusions_heap_bytes(exclusions)?)?;
+    }
+    Some(bytes)
+}
+
+fn route_excluded_target_bytes(capacity: usize) -> Option<usize> {
+    if capacity == 0 {
+        return Some(0);
+    }
+    // The same RawTable layout used by WorldState::growth_bound: one
+    // control byte per bucket and one trailing 16-byte SIMD group.
+    let buckets = if capacity < 4 {
+        4
+    } else if capacity < 8 {
+        8
+    } else if capacity < 15 {
+        16
+    } else {
+        capacity
+            .checked_mul(8)?
+            .checked_div(7)?
+            .checked_next_power_of_two()?
+    };
+    buckets
+        .checked_mul(std::mem::size_of::<WorldTile>())?
+        .checked_add(buckets)?
+        .checked_add(16)
+}
+
+const ROUTE_WORK_LIMIT_BYTES: usize = 192 * 1024 * 1024;
+
+fn arc_slice_heap_bytes<T>(length: usize) -> Option<usize> {
+    let payload = std::alloc::Layout::array::<T>(length).ok()?;
+    let (layout, _) = std::alloc::Layout::new::<[std::sync::atomic::AtomicUsize; 2]>()
+        .extend(payload)
+        .ok()?;
+    Some(layout.pad_to_align().size())
+}
+
+fn route_exclusions_heap_bytes(exclusions: &ScriptRouteExclusions) -> Option<usize> {
+    let payload = std::alloc::Layout::new::<ScriptRouteExclusions>();
+    let (layout, _) = std::alloc::Layout::new::<[std::sync::atomic::AtomicUsize; 2]>()
+        .extend(payload)
+        .ok()?;
+    let mut bytes = layout.pad_to_align().size();
+    for allocation in [
+        exclusions
+            .avoid
+            .capacity()
+            .checked_mul(std::mem::size_of::<AvoidRect>())?,
+        exclusions
+            .avoid_wire
+            .capacity()
+            .checked_mul(std::mem::size_of::<script::shim::InspectAvoidWire>())?,
+        exclusions
+            .cross
+            .capacity()
+            .checked_mul(std::mem::size_of::<Arc<str>>())?,
+    ] {
+        bytes = bytes.checked_add(allocation)?;
+    }
+    for value in &exclusions.cross {
+        bytes = bytes.checked_add(arc_slice_heap_bytes::<u8>(value.len())?)?;
+    }
+    Some(bytes)
+}
+
+fn risk_tables_build_peak_bytes() -> Option<usize> {
+    let Ok(combat) = script::combat::guard::shared_tables() else {
+        return Some(0);
+    };
+    let rows = combat
+        .selected()
+        .npc_names()
+        .map_or(0, |names| names.rows.len());
+    let backing_bytes =
+        rows.checked_mul(std::mem::size_of::<(i32, script::combat::risk::KindRisk)>())?;
+    let mut checkpoint: crate::admission::RouteYieldCallback = crate::admission::route_yield_unit;
+    let future = script::combat::risk::RiskTables::build_cooperative(&combat, &mut checkpoint);
+    let future_bytes = std::mem::size_of_val(&future);
+    std::mem::drop(future);
+    std::mem::size_of::<script::combat::risk::RiskTables>()
+        .checked_add(backing_bytes.checked_mul(2)?)?
+        .checked_add(future_bytes)
+}
+
+struct TextByteCounter(usize);
+
+impl std::fmt::Write for TextByteCounter {
+    fn write_str(&mut self, value: &str) -> std::fmt::Result {
+        self.0 = self.0.checked_add(value.len()).ok_or(std::fmt::Error)?;
+        Ok(())
+    }
+}
+
+fn route_output_detail_bound(
+    request: &ScriptRouteRequest,
+    missing_capacity: usize,
+) -> Option<usize> {
+    use std::fmt::Write as _;
+
+    let mut context = TextByteCounter(0);
+    write!(
+        &mut context,
+        "native walk route failed: {:?} arrival from {:?} to {:?} within radius {}",
+        request.arrival, request.from, request.to, request.radius
+    )
+    .ok()?;
+    let blocked = if let Some(table) = request.world.graph.zones.as_ref() {
+        table
+            .blocking_detail_bytes_bound()
+            .checked_add(SCRIPT_DANGER_HINT.len())?
+            .checked_add(2)?
+    } else {
+        crate::walk_map::LEGACY_ZONES_DETAIL.len()
+    };
+    let blocked_with_context = blocked.checked_add(2)?.checked_add(context.0)?;
+    let item_name_bytes = request
+        .world
+        .transport_item_name_bytes_bound()
+        .max("item #".len() + 11);
+    let supply_row_bytes = 58usize.checked_add(item_name_bytes)?;
+    let supply_bytes = missing_capacity
+        .checked_mul(supply_row_bytes)?
+        .checked_add(missing_capacity.saturating_sub(1).checked_mul(2)?)?;
+    let detail_len = blocked_with_context.checked_add(if supply_bytes == 0 {
+        0
+    } else {
+        supply_bytes.checked_add(2)?
+    })?;
+    detail_len.checked_add(arc_slice_heap_bytes::<u8>(detail_len)?)
+}
+
+fn arrival_filter_needed(request: &ScriptRouteRequest) -> bool {
+    request.radius > 0
+        && request.loc_id.is_none()
+        && request.arrival != ArrivalKind::Area
+        && request.live_geometry.is_none()
+}
+
+fn arrival_collision_flags(
+    collision: &nav::collision::WorldCollision,
+    tile: WorldTile,
+) -> Option<i32> {
+    if !(0..=3).contains(&tile.level) {
+        return None;
+    }
+    let x = i64::from(tile.x) - i64::from(collision.origin.x);
+    let z = i64::from(tile.z) - i64::from(collision.origin.z);
+    if x < 0
+        || z < 0
+        || usize::try_from(x).ok()? >= collision.width
+        || usize::try_from(z).ok()? >= collision.height
+    {
+        return None;
+    }
+    i32::try_from(collision.walkable_word(tile.x, tile.z, tile.level)).ok()
+}
+
+async fn route_arrival_filter_future(
+    world: Arc<NavWorld>,
+    mut candidates: Vec<WorldTile>,
+    destination: WorldTile,
+    radius: i32,
+    bounds: api::query::ArrivalCollisionBounds,
+    checkpoint: crate::admission::RouteYieldCallback,
+) -> Vec<WorldTile> {
+    let mut checkpoint = || checkpoint();
+    api::query::retain_arrival_candidates_cooperative(
+        &mut candidates,
+        destination,
+        radius,
+        bounds,
+        move |tile| arrival_collision_flags(&world.collision, tile),
+        &mut checkpoint,
+    )
+    .await;
+    candidates
+}
+
+fn arrival_filter_charge(
+    request: &ScriptRouteRequest,
+    candidate_capacity: usize,
+) -> Result<(usize, usize), RouteJobError> {
+    if !arrival_filter_needed(request) {
+        return Ok((0, 0));
+    }
+    let collision = &request.world.collision;
+    let bounds = api::query::ArrivalCollisionBounds::new(
+        collision.origin.x,
+        collision.origin.z,
+        collision.width,
+        collision.height,
+    )
+    .ok_or(RouteJobError::Budget)?;
+    let heap_bytes =
+        api::query::arrival_candidates_heap_bound(request.radius, candidate_capacity, bounds)
+            .ok_or(RouteJobError::Budget)?;
+    let future = route_arrival_filter_future(
+        Arc::clone(&request.world),
+        Vec::new(),
+        request.to,
+        request.radius,
+        bounds,
+        crate::admission::route_yield_unit,
+    );
+    Ok((heap_bytes, std::mem::size_of_val(&future)))
+}
+
+impl api::work::WorkFamilySpec for RouteWorkSpec {
+    const FAMILY: api::work::WorkFamily = api::work::WorkFamily::Route;
+    type Input = RouteSubmission;
+    type Output = RouteStageResult;
+    type Error = RouteJobError;
+    type Phase = nav::contract::RoutePhase;
+
+    fn revision(input: &Self::Input) -> InputRevision {
+        input.revision
+    }
+
+    fn charge(input: &Self::Input) -> api::work::WorkCharge {
+        api::work::WorkCharge::new(
+            input.input_bytes,
+            input.scratch_bytes,
+            input.result_bytes,
+            0,
+        )
+    }
+
+    fn map_cancellation(reason: Cancellation) -> Cancellation {
+        reason
+    }
+}
+const _: fn() = || {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<RouteWorkSpec>();
+};
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum RouteJobError {
+    #[error("route request cannot fit the checked WorkAdmission bounds")]
+    Budget,
+    #[error("route search cursor failed")]
+    Search,
+    #[error("route job input or output allocation failed")]
+    Allocation,
+    #[error("route result shape did not match its bounded request")]
+    ResultShape,
+}
+
+type RouteArrivalFuture = Pin<Box<dyn Future<Output = Vec<WorldTile>> + Send + 'static>>;
+type RouteAssessmentFuture = Pin<
+    Box<
+        dyn Future<
+                Output = Result<
+                    (
+                        RouteJobOutcome,
+                        Option<Arc<script::combat::risk::RouteAssessment>>,
+                        bool,
+                    ),
+                    RouteJobError,
+                >,
+            > + Send
+            + 'static,
+    >,
+>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RouteJobStage {
+    Targets,
+    Arrival,
+    CopyTargets,
+    Search,
+    CopyAvoid,
+    PlanRows,
+    BankPlan,
+    FetchableState,
+    FetchableEdges,
+    RestoreFetchable,
+    ApplyBankPlan,
+    RollbackBankState,
+    CopyBankAvoid,
+    BeginDiagnostics,
+    Diagnostics,
+    Assess,
+    Complete,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RouteSearchPurpose {
+    Strict,
+    StrictFirst,
+    MissingTarget,
+    MissingTargets,
+    MissingRoute,
+    BankAccess,
+    PostBank,
+    FetchableFirst,
+    Blocking,
+    Unresolved,
+    MissingCarry,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RouteGoalCopy {
+    None,
+    First,
+    Missing,
+    Fetchable,
+    Diagnostics,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RouteRestoreNext {
+    MissingRoute,
+    AssessRoute,
+    Diagnostics,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RouteSearchMode {
+    InOrder,
+    First,
+}
+
+pub(crate) struct RouteJob {
+    request: Box<ScriptRouteRequest>,
+    thread_name: String,
+    kind: Option<RouteDemandKind>,
+    // Minted under the service lock that also covers submission.
+    identity: Option<WorkIdentity>,
+    revision: InputRevision,
+    admission_capacity: Option<PublishSequence>,
+    lease: NavLease,
+    state: Arc<WorldState>,
+    basis_avoid: Arc<[AvoidRect]>,
+    submission: RouteSubmission,
+    preflights: RoutePreflights,
+    bank_rows_limit: usize,
+    gap_custody: Option<OwnerResultReservation>,
+    boundary_ready: bool,
+    stage: RouteJobStage,
+    target_cursor: Option<RouteTargetCursor>,
+    target_sort_started: bool,
+    target_priority: Option<RouteTargetPriority>,
+    arrival_future: Option<RouteArrivalFuture>,
+    targets: Vec<WorldTile>,
+    first_preferred: Vec<WorldTile>,
+    first_fallback_enabled: bool,
+    goal_copy: Vec<WorldTile>,
+    fallback_copy: Vec<WorldTile>,
+    goal_copy_index: usize,
+    fallback_copy_index: usize,
+    goal_copy_kind: RouteGoalCopy,
+    search_cursor: Option<SearchCursor>,
+    search_purpose: RouteSearchPurpose,
+    search_avoid: Vec<AvoidRect>,
+    search_avoid_index: usize,
+    search_avoid_started: bool,
+    search_mode: RouteSearchMode,
+    target_index: usize,
+    excluded_targets: std::collections::HashSet<WorldTile>,
+    strict_fallback: Option<CompactRoute>,
+    selected_route: Option<CompactRoute>,
+    selected_target: Option<WorldTile>,
+    missing_requirements: Option<MissingRequirements>,
+    planning_cursor: Option<PlanningRowsCursor>,
+    planned_rows: Option<Vec<(i32, i32)>>,
+    bank_cursor: Option<BankFetchCursor>,
+    bank_plan: Option<BankFetchPlan>,
+    bank_plan_capture_step: usize,
+    bank_apply_reserved: bool,
+    bank_undo_reserved: bool,
+    bank_plan_apply_step: usize,
+    bank_undo: Vec<RouteBankUndo>,
+    bank_rollback_index: usize,
+    bank_access_route: Option<CompactRoute>,
+    fetchable_cursor: Option<FetchableStateCursor>,
+    fetchable_edges: Option<FetchableEdgeCursor>,
+    fetchable_rows: Option<Vec<(i32, i32)>>,
+    fetchable_overlay_ready: bool,
+    fetchable_rows_planned: bool,
+    restore_next: Option<RouteRestoreNext>,
+    bank_avoid_copy: Vec<AvoidRect>,
+    bank_avoid_index: usize,
+    diagnostics_started: bool,
+    outcome: Option<RouteJobOutcome>,
+    assessment_future: Option<RouteAssessmentFuture>,
+    assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
+    refusal: Option<script::native::WalkRefusal>,
+    blocked: Box<[ZoneKey]>,
+    native_failure: Option<script::native::WalkEnd>,
+    detail: Option<String>,
+    missing: Vec<MissingCarry>,
+    missing_diag_index: usize,
+}
+
+#[derive(Clone, Copy)]
+struct RouteBankUndo {
+    id: i32,
+    inventory: Option<i32>,
+    worn: bool,
+}
+
+impl RouteJob {
+    fn prepare(
+        name: &str,
+        mut request: Box<ScriptRouteRequest>,
+        kind: RouteDemandKind,
+    ) -> Result<Self, RouteJobError> {
+        let state = Arc::new(request.state.take().unwrap_or_else(WorldState::empty));
+        let basis_avoid: Arc<[AvoidRect]> = Arc::from(copy_boxed_slice(request.avoid())?);
+        let lease = nav_lease(&request.world).map_err(|_| RouteJobError::Budget)?;
+        let bank_rows_limit = request.bank.capacity();
+        let mut thread_name = String::with_capacity("nav-find-".len() + name.len());
+        thread_name.push_str("nav-find-");
+        thread_name.push_str(name);
+        let (submission, preflights) = RouteSubmission::prepare(
+            &request,
+            &state,
+            &lease,
+            bank_rows_limit,
+            thread_name.capacity(),
+        )?;
+        let missing_capacity = preflights
+            .missing
+            .reservation()
+            .max_missing_carry_ids
+            .max(preflights.missing_route.reservation().max_missing_carry_ids);
+        let mut missing = Vec::new();
+        missing
+            .try_reserve_exact(missing_capacity)
+            .map_err(|_| RouteJobError::Allocation)?;
+        let target_cursor = RouteTargetCursor::new(&request)?;
+        let targets = Vec::new();
+        let search_mode = if request.radius > 0
+            && (request.arrival == ArrivalKind::Area
+                || request.live_geometry.is_some()
+                || (request.loc_id.is_none() && !request.world.collision.standable(request.to)))
+        {
+            RouteSearchMode::First
+        } else {
+            RouteSearchMode::InOrder
+        };
+        let excluded_capacity = RouteTargetCursor::capacity(&request)?;
+        let mut excluded_targets = std::collections::HashSet::new();
+        excluded_targets
+            .try_reserve(excluded_capacity)
+            .map_err(|_| RouteJobError::Allocation)?;
+        let first_preferred = Vec::new();
+        let first_fallback_enabled = request.radius > 0
+            && request.loc_id.is_none()
+            && request.arrival != ArrivalKind::Area
+            && request.live_geometry.is_none()
+            && !request.world.collision.standable(request.to);
+        let mut job = Self {
+            revision: submission.revision,
+            request,
+            thread_name,
+            kind: Some(kind),
+            identity: None,
+            admission_capacity: None,
+            lease,
+            basis_avoid,
+            state,
+            submission,
+            preflights,
+            bank_rows_limit,
+            gap_custody: None,
+            boundary_ready: false,
+            stage: RouteJobStage::Targets,
+            target_cursor: Some(target_cursor),
+            target_sort_started: false,
+            target_priority: None,
+            arrival_future: None,
+            targets,
+            first_preferred,
+            first_fallback_enabled,
+            goal_copy: Vec::new(),
+            fallback_copy: Vec::new(),
+            goal_copy_index: 0,
+            fallback_copy_index: 0,
+            goal_copy_kind: RouteGoalCopy::None,
+            search_cursor: None,
+            search_purpose: if search_mode == RouteSearchMode::First {
+                RouteSearchPurpose::StrictFirst
+            } else {
+                RouteSearchPurpose::Strict
+            },
+            search_avoid: Vec::new(),
+            search_avoid_index: 0,
+            search_avoid_started: false,
+            search_mode,
+            target_index: 0,
+            excluded_targets,
+            strict_fallback: None,
+            selected_route: None,
+            selected_target: None,
+            missing_requirements: None,
+            planning_cursor: None,
+            planned_rows: None,
+            bank_cursor: None,
+            bank_plan: None,
+            bank_plan_capture_step: 0,
+            bank_apply_reserved: false,
+            bank_plan_apply_step: 0,
+            bank_undo_reserved: false,
+            bank_undo: Vec::new(),
+            bank_rollback_index: 0,
+            bank_access_route: None,
+            fetchable_cursor: None,
+            fetchable_edges: None,
+            fetchable_rows: None,
+            fetchable_rows_planned: false,
+            restore_next: None,
+            fetchable_overlay_ready: false,
+            bank_avoid_copy: Vec::new(),
+            bank_avoid_index: 0,
+            diagnostics_started: false,
+            outcome: None,
+            assessment_future: None,
+            assessment: None,
+            refusal: None,
+            blocked: Box::default(),
+            native_failure: None,
+            detail: None,
+            missing_diag_index: 0,
+            missing,
+        };
+        job.add_owned_input_to_submission()?;
+        Ok(job)
+    }
+
+    fn submission(&self) -> &RouteSubmission {
+        &self.submission
+    }
+
+    fn extra_retained_bytes(&self) -> Option<usize> {
+        let mut bytes = route_excluded_target_bytes(self.excluded_targets.capacity())?;
+        for allocation in [
+            route_vec_bytes(&self.targets)?,
+            route_vec_bytes(&self.first_preferred)?,
+            route_vec_bytes(&self.goal_copy)?,
+            route_vec_bytes(&self.fallback_copy)?,
+            route_vec_bytes(&self.search_avoid)?,
+            route_vec_bytes(&self.bank_avoid_copy)?,
+            route_vec_bytes(&self.bank_undo)?,
+            route_vec_bytes(&self.missing)?,
+            self.blocked
+                .len()
+                .checked_mul(std::mem::size_of::<ZoneKey>())?,
+        ] {
+            bytes = bytes.checked_add(allocation)?;
+        }
+        if let Some(cursor) = &self.target_cursor {
+            bytes = bytes.checked_add(route_vec_bytes(&cursor.targets)?)?;
+        }
+        for route in [
+            self.strict_fallback.as_ref(),
+            self.selected_route.as_ref(),
+            self.bank_access_route.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            bytes = bytes.checked_add(route.try_retained_bytes()?)?;
+        }
+        if let Some(missing) = &self.missing_requirements {
+            bytes = bytes.checked_add(missing.try_retained_bytes()?)?;
+        }
+        for rows in [self.planned_rows.as_ref(), self.fetchable_rows.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            bytes = bytes.checked_add(route_vec_bytes(rows)?)?;
+        }
+        if let Some(cursor) = &self.planning_cursor {
+            bytes = bytes.checked_add(cursor.retained_bytes())?;
+        }
+        if let Some(cursor) = &self.bank_cursor {
+            bytes = bytes.checked_add(cursor.retained_bytes())?;
+        }
+        if let Some(plan) = &self.bank_plan {
+            bytes = bytes.checked_add(plan.retained_bytes())?;
+        }
+        if let Some(cursor) = &self.fetchable_cursor {
+            bytes = bytes.checked_add(cursor.retained_bytes()?)?;
+        }
+        if let Some(edges) = &self.fetchable_edges {
+            bytes = bytes.checked_add(edges.retained_bytes())?;
+        }
+        if let Some(detail) = &self.detail {
+            bytes = bytes.checked_add(detail.capacity())?;
+        }
+        if let Some(script::native::WalkEnd::NeedsEvidence(gates)) = &self.native_failure {
+            bytes =
+                bytes
+                    .checked_add(std::mem::size_of_val(gates.as_ref()).checked_add(
+                        std::mem::size_of::<[std::sync::atomic::AtomicUsize; 2]>(),
+                    )?)?;
+        }
+        match &self.outcome {
+            Some(RouteJobOutcome::Route(route)) => {
+                bytes = bytes.checked_add(route.try_retained_bytes()?)?;
+            }
+            Some(RouteJobOutcome::Bank {
+                steps,
+                route,
+                final_route,
+            }) => {
+                if let Some(route) = route {
+                    bytes = bytes.checked_add(route.try_retained_bytes()?)?;
+                }
+                bytes = bytes.checked_add(final_route.try_retained_bytes()?)?;
+                bytes = bytes.checked_add(
+                    steps
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<BankStep>())?,
+                )?;
+            }
+            Some(RouteJobOutcome::NoPath) | None => {}
+        }
+        Some(bytes)
+    }
+
+    fn owned_retained_bytes(&self) -> Option<usize> {
+        route_capture_bytes(&self.request, &self.state, self.thread_name.capacity())?
+            .checked_add(self.extra_retained_bytes()?)
+    }
+
+    fn add_owned_input_to_submission(&mut self) -> Result<(), RouteJobError> {
+        let extra = self
+            .extra_retained_bytes()
+            .and_then(|bytes| bytes.checked_add(OwnerResultReservation::storage_bytes()))
+            .ok_or(RouteJobError::Budget)?;
+        self.submission.input_bytes = self
+            .submission
+            .input_bytes
+            .checked_add(extra)
+            .ok_or(RouteJobError::Budget)?;
+        let charge = <RouteWorkSpec as api::work::WorkFamilySpec>::charge(&self.submission);
+        if charge.total_bytes().ok_or(RouteJobError::Budget)? > ROUTE_WORK_LIMIT_BYTES {
+            return Err(RouteJobError::Budget);
+        }
+        Ok(())
+    }
+
+    fn prepare_continuation(&mut self) -> Result<(), RouteJobError> {
+        let revision = self.revision.next().ok_or(RouteJobError::Budget)?;
+        let (mut submission, preflights) = RouteSubmission::prepare(
+            &self.request,
+            &self.state,
+            &self.lease,
+            self.bank_rows_limit,
+            self.thread_name.capacity(),
+        )?;
+        submission.revision = revision;
+        self.revision = revision;
+        self.submission = submission;
+        self.preflights = preflights;
+        self.add_owned_input_to_submission()
+    }
+
+    fn generation(&self) -> u64 {
+        self.request.generation
+    }
+
+    fn request_id(&self) -> u64 {
+        self.request.request_id
+    }
+
+    fn advance_targets(&mut self) -> bool {
+        let Some(mut cursor) = self.target_cursor.take() else {
+            return true;
+        };
+        let finished = if let Some(priority) = self.target_priority.as_mut() {
+            priority.advance(&mut cursor.targets)
+        } else if cursor.advance(&self.request) {
+            if !self.target_sort_started {
+                cursor.start_sort();
+                self.target_sort_started = true;
+                false
+            } else if let Some(priority) = RouteTargetPriority::new(&self.request) {
+                self.target_priority = Some(priority);
+                false
+            } else {
+                true
+            }
+        } else {
+            false
+        };
+        if finished {
+            self.target_priority = None;
+            self.targets = std::mem::take(&mut cursor.targets);
+        } else {
+            self.target_cursor = Some(cursor);
+        }
+        finished
+    }
+
+    fn start_arrival_filter(&mut self) -> Result<(), RouteJobError> {
+        if !arrival_filter_needed(&self.request) {
+            return self.prepare_search_targets();
+        }
+        let collision = &self.request.world.collision;
+        let bounds = api::query::ArrivalCollisionBounds::new(
+            collision.origin.x,
+            collision.origin.z,
+            collision.width,
+            collision.height,
+        )
+        .ok_or(RouteJobError::Budget)?;
+        let future = route_arrival_filter_future(
+            Arc::clone(&self.request.world),
+            std::mem::take(&mut self.targets),
+            self.request.to,
+            self.request.radius,
+            bounds,
+            crate::admission::route_yield_unit,
+        );
+        self.arrival_future = Some(Box::pin(future));
+        self.stage = RouteJobStage::Arrival;
+        Ok(())
+    }
+
+    fn prepare_search_targets(&mut self) -> Result<(), RouteJobError> {
+        if self.search_mode == RouteSearchMode::First {
+            if self.first_fallback_enabled {
+                self.first_preferred
+                    .try_reserve_exact(4)
+                    .map_err(|_| RouteJobError::Allocation)?;
+                for stand in api::query::arrival_stands(
+                    self.request.to,
+                    |stand| self.request.world.collision.standable(stand),
+                    |stand| {
+                        Some(self.request.world.collision.walkable_word(
+                            stand.x,
+                            stand.z,
+                            stand.level,
+                        ) as i32)
+                    },
+                ) {
+                    self.first_preferred.push(stand);
+                }
+            }
+            self.prepare_goal_copy(RouteGoalCopy::First, RouteSearchPurpose::StrictFirst)
+        } else {
+            self.search_purpose = RouteSearchPurpose::Strict;
+            self.stage = RouteJobStage::Search;
+            Ok(())
+        }
+    }
+
+    fn prepare_goal_copy(
+        &mut self,
+        kind: RouteGoalCopy,
+        purpose: RouteSearchPurpose,
+    ) -> Result<(), RouteJobError> {
+        let (primary_capacity, fallback_capacity) = match kind {
+            RouteGoalCopy::None => (0, 0),
+            RouteGoalCopy::First => (
+                if self.first_fallback_enabled {
+                    self.first_preferred.len()
+                } else {
+                    self.targets.len()
+                },
+                if self.first_fallback_enabled {
+                    self.targets.len()
+                } else {
+                    0
+                },
+            ),
+            RouteGoalCopy::Missing | RouteGoalCopy::Fetchable => (
+                if self.first_fallback_enabled {
+                    self.first_preferred.len()
+                } else {
+                    self.targets.len()
+                },
+                if self.first_fallback_enabled && self.strict_fallback.is_none() {
+                    self.targets.len()
+                } else {
+                    0
+                },
+            ),
+            RouteGoalCopy::Diagnostics => (self.targets.len(), 0),
+        };
+        self.goal_copy.clear();
+        self.goal_copy
+            .try_reserve_exact(primary_capacity)
+            .map_err(|_| RouteJobError::Allocation)?;
+        self.fallback_copy.clear();
+        self.fallback_copy
+            .try_reserve_exact(fallback_capacity)
+            .map_err(|_| RouteJobError::Allocation)?;
+        self.goal_copy_index = 0;
+        self.fallback_copy_index = 0;
+        self.goal_copy_kind = kind;
+        self.search_purpose = purpose;
+        self.stage = RouteJobStage::CopyTargets;
+        Ok(())
+    }
+
+    fn advance_goal_copy(&mut self) -> bool {
+        let (primary, fallback, filter_excluded) = match self.goal_copy_kind {
+            RouteGoalCopy::None => return true,
+            RouteGoalCopy::First => (
+                if self.first_fallback_enabled {
+                    self.first_preferred.as_slice()
+                } else {
+                    self.targets.as_slice()
+                },
+                self.first_fallback_enabled,
+                false,
+            ),
+            RouteGoalCopy::Missing => (
+                if self.first_fallback_enabled {
+                    self.first_preferred.as_slice()
+                } else {
+                    self.targets.as_slice()
+                },
+                self.first_fallback_enabled && self.strict_fallback.is_none(),
+                false,
+            ),
+            RouteGoalCopy::Fetchable => (
+                if self.first_fallback_enabled {
+                    self.first_preferred.as_slice()
+                } else {
+                    self.targets.as_slice()
+                },
+                self.first_fallback_enabled && self.strict_fallback.is_none(),
+                true,
+            ),
+            RouteGoalCopy::Diagnostics => (self.targets.as_slice(), false, false),
+        };
+        if let Some(&target) = primary.get(self.goal_copy_index) {
+            self.goal_copy_index += 1;
+            if !filter_excluded || !self.excluded_targets.contains(&target) {
+                self.goal_copy.push(target);
+            }
+            return false;
+        }
+        if fallback {
+            if let Some(&target) = self.targets.get(self.fallback_copy_index) {
+                self.fallback_copy_index += 1;
+                if !filter_excluded || !self.excluded_targets.contains(&target) {
+                    self.fallback_copy.push(target);
+                }
+                return false;
+            }
+        }
+        self.stage = RouteJobStage::Search;
+        true
+    }
+
+    fn start_search(&mut self) -> Result<bool, RouteJobError> {
+        if !self.search_avoid_started {
+            self.search_avoid
+                .try_reserve_exact(self.request.avoid().len())
+                .map_err(|_| RouteJobError::Allocation)?;
+            self.search_avoid_index = 0;
+            self.search_avoid_started = true;
+            if !self.request.avoid().is_empty() {
+                self.stage = RouteJobStage::CopyAvoid;
+                return Ok(false);
+            }
+        }
+        let avoid = std::mem::take(&mut self.search_avoid).into_boxed_slice();
+        self.search_avoid_started = false;
+        let options = route_search_options(&self.request);
+        let max_settles = NODE_BUDGET;
+        let single_preflight = if self.search_purpose == RouteSearchPurpose::PostBank {
+            self.preflights.post_bank_single
+        } else {
+            self.preflights.single
+        };
+        let search = match self.search_purpose {
+            RouteSearchPurpose::Strict => {
+                let Some(target) = self.targets.get(self.target_index).copied() else {
+                    self.begin_diagnostics();
+                    return Ok(true);
+                };
+                SearchCursor::new_preflighted(
+                    SearchRequest::Single {
+                        from: self.request.from,
+                        to: target,
+                        options,
+                        avoid,
+                        max_settles,
+                    },
+                    self.lease.clone(),
+                    Arc::clone(&self.state),
+                    single_preflight,
+                )
+                .map_err(|_| RouteJobError::Search)?
+            }
+            RouteSearchPurpose::StrictFirst | RouteSearchPurpose::FetchableFirst => {
+                SearchCursor::new_preflighted(
+                    SearchRequest::First {
+                        from: self.request.from,
+                        targets: std::mem::take(&mut self.goal_copy).into_boxed_slice(),
+                        fallback: std::mem::take(&mut self.fallback_copy).into_boxed_slice(),
+                        options,
+                        avoid,
+                        max_settles,
+                    },
+                    self.lease.clone(),
+                    Arc::clone(&self.state),
+                    self.preflights.first,
+                )
+                .map_err(|_| RouteJobError::Search)?
+            }
+            RouteSearchPurpose::MissingTarget | RouteSearchPurpose::MissingCarry => {
+                let target = if self.search_purpose == RouteSearchPurpose::MissingCarry {
+                    self.request.to
+                } else {
+                    self.targets
+                        .get(self.target_index)
+                        .copied()
+                        .ok_or(RouteJobError::ResultShape)?
+                };
+                SearchCursor::new_preflighted(
+                    SearchRequest::MissingItemReqs {
+                        from: self.request.from,
+                        targets: Box::from([target]),
+                        fallback: Box::default(),
+                        options,
+                        avoid,
+                        max_settles,
+                    },
+                    self.lease.clone(),
+                    Arc::clone(&self.state),
+                    self.preflights.missing,
+                )
+                .map_err(|_| RouteJobError::Search)?
+            }
+            RouteSearchPurpose::MissingTargets => SearchCursor::new_preflighted(
+                SearchRequest::MissingItemReqs {
+                    from: self.request.from,
+                    targets: std::mem::take(&mut self.goal_copy).into_boxed_slice(),
+                    fallback: std::mem::take(&mut self.fallback_copy).into_boxed_slice(),
+                    options,
+                    avoid,
+                    max_settles,
+                },
+                self.lease.clone(),
+                Arc::clone(&self.state),
+                self.preflights.missing,
+            )
+            .map_err(|_| RouteJobError::Search)?,
+            RouteSearchPurpose::MissingRoute => {
+                let route = self
+                    .selected_route
+                    .take()
+                    .ok_or(RouteJobError::ResultShape)?;
+                SearchCursor::new_preflighted(
+                    SearchRequest::MissingItemReqsForRoute { route },
+                    self.lease.clone(),
+                    Arc::clone(&self.state),
+                    self.preflights.missing_route,
+                )
+                .map_err(|_| RouteJobError::Search)?
+            }
+            RouteSearchPurpose::BankAccess => {
+                let strict_options = strict_bank_access_options(options);
+                let targets = self
+                    .bank_cursor
+                    .as_mut()
+                    .ok_or(RouteJobError::ResultShape)?
+                    .take_access_targets();
+                if targets.is_empty() {
+                    return Err(RouteJobError::ResultShape);
+                }
+                SearchCursor::new_preflighted(
+                    SearchRequest::First {
+                        from: self.request.from,
+                        targets,
+                        fallback: Box::default(),
+                        options: strict_options,
+                        avoid,
+                        max_settles,
+                    },
+                    self.lease.clone(),
+                    Arc::clone(&self.state),
+                    self.preflights.bank_access_first,
+                )
+                .map_err(|_| RouteJobError::Search)?
+            }
+            RouteSearchPurpose::PostBank => {
+                let target = self.selected_target.ok_or(RouteJobError::ResultShape)?;
+                let mut strict_options = options;
+                strict_options.allow_bank_fetch = false;
+                SearchCursor::new_preflighted(
+                    SearchRequest::Single {
+                        from: self.request.from,
+                        to: target,
+                        options: strict_options,
+                        avoid,
+                        max_settles,
+                    },
+                    self.lease.clone(),
+                    Arc::clone(&self.state),
+                    single_preflight,
+                )
+                .map_err(|_| RouteJobError::Search)?
+            }
+            RouteSearchPurpose::Blocking => {
+                let diagnosis = route_blocker_diagnosis(&self.request);
+                let target_count = self.targets.len();
+                let zone_count = self
+                    .request
+                    .world
+                    .graph
+                    .zones
+                    .as_ref()
+                    .map_or(0, |zones| zones.zones().len());
+                let mut endpoints = [self.request.from, self.request.to];
+                if target_count == 1 {
+                    endpoints[1] = self.targets[0];
+                }
+                let attribution_endpoints = match diagnosis {
+                    BlockerDiagnosis::SingleTarget => endpoints.as_slice(),
+                    BlockerDiagnosis::FirstGoal => &endpoints[..1],
+                };
+                let zone_filter = ZoneFilterOwned::new(
+                    zone_count,
+                    self.request.admission.input.combat.map(i32::from),
+                    attribution_endpoints,
+                    options.zones,
+                )
+                .map_err(|_| RouteJobError::Allocation)?;
+                SearchCursor::new_preflighted(
+                    SearchRequest::BlockingZones {
+                        from: self.request.from,
+                        targets: std::mem::take(&mut self.goal_copy).into_boxed_slice(),
+                        diagnosis,
+                        options,
+                        avoid,
+                        max_settles,
+                        zone_filter,
+                    },
+                    self.lease.clone(),
+                    Arc::clone(&self.state),
+                    self.preflights.blocking,
+                )
+                .map_err(|_| RouteJobError::Search)?
+            }
+            RouteSearchPurpose::Unresolved => SearchCursor::new_preflighted(
+                SearchRequest::UnresolvedQuestGates {
+                    from: self.request.from,
+                    targets: std::mem::take(&mut self.goal_copy).into_boxed_slice(),
+                    options,
+                    avoid,
+                    max_settles,
+                },
+                self.lease.clone(),
+                Arc::clone(&self.state),
+                self.preflights.unresolved,
+            )
+            .map_err(|_| RouteJobError::Search)?,
+        };
+        #[cfg(test)]
+        route_work_tests::record_search_event(&self.thread_name, self.search_purpose, true);
+        self.search_cursor = Some(search);
+        Ok(true)
+    }
+
+    fn finish_strict_searches(&mut self) {
+        self.target_index = self.target_index.saturating_add(1);
+        if self.target_index >= self.targets.len() {
+            self.begin_diagnostics();
+        } else {
+            self.schedule_search(RouteSearchPurpose::Strict);
+        }
+    }
+
+    fn schedule_search(&mut self, purpose: RouteSearchPurpose) {
+        self.search_cursor = None;
+        self.search_avoid.clear();
+        self.search_avoid_index = 0;
+        self.search_avoid_started = false;
+        self.search_purpose = purpose;
+        self.stage = RouteJobStage::Search;
+    }
+
+    fn begin_diagnostics(&mut self) {
+        self.outcome = Some(RouteJobOutcome::NoPath);
+        self.diagnostics_started = true;
+        self.stage = RouteJobStage::BeginDiagnostics;
+    }
+
+    fn handle_search(&mut self, search: SearchOutcome) -> Result<(), RouteJobError> {
+        match (self.search_purpose, search) {
+            (RouteSearchPurpose::Strict, SearchOutcome::Single { route }) => {
+                if let Ok(route) = route {
+                    self.outcome = Some(RouteJobOutcome::Route(route));
+                    self.stage = RouteJobStage::Assess;
+                } else if self.request.opts.allow_bank_fetch {
+                    self.schedule_search(RouteSearchPurpose::MissingTarget);
+                } else {
+                    self.finish_strict_searches();
+                }
+            }
+            (RouteSearchPurpose::StrictFirst, SearchOutcome::First { search }) => {
+                let (preferred, fallback) = search.into_routes();
+                if let Ok(route) = preferred {
+                    self.outcome = Some(RouteJobOutcome::Route(route));
+                    self.stage = RouteJobStage::Assess;
+                } else {
+                    if let Some(CompactFallbackRoute::Routed(route)) = fallback {
+                        self.strict_fallback = Some(route);
+                    }
+                    self.begin_fetchable_first()?;
+                }
+            }
+            (RouteSearchPurpose::MissingTarget, SearchOutcome::MissingItemReqs(missing)) => {
+                if let Some(missing) = missing.filter(|missing| !missing.is_empty()) {
+                    self.missing_requirements = Some(missing);
+                    self.selected_target = self.targets.get(self.target_index).copied();
+                    self.begin_bank_planning()?;
+                } else {
+                    self.advance_target_after_bank_failure();
+                }
+            }
+            (RouteSearchPurpose::MissingTargets, SearchOutcome::MissingItemReqs(missing)) => {
+                if let Some(missing) = missing {
+                    self.missing_requirements = Some(missing);
+                    self.begin_planning_rows()?;
+                } else {
+                    self.fetchable_rows_planned = false;
+                    self.start_fetchable_overlay()?;
+                }
+            }
+            (
+                RouteSearchPurpose::MissingRoute,
+                SearchOutcome::MissingItemReqsForRoute { route, missing },
+            ) => {
+                self.selected_route = Some(route);
+                self.missing_requirements = Some(missing);
+                match self.missing_requirements.as_ref() {
+                    Some(missing) if missing.is_empty() => {
+                        let route = self
+                            .selected_route
+                            .take()
+                            .ok_or(RouteJobError::ResultShape)?;
+                        self.outcome = Some(RouteJobOutcome::Route(route));
+                        self.stage = RouteJobStage::Assess;
+                    }
+                    Some(_) => {
+                        self.selected_route = None;
+                        self.begin_bank_planning()?;
+                    }
+                    None => self.advance_target_after_bank_failure(),
+                }
+            }
+            (RouteSearchPurpose::BankAccess, SearchOutcome::First { search }) => {
+                let (route, _) = search.into_routes();
+                if let Ok(route) = route {
+                    let cursor = self
+                        .bank_cursor
+                        .as_mut()
+                        .ok_or(RouteJobError::ResultShape)?;
+                    if !cursor.select_access(route.destination()) {
+                        return Err(RouteJobError::ResultShape);
+                    }
+                    let plan = self
+                        .bank_cursor
+                        .take()
+                        .and_then(|mut cursor| cursor.take_plan())
+                        .ok_or(RouteJobError::ResultShape)?;
+                    self.bank_plan = Some(plan);
+                    self.bank_plan_capture_step = 0;
+                    self.bank_access_route = Some(route);
+                    self.bank_plan_apply_step = 0;
+                    self.stage = RouteJobStage::ApplyBankPlan;
+                } else {
+                    self.advance_target_after_bank_failure();
+                }
+            }
+            (RouteSearchPurpose::PostBank, SearchOutcome::Single { route }) => {
+                if let Ok(final_route) = route {
+                    let plan = self.bank_plan.take().ok_or(RouteJobError::ResultShape)?;
+                    let route = self.bank_access_route.take();
+                    let steps = plan.into_steps().into();
+                    self.bank_undo = Vec::new();
+                    self.bank_undo_reserved = false;
+                    self.bank_apply_reserved = false;
+                    self.bank_plan_capture_step = 0;
+                    self.planned_rows = None;
+                    self.fetchable_rows = None;
+                    self.outcome = Some(RouteJobOutcome::Bank {
+                        steps,
+                        route,
+                        final_route,
+                    });
+                    self.prepare_bank_avoid_copy()?;
+                } else {
+                    self.advance_target_after_bank_failure();
+                }
+            }
+            (RouteSearchPurpose::FetchableFirst, SearchOutcome::First { search }) => {
+                let (preferred, fallback) = search.into_routes();
+                if let Ok(route) = preferred {
+                    self.selected_target = Some(route.destination());
+                    self.selected_route = Some(route);
+                    self.start_restore_fetchable(RouteRestoreNext::MissingRoute)?;
+                } else if let Some(CompactFallbackRoute::Routed(route)) = fallback {
+                    self.selected_target = Some(route.destination());
+                    self.selected_route = Some(route);
+                    self.start_restore_fetchable(RouteRestoreNext::MissingRoute)?;
+                } else if let Some(route) = self.strict_fallback.take() {
+                    self.outcome = Some(RouteJobOutcome::Route(route));
+                    self.start_restore_fetchable(RouteRestoreNext::AssessRoute)?;
+                } else {
+                    self.start_restore_fetchable(RouteRestoreNext::Diagnostics)?;
+                }
+            }
+            (RouteSearchPurpose::Blocking, SearchOutcome::BlockingZones(blocked)) => {
+                if let Some(keys) = blocked.filter(|keys| !keys.is_empty()) {
+                    self.blocked = keys;
+                }
+                if self.kind.as_ref().is_some_and(|kind| {
+                    matches!(kind, RouteDemandKind::Walk { authority: Some(_) })
+                }) {
+                    if self.blocked.is_empty() {
+                        self.prepare_goal_copy(
+                            RouteGoalCopy::Diagnostics,
+                            RouteSearchPurpose::Unresolved,
+                        )?;
+                    } else {
+                        self.native_failure = Some(script::native::WalkEnd::Refused);
+                        self.schedule_search(RouteSearchPurpose::MissingCarry);
+                    }
+                } else {
+                    self.schedule_search(RouteSearchPurpose::MissingCarry);
+                }
+            }
+            (RouteSearchPurpose::Unresolved, SearchOutcome::UnresolvedQuestGates(result)) => {
+                self.native_failure = Some(match result {
+                    Ok(Some(gates)) if !gates.is_empty() => {
+                        script::native::WalkEnd::NeedsEvidence(Arc::from(gates))
+                    }
+                    Ok(_) => script::native::WalkEnd::Failed,
+                    Err(_) => script::native::WalkEnd::Refused,
+                });
+                self.schedule_search(RouteSearchPurpose::MissingCarry);
+            }
+            (RouteSearchPurpose::MissingCarry, SearchOutcome::MissingItemReqs(missing)) => {
+                self.missing_requirements = missing;
+                self.missing_diag_index = 0;
+                self.stage = RouteJobStage::Diagnostics;
+            }
+            _ => return Err(RouteJobError::ResultShape),
+        }
+        Ok(())
+    }
+
+    fn begin_fetchable_first(&mut self) -> Result<(), RouteJobError> {
+        if !self.request.opts.allow_bank_fetch {
+            if let Some(route) = self.strict_fallback.take() {
+                self.outcome = Some(RouteJobOutcome::Route(route));
+                self.stage = RouteJobStage::Assess;
+            } else {
+                self.begin_diagnostics();
+            }
+            return Ok(());
+        }
+        if self.request.bank_origin == Origin::Hint {
+            self.prepare_goal_copy(RouteGoalCopy::Missing, RouteSearchPurpose::MissingTargets)?;
+        } else {
+            self.start_fetchable_overlay()?;
+        }
+        Ok(())
+    }
+
+    fn plan_item_limit(&self) -> usize {
+        self.preflights
+            .missing
+            .reservation()
+            .max_plan_item_rows
+            .max(
+                self.preflights
+                    .missing_route
+                    .reservation()
+                    .max_plan_item_rows,
+            )
+    }
+
+    fn begin_planning_rows(&mut self) -> Result<(), RouteJobError> {
+        self.planning_cursor = Some(
+            PlanningRowsCursor::with_limits(self.request.bank.len(), self.plan_item_limit())
+                .ok_or(RouteJobError::Budget)?,
+        );
+        self.stage = RouteJobStage::PlanRows;
+        Ok(())
+    }
+
+    fn start_fetchable_overlay(&mut self) -> Result<(), RouteJobError> {
+        let rows = self
+            .fetchable_rows
+            .take()
+            .unwrap_or_else(|| std::mem::take(&mut self.request.bank));
+        let edges = FetchableEdgeCursor::new(
+            &self.request.world.graph,
+            route_search_options(&self.request).allow_teleports,
+        )
+        .map_err(|_| RouteJobError::Allocation)?;
+        let cursor =
+            FetchableStateCursor::new(&self.state, rows, !self.request.world.banks().is_empty())
+                .map_err(|_| RouteJobError::Allocation)?;
+        self.fetchable_cursor = Some(cursor);
+        self.fetchable_edges = Some(edges);
+        self.fetchable_overlay_ready = false;
+        self.stage = RouteJobStage::FetchableEdges;
+        Ok(())
+    }
+
+    fn begin_bank_planning(&mut self) -> Result<(), RouteJobError> {
+        if self.request.bank_origin == Origin::Hint {
+            self.begin_planning_rows()
+        } else {
+            self.start_bank_cursor()
+        }
+    }
+
+    fn start_bank_cursor(&mut self) -> Result<(), RouteJobError> {
+        if self.missing_requirements.is_none() {
+            self.advance_target_after_bank_failure();
+            return Ok(());
+        }
+        let bank_rows = self
+            .planned_rows
+            .as_ref()
+            .map_or(self.request.bank.len(), Vec::len);
+        self.bank_cursor = Some(
+            BankFetchCursor::with_limits(
+                bank_rows,
+                self.plan_item_limit(),
+                self.request.world.banks().len(),
+            )
+            .ok_or(RouteJobError::Budget)?,
+        );
+        self.bank_plan_capture_step = 0;
+        self.bank_undo_reserved = false;
+        self.bank_plan_apply_step = 0;
+        self.bank_apply_reserved = false;
+        self.bank_undo.clear();
+        self.bank_access_route = None;
+        self.stage = RouteJobStage::BankPlan;
+        Ok(())
+    }
+
+    fn start_restore_fetchable(&mut self, next: RouteRestoreNext) -> Result<(), RouteJobError> {
+        self.restore_next = Some(next);
+        if let Some(cursor) = self.fetchable_cursor.as_mut() {
+            if !cursor.begin_restore() {
+                return Err(RouteJobError::ResultShape);
+            }
+            self.stage = RouteJobStage::RestoreFetchable;
+        } else {
+            self.finish_fetchable_restore()?;
+        }
+        Ok(())
+    }
+
+    fn finish_fetchable_restore(&mut self) -> Result<(), RouteJobError> {
+        if let Some(cursor) = self.fetchable_cursor.as_mut() {
+            let rows = cursor.take_rows().ok_or(RouteJobError::ResultShape)?;
+            if self.fetchable_rows_planned {
+                self.fetchable_rows = Some(rows);
+            } else {
+                self.request.bank = rows;
+            }
+        }
+        self.fetchable_cursor = None;
+        self.fetchable_edges = None;
+        self.fetchable_overlay_ready = false;
+        match self.restore_next.take() {
+            Some(RouteRestoreNext::MissingRoute) => {
+                self.schedule_search(RouteSearchPurpose::MissingRoute);
+            }
+            Some(RouteRestoreNext::AssessRoute) => {
+                self.stage = RouteJobStage::Assess;
+            }
+            Some(RouteRestoreNext::Diagnostics) | None => self.begin_diagnostics(),
+        }
+        Ok(())
+    }
+
+    fn prepare_bank_avoid_copy(&mut self) -> Result<(), RouteJobError> {
+        self.bank_avoid_copy
+            .try_reserve_exact(self.request.avoid().len())
+            .map_err(|_| RouteJobError::Allocation)?;
+        self.bank_avoid_index = 0;
+        self.stage = if self.request.avoid().is_empty() {
+            RouteJobStage::Assess
+        } else {
+            RouteJobStage::CopyBankAvoid
+        };
+        Ok(())
+    }
+
+    fn advance_target_after_bank_failure(&mut self) {
+        if !self.bank_undo.is_empty() {
+            self.bank_rollback_index = self.bank_undo.len();
+            self.stage = RouteJobStage::RollbackBankState;
+            return;
+        }
+        self.finish_bank_failure();
+    }
+
+    fn finish_bank_failure(&mut self) {
+        self.missing_requirements = None;
+        self.planning_cursor = None;
+        self.planned_rows = None;
+        self.bank_cursor = None;
+        self.bank_plan = None;
+        self.bank_plan_capture_step = 0;
+        self.bank_plan_apply_step = 0;
+        self.bank_apply_reserved = false;
+        self.bank_undo_reserved = false;
+        self.bank_rollback_index = 0;
+        self.bank_undo.clear();
+        self.bank_access_route = None;
+        self.selected_route = None;
+        if self.search_mode == RouteSearchMode::InOrder {
+            self.selected_target = None;
+            self.target_index = self.target_index.saturating_add(1);
+            if self.target_index < self.targets.len() {
+                self.schedule_search(RouteSearchPurpose::Strict);
+            } else {
+                self.begin_diagnostics();
+            }
+        } else {
+            if let Some(target) = self.selected_target.take() {
+                self.excluded_targets.insert(target);
+            }
+            if let Err(error) = self.start_fetchable_overlay() {
+                self.detail = Some(error.to_string());
+                self.begin_diagnostics();
+            }
+        }
+    }
+
+    fn start_assessment(&mut self) -> Result<(), RouteJobError> {
+        let outcome = self.outcome.take().unwrap_or(RouteJobOutcome::NoPath);
+        let future = assess_route_outcome_cooperative(
+            Arc::clone(&self.request.world),
+            self.lease.clone(),
+            self.request.admission,
+            outcome,
+        );
+        if std::mem::size_of_val(&future) != self.submission.assessment_future_bytes {
+            return Err(RouteJobError::ResultShape);
+        }
+        self.assessment_future = Some(Box::pin(future));
+        Ok(())
+    }
+
+    fn finish(&mut self) -> RouteJobOutput {
+        let outcome = self.outcome.take().unwrap_or(RouteJobOutcome::NoPath);
+        let mut detail = self.detail.take();
+        if matches!(&outcome, RouteJobOutcome::NoPath) {
+            let mut route_detail = if self.blocked.is_empty() {
+                self.request
+                    .world
+                    .graph
+                    .zones
+                    .is_none()
+                    .then(|| crate::walk_map::LEGACY_ZONES_DETAIL.to_owned())
+            } else {
+                self.request.world.graph.zones.as_ref().map(|table| {
+                    format!(
+                        "{}; {SCRIPT_DANGER_HINT}",
+                        blocked_zone_detail(table, &self.blocked)
+                    )
+                })
+            };
+            if self.refusal.is_some() {
+                route_detail = self
+                    .assessment
+                    .as_ref()
+                    .map(|assessment| assessment.reason.to_string())
+                    .or(route_detail);
+            }
+            if self
+                .kind
+                .as_ref()
+                .is_some_and(|kind| matches!(kind, RouteDemandKind::Walk { authority: Some(_) }))
+            {
+                let context = format!(
+                    "native walk route failed: {:?} arrival from {:?} to {:?} within radius {}",
+                    self.request.arrival, self.request.from, self.request.to, self.request.radius
+                );
+                route_detail = Some(match route_detail {
+                    Some(detail) => format!("{detail}; {context}"),
+                    None => context,
+                });
+            }
+            if !self.missing.is_empty() {
+                if let Some(shortfall) = crate::walk_map::route_supply_shortfall_detail(
+                    &self.request.world,
+                    &self.state,
+                    self.missing.iter().map(|row| (row.id, row.count)),
+                ) {
+                    let shortfall =
+                        crate::walk_map::ActionError::InsufficientItems { detail: shortfall }
+                            .to_string();
+                    route_detail = Some(match route_detail {
+                        Some(nav_detail) => format!("{shortfall}; {nav_detail}"),
+                        None => shortfall,
+                    });
+                }
+            }
+            if let Some(route_detail) = route_detail {
+                detail = Some(match detail {
+                    Some(detail) => format!("{detail}; {route_detail}"),
+                    None => route_detail,
+                });
+            }
+        }
+        RouteJobOutput {
+            kind: self.kind.take().expect("route demand kind is present"),
+            completion: std::mem::take(&mut self.request.completion),
+            identity: self
+                .identity
+                .expect("executed route has an admitted identity"),
+            revision: self.revision,
+            generation: self.request.generation,
+            request_id: self.request.request_id,
+            lease: Some(self.lease.clone()),
+            basis_avoid: Arc::clone(&self.basis_avoid),
+            opts: self.request.opts,
+            compat_v1: self.request.admission.compat_v1,
+            quest_evidence: self.state.quest_evidence.clone(),
+            outcome,
+            assessment: self.assessment.take(),
+            refusal: self.refusal.take(),
+            blocked: std::mem::take(&mut self.blocked),
+            native_failure: self.native_failure.take(),
+            detail,
+            missing: std::mem::take(&mut self.missing),
+            bank_avoid_copy: std::mem::take(&mut self.bank_avoid_copy),
+        }
+    }
+}
+
+impl CooperativeJob for RouteJob {
+    type Output = RouteJobOutput;
+    type Error = RouteJobError;
+    type Phase = nav::contract::RoutePhase;
+
+    fn step(
+        &mut self,
+        ctx: &mut StepContext<'_, Self::Phase>,
+    ) -> StepOutcome<Self::Output, Self::Error> {
+        match ctx.checkpoint() {
+            Checkpoint::Continue => {}
+            Checkpoint::Yield | Checkpoint::Cancel(_) => return StepOutcome::Yielded,
+        }
+        loop {
+            match ctx.checkpoint() {
+                Checkpoint::Continue => {}
+                Checkpoint::Yield | Checkpoint::Cancel(_) => return StepOutcome::Yielded,
+            }
+            match self.stage {
+                RouteJobStage::Targets => {
+                    let finished = self.advance_targets();
+                    if finished {
+                        if let Err(error) = self.start_arrival_filter() {
+                            return StepOutcome::Failed(error);
+                        }
+                    }
+                    match ctx.consume_unit() {
+                        Checkpoint::Continue => {}
+                        Checkpoint::Yield | Checkpoint::Cancel(_) => {
+                            return StepOutcome::Yielded;
+                        }
+                    }
+                }
+                RouteJobStage::Arrival => {
+                    let Some(future) = self.arrival_future.as_mut() else {
+                        return StepOutcome::Failed(RouteJobError::ResultShape);
+                    };
+                    let mut poll_context = Context::from_waker(Waker::noop());
+                    match future.as_mut().poll(&mut poll_context) {
+                        Poll::Ready(targets) => {
+                            self.targets = targets;
+                            self.arrival_future = None;
+                            if let Err(error) = self.prepare_search_targets() {
+                                return StepOutcome::Failed(error);
+                            }
+                        }
+                        Poll::Pending => match ctx.consume_unit() {
+                            Checkpoint::Continue => {}
+                            Checkpoint::Yield | Checkpoint::Cancel(_) => {
+                                return StepOutcome::Yielded;
+                            }
+                        },
+                    }
+                }
+                RouteJobStage::CopyTargets => {
+                    if self.advance_goal_copy() {
+                        continue;
+                    }
+                    match ctx.consume_unit() {
+                        Checkpoint::Continue => {}
+                        Checkpoint::Yield | Checkpoint::Cancel(_) => {
+                            return StepOutcome::Yielded;
+                        }
+                    }
+                }
+                RouteJobStage::CopyAvoid => {
+                    if let Some(&avoid) = self.request.avoid().get(self.search_avoid_index) {
+                        self.search_avoid.push(avoid);
+                        self.search_avoid_index += 1;
+                    } else {
+                        self.stage = RouteJobStage::Search;
+                        continue;
+                    }
+                    match ctx.consume_unit() {
+                        Checkpoint::Continue => {}
+                        Checkpoint::Yield | Checkpoint::Cancel(_) => {
+                            return StepOutcome::Yielded;
+                        }
+                    }
+                }
+                RouteJobStage::PlanRows => {
+                    let done = {
+                        let Some(cursor) = self.planning_cursor.as_mut() else {
+                            return StepOutcome::Failed(RouteJobError::ResultShape);
+                        };
+                        let Some(missing) = self.missing_requirements.as_ref() else {
+                            return StepOutcome::Failed(RouteJobError::ResultShape);
+                        };
+                        cursor.advance(&self.request.bank, missing)
+                    };
+                    if done {
+                        let Some(rows) = self
+                            .planning_cursor
+                            .take()
+                            .and_then(|mut cursor| cursor.take_rows())
+                        else {
+                            return StepOutcome::Failed(RouteJobError::ResultShape);
+                        };
+                        if self.search_purpose == RouteSearchPurpose::MissingTargets {
+                            self.fetchable_rows = Some(rows);
+                            self.fetchable_rows_planned = true;
+                            if let Err(error) = self.start_fetchable_overlay() {
+                                return StepOutcome::Failed(error);
+                            }
+                        } else {
+                            self.planned_rows = Some(rows);
+                            if let Err(error) = self.start_bank_cursor() {
+                                return StepOutcome::Failed(error);
+                            }
+                        }
+                    }
+                    match ctx.consume_unit() {
+                        Checkpoint::Continue => {}
+                        Checkpoint::Yield | Checkpoint::Cancel(_) => {
+                            return StepOutcome::Yielded;
+                        }
+                    }
+                }
+                RouteJobStage::BankPlan => {
+                    let done = {
+                        let Some(cursor) = self.bank_cursor.as_mut() else {
+                            return StepOutcome::Failed(RouteJobError::ResultShape);
+                        };
+                        let bank = self
+                            .planned_rows
+                            .as_deref()
+                            .unwrap_or(self.request.bank.as_slice());
+                        let Some(missing) = self.missing_requirements.as_ref() else {
+                            return StepOutcome::Failed(RouteJobError::ResultShape);
+                        };
+                        cursor.advance(
+                            missing,
+                            &self.state,
+                            bank,
+                            self.request.world.banks(),
+                            self.request.from,
+                            &self.request.world.collision,
+                        )
+                    };
+                    if done {
+                        let has_access = self
+                            .bank_cursor
+                            .as_ref()
+                            .and_then(BankFetchCursor::planned_access)
+                            .is_some();
+                        if has_access {
+                            self.schedule_search(RouteSearchPurpose::BankAccess);
+                        } else if let Some(plan) = self
+                            .bank_cursor
+                            .take()
+                            .and_then(|mut cursor| cursor.take_plan())
+                        {
+                            self.bank_plan = Some(plan);
+                            self.bank_plan_capture_step = 0;
+                            self.stage = RouteJobStage::ApplyBankPlan;
+                        } else {
+                            self.bank_cursor = None;
+                            self.advance_target_after_bank_failure();
+                        }
+                    }
+                    match ctx.consume_unit() {
+                        Checkpoint::Continue => {}
+                        Checkpoint::Yield | Checkpoint::Cancel(_) => {
+                            return StepOutcome::Yielded;
+                        }
+                    }
+                }
+                RouteJobStage::FetchableEdges => {
+                    if !self.fetchable_overlay_ready {
+                        let captured = {
+                            let Some(edges) = self.fetchable_edges.as_mut() else {
+                                return StepOutcome::Failed(RouteJobError::ResultShape);
+                            };
+                            edges.capture_strict(&self.request.world.graph, &self.state)
+                        };
+                        if captured {
+                            self.stage = RouteJobStage::FetchableState;
+                        }
+                    } else {
+                        let opened = {
+                            let Some(edges) = self.fetchable_edges.as_mut() else {
+                                return StepOutcome::Failed(RouteJobError::ResultShape);
+                            };
+                            edges.opens_next(&self.request.world.graph, &self.state)
+                        };
+                        match opened {
+                            Some(true) => {
+                                if let Err(error) = self.prepare_goal_copy(
+                                    RouteGoalCopy::Fetchable,
+                                    RouteSearchPurpose::FetchableFirst,
+                                ) {
+                                    return StepOutcome::Failed(error);
+                                }
+                            }
+                            Some(false) => {
+                                let next = if let Some(route) = self.strict_fallback.take() {
+                                    self.outcome = Some(RouteJobOutcome::Route(route));
+                                    RouteRestoreNext::AssessRoute
+                                } else {
+                                    RouteRestoreNext::Diagnostics
+                                };
+                                if let Err(error) = self.start_restore_fetchable(next) {
+                                    return StepOutcome::Failed(error);
+                                }
+                            }
+                            None => {}
+                        }
+                    }
+                    match ctx.consume_unit() {
+                        Checkpoint::Continue => {}
+                        Checkpoint::Yield | Checkpoint::Cancel(_) => {
+                            return StepOutcome::Yielded;
+                        }
+                    }
+                }
+                RouteJobStage::FetchableState => {
+                    let Some(cursor) = self.fetchable_cursor.as_mut() else {
+                        return StepOutcome::Failed(RouteJobError::ResultShape);
+                    };
+                    let Some(state) = Arc::get_mut(&mut self.state) else {
+                        return StepOutcome::Failed(RouteJobError::ResultShape);
+                    };
+                    match cursor.advance(state) {
+                        Ok(true) => {
+                            self.fetchable_overlay_ready = true;
+                            self.stage = RouteJobStage::FetchableEdges;
+                        }
+                        Ok(false) => {}
+                        Err(_) => return StepOutcome::Failed(RouteJobError::Allocation),
+                    }
+                    match ctx.consume_unit() {
+                        Checkpoint::Continue => {}
+                        Checkpoint::Yield | Checkpoint::Cancel(_) => {
+                            return StepOutcome::Yielded;
+                        }
+                    }
+                }
+                RouteJobStage::RestoreFetchable => {
+                    let Some(cursor) = self.fetchable_cursor.as_mut() else {
+                        return StepOutcome::Failed(RouteJobError::ResultShape);
+                    };
+                    let Some(state) = Arc::get_mut(&mut self.state) else {
+                        return StepOutcome::Failed(RouteJobError::ResultShape);
+                    };
+                    let restored = cursor.restore_next(state);
+                    if restored {
+                        if let Err(error) = self.finish_fetchable_restore() {
+                            return StepOutcome::Failed(error);
+                        }
+                    }
+                    match ctx.consume_unit() {
+                        Checkpoint::Continue => {}
+                        Checkpoint::Yield | Checkpoint::Cancel(_) => {
+                            return StepOutcome::Yielded;
+                        }
+                    }
+                }
+                RouteJobStage::ApplyBankPlan => {
+                    if !self.bank_undo_reserved {
+                        let missing_capacity = self.plan_item_limit();
+                        let Some(capacity) = missing_capacity.checked_mul(2) else {
+                            return StepOutcome::Failed(RouteJobError::Budget);
+                        };
+                        if self.bank_undo.try_reserve_exact(capacity).is_err() {
+                            return StepOutcome::Failed(RouteJobError::Allocation);
+                        }
+                        self.bank_undo_reserved = true;
+                    }
+                    let Some(plan) = self.bank_plan.as_ref() else {
+                        return StepOutcome::Failed(RouteJobError::ResultShape);
+                    };
+                    if let Some(step) = plan.steps().get(self.bank_plan_capture_step) {
+                        let id = match step {
+                            BankStep::Withdraw { id, .. }
+                            | BankStep::WithdrawXAmount { id, .. }
+                            | BankStep::Wear { id } => Some(*id),
+                            _ => None,
+                        };
+                        if let Some(id) = id {
+                            self.bank_undo.push(RouteBankUndo {
+                                id,
+                                inventory: self.state.inv.get(&id).copied(),
+                                worn: self.state.worn.contains(&id),
+                            });
+                        }
+                        self.bank_plan_capture_step += 1;
+                        match ctx.consume_unit() {
+                            Checkpoint::Continue => {}
+                            Checkpoint::Yield | Checkpoint::Cancel(_) => {
+                                return StepOutcome::Yielded;
+                            }
+                        }
+                        continue;
+                    }
+                    if !self.bank_apply_reserved {
+                        let missing_capacity = self.plan_item_limit();
+                        let Some(state) = Arc::get_mut(&mut self.state) else {
+                            return StepOutcome::Failed(RouteJobError::ResultShape);
+                        };
+                        if state.inv.try_reserve(missing_capacity).is_err()
+                            || state.worn.try_reserve(missing_capacity).is_err()
+                        {
+                            return StepOutcome::Failed(RouteJobError::Allocation);
+                        }
+                        self.bank_apply_reserved = true;
+                    }
+                    let Some(state) = Arc::get_mut(&mut self.state) else {
+                        return StepOutcome::Failed(RouteJobError::ResultShape);
+                    };
+                    let Some(plan) = self.bank_plan.as_mut() else {
+                        return StepOutcome::Failed(RouteJobError::ResultShape);
+                    };
+                    if plan.apply_next(state) {
+                        self.schedule_search(RouteSearchPurpose::PostBank);
+                    }
+                    match ctx.consume_unit() {
+                        Checkpoint::Continue => {}
+                        Checkpoint::Yield | Checkpoint::Cancel(_) => {
+                            return StepOutcome::Yielded;
+                        }
+                    }
+                }
+                RouteJobStage::RollbackBankState => {
+                    if self.bank_rollback_index == 0 {
+                        self.bank_undo.clear();
+                        self.bank_plan = None;
+                        self.bank_apply_reserved = false;
+                        self.bank_undo_reserved = false;
+                        self.bank_plan_capture_step = 0;
+                        self.bank_plan_apply_step = 0;
+                        self.finish_bank_failure();
+                        continue;
+                    }
+                    self.bank_rollback_index -= 1;
+                    let undo = self.bank_undo[self.bank_rollback_index];
+                    let Some(state) = Arc::get_mut(&mut self.state) else {
+                        return StepOutcome::Failed(RouteJobError::ResultShape);
+                    };
+                    if let Some(count) = undo.inventory {
+                        state.inv.insert(undo.id, count);
+                    } else {
+                        state.inv.remove(&undo.id);
+                    }
+                    if undo.worn {
+                        state.worn.insert(undo.id);
+                    } else {
+                        state.worn.remove(&undo.id);
+                    }
+                    match ctx.consume_unit() {
+                        Checkpoint::Continue => {}
+                        Checkpoint::Yield | Checkpoint::Cancel(_) => {
+                            return StepOutcome::Yielded;
+                        }
+                    }
+                }
+                RouteJobStage::CopyBankAvoid => {
+                    if let Some(&avoid) = self.request.avoid().get(self.bank_avoid_index) {
+                        self.bank_avoid_copy.push(avoid);
+                        self.bank_avoid_index += 1;
+                    } else {
+                        self.stage = RouteJobStage::Assess;
+                        continue;
+                    }
+                    match ctx.consume_unit() {
+                        Checkpoint::Continue => {}
+                        Checkpoint::Yield | Checkpoint::Cancel(_) => {
+                            return StepOutcome::Yielded;
+                        }
+                    }
+                }
+                RouteJobStage::BeginDiagnostics => {
+                    if let Err(error) = self
+                        .prepare_goal_copy(RouteGoalCopy::Diagnostics, RouteSearchPurpose::Blocking)
+                    {
+                        return StepOutcome::Failed(error);
+                    }
+                    continue;
+                }
+                RouteJobStage::Diagnostics => {
+                    let Some(missing) = self.missing_requirements.as_ref() else {
+                        self.stage = RouteJobStage::Assess;
+                        continue;
+                    };
+                    if let Some(MissingReqView::Carry { id, count }) =
+                        missing.requirement_at(self.missing_diag_index)
+                    {
+                        if count > 0 {
+                            self.missing.push(MissingCarry { id, count });
+                        }
+                        self.missing_diag_index += 1;
+                    } else {
+                        self.stage = RouteJobStage::Assess;
+                        continue;
+                    }
+                    match ctx.consume_unit() {
+                        Checkpoint::Continue => {}
+                        Checkpoint::Yield | Checkpoint::Cancel(_) => {
+                            return StepOutcome::Yielded;
+                        }
+                    }
+                }
+                RouteJobStage::Search => {
+                    if self.search_cursor.is_none() {
+                        if let Err(error) = self.start_search() {
+                            return StepOutcome::Failed(error);
+                        }
+                        continue;
+                    }
+                    let step = self
+                        .search_cursor
+                        .as_mut()
+                        .expect("search cursor is present")
+                        .advance(ctx);
+                    match step {
+                        CursorStep::Yielded | CursorStep::Cancelled(_) => {
+                            return StepOutcome::Yielded;
+                        }
+                        CursorStep::Failed(_) => return StepOutcome::Failed(RouteJobError::Search),
+                        CursorStep::Complete(completion) => {
+                            #[cfg(test)]
+                            route_work_tests::record_search_event(
+                                &self.thread_name,
+                                self.search_purpose,
+                                false,
+                            );
+                            self.search_cursor = None;
+                            let (search, _state) = completion.into_parts();
+                            if let Err(error) = self.handle_search(search) {
+                                return StepOutcome::Failed(error);
+                            }
+                            self.boundary_ready = true;
+                            return StepOutcome::Yielded;
+                        }
+                    }
+                }
+                RouteJobStage::Assess => {
+                    if self.assessment_future.is_none() {
+                        if let Err(error) = self.start_assessment() {
+                            return StepOutcome::Failed(error);
+                        }
+                    }
+                    let Some(future) = self.assessment_future.as_mut() else {
+                        return StepOutcome::Failed(RouteJobError::ResultShape);
+                    };
+                    let mut poll_context = Context::from_waker(Waker::noop());
+                    match future.as_mut().poll(&mut poll_context) {
+                        Poll::Ready(Ok((outcome, assessment, permitted))) => {
+                            self.assessment_future = None;
+                            self.outcome = Some(if permitted {
+                                outcome
+                            } else {
+                                RouteJobOutcome::NoPath
+                            });
+                            self.assessment = assessment;
+                            if !permitted {
+                                self.refusal = Some(
+                                    if self
+                                        .request
+                                        .admission
+                                        .escape
+                                        .is_some_and(crate::admission::escape_live)
+                                    {
+                                        script::native::WalkRefusal::EscapeInProgress
+                                    } else if let Some(assessment) = self.assessment.as_ref() {
+                                        crate::admission::verdict_refusal(assessment.verdict)
+                                    } else {
+                                        script::native::WalkRefusal::NoRouteWithinBounds {
+                                            tried: 0,
+                                            last: None,
+                                        }
+                                    },
+                                );
+                            }
+                            self.stage = RouteJobStage::Complete;
+                        }
+                        Poll::Ready(Err(error)) => return StepOutcome::Failed(error),
+                        Poll::Pending => match ctx.consume_unit() {
+                            Checkpoint::Continue => {}
+                            Checkpoint::Yield | Checkpoint::Cancel(_) => {
+                                return StepOutcome::Yielded;
+                            }
+                        },
+                    }
+                }
+                RouteJobStage::Complete => match ctx.checkpoint() {
+                    Checkpoint::Continue => {
+                        return StepOutcome::Completed(self.finish());
+                    }
+                    Checkpoint::Yield | Checkpoint::Cancel(_) => {
+                        return StepOutcome::Yielded;
+                    }
+                },
+            }
+        }
+    }
+
+    fn retained(&self) -> RetainedState {
+        RetainedState::clean(
+            self.submission
+                .input_bytes
+                .saturating_add(self.submission.scratch_bytes),
+        )
+    }
+}
+
+pub(crate) struct RouteJobOutput {
+    kind: RouteDemandKind,
+    completion: RouteCompletion,
+    identity: WorkIdentity,
+    revision: InputRevision,
+    generation: u64,
+    request_id: u64,
+    lease: Option<NavLease>,
+    basis_avoid: Arc<[AvoidRect]>,
+    opts: FindOptions,
+    compat_v1: bool,
+    quest_evidence: Option<nav::quest_gates::QuestEvidence>,
+    outcome: RouteJobOutcome,
+    assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
+    refusal: Option<script::native::WalkRefusal>,
+    blocked: Box<[ZoneKey]>,
+    native_failure: Option<script::native::WalkEnd>,
+    detail: Option<String>,
+    missing: Vec<MissingCarry>,
+    bank_avoid_copy: Vec<AvoidRect>,
+}
+
+#[expect(
+    clippy::large_enum_variant,
+    reason = "The bank outcome retains both charged routes without a separate result allocation."
+)]
+enum RouteJobOutcome {
+    Route(CompactRoute),
+    Bank {
+        steps: VecDeque<BankStep>,
+        route: Option<CompactRoute>,
+        final_route: CompactRoute,
+    },
+    NoPath,
+}
+
+impl RouteJobOutcome {
+    fn current_route(&self) -> Option<&CompactRoute> {
+        match self {
+            Self::Route(route) => Some(route),
+            Self::Bank {
+                route, final_route, ..
+            } => Some(route.as_ref().unwrap_or(final_route)),
+            Self::NoPath => None,
+        }
+    }
+}
+
+fn route_assessment_future_layout_bytes(
+    world: &Arc<NavWorld>,
+    lease: &NavLease,
+    admission: crate::admission::Admission,
+) -> Option<usize> {
+    let future = assess_route_outcome_cooperative(
+        Arc::clone(world),
+        lease.clone(),
+        admission,
+        RouteJobOutcome::NoPath,
+    );
+    Some(std::mem::size_of_val(&future))
+}
+
+async fn assess_route_outcome_cooperative(
+    world: Arc<NavWorld>,
+    lease: NavLease,
+    admission: crate::admission::Admission,
+    outcome: RouteJobOutcome,
+) -> Result<
+    (
+        RouteJobOutcome,
+        Option<Arc<script::combat::risk::RouteAssessment>>,
+        bool,
+    ),
+    RouteJobError,
+> {
+    let Some(route) = outcome.current_route() else {
+        return Ok((outcome, None, true));
+    };
+    if admission.escape.is_some_and(crate::admission::escape_live) {
+        return Ok((RouteJobOutcome::NoPath, None, false));
+    }
+    let view =
+        nav::producer::compact_route_view(&lease, route).map_err(|_| RouteJobError::ResultShape)?;
+    let mut yield_unit = crate::admission::route_yield_unit;
+    let assessment =
+        crate::admission::assess_view_cooperative(view, &world, &admission, &mut yield_unit).await;
+    let view =
+        nav::producer::compact_route_view(&lease, route).map_err(|_| RouteJobError::ResultShape)?;
+    let permitted = crate::admission::permits_view_cooperative(
+        view,
+        &world,
+        &admission,
+        &assessment,
+        &mut yield_unit,
+    )
+    .await;
+    Ok((outcome, Some(assessment), permitted))
+}
+
+enum RouteReservation {
+    NotNeeded,
+    Full,
+    Failed(String),
+    Refused(nav::producer::OwnerResultRefusal),
+    Reserved(Option<OwnerResultReservation>),
+}
+
+fn route_output_retained_bytes(
+    output: &RouteJobOutput,
+) -> Result<Option<usize>, nav::producer::OwnerResultRefusal> {
+    if !matches!(&output.kind, RouteDemandKind::Walk { .. }) {
+        return Ok(None);
+    }
+    let custody_bytes = OwnerResultLedger::owner_result_bytes::<RoutePlanLease>(0)
+        .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?;
+    let basis_bytes = arc_slice_heap_bytes::<AvoidRect>(output.basis_avoid.len())
+        .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?;
+    let route_basis_layout = std::alloc::Layout::new::<[std::sync::atomic::AtomicUsize; 2]>()
+        .extend(std::alloc::Layout::new::<crate::admission::RouteBasis>())
+        .map_err(|_| nav::producer::OwnerResultRefusal::SizeOverflow)?
+        .0
+        .pad_to_align()
+        .size();
+    let retained = match &output.outcome {
+        RouteJobOutcome::NoPath => return Ok(None),
+        RouteJobOutcome::Route(route) => nav::producer::compact_route_storage_bytes(route)
+            .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?
+            .checked_add(std::mem::size_of::<RoutePath>())
+            .and_then(|bytes| bytes.checked_add(custody_bytes))
+            .and_then(|bytes| bytes.checked_add(basis_bytes))
+            .and_then(|bytes| bytes.checked_add(route_basis_layout))
+            .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?,
+        RouteJobOutcome::Bank {
+            steps,
+            route,
+            final_route,
+        } => {
+            let current = match route {
+                Some(route) => nav::producer::compact_route_storage_bytes(route)
+                    .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?,
+                None => 0,
+            };
+            let final_route = nav::producer::compact_route_storage_bytes(final_route)
+                .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?;
+            let shared_custody = if route.is_some() {
+                custody_bytes
+                    .checked_mul(2)
+                    .and_then(|bytes| bytes.checked_sub(OwnerResultReservation::storage_bytes()))
+                    .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?
+            } else {
+                custody_bytes
+            };
+            let step_bytes = steps
+                .capacity()
+                .checked_mul(std::mem::size_of::<BankStep>())
+                .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?;
+            let avoid_bytes = output
+                .bank_avoid_copy
+                .capacity()
+                .checked_mul(std::mem::size_of::<AvoidRect>())
+                .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?;
+            current
+                .checked_add(final_route)
+                .and_then(|bytes| bytes.checked_add(std::mem::size_of::<RoutePath>()))
+                .and_then(|bytes| bytes.checked_add(std::mem::size_of::<PendingBankFetch>()))
+                .and_then(|bytes| bytes.checked_add(step_bytes))
+                .and_then(|bytes| bytes.checked_add(avoid_bytes))
+                .and_then(|bytes| bytes.checked_add(shared_custody))
+                .and_then(|bytes| bytes.checked_add(basis_bytes))
+                .and_then(|bytes| bytes.checked_add(route_basis_layout))
+                .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?
+        }
+    };
+    Ok(Some(retained))
+}
+
+fn route_ticket_is_current(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    identity: WorkIdentity,
+    revision: InputRevision,
+) -> bool {
+    let all = navs.lock().expect("navigation state mutex is not poisoned");
+    all.get(name).is_some_and(|bot| {
+        bot.route_ticket
+            .as_ref()
+            .is_some_and(|owner| owner.identity == identity && owner.revision == revision)
+    })
+}
+
+fn take_route_demand(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    capacity: Option<PublishSequence>,
+) -> Option<(RouteDemand, Option<Scope>)> {
+    let mut all = navs.lock().expect("navigation state mutex is not poisoned");
+    let bot = all.get_mut(name)?;
+    if bot.route_ticket.is_some() {
+        return None;
+    }
+    let pending = bot.pending_route.as_deref()?;
+    if matches!(pending, RouteDemand::Preparing { .. })
+        || matches!(pending, RouteDemand::Prepared(job) if capacity.is_some() && job.admission_capacity == capacity)
+    {
+        return None;
+    }
+    let scope = match pending {
+        RouteDemand::Pending { kind, .. } => bot.route_work_scope(kind),
+        RouteDemand::Prepared(job) => job
+            .kind
+            .as_ref()
+            .and_then(|kind| bot.route_work_scope(kind)),
+        RouteDemand::Preparing { .. } => None,
+    };
+    let placeholder = RouteDemand::Preparing {
+        generation: pending.generation(),
+        request_id: pending.request_id(),
+    };
+    let demand = std::mem::replace(bot.pending_route.as_deref_mut()?, placeholder);
+    Some((demand, scope))
+}
+
+fn route_demand_placeholder_is_current(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    generation: u64,
+    request_id: u64,
+) -> bool {
+    let all = navs.lock().expect("navigation state mutex is not poisoned");
+    all.get(name).is_some_and(|bot| {
+        bot.route_ticket.is_none()
+            && bot
+                .pending_route
+                .as_ref()
+                .is_some_and(|demand| demand.matches(generation, request_id))
+    })
+}
+
+fn restore_prepared_route_demand(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    generation: u64,
+    request_id: u64,
+    job: Box<RouteJob>,
+) -> bool {
+    let mut all = navs.lock().expect("navigation state mutex is not poisoned");
+    let Some(bot) = all.get_mut(name) else {
+        return false;
+    };
+    if bot.route_ticket.is_some()
+        || !bot
+            .pending_route
+            .as_ref()
+            .is_some_and(|demand| demand.matches(generation, request_id))
+    {
+        return false;
+    }
+    **bot
+        .pending_route
+        .as_mut()
+        .expect("current demand retains its box") = RouteDemand::Prepared(job);
+    true
+}
+
+fn publish_unsubmitted_route_failure(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    generation: u64,
+    request_id: u64,
+    kind: RouteDemandKind,
+    detail: &str,
+) {
+    let mut all = navs.lock().expect("navigation state mutex is not poisoned");
+    let Some(bot) = all.get_mut(name) else {
+        return;
+    };
+    if !bot
+        .pending_route
+        .as_ref()
+        .is_some_and(|demand| demand.matches(generation, request_id))
+        || bot.route_ticket.is_some()
+    {
+        return;
+    }
+    bot.pending_route = None;
+    match kind {
+        RouteDemandKind::Advisory {
+            authority,
+            evidence,
+        } => {
+            if bot.advisory_request_id == request_id && authority.live() {
+                bot.assess_result = Some(Box::new((
+                    authority.clone(),
+                    advisory_refusal(&authority, evidence, detail),
+                )));
+            }
+        }
+        RouteDemandKind::Walk { authority } => {
+            if bot.route_generation != generation
+                || bot.walk_request_id != request_id
+                || authority.as_ref().is_some_and(|owner| !owner.live())
+            {
+                return;
+            }
+            if let Some((to, radius, allow_teleports, ..)) = bot.requested_route {
+                if bot.armed_outcome_may_publish(request_id) {
+                    bot.note_failure(generation, request_id, to, radius, allow_teleports);
+                }
+            }
+            if authority.is_some() {
+                bot.native_walk_failure = Some((request_id, script::native::WalkEnd::Refused));
+                if bot.walk_outcome_generation == generation
+                    && bot.walk_outcome_request_id == request_id
+                {
+                    bot.walk_outcome_detail = Some(Arc::from(detail));
+                }
+            }
+            bot.requested_route = None;
+        }
+    }
+}
+
+fn compact_route_ticks(lease: &NavLease, route: &CompactRoute) -> u32 {
+    nav::producer::compact_route_view(lease, route)
+        .ok()
+        .and_then(|view| script::combat::risk::RoutePath::new(view).ok())
+        .and_then(|path| u32::try_from(path.ticks()).ok())
+        .unwrap_or(0)
+}
+
+pub(crate) fn pump_route_work(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
+    let shared = match WorkService::shared() {
+        Ok(shared) => shared,
+        Err(error) => {
+            if let Some((demand, _)) = take_route_demand(navs, name, None) {
+                let generation = demand.generation();
+                let request_id = demand.request_id();
+                if let Some(kind) = demand.kind() {
+                    publish_unsubmitted_route_failure(
+                        navs,
+                        name,
+                        generation,
+                        request_id,
+                        kind,
+                        &error.to_string(),
+                    );
+                }
+                demand.signal_completion();
+            }
+            return;
+        }
+    };
+
+    pump_route_work_on_service(&shared, navs, name, OwnerResultLedger::shared());
+}
+
+fn pump_route_work_on_service(
+    shared: &Arc<parking_lot::Mutex<WorkService>>,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    ledger: &OwnerResultLedger,
+) {
+    // A completed search can submit its continuation in this same frame.
+    // Do not loop: each pass harvests at most one admitted route job.
+    harvest_route_terminal(shared, navs, name, ledger);
+    let capacity = {
+        let service = shared.lock();
+        service
+            .worker_available()
+            .then(|| service.publications().capacity().sequence())
+    };
+    if let Some((demand, scope)) = take_route_demand(navs, name, capacity) {
+        let generation = demand.generation();
+        let request_id = demand.request_id();
+        let Some(scope) = scope else {
+            if let Some(kind) = demand.kind() {
+                publish_unsubmitted_route_failure(
+                    navs,
+                    name,
+                    generation,
+                    request_id,
+                    kind,
+                    "compiled slot scope is unavailable",
+                );
+            }
+            demand.signal_completion();
+            return;
+        };
+        let (mut job, kind) = match demand {
+            RouteDemand::Pending { request, kind } => {
+                let failure_kind = kind.clone();
+                match RouteJob::prepare(name, request, kind) {
+                    Ok(job) => {
+                        let kind = job
+                            .kind
+                            .as_ref()
+                            .expect("prepared route has a demand kind")
+                            .clone();
+                        (Box::new(job), kind)
+                    }
+                    Err(error) => {
+                        publish_unsubmitted_route_failure(
+                            navs,
+                            name,
+                            generation,
+                            request_id,
+                            failure_kind,
+                            &error.to_string(),
+                        );
+                        return;
+                    }
+                }
+            }
+            RouteDemand::Prepared(job) => {
+                let kind = job
+                    .kind
+                    .as_ref()
+                    .expect("prepared route has a demand kind")
+                    .clone();
+                (job, kind)
+            }
+            RouteDemand::Preparing { .. } => return,
+        };
+
+        if !route_demand_placeholder_is_current(navs, name, generation, request_id) {
+            drop(job);
+            return;
+        }
+        let revision = job.revision;
+        let input = *job.submission();
+        enum Submission {
+            Accepted(WorkTicket<RouteWorkSpec>, WorkCancellation<RouteWorkSpec>),
+            Full(Box<RouteJob>),
+            Refused(String),
+        }
+        let submission = {
+            let mut service = shared.lock();
+            let before = service.publications().capacity().sequence();
+            let conditions = ProcessConditions::new(service.incarnation());
+            match service.mint_identity(scope, kind.origin()) {
+                Err(error) => Submission::Refused(error.to_string()),
+                Ok(identity) => {
+                    job.identity = Some(identity);
+                    let job = RouteWorkJob::new(job);
+                    match service.try_submit::<RouteWorkSpec, _>(identity, &input, job, &conditions)
+                    {
+                        Ok(ticket) => match service.cancellation_handle(ticket) {
+                            Ok(cancellation) => Submission::Accepted(ticket, cancellation),
+                            Err(error) => {
+                                let _ = service.abandon(ticket, Cancellation::ScopeInvalidated);
+                                Submission::Refused(error.to_string())
+                            }
+                        },
+                        Err(refused) => {
+                            let (reason, job) = refused.into_parts();
+                            if reason == SubmissionRefusal::Full {
+                                let mut job = job.into_job();
+                                // A release racing admission must permit another attempt.
+                                job.admission_capacity = Some(before);
+                                Submission::Full(job)
+                            } else {
+                                Submission::Refused(reason.to_string())
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        match submission {
+            Submission::Accepted(ticket, cancellation) => {
+                let identity = ticket.identity();
+                let mut owner = Some(Box::new(RouteTicketOwner {
+                    identity,
+                    revision,
+                    generation,
+                    request_id,
+                    kind: kind.clone(),
+                    cancellation,
+                    active: true,
+                }));
+                let installed = {
+                    let mut all = navs.lock().expect("navigation state mutex is not poisoned");
+                    all.get_mut(name).is_some_and(|bot| {
+                        if bot.route_ticket.is_some()
+                            || !bot
+                                .pending_route
+                                .as_ref()
+                                .is_some_and(|demand| demand.matches(generation, request_id))
+                        {
+                            return false;
+                        }
+                        bot.pending_route = None;
+                        bot.route_ticket = owner.take();
+                        true
+                    })
+                };
+                if !installed {
+                    if let Some(mut owner) = owner {
+                        owner.abandon(Cancellation::Superseded);
+                    }
+                }
+            }
+            Submission::Full(job) => {
+                restore_prepared_route_demand(navs, name, generation, request_id, job);
+            }
+            Submission::Refused(detail) => {
+                publish_unsubmitted_route_failure(
+                    navs, name, generation, request_id, kind, &detail,
+                );
+            }
+        }
+    }
+}
+
+fn take_route_ticket_owner(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    identity: WorkIdentity,
+    revision: InputRevision,
+) -> Option<Box<RouteTicketOwner>> {
+    let mut all = navs.lock().expect("navigation state mutex is not poisoned");
+    let bot = all.get_mut(name)?;
+    if !bot
+        .route_ticket
+        .as_ref()
+        .is_some_and(|owner| owner.identity == identity && owner.revision == revision)
+    {
+        return None;
+    }
+    bot.route_ticket.take()
+}
+
+fn publish_accepted_route_failure(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    generation: u64,
+    request_id: u64,
+    kind: RouteDemandKind,
+    detail: &str,
+) {
+    publish_accepted_route_refusal(navs, name, generation, request_id, kind, detail, None);
+}
+
+fn publish_accepted_route_refusal(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    generation: u64,
+    request_id: u64,
+    kind: RouteDemandKind,
+    detail: &str,
+    refusal: Option<script::native::WalkRefusal>,
+) {
+    let mut all = navs.lock().expect("navigation state mutex is not poisoned");
+    let Some(bot) = all.get_mut(name) else {
+        return;
+    };
+    match kind {
+        RouteDemandKind::Advisory {
+            authority,
+            evidence,
+        } => {
+            if bot.advisory_request_id == request_id && authority.live() {
+                let mut receipt = advisory_refusal(&authority, evidence, detail);
+                if let Some(refusal) = refusal {
+                    receipt.refusal = Some(refusal);
+                }
+                bot.assess_result = Some(Box::new((authority.clone(), receipt)));
+            }
+        }
+        RouteDemandKind::Walk { authority } => {
+            if bot.route_generation != generation
+                || bot.walk_request_id != request_id
+                || authority.as_ref().is_some_and(|owner| !owner.live())
+            {
+                return;
+            }
+            if let Some((to, radius, allow_teleports, ..)) = bot.requested_route {
+                if bot.armed_outcome_may_publish(request_id) {
+                    bot.note_failure(generation, request_id, to, radius, allow_teleports);
+                }
+            }
+            if let Some(refusal) = refusal {
+                bot.risk_refusal = Some(Box::new((request_id, refusal)));
+            }
+            if authority.is_some() {
+                bot.native_walk_failure = Some((request_id, script::native::WalkEnd::Refused));
+            }
+            if bot.walk_outcome_generation == generation
+                && bot.walk_outcome_request_id == request_id
+            {
+                bot.walk_outcome_detail = Some(Arc::from(detail));
+            }
+            bot.requested_route = None;
+        }
+    }
+}
+
+pub(crate) fn publish_route_owner_refusal(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    generation: u64,
+    request_id: u64,
+    kind: RouteDemandKind,
+    error: nav::producer::OwnerResultRefusal,
+) {
+    let refusal = match &error {
+        nav::producer::OwnerResultRefusal::TooLarge { requested, maximum } => {
+            Some(script::native::WalkRefusal::RouteTooLarge {
+                required_bytes: *requested,
+                maximum_bytes: *maximum,
+            })
+        }
+        nav::producer::OwnerResultRefusal::Full { .. }
+        | nav::producer::OwnerResultRefusal::SizeOverflow => None,
+    };
+    let detail = refusal.map_or_else(|| error.to_string(), |refusal| refusal.to_string());
+    publish_accepted_route_refusal(navs, name, generation, request_id, kind, &detail, refusal);
+}
+
+fn make_compact_route_path(
+    route: CompactRoute,
+    lease: &NavLease,
+    identity: WorkIdentity,
+    revision: InputRevision,
+    reservation: &OwnerResultReservation,
+) -> (RoutePath, Arc<dyn std::any::Any + Send + Sync>) {
+    let plan =
+        nav::producer::publish_compact_route(lease, identity, revision, route, reservation.clone());
+    let custody = Arc::new(reservation.clone().hold(plan.clone()));
+    let custody_any: Arc<dyn std::any::Any + Send + Sync> = custody;
+    (
+        RoutePath::compact(plan, lease.clone(), Arc::clone(&custody_any)),
+        custody_any,
+    )
+}
+
+fn apply_route_output(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    mut output: RouteJobOutput,
+    reservation: Option<OwnerResultReservation>,
+) {
+    let _completion = output.completion;
+    match output.kind {
+        RouteDemandKind::Advisory {
+            authority,
+            evidence,
+        } => {
+            if !authority.live() {
+                return;
+            }
+            let lease = output.lease.as_ref();
+            let route_ticks = lease
+                .zip(output.outcome.current_route())
+                .map_or(0, |(lease, route)| compact_route_ticks(lease, route));
+            let no_path = matches!(output.outcome, RouteJobOutcome::NoPath);
+            let detail = output
+                .assessment
+                .as_ref()
+                .map(|assessment| Arc::clone(&assessment.reason))
+                .or_else(|| {
+                    no_path.then(|| Arc::from("No route within the request's hard constraints"))
+                });
+            let refusal = output.refusal.take().or_else(|| {
+                no_path.then_some(script::native::WalkRefusal::NoRouteWithinBounds {
+                    tried: 0,
+                    last: None,
+                })
+            });
+            let receipt = script::native::AssessReceipt {
+                request_id: authority.request_id().get(),
+                evidence,
+                assessment: output.assessment.take(),
+                refusal,
+                detail,
+                route_ticks,
+            };
+            let mut all = navs.lock().expect("navigation state mutex is not poisoned");
+            if let Some(bot) = all.get_mut(name) {
+                if bot.advisory_request_id == authority.request_id().get() && authority.live() {
+                    bot.assess_result = Some(Box::new((authority, receipt)));
+                }
+            }
+        }
+        RouteDemandKind::Walk { authority } => {
+            if authority.as_ref().is_some_and(|owner| !owner.live()) {
+                return;
+            }
+            let Some(lease) = output.lease.take() else {
+                publish_accepted_route_failure(
+                    navs,
+                    name,
+                    output.generation,
+                    output.request_id,
+                    RouteDemandKind::Walk { authority },
+                    "route job omitted its navigation lease",
+                );
+                return;
+            };
+            let mut reservation = reservation;
+            let (route_path, pending, custody) = match output.outcome {
+                RouteJobOutcome::NoPath => (None, None, None),
+                RouteJobOutcome::Route(route) => {
+                    let Some(reservation) = reservation.as_ref() else {
+                        publish_accepted_route_failure(
+                            navs,
+                            name,
+                            output.generation,
+                            output.request_id,
+                            RouteDemandKind::Walk { authority },
+                            "route result could not obtain owner custody",
+                        );
+                        return;
+                    };
+                    let (path, custody) = make_compact_route_path(
+                        route,
+                        &lease,
+                        output.identity,
+                        output.revision,
+                        reservation,
+                    );
+                    (Some(path), None, Some(custody))
+                }
+                RouteJobOutcome::Bank {
+                    steps,
+                    route,
+                    final_route,
+                } => {
+                    let Some(reservation) = reservation.as_ref() else {
+                        publish_accepted_route_failure(
+                            navs,
+                            name,
+                            output.generation,
+                            output.request_id,
+                            RouteDemandKind::Walk { authority },
+                            "bank route result could not obtain owner custody",
+                        );
+                        return;
+                    };
+                    let (final_path, final_custody) = make_compact_route_path(
+                        final_route,
+                        &lease,
+                        output.identity,
+                        output.revision,
+                        reservation,
+                    );
+                    let (path, custody) = match route {
+                        Some(route) => make_compact_route_path(
+                            route,
+                            &lease,
+                            output.identity,
+                            output.revision,
+                            reservation,
+                        ),
+                        None => (final_path.clone(), final_custody),
+                    };
+                    let pending = PendingBankFetch {
+                        steps,
+                        dest: final_path.destination(),
+                        opts: output.opts,
+                        final_route: final_path,
+                        avoid: std::mem::take(&mut output.bank_avoid_copy),
+                        progress: Default::default(),
+                    };
+                    (Some(path), Some(pending), Some(custody))
+                }
+            };
+
+            let mut all = navs.lock().expect("navigation state mutex is not poisoned");
+            let Some(bot) = all.get_mut(name) else {
+                return;
+            };
+            if bot.route_generation != output.generation || bot.walk_request_id != output.request_id
+            {
+                return;
+            }
+            if let Some(assessment) = output.assessment.as_ref() {
+                crate::admission::log(Some(name), assessment, output.compat_v1);
+            }
+            bot.risk_refusal = output
+                .refusal
+                .take()
+                .map(|refusal| Box::new((output.request_id, refusal)));
+            bot.assessment = output.assessment.take();
+            if bot.risk_refusal.is_some() {
+                if let Some(assessment) = bot.assessment.as_ref() {
+                    bot.last_assessment = Some(Arc::clone(assessment));
+                }
+            }
+            let native_failure = output.native_failure.take().or_else(|| {
+                bot.risk_refusal
+                    .as_ref()
+                    .map(|_| script::native::WalkEnd::Refused)
+            });
+            let native_refused = native_failure == Some(script::native::WalkEnd::Refused);
+            let detail = output.detail.take().map(Arc::from);
+            let blocked = std::mem::take(&mut output.blocked);
+            if let Some(path) = route_path {
+                let Some(custody) = custody else {
+                    return;
+                };
+                if !bot.publish_compact_route(
+                    output.generation,
+                    output.request_id,
+                    output.identity,
+                    output.revision,
+                    output.opts.allow_teleports,
+                    path,
+                    pending,
+                    custody,
+                    output.quest_evidence.clone(),
+                ) {
+                    return;
+                }
+                if bot.route_basis.is_none() {
+                    if let Some(route) = bot.route_path_for_follow() {
+                        bot.route_basis = Some(Arc::new(crate::admission::RouteBasis {
+                            _route: route,
+                            options: output.opts,
+                            avoid: Arc::clone(&output.basis_avoid),
+                            quest_evidence: output.quest_evidence.clone(),
+                        }));
+                    }
+                }
+                bot.admission_pending = true;
+                if bot.walk_outcome_generation == output.generation
+                    && bot.walk_outcome_request_id == output.request_id
+                {
+                    bot.native_walk_failure = native_failure.map(|end| (output.request_id, end));
+                    bot.walk_outcome_detail = detail;
+                    bot.native_walk_blocked = if native_refused {
+                        (!blocked.is_empty())
+                            .then(|| (output.request_id, Arc::<[ZoneKey]>::from(blocked)))
+                    } else {
+                        None
+                    };
+                }
+            } else {
+                bot.publish_compact_route_failure(
+                    output.generation,
+                    output.request_id,
+                    detail,
+                    std::mem::take(&mut output.missing),
+                    native_failure,
+                    blocked,
+                );
+            }
+            drop(reservation.take());
+        }
+    }
+}
+
+fn route_stage_retained_bytes(
+    result: &RouteStageResult,
+) -> Result<Option<usize>, nav::producer::OwnerResultRefusal> {
+    match result {
+        RouteStageResult::Complete(output) => route_output_retained_bytes(output),
+        RouteStageResult::Continue(job) => job
+            .owned_retained_bytes()
+            .and_then(|bytes| bytes.checked_add(std::mem::size_of::<RouteDemand>()))
+            .and_then(|bytes| bytes.checked_add(OwnerResultReservation::storage_bytes()))
+            .map(Some)
+            .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow),
+    }
+}
+
+fn retain_route_continuation(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    mut job: Box<RouteJob>,
+    previous_identity: WorkIdentity,
+    previous_revision: InputRevision,
+    reservation: OwnerResultReservation,
+) {
+    let generation = job.generation();
+    let request_id = job.request_id();
+    let kind = job
+        .kind
+        .as_ref()
+        .expect("continuation retains its demand kind")
+        .clone();
+    if job.identity != Some(previous_identity) || job.revision != previous_revision {
+        return;
+    }
+    let preparation = job.prepare_continuation();
+    if let Err(error) = preparation {
+        drop(job);
+        publish_accepted_route_failure(
+            navs,
+            name,
+            generation,
+            request_id,
+            kind,
+            &error.to_string(),
+        );
+        return;
+    }
+    job.gap_custody = Some(reservation);
+    let mut all = navs.lock().expect("navigation state mutex is not poisoned");
+    let Some(bot) = all.get_mut(name) else {
+        return;
+    };
+    if bot.route_ticket.is_some() || bot.pending_route.is_some() {
+        return;
+    }
+    let current = match &kind {
+        RouteDemandKind::Walk { authority } => {
+            bot.route_generation == generation
+                && bot.walk_request_id == request_id
+                && authority.as_ref().is_none_or(|authority| authority.live())
+        }
+        RouteDemandKind::Advisory { authority, .. } => {
+            bot.advisory_request_id == request_id && authority.live()
+        }
+    };
+    if current {
+        bot.pending_route = Some(Box::new(RouteDemand::Prepared(job)));
+    }
+}
+
+fn harvest_route_terminal(
+    shared: &Arc<parking_lot::Mutex<WorkService>>,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    ledger: &OwnerResultLedger,
+) {
+    let (ticket, identity, revision, generation, request_id, kind) = {
+        let all = navs.lock().expect("navigation state mutex is not poisoned");
+        let Some(owner) = all.get(name).and_then(|bot| bot.route_ticket.as_ref()) else {
+            return;
+        };
+        (
+            owner.ticket(),
+            owner.identity,
+            owner.revision,
+            owner.generation,
+            owner.request_id,
+            owner.kind.clone(),
+        )
+    };
+    let reservation = {
+        let service = shared.lock();
+        match service.borrow_terminal(&ticket) {
+            Ok(None) => return,
+            Err(error) => RouteReservation::Failed(error.to_string()),
+            Ok(Some(Settlement::Completed(output))) => match route_stage_retained_bytes(output) {
+                Err(error) => RouteReservation::Refused(error),
+                Ok(None) => RouteReservation::NotNeeded,
+                Ok(Some(bytes)) => match ledger.try_reserve_bytes(bytes) {
+                    Ok(reservation) => RouteReservation::Reserved(Some(reservation)),
+                    Err(nav::producer::OwnerResultRefusal::Full { .. }) => RouteReservation::Full,
+                    Err(error) => RouteReservation::Refused(error),
+                },
+            },
+            Ok(Some(Settlement::Failed(_))) | Ok(Some(Settlement::Cancelled(_))) => {
+                RouteReservation::NotNeeded
+            }
+        }
+    };
+    if matches!(&reservation, RouteReservation::Full) {
+        return;
+    }
+    if !route_ticket_is_current(navs, name, identity, revision) {
+        return;
+    }
+    let settlement = match shared.lock().consume(&ticket) {
+        Ok(settlement) => settlement,
+        Err(error) => {
+            let owner = take_route_ticket_owner(navs, name, identity, revision);
+            drop(owner);
+            publish_accepted_route_failure(
+                navs,
+                name,
+                generation,
+                request_id,
+                kind,
+                &error.to_string(),
+            );
+            return;
+        }
+    };
+    let Some(mut owner) = take_route_ticket_owner(navs, name, identity, revision) else {
+        return;
+    };
+    owner.settled();
+    drop(owner);
+    match (settlement, reservation) {
+        (
+            Settlement::Completed(RouteStageResult::Complete(output)),
+            RouteReservation::Reserved(reservation),
+        ) => apply_route_output(navs, name, output, reservation),
+        (
+            Settlement::Completed(RouteStageResult::Complete(output)),
+            RouteReservation::NotNeeded,
+        ) => apply_route_output(navs, name, output, None),
+        (
+            Settlement::Completed(RouteStageResult::Continue(job)),
+            RouteReservation::Reserved(Some(reservation)),
+        ) => {
+            retain_route_continuation(navs, name, job, identity, revision, reservation);
+        }
+        (Settlement::Completed(output), RouteReservation::Failed(detail)) => {
+            drop(output);
+            publish_accepted_route_failure(navs, name, generation, request_id, kind, &detail);
+        }
+        (settlement, RouteReservation::Refused(error)) => {
+            drop(settlement);
+            publish_route_owner_refusal(navs, name, generation, request_id, kind, error);
+        }
+        (
+            Settlement::Completed(RouteStageResult::Continue(_)),
+            RouteReservation::NotNeeded | RouteReservation::Reserved(None),
+        ) => {
+            publish_accepted_route_failure(
+                navs,
+                name,
+                generation,
+                request_id,
+                kind,
+                "route continuation has no retained-input custody",
+            );
+        }
+        (Settlement::Failed(error), RouteReservation::NotNeeded) => {
+            publish_accepted_route_failure(
+                navs,
+                name,
+                generation,
+                request_id,
+                kind,
+                &error.to_string(),
+            );
+        }
+        (Settlement::Failed(error), RouteReservation::Failed(detail)) => {
+            publish_accepted_route_failure(
+                navs,
+                name,
+                generation,
+                request_id,
+                kind,
+                &format!("{error}; {detail}"),
+            );
+        }
+        (Settlement::Cancelled(_), RouteReservation::NotNeeded) => {}
+        (Settlement::Cancelled(_), RouteReservation::Failed(detail)) => {
+            publish_accepted_route_failure(navs, name, generation, request_id, kind, &detail);
+        }
+        (Settlement::Failed(error), RouteReservation::Reserved(_)) => {
+            publish_accepted_route_failure(
+                navs,
+                name,
+                generation,
+                request_id,
+                kind,
+                &error.to_string(),
+            );
+        }
+        (Settlement::Cancelled(_), RouteReservation::Reserved(_)) => {
+            publish_accepted_route_failure(
+                navs,
+                name,
+                generation,
+                request_id,
+                kind,
+                "route work was cancelled",
+            );
+        }
+        (_, RouteReservation::Full) => unreachable!("full owner results keep the terminal"),
+    }
+}
 /// Host-published walk outcome copied onto the isolate snapshot.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct PostedWalkOutcome {
@@ -90,15 +3840,17 @@ impl ScriptRouteExclusions {
 }
 
 /// Per-uid nav state: the whole-world traveller plus the route it is
-/// following. `ctx.walk` stores the route (found off-pump over the shared
-/// [`NavWorld`]); the slot pump polls [`Traveller::follow`] with a clone of
-/// it one step per player-info tick. `route` being set is the "armed"
-/// gate the walk hook and the busy flag read. A pending BankBudget
+/// following. `ctx.walk` stores the route, produced by the shared route-work
+/// service over [`NavWorld`]. The slot pump polls [`Traveller::follow`] with a
+/// clone of it one step per player-info tick. [`NavBot::has_route`] is the
+/// "armed" gate the walk hook and the busy flag read. A pending BankBudget
 /// session freezes follow until its steps finish.
 #[derive(Default)]
 pub(crate) struct NavBot {
     /// Shared session globals, attached before a production slot starts.
     pub(crate) walk_globals: Option<Arc<Mutex<super::WalkGlobals>>>,
+    /// Actual compiled-slot identity. None is a fail-closed admission state.
+    pub(crate) work_scope: Option<Scope>,
     /// The shared preferences each admission reads the globals from.
     pub(crate) walk_globals_store: Option<super::local_state::Preferences>,
     /// The compiled instance's effective Start/config revision, never a draft.
@@ -115,13 +3867,14 @@ pub(crate) struct NavBot {
     pub(crate) risk_refusal: Option<Box<(u64, script::native::WalkRefusal)>>,
     pub(crate) assess_result:
         Option<Box<(script::native::HostAuthority, script::native::AssessReceipt)>>,
-    pub(crate) assess_worker: Option<Arc<()>>,
+    pub(crate) advisory_request_id: u64,
     pub(crate) manual_arm: Option<std::sync::Weak<Mutex<crate::WalkArm>>>,
     pub(crate) route_generation: u64,
     pub(crate) map_route_generation: u64,
-    pub(crate) route_worker: Option<Arc<()>>,
-    pub(crate) pending_route: Option<Box<ScriptRouteRequest>>,
-    pub(crate) pending_assess: Option<Box<PendingAdvisoryAssess>>,
+    pub(crate) pending_route: Option<Box<RouteDemand>>,
+    pub(crate) route_ticket: Option<Box<RouteTicketOwner>>,
+    /// Route family metadata retained with the caller-owned result.
+    pub(crate) route_result_custody: Option<Arc<dyn std::any::Any + Send + Sync>>,
     /// Native ownership survives worker handoff, but not action revocation.
     pub(crate) native_walk: Option<script::native::HostAuthority>,
     pub(crate) native_receipt_seq: u64,
@@ -148,6 +3901,7 @@ pub(crate) struct NavBot {
     pub(crate) requested_exclusions: Option<Arc<ScriptRouteExclusions>>,
     pub(crate) traveller: Traveller,
     pub(crate) route: Option<Arc<Route>>,
+    pub(crate) compact_route: Option<RoutePath>,
     /// The walk request id `publish_route` installed `route` for. A retarget
     /// moves `walk_request_id` / `requested_route` to the new walk while the
     /// old route is still followed; only a route end whose owner is the
@@ -158,7 +3912,8 @@ pub(crate) struct NavBot {
     /// screen: its confirm accepts only that partner, in this session.
     pub(crate) duel_offer_partner: Option<String>,
     /// Isolate-allocated walk request id for the armed / in-flight find.
-    /// Distinct from `route_generation`, which remains the worker / retained-route token.
+    /// Distinct from `route_generation`, which remains the route-job /
+    /// retained-route token.
     pub(crate) walk_request_id: u64,
     /// Unpublished current-wait refusal id, distinct from `walk_request_id`.
     /// Older armed-route NoPath / mid-follow terminals must not overwrite this
@@ -229,8 +3984,8 @@ pub(crate) struct CarriedWalk {
     request: script::shim::InteractReq,
 }
 
-/// The shared arm for queued script walks and host bank-stand walks.
-/// Routing stays off-pump; the slot pump owns follow and dispatch.
+/// The route-work service handles searches; the slot pump owns follow
+/// and dispatch.
 #[derive(Clone)]
 pub(crate) struct ScriptWalkArm {
     pub(crate) here: Option<(i32, i32, i32)>,
@@ -238,7 +3993,7 @@ pub(crate) struct ScriptWalkArm {
     pub(crate) navs: Arc<Mutex<HashMap<String, NavBot>>>,
     pub(crate) name: String,
     /// The slot's gating facts at arm time (from its live snapshot);
-    /// `None` when no player is decoded — the worker then routes with
+    /// `None` when no player is decoded — the route job then searches with
     /// the fail-closed empty [`WorldState`].
     pub(crate) state: Option<WorldState>,
     /// The account's bank memory rows at arm time
@@ -281,13 +4036,6 @@ fn log_walk_arm(name: &str, build: impl FnOnce() -> String) {
     );
 }
 
-fn walk_arm_worker_slot() -> String {
-    thread::current()
-        .name()
-        .and_then(|n| n.strip_prefix("nav-find-").map(str::to_string))
-        .unwrap_or_else(|| "?".to_string())
-}
-
 pub(super) fn log_walk_arm_bot(build: impl FnOnce() -> String) {
     api::host_log!(
         api::hostlog::Category::NavTrace,
@@ -310,23 +4058,10 @@ pub(crate) fn blocked_zone_detail(table: &nav::zones::ZoneTable, keys: &[ZoneKey
     )
 }
 
-/// How a user lets a script walk cross the zones its refusal names. WalkTo
-/// carries its own one-walk hint (`walk_map/actions.rs`); compat scripts get
-/// the `crossZones` hint from [`compat_zone_no_route_line`].
+/// How a user lets a script walk cross the zones its refusal names.
+/// WalkTo carries its own one-walk hint (`walk_map/actions.rs`).
 const SCRIPT_DANGER_HINT: &str =
     "to allow it, set Danger routing to Always in Nav config, or allow danger zones in the script's own settings if it has that option";
-
-pub(crate) fn compat_zone_no_route_line(table: &nav::zones::ZoneTable, keys: &[ZoneKey]) -> String {
-    let names = keys
-        .iter()
-        .map(|&key| format!("{:?}", table.name(key)))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "no route: {} — pass crossZones: [{names}] to cross",
-        blocked_zone_detail(table, keys)
-    )
-}
 
 pub(crate) fn resolve_route_exclusions(
     mut opts: FindOptions,
@@ -466,13 +4201,25 @@ impl ScriptWalkArm {
                 }),
                 detail: Some(Arc::from(detail)),
             };
-            let mut navs = self.navs.lock().unwrap();
-            let bot = navs.entry(self.name.clone()).or_default();
-            if let Some(pending) = bot.pending_assess.take() {
-                pending.request.completion.signal();
+            let displaced = {
+                let mut navs = self
+                    .navs
+                    .lock()
+                    .expect("navigation state mutex is not poisoned");
+                let bot = navs.entry(self.name.clone()).or_default();
+                bot.advisory_request_id = authority.request_id().get();
+                let has_advisory = bot
+                    .pending_route
+                    .as_ref()
+                    .and_then(|demand| demand.kind())
+                    .is_some_and(|kind| matches!(kind, RouteDemandKind::Advisory { .. }));
+                let displaced = has_advisory.then(|| bot.pending_route.take()).flatten();
+                bot.assess_result = Some(Box::new((authority.clone(), receipt)));
+                displaced
+            };
+            if let Some(displaced) = displaced {
+                (*displaced).signal_completion();
             }
-            bot.assess_worker = None;
-            bot.assess_result = Some(Box::new((authority.clone(), receipt)));
         };
         let (Some(world), Some((x, z, level))) = (self.world.as_ref(), self.here) else {
             refusal("Advisory route unavailable: no navigation world or observed player");
@@ -502,6 +4249,7 @@ impl ScriptWalkArm {
             ));
         }
         let from = WorldTile { x, z, level };
+        let radius = i32::from(request.radius);
         let (options, policy, enforce) = super::walk_permissions::native_admission(
             &self.navs,
             &self.name,
@@ -548,11 +4296,10 @@ impl ScriptWalkArm {
                 escape: None,
             }
         };
-        let radius = i32::from(request.radius);
-        let live_candidates = if radius > 0 {
+        let live_geometry = if radius > 0 {
             request
                 .loc_id
-                .and_then(|id| loc_target_approach_tiles(snapshot, request.target, radius, id))
+                .and_then(|id| capture_loc_geometry(snapshot, request.target, radius, id))
         } else {
             None
         };
@@ -571,83 +4318,43 @@ impl ScriptWalkArm {
             compat_tile_intent: false,
             bank_origin: self.bank.origin,
             bank: self.bank.rows,
-            live_candidates,
+            live_geometry,
             exclusions: (!exclusions.is_empty()).then(|| Arc::new(exclusions)),
             completion: RouteCompletion::default(),
         };
-        let token = Arc::new(());
-        let worker_token = {
-            let mut navs = self.navs.lock().unwrap();
-            let bot = navs.entry(self.name.clone()).or_default();
-            bot.assess_worker = Some(Arc::clone(&token));
-            bot.assess_result = None;
-            bot.pending_assess = Some(Box::new(PendingAdvisoryAssess {
-                request: Box::new(request),
+        let request_id = request.request_id;
+        let demand = RouteDemand::Pending {
+            request: Box::new(request),
+            kind: RouteDemandKind::Advisory {
                 authority: authority.clone(),
                 evidence,
-                token: Arc::clone(&token),
-            }));
-            if bot.route_worker.is_some() {
-                None
-            } else {
-                let worker_token = Arc::new(());
-                bot.route_worker = Some(Arc::clone(&worker_token));
-                Some(worker_token)
+            },
+        };
+        let (queued, displaced) = {
+            let mut navs = self
+                .navs
+                .lock()
+                .expect("navigation state mutex is not poisoned");
+            let bot = navs.entry(self.name.clone()).or_default();
+            let replaceable = bot
+                .pending_route
+                .as_ref()
+                .and_then(|pending| pending.kind())
+                .is_some_and(|kind| matches!(kind, RouteDemandKind::Advisory { .. }));
+            let displaced = replaceable.then(|| bot.pending_route.take()).flatten();
+            let queued = bot.pending_route.is_none();
+            if queued {
+                bot.advisory_request_id = request_id;
+                bot.assess_result = None;
+                bot.pending_route = Some(Box::new(demand));
             }
+            (queued, displaced)
         };
-        let Some(worker_token) = worker_token else {
-            return;
-        };
-        if spawn_route_worker(
-            Arc::clone(&self.navs),
-            self.name.clone(),
-            Arc::clone(&worker_token),
-        ) {
-            return;
+        if let Some(displaced) = displaced {
+            (*displaced).signal_completion();
         }
-        let mut navs = self.navs.lock().unwrap();
-        let Some(bot) = navs.get_mut(&self.name) else {
-            return;
-        };
-        if !bot
-            .route_worker
-            .as_ref()
-            .is_some_and(|current| Arc::ptr_eq(current, &worker_token))
-        {
-            return;
-        }
-        bot.route_worker = None;
-        if let Some((to, radius, allow_teleports, ..)) = bot.requested_route {
-            bot.note_failure(
-                bot.route_generation,
-                bot.walk_request_id,
-                to,
-                radius,
-                allow_teleports,
-            );
-        }
-        if let Some(request) = bot.pending_route.take() {
-            request.completion.signal();
-        }
-        bot.requested_route = None;
-        if let Some(pending) = bot.pending_assess.take() {
-            pending.request.completion.signal();
-            if pending.authority.live()
-                && bot
-                    .assess_worker
-                    .as_ref()
-                    .is_some_and(|current| Arc::ptr_eq(current, &pending.token))
-            {
-                bot.assess_worker = None;
-                bot.assess_result = Some(Box::new((
-                    pending.authority.clone(),
-                    advisory_refusal(
-                        &pending.authority,
-                        pending.evidence,
-                        "Advisory route worker could not start",
-                    ),
-                )));
-            }
+        if !queued {
+            refusal("Advisory route work is already pending for this slot");
         }
     }
 
@@ -924,14 +4631,14 @@ impl ScriptWalkArm {
         )
     }
 
-    /// Queue one walk toward `(x, z, level)` with `opts`, routing off-pump
-    /// on a short-lived worker (`find_with` over the shared [`NavWorld`]).
-    /// When `allow_bank_fetch` is on and the strict find fails only on
-    /// missing item/worn reqs, latches a [`PendingBankFetch`] session and
-    /// the post-session route. Refuses synchronously only when there is
-    /// no player tile, no nav world, or a route/session already queued;
-    /// the worker stores the outcome on the uid's nav bot. Returns whether
-    /// the worker was spawned — not whether a path exists.
+    /// Queue one walk toward `(x, z, level)` with `opts`; search runs through
+    /// the shared route-work service over [`NavWorld`]. When `allow_bank_fetch`
+    /// is on and a strict find fails only for missing item or worn requirements,
+    /// the route job latches a [`PendingBankFetch`] session and the post-session
+    /// route. Requests are refused synchronously only when there is no player
+    /// tile, no nav world, or a route/session already queued; the service stores
+    /// the result on the uid's nav bot. Returns whether the request was queued,
+    /// not whether a path exists.
     #[allow(clippy::too_many_arguments)] // plus the borrowed arm-time scene
     pub(crate) fn queue_route_in_snapshot(
         &self,
@@ -1029,7 +4736,10 @@ impl ScriptWalkArm {
     }
 
     #[cfg(test)]
-    #[allow(clippy::too_many_arguments)] // deterministic worker seam for route tests
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the deterministic route-work test seam supplies each service input explicitly"
+    )]
     pub(crate) fn queue_route_in_snapshot_synced(
         &self,
         snapshot: &GameSnapshot,
@@ -1094,16 +4804,15 @@ impl ScriptWalkArm {
             ),
             None => bot.note_failure(bot.route_generation, request_id, to, radius, key.2),
         };
-        if bot.bank_fetch.is_some()
-            || (!retarget && (bot.route.is_some() || bot.route_worker.is_some()))
+        if bot.bank_fetch.is_some() || (!retarget && (bot.has_route() || bot.route_work_pending()))
         {
             log_walk_arm(&self.name, || {
                 format!(
                     "queue_route refused-in-flight dest={to:?} r={radius} request_id={request_id} \
-                     bank_fetch={} retarget={retarget} route={} worker={}",
+                     bank_fetch={} retarget={retarget} route={} route_work_pending={}",
                     bot.bank_fetch.is_some(),
-                    bot.route.is_some(),
-                    bot.route_worker.is_some()
+                    bot.has_route(),
+                    bot.route_work_pending()
                 )
             });
             refuse(bot);
@@ -1114,7 +4823,7 @@ impl ScriptWalkArm {
             && bot.route_loc_id == loc_id
             && bot.route_arrival == arrival
             && bot.route_compat_tile_intent == compat_tile_intent
-            && (bot.route_worker.is_some() || bot.route.is_some() || bot.pending_route.is_some())
+            && (bot.route_work_pending() || bot.has_route())
         {
             // Same-id retransmission and legacy request_id 0 keep the
             // in-flight find. A later distinct nonzero wait is refused
@@ -1314,9 +5023,9 @@ impl ScriptWalkArm {
         // Resolve live-scene geometry only after this request passes the
         // refusal/coalescing gates, but outside the process-wide nav mutex.
         // The second gate below closes the race with another arming thread.
-        let live_candidates = if radius > 0 {
+        let live_geometry = if radius > 0 {
             snapshot.and_then(|snapshot| {
-                loc_id.and_then(|id| loc_target_approach_tiles(snapshot, to, radius, id))
+                loc_id.and_then(|id| capture_loc_geometry(snapshot, to, radius, id))
             })
         } else {
             None
@@ -1332,7 +5041,10 @@ impl ScriptWalkArm {
                 })
             }),
         );
-        let token = {
+        let allow_teleports = opts.allow_teleports;
+        let allow_wilderness = opts.allow_wilderness;
+        let allow_bank_fetch = opts.allow_bank_fetch;
+        let (generation, displaced, displaced_kind) = {
             let mut navs = self.navs.lock().unwrap();
             let bot = navs.entry(self.name.clone()).or_default();
             if let Some(result) = self.gate_route(
@@ -1353,8 +5065,6 @@ impl ScriptWalkArm {
             if let Some(ess) = bot.traveller.essence() {
                 opts.essence = Some(ess);
             }
-            // Refresh retains its original policy and corridor; a new request
-            // derives its own policy instead of borrowing the previous override.
             let same_owner = bot
                 .native_walk
                 .as_ref()
@@ -1402,12 +5112,27 @@ impl ScriptWalkArm {
                 bot.risk_refusal = None;
                 bot.admission_pending = false;
             }
+            if bot.bank_pick.walking(bot.route_generation) {
+                bot.bank_pick.reset();
+            }
+            if bot
+                .route_ticket
+                .as_ref()
+                .is_some_and(|owner| matches!(&owner.kind, RouteDemandKind::Walk { .. }))
+            {
+                bot.supersede_route_work();
+            }
+            let displaced = bot.pending_route.take();
+            let displaced_kind = displaced.as_ref().and_then(|demand| demand.kind());
             admission.input.off_debt = bot.walk_guard_off.is_some();
             admission.grants = opts.zones;
             admission.generation = bot.route_generation.wrapping_add(1);
             match bot.admission.as_deref_mut() {
                 Some(pending) => *pending = admission,
                 None => bot.admission = Some(Box::new(admission)),
+            }
+            if bot.bank_pick.walking(bot.route_generation) {
+                bot.bank_pick.reset_for_route_replacement();
             }
             bot.route_generation = admission.generation;
             bot.manual_walk_cancelled_detail = false;
@@ -1419,10 +5144,10 @@ impl ScriptWalkArm {
             bot.route_arrival = arrival;
             bot.route_loc_geometry = loc_geometry;
             bot.requested_exclusions = exclusions.clone();
-            bot.native_walk = authority;
+            bot.native_walk = authority.clone();
             bot.native_walk_failure = None;
             bot.route_compat_tile_intent = compat_tile_intent;
-            bot.pending_route = Some(Box::new(ScriptRouteRequest {
+            let request = ScriptRouteRequest {
                 generation: bot.route_generation,
                 request_id,
                 world: Arc::clone(world),
@@ -1437,36 +5162,51 @@ impl ScriptWalkArm {
                 compat_tile_intent,
                 bank_origin: self.bank.origin,
                 bank: self.bank.rows.clone(),
-                live_candidates,
+                live_geometry,
                 exclusions,
                 completion,
+            };
+            bot.pending_route = Some(Box::new(RouteDemand::Pending {
+                request: Box::new(request),
+                kind: RouteDemandKind::Walk { authority },
             }));
-            if bot.route_worker.is_some() {
-                log_walk_arm(&self.name, || {
-                    format!(
-                        "queue_route handed-pending dest={to:?} r={radius} request_id={request_id} \
-                         generation={} from={from:?}{}",
-                        bot.route_generation,
-                        if world.graph.zones.is_none() {
-                            " zones: unavailable (legacy grid pack)"
-                        } else {
-                            ""
-                        }
-                    )
-                });
-                return true;
-            }
-            let token = Arc::new(());
-            bot.route_worker = Some(Arc::clone(&token));
-            token
+            (bot.route_generation, displaced, displaced_kind)
         };
+        if let Some(displaced) = displaced {
+            (*displaced).signal_completion();
+        }
+        if let Some(RouteDemandKind::Advisory {
+            authority,
+            evidence,
+        }) = displaced_kind
+        {
+            if authority.live() {
+                let mut navs = self
+                    .navs
+                    .lock()
+                    .expect("navigation state mutex is not poisoned");
+                if let Some(bot) = navs.get_mut(&self.name) {
+                    if bot.advisory_request_id == authority.request_id().get() {
+                        bot.assess_result = Some(Box::new((
+                            authority.clone(),
+                            advisory_refusal(
+                                &authority,
+                                evidence,
+                                "Advisory route was superseded by a walk",
+                            ),
+                        )));
+                    }
+                }
+            }
+        }
         log_walk_arm(&self.name, || {
             format!(
-                "queue_route spawned dest={to:?} r={radius} request_id={request_id} from={from:?} \
-                 allow_teleports={} allow_wilderness={} allow_bank_fetch={}{}",
-                opts.allow_teleports,
-                opts.allow_wilderness,
-                opts.allow_bank_fetch,
+                "queue_route admitted dest={to:?} r={radius} request_id={request_id} \
+                 generation={generation} from={from:?} allow_teleports={} \
+                 allow_wilderness={} allow_bank_fetch={}{}",
+                allow_teleports,
+                allow_wilderness,
+                allow_bank_fetch,
                 if world.graph.zones.is_none() {
                     " zones: unavailable (legacy grid pack)"
                 } else {
@@ -1474,402 +5214,37 @@ impl ScriptWalkArm {
                 }
             )
         });
-        let spawned = spawn_route_worker(
-            Arc::clone(&self.navs),
-            self.name.clone(),
-            Arc::clone(&token),
-        );
-        if !spawned {
-            log_walk_arm(&self.name, || {
-                format!("queue_route spawn-failed dest={to:?} r={radius} request_id={request_id}")
-            });
-            if let Some(bot) = self.navs.lock().unwrap().get_mut(&self.name) {
-                if bot
-                    .route_worker
-                    .as_ref()
-                    .is_some_and(|t| Arc::ptr_eq(t, &token))
-                {
-                    if let Some((to, radius, allow_teleports, ..)) = bot.requested_route {
-                        bot.note_failure(
-                            bot.route_generation,
-                            bot.walk_request_id,
-                            to,
-                            radius,
-                            allow_teleports,
-                        );
-                    }
-                    bot.route_worker = None;
-                    if let Some(request) = bot.pending_route.take() {
-                        request.completion.signal();
-                    }
-                    bot.requested_route = None;
-                    if let Some(pending) = bot.pending_assess.take() {
-                        pending.request.completion.signal();
-                        if bot
-                            .assess_worker
-                            .as_ref()
-                            .is_some_and(|current| Arc::ptr_eq(current, &pending.token))
-                        {
-                            bot.assess_worker = None;
-                            if pending.authority.live() {
-                                bot.assess_result = Some(Box::new((
-                                    pending.authority.clone(),
-                                    advisory_refusal(
-                                        &pending.authority,
-                                        pending.evidence,
-                                        "Shared route worker could not start",
-                                    ),
-                                )));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        spawned
+        true
     }
 }
 
-enum RouteWorkerTask {
-    Route(
-        Box<ScriptRouteRequest>,
-        Option<script::native::HostAuthority>,
-    ),
-    Assess(Box<PendingAdvisoryAssess>),
+/// Captured loc footprint input. It contains only scalar geometry and the
+/// scene-clipped flags the footprint scan can read; no snapshot borrow or
+/// prebuilt stand vector crosses WorkAdmission admission.
+#[derive(Debug)]
+pub(crate) struct LocGeometryCapture {
+    approach: Option<api::query::loc_approach::LocApproach>,
+    radius: i32,
+    base_x: i32,
+    base_z: i32,
+    level: i32,
+    start_x: i32,
+    start_z: i32,
+    height: usize,
+    flags: Vec<i32>,
 }
-fn spawn_route_worker(
-    navs: Arc<Mutex<HashMap<String, NavBot>>>,
-    name: String,
-    token: Arc<()>,
-) -> bool {
-    let worker_token = Arc::clone(&token);
-    let spawned = thread::Builder::new()
-        .name(format!("nav-find-{name}"))
-        .spawn(move || loop {
-            let task = {
-                let mut all = navs.lock().unwrap();
-                let Some(bot) = all.get_mut(&name) else {
-                    log_walk_arm(&name, || "worker exit bot-gone".to_string());
-                    return;
-                };
-                if !bot
-                    .route_worker
-                    .as_ref()
-                    .is_some_and(|t| Arc::ptr_eq(t, &worker_token))
-                {
-                    log_walk_arm(&name, || {
-                        "worker discard stale-token before dequeue".to_string()
-                    });
-                    return;
-                }
-                if let Some(request) = bot.pending_route.take() {
-                    RouteWorkerTask::Route(request, bot.native_walk.clone())
-                } else if let Some(pending) = bot.pending_assess.take() {
-                    RouteWorkerTask::Assess(pending)
-                } else {
-                    bot.route_worker = None;
-                    log_walk_arm(&name, || "worker exit no-pending-work".to_string());
-                    return;
-                }
-            };
-            match task {
-                RouteWorkerTask::Route(request, authority) => {
-                if authority.as_ref().is_some_and(|owner| !owner.live()) {
-                    request.completion.signal();
-                    continue;
-                }
-                let debug = debug_enabled();
-                if debug {
-                    log_walk_arm(&name, || {
-                        format!(
-                            "worker calculate begin generation={} request_id={} from={:?} dest={:?} r={}",
-                            request.generation,
-                            request.request_id,
-                            request.from,
-                            request.to,
-                            request.radius
-                        )
-                    });
-                }
-                let started = debug.then(Instant::now);
-                let (admitted, targets) = request.calculate_admitted();
-                let crate::admission::RouteAdmission { outcome, assessment, refusal, blocked, tried: _ } = admitted;
-                let outcome = if refusal.is_some() { RouteOutcome::NoPath } else { outcome };
-                if debug {
-                    let elapsed_ms = started.unwrap().elapsed().as_millis();
-                    log_walk_arm(&name, || {
-                        format!(
-                            "worker calculate end generation={} request_id={} elapsed_ms={elapsed_ms} \
-                             outcome={}",
-                            request.generation,
-                            request.request_id,
-                            walk_arm_outcome_tag(&outcome)
-                        )
-                    });
-                }
-                let blocked = (!blocked.is_empty()).then(|| blocked.into_vec());
-                let route_detail = blocked
-                    .as_ref()
-                    .and_then(|keys| {
-                        request
-                            .world
-                            .graph
-                            .zones
-                            .as_ref()
-                            .map(|table| format!("{}; {SCRIPT_DANGER_HINT}", blocked_zone_detail(table, keys)))
-                    })
-                    .or_else(|| {
-                        request
-                            .world
-                            .graph
-                            .zones
-                            .is_none()
-                            .then(|| crate::walk_map::LEGACY_ZONES_DETAIL.to_owned())
-                    });
-                let route_detail = assessment.as_ref().filter(|_| refusal.is_some())
-                    .map(|assessment| assessment.reason.to_string()).or(route_detail);
-                let mut route_detail = if authority.is_some()
-                    && matches!(&outcome, &RouteOutcome::NoPath)
-                {
-                    let context = format!(
-                        "native walk route failed: {:?} arrival from {:?} to {:?} within radius {}",
-                        request.arrival, request.from, request.to, request.radius
-                    );
-                    Some(match route_detail {
-                        Some(detail) => format!("{detail}; {context}"),
-                        None => context,
-                    })
-                } else {
-                    route_detail
-                };
-                if let (Some(keys), Some(table)) =
-                    (blocked.as_ref(), request.world.graph.zones.as_ref())
-                {
-                    api::host_log!(
-                        api::hostlog::Category::NavTrace,
-                        api::hostlog::Level::Warn,
-                        slot = &name,
-                        "{}",
-                        compat_zone_no_route_line(table, keys)
-                    );
-                }
-                let native_failure = if refusal.is_some() {
-                    Some(script::native::WalkEnd::Refused)
-                } else { request.native_failure(&outcome, blocked.as_deref(), &targets) };
-                let native_refused = native_failure == Some(script::native::WalkEnd::Refused);
-                let mut all = navs.lock().unwrap();
-                let Some(bot) = all.get_mut(&name) else {
-                    log_walk_arm(&name, || "worker exit bot-gone after calculate".to_string());
-                    return;
-                };
-                if !bot
-                    .route_worker
-                    .as_ref()
-                    .is_some_and(|t| Arc::ptr_eq(t, &worker_token))
-                {
-                    log_walk_arm(&name, || {
-                        format!(
-                            "worker discard stale-token after calculate generation={} \
-                             live_generation={}",
-                            request.generation, bot.route_generation
-                        )
-                    });
-                    return;
-                }
-                if authority.as_ref().is_some_and(|owner| !owner.live()) {
-                    request.completion.signal();
-                    continue;
-                }
-                let missing = if refusal.is_some() { Vec::new() } else { request.missing_carry(&outcome) };
-                if !missing.is_empty() {
-                    let empty_state = WorldState::empty();
-                    let state = request.state.as_ref().unwrap_or(&empty_state);
-                    if let Some(detail) = crate::walk_map::route_supply_shortfall_detail(
-                        &request.world,
-                        state,
-                        missing.iter().map(|row| (row.id, row.count)),
-                    ) {
-                        let supply_detail =
-                            crate::walk_map::ActionError::InsufficientItems { detail }.to_string();
-                        route_detail = Some(match route_detail.take() {
-                            Some(nav_detail) => format!("{supply_detail}; {nav_detail}"),
-                            None => supply_detail,
-                        });
-                    }
-                }
 
-                if bot.route_generation == request.generation && bot.walk_request_id == request.request_id {
-                    bot.risk_refusal = refusal.map(|refusal| Box::new((request.request_id, refusal)));
-                    bot.assessment = assessment;
-                    if let Some(assessment) = bot.assessment.as_ref() {
-                        crate::admission::log(Some(&name), assessment, request.admission.compat_v1);
-                        if bot.risk_refusal.is_some() {
-                            bot.last_assessment = Some(Arc::clone(assessment));
-                        }
-                    }
-                }
-                // Only a route this publish installs carries its evidence; a
-                // newer request's NoPath leaves the followed route's own.
-                if bot.route_generation == request.generation
-                    && bot.walk_request_id == request.request_id
-                    && !matches!(outcome, RouteOutcome::NoPath)
-                {
-                    bot.route_quest_evidence = request
-                        .state
-                        .as_ref()
-                        .and_then(|state| state.quest_evidence.clone());
-                }
-                let has_route = matches!(
-                    &outcome,
-                    RouteOutcome::Routed(_) | RouteOutcome::BankSession { .. }
-                );
-                bot.publish_route(
-                    request.generation,
-                    request.request_id,
-                    request.opts.allow_teleports,
-                    outcome,
-                );
-                if bot.route_generation == request.generation
-                    && bot.walk_request_id == request.request_id
-                    && has_route
-                {
-                    if bot.route_basis.is_none() {
-                        if let Some(route) = bot.route.as_ref() {
-                            bot.route_basis = Some(Arc::new(crate::admission::RouteBasis {
-                                route: Arc::clone(route),
-                                options: request.opts,
-                                avoid: Arc::from(request.avoid()),
-                                quest_evidence: request
-                                    .state
-                                    .as_ref()
-                                    .and_then(|state| state.quest_evidence.clone()),
-                            }));
-                        }
-                    }
-                    bot.admission_pending = true;
-                }
-                // The diagnosis lands under the same lock as the outcome it
-                // belongs to, so the packer can never read a list beside
-                // another failure. A discarded publish (stale generation)
-                // leaves the list it did not name cleared.
-                bot.note_missing_carry(request.generation, request.request_id, missing);
-                if bot.walk_outcome_generation == request.generation
-                    && bot.walk_outcome_request_id == request.request_id
-                {
-                    bot.native_walk_failure =
-                        native_failure.map(|end| (request.request_id, end));
-                    bot.walk_outcome_detail = route_detail.map(Arc::from);
-                    bot.native_walk_blocked = if native_refused {
-                        blocked.map(|keys| (request.request_id, Arc::<[ZoneKey]>::from(keys)))
-                    } else {
-                        None
-                    };
-                }
-                request.completion.signal();
-                }
-                RouteWorkerTask::Assess(pending) => {
-                    if !pending.authority.live() {
-                        let mut all = navs.lock().unwrap();
-                        if let Some(bot) = all.get_mut(&name) {
-                            if bot
-                                .assess_worker
-                                .as_ref()
-                                .is_some_and(|current| Arc::ptr_eq(current, &pending.token))
-                            {
-                                bot.assess_worker = None;
-                            }
-                        }
-                        drop(all);
-                        pending.request.completion.signal();
-                        continue;
-                    }
-                    let (admitted, _) = pending.request.calculate_admitted();
-                    let route_ticks = match &admitted.outcome {
-                        RouteOutcome::Routed(route) | RouteOutcome::BankSession { route, .. } => {
-                            nav::producer::route_view(&*pending.request.world, route)
-                                .ok()
-                                .and_then(|view| script::combat::risk::RoutePath::new(view).ok())
-                                .and_then(|path| u32::try_from(path.ticks()).ok())
-                                .unwrap_or(0)
-                        }
-                        RouteOutcome::NoPath => 0,
-                    };
-                    let detail = admitted
-                        .assessment
-                        .as_ref()
-                        .map(|assessment| Arc::clone(&assessment.reason))
-                        .or_else(|| {
-                            matches!(&admitted.outcome, RouteOutcome::NoPath).then(|| {
-                                Arc::from("No route within the request's hard constraints")
-                            })
-                        });
-                    let receipt = script::native::AssessReceipt {
-                        request_id: pending.authority.request_id().get(),
-                        evidence: pending.evidence,
-                        assessment: admitted.assessment,
-                        refusal: admitted.refusal.or_else(|| {
-                            matches!(&admitted.outcome, RouteOutcome::NoPath).then_some(
-                                script::native::WalkRefusal::NoRouteWithinBounds {
-                                    tried: admitted.tried,
-                                    last: None,
-                                },
-                            )
-                        }),
-                        detail,
-                        route_ticks,
-                    };
-                    let mut all = navs.lock().unwrap();
-                    let Some(bot) = all.get_mut(&name) else {
-                        pending.request.completion.signal();
-                        return;
-                    };
-                    if !bot
-                        .route_worker
-                        .as_ref()
-                        .is_some_and(|current| Arc::ptr_eq(current, &worker_token))
-                    {
-                        pending.request.completion.signal();
-                        return;
-                    }
-                    if !pending.authority.live() {
-                        if bot
-                            .assess_worker
-                            .as_ref()
-                            .is_some_and(|current| Arc::ptr_eq(current, &pending.token))
-                        {
-                            bot.assess_worker = None;
-                        }
-                        pending.request.completion.signal();
-                        continue;
-                    }
-                    if bot
-                        .assess_worker
-                        .as_ref()
-                        .is_some_and(|current| Arc::ptr_eq(current, &pending.token))
-                    {
-                        bot.assess_worker = None;
-                        bot.assess_result = Some(Box::new((
-                            pending.authority.clone(),
-                            receipt,
-                        )));
-                    }
-                    pending.request.completion.signal();
-                }
-            }
-            })
-        .is_ok();
-    spawned
-}
-/// Legal full-footprint stands for the caller's explicitly identified live loc.
-/// Do not filter by the scene flood: the baked graph can cross a shut door.
-fn loc_target_approach_tiles(
+/// Capture only the footprint's operable window, clipped to the live scene.
+/// `None` preserves the legacy distinction between an unmodeled/off-scene loc
+/// and a modeled loc with no legal stands.
+fn capture_loc_geometry(
     snapshot: &GameSnapshot,
     to: WorldTile,
     radius: i32,
     loc_id: i32,
-) -> Option<Vec<WorldTile>> {
-    let query = api::query::SceneQuery::new(snapshot.scene(), None);
-    if !query.contains(to) {
+) -> Option<LocGeometryCapture> {
+    let scene = snapshot.scene();
+    if !api::query::SceneQuery::new(scene, None).contains(to) {
         return None;
     }
     let loc = snapshot
@@ -1877,14 +5252,392 @@ fn loc_target_approach_tiles(
         .iter()
         .find(|loc| loc.tile == to && loc.id == loc_id)?;
     api::query::loc_approach::distance_from(loc, to)?;
-    let mut tiles = query.operable_tiles(loc)?;
-    tiles.retain(|stand| {
-        api::query::loc_approach::distance_from(loc, *stand)
-            .is_some_and(|distance| distance <= radius.clamp(0, 104) as u32)
-    });
-    Some(tiles)
+    let approach = api::query::loc_approach::LocApproach::from_loc_def(
+        loc.width,
+        loc.length,
+        loc.angle,
+        loc.force_approach,
+    );
+    let (start_x, start_z, width, height) = if let Some(approach) = approach {
+        let dst_x = loc.tile.x.checked_sub(scene.base_x)?;
+        let dst_z = loc.tile.z.checked_sub(scene.base_z)?;
+        let width = i32::from(approach.width);
+        let height = i32::from(approach.length);
+        let start_x = dst_x.checked_sub(1)?.max(0);
+        let start_z = dst_z.checked_sub(1)?.max(0);
+        let end_x = dst_x.checked_add(width)?.min(scene.width.checked_sub(1)?);
+        let end_z = dst_z.checked_add(height)?.min(scene.height.checked_sub(1)?);
+        if start_x > end_x || start_z > end_z {
+            (start_x, start_z, 0, 0)
+        } else {
+            (
+                start_x,
+                start_z,
+                usize::try_from(end_x.checked_sub(start_x)?.checked_add(1)?).ok()?,
+                usize::try_from(end_z.checked_sub(start_z)?.checked_add(1)?).ok()?,
+            )
+        }
+    } else {
+        // `distance_from` already established a modeled positive footprint.
+        // `from_loc_def` can only fail when one raw dimension cannot fit in
+        // the packed LocApproach representation; the legacy stand test then
+        // rejects every tile as well.
+        (0, 0, 0, 0)
+    };
+    let count = width.checked_mul(height)?;
+    let mut flags = Vec::new();
+    flags.try_reserve_exact(count).ok()?;
+    let collision_index = |lx: i32, lz: i32| {
+        usize::try_from(lx)
+            .ok()?
+            .checked_mul(usize::try_from(scene.height).ok()?)?
+            .checked_add(usize::try_from(lz).ok()?)
+    };
+    for lx in start_x..start_x.checked_add(i32::try_from(width).ok()?)? {
+        for lz in start_z..start_z.checked_add(i32::try_from(height).ok()?)? {
+            let flags_at = collision_index(lx, lz)
+                .and_then(|index| scene.collision_flags.get(index).copied())
+                .unwrap_or(client::dash3d::CollisionFlag::SQ_BLOCKED);
+            flags.push(flags_at);
+        }
+    }
+    Some(LocGeometryCapture {
+        approach,
+        radius: radius.clamp(0, 104),
+        base_x: scene.base_x,
+        base_z: scene.base_z,
+        level: scene.level,
+        start_x,
+        start_z,
+        height,
+        flags,
+    })
+}
+impl LocGeometryCapture {
+    fn candidate_at(&self, to: WorldTile, index: usize) -> Option<WorldTile> {
+        let approach = self.approach?;
+        if self.height == 0 {
+            return None;
+        }
+        let lx = self
+            .start_x
+            .checked_add(i32::try_from(index / self.height).ok()?)?;
+        let lz = self
+            .start_z
+            .checked_add(i32::try_from(index % self.height).ok()?)?;
+        let x = self.base_x.checked_add(lx)?;
+        let z = self.base_z.checked_add(lz)?;
+        let flags = *self.flags.get(index)?;
+        if flags & client::dash3d::CollisionFlag::SQ_BLOCKED != 0 {
+            return None;
+        }
+        let tile = WorldTile {
+            x,
+            z,
+            level: self.level,
+        };
+        if !approach.can_operate(to, tile, flags) {
+            return None;
+        }
+        let max_x =
+            to.x.checked_add(i32::from(approach.width).checked_sub(1)?)?;
+        let max_z =
+            to.z.checked_add(i32::from(approach.length).checked_sub(1)?)?;
+        let nearest_x = x.clamp(to.x, max_x);
+        let nearest_z = z.clamp(to.z, max_z);
+        (x.abs_diff(nearest_x).max(z.abs_diff(nearest_z)) <= self.radius as u32).then_some(tile)
+    }
+
+    #[cfg(test)]
+    fn candidates(&self, to: WorldTile) -> Vec<WorldTile> {
+        (0..self.flags.len())
+            .filter_map(|index| self.candidate_at(to, index))
+            .collect()
+    }
+}
+/// Bounded target construction for one admitted route job. It retains only
+/// the candidate array; target ordering is an in-place cooperative heapsort.
+struct RouteTargetCursor {
+    mode: RouteTargetMode,
+    index: usize,
+    side: usize,
+    targets: Vec<WorldTile>,
+    sort: Option<RouteTargetSort>,
 }
 
+#[derive(Clone, Copy)]
+enum RouteTargetMode {
+    Exact,
+    Geometry,
+    Radius,
+}
+
+impl RouteTargetCursor {
+    fn shape(
+        request: &ScriptRouteRequest,
+    ) -> Result<(RouteTargetMode, usize, usize), RouteJobError> {
+        if request.radius <= 0 {
+            return Ok((RouteTargetMode::Exact, 1, 0));
+        }
+        if let Some(geometry) = request.live_geometry.as_ref() {
+            return Ok((RouteTargetMode::Geometry, geometry.flags.len(), 0));
+        }
+        let radius =
+            usize::try_from(request.radius.clamp(0, 104)).map_err(|_| RouteJobError::Budget)?;
+        let side = radius
+            .checked_mul(2)
+            .and_then(|side| side.checked_add(1))
+            .ok_or(RouteJobError::Budget)?;
+        let capacity = side
+            .checked_mul(side)
+            .and_then(|capacity| {
+                capacity.checked_add(usize::from(
+                    request.compat_tile_intent
+                        && request.loc_id.is_none()
+                        && request.arrival != ArrivalKind::Area,
+                ))
+            })
+            .ok_or(RouteJobError::Budget)?;
+        Ok((RouteTargetMode::Radius, capacity, side))
+    }
+
+    fn capacity(request: &ScriptRouteRequest) -> Result<usize, RouteJobError> {
+        Self::shape(request).map(|(_, capacity, _)| capacity)
+    }
+
+    fn new(request: &ScriptRouteRequest) -> Result<Self, RouteJobError> {
+        let (mode, capacity, side) = Self::shape(request)?;
+        let mut targets = Vec::new();
+        targets
+            .try_reserve_exact(capacity)
+            .map_err(|_| RouteJobError::Allocation)?;
+        Ok(Self {
+            mode,
+            index: 0,
+            side,
+            targets,
+            sort: None,
+        })
+    }
+
+    /// Advance one candidate or ordering unit. `true` means all candidates
+    /// are ready for the optional arrival filter.
+    fn advance(&mut self, request: &ScriptRouteRequest) -> bool {
+        if let Some(sort) = self.sort.as_mut() {
+            if sort.advance(&mut self.targets, request.from, request.to) {
+                self.sort = None;
+                return true;
+            }
+            return false;
+        }
+        match self.mode {
+            RouteTargetMode::Exact => {
+                if self.index == 0 {
+                    self.targets.push(request.to);
+                    self.index = 1;
+                }
+                true
+            }
+            RouteTargetMode::Geometry => {
+                let Some(geometry) = request.live_geometry.as_ref() else {
+                    return true;
+                };
+                if let Some(tile) = geometry.candidate_at(request.to, self.index) {
+                    self.targets.push(tile);
+                }
+                self.index += 1;
+                self.index >= geometry.flags.len()
+            }
+            RouteTargetMode::Radius => {
+                let radius = request.radius.clamp(0, 104);
+                let total = self.side.saturating_mul(self.side);
+                if self.index >= total {
+                    return true;
+                }
+                let dx = i32::try_from(self.index / self.side).unwrap_or(i32::MAX) - radius;
+                let dz = i32::try_from(self.index % self.side).unwrap_or(i32::MAX) - radius;
+                let Some(x) = request.to.x.checked_add(dx) else {
+                    self.index += 1;
+                    return false;
+                };
+                let Some(z) = request.to.z.checked_add(dz) else {
+                    self.index += 1;
+                    return false;
+                };
+                let tile = WorldTile {
+                    x,
+                    z,
+                    level: request.to.level,
+                };
+                if request.world.collision.standable(tile) {
+                    self.targets.push(tile);
+                }
+                self.index += 1;
+                false
+            }
+        }
+    }
+
+    fn start_sort(&mut self) {
+        if matches!(self.mode, RouteTargetMode::Radius) {
+            self.sort = Some(RouteTargetSort::new(self.targets.len()));
+        }
+    }
+}
+
+/// Cooperative in-place max-heapsort. The route target key includes x/z, so
+/// distinct grid candidates have a total order even though heapsort is not
+/// stable.
+struct RouteTargetSort {
+    build_parent: usize,
+    end: usize,
+    sift: Option<(usize, usize)>,
+    extracting: bool,
+}
+
+impl RouteTargetSort {
+    fn new(len: usize) -> Self {
+        Self {
+            build_parent: len / 2,
+            end: len,
+            sift: None,
+            extracting: false,
+        }
+    }
+
+    fn advance(&mut self, targets: &mut [WorldTile], from: WorldTile, to: WorldTile) -> bool {
+        let key = |tile: WorldTile| {
+            (
+                tile.x.abs_diff(from.x).max(tile.z.abs_diff(from.z)),
+                tile.x.abs_diff(to.x).max(tile.z.abs_diff(to.z)),
+                tile.x,
+                tile.z,
+            )
+        };
+        if targets.len() < 2 {
+            return true;
+        }
+        if let Some((root, limit)) = self.sift {
+            let left = root.saturating_mul(2).saturating_add(1);
+            if left >= limit {
+                self.sift = None;
+                return false;
+            }
+            let right = left + 1;
+            let largest = if right < limit && key(targets[right]) > key(targets[left]) {
+                right
+            } else {
+                left
+            };
+            if key(targets[root]) < key(targets[largest]) {
+                targets.swap(root, largest);
+                self.sift = Some((largest, limit));
+            } else {
+                self.sift = None;
+            }
+            return false;
+        }
+        if !self.extracting {
+            if self.build_parent != 0 {
+                self.build_parent -= 1;
+                self.sift = Some((self.build_parent, self.end));
+                return false;
+            }
+            self.extracting = true;
+        }
+        if self.end <= 1 {
+            return true;
+        }
+        self.end -= 1;
+        targets.swap(0, self.end);
+        self.sift = Some((0, self.end));
+        false
+    }
+}
+
+/// The compat target is a stable first goal, even when its normal radius key
+/// would sort later. Both the search and the shift are cooperative.
+struct RouteTargetPriority {
+    target: WorldTile,
+    scan: usize,
+    found: Option<usize>,
+    shift: Option<usize>,
+    phase: RouteTargetPriorityPhase,
+}
+
+#[derive(Clone, Copy)]
+enum RouteTargetPriorityPhase {
+    Scan,
+    ShiftExisting,
+    ShiftInserted,
+    Done,
+}
+
+impl RouteTargetPriority {
+    fn new(request: &ScriptRouteRequest) -> Option<Self> {
+        (request.compat_tile_intent
+            && request.loc_id.is_none()
+            && request.arrival != ArrivalKind::Area
+            && request.radius > 0
+            && request.world.collision.walkable(request.to)
+            && request.world.collision.standable(request.to))
+        .then_some(Self {
+            target: request.to,
+            scan: 0,
+            found: None,
+            shift: None,
+            phase: RouteTargetPriorityPhase::Scan,
+        })
+    }
+
+    fn advance(&mut self, targets: &mut Vec<WorldTile>) -> bool {
+        match self.phase {
+            RouteTargetPriorityPhase::Scan => {
+                if let Some(&tile) = targets.get(self.scan) {
+                    if tile == self.target {
+                        self.found = Some(self.scan);
+                        self.shift = Some(self.scan);
+                        self.phase = RouteTargetPriorityPhase::ShiftExisting;
+                    } else {
+                        self.scan += 1;
+                    }
+                } else {
+                    targets.push(self.target);
+                    self.shift = Some(targets.len() - 1);
+                    self.phase = RouteTargetPriorityPhase::ShiftInserted;
+                }
+                false
+            }
+            RouteTargetPriorityPhase::ShiftExisting => {
+                let shift = self.shift.unwrap_or_default();
+                if shift == 0 {
+                    targets[0] = self.target;
+                    self.phase = RouteTargetPriorityPhase::Done;
+                    true
+                } else {
+                    targets[shift] = targets[shift - 1];
+                    self.shift = Some(shift - 1);
+                    false
+                }
+            }
+            RouteTargetPriorityPhase::ShiftInserted => {
+                let shift = self.shift.unwrap_or_default();
+                if shift == 0 {
+                    targets[0] = self.target;
+                    self.phase = RouteTargetPriorityPhase::Done;
+                    true
+                } else {
+                    targets[shift] = targets[shift - 1];
+                    self.shift = Some(shift - 1);
+                    false
+                }
+            }
+            RouteTargetPriorityPhase::Done => true,
+        }
+    }
+}
+
+#[cfg(test)]
 /// Anchor-radius destinations. Unknown/off-scene explicit locs need only a
 /// standable approach estimate; plain tile walks retain target-side filtering.
 /// Neither estimate admission nor scene proximity proves loc arrival.
@@ -1899,9 +5652,12 @@ pub(crate) fn approach_tiles(
     let mut tiles = Vec::new();
     for dx in -r..=r {
         for dz in -r..=r {
+            let (Some(x), Some(z)) = (to.x.checked_add(dx), to.z.checked_add(dz)) else {
+                continue;
+            };
             let t = WorldTile {
-                x: to.x + dx,
-                z: to.z + dz,
+                x,
+                z,
                 level: to.level,
             };
             if world.collision.standable(t) {
@@ -1920,8 +5676,8 @@ pub(crate) fn approach_tiles(
     }
     tiles.sort_by_key(|t| {
         (
-            (t.x - from.x).abs().max((t.z - from.z).abs()),
-            (t.x - to.x).abs().max((t.z - to.z).abs()),
+            t.x.abs_diff(from.x).max(t.z.abs_diff(from.z)),
+            t.x.abs_diff(to.x).max(t.z.abs_diff(to.z)),
             t.x,
             t.z,
         )
@@ -1929,17 +5685,10 @@ pub(crate) fn approach_tiles(
     tiles
 }
 
-pub(crate) struct PendingAdvisoryAssess {
-    request: Box<ScriptRouteRequest>,
-    authority: script::native::HostAuthority,
-    evidence: api::quest_progress::EvidenceStamp,
-    token: Arc<()>,
-}
-
 fn advisory_refusal(
     authority: &script::native::HostAuthority,
     evidence: api::quest_progress::EvidenceStamp,
-    detail: &'static str,
+    detail: &str,
 ) -> script::native::AssessReceipt {
     script::native::AssessReceipt {
         request_id: authority.request_id().get(),
@@ -1970,8 +5719,8 @@ pub(crate) struct ScriptRouteRequest {
     /// its rows so the byte packs into this request's own padding.
     pub(crate) bank_origin: Origin,
     pub(crate) bank: Vec<(i32, i32)>,
-    /// Explicit live-loc footprint goals; otherwise use the request's tile-area rule.
-    pub(crate) live_candidates: Option<Vec<WorldTile>>,
+    /// Explicit live-loc footprint input; stands are built after admission.
+    pub(crate) live_geometry: Option<LocGeometryCapture>,
     /// Frozen request exclusions: every search keeps out of rects and carries
     /// the original wire entries across a resume for arm-time re-resolution.
     pub(crate) exclusions: Option<Arc<ScriptRouteExclusions>>,
@@ -1981,16 +5730,18 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) completion: RouteCompletion,
 }
 
+#[cfg(test)]
 // Refusal hints must not fan out into a separate full-world diagnosis for
 // every Area goal. Routing still searches the complete goal set; only these
 // optional bank-fetch attribution probes have a fixed candidate budget.
 const BANK_ZONE_DIAGNOSTIC_TARGETS: usize = 8;
 impl ScriptRouteRequest {
+    #[cfg(test)]
     fn targets(&self) -> Vec<WorldTile> {
         if self.radius <= 0 {
             vec![self.to]
-        } else if let Some(stands) = self.live_candidates.as_ref() {
-            stands.clone()
+        } else if let Some(geometry) = self.live_geometry.as_ref() {
+            geometry.candidates(self.to)
         } else {
             let mut targets = approach_tiles(
                 &self.world,
@@ -2020,6 +5771,7 @@ impl ScriptRouteRequest {
             .as_deref()
             .map_or(&[][..], |exclusions| exclusions.avoid.as_slice())
     }
+    #[cfg(test)]
     fn blocking_zones(
         &self,
         outcome: &RouteOutcome,
@@ -2033,12 +5785,10 @@ impl ScriptRouteRequest {
         let bank_targets = if self.radius <= 0 || self.arrival == ArrivalKind::Area {
             targets
         } else {
-            self.live_candidates
-                .as_ref()
-                .map_or(&[][..], |stands| stands.as_slice())
+            self.live_geometry.as_ref().map_or(&[][..], |_| targets)
         };
-        let direct = if self.radius <= 0 {
-            nav::router::find_blocking_zones(
+        let direct = match route_blocker_diagnosis(self) {
+            BlockerDiagnosis::SingleTarget => nav::router::find_blocking_zones(
                 &self.world.collision,
                 &self.world.graph,
                 self.from,
@@ -2046,9 +5796,8 @@ impl ScriptRouteRequest {
                 self.opts,
                 state,
                 self.avoid(),
-            )
-        } else {
-            nav::router::find_first_blocking_zones(
+            ),
+            BlockerDiagnosis::FirstGoal => nav::router::find_first_blocking_zones(
                 &self.world.collision,
                 &self.world.graph,
                 self.from,
@@ -2056,7 +5805,7 @@ impl ScriptRouteRequest {
                 self.opts,
                 state,
                 self.avoid(),
-            )
+            ),
         }
         .filter(|keys| !keys.is_empty());
         if direct.is_some() {
@@ -2083,39 +5832,23 @@ impl ScriptRouteRequest {
             ) else {
                 continue;
             };
-            let Some(plan) = plan_bank_fetch(
+            let plan = match plan_bank_fetch(
                 &missing,
                 state,
                 &planning_rows(self.bank_origin, &self.bank, &missing),
                 self.world.banks(),
                 self.from,
                 &self.world.collision,
-            ) else {
-                continue;
-            };
-            let access = plan.steps.iter().find_map(|step| match step {
-                BankStep::Walk { x, z, level } => Some(WorldTile {
-                    x: *x,
-                    z: *z,
-                    level: *level,
-                }),
-                _ => None,
-            });
-            if let Some(access) = access {
-                if let Some(keys) = nav::router::find_blocking_zones(
-                    &self.world.collision,
-                    &self.world.graph,
-                    self.from,
-                    access,
-                    strict_opts,
-                    state,
-                    self.avoid(),
-                )
-                .filter(|keys| !keys.is_empty())
-                {
-                    return Some(keys);
+                &self.world.graph,
+                self.opts,
+                self.avoid(),
+            ) {
+                Ok(plan) => plan,
+                Err(BankFetchError::Access { blocked_zones, .. }) if !blocked_zones.is_empty() => {
+                    return Some(blocked_zones);
                 }
-            }
+                Err(_) => continue,
+            };
             if let Some(keys) = nav::router::find_blocking_zones(
                 &self.world.collision,
                 &self.world.graph,
@@ -2132,350 +5865,322 @@ impl ScriptRouteRequest {
         }
         None
     }
+}
+#[cfg(test)]
+impl ScriptRouteRequest {
+    /// Convert the completed production job to the test route view.
+    fn project_route_job_outcome(
+        outcome: RouteJobOutcome,
+        opts: FindOptions,
+        bank_avoid_copy: Vec<AvoidRect>,
+        world: &NavWorld,
+    ) -> RouteOutcome {
+        match outcome {
+            RouteJobOutcome::Route(route) => RouteOutcome::Routed(route.to_route(&world.graph)),
+            RouteJobOutcome::Bank {
+                steps,
+                route,
+                final_route,
+            } => {
+                let final_route = final_route.to_route(&world.graph);
+                let route = route
+                    .map(|route| route.to_route(&world.graph))
+                    .unwrap_or_else(|| final_route.clone());
+                RouteOutcome::BankSession {
+                    pending: PendingBankFetch {
+                        steps,
+                        dest: final_route.dest,
+                        opts,
+                        final_route: RoutePath::legacy(Arc::new(final_route.clone())),
+                        avoid: bank_avoid_copy,
+                        progress: Default::default(),
+                    },
+                    route,
+                }
+            }
+            RouteJobOutcome::NoPath => RouteOutcome::NoPath,
+        }
+    }
 
-    fn native_failure(
-        &self,
-        outcome: &RouteOutcome,
-        blocked: Option<&[ZoneKey]>,
-        targets: &[WorldTile],
-    ) -> Option<script::native::WalkEnd> {
-        if !matches!(outcome, RouteOutcome::NoPath) {
-            return None;
+    fn drive_route_job_output_for_test(self) -> (RouteJobOutput, Vec<WorldTile>, Arc<NavWorld>) {
+        fn identity(index: u64) -> WorkIdentity {
+            WorkIdentity::new(
+                RequestId::from_raw(RequestId::HOST_FIRST + index)
+                    .expect("test route identity is valid"),
+                api::identity::ProcessIncarnation::from_start_nonce(
+                    std::num::NonZeroU64::new(1).expect("test incarnation is nonzero"),
+                ),
+                Scope::Slot(
+                    api::identity::SlotKey::from_incarnation(1)
+                        .expect("test slot incarnation is valid"),
+                ),
+                None,
+            )
+            .expect("test route identity is valid")
         }
-        if blocked.is_some_and(|keys| !keys.is_empty()) {
-            return Some(script::native::WalkEnd::Refused);
+
+        fn drive_stage(worker: &mut RouteWorkJob) -> RouteStageResult {
+            use api::identity::Deadline;
+            use api::work::{MonotonicClock, SharedCancellation, SliceBudget, SystemClock};
+
+            let clock = SystemClock;
+            let cancellation = SharedCancellation::new();
+            for _ in 0..250_000 {
+                let budget = SliceBudget::new(
+                    std::num::NonZeroU32::new(64).expect("slice budget is nonzero"),
+                    Deadline::after(clock.now(), std::time::Duration::from_millis(10)),
+                );
+                let mut context = StepContext::new(&clock, budget, &cancellation);
+                match worker.step(&mut context) {
+                    StepOutcome::Yielded => {}
+                    StepOutcome::Completed(result) => return result,
+                    StepOutcome::Failed(error) => panic!("route stage failed: {error}"),
+                }
+            }
+            panic!("route stage exceeded the bounded slice count");
         }
-        let empty = WorldState::empty();
-        let state = self.state.as_ref().unwrap_or(&empty);
-        Some(
-            match nav::router::find_unresolved_quest_gates(
-                &self.world.collision,
-                &self.world.graph,
-                self.from,
-                targets,
-                self.opts,
-                state,
-                self.avoid(),
-            ) {
-                Ok(Some(gates)) => script::native::WalkEnd::NeedsEvidence(gates),
-                Ok(None) => script::native::WalkEnd::Failed,
-                Err(_) => script::native::WalkEnd::Refused,
+
+        let world = Arc::clone(&self.world);
+        let mut job = RouteJob::prepare(
+            "route-rule-test",
+            Box::new(self),
+            RouteDemandKind::Walk { authority: None },
+        )
+        .expect("test route request prepares");
+        job.identity = Some(identity(0));
+        let mut next = Some(Box::new(job));
+        for stage_index in 0..64u64 {
+            let job = next.take().expect("the prior route stage continued");
+            let mut worker = RouteWorkJob::new(job);
+            match drive_stage(&mut worker) {
+                RouteStageResult::Continue(mut job) => {
+                    assert!(job.search_cursor.is_none());
+                    job.prepare_continuation()
+                        .expect("test route continuation prepares");
+                    job.identity = Some(identity(stage_index + 1));
+                    next = Some(job);
+                }
+                RouteStageResult::Complete(output) => {
+                    let targets = worker
+                        .job
+                        .as_ref()
+                        .expect("completed route worker retains its job")
+                        .targets
+                        .clone();
+                    return (output, targets, world);
+                }
+            }
+        }
+        panic!("route job exceeded the bounded stage count");
+    }
+
+    /// Drive admission through the production route job and preserve its output.
+    pub(crate) fn drive_route_admission_for_test(
+        self,
+    ) -> (
+        crate::admission::RouteAdmission,
+        Vec<WorldTile>,
+        FindOptions,
+    ) {
+        let (output, targets, world) = Self::drive_route_job_output_for_test(self);
+        let RouteJobOutput {
+            outcome,
+            opts,
+            bank_avoid_copy,
+            assessment,
+            refusal,
+            blocked,
+            ..
+        } = output;
+        let outcome = Self::project_route_job_outcome(outcome, opts, bank_avoid_copy, &world);
+        let tried = match &refusal {
+            Some(script::native::WalkRefusal::NoRouteWithinBounds { tried, .. }) => *tried,
+            _ => 0,
+        };
+        (
+            crate::admission::RouteAdmission {
+                outcome,
+                assessment,
+                refusal,
+                blocked,
+                tried,
             },
+            targets,
+            opts,
+        )
+    }
+
+    /// Drive this request through the cooperative route jobs used by the production worker.
+    /// Keep Admission unchanged because its policy can change production search options.
+    pub(crate) fn drive_route_job_for_test(self) -> (RouteOutcome, Vec<WorldTile>) {
+        let (output, targets, world) = Self::drive_route_job_output_for_test(self);
+        let RouteJobOutput {
+            outcome,
+            opts,
+            bank_avoid_copy,
+            ..
+        } = output;
+        (
+            Self::project_route_job_outcome(outcome, opts, bank_avoid_copy, &world),
+            targets,
         )
     }
 }
-impl ScriptRouteRequest {
-    /// The navigator-named gate shorts of a failed walk: the strict find's own
-    /// diagnosis, re-run with only the `item_req`/`worn_req` gates ignored.
-    /// A routed outcome names none, and neither does a failure the relaxed
-    /// re-run cannot diagnose (budget, off-graph, a skill/quest/varp gate) —
-    /// a `NoPath` is never read into a shopping list from its dest geometry.
-    /// A `worn_req` any-of alternative is not a carry and is never posted as
-    /// one.
-    fn missing_carry(&self, outcome: &RouteOutcome) -> Vec<MissingCarry> {
-        if !matches!(outcome, RouteOutcome::NoPath) {
-            return Vec::new();
-        }
-        let empty = WorldState::empty();
-        let state = self.state.as_ref().unwrap_or(&empty);
-        let Some(missing) = find_missing_item_reqs_with_avoid(
-            &self.world.collision,
-            &self.world.graph,
-            self.from,
-            self.to,
-            self.opts,
-            state,
-            self.avoid(),
-        ) else {
-            return Vec::new();
-        };
-        missing
-            .into_iter()
-            .filter_map(|req| match req {
-                MissingReq::Carry { id, count }
-                    if state.inv.get(&id).copied().unwrap_or(0) < count =>
-                {
-                    Some(MissingCarry { id, count })
-                }
-                MissingReq::Carry { .. } => None,
-                MissingReq::WearAny { .. } => None,
-            })
-            .collect()
-    }
-
-    /// A modeled live loc or an unmodeled solid: legal stands first, then an
-    /// optional wall-aware radius fallback for unmodeled solids only. In order: a strict route to a
-    /// stand, a BankBudget session to a stand, a strict route to a radius tile, a
-    /// session to a radius tile. The strict search for the stands also
-    /// answers for the tiles as a search over them alone would, where that
-    /// needs no more settles ([`find_first_with_fallback`]: the tiles keep
-    /// their own proof and budget), and so does the search under what a
-    /// session can fetch; a search over the tiles alone runs only when its
-    /// stand search left them undecided. Of each such pair at most one stops
-    /// at the unproven budget, so the arm spends at most two budget-limited
-    /// searches, one strict and one fetchable, plus one fetchable search for
-    /// each stand or tile whose session is refused (no session covers its
-    /// missing facts, or the post-state re-find still misses a gate; a
-    /// session never deposits). A `Hint` bank memory adds one relaxed
-    /// goal-set diagnosis of the same shape before the fetchable search
-    /// ([`fetchable_facts`]), so its stock never rejects a goal whose one
-    /// verifying trip would decide it.
-    fn calculate_solid(
-        &self,
-        stands: &[WorldTile],
-        tiles: &[WorldTile],
-        state: &WorldState,
-        opts: FindOptions,
-    ) -> RouteOutcome {
-        let debug = debug_enabled();
-        let slot = walk_arm_worker_slot();
-        let started = debug.then(Instant::now);
-        let search = find_first_with_fallback_avoid(
-            &self.world.collision,
-            &self.world.graph,
-            self.from,
-            stands,
-            tiles,
-            opts,
-            state,
-            self.avoid(),
-        );
-        if debug {
-            let elapsed_ms = started.unwrap().elapsed().as_millis();
-            let scratch = search.scratch_capacities();
-            log_walk_arm(&slot, || {
-                format!(
-                    "approach solid dest={:?} r={} stands={} tiles={} settled={} \
-                     scratch={}/{}/{}/{} reverse={}/{} proof={:?} elapsed_ms={elapsed_ms} \
-                     stand={} tile={:?}",
-                    self.to,
-                    self.radius,
-                    stands.len(),
-                    tiles.len(),
-                    search.settled(),
-                    scratch.distances,
-                    scratch.predecessors,
-                    scratch.settled,
-                    scratch.heap,
-                    scratch.reverse,
-                    scratch.reverse_queue,
-                    search.proof(),
-                    search.route().is_ok(),
-                    search.fallback().map(|tile| match tile {
-                        FallbackRoute::Routed(route) => Ok(route.dest),
-                        other => Err(other.clone()),
-                    })
-                )
-            });
-        }
-        let strict_tile = match search.into_routes() {
-            (Ok(route), _) => return RouteOutcome::Routed(route),
-            (Err(_), tile) => tile,
-        };
-
-        // A routed strict tile beats a session to one, so the stands are
-        // searched alone under the fetchable facts (and diagnosed alone).
-        let stand_tiles = match strict_tile {
-            Some(FallbackRoute::Routed(_)) => &[][..],
-            _ => tiles,
-        };
-        let fetchable = fetchable_facts(
-            &self.world,
-            self.from,
-            stands,
-            stand_tiles,
-            opts,
-            state,
-            self.bank_origin,
-            &self.bank,
-            self.avoid(),
-        );
-        let mut fetch_tiles = None;
-        if let Some(fetchable) = &fetchable {
-            match fetch_stand(
-                &self.world,
-                self.from,
-                stands,
-                stand_tiles,
-                opts,
-                state,
-                fetchable,
-                self.bank_origin,
-                &self.bank,
-                self.avoid(),
-            ) {
-                StandFetch::Outcome(outcome) => return outcome,
-                StandFetch::Tiles(known) => fetch_tiles = known,
-            }
-        }
-
-        let strict_tile = match strict_tile {
-            Some(FallbackRoute::Routed(route)) => Some(route),
-            Some(FallbackRoute::Undecided) => find_first_with_avoid(
-                &self.world.collision,
-                &self.world.graph,
-                self.from,
-                tiles,
-                opts,
-                state,
-                self.avoid(),
-            )
-            .into_route()
-            .ok(),
-            Some(FallbackRoute::Failed(_)) | None => None,
-        };
-        if let Some(route) = strict_tile {
-            return RouteOutcome::Routed(route);
-        }
-
-        let outcome = match &fetchable {
-            Some(fetchable) => fetch_tile(
-                &self.world,
-                self.from,
-                tiles,
-                fetch_tiles,
-                opts,
-                state,
-                fetchable,
-                self.bank_origin,
-                &self.bank,
-                self.avoid(),
-            ),
-            None => RouteOutcome::NoPath,
-        };
-        if debug {
-            let elapsed_ms = started.unwrap().elapsed().as_millis();
-            log_walk_arm(&slot, || {
-                format!(
-                    "approach solid end elapsed_ms={elapsed_ms} fetchable={} outcome={}",
-                    fetchable.is_some(),
-                    walk_arm_outcome_tag(&outcome)
-                )
-            });
-        }
-        outcome
-    }
-
-    fn calculate_in_order(
-        &self,
-        candidates: &[WorldTile],
-        state: &WorldState,
-        label: &str,
-        opts: FindOptions,
-    ) -> RouteOutcome {
-        let debug = debug_enabled();
-        let slot = walk_arm_worker_slot();
-        for (idx, &target) in candidates.iter().enumerate() {
-            if debug {
-                log_walk_arm(&slot, || {
-                    format!(
-                        "{label} begin idx={idx} target={target:?} generation={} request_id={}",
-                        self.generation, self.request_id
-                    )
-                });
-            }
-            let started = debug.then(Instant::now);
-            let outcome = route_or_bank_fetch(
-                &self.world,
-                self.from,
-                target,
-                opts,
-                state,
-                self.bank_origin,
-                &self.bank,
-                self.avoid(),
-            );
-            if debug {
-                let elapsed_ms = started.unwrap().elapsed().as_millis();
-                log_walk_arm(&slot, || {
-                    format!(
-                        "{label} end idx={idx} target={target:?} elapsed_ms={elapsed_ms} outcome={}",
-                        walk_arm_outcome_tag(&outcome)
-                    )
-                });
-            }
-            if !matches!(outcome, RouteOutcome::NoPath) {
-                return outcome;
-            }
-        }
-        RouteOutcome::NoPath
-    }
-
-    pub(crate) fn calculate_admitted(&self) -> (crate::admission::RouteAdmission, Vec<WorldTile>) {
-        let targets = self.targets();
-        let result = crate::admission::route(
-            &self.world,
-            &self.admission,
-            self.opts,
-            |opts| self.calculate_targets_with_options(&targets, opts),
-            || self.blocking_zones(&RouteOutcome::NoPath, &targets),
-        );
-        (result, targets)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn calculate(&self) -> (RouteOutcome, Vec<WorldTile>) {
-        let targets = self.targets();
-        (self.calculate_targets(&targets), targets)
-    }
-
-    #[cfg(test)]
-    fn calculate_targets(&self, targets: &[WorldTile]) -> RouteOutcome {
-        self.calculate_targets_with_options(targets, self.opts)
-    }
-
-    fn calculate_targets_with_options(
-        &self,
-        targets: &[WorldTile],
-        opts: FindOptions,
-    ) -> RouteOutcome {
-        let empty = WorldState::empty();
-        let state = self.state.as_ref().unwrap_or(&empty);
-        if self.radius <= 0 {
-            return route_or_bank_fetch(
-                &self.world,
-                self.from,
-                self.to,
-                opts,
-                state,
-                self.bank_origin,
-                &self.bank,
-                self.avoid(),
-            );
-        }
-        if self.arrival == ArrivalKind::Area {
-            return self.calculate_solid(targets, &[], state, opts);
-        }
-
-        // Only explicitly identified live footprints use operable stands.
-        // Off-scene/unknown targets retain the ordinary anchor-radius estimate.
-        if let Some(stands) = self.live_candidates.as_ref() {
-            return self.calculate_solid(stands.as_slice(), &[], state, opts);
-        }
-        if self.loc_id.is_none() && !self.world.collision.standable(self.to) {
-            let mut stands = [self.to; 4];
-            let mut len = 0;
-            for stand in api::query::arrival_stands(
-                self.to,
-                |stand| self.world.collision.standable(stand),
-                |stand| {
-                    Some(
-                        self.world
-                            .collision
-                            .walkable_word(stand.x, stand.z, stand.level)
-                            as i32,
-                    )
-                },
-            ) {
-                stands[len] = stand;
-                len += 1;
-            }
-            return self.calculate_solid(&stands[..len], targets, state, opts);
-        }
-        self.calculate_in_order(targets, state, "approach estimate", opts)
-    }
-}
 impl NavBot {
+    pub(crate) fn has_route(&self) -> bool {
+        self.route.is_some() || self.compact_route.is_some()
+    }
+
+    /// Whether the slot has route or advisory work that needs a pump turn.
+    pub(crate) fn route_work_pending(&self) -> bool {
+        self.route_ticket.is_some() || self.pending_route.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_route_work_preparing_for_test(&mut self) {
+        self.pending_route = Some(Box::new(RouteDemand::Preparing {
+            generation: self.route_generation,
+            request_id: self.walk_request_id,
+        }));
+    }
+
+    /// Abandon the accepted route when bank work takes ownership of the nav entry.
+    pub(crate) fn supersede_route_work(&mut self) {
+        if let Some(mut owner) = self.route_ticket.take() {
+            owner.abandon(Cancellation::Superseded);
+        }
+        self.pending_route = None;
+    }
+
+    /// Native request IDs belong to their run, within the bound compiled slot.
+    fn route_work_scope(&self, kind: &RouteDemandKind) -> Option<Scope> {
+        let slot_scope = self
+            .work_scope
+            .filter(|scope| matches!(scope, Scope::Slot(_)))?;
+        let scope = match kind {
+            RouteDemandKind::Walk {
+                authority: Some(authority),
+            }
+            | RouteDemandKind::Advisory { authority, .. } => Scope::Run(authority.run()),
+            RouteDemandKind::Walk { authority: None } => slot_scope,
+        };
+        slot_scope.contains(&scope).then_some(scope)
+    }
+    pub(crate) fn route_destination(&self) -> Option<WorldTile> {
+        self.compact_route
+            .as_ref()
+            .map(RoutePath::destination)
+            .or_else(|| self.route.as_ref().map(|route| route.dest))
+    }
+
+    pub(crate) fn route_path_for_follow(&self) -> Option<RoutePath> {
+        self.compact_route.clone().or_else(|| {
+            self.route
+                .as_ref()
+                .map(|route| RoutePath::legacy(Arc::clone(route)))
+        })
+    }
+
+    pub(crate) fn install_route_path(&mut self, route: RoutePath) {
+        match route {
+            RoutePath::Legacy(route) => {
+                self.route = Some(route);
+                self.compact_route = None;
+            }
+            compact @ RoutePath::Compact { .. } => {
+                self.route = None;
+                self.compact_route = Some(compact);
+            }
+        }
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Publication checks the frozen request identity and transfers the charged route with its custody."
+    )]
+    pub(crate) fn publish_compact_route(
+        &mut self,
+        generation: u64,
+        request_id: u64,
+        identity: WorkIdentity,
+        revision: InputRevision,
+        allow_teleports: bool,
+        route: RoutePath,
+        pending: Option<PendingBankFetch>,
+        custody: Arc<dyn std::any::Any + Send + Sync>,
+        quest_evidence: Option<nav::quest_gates::QuestEvidence>,
+    ) -> bool {
+        let Some(plan) = route.plan() else {
+            return false;
+        };
+        if self.route_generation != generation
+            || self.walk_request_id != request_id
+            || plan.identity() != identity
+            || plan.revision() != revision
+        {
+            return false;
+        }
+        self.traveller.clear();
+        self.install_route_path(route);
+        self.route_result_custody = Some(custody);
+        self.map_route_generation = crate::walk_map::next_map_route_generation();
+        self.route_request_id = request_id;
+        self.bank_fetch = pending;
+        self.allow_teleports = allow_teleports;
+        self.route_quest_evidence = quest_evidence;
+        true
+    }
+
+    pub(crate) fn publish_compact_route_failure(
+        &mut self,
+        generation: u64,
+        request_id: u64,
+        detail: Option<Arc<str>>,
+        missing: Vec<MissingCarry>,
+        native_failure: Option<script::native::WalkEnd>,
+        blocked: Box<[ZoneKey]>,
+    ) {
+        if self.route_generation != generation || self.walk_request_id != request_id {
+            return;
+        }
+        if let Some((to, radius, allow_teleports, ..)) = self.requested_route {
+            if self.armed_outcome_may_publish(request_id) {
+                self.note_failure(generation, request_id, to, radius, allow_teleports);
+            }
+        }
+        self.note_missing_carry(generation, request_id, missing);
+        if self.walk_outcome_generation == generation && self.walk_outcome_request_id == request_id
+        {
+            let native_refused = matches!(
+                native_failure.as_ref(),
+                Some(script::native::WalkEnd::Refused)
+            );
+            self.native_walk_failure = native_failure.map(|end| (request_id, end));
+            self.walk_outcome_detail = detail;
+            self.native_walk_blocked = if native_refused {
+                (!blocked.is_empty()).then(|| (request_id, Arc::<[ZoneKey]>::from(blocked)))
+            } else {
+                None
+            };
+        }
+        self.requested_route = None;
+    }
+    pub(crate) fn route_projection(&self) -> Option<crate::walk_map::RouteProjectionPath<'_>> {
+        self.compact_route
+            .as_ref()
+            .map(RoutePath::projection)
+            .or_else(|| {
+                self.route
+                    .as_deref()
+                    .map(crate::walk_map::RouteProjectionPath::Legacy)
+            })
+    }
+
+    pub(crate) fn clear_route(&mut self) {
+        self.route = None;
+        self.compact_route = None;
+    }
+
     fn bump_walk_outcome_seq(&mut self) {
         self.manual_walk_cancelled_detail = false;
         self.walk_outcome_seq = self.walk_outcome_seq.wrapping_add(1);
@@ -2486,7 +6191,7 @@ impl NavBot {
 
     pub(crate) fn ordinary_movement_owned(&self, tick: u16) -> bool {
         self.native_walk.as_ref().is_some_and(|owner| owner.live())
-            || self.route.is_some()
+            || self.has_route()
             || self.bank_fetch.is_some()
             || self.slot_escape().is_some()
             || self
@@ -2582,6 +6287,29 @@ impl NavBot {
         }
         use api::selected::Truth;
         let end = match outcome {
+            nav::traveller::TravelOutcome::Stalled {
+                at,
+                aiming,
+                why,
+                tries,
+            } => Some(script::native::WalkEnd::Stalled(Arc::new(
+                script::native::WalkStall {
+                    at: *at,
+                    aiming: *aiming,
+                    why: match why {
+                        nav::traveller::HopFailure::Expired => {
+                            script::native::WalkStallReason::Expired
+                        }
+                        nav::traveller::HopFailure::Dropped => {
+                            script::native::WalkStallReason::Dropped
+                        }
+                        nav::traveller::HopFailure::EndBlocked => {
+                            script::native::WalkStallReason::EndBlocked
+                        }
+                    },
+                    tries: *tries,
+                },
+            ))),
             nav::traveller::TravelOutcome::Refused { .. } => Some(script::native::WalkEnd::Refused),
             nav::traveller::TravelOutcome::Blocked { .. } => Some(script::native::WalkEnd::Blocked),
             nav::traveller::TravelOutcome::EvidenceUnproven {
@@ -2602,8 +6330,10 @@ impl NavBot {
             .as_ref()
             .is_some_and(|owner| owner.live() && owner.request_id().get() == self.walk_request_id)
         {
-            self.walk_outcome_detail =
-                Some(Arc::from(format!("native follow failed: {outcome:?}")));
+            self.walk_outcome_detail = match outcome {
+                nav::traveller::TravelOutcome::Stalled { .. } => None,
+                _ => Some(Arc::from(format!("native follow failed: {outcome:?}"))),
+            };
         }
     }
 
@@ -2845,10 +6575,9 @@ impl NavBot {
 
     /// Whether a script walk is armed, in flight or following.
     pub(crate) fn script_walk_armed(&self) -> bool {
-        self.route.is_some()
+        self.has_route()
             || self.bank_fetch.is_some()
-            || self.route_worker.is_some()
-            || self.pending_route.is_some()
+            || self.route_work_pending()
             || self.requested_route.is_some()
             || self.walk_request_id != 0
     }
@@ -2939,7 +6668,8 @@ impl NavBot {
             }
         };
         self.traveller.clear();
-        self.route = Some(Arc::clone(&route));
+        self.route = Some(route);
+        self.compact_route = None;
         self.map_route_generation = crate::walk_map::next_map_route_generation();
         self.route_request_id = request_id;
         self.bank_fetch = pending;
@@ -3046,10 +6776,7 @@ pub(crate) fn hold_script_nav(
         let route_generation = nav.route_generation;
         // A duel's screens belong to the dropped connection.
         nav.duel_offer_partner = None;
-        let armed = nav.route.is_some()
-            || nav.route_worker.is_some()
-            || nav.pending_route.is_some()
-            || nav.bank_fetch.is_some();
+        let armed = nav.has_route() || nav.route_work_pending() || nav.bank_fetch.is_some();
         let picking = nav.bank_pick.walking(nav.route_generation);
         if let (Some(runtime_generation), true, true) = (carry, picking, !armed) {
             // A nearest-bank walk still choosing its bank: re-ask for it.
@@ -3125,20 +6852,21 @@ pub(crate) fn take_carried_walk(
 }
 
 fn end_route_follow(nav: &mut NavBot) {
+    if nav.bank_pick.walking(nav.route_generation) {
+        nav.bank_pick.reset();
+    }
+    nav.supersede_route_work();
     nav.route_generation = nav.route_generation.wrapping_add(1);
-    nav.route_worker = None;
     nav.pending_route = None;
-    nav.pending_assess = None;
     nav.requested_route = None;
     nav.traveller.clear();
-    nav.route = None;
+    nav.clear_route();
     nav.bank_fetch = None;
     nav.walk_request_id = 0;
     nav.route_quest_evidence = None;
     super::script_walk::owe_walk_guard_off(nav);
     nav.end_native_walk(script::native::WalkEnd::Cancelled);
     nav.admission_pending = false;
-    nav.assess_worker = None;
     nav.assess_result = None;
     nav.risk_refusal = None;
     if nav
@@ -3156,6 +6884,10 @@ fn end_route_follow(nav: &mut NavBot) {
 #[cfg(test)]
 #[path = "script_nav_facade_tests.rs"]
 mod facade_tests;
+
+#[cfg(test)]
+#[path = "route_work_tests.rs"]
+mod route_work_tests;
 
 #[cfg(test)]
 mod diagnostic_tests {
@@ -3210,7 +6942,7 @@ mod diagnostic_tests {
             state: None,
             bank_origin: Origin::Unknown,
             bank: Vec::new(),
-            live_candidates: None,
+            live_geometry: None,
             exclusions: None,
             compat_tile_intent: false,
             completion: Default::default(),
@@ -3237,5 +6969,486 @@ mod diagnostic_tests {
             .blocking_zones(&RouteOutcome::NoPath, targets)
             .is_none());
         BANK_TARGET_PROBES.with(|count| assert_eq!(count.get(), 0));
+    }
+
+    fn stage_identity(index: u64) -> WorkIdentity {
+        WorkIdentity::new(
+            RequestId::from_raw(RequestId::HOST_FIRST + index).unwrap(),
+            api::identity::ProcessIncarnation::from_start_nonce(
+                std::num::NonZeroU64::new(1).unwrap(),
+            ),
+            Scope::Slot(api::identity::SlotKey::from_incarnation(1).unwrap()),
+            None,
+        )
+        .unwrap()
+    }
+
+    fn stage_request(world: Arc<NavWorld>) -> Box<ScriptRouteRequest> {
+        let from = world.collision.origin;
+        Box::new(ScriptRouteRequest {
+            admission: crate::admission::Admission::manual(
+                FindOptions::default(),
+                Default::default(),
+                1,
+                crate::WalkGlobals::default(),
+            ),
+            generation: 1,
+            request_id: 1,
+            world,
+            from,
+            to: WorldTile {
+                x: from.x + 1,
+                z: from.z + 1,
+                ..from
+            },
+            radius: 0,
+            loc_id: None,
+            arrival: ArrivalKind::Reach,
+            opts: FindOptions::default(),
+            state: None,
+            bank_origin: Origin::Unknown,
+            bank: Vec::new(),
+            live_geometry: None,
+            exclusions: None,
+            compat_tile_intent: false,
+            completion: Default::default(),
+        })
+    }
+
+    pub(super) fn tiny_stage_request() -> Box<ScriptRouteRequest> {
+        let origin = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        stage_request(Arc::new(NavWorld::from_parts(
+            nav::collision::WorldCollision {
+                origin,
+                width: 4,
+                height: 4,
+                walk: vec![0; 4 * 4 * 4],
+                blocked: vec![0; (4usize * 4 * 4).div_ceil(64)],
+                flags: None,
+            },
+            nav::transport::TransportGraph::default(),
+            Vec::new(),
+        )))
+    }
+
+    #[test]
+    fn cooperative_route_targets_preserve_compat_center_priority() {
+        for compat_tile_intent in [false, true] {
+            let mut request = tiny_stage_request();
+            request.radius = 1;
+            request.compat_tile_intent = compat_tile_intent;
+            let expected = request.targets();
+            let job = completed_search_stage(request);
+            assert_eq!(
+                job.targets, expected,
+                "compat_tile_intent={compat_tile_intent}"
+            );
+        }
+    }
+
+    fn drive_stage(worker: &mut RouteWorkJob) -> (RouteStageResult, usize, std::time::Duration) {
+        use api::identity::Deadline;
+        use api::work::{MonotonicClock, SharedCancellation, SliceBudget, SystemClock};
+
+        let clock = SystemClock;
+        let cancellation = SharedCancellation::new();
+        let mut largest = std::time::Duration::ZERO;
+        for slices in 1..=250_000 {
+            let budget = SliceBudget::new(
+                std::num::NonZeroU32::new(64).unwrap(),
+                Deadline::after(clock.now(), std::time::Duration::from_millis(10)),
+            );
+            let mut context = StepContext::new(&clock, budget, &cancellation);
+            let started = Instant::now();
+            let outcome = worker.step(&mut context);
+            largest = largest.max(started.elapsed());
+            match outcome {
+                StepOutcome::Yielded => {}
+                StepOutcome::Completed(result) => return (result, slices, largest),
+                StepOutcome::Failed(error) => panic!("route stage failed: {error}"),
+            }
+        }
+        panic!("route stage exceeded the bounded slice count");
+    }
+
+    fn completed_search_stage(request: Box<ScriptRouteRequest>) -> Box<RouteJob> {
+        let mut job =
+            RouteJob::prepare("test", request, RouteDemandKind::Walk { authority: None }).unwrap();
+        job.identity = Some(stage_identity(0));
+        let mut worker = RouteWorkJob::new(Box::new(job));
+        let (result, _, _) = drive_stage(&mut worker);
+        let RouteStageResult::Continue(job) = result else {
+            panic!("the completed search must cross a private job boundary");
+        };
+        assert!(job.search_cursor.is_none());
+        assert!(!job.boundary_ready);
+        job
+    }
+
+    #[test]
+    fn search_result_is_an_exact_charged_input_to_the_next_route_job() {
+        let mut job = completed_search_stage(tiny_stage_request());
+        assert!(matches!(job.outcome, Some(RouteJobOutcome::Route(_))));
+        let exact = job.owned_retained_bytes().unwrap();
+        let revision = job.revision;
+        job.prepare_continuation().unwrap();
+        assert_eq!(job.revision, revision.next().unwrap());
+        assert!(
+            job.submission.input_bytes >= exact + OwnerResultReservation::storage_bytes(),
+            "the later job must charge the retained route and captured request as input",
+        );
+        assert!(
+            <RouteWorkSpec as api::work::WorkFamilySpec>::charge(job.submission())
+                .total_bytes()
+                .unwrap()
+                <= ROUTE_WORK_LIMIT_BYTES,
+        );
+    }
+
+    #[test]
+    fn manual_cancel_in_the_route_job_gap_releases_custody_and_signals_once() {
+        let mut request = tiny_stage_request();
+        let (completion, receiver) = RouteCompletion::channel();
+        request.completion = completion;
+        let job = completed_search_stage(request);
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty),
+        ));
+        let identity = job.identity.expect("executed stage identity");
+        let revision = job.revision;
+        let bytes = job.owned_retained_bytes().unwrap()
+            + std::mem::size_of::<RouteDemand>()
+            + OwnerResultReservation::storage_bytes();
+        let ledger = OwnerResultLedger::with_limits(ROUTE_WORK_LIMIT_BYTES, ROUTE_WORK_LIMIT_BYTES);
+        let reservation = ledger.try_reserve_bytes(bytes).unwrap();
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "alice".to_owned(),
+            NavBot {
+                route_generation: 1,
+                walk_request_id: 1,
+                ..NavBot::default()
+            },
+        )])));
+        retain_route_continuation(&navs, "alice", job, identity, revision, reservation);
+        assert_eq!(ledger.used_bytes(), bytes);
+        {
+            let mut all = navs.lock().unwrap();
+            let bot = all.get_mut("alice").unwrap();
+            assert!(matches!(
+                bot.pending_route.as_deref(),
+                Some(RouteDemand::Prepared(_))
+            ));
+            end_route_follow(bot);
+            assert!(bot.pending_route.is_none());
+            assert!(!bot.has_route());
+        }
+        assert_eq!(ledger.used_bytes(), 0);
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected),
+        ));
+    }
+
+    #[test]
+    fn stale_generation_identity_and_revision_do_not_publish_across_the_route_job_gap() {
+        for stale in 0..3 {
+            let job = completed_search_stage(tiny_stage_request());
+            let identity = job.identity.expect("executed stage identity");
+            let revision = job.revision;
+            let ledger =
+                OwnerResultLedger::with_limits(ROUTE_WORK_LIMIT_BYTES, ROUTE_WORK_LIMIT_BYTES);
+            let reservation = ledger
+                .try_reserve_bytes(job.owned_retained_bytes().unwrap())
+                .unwrap();
+            let navs = Arc::new(Mutex::new(HashMap::from([(
+                "alice".to_owned(),
+                NavBot {
+                    route_generation: if stale == 0 { 2 } else { 1 },
+                    walk_request_id: 1,
+                    ..NavBot::default()
+                },
+            )])));
+            retain_route_continuation(
+                &navs,
+                "alice",
+                job,
+                if stale == 1 {
+                    stage_identity(1)
+                } else {
+                    identity
+                },
+                if stale == 2 {
+                    revision.next().unwrap()
+                } else {
+                    revision
+                },
+                reservation,
+            );
+            let all = navs.lock().unwrap();
+            let bot = &all["alice"];
+            assert!(bot.pending_route.is_none(), "stale kind {stale}");
+            assert!(!bot.has_route(), "stale kind {stale}");
+            assert!(!bot.walk_outcome_failed, "stale kind {stale}");
+            assert_eq!(ledger.used_bytes(), 0, "stale kind {stale}");
+        }
+    }
+
+    #[test]
+    #[ignore = "requires BOT_ROUTE_PLAN_NAVPACK and BOT_ROUTE_PLAN_CAPTURE_OUT"]
+    fn qualifies_real_bank_route_stages_with_the_production_node_budget() {
+        let pack = std::path::PathBuf::from(
+            std::env::var_os("BOT_ROUTE_PLAN_NAVPACK").expect("set the real 289 navpack"),
+        );
+        let output = std::path::PathBuf::from(
+            std::env::var_os("BOT_ROUTE_PLAN_CAPTURE_OUT").expect("set the evidence output"),
+        );
+        assert!(pack.is_absolute() && output.is_absolute());
+        let loaded = NavWorld::load_pack(&pack).unwrap();
+        loaded
+            .bind_named_bank_facts(
+                &api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+            )
+            .unwrap();
+        let world = Arc::new(loaded);
+        assert_eq!(NODE_BUDGET, 4_000_000);
+        let mut records = Vec::new();
+        // Keep the exact-tile carried-knife case. The exact worn-only case
+        // retains its baseline refusal. Qualify the worn bank branch through
+        // the unchanged production Area path, with radius one.
+        for (case, item, radius, arrival) in [
+            ("carry-knife", 946, 0, ArrivalKind::Reach),
+            ("exact-worn-blade", 1277, 0, ArrivalKind::Reach),
+            ("worn-blade", 1277, 1, ArrivalKind::Area),
+        ] {
+            let mut request = stage_request(Arc::clone(&world));
+            request.from = WorldTile {
+                x: 3202,
+                z: 9909,
+                level: 0,
+            };
+            request.to = WorldTile {
+                x: 3209,
+                z: 9891,
+                level: 0,
+            };
+            request.radius = radius;
+            request.arrival = arrival;
+            request.opts = FindOptions {
+                allow_bank_fetch: true,
+                allow_wilderness: true,
+                ..FindOptions::default()
+            };
+            request.admission = crate::admission::Admission::manual(
+                request.opts,
+                Default::default(),
+                1,
+                crate::WalkGlobals::default(),
+            );
+            request.state = Some(WorldState {
+                stats: (0..25).map(|skill| (skill, 99)).collect(),
+                combat_level: Some(126),
+                map_members: true,
+                ..WorldState::empty()
+            });
+            request.bank_origin = Origin::Session;
+            request.bank = vec![(item, 1)];
+            if case == "exact-worn-blade" {
+                let state = request
+                    .state
+                    .as_ref()
+                    .expect("qualification request has a captured state")
+                    .clone();
+                let bank = request.bank.clone();
+                let from = request.from;
+                let to = request.to;
+                let opts = request.opts;
+                let (outcome, _) = request.drive_route_job_for_test();
+                assert!(matches!(outcome, RouteOutcome::NoPath));
+                let missing = nav::router::find_missing_item_reqs_with_avoid(
+                    &world.collision,
+                    &world.graph,
+                    from,
+                    to,
+                    opts,
+                    &state,
+                    &[],
+                )
+                .unwrap();
+                assert_eq!(
+                    missing,
+                    vec![nav::router::MissingReq::Carry { id: 946, count: 1 }],
+                );
+                assert!(matches!(
+                    nav::bank_fetch::plan_bank_fetch(
+                        &missing,
+                        &state,
+                        &bank,
+                        world.banks(),
+                        from,
+                        &world.collision,
+                        &world.graph,
+                        opts,
+                        &[],
+                    ),
+                    Err(nav::bank_fetch::BankFetchError::Unavailable),
+                ));
+                records.push(serde_json::json!({
+                    "case": case,
+                    "radius": radius,
+                    "arrival": "Reach",
+                    "legacy_result": "NoPath",
+                    "missing": [{"kind": "Carry", "id": 946, "count": 1}],
+                    "bank_rows": bank,
+                    "bank_plan_accepted": false,
+                    "qualification": "unchanged exact-tile refusal; baseline comparison is external",
+                }));
+                continue;
+            }
+            let mut captured = None;
+            let capture = allocation_counter::measure(|| {
+                let mut job =
+                    RouteJob::prepare("test", request, RouteDemandKind::Walk { authority: None })
+                        .unwrap();
+                job.identity = Some(stage_identity(0));
+                captured = Some(job);
+            });
+            let mut next = Some(Box::new(captured.unwrap()));
+            let ledger = OwnerResultLedger::with_limits(ROUTE_WORK_LIMIT_BYTES, 64 * 1024 * 1024);
+            let mut completed = false;
+            let mut saw_bank_access = false;
+            let mut saw_post_bank = false;
+            for index in 0..64 {
+                let job = next
+                    .take()
+                    .expect("the prior stage retained its continuation");
+                let phase = format!("{:?}", job.stage);
+                let purpose = match job.search_purpose {
+                    RouteSearchPurpose::Strict => "Strict",
+                    RouteSearchPurpose::StrictFirst => "StrictFirst",
+                    RouteSearchPurpose::MissingTarget => "MissingTarget",
+                    RouteSearchPurpose::MissingTargets => "MissingTargets",
+                    RouteSearchPurpose::MissingRoute => "MissingRoute",
+                    RouteSearchPurpose::BankAccess => "BankAccess",
+                    RouteSearchPurpose::PostBank => "PostBank",
+                    RouteSearchPurpose::FetchableFirst => "FetchableFirst",
+                    RouteSearchPurpose::Blocking => "Blocking",
+                    RouteSearchPurpose::Unresolved => "Unresolved",
+                    RouteSearchPurpose::MissingCarry => "MissingCarry",
+                };
+                saw_bank_access |= job.search_purpose == RouteSearchPurpose::BankAccess;
+                saw_post_bank |= job.search_purpose == RouteSearchPurpose::PostBank;
+                let input = *job.submission();
+                let charge = <RouteWorkSpec as api::work::WorkFamilySpec>::charge(&input)
+                    .total_bytes()
+                    .unwrap();
+                assert!(charge <= ROUTE_WORK_LIMIT_BYTES, "{case} job {index}");
+                assert!(capture.bytes_max <= charge as u64);
+                let held =
+                    job.owned_retained_bytes().unwrap() + OwnerResultReservation::storage_bytes();
+                let retained_routes: usize = [
+                    job.strict_fallback.as_ref(),
+                    job.selected_route.as_ref(),
+                    job.bank_access_route.as_ref(),
+                ]
+                .into_iter()
+                .flatten()
+                .map(|route| route.try_retained_bytes().unwrap())
+                .sum();
+                let mut measured = None;
+                let allocations = allocation_counter::measure(|| {
+                    let mut worker = RouteWorkJob::new(job);
+                    measured = Some(drive_stage(&mut worker));
+                });
+                let peak = held
+                    .checked_add(usize::try_from(allocations.bytes_max).unwrap())
+                    .unwrap();
+                assert!(
+                    peak <= charge,
+                    "{case} job {index}: peak={peak}, charge={charge}"
+                );
+                let (result, slices, largest) = measured.unwrap();
+                let result_bytes = route_stage_retained_bytes(&result).unwrap().unwrap_or_else(|| {
+                    if let RouteStageResult::Complete(output) = &result {
+                        panic!(
+                            "{case} job {index} {phase}/{purpose}: no route custody; detail={:?}, missing={:?}, blocked={:?}, refusal={:?}",
+                            output.detail, output.missing, output.blocked, output.refusal,
+                        );
+                    }
+                    panic!("{case} job {index}: continuation has no custody")
+                });
+                let reservation = ledger.try_reserve_bytes(result_bytes).unwrap();
+                records.push(serde_json::json!({
+                    "case": case,
+                    "radius": radius,
+                    "arrival": format!("{arrival:?}"),
+                    "job": index,
+                    "phase_at_admission": phase,
+                    "next_search_at_admission": purpose,
+                    "input_bytes": input.input_bytes,
+                    "scratch_bytes": input.scratch_bytes,
+                    "result_bound_bytes": input.result_bytes,
+                    "charge_bytes": charge,
+                    "exact_initial_owned_bytes": held,
+                    "retained_earlier_route_bytes": retained_routes,
+                    "new_allocation_peak_bytes": allocations.bytes_max,
+                    "whole_job_peak_bytes": peak,
+                    "exact_terminal_bytes": result_bytes,
+                    "slices": slices,
+                    "largest_slice_ns": largest.as_nanos(),
+                }));
+                match result {
+                    RouteStageResult::Continue(mut job) => {
+                        assert!(job.search_cursor.is_none());
+                        job.prepare_continuation().unwrap();
+                        job.identity = Some(stage_identity(index + 1));
+                        job.gap_custody = Some(reservation);
+                        next = Some(job);
+                    }
+                    RouteStageResult::Complete(result) => {
+                        let RouteJobOutcome::Bank {
+                            route,
+                            final_route,
+                            steps,
+                        } = result.outcome
+                        else {
+                            panic!("{case} must execute the real bank branch, not Path or NoPath");
+                        };
+                        assert!(route.as_ref().unwrap().try_retained_bytes().unwrap() > 0);
+                        assert!(final_route.try_retained_bytes().unwrap() > 0);
+                        assert!(!steps.is_empty());
+                        if case == "worn-blade" {
+                            assert!(steps
+                                .iter()
+                                .any(|step| matches!(step, BankStep::Wear { id: 1277 })));
+                        }
+                        drop(reservation);
+                        completed = true;
+                        break;
+                    }
+                }
+            }
+            assert!(completed && saw_bank_access && saw_post_bank, "{case}");
+            assert_eq!(ledger.used_bytes(), 0);
+        }
+        std::fs::write(
+            output,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "navpack": pack,
+                "node_budget": NODE_BUDGET,
+                "job_limit_bytes": ROUTE_WORK_LIMIT_BYTES,
+                "result_limit_bytes": 64 * 1024 * 1024,
+                "cases": records,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
     }
 }

@@ -2,7 +2,7 @@ use std::fmt;
 use std::sync::atomic::Ordering;
 
 use api::snapshot::WorldTile;
-use nav::bank_fetch::{plan_bank_fetch, BankRows, BankStep};
+use nav::bank_fetch::{plan_bank_fetch, BankFetchError, BankRows};
 use nav::map::identity::Digest;
 use nav::map::spatial::{snap_walkable, GameTile};
 use nav::router::{FindOptions, Leg, Route};
@@ -29,7 +29,7 @@ impl FocusToken {
     pub fn capture(arm: &SlotArm) -> Self {
         Self {
             lifetime: arm.queue_owner,
-            world_epoch: arm.world_generation.load(Ordering::Acquire),
+            world_epoch: arm.world_generation(),
         }
     }
 }
@@ -944,32 +944,22 @@ fn blocking_zones_for_walk(
         slot.state,
         &[],
     )?;
-    let plan = plan_bank_fetch(
+    match plan_bank_fetch(
         &missing,
         slot.state,
         &nav::bank_fetch::planning_rows(slot.bank.origin, &slot.bank.rows, &missing),
         world.banks(),
         from,
         &world.collision,
-    )?;
-    let access = plan.steps.iter().find_map(|step| match step {
-        BankStep::Walk { x, z, level } => Some(WorldTile {
-            x: *x,
-            z: *z,
-            level: *level,
-        }),
-        _ => None,
-    })?;
-    nav::router::find_blocking_zones(
-        &world.collision,
         &world.graph,
-        from,
-        access,
         options,
-        slot.state,
         &[],
-    )
-    .filter(|keys| !keys.is_empty())
+    ) {
+        Err(BankFetchError::Access { blocked_zones, .. }) if !blocked_zones.is_empty() => {
+            Some(blocked_zones)
+        }
+        _ => None,
+    }
 }
 impl MapCommand {
     pub fn destination(&self) -> Tile {

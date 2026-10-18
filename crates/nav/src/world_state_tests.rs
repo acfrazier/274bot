@@ -681,3 +681,174 @@ fn combat_level_uses_ready_base_rows_not_boosts() {
         );
     }
 }
+
+#[test]
+fn world_state_growth_bound_accounts_current_and_rehash_capacity() {
+    let mut state = WorldState::empty();
+    state.inv.insert(995, 10);
+    state.worn.insert(1712);
+    let inventory_additions = state.inv.capacity() - state.inv.len() + 1;
+    let worn_additions = state.worn.capacity() - state.worn.len() + 1;
+    let bound = state
+        .growth_bound(inventory_additions, worn_additions)
+        .unwrap();
+
+    assert_eq!(
+        bound.inventory_old_bytes,
+        map_storage_bound(
+            state.inv.capacity(),
+            std::mem::size_of::<(i32, i32)>(),
+            std::mem::align_of::<(i32, i32)>()
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        bound.worn_old_bytes,
+        map_storage_bound(
+            state.worn.capacity(),
+            std::mem::size_of::<i32>(),
+            std::mem::align_of::<i32>()
+        )
+        .unwrap()
+    );
+    assert!(bound.inventory_new_bytes > 0);
+    assert!(bound.worn_new_bytes > 0);
+    assert_eq!(state.inv.len(), 1);
+    assert_eq!(state.worn.len(), 1);
+    assert!(state.growth_bound(usize::MAX, 0).is_none());
+}
+
+#[test]
+fn world_state_growth_bound_has_no_new_charge_without_growth() {
+    let mut state = WorldState::empty();
+    state.inv.reserve(8);
+    state.worn.reserve(8);
+    state.inv.insert(995, 10);
+    state.worn.insert(1712);
+    let bound = state.growth_bound(0, 0).unwrap();
+    assert_eq!(bound.inventory_new_bytes, 0);
+    assert_eq!(bound.worn_new_bytes, 0);
+}
+
+#[test]
+fn world_state_growth_bound_covers_small_table_allocations() {
+    let mut state = WorldState::empty();
+    let empty_bound = state.growth_bound(1, 1).unwrap();
+
+    let inventory_initial = allocation_counter::measure(|| {
+        state.inv.insert(995, 10);
+    });
+    let worn_initial = allocation_counter::measure(|| {
+        state.worn.insert(1712);
+    });
+    let inventory_initial_bytes = usize::try_from(inventory_initial.bytes_total)
+        .expect("inventory allocation bytes fit usize");
+    let worn_initial_bytes =
+        usize::try_from(worn_initial.bytes_total).expect("worn allocation bytes fit usize");
+    assert!(inventory_initial.bytes_total > 0);
+    assert!(worn_initial.bytes_total > 0);
+    assert!(
+        inventory_initial_bytes <= empty_bound.inventory_new_bytes,
+        "inventory first allocation {} exceeds {}",
+        inventory_initial_bytes,
+        empty_bound.inventory_new_bytes
+    );
+    assert!(
+        worn_initial_bytes <= empty_bound.worn_new_bytes,
+        "worn first allocation {} exceeds {}",
+        worn_initial_bytes,
+        empty_bound.worn_new_bytes
+    );
+
+    let inventory_additions = state.inv.capacity() - state.inv.len() + 1;
+    let worn_additions = state.worn.capacity() - state.worn.len() + 1;
+    assert!(inventory_additions <= 64);
+    assert!(worn_additions <= 64);
+    let growth_bound = state
+        .growth_bound(inventory_additions, worn_additions)
+        .unwrap();
+    assert!(growth_bound.inventory_old_bytes >= inventory_initial_bytes);
+    assert!(growth_bound.worn_old_bytes >= worn_initial_bytes);
+
+    let inventory_growth = allocation_counter::measure(|| {
+        for offset in 0..inventory_additions {
+            state.inv.insert(1_000 + offset as i32, 1);
+        }
+    });
+    let worn_growth = allocation_counter::measure(|| {
+        for offset in 0..worn_additions {
+            state.worn.insert(2_000 + offset as i32);
+        }
+    });
+    let inventory_growth_bytes =
+        usize::try_from(inventory_growth.bytes_total).expect("inventory growth bytes fit usize");
+    let worn_growth_bytes =
+        usize::try_from(worn_growth.bytes_total).expect("worn growth bytes fit usize");
+    assert!(inventory_growth.bytes_total > 0);
+    assert!(worn_growth.bytes_total > 0);
+    assert!(
+        inventory_growth_bytes <= growth_bound.inventory_new_bytes,
+        "inventory growth {} exceeds {}",
+        inventory_growth_bytes,
+        growth_bound.inventory_new_bytes
+    );
+    assert!(
+        worn_growth_bytes <= growth_bound.worn_new_bytes,
+        "worn growth {} exceeds {}",
+        worn_growth_bytes,
+        growth_bound.worn_new_bytes
+    );
+}
+#[test]
+fn world_state_shared_retained_bytes_counts_one_arc_and_owned_buffers() {
+    let mut state = WorldState::empty();
+    state.inv.reserve(4);
+    state.worn.reserve(4);
+    state.stats.reserve(4);
+    state.varps.reserve(4);
+    state.quests.reserve(2);
+    state.quests.insert(String::with_capacity(24));
+
+    let (arc_layout, _) = std::alloc::Layout::new::<[std::sync::atomic::AtomicUsize; 2]>()
+        .extend(std::alloc::Layout::new::<WorldState>())
+        .unwrap();
+    let expected = [
+        Some(arc_layout.pad_to_align().size()),
+        map_storage_bound(
+            state.inv.capacity(),
+            std::mem::size_of::<(i32, i32)>(),
+            std::mem::align_of::<(i32, i32)>(),
+        ),
+        map_storage_bound(
+            state.worn.capacity(),
+            std::mem::size_of::<i32>(),
+            std::mem::align_of::<i32>(),
+        ),
+        map_storage_bound(
+            state.stats.capacity(),
+            std::mem::size_of::<(i32, i32)>(),
+            std::mem::align_of::<(i32, i32)>(),
+        ),
+        map_storage_bound(
+            state.varps.capacity(),
+            std::mem::size_of::<(i32, i32)>(),
+            std::mem::align_of::<(i32, i32)>(),
+        ),
+        map_storage_bound(
+            state.quests.capacity(),
+            std::mem::size_of::<String>(),
+            std::mem::align_of::<String>(),
+        ),
+        state
+            .quests
+            .iter()
+            .map(String::capacity)
+            .sum::<usize>()
+            .into(),
+    ]
+    .into_iter()
+    .try_fold(0usize, |total, part| total.checked_add(part?))
+    .unwrap();
+
+    assert_eq!(state.try_shared_retained_bytes(), Some(expected));
+}

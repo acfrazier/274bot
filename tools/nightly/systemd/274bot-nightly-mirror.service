@@ -1,0 +1,11 @@
+# Review machine (user unit): mirror the last 7 days of archived runs.
+# Install: ~/.config/systemd/user/274bot-nightly-mirror.service, script at
+# ~/.local/lib/274bot-nightly/mirror-pull.sh, settings in
+# ~/.config/274bot-nightly/mirror.env (host, key, known_hosts, folder).
+[Unit]
+Description=Mirror the last 7 days of 274bot nightly runs from the archive
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/274bot-nightly/mirror.env
+ExecStart=%h/.local/lib/274bot-nightly/mirror-pull.sh
