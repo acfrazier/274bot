@@ -174,7 +174,11 @@ export function tick(api) {
     snapshot.bank_loaded = true;
     snapshot.bank_generation = 1;
 
-    let mut batches = Vec::new();
+    // These protocol, lineage, and async-context fixtures acknowledge host pages explicitly.
+    // Bank execution behavior is covered separately by the BankSlot fixtures.
+    let mut bank_open_id = None;
+    let mut bank_live = false;
+    let mut bank_completed = false;
     for tick in 1..=12 {
         if tick >= 4 {
             snapshot.here = Some(TileInput {
@@ -183,8 +187,66 @@ export function tick(api) {
                 level: 0,
             });
         }
-        post_test_tick(&iso, &mut snapshot, tick);
-        batches.extend(iso.drain_seat_batches());
+        if let Some(id) = bank_open_id.filter(|_| !bank_live) {
+            let live = [root_seat_entry(id, NativeKind::BankPlan)];
+            let details = [SeatLiveDetails {
+                id,
+                phase: script::native::NativePhase::Waiting,
+                prompt: None,
+            }];
+            let seat_page = SeatPageInput::new(&live, &[], &details, 0).unwrap();
+            post_test_tick_with_native(
+                &iso,
+                &mut snapshot,
+                tick,
+                NativeFactsInput {
+                    seat_page: Some(seat_page),
+                    ..NativeFactsInput::default()
+                },
+            );
+            bank_live = true;
+        } else if let Some(id) = bank_open_id.filter(|_| !bank_completed) {
+            let terminal = [SeatResult {
+                id,
+                seq: 1,
+                outcome: SeatTerminal::Done,
+                prior_parent: None,
+                session: Some(id),
+                authority_revoked: false,
+            }];
+            let value = serde_json::Value::Bool(true);
+            let encoded_value = script::channel::encode(&value).unwrap();
+            let values = [SeatResultValue {
+                id,
+                value: &encoded_value,
+            }];
+            let seat_page = SeatPageInput::new(&[], &terminal, &[], 0)
+                .unwrap()
+                .with_result_values(&values)
+                .unwrap();
+            post_test_tick_with_native(
+                &iso,
+                &mut snapshot,
+                tick,
+                NativeFactsInput {
+                    seat_page: Some(seat_page),
+                    ..NativeFactsInput::default()
+                },
+            );
+            bank_completed = true;
+        } else {
+            post_test_tick(&iso, &mut snapshot, tick);
+        }
+        let tick_batches = iso.drain_seat_batches();
+        if bank_open_id.is_none() {
+            if let Some(start) = seat_starts(&tick_batches)
+                .find(|start| start.kind == NativeKind::BankPlan)
+            {
+                assert_bank_start_operation(start, "Open");
+                bank_open_id = Some(start.id);
+            }
+        }
+        batches.extend(tick_batches);
         if iso.probe("globalThis.__rootDone").unwrap() == true {
             break;
         }
@@ -425,10 +487,76 @@ export function tick(api) {
     snapshot.bank_open = true;
     snapshot.bank_loaded = true;
     snapshot.bank_generation = 1;
-    let mut batches = Vec::new();
-    for tick in 1..=4 {
-        post_test_tick(&iso, &mut snapshot, tick);
-        batches.extend(iso.drain_seat_batches());
+    // This protocol and async-context fixture acknowledges host pages explicitly.
+    // Bank execution behavior is covered separately by the BankSlot fixtures.
+    let mut bank_open_id = None;
+    let mut bank_live = false;
+    let mut next_terminal_seq = 1;
+    for tick in 1..=8 {
+        if let Some(id) = bank_open_id {
+            if !bank_live {
+                let live = [root_seat_entry(id, NativeKind::BankPlan)];
+                let details = [SeatLiveDetails {
+                    id,
+                    phase: script::native::NativePhase::Waiting,
+                    prompt: None,
+                }];
+                let seat_page = SeatPageInput::new(&live, &[], &details, 0).unwrap();
+                post_test_tick_with_native(
+                    &iso,
+                    &mut snapshot,
+                    tick,
+                    NativeFactsInput {
+                        seat_page: Some(seat_page),
+                        ..NativeFactsInput::default()
+                    },
+                );
+                bank_live = true;
+            } else {
+                let terminal = [SeatResult {
+                    id,
+                    seq: next_terminal_seq,
+                    outcome: SeatTerminal::Done,
+                    prior_parent: None,
+                    session: Some(id),
+                    authority_revoked: false,
+                }];
+                let value = serde_json::Value::Bool(true);
+                let encoded_value = script::channel::encode(&value).unwrap();
+                let values = [SeatResultValue {
+                    id,
+                    value: &encoded_value,
+                }];
+                let seat_page = SeatPageInput::new(&[], &terminal, &[], 0)
+                    .unwrap()
+                    .with_result_values(&values)
+                    .unwrap();
+                post_test_tick_with_native(
+                    &iso,
+                    &mut snapshot,
+                    tick,
+                    NativeFactsInput {
+                        seat_page: Some(seat_page),
+                        ..NativeFactsInput::default()
+                    },
+                );
+                bank_open_id = None;
+                bank_live = false;
+                next_terminal_seq += 1;
+            }
+        } else {
+            post_test_tick(&iso, &mut snapshot, tick);
+        }
+        let tick_batches = iso.drain_seat_batches();
+        if bank_open_id.is_none() {
+            if let Some(start) = seat_starts(&tick_batches)
+                .find(|start| start.kind == NativeKind::BankPlan)
+            {
+                assert_bank_start_operation(start, "Open");
+                bank_open_id = Some(start.id);
+            }
+        }
+        batches.extend(tick_batches);
     }
 
     assert_eq!(
@@ -794,9 +922,11 @@ export function tick(api) {
             authority_revoked: false,
         },
     ];
+    let bank_value_json = serde_json::Value::Null;
+    let bank_value_bytes = script::channel::encode(&bank_value_json).unwrap();
     let bank_value = [SeatResultValue {
         id: bank_id,
-        value: b"null",
+        value: &bank_value_bytes,
     }];
     let terminal_page = SeatPageInput::new(&[], &terminal, &[], 0)
         .unwrap()
