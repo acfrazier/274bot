@@ -41,7 +41,7 @@ import time
 import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 IS_WINDOWS = os.name == "nt"
@@ -275,147 +275,179 @@ def git_env() -> dict:
     return dict(os.environ, GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
 
 
-def _is_junction(path: Path) -> bool:
-    isjunction = getattr(os.path, "isjunction", None)
-    return bool(isjunction and isjunction(path))
+# A Windows stat result has this bit in `st_file_attributes` for a junction,
+# a directory symlink or any other reparse point.
+_REPARSE_POINT = stat.FILE_ATTRIBUTE_REPARSE_POINT
 
 
-def _is_link(path: Path) -> bool:
-    """True for a symlink or a Windows junction. Neither is ever followed."""
-    return os.path.islink(path) or _is_junction(path)
+def _kind(info: os.stat_result, link: bool) -> str:
+    """"link", "dir" or "file" for one `lstat` result.
 
-
-def _unlink_link(path: Path) -> None:
-    """Remove a link itself, never the thing it points to."""
-    if _is_junction(path):
-        try:
-            # Windows removes a directory junction with rmdir, not unlink.
-            os.rmdir(path)
-            return
-        except OSError:
-            pass
-    os.unlink(path)
-
-
-def _chmod_real(path: Path, root: Path) -> None:
-    """Add the permissions that removal needs to one real file or directory.
-
-    `lstat` decides what `path` is, so a link is never chmod-ed through to
-    the file or directory it points to, and only paths at or under `root`
-    (the tree that is being removed) are touched. A directory gets owner
-    read, write and search. A file gets owner write.
+    `link` is the caller's symlink and junction check. A directory with the
+    Windows reparse-point bit is a link too. The disk code never walks into
+    a link, never measures what it points to and never changes its
+    permissions. It removes the link itself.
     """
-    info = path.lstat()
-    if _is_link(path):
-        raise OSError(f"refusing to change permissions through a link: {path}")
-    root_abs = os.path.abspath(root)
-    target_abs = os.path.abspath(path)
-    try:
-        under_root = os.path.commonpath((root_abs, target_abs)) == root_abs
-    except ValueError:
-        under_root = False
-    if not under_root:
-        raise OSError(f"refusing to change permissions outside {root}: {path}")
+    if link or stat.S_ISLNK(info.st_mode):
+        return "link"
     if stat.S_ISDIR(info.st_mode):
-        os.chmod(path, stat.S_IMODE(info.st_mode) | stat.S_IRWXU)
-    else:
-        os.chmod(path, stat.S_IMODE(info.st_mode) | stat.S_IWRITE)
+        if getattr(info, "st_file_attributes", 0) & _REPARSE_POINT:
+            return "link"
+        return "dir"
+    return "file"
 
 
-def _fix_permissions(root: Path) -> None:
-    """Make a real directory tree removable before `shutil.rmtree` walks it.
+def _path_kind(path: Path) -> tuple[str, os.stat_result]:
+    isjunction = getattr(os.path, "isjunction", None)
+    info = os.lstat(path)
+    return _kind(info, os.path.islink(path) or bool(isjunction and isjunction(path))), info
 
-    A directory that cannot be listed makes `rmtree` give up on the whole
-    tree, and a read-only file cannot be unlinked on Windows (git's object
-    files), so both get their permissions fixed up front, top down. Links
-    are left alone. `rmtree` unlinks them without following them. Raise
-    OSError when a directory still cannot be listed after the fix.
+
+def _entry_kind(entry: os.DirEntry) -> tuple[str, os.stat_result]:
+    is_junction = getattr(entry, "is_junction", None)
+    info = entry.stat(follow_symlinks=False)
+    return _kind(info, entry.is_symlink() or bool(is_junction and is_junction())), info
+
+
+def _walk(top: Path, top_info: os.stat_result, *, prepare: Callable[[Path], None] | None = None,
+          onerror: Callable[[OSError], None] | None = None
+          ) -> Iterator[tuple[Path, str, os.stat_result]]:
+    """Yield each entry under the real directory `top`, then `top` itself.
+
+    This is the one traversal that `dir_size` and `rmtree` share. Each item
+    is `(path, kind, lstat result)`, with kind "link", "dir" or "file" (see
+    `_kind`). A directory comes after everything in it, so the caller can
+    remove each item when it arrives. The walk goes only into real
+    directories. A symlink or a junction comes out as one "link" item and
+    the walk never goes into it, so every item is inside `top`.
+
+    `prepare(folder)` runs on each real directory before the walk lists it.
+    An error from `prepare`, from a listing or from an `lstat` goes to
+    `onerror`, and the walk continues without that part. With no `onerror`
+    the error is raised. An entry that is gone before the walk reaches it
+    is skipped.
     """
-    def onerror(error: OSError) -> None:
-        raise error
+    def listing(folder: Path) -> Iterator[os.DirEntry]:
+        try:
+            if prepare is not None:
+                prepare(folder)
+            with os.scandir(folder) as entries:
+                return iter(list(entries))
+        except FileNotFoundError:
+            return iter(())
+        except OSError as error:
+            if onerror is None:
+                raise
+            onerror(error)
+            return iter(())
 
-    info = root.lstat()
-    if stat.S_ISDIR(info.st_mode) and stat.S_IMODE(info.st_mode) & stat.S_IRWXU != stat.S_IRWXU:
-        _chmod_real(root, root)
-    for current, dirs, files in os.walk(root, onerror=onerror):
-        for name in dirs + files:
-            entry = Path(current) / name
-            if _is_link(entry):
-                continue
-            try:
-                info = entry.lstat()
-            except FileNotFoundError:
-                continue
-            mode = stat.S_IMODE(info.st_mode)
-            if stat.S_ISDIR(info.st_mode):
-                if mode & stat.S_IRWXU != stat.S_IRWXU:
-                    _chmod_real(entry, root)
-            elif not mode & stat.S_IWRITE:
-                _chmod_real(entry, root)
+    # An explicit stack, so a deep tree cannot raise RecursionError.
+    stack = [(top, top_info, listing(top))]
+    while stack:
+        folder, info, entries = stack[-1]
+        entry = next(entries, None)
+        if entry is None:
+            stack.pop()
+            yield folder, "dir", info
+            continue
+        path = Path(entry.path)
+        try:
+            kind, child_info = _entry_kind(entry)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            if onerror is None:
+                raise
+            onerror(error)
+            continue
+        if kind == "dir":
+            stack.append((path, child_info, listing(path)))
+        else:
+            yield path, kind, child_info
+
+
+def _add_permissions(path: Path, bits: int) -> None:
+    """Add `bits` to the mode of one real file or directory.
+
+    `lstat` decides what `path` is. A link is refused, so a fix never goes
+    through a symlink or a junction to the thing that it points to. The
+    callers pass only `rmtree`'s own path or paths that `_walk` reached, so
+    every fix is inside the tree that is being removed. Bits are only
+    added, never taken away.
+    """
+    kind, info = _path_kind(path)
+    if kind == "link":
+        raise OSError(f"refusing to change permissions through a link: {path}")
+    mode = stat.S_IMODE(info.st_mode)
+    if mode & bits == bits:
+        return
+    if os.chmod in os.supports_follow_symlinks:
+        os.chmod(path, mode | bits, follow_symlinks=False)
+    else:
+        os.chmod(path, mode | bits)
+
+
+def _make_listable(folder: Path) -> None:
+    # Owner read, write and search: list the folder and remove its entries.
+    _add_permissions(folder, stat.S_IRWXU)
+
+
+def _remove_link(path: Path, info: os.stat_result) -> None:
+    """Remove a symlink or a junction itself, never the thing it points to."""
+    if stat.S_ISDIR(info.st_mode):
+        # A Windows junction or another directory reparse point. rmdir
+        # removes only the link. It never removes the contents of a folder.
+        os.rmdir(path)
+    else:
+        os.unlink(path)
+
+
+def _remove_file(path: Path) -> None:
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        return
+    except OSError:
+        # Windows refuses to unlink a read-only file (git's object files).
+        # Add owner write and try once more.
+        _add_permissions(path, stat.S_IWRITE)
+        os.unlink(path)
 
 
 def rmtree(path: Path) -> None:
-    """Remove a tree, including git's read-only object files on Windows.
+    """Remove a file, a link or a directory tree.
 
-    A symlink or a Windows junction, at the top or nested, is unlinked and
-    never followed, so nothing outside `path` is changed or removed.
-    Permission fixes go only to real files and directories under `path`.
-    Raise OSError when the tree cannot be removed. Return only when `path`
-    no longer exists.
+    The removal uses `_walk`, so it never goes into a symlink or a junction,
+    at the top or nested. Each link is removed as a link, and nothing
+    outside `path` is changed or removed. Each real directory gets owner
+    read, write and search before the walk lists it. A file that cannot be
+    unlinked gets owner write and one more try. The removal continues past
+    a failure and removes what it can. Raise one OSError when any part
+    could not be removed. Return only when `path` no longer exists.
     """
     try:
-        info = path.lstat()
+        kind, info = _path_kind(path)
     except FileNotFoundError:
         return
-    if _is_link(path):
-        _unlink_link(path)
-    elif not stat.S_ISDIR(info.st_mode):
-        try:
-            os.unlink(path)
-        except OSError:
-            _chmod_real(path, path)
-            os.unlink(path)
+    failures: list[OSError] = []
+    if kind == "dir":
+        items = _walk(path, info, prepare=_make_listable, onerror=failures.append)
     else:
-        _fix_permissions(path)
-        failures: list[OSError] = []
-
-        def retry(func, target, _exc):
-            # This hook must not raise. Python 3.14's shutil calls the hook
-            # again, for the parent folder, when the hook raises an OSError
-            # from a step inside its own try block. A failed retry is
-            # recorded here. shutil then removes what it can, and the
-            # checks below raise one OSError for the whole tree.
-            if func is os.close:
-                return
-            target = Path(target)
-            try:
-                target.lstat()
-            except FileNotFoundError:
-                return
-            except OSError as error:
-                failures.append(error)
-                return
-            try:
-                if _is_link(target):
-                    _unlink_link(target)
-                    return
-                _chmod_real(target, path)
-                if func in (os.unlink, os.rmdir):
-                    func(target)
-                # For a failed listing or open, shutil has already given up
-                # on that folder and cannot resume it from here. The folder
-                # stays in place, and the check below raises. The permission
-                # pass above makes this case rare. It fixed every folder
-                # that could not be listed before shutil started.
-            except OSError as error:
-                failures.append(error)
-
-        if sys.version_info >= (3, 12):
-            shutil.rmtree(path, onexc=retry)
-        else:
-            shutil.rmtree(path, onerror=retry)
-        if failures:
-            raise OSError(f"could not remove {path}: {failures[0]}")
+        items = iter([(path, kind, info)])
+    for item, item_kind, item_info in items:
+        try:
+            if item_kind == "link":
+                _remove_link(item, item_info)
+            elif item_kind == "file":
+                _remove_file(item)
+            else:
+                os.rmdir(item)
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            failures.append(error)
+    if failures:
+        raise OSError(f"could not remove {path}: {failures[0]}")
     if os.path.lexists(path):
         raise OSError(f"could not remove {path}: the path still exists")
 
@@ -466,28 +498,24 @@ def fmt_gb(nbytes: int) -> str:
 
 
 def dir_size(path: Path) -> int:
-    """Total size of the files under `path` in bytes; 0 when it does not exist.
+    """Total size of the real files under `path` in bytes; 0 when it does not exist.
 
-    Never follow a symlink or a junction. A link counts as its own `lstat`
-    size, and a linked directory is not walked. Raise OSError when any part
-    of the tree cannot be listed or measured. A partial total is never
-    returned as if it were the true size.
+    The size comes from `_walk`, the same traversal that `rmtree` uses. It
+    never follows a symlink or a junction. A link counts as 0 bytes, at the
+    top or nested, and the thing that it points to is not measured. Raise
+    OSError when any part of the tree cannot be listed or measured. A
+    partial total is never returned as if it were the true size.
     """
     try:
-        info = path.lstat()
+        kind, info = _path_kind(path)
     except FileNotFoundError:
         return 0
-    if _is_link(path) or not stat.S_ISDIR(info.st_mode):
+    if kind == "link":
+        return 0
+    if kind == "file":
         return info.st_size
-
-    def onerror(error: OSError) -> None:
-        raise error
-
-    total = 0
-    for root, _dirs, files in os.walk(path, onerror=onerror):
-        for name in files:
-            total += os.lstat(os.path.join(root, name)).st_size
-    return total
+    return sum(item_info.st_size for _item, item_kind, item_info in _walk(path, info)
+               if item_kind == "file")
 
 
 def free_bytes(path: Path) -> int:

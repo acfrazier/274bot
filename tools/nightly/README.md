@@ -330,9 +330,14 @@ start at all while BotTest is logged off (after a reboot, the host does not log 
 itself), so `274bot-nightly-catchup` runs at BotTest's next logon: if the last 23:00
 night left no `state\started-<date>` marker, it writes that night as a run with every
 lane and cell `UNAVAILABLE: BotTest console session not active at the scheduled 23:00
-start`. Catch-up writes only that summary. It does not run the disk guard. Its task
-limit is 30 minutes, and a large removal killed at that limit would leave the missed
-night with no summary at all. The next scheduled night runs the guard again.
+start`. Catch-up does not run the disk guard. Its task limit is 30 minutes, and a
+large removal killed at that limit would leave the missed night with no summary at
+all. The next scheduled night runs the guard again. Catch-up still runs the sources
+step (1 below) before it writes the summary, because the summary names the branch's
+commit and lists that commit's cells. On this host that step removes `trees\<branch>`
+and clones it again from the local mirror. That folder holds only sources, not Cargo
+output. If that step fails, catch-up still writes the summary, with the sources
+error in it. If the task is stopped during that step, the missed night has no summary.
 
 **One night, in order, each step with its own deadline:**
 
@@ -395,9 +400,12 @@ removes the other target folders too, and it logs one line per removal with
 the sizes. If free space is still below the floor after that, the whole night
 is `UNAVAILABLE` with that reason and nothing is built, so the nightly cannot
 fill the disk. A removal that fails also makes the night `UNAVAILABLE`.
-Removal never follows a symlink or a junction. It unlinks the link itself.
-It changes permissions only on real files and folders inside the folder that
-it removes. The logon catch-up does not run the guard (see Tasks above).
+Measurement and removal use one walk of the folder. That walk never goes into a
+symlink or a junction, at the top or inside the folder. A link counts as 0 bytes,
+and removal deletes the link itself (a junction with `rmdir`), never what it points
+to. Permission fixes go only to real files and folders inside the folder that is
+being removed, so no file outside it changes, not even its mode.
+The logon catch-up does not run the guard (see Tasks above).
 A setting of 0 turns that check off. Both checks are off by default on
 Linux, whose disk is 100 GB in total and whose tree path was already stable.
 They run when the variables are set there.

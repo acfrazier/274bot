@@ -5,9 +5,12 @@ The guard stops the Windows nightly from filling its disk: a Cargo target
 folder over `NIGHTLY_TARGET_CAP_GB` is removed before the lanes and before
 the build, and the night is UNAVAILABLE when the drive still has less free
 space than `NIGHTLY_MIN_FREE_GB` after that. A target folder whose size
-cannot be read in full counts as over the cap. Removal never follows a
-symlink or a Windows junction. The logon catch-up writes its UNAVAILABLE
-summary without running the guard. The stable tree path
+cannot be read in full counts as over the cap. Measurement and removal
+share one walker that never goes into a symlink or a Windows junction, at
+the top or nested. A link counts as 0 bytes and is removed as a link, and
+nothing outside the target changes, not even a read-only file's mode. The
+logon catch-up writes its UNAVAILABLE summary without running the guard.
+The stable tree path
 (`trees/<branch>`, a clean clone into the same path every night) stops Cargo
 from adding a new set of artefacts for every new source path.
 
@@ -456,27 +459,25 @@ class RmtreeTests(unittest.TestCase):
                 if outside.exists():
                     os.chmod(outside, 0o755)
 
-    def test_a_nested_symlink_to_an_outside_folder_is_unlinked_not_followed(self):
+    def test_read_only_files_and_folders_inside_the_target_are_removed(self):
+        # git's object files are read-only, and Windows refuses to unlink a
+        # read-only file. A folder without owner write blocks the removal of
+        # its entries on Linux.
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            outside, keep = make_outside(root)
-            outside_file = root / "outside.bin"
-            outside_file.write_bytes(b"z" * 100)
-            before_dir = mode_of(outside)
-            before_file = mode_of(outside_file)
-            target = make_target(root, "dev-ci", 500)
-            make_symlink(target / "linkdir", outside, directory=True)
-            make_symlink(target / "linkfile", outside_file)
+            target = make_target(Path(tmp), "dev-ci", 500)
+            sub = target / "objects"
+            sub.mkdir()
+            readonly = sub / "pack.idx"
+            readonly.write_bytes(b"p" * 300)
+            os.chmod(readonly, 0o444)
+            os.chmod(sub, 0o555)
             try:
+                self.assertEqual(rn.dir_size(target), 800)
                 rn.rmtree(target)
                 self.assertFalse(os.path.lexists(target))
-                self.assertEqual(keep.read_text(encoding="utf-8"), "keep\n")
-                self.assertEqual(outside_file.read_bytes(), b"z" * 100)
-                self.assertEqual(mode_of(outside), before_dir)
-                self.assertEqual(mode_of(outside_file), before_file)
             finally:
-                if outside.exists():
-                    os.chmod(outside, 0o755)
+                if sub.exists():
+                    os.chmod(sub, 0o755)
 
     def test_a_removal_that_fails_twice_raises(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -509,18 +510,115 @@ class RmtreeTests(unittest.TestCase):
             self.assertEqual(keep.read_text(encoding="utf-8"), "keep\n")
             self.assertEqual(mode_of(outside), before)
 
-    @unittest.skipUnless(os.name == "nt", "junctions exist only on Windows")
-    def test_a_nested_junction_to_an_outside_folder_is_unlinked_not_followed(self):
+
+def make_readonly_outside(root: Path) -> tuple[Path, Path]:
+    """A folder outside the target under test, with one read-only 8000-byte file in it."""
+    outside = root / "outside"
+    outside.mkdir()
+    readonly = outside / "readonly.bin"
+    readonly.write_bytes(b"r" * 8000)
+    os.chmod(readonly, 0o444)
+    return outside, readonly
+
+
+def outside_state(outside: Path) -> tuple:
+    """The folder's mode and, for each entry in it, its name, mode and bytes."""
+    return (mode_of(outside),
+            sorted((entry.name, mode_of(entry), entry.read_bytes()) for entry in outside.iterdir()))
+
+
+class NestedLinkCases:
+    """A link inside a target folder, to a folder outside it that holds a read-only file.
+
+    The link is one level down (`dev-ci/sub/link`). Removal and measurement
+    must not go through it: the outside folder, its file, the file's bytes
+    and both modes stay the same, and the outside bytes are not counted.
+    Each subclass makes one kind of link.
+    """
+
+    def make_dir_link(self, link: Path, target: Path) -> None:
+        raise NotImplementedError
+
+    def make_case(self, root: Path, size: int) -> tuple[Path, Path, Path]:
+        outside, readonly = make_readonly_outside(root)
+        self.assertEqual(mode_of(readonly), 0o444)
+        target = make_target(root, "dev-ci", size)
+        (target / "sub").mkdir()
+        self.make_dir_link(target / "sub" / "link", outside)
+        # The link works: the outside file is visible through it.
+        self.assertEqual((target / "sub" / "link" / "readonly.bin").read_bytes(), b"r" * 8000)
+        return outside, readonly, target
+
+    def test_rmtree_removes_the_link_and_leaves_the_outside_folder_unchanged(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            outside, keep = make_outside(root)
-            before = mode_of(outside)
-            target = make_target(root, "dev-ci", 500)
-            make_junction(target / "linkdir", outside)
+            outside, readonly, target = self.make_case(Path(tmp), 500)
+            before = outside_state(outside)
             rn.rmtree(target)
             self.assertFalse(os.path.lexists(target))
-            self.assertEqual(keep.read_text(encoding="utf-8"), "keep\n")
-            self.assertEqual(mode_of(outside), before)
+            self.assertEqual(outside_state(outside), before)
+            self.assertEqual(mode_of(readonly), 0o444)
+            self.assertEqual(readonly.read_bytes(), b"r" * 8000)
+
+    def test_dir_size_does_not_count_the_outside_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outside, _readonly, target = self.make_case(Path(tmp), 10)
+            before = outside_state(outside)
+            self.assertEqual(rn.dir_size(target), 10)
+            self.assertEqual(outside_state(outside), before)
+
+    def test_the_guard_removes_the_target_and_leaves_the_outside_folder_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outside, readonly, target = self.make_case(Path(tmp), 5000)
+            before = outside_state(outside)
+            logs: list[str] = []
+            with mock.patch.object(rn, "log", logs.append):
+                reason = rn.disk_guard([target], 1000, 1000, free_of=lambda _path: 10**7)
+            self.assertIsNone(reason)
+            self.assertFalse(os.path.lexists(target))
+            self.assertEqual(len(logs), 1)
+            self.assertIn("disk guard: removed", logs[0])
+            # The size was read. The log does not use the size-unknown path.
+            self.assertIn("(over the cap: size", logs[0])
+            self.assertNotIn("size could not be read", logs[0])
+            self.assertEqual(outside_state(outside), before)
+            self.assertEqual(mode_of(readonly), 0o444)
+
+    def test_the_guard_logs_no_removal_when_the_target_stays(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outside, readonly, target = self.make_case(Path(tmp), 5000)
+            before = outside_state(outside)
+            logs: list[str] = []
+            with mock.patch.object(rn, "log", logs.append), \
+                    mock.patch("os.rmdir", side_effect=OSError("folder is locked")):
+                with self.assertRaises(OSError):
+                    rn.disk_guard([target], 1000, 1000, free_of=lambda _path: 10**7)
+            self.assertTrue(os.path.lexists(target))
+            self.assertEqual(logs, [])
+            self.assertEqual(outside_state(outside), before)
+            self.assertEqual(mode_of(readonly), 0o444)
+
+
+class NestedSymlinkTests(NestedLinkCases, unittest.TestCase):
+    def make_dir_link(self, link: Path, target: Path) -> None:
+        make_symlink(link, target, directory=True)
+
+    def test_a_nested_symlink_to_an_outside_file_is_not_followed_or_counted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outside, readonly, target = self.make_case(Path(tmp), 10)
+            make_symlink(target / "sub" / "filelink", readonly)
+            before = outside_state(outside)
+            self.assertEqual(rn.dir_size(target), 10)
+            rn.rmtree(target)
+            self.assertFalse(os.path.lexists(target))
+            self.assertEqual(outside_state(outside), before)
+
+
+@unittest.skipUnless(os.name == "nt", "junctions exist only on Windows")
+class NestedJunctionTests(NestedLinkCases, unittest.TestCase):
+    def make_dir_link(self, link: Path, target: Path) -> None:
+        make_junction(link, target)
+        self.assertTrue(os.path.isjunction(link))
+        self.assertFalse(os.path.islink(link))
 
 
 class CatchUpTests(unittest.TestCase):
