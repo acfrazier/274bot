@@ -45,23 +45,27 @@ impl MapBakeProducer for NativeMapProducer {
         // initializer peak; the immutable process-static owner is measured
         // separately by the release harness.
         let input = request.client_input()?;
-        let (charge, cursor_bytes) = match request.artifact() {
+        // Each `work_charge` counts its own cursor. The boxed wrapper adds
+        // only the fields it holds beside that cursor.
+        let (charge, wrapper_bytes) = match request.artifact() {
             ArtifactKind::Catalogue => (
                 CatalogueCursor::work_charge(input).map_err(MapCacheError::Map)?,
-                std::mem::size_of::<CatalogueCursor>(),
+                std::mem::size_of::<NativeCatalogueCursor>()
+                    - std::mem::size_of::<CatalogueCursor>(),
             ),
             ArtifactKind::Images => (
                 ImageBakeCursor::work_charge(input, request.partial_dir_arc())
                     .map_err(MapCacheError::Map)?,
-                std::mem::size_of::<ImageBakeCursor>(),
+                std::mem::size_of::<NativeImageCursor>() - std::mem::size_of::<ImageBakeCursor>(),
             ),
         };
-        let input_bytes = charge
-            .input_bytes()
-            .checked_add(std::mem::size_of::<NativeCursor>() - cursor_bytes)
-            .ok_or(MapCacheError::Map(nav::map::MapError::Limit(
-                "native map cursor charge",
-            )))?;
+        let input_bytes =
+            charge
+                .input_bytes()
+                .checked_add(wrapper_bytes)
+                .ok_or(MapCacheError::Map(nav::map::MapError::Limit(
+                    "native map cursor charge",
+                )))?;
         Ok(api::work::WorkCharge::new(
             input_bytes,
             charge.scratch_bytes(),
@@ -76,48 +80,75 @@ impl MapBakeProducer for NativeMapProducer {
         partial_dir: std::sync::Arc<std::path::PathBuf>,
     ) -> Result<Box<dyn MapBakeCursor>, MapCacheError> {
         let input = request.client_input()?;
-        let cursor = match request.artifact() {
-            ArtifactKind::Catalogue => NativeCursor::Catalogue {
+        let cursor: Box<dyn MapBakeCursor> = match request.artifact() {
+            ArtifactKind::Catalogue => Box::new(NativeCatalogueCursor {
                 cursor: CatalogueCursor::new(input).map_err(MapCacheError::Map)?,
                 output: None,
-            },
-            ArtifactKind::Images => NativeCursor::Images(
+            }),
+            ArtifactKind::Images => Box::new(NativeImageCursor(
                 ImageBakeCursor::new(input, partial_dir, request.descriptor().image_identity())
                     .map_err(MapCacheError::Map)?,
-            ),
+            )),
         };
-        Ok(Box::new(cursor))
+        Ok(cursor)
     }
 }
 
-// The enclosing trait-object Box is the only cursor allocation. Boxing this
-// variant again would add an allocation solely to reduce an unused stack size.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "boxing the variant adds an allocation solely to reduce an unused stack size"
-)]
-enum NativeCursor {
-    Catalogue {
-        cursor: CatalogueCursor,
-        output: Option<ClientPois>,
-    },
-    Images(ImageBakeCursor),
+// The trait-object Box is the only allocation of each cursor, and it holds
+// only the cursor type of its artifact.
+struct NativeCatalogueCursor {
+    cursor: CatalogueCursor,
+    output: Option<ClientPois>,
 }
 
-impl MapBakeCursor for NativeCursor {
+struct NativeImageCursor(ImageBakeCursor);
+
+impl MapBakeCursor for NativeCatalogueCursor {
     fn plan(&self) -> Option<BakePlan> {
-        match self {
-            // Input work does not touch cache output. Hand the writer to the
-            // host only after the owned result is ready for persistence.
-            Self::Catalogue { output, .. } => output.as_ref().map(|_| BakePlan {
-                planned_units: 1,
-                stage: BakeStage::Catalogue,
-            }),
-            Self::Images(cursor) => cursor.planned_units().map(|planned_units| BakePlan {
-                planned_units,
-                stage: BakeStage::BaseTerrain,
-            }),
+        // Input work does not touch cache output. Hand the writer to the
+        // host only after the owned result is ready for persistence.
+        self.output.as_ref().map(|_| BakePlan {
+            planned_units: 1,
+            stage: BakeStage::Catalogue,
+        })
+    }
+
+    fn step(
+        &mut self,
+        context: &mut api::work::StepContext<'_, api::work::MapBakePhase>,
+        _writer: Option<&mut BakeWriter>,
+    ) -> Result<MapBakeCursorStep, MapCacheError> {
+        if let Some(pois) = self.output.take() {
+            return Ok(MapBakeCursorStep::Completed(
+                MapBakeCursorOutput::Catalogue(pois),
+            ));
         }
+        let result = self.cursor.step(context).map_err(MapCacheError::Map)?;
+        match result {
+            producer::ProducerStep::Yielded => Ok(MapBakeCursorStep::Yielded),
+            producer::ProducerStep::Completed(result) => {
+                self.output = Some(result.pois);
+                Ok(MapBakeCursorStep::Yielded)
+            }
+            producer::ProducerStep::Cancelled => Ok(MapBakeCursorStep::Cancelled),
+        }
+    }
+
+    fn progress(&self) -> MapProgressSnapshot {
+        catalogue_progress(self.cursor.progress())
+    }
+
+    fn take_completed_units(&mut self) -> Vec<CompletedUnit> {
+        Vec::new()
+    }
+}
+
+impl MapBakeCursor for NativeImageCursor {
+    fn plan(&self) -> Option<BakePlan> {
+        self.0.planned_units().map(|planned_units| BakePlan {
+            planned_units,
+            stage: BakeStage::BaseTerrain,
+        })
     }
 
     fn step(
@@ -125,42 +156,14 @@ impl MapBakeCursor for NativeCursor {
         context: &mut api::work::StepContext<'_, api::work::MapBakePhase>,
         writer: Option<&mut BakeWriter>,
     ) -> Result<MapBakeCursorStep, MapCacheError> {
-        match self {
-            Self::Catalogue { cursor, output } => {
-                if let Some(pois) = output.take() {
-                    return Ok(MapBakeCursorStep::Completed(
-                        MapBakeCursorOutput::Catalogue(pois),
-                    ));
-                }
-                let result = cursor.step(context).map_err(MapCacheError::Map)?;
-                match result {
-                    producer::ProducerStep::Yielded => Ok(MapBakeCursorStep::Yielded),
-                    producer::ProducerStep::Completed(result) => {
-                        *output = Some(result.pois);
-                        Ok(MapBakeCursorStep::Yielded)
-                    }
-                    producer::ProducerStep::Cancelled => Ok(MapBakeCursorStep::Cancelled),
-                }
-            }
-            Self::Images(cursor) => {
-                let mut sink = match writer {
-                    Some(writer) => WriterImageTileSink { writer },
-                    None => {
-                        return match cursor
-                            .step(context, &mut BackpressureImageTileSink)
-                            .map_err(map_image_error)?
-                        {
-                            producer::ProducerStep::Yielded => Ok(MapBakeCursorStep::Yielded),
-                            producer::ProducerStep::Completed(report) => {
-                                Ok(MapBakeCursorStep::Completed(MapBakeCursorOutput::Images(
-                                    report.manifest,
-                                )))
-                            }
-                            producer::ProducerStep::Cancelled => Ok(MapBakeCursorStep::Cancelled),
-                        }
-                    }
-                };
-                match cursor.step(context, &mut sink).map_err(map_image_error)? {
+        let cursor = &mut self.0;
+        let mut sink = match writer {
+            Some(writer) => WriterImageTileSink { writer },
+            None => {
+                return match cursor
+                    .step(context, &mut BackpressureImageTileSink)
+                    .map_err(map_image_error)?
+                {
                     producer::ProducerStep::Yielded => Ok(MapBakeCursorStep::Yielded),
                     producer::ProducerStep::Completed(report) => Ok(MapBakeCursorStep::Completed(
                         MapBakeCursorOutput::Images(report.manifest),
@@ -168,21 +171,22 @@ impl MapBakeCursor for NativeCursor {
                     producer::ProducerStep::Cancelled => Ok(MapBakeCursorStep::Cancelled),
                 }
             }
+        };
+        match cursor.step(context, &mut sink).map_err(map_image_error)? {
+            producer::ProducerStep::Yielded => Ok(MapBakeCursorStep::Yielded),
+            producer::ProducerStep::Completed(report) => Ok(MapBakeCursorStep::Completed(
+                MapBakeCursorOutput::Images(report.manifest),
+            )),
+            producer::ProducerStep::Cancelled => Ok(MapBakeCursorStep::Cancelled),
         }
     }
 
     fn progress(&self) -> MapProgressSnapshot {
-        match self {
-            Self::Catalogue { cursor, .. } => catalogue_progress(cursor.progress()),
-            Self::Images(cursor) => image_progress(cursor.progress()),
-        }
+        image_progress(self.0.progress())
     }
 
     fn take_completed_units(&mut self) -> Vec<CompletedUnit> {
-        match self {
-            Self::Catalogue { .. } => Vec::new(),
-            Self::Images(cursor) => cursor.take_completed_units(),
-        }
+        self.0.take_completed_units()
     }
 }
 
@@ -309,7 +313,7 @@ mod tests {
             std::path::Path::new("/verified/snapshot"),
         )
         .unwrap();
-        let cursor = NativeCursor::Catalogue {
+        let cursor = NativeCatalogueCursor {
             cursor: CatalogueCursor::new(input).unwrap(),
             output: None,
         };

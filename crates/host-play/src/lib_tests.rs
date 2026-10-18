@@ -24813,20 +24813,22 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
     assert!(
         dispatch_script_interact_cached_scoped(
             &mut c,
-            &snap,
-            None,
-            Some((start.x, start.z, start.level)),
-            &navs,
-            &world_opt,
-            Some(WorldState::empty()),
-            None,
-            "test",
-            Some(api::identity::Scope::Slot(
-                api::identity::SlotKey::from_incarnation(1).unwrap(),
-            )),
+            &InteractContext {
+                snapshot: &snap,
+                obj_names: None,
+                here: Some((start.x, start.z, start.level)),
+                navs: &navs,
+                world: &world_opt,
+                state: &Some(WorldState::empty()),
+                bank: None,
+                name: "test",
+                compatibility_scope: Some(api::identity::Scope::Slot(
+                    api::identity::SlotKey::from_incarnation(1).unwrap(),
+                )),
+                cache: &None,
+                obj_names_arc: &None,
+            },
             requests,
-            None,
-            None,
         ),
         "raw bank selection must be accepted without a movement packet",
     );

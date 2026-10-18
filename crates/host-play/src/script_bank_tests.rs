@@ -121,20 +121,22 @@ export async function tick(api) {{
         state.quests.insert("Lost City".into());
         super::super::dispatch_script_interact_cached_scoped(
             &mut HeldDriver,
-            &GameSnapshot::new(),
-            None,
-            Some((3091, 3958, 0)),
-            &navs,
-            &Some(world(false)),
-            Some(state),
-            None,
-            "test",
-            Some(api::identity::Scope::Slot(
-                api::identity::SlotKey::from_incarnation(1).unwrap(),
-            )),
+            &super::super::InteractContext {
+                snapshot: &GameSnapshot::new(),
+                obj_names: None,
+                here: Some((3091, 3958, 0)),
+                navs: &navs,
+                world: &Some(world(false)),
+                state: &Some(state),
+                bank: None,
+                name: "test",
+                compatibility_scope: Some(api::identity::Scope::Slot(
+                    api::identity::SlotKey::from_incarnation(1).unwrap(),
+                )),
+                cache: &None,
+                obj_names_arc: &None,
+            },
             iso.drain_interacts(),
-            None,
-            None,
         );
         let result = navs.lock().unwrap()["test"].bank_pick.posted;
         post(2, result);
@@ -1280,14 +1282,11 @@ mod bank_pick_capture {
         assert!(super::super::submit_pending_bank_pick_with_service(
             &navs, "test", scope, true, &service,
         ));
-        let ticket = navs.lock().unwrap()["test"]
-            .bank_pick
-            .current
-            .as_ref()
-            .unwrap()
-            .ticket
-            .unwrap()
-            .ticket();
+        let (ticket, job) = {
+            let all = navs.lock().unwrap();
+            let active = all["test"].bank_pick.current.as_ref().unwrap();
+            (active.ticket.unwrap().ticket(), active.job.clone())
+        };
         WorkService::wait_terminal(&service, &ticket)
             .expect("bank-pick terminal completes before owner reservation");
         let (terminal_before, noops_before) = {
@@ -1306,13 +1305,13 @@ mod bank_pick_capture {
             &navs,
             "test",
             scope,
-            1,
-            1,
+            &job,
             ticket,
             nav::producer::OWNER_RESULT_MAX_BYTES + 1,
             nav::producer::OwnerResultLedger::shared(),
         )
         .is_none());
+        drop(job);
         assert!(navs.lock().unwrap()["test"].bank_pick.current.is_none());
         wait_for_returned_capacity(&service, 0);
         let service = service.lock();

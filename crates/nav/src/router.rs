@@ -704,7 +704,7 @@ impl<'a> Iterator for CompactRouteCursor<'a> {
 impl CompactRoute {
     #[expect(
         clippy::too_many_arguments,
-        reason = "the producer transfers each compact buffer without an intermediate allocation"
+        reason = "Each argument is one private `CompactRoute` field, set by the route producers and by paint tests outside this module."
     )]
     pub(crate) fn from_compact_parts(
         origin: WorldTile,
@@ -8307,7 +8307,7 @@ async fn search_kernel(
 )]
 #[expect(
     clippy::too_many_arguments,
-    reason = "the compact relaxation updates the shared table and heap without copying state"
+    reason = "The per-edge relaxation takes the candidate's five fields plus the kernel's table, heap and limits, and this FLOOR-gated inline body keeps its measured shape."
 )]
 fn relax_packed<'table, 'heap, 'pending, B: Budget>(
     table: &'table mut PackedSearchTable,
@@ -8390,7 +8390,7 @@ fn relax_packed<'table, 'heap, 'pending, B: Budget>(
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "the budgeted kernel keeps its shared search inputs explicit"
+    reason = "The generic body of `search_kernel` takes its 16 inputs plus the budget meter and changes only together with that FLOOR-gated kernel."
 )]
 async fn search_kernel_budget<B: Budget>(
     collision: &WorldCollision,

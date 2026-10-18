@@ -71,15 +71,15 @@
     },
     "host-play": {
       "clippy::large_enum_variant": {
-        "non_test": 7,
+        "non_test": 6,
         "test": 0
       },
       "clippy::too_many_arguments": {
-        "non_test": 44,
+        "non_test": 39,
         "test": 17
       },
       "dead_code": {
-        "non_test": 2,
+        "non_test": 0,
         "test": 4
       },
       "deprecated": {

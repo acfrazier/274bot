@@ -49,10 +49,10 @@ enum PickKind {
     AirFallback = 3,
     NoCandidate = 4,
 }
-struct NativeBankPickInput {
-    request: NativeBankPickRequest,
-    authority: HostAuthority,
-    evidence: EvidenceStamp,
+pub(super) struct NativeBankPickInput {
+    pub(super) request: NativeBankPickRequest,
+    pub(super) authority: HostAuthority,
+    pub(super) evidence: EvidenceStamp,
 }
 
 /// Selection completion is independent of movement. Each slot retains only
@@ -1793,7 +1793,7 @@ fn bank_candidates(
 }
 #[expect(
     clippy::too_many_arguments,
-    reason = "The capture keeps the existing immutable search inputs and optional native authority together."
+    reason = "Each argument is one `BankPickRequest` field. The constructor adds the timeout flag and the state `Arc` for production, harness and tests."
 )]
 fn make_bank_pick_request(
     request_id: u64,
@@ -1822,24 +1822,18 @@ fn make_bank_pick_request(
     })
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "native selection borrows the locked slot context and its session permissions"
-)]
 pub(super) fn queue_native_bank_pick_scoped(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
     scope: Scope,
     world: &Option<Arc<NavWorld>>,
     state: Option<WorldState>,
-    request: NativeBankPickRequest,
-    authority: HostAuthority,
-    evidence: EvidenceStamp,
+    input: NativeBankPickInput,
     session_permissions: Option<script::native::WalkPermissions>,
 ) {
-    let from = request.from;
-    let preferences = request.preferences;
-    let request_id = authority.request_id().get();
+    let from = input.request.from;
+    let preferences = input.request.preferences;
+    let request_id = input.authority.request_id().get();
     queue_bank(
         navs,
         name,
@@ -1852,7 +1846,7 @@ pub(super) fn queue_native_bank_pick_scoped(
             name,
             script::native::WalkOptions {
                 allow_teleports: script::native::WalkBit::Forbid,
-                ..request.options
+                ..input.request.options
             },
             session_permissions,
         )
@@ -1861,17 +1855,13 @@ pub(super) fn queue_native_bank_pick_scoped(
         preferences,
         None,
         false,
-        Some(NativeBankPickInput {
-            request,
-            authority,
-            evidence,
-        }),
+        Some(input),
     );
 }
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "the scoped compatibility selection borrows each captured request input"
+    reason = "Forwards one `SelectBank` request's values, the slot's fishing level and its navigation handles to `queue_bank`."
 )]
 pub(super) fn queue_bank_pick_scoped(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
@@ -2684,20 +2674,17 @@ fn active_bank_pick_is_current(
         .is_some_and(|active| active_ticket_matches(active, scope, generation, request_id, ticket))
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "The custody transfer checks the exact active request before reserving its result."
-)]
 fn reserve_bank_pick_result(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
     scope: Scope,
-    generation: u64,
-    request_id: u64,
+    job: &BankPickJob,
     ticket: WorkTicket<BankPickSpec>,
     bytes: usize,
     ledger: &nav::producer::OwnerResultLedger,
 ) -> Option<nav::producer::OwnerResultReservation> {
+    let generation = job.generation;
+    let request_id = job.request.request_id;
     if !active_bank_pick_is_current(navs, name, scope, generation, request_id, ticket) {
         return None;
     }
@@ -2778,16 +2765,9 @@ fn publish_failed_bank_pick(
     let Some(bytes) = result.owner_result_bytes() else {
         return;
     };
-    let Some(reservation) = reserve_bank_pick_result(
-        navs,
-        name,
-        scope,
-        job.generation,
-        job.request.request_id,
-        ticket,
-        bytes,
-        ledger,
-    ) else {
+    let Some(reservation) =
+        reserve_bank_pick_result(navs, name, scope, &job, ticket, bytes, ledger)
+    else {
         return;
     };
     publish_work_pick_result(navs, name, scope, job, ticket, result, reservation);
@@ -2806,16 +2786,9 @@ fn consume_failed_bank_pick(
     let Some(bytes) = result.owner_result_bytes() else {
         return;
     };
-    let Some(reservation) = reserve_bank_pick_result(
-        navs,
-        name,
-        scope,
-        job.generation,
-        job.request.request_id,
-        ticket,
-        bytes,
-        ledger,
-    ) else {
+    let Some(reservation) =
+        reserve_bank_pick_result(navs, name, scope, &job, ticket, bytes, ledger)
+    else {
         return;
     };
     let settlement = {
@@ -2865,7 +2838,7 @@ fn consume_failed_bank_pick(
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "The consume seam transfers the existing request, ticket and owner reservation without copying."
+    reason = "Consumes one completed pick for one slot: the job, its ticket and result size, the work service and the ledger that tests replace."
 )]
 fn consume_completed_bank_pick(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
@@ -2877,16 +2850,9 @@ fn consume_completed_bank_pick(
     shared: &Arc<parking_lot::Mutex<WorkService>>,
     ledger: &nav::producer::OwnerResultLedger,
 ) {
-    let Some(reservation) = reserve_bank_pick_result(
-        navs,
-        name,
-        scope,
-        job.generation,
-        job.request.request_id,
-        ticket,
-        bytes,
-        ledger,
-    ) else {
+    let Some(reservation) =
+        reserve_bank_pick_result(navs, name, scope, &job, ticket, bytes, ledger)
+    else {
         return;
     };
     let settlement = {

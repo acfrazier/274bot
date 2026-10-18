@@ -726,20 +726,21 @@ struct InspectSearchBuilder {
 }
 
 impl InspectSearchBuilder {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "The builder captures independent search inputs without an extra allocation."
-    )]
+    /// Missing and blocker requests take `to` as their one target. Single
+    /// requests use `to` directly and first-goal requests own their targets.
     fn new(
         from: WorldTile,
         to: WorldTile,
         options: FindOptions,
         max_settles: usize,
         input: InspectSearchInput,
-        target: Option<WorldTile>,
         purpose: InspectSearchPurpose,
         preflight: nav::router::SearchPreflight,
     ) -> Self {
+        let target = match input {
+            InspectSearchInput::Missing | InspectSearchInput::Blocking(_) => Some(to),
+            InspectSearchInput::Single | InspectSearchInput::First(_) => None,
+        };
         Self {
             from,
             to,
@@ -1093,7 +1094,6 @@ impl InspectJob {
                 options,
                 max_settles,
                 InspectSearchInput::Single,
-                None,
                 purpose,
                 preflight,
             ),
@@ -1120,7 +1120,6 @@ impl InspectJob {
                 options,
                 max_settles,
                 InspectSearchInput::First(targets),
-                None,
                 purpose,
                 preflight,
             ),
@@ -1215,7 +1214,6 @@ impl InspectJob {
                 capture.opts,
                 strict_budget(capture),
                 InspectSearchInput::Missing,
-                Some(capture.to),
                 InspectSearchPurpose::Missing,
                 preflight,
             ),
@@ -1705,7 +1703,6 @@ impl CooperativeJob for InspectJob {
                                 options,
                                 nav::router::NODE_BUDGET,
                                 InspectSearchInput::Blocking(filter),
-                                Some(to),
                                 InspectSearchPurpose::Blockers { bank_planned },
                                 preflight,
                             ),
@@ -2423,7 +2420,7 @@ pub(super) fn validate_request(
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "The request forwards captured navigation inputs without allocating an argument bundle."
+    reason = "The one production call site hands over the slot's navigation table, name, world, state, bank rows, cache and object names from separate owners, plus the request."
 )]
 pub(super) fn queue_inspect(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,

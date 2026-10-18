@@ -20,8 +20,8 @@ use super::{
     abort_script_walk, apply_watchdog_nav_action, dispatch_native_bank_deposit,
     dispatch_observed_bank_op, dispatch_script_interact_cached_scoped, pack_cached_reach,
     recovery_walk_idle, reset_script_nav, resumed_walk, route_inspect, script_slot,
-    take_carried_walk, with_script_snapshot_input_shorts, BankDepositDispatch, NavBot,
-    PostedWalkOutcome, ScriptWall,
+    take_carried_walk, with_script_snapshot_input_shorts, BankDepositDispatch, InteractContext,
+    NavBot, PostedWalkOutcome, ScriptWall,
 };
 use crate::debug_enabled;
 #[cfg(feature = "memory-profile")]
@@ -1265,6 +1265,19 @@ pub(crate) fn script_observe_cached_with_channels(
                         bot.native_permissions = slot.native_walk_permissions();
                         bot.compat_v1 = slot.api_family() == Some(script::ApiFamily::V1);
                     }
+                    let interact_context = InteractContext {
+                        snapshot,
+                        obj_names,
+                        here,
+                        navs,
+                        world,
+                        state: &state,
+                        bank: bank_memory,
+                        name,
+                        compatibility_scope: compatibility_work_scope,
+                        cache: &cache,
+                        obj_names_arc: &obj_names_arc,
+                    };
                     // The native seat encodes release rows ahead of gameplay,
                     // but its two host consumers drain separately. Deliver JS
                     // Walk releases before the native action loop as well, so
@@ -1280,21 +1293,11 @@ pub(crate) fn script_observe_cached_with_channels(
                         interact = remaining;
                         wrote |= dispatch_script_interact_cached_scoped(
                             driver,
-                            snapshot,
-                            obj_names,
-                            here,
-                            navs,
-                            world,
-                            state.clone(),
-                            bank_memory,
-                            name,
-                            compatibility_work_scope,
+                            &interact_context,
                             releases
                                 .into_iter()
                                 .map(|queued| queued.req)
                                 .collect::<Vec<_>>(),
-                            cache.clone(),
-                            obj_names_arc.clone(),
                         );
                     }
                     let mut refused_batch = None;
@@ -1421,18 +1424,8 @@ pub(crate) fn script_observe_cached_with_channels(
                                 } else {
                                     dispatch_script_interact_cached_scoped(
                                         driver,
-                                        snapshot,
-                                        obj_names,
-                                        here,
-                                        navs,
-                                        world,
-                                        state.clone(),
-                                        bank_memory,
-                                        name,
-                                        compatibility_work_scope,
+                                        &interact_context,
                                         [request],
-                                        cache.clone(),
-                                        obj_names_arc.clone(),
                                     )
                                 };
                                 let mut emitted_packets = 0;
@@ -1611,9 +1604,11 @@ pub(crate) fn script_observe_cached_with_channels(
                                     scope,
                                     world,
                                     state.clone(),
-                                    request,
-                                    authority,
-                                    evidence,
+                                    super::bank::NativeBankPickInput {
+                                        request,
+                                        authority,
+                                        evidence,
+                                    },
                                     slot.api_gather_walk_permissions(),
                                 );
                             }
@@ -1754,18 +1749,8 @@ pub(crate) fn script_observe_cached_with_channels(
                     }
                     wrote |= dispatch_script_interact_cached_scoped(
                         driver,
-                        snapshot,
-                        obj_names,
-                        here,
-                        navs,
-                        world,
-                        state.clone(),
-                        bank_memory,
-                        name,
-                        compatibility_work_scope,
+                        &interact_context,
                         dispatchable,
-                        cache.clone(),
-                        obj_names_arc.clone(),
                     );
                     if (armed.is_some()
                         || armed_bank_op.is_some()

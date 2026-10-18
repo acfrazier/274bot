@@ -49,6 +49,7 @@ pub(super) use script_snapshot::{slot_arrival_reach, with_script_snapshot_input_
 mod script_interact;
 pub(super) use script_interact::{
     dispatch_native_bank_deposit, dispatch_script_interact_cached_scoped, BankDepositDispatch,
+    InteractContext,
 };
 #[cfg(test)]
 pub(super) use script_interact::{
@@ -65,14 +66,7 @@ mod route_inspect;
 #[cfg(test)]
 pub(super) use route_inspect::PostedInspect;
 
-#[cfg(any(test, feature = "test-support"))]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "The test-support hook is called by host fixture loops."
-    )
-)]
+#[cfg(test)]
 pub(super) fn poll_inspection_for_test(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
     route_inspect::poll_inspection(navs, name);
 }
