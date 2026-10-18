@@ -142,11 +142,718 @@ use crate::shim::{InteractReq, MaybeInteractReq};
 use crate::task_clock::InstantTaskClock;
 use crate::{isolate_fb, native};
 use api::identity::{ExecutionId, RequestId};
-use api::script_contract::{CallbackCancelReason, RequestStamp};
+use api::script_contract::{CallbackCancelReason, DecisionSequence, RequestStamp};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
+use std::rc::Rc;
+
+/// Closed bank family descriptor. This table does not depend on the old
+/// behaviorful machine implementations.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BankFamilyDescriptor {
+    pub(crate) name: &'static str,
+    pub(crate) callbacks: &'static [&'static str],
+    pub(crate) kind: native::request::NativeKind,
+    pub(crate) exclusive_group: Option<&'static str>,
+}
+
+const BANK_NO_CALLBACKS: &[&str] = &[];
+const BANK_LOG_CALLBACK: &[&str] = &["log"];
+const BANK_DEPOSIT_CALLBACKS: &[&str] = &["match", "log"];
+const BANK_NEAREST_CALLBACKS: &[&str] = &["deposit", "afterDeposit", "log"];
+
+pub(crate) const BANK_FAMILY_DESCRIPTORS: &[BankFamilyDescriptor] = &[
+    BankFamilyDescriptor {
+        name: "bank_op",
+        callbacks: BANK_NO_CALLBACKS,
+        kind: native::request::NativeKind::BankPlan,
+        exclusive_group: None,
+    },
+    BankFamilyDescriptor {
+        name: "bank_withdraw_load",
+        callbacks: BANK_NO_CALLBACKS,
+        kind: native::request::NativeKind::BankPlan,
+        exclusive_group: None,
+    },
+    BankFamilyDescriptor {
+        name: "bank_note_mode",
+        callbacks: BANK_NO_CALLBACKS,
+        kind: native::request::NativeKind::BankPlan,
+        exclusive_group: None,
+    },
+    BankFamilyDescriptor {
+        name: "bank_close",
+        callbacks: BANK_NO_CALLBACKS,
+        kind: native::request::NativeKind::BankPlan,
+        exclusive_group: None,
+    },
+    BankFamilyDescriptor {
+        name: "bank_deposit",
+        callbacks: BANK_DEPOSIT_CALLBACKS,
+        kind: native::request::NativeKind::BankPlan,
+        exclusive_group: None,
+    },
+    BankFamilyDescriptor {
+        name: "bank_open",
+        callbacks: BANK_NO_CALLBACKS,
+        kind: native::request::NativeKind::BankPlan,
+        exclusive_group: Some("bank_open"),
+    },
+    BankFamilyDescriptor {
+        name: "bank_access",
+        callbacks: BANK_LOG_CALLBACK,
+        kind: native::request::NativeKind::BankPlan,
+        exclusive_group: Some("bank_open"),
+    },
+    BankFamilyDescriptor {
+        name: "bank_npc_access",
+        callbacks: BANK_LOG_CALLBACK,
+        kind: native::request::NativeKind::BankPlan,
+        exclusive_group: Some("bank_open"),
+    },
+    BankFamilyDescriptor {
+        name: "bank_open_access",
+        callbacks: BANK_LOG_CALLBACK,
+        kind: native::request::NativeKind::BankPlan,
+        exclusive_group: Some("bank_open"),
+    },
+    BankFamilyDescriptor {
+        name: "banking_open",
+        callbacks: BANK_LOG_CALLBACK,
+        kind: native::request::NativeKind::BankPlan,
+        exclusive_group: Some("bank_open"),
+    },
+    BankFamilyDescriptor {
+        name: "bank_select",
+        callbacks: BANK_NO_CALLBACKS,
+        kind: native::request::NativeKind::BankPlan,
+        exclusive_group: Some("bank_select"),
+    },
+    BankFamilyDescriptor {
+        name: "bank_nearest",
+        callbacks: BANK_NEAREST_CALLBACKS,
+        kind: native::request::NativeKind::BankNearest,
+        exclusive_group: None,
+    },
+    BankFamilyDescriptor {
+        name: "bank_wait",
+        callbacks: BANK_LOG_CALLBACK,
+        kind: native::request::NativeKind::BankPlan,
+        exclusive_group: None,
+    },
+];
+
+fn bank_family_descriptor(name: &str) -> Option<&'static BankFamilyDescriptor> {
+    BANK_FAMILY_DESCRIPTORS
+        .iter()
+        .find(|descriptor| descriptor.name == name)
+}
+
+fn bank_family_for_operation(
+    operation: crate::bank::request::BankSeatOperation,
+) -> &'static str {
+    use crate::bank::request::BankSeatOperation as Op;
+    match operation {
+        Op::DepositAll | Op::DepositKeep | Op::DepositMatch => "bank_deposit",
+        Op::OpenBooth | Op::OpenNearest | Op::OpenNearestWorld => "bank_open",
+        Op::OpenObject => "bank_access",
+        Op::OpenNpc => "bank_npc_access",
+        Op::OpenAccess => "bank_open_access",
+        Op::Open => "banking_open",
+        Op::Select => "bank_select",
+        Op::BankNearest => "bank_nearest",
+        Op::WaitReady | Op::WaitSnapshotAfter => "bank_wait",
+        Op::DepositLabel | Op::WithdrawLabel | Op::WithdrawDelta => "bank_op",
+        Op::WithdrawLoad => "bank_withdraw_load",
+        Op::SetNoteMode => "bank_note_mode",
+        Op::Close => "bank_close",
+        Op::None => unreachable!("bank start operation is validated"),
+    }
+}
+
+fn bank_hook_bit(
+    operation: crate::bank::request::BankSeatOperation,
+    member: &str,
+) -> u32 {
+    use crate::bank::request::{
+        BankSeatOperation as Op, BANK_NEAREST_HOOK_AFTER_DEPOSIT,
+        BANK_NEAREST_HOOK_DEPOSIT, BANK_NEAREST_HOOK_LOG, DEPOSIT_MATCH_HOOK_LOG,
+        DEPOSIT_MATCH_HOOK_MATCH, HOOK_LOG,
+    };
+    match (operation, member) {
+        (Op::DepositMatch, "match") => DEPOSIT_MATCH_HOOK_MATCH,
+        (Op::DepositMatch, "log") => DEPOSIT_MATCH_HOOK_LOG,
+        (Op::BankNearest, "deposit") => BANK_NEAREST_HOOK_DEPOSIT,
+        (Op::BankNearest, "afterDeposit") => BANK_NEAREST_HOOK_AFTER_DEPOSIT,
+        (Op::BankNearest, "log") => BANK_NEAREST_HOOK_LOG,
+        (
+            Op::OpenObject
+            | Op::OpenNpc
+            | Op::OpenAccess
+            | Op::Open
+            | Op::WaitReady,
+            "log",
+        ) => HOOK_LOG,
+        _ => 0,
+    }
+}
+
+fn bank_transfer_operation(operation: crate::bank::request::BankSeatOperation) -> bool {
+    use crate::bank::request::BankSeatOperation as Op;
+    matches!(
+        operation,
+        Op::DepositLabel
+            | Op::WithdrawLabel
+            | Op::WithdrawDelta
+            | Op::WithdrawLoad
+            | Op::DepositAll
+            | Op::DepositKeep
+            | Op::DepositMatch
+    )
+}
+
+fn bank_object<'a>(
+    value: &'a Value,
+    description: &str,
+) -> Result<&'a serde_json::Map<String, Value>, String> {
+    value
+        .as_object()
+        .ok_or_else(|| format!("{description} must be an object"))
+}
+
+fn bank_field<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    name: &str,
+    alias: Option<&str>,
+) -> Option<&'a Value> {
+    object
+        .get(name)
+        .or_else(|| alias.and_then(|alias| object.get(alias)))
+}
+
+fn bank_string(
+    object: &serde_json::Map<String, Value>,
+    name: &str,
+    alias: Option<&str>,
+) -> Result<Option<String>, String> {
+    match bank_field(object, name, alias) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(format!("{name} must be a string")),
+    }
+}
+
+fn bank_required_string(
+    object: &serde_json::Map<String, Value>,
+    name: &str,
+    alias: Option<&str>,
+) -> Result<String, String> {
+    bank_string(object, name, alias)?.ok_or_else(|| format!("{name} is required"))
+}
+
+fn bank_boolean(
+    object: &serde_json::Map<String, Value>,
+    name: &str,
+    default: bool,
+) -> Result<bool, String> {
+    match object.get(name) {
+        None | Some(Value::Null) => Ok(default),
+        Some(Value::Bool(value)) => Ok(*value),
+        Some(_) => Err(format!("{name} must be a boolean")),
+    }
+}
+
+fn bank_number(
+    object: &serde_json::Map<String, Value>,
+    name: &str,
+) -> Result<Option<f64>, String> {
+    match object.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(value)) => value
+            .as_f64()
+            .map(Some)
+            .ok_or_else(|| format!("{name} is not representable")),
+        Some(_) => Err(format!("{name} must be a number")),
+    }
+}
+
+fn bank_integer(value: &Value, name: &str) -> Result<i64, String> {
+    let Some(number) = value.as_f64() else {
+        return Err(format!("{name} must be an integer"));
+    };
+    if !number.is_finite()
+        || number.fract() != 0.0
+        || number < i64::MIN as f64
+        || number >= (i64::MAX as f64)
+    {
+        return Err(format!("{name} must be an integer"));
+    }
+    Ok(number as i64)
+}
+
+fn bank_i32(value: &Value, name: &str) -> Result<i32, String> {
+    i32::try_from(bank_integer(value, name)?).map_err(|_| format!("{name} is outside i32 range"))
+}
+
+fn bank_tile(value: &Value, name: &str) -> Result<api::snapshot::WorldTile, String> {
+    serde_json::from_value(value.clone()).map_err(|error| format!("{name}: {error}"))
+}
+
+fn bank_optional_tile(
+    object: &serde_json::Map<String, Value>,
+    name: &str,
+    alias: Option<&str>,
+) -> Result<Option<api::snapshot::WorldTile>, String> {
+    match bank_field(object, name, alias) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => bank_tile(value, name).map(Some),
+    }
+}
+
+fn bank_access(value: &Value, description: &str) -> Result<crate::bank::request::BankSeatObjectAccess, String> {
+    use crate::bank::request::BankSeatObjectAccess;
+    let object = bank_object(value, description)?;
+    let open_first = bank_field(object, "open_first", Some("openFirst"));
+    let (open_first_name, open_first_op) = match open_first {
+        None | Some(Value::Null) => (None, None),
+        Some(value) => {
+            let opener = bank_object(value, "open_first")?;
+            (
+                Some(bank_required_string(opener, "name", None)?),
+                Some(bank_required_string(opener, "op", None)?),
+            )
+        }
+    };
+    Ok(BankSeatObjectAccess {
+        name: bank_required_string(object, "name", None)?,
+        op: bank_required_string(object, "op", None)?,
+        open_first_name,
+        open_first_op,
+    })
+}
+
+fn bank_optional_access(
+    value: Option<&Value>,
+    description: &str,
+) -> Result<Option<crate::bank::request::BankSeatObjectAccess>, String> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => bank_access(value, description).map(Some),
+    }
+}
+
+fn bank_npc_access(
+    value: &Value,
+    description: &str,
+) -> Result<crate::bank::request::BankSeatNpcAccess, String> {
+    use crate::bank::request::BankSeatNpcAccess;
+    let object = bank_object(value, description)?;
+    Ok(BankSeatNpcAccess {
+        name: bank_required_string(object, "name", None)?,
+        op: bank_required_string(object, "op", None)?,
+        choose: bank_string(object, "choose", None)?.unwrap_or_default(),
+    })
+}
+
+fn bank_optional_npc_access(
+    value: Option<&Value>,
+    description: &str,
+) -> Result<Option<crate::bank::request::BankSeatNpcAccess>, String> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => bank_npc_access(value, description).map(Some),
+    }
+}
+
+fn bank_destination(
+    value: Option<&Value>,
+) -> Result<Option<crate::bank::request::BankSeatDestination>, String> {
+    use crate::bank::request::BankSeatDestination;
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(None);
+    };
+    let object = bank_object(value, "destination")?;
+    let tile_value = object.get("tile").unwrap_or(value);
+    Ok(Some(BankSeatDestination {
+        tile: bank_tile(tile_value, "destination.tile")?,
+        object_access: bank_optional_access(
+            bank_field(object, "object_access", Some("access")),
+            "destination.access",
+        )?,
+        npc_access: bank_optional_npc_access(
+            bank_field(object, "npc_access", Some("npcAccess")),
+            "destination.npcAccess",
+        )?,
+    }))
+}
+
+fn bank_string_list(value: Option<&Value>, name: &str) -> Result<Vec<String>, String> {
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(Vec::new());
+    };
+    let values = value
+        .as_array()
+        .ok_or_else(|| format!("{name} must be an array"))?;
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| format!("{name} entries must be strings"))
+        })
+        .collect()
+}
+
+/// The frozen `bank_op.withdraw` numeric tier before the bank's posted
+/// stock is known. `quantity` carries the numeric threshold; the native
+/// body selects All only when that threshold also covers the observed row.
+fn bank_withdraw_threshold(value: &Value) -> i64 {
+    let amount = match value {
+        Value::Number(number) => number.as_f64().unwrap_or(f64::NAN),
+        Value::Bool(value) => f64::from(u8::from(*value)),
+        _ => f64::NAN,
+    };
+    if amount >= 10.0 {
+        amount.floor().min(9_007_199_254_740_991.0) as i64
+    } else {
+        1
+    }
+}
+fn bank_js_number(value: &Value) -> f64 {
+    match value {
+        Value::Number(number) => number.as_f64().unwrap_or(f64::NAN),
+        Value::Bool(value) => f64::from(u8::from(*value)),
+        Value::String(value) => {
+            let value = value.trim();
+            if value.is_empty() {
+                0.0
+            } else {
+                value.parse().unwrap_or(f64::NAN)
+            }
+        }
+        _ => f64::NAN,
+    }
+}
+
+fn bank_safe_integer(number: f64) -> bool {
+    number.is_finite()
+        && number.fract() == 0.0
+        && number.abs() <= 9_007_199_254_740_991.0
+}
+
+fn bank_numeric_i32(number: f64) -> Option<i32> {
+    (bank_safe_integer(number)
+        && number >= f64::from(i32::MIN)
+        && number <= f64::from(i32::MAX))
+    .then_some(number as i32)
+}
+
+fn bank_id_number(value: &Value) -> Option<i32> {
+    let Value::Number(number) = value else {
+        return None;
+    };
+    bank_numeric_i32(number.as_f64()?)
+}
+
+fn bank_withdraw_count(value: &Value) -> Option<i64> {
+    bank_withdraw_count_number(bank_js_number(value))
+}
+
+fn bank_withdraw_count_number(count: f64) -> Option<i64> {
+    (bank_safe_integer(count) && (1.0..=f64::from(i32::MAX)).contains(&count))
+        .then_some(count as i64)
+}
+
+fn bank_withdraw_lands_as(value: &Value) -> Option<i32> {
+    bank_numeric_i32(bank_js_number(value))
+}
+
+fn bank_op_immediate_outcome(
+    family: &str,
+    value: &Value,
+) -> Result<Option<Outcome>, String> {
+    if family != "bank_op" {
+        return Ok(None);
+    }
+    let object = bank_object(value, "bank arguments")?;
+    let kind = bank_required_string(object, "kind", None)?;
+    let outcome = match kind.as_str() {
+        "withdraw-id" => {
+            let id = object.get("id").ok_or("id is required")?;
+            bank_required_string(object, "op", None)?;
+            bank_id_number(id).is_none().then_some(false)
+        }
+        "withdraw-x" => {
+            bank_required_string(object, "name", None)?;
+            let count = bank_js_number(object.get("count").unwrap_or(&Value::Null));
+            if bank_safe_integer(count) && count <= 0.0 {
+                Some(true)
+            } else if bank_withdraw_count_number(count).is_none() {
+                Some(false)
+            } else {
+                None
+            }
+        }
+        "withdraw-x-id" => {
+            let id = object.get("id").ok_or("id is required")?;
+            let count = bank_js_number(object.get("count").unwrap_or(&Value::Null));
+            if bank_safe_integer(count) && count <= 0.0 {
+                Some(true)
+            } else {
+                let lands_as = object.get("lands_as").unwrap_or(&Value::Null);
+                (bank_withdraw_count_number(count).is_none()
+                    || bank_id_number(id).is_none()
+                    || bank_withdraw_lands_as(lands_as).is_none())
+                .then_some(false)
+            }
+        }
+        _ => None,
+    };
+    Ok(outcome.map(|value| Outcome::Done(Value::Bool(value))))
+}
+
+fn bank_positive_withdraw_count(value: &Value, name: &str) -> Result<i64, String> {
+    bank_withdraw_count(value).ok_or_else(|| format!("{name} must be a positive i32"))
+}
+
+fn bank_required_id(value: &Value, name: &str) -> Result<i32, String> {
+    bank_id_number(value).ok_or_else(|| format!("{name} must be an i32 item id"))
+}
+
+fn bank_required_lands_as(value: &Value) -> Result<i32, String> {
+    bank_withdraw_lands_as(value)
+        .ok_or_else(|| "lands_as must be a safe i32".into())
+}
+
+
+fn parse_bank_start(family: &str, value: Value) -> Result<crate::bank::request::BankSeatArgs, String> {
+    use crate::bank::request::{BankSeatArgs as Args, BankSeatOperation as Op};
+    let object = bank_object(&value, "bank arguments")?;
+    let operation = match family {
+        "bank_op" => {
+            let kind = bank_required_string(object, "kind", None)?;
+            match kind.as_str() {
+                "deposit" => {
+                    let mut args = Args::new(Op::DepositLabel);
+                    args.item_name = Some(bank_required_string(object, "name", None)?);
+                    args.menu_op = Some(bank_required_string(object, "op", None)?);
+                    args
+                }
+                "withdraw" => {
+                    let amount = object.get("amount").unwrap_or(&Value::Null);
+                    let mut args = Args::new(Op::WithdrawLabel);
+                    args.item_name = Some(bank_required_string(object, "name", None)?);
+                    if let Some(label) = amount.as_str() {
+                        args.menu_op = Some(if label.eq_ignore_ascii_case("all") {
+                            "Withdraw All".into()
+                        } else {
+                            label.to_owned()
+                        });
+                    } else {
+                        args.quantity = Some(bank_withdraw_threshold(amount));
+                    }
+                    args
+                }
+                "withdraw-id" => {
+                    let mut args = Args::new(Op::WithdrawLabel);
+                    args.item_id = Some(bank_i32(
+                        object.get("id").ok_or("id is required")?,
+                        "id",
+                    )?);
+                    let op = bank_required_string(object, "op", None)?;
+                    args.menu_op = Some(
+                        if matches!(op.to_lowercase().as_str(), "withdraw-all" | "all") {
+                            "Withdraw All".into()
+                        } else {
+                            op.replace('-', " ")
+                        },
+                    );
+                    args
+                }
+                "withdraw-x" => {
+                    let mut args = Args::new(Op::WithdrawDelta);
+                    args.item_name = Some(bank_required_string(object, "name", None)?);
+                    args.quantity = Some(bank_positive_withdraw_count(
+                        object.get("count").unwrap_or(&Value::Null),
+                        "count",
+                    )?);
+                    args
+                }
+                "withdraw-x-id" => {
+                    let id = bank_required_id(
+                        object.get("id").ok_or("id is required")?,
+                        "id",
+                    )?;
+                    let mut args = Args::new(Op::WithdrawDelta);
+                    args.item_id = Some(id);
+                    args.quantity = Some(bank_positive_withdraw_count(
+                        object.get("count").unwrap_or(&Value::Null),
+                        "count",
+                    )?);
+                    args.lands_as_id = Some(bank_required_lands_as(
+                        object.get("lands_as").unwrap_or(&Value::Null),
+                    )?);
+                    args
+                }
+                _ => return Err(format!("unknown bank operation {kind:?}")),
+            }
+        }
+        "bank_withdraw_load" => {
+            let mut args = Args::new(Op::WithdrawLoad);
+            args.item_name = Some(bank_required_string(object, "name", None)?);
+            args
+        }
+        "bank_note_mode" => {
+            let mut args = Args::new(Op::SetNoteMode);
+            args.note_mode = bank_boolean(object, "on", false)?;
+            args
+        }
+        "bank_close" => {
+            let mut args = Args::new(Op::Close);
+            args.timeout_ms = bank_number(object, "timeout_ms")?;
+            args
+        }
+        "bank_deposit" => {
+            if bank_boolean(object, "all", false)? {
+                Args::new(Op::DepositAll)
+            } else if object.get("keep").is_some_and(|keep| !keep.is_null()) {
+                let mut args = Args::new(Op::DepositKeep);
+                args.keep_names = bank_string_list(object.get("keep"), "keep")?;
+                args
+            } else {
+                Args::new(Op::DepositMatch)
+            }
+        }
+        "bank_open" => {
+            let mode = bank_string(object, "mode", None)?.unwrap_or_default();
+            let stand = bank_optional_tile(object, "stand", None)?;
+            let booth_name = bank_string(object, "booth_name", None)?;
+            let booth_op = bank_string(object, "booth_action", None)?;
+            let object_access = match (booth_name, booth_op) {
+                (None, None) => None,
+                (name, op) => Some(crate::bank::request::BankSeatObjectAccess {
+                    name: name.unwrap_or_else(|| "Bank booth".into()),
+                    op: op.unwrap_or_else(|| "Use-quickly".into()),
+                    open_first_name: None,
+                    open_first_op: None,
+                }),
+            };
+            let operation = match mode.as_str() {
+                "open-booth" => Op::OpenBooth,
+                "open-nearest" => Op::OpenNearest,
+                "open-nearest-world" => Op::OpenNearestWorld,
+                _ => return Err(format!("unknown bank open mode {mode:?}")),
+            };
+            let mut args = Args::new(operation);
+            args.stand = stand;
+            args.object_access = object_access;
+            args
+        }
+        "bank_access" => {
+            let mut args = Args::new(Op::OpenObject);
+            args.object_access = Some(bank_access(&value, family)?);
+            args
+        }
+        "bank_npc_access" => {
+            let mut args = Args::new(Op::OpenNpc);
+            args.npc_access = Some(bank_npc_access(&value, family)?);
+            args
+        }
+        "bank_open_access" => {
+            let mut args = Args::new(Op::OpenAccess);
+            args.object_access = bank_optional_access(
+                bank_field(object, "access", None),
+                "access",
+            )?;
+            args.npc_access = bank_optional_npc_access(
+                bank_field(object, "npc_access", Some("npcAccess")),
+                "npc_access",
+            )?;
+            args.fallback_access =
+                bank_optional_access(bank_field(object, "fallback", None), "fallback")?;
+            args
+        }
+        "banking_open" => {
+            let mut args = Args::new(Op::Open);
+            args.stand = bank_optional_tile(object, "stand", None)?;
+            args.destination = bank_destination(object.get("destination"))?;
+            let booth_name = bank_string(object, "boothName", None)?;
+            let booth_op = bank_string(object, "boothOp", None)?;
+            args.object_access = match (booth_name, booth_op) {
+                (None, None) => None,
+                (name, op) => Some(crate::bank::request::BankSeatObjectAccess {
+                    name: name.unwrap_or_else(|| "Bank booth".into()),
+                    op: op.unwrap_or_else(|| "Use-quickly".into()),
+                    open_first_name: None,
+                    open_first_op: None,
+                }),
+            };
+            args.prefer_nearby = match object.get("preferNearby") {
+                None | Some(Value::Null) => None,
+                Some(Value::Bool(value)) => Some(*value),
+                Some(_) => return Err("preferNearby must be a boolean".into()),
+            };
+            args.nearby_radius = bank_number(object, "nearbyRadius")?;
+            args.obstacles = bank_string_list(object.get("obstacles"), "obstacles")?;
+            args
+        }
+        "bank_select" => {
+            let mut args = Args::new(Op::Select);
+            args.stand = bank_optional_tile(object, "from", None)?;
+            args.allow_wilderness = bank_boolean(object, "allow_wilderness", false)?;
+            args.use_mage_bank = match object.get("use_mage_bank") {
+                None | Some(Value::Null) => None,
+                Some(Value::Bool(value)) => Some(*value),
+                Some(_) => return Err("use_mage_bank must be a boolean".into()),
+            };
+            args.use_zanaris_bank = match object.get("use_zanaris_bank") {
+                None | Some(Value::Null) => None,
+                Some(Value::Bool(value)) => Some(*value),
+                Some(_) => return Err("use_zanaris_bank must be a boolean".into()),
+            };
+            args
+        }
+        "bank_nearest" => {
+            let mut args = Args::new(Op::BankNearest);
+            args.destination = bank_destination(object.get("destination"))?;
+            let booth_name = bank_string(object, "booth_name", None)?;
+            let booth_op = bank_string(object, "booth_op", None)?;
+            args.object_access = match (booth_name, booth_op) {
+                (None, None) => None,
+                (name, op) => Some(crate::bank::request::BankSeatObjectAccess {
+                    name: name.unwrap_or_else(|| "Bank booth".into()),
+                    op: op.unwrap_or_else(|| "Use-quickly".into()),
+                    open_first_name: None,
+                    open_first_op: None,
+                }),
+            };
+            args.return_to = bank_optional_tile(object, "return_to", None)?;
+            args.deposit_all = bank_boolean(object, "deposit_all", false)?;
+            args.common_junk = bank_boolean(object, "common_junk", true)?;
+            args
+        }
+        "bank_wait" => match bank_required_string(object, "kind", None)?.as_str() {
+            "ready" => {
+                let mut args = Args::new(Op::WaitReady);
+                args.timeout_ms = bank_number(object, "timeout_ms")?;
+                args
+            }
+            "snapshot-after" => {
+                let mut args = Args::new(Op::WaitSnapshotAfter);
+                args.timeout_ms = bank_number(object, "timeout_ms")?;
+                args.baseline_generation = bank_number(object, "baseline_generation")?;
+                args
+            }
+            other => return Err(format!("unknown bank wait kind {other:?}")),
+        },
+        _ => return Err(format!("unknown bank family {family:?}")),
+    };
+    Ok(operation)
+}
+
 /// A started machine's id, unique for the isolate thread's life.
 pub(crate) type Handle = u64;
 
@@ -363,7 +1070,7 @@ pub(crate) struct Cx<'a> {
     ops: &'a mut Vec<InteractReq>,
     clock: &'a mut InstantTaskClock,
     reply: Option<Reply>,
-    hooks: &'a [Hook],
+    hooks: &'a [Rc<Hook>],
     handle: Handle,
     /// The script side while a row steps; `None` in begin.
     js: Option<&'a mut (dyn Js + 'a)>,
@@ -372,6 +1079,7 @@ pub(crate) struct Cx<'a> {
     /// Asks this step made, and how the first failing one ended the row.
     asks: usize,
     ending: Option<Ending>,
+    callback_path: Option<native::abi::HookPath>,
 }
 impl<'a> Cx<'a> {
     /// A bare context for a family's own unit tests: no hooks held.
@@ -387,10 +1095,11 @@ impl<'a> Cx<'a> {
             reply,
             hooks: &[],
             handle: 0,
+            context: StartContext::default(),
             js: None,
-            intent_baseline: user_move_intent_seq(),
             asks: 0,
             ending: None,
+            callback_path: None,
         }
     }
 }
@@ -437,22 +1146,13 @@ impl Cx<'_> {
         self.hooks.get(hook).is_some_and(|hook| hook.present)
     }
 
-    /// Call `hooks[CALLBACKS[hook]](...args)` now, inside this step: a
-    /// script getter or predicate a decision reads where it stands
-    /// (frozen `host.hpFraction()`, `site.inArea(t)`), or a synchronous
-    /// notification (`host.log(m)`). Same callback path as [`Step::Call`]
-    /// (microtask checkpoint included), but synchronous only and outside
-    /// [`CALLS_PER_TICK`]; async hooks go through [`Step::Call`].
-    ///
-    /// `Err(Ended)` ends the row whatever the step then returns, and the
-    /// family should return at once: join claimed the tick for Stop
-    /// (before or during the call) or the call was terminated (the row is
-    /// aborted `terminated`, as a terminated [`Step::Call`] is), the hook
-    /// threw (the `runMachine` await rejects with that value), it returned
-    /// a promise (never awaited here: `not impl`), or the step made more
-    /// than [`ASKS_PER_STEP`] asks. Begin has no script side, so an ask
-    /// there is `Err` and ends nothing.
-    pub(crate) fn ask(&mut self, hook: usize, args: &[Value]) -> Result<Value, Ended> {
+    /// Invoke one bank prompt callback using its source-backed path.
+    pub(crate) fn call_prompt(
+        &mut self,
+        hook: Option<usize>,
+        args: &[Value],
+        path: native::abi::HookPath,
+    ) -> Result<Called, Ended> {
         if self.ending.is_some() {
             return Err(Ended);
         }
@@ -470,7 +1170,9 @@ impl Cx<'_> {
             ))));
             return Err(Ended);
         }
-        let callback = self.hooks.get(hook).map(|hook| &hook.callback);
+        let callback = hook
+            .and_then(|hook| self.hooks.get(hook))
+            .map(|hook| &hook.callback);
         let called = js.call_for(self.handle, callback, args);
         if matches!(called, Called::Terminated) {
             TERMINATED.with(|flag| flag.set(true));
@@ -482,20 +1184,59 @@ impl Cx<'_> {
             return Err(Ended);
         }
         match called {
-            Called::Settled(Reply::Value(value)) => Ok(value),
             Called::Settled(Reply::Threw(thrown)) => {
                 self.ending = Some(Ending::Failed(thrown));
                 Err(Ended)
             }
-            Called::Pending(_) | Called::Terminated => {
+            Called::Pending(_) if path == native::abi::HookPath::CallSync => Ok(
+                Called::Settled(Reply::Value(serde_json::json!({}))),
+            ),
+            Called::Pending(_) if path == native::abi::HookPath::Ask => {
                 self.ending = Some(Ending::Failed(Thrown::new(
                     "not impl: a synchronous machine callback returned a promise",
                 )));
                 Err(Ended)
             }
+            Called::Terminated => unreachable!("termination returned above"),
+            called => Ok(called),
+        }
+    }
+
+    /// Poll the one Promise returned by an awaited bank prompt. A settled
+    /// rejection ends this row with its original V8 value.
+    pub(crate) fn poll_prompt(&mut self, pending: &Pending) -> Option<Reply> {
+        if self.ending.is_some() {
+            return None;
+        }
+        let Some(js) = self.js.as_deref_mut() else {
+            return None;
+        };
+        if js.claimed() {
+            self.ending = Some(Ending::Stopped);
+            return None;
+        }
+        let reply = js.poll(pending);
+        if js.claimed() {
+            self.ending = Some(Ending::Stopped);
+            return None;
+        }
+        if let Some(Reply::Threw(thrown)) = &reply {
+            self.ending = Some(Ending::Failed(thrown.clone()));
+        }
+        reply
+    }
+
+    /// Call `hooks[CALLBACKS[hook]](...args)` now, inside this step.
+    /// Promises are never awaited here.
+    pub(crate) fn ask(&mut self, hook: usize, args: &[Value]) -> Result<Value, Ended> {
+        match self.call_prompt(Some(hook), args, native::abi::HookPath::Ask)? {
+            Called::Settled(Reply::Value(value)) => Ok(value),
+            Called::Settled(Reply::Threw(_)) => Err(Ended),
+            Called::Pending(_) | Called::Terminated => unreachable!("ask path is synchronous"),
         }
     }
 }
+
 
 /// An [`Cx::ask`] that ended its row; the family returns at once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -582,9 +1323,6 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::autocast::Autocast>(),
     entry::<crate::special::Special>(),
     entry::<crate::modals::Modals>(),
-    entry::<crate::bank_open::BankOpen>(),
-    entry::<crate::banking_open::BankingOpen>(),
-    entry::<crate::bank_select::SelectBank>(),
     entry::<crate::fire::LightFire>(),
     entry::<crate::fight_upkeep::BuryInFight>(),
     entry::<crate::shop::Shop>(),
@@ -625,18 +1363,8 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::walk::DirectClick>(),
     entry::<crate::boat_fare::WalkTo>(),
     entry::<crate::anchor_return::ReturnToAnchor>(),
-    entry::<crate::bank_op::BankOp>(),
-    entry::<crate::bank_op::BankWithdrawLoad>(),
-    entry::<crate::bank_op::BankClose>(),
-    entry::<crate::bank_op::BankNoteMode>(),
-    entry::<crate::bank_deposit::BankDeposit>(),
     entry::<crate::bank_withdraw::WithdrawTo>(),
     entry::<crate::bank_withdraw::CloseConfirm>(),
-    entry::<crate::bank_access::BankAccess>(),
-    entry::<crate::bank_access::NpcAccess>(),
-    entry::<crate::bank_access::BankOpenAccess>(),
-    entry::<crate::periodic_bank::BankNearest>(),
-    entry::<crate::periodic_bank::PeriodicBank>(),
     entry::<crate::death_recovery::DeathRecovery>(),
     #[cfg(test)]
     entry::<tests::Probe>(),
@@ -668,10 +1396,14 @@ const FAMILIES: &[Entry] = &[
 
 /// The callback names `family` holds at start, or `None` if unregistered.
 pub(crate) fn callbacks_of(family: &str) -> Option<&'static [&'static str]> {
-    FAMILIES
-        .iter()
-        .find(|entry| entry.name == family)
-        .map(|entry| entry.callbacks)
+    bank_family_descriptor(family)
+        .map(|descriptor| descriptor.callbacks)
+        .or_else(|| {
+            FAMILIES
+                .iter()
+                .find(|entry| entry.name == family)
+                .map(|entry| entry.callbacks)
+        })
 }
 
 /// Whether a live row of `family` is running (its begin returned
@@ -687,6 +1419,16 @@ pub(crate) fn live(family: &str) -> bool {
         let host = host.borrow();
         host.rows.iter().any(|row| row.family == family)
             || host.stepping.iter().any(|row| row.family == family)
+    })
+}
+
+/// Whether a native bank transfer is pending or admitted on this isolate.
+pub(crate) fn bank_transfer_busy() -> bool {
+    flush_deferred_bank_cancels();
+    HOST.with(|host| {
+        host.borrow().bank_mirrors.iter().any(|mirror| {
+            mirror.transfer_busy && mirror.terminal.is_none()
+        })
     })
 }
 
@@ -847,6 +1589,7 @@ pub(crate) enum SeatStartPayload {
     Gather(std::sync::Arc<crate::native::SettingsBag>),
     Combat(std::sync::Arc<crate::api_combat::CombatSessionRequest>),
     QuestProgress(std::sync::Arc<str>),
+    Bank(crate::bank::request::BankSeatArgs),
 }
 
 impl SeatStartPayload {
@@ -856,6 +1599,7 @@ impl SeatStartPayload {
             Self::Gather(settings) => isolate_fb::SeatStartArgsRef::Gather(settings),
             Self::Combat(request) => isolate_fb::SeatStartArgsRef::Combat(request),
             Self::QuestProgress(name) => isolate_fb::SeatStartArgsRef::QuestProgress(name),
+            Self::Bank(args) => isolate_fb::SeatStartArgsRef::Bank(args),
         }
     }
 }
@@ -890,10 +1634,434 @@ struct PendingSeatCancel {
     reason: CallbackCancelReason,
 }
 
+#[derive(Clone)]
+struct BankPrompt {
+    sequence: DecisionSequence,
+    point: String,
+    args: Vec<u8>,
+}
+
+#[derive(Clone)]
+struct PendingSeatDecision {
+    of: RequestId,
+    sequence: DecisionSequence,
+    answer: Vec<u8>,
+}
+
+struct BankMirror {
+    id: RequestId,
+    family: &'static str,
+    transfer_busy: bool,
+    prompt: Option<BankPrompt>,
+    terminal: Option<Outcome>,
+    admitted: bool,
+    orphaned: bool,
+}
+
+/// One isolate-side continuation over an admitted native bank seat row.
+pub(crate) struct NativeBankChild {
+    id: RequestId,
+    family: &'static str,
+    hook_indices: Vec<Option<usize>>,
+    seen_prompt: u32,
+    awaiting_reply: Option<u32>,
+    cancel_on_drop: bool,
+    finished: bool,
+}
+
+fn bank_hook_indices(
+    descriptor: &BankFamilyDescriptor,
+    operation: crate::bank::request::BankSeatOperation,
+    hook_map: &[(&str, usize)],
+    hook_count: usize,
+    mut present: impl FnMut(usize) -> bool,
+) -> Result<(Vec<Option<usize>>, u32), String> {
+    let mut indices = vec![None; descriptor.callbacks.len()];
+    let mut hooks_present = 0;
+    for (member, index) in hook_map {
+        if *index >= hook_count {
+            return Err(format!("bank callback {member:?} index {index} is out of range"));
+        }
+        let Some(slot) = descriptor
+            .callbacks
+            .iter()
+            .position(|callback| callback == member)
+        else {
+            return Err(format!(
+                "bank callback {member:?} is not declared by {}",
+                descriptor.name
+            ));
+        };
+        if indices[slot].replace(*index).is_some() {
+            return Err(format!("bank callback {member:?} is mapped more than once"));
+        }
+        if present(*index) {
+            hooks_present |= bank_hook_bit(operation, member);
+        }
+    }
+    Ok((indices, hooks_present))
+}
+
+fn require_bank_hooks(
+    operation: crate::bank::request::BankSeatOperation,
+    hooks_present: u32,
+) -> Result<(), String> {
+    use crate::bank::request::{BankSeatOperation as Op, DEPOSIT_MATCH_HOOK_MATCH};
+    if operation == Op::DepositMatch && hooks_present & DEPOSIT_MATCH_HOOK_MATCH == 0 {
+        return Err("bank_deposit requires a match function".into());
+    }
+    Ok(())
+}
+
+fn enqueue_bank_child(
+    id: RequestId,
+    family: &'static str,
+    args: crate::bank::request::BankSeatArgs,
+    context: StartContext,
+) -> Result<(), String> {
+    let descriptor =
+        bank_family_descriptor(family).ok_or_else(|| format!("unknown bank family {family:?}"))?;
+    if bank_family_for_operation(args.operation) != family {
+        return Err(format!(
+            "bank operation {:?} does not belong to {family}",
+            args.operation
+        ));
+    }
+    args.validate(descriptor.kind)?;
+    let mut host = HOST.with(|host| host.borrow_mut());
+    if host.execution.is_none() {
+        return Err("native bank seat requires an active execution".into());
+    }
+    if host.pending_starts.len() >= MAX_PENDING_SEAT_STARTS {
+        return Err("native seat start carry is full".into());
+    }
+    if host.bank_mirrors.iter().any(|mirror| mirror.id == id) {
+        return Err("native bank seat identity is already registered".into());
+    }
+    host.pending_starts.push(PendingSeatStart {
+        id,
+        parent: context.seat_parent,
+        local_parent: context.local_parent,
+        kind: descriptor.kind,
+        args: SeatStartPayload::Bank(args.clone()),
+    });
+    let transfer_busy = bank_transfer_operation(args.operation)
+        || (args.operation == crate::bank::request::BankSeatOperation::BankNearest
+            && (args.deposit_all
+                || args.hooks_present & crate::bank::request::BANK_NEAREST_HOOK_DEPOSIT != 0));
+    host.bank_mirrors.push(BankMirror {
+        id,
+        family,
+        transfer_busy,
+        prompt: None,
+        terminal: None,
+        admitted: false,
+        orphaned: false,
+    });
+    Ok(())
+}
+
+impl NativeBankChild {
+    /// Start one typed native bank request under this row's captured lineage.
+    pub(crate) fn start(
+        mut args: crate::bank::request::BankSeatArgs,
+        hook_map: &[(&str, usize)],
+        cx: &Cx<'_>,
+    ) -> Result<Self, String> {
+        flush_deferred_bank_cancels();
+        if IN_BEGIN.with(Cell::get) {
+            return Err("a machine begin may not start a machine".into());
+        }
+        if cx.context.history_expired {
+            return Err("history expired".into());
+        }
+        if cx.context.parent_revoked {
+            return Err("parent not live".into());
+        }
+        let family = bank_family_for_operation(args.operation);
+        let descriptor = bank_family_descriptor(family)
+            .ok_or_else(|| format!("unknown bank family {family:?}"))?;
+        let (hook_indices, hooks_present) = bank_hook_indices(
+            descriptor,
+            args.operation,
+            hook_map,
+            cx.hooks.len(),
+            |index| cx.has(index),
+        )?;
+        require_bank_hooks(args.operation, hooks_present)?;
+        args.hooks_present = hooks_present;
+        args.validate(descriptor.kind)?;
+        let handle = HOST
+            .with(|host| host.borrow_mut().allocate_handle())
+            .ok_or_else(|| "native bank seat identity exhausted".to_owned())?;
+        let id = RequestId::isolate(handle)
+            .map_err(|error| format!("native bank seat identity: {error}"))?;
+        enqueue_bank_child(id, family, args, cx.context)?;
+        Ok(Self {
+            id,
+            family,
+            hook_indices,
+            seen_prompt: 0,
+            awaiting_reply: None,
+            cancel_on_drop: true,
+            finished: false,
+        })
+    }
+
+    /// Drive an admitted native bank request once.
+    pub(crate) fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+        if self.finished {
+            return Step::Fail(Thrown::new("native bank child is already settled"));
+        }
+        let mirror = HOST.with(|host| {
+            host.borrow()
+                .bank_mirrors
+                .iter()
+                .find(|mirror| mirror.id == self.id)
+                .map(|mirror| {
+                    (
+                        mirror.admitted,
+                        mirror.prompt.clone(),
+                        mirror.terminal.clone(),
+                    )
+                })
+        });
+        let Some((admitted, prompt, terminal)) = mirror else {
+            self.finished = true;
+            return Step::Fail(Thrown::new("native bank seat mirror is unavailable"));
+        };
+        if let Some(outcome) = terminal {
+            self.finished = true;
+            clear_bank_mirror(self.id);
+            return match outcome {
+                Outcome::Done(value) => Step::Done(value),
+                Outcome::Failed(thrown) => Step::Fail(thrown),
+                Outcome::Aborted(reason) => Step::Fail(Thrown::new(format!(
+                    "native bank seat aborted: {}",
+                    reason.as_str()
+                ))),
+                Outcome::Refused(reason) => Step::Fail(Thrown::new(format!(
+                    "native bank seat refused: {reason}"
+                ))),
+            };
+        }
+        if !admitted {
+            return Step::Wait;
+        }
+        if let Some(sequence) = self.awaiting_reply {
+            match cx.reply() {
+                None => return Step::Wait,
+                Some(Reply::Value(value)) => {
+                    if let Err(error) = queue_bank_decision(self.id, sequence, value) {
+                        self.fail_callback();
+                        return Step::Fail(Thrown::new(error));
+                    }
+                    self.awaiting_reply = None;
+                    return Step::Wait;
+                }
+                Some(Reply::Threw(thrown)) => {
+                    self.fail_callback();
+                    return Step::Fail(thrown);
+                }
+            }
+        }
+        let Some(prompt) = prompt else {
+            return Step::Wait;
+        };
+        let sequence = prompt.sequence.get();
+        if sequence <= self.seen_prompt {
+            return Step::Wait;
+        }
+        self.seen_prompt = sequence;
+        let Some((point, hook_index)) =
+            bank_prompt_hook(self.family, &prompt.point, &self.hook_indices)
+        else {
+            self.fail_callback();
+            return Step::Fail(Thrown::new(format!(
+                "not impl: no source-backed bank prompt {} / {:?}",
+                self.family, prompt.point
+            )));
+        };
+        if !cx.has(hook_index) {
+            self.fail_callback();
+            return Step::Fail(Thrown::new(format!(
+                "not impl: bank prompt {} / {:?} has no held callback",
+                self.family, prompt.point
+            )));
+        }
+        let args = match crate::channel::decode(&prompt.args) {
+            Ok(Value::Array(args)) => args,
+            Ok(_) => {
+                self.fail_callback();
+                return Step::Fail(Thrown::new("native bank prompt arguments are not an array"));
+            }
+            Err(error) => {
+                self.fail_callback();
+                return Step::Fail(Thrown::new(format!(
+                    "native bank prompt arguments: {error}"
+                )));
+            }
+        };
+        match point.path() {
+            native::abi::HookPath::Awaited => {
+                self.awaiting_reply = Some(sequence);
+                cx.callback_path = Some(native::abi::HookPath::Awaited);
+                Step::Call(Call {
+                    hook: hook_index,
+                    args,
+                })
+            }
+            path @ (native::abi::HookPath::CallSync | native::abi::HookPath::Ask) => {
+                match cx.call_prompt(Some(hook_index), &args, path) {
+                    Ok(Called::Settled(Reply::Value(value))) => {
+                        if let Err(error) = queue_bank_decision(self.id, prompt.sequence, value) {
+                            self.fail_callback();
+                            Step::Fail(Thrown::new(error))
+                        } else {
+                            Step::Wait
+                        }
+                    }
+                    Ok(Called::Settled(Reply::Threw(_)))
+                    | Ok(Called::Pending(_))
+                    | Ok(Called::Terminated) => {
+                        unreachable!("call_prompt resolves synchronous bank callbacks")
+                    }
+                    Err(Ended) => {
+                        if matches!(cx.ending.as_ref(), Some(Ending::Failed(_))) {
+                            self.fail_callback();
+                        } else {
+                            self.mark_orphaned();
+                        }
+                        Step::Wait
+                    }
+                }
+            }
+        }
+    }
+
+    fn cancel_and_orphan(&mut self, reason: CallbackCancelReason) {
+        HOST.with(|host| {
+            let mut host = host.borrow_mut();
+            host.pending_decisions.retain(|decision| decision.of != self.id);
+            host.queue_cancel(self.id, reason);
+            if let Some(mirror) = host.bank_mirrors.iter_mut().find(|row| row.id == self.id) {
+                mirror.orphaned = true;
+            }
+        });
+        self.awaiting_reply = None;
+        self.finished = true;
+    }
+
+    fn fail_callback(&mut self) {
+        if self.cancel_on_drop {
+            self.cancel_and_orphan(CallbackCancelReason::HookThrew);
+        } else {
+            self.mark_orphaned();
+        }
+    }
+
+    fn mark_orphaned(&mut self) {
+        HOST.with(|host| {
+            if let Some(mirror) = host
+                .borrow_mut()
+                .bank_mirrors
+                .iter_mut()
+                .find(|row| row.id == self.id)
+            {
+                mirror.orphaned = true;
+            }
+        });
+        self.finished = true;
+    }
+
+    pub(crate) fn cancel(&mut self) {
+        if !self.finished {
+            self.awaiting_reply = None;
+            self.finished = true;
+            defer_bank_cancel(self.id);
+        }
+    }
+}
+
+impl Drop for NativeBankChild {
+    fn drop(&mut self) {
+        if self.cancel_on_drop && !self.finished {
+            self.cancel();
+        }
+    }
+}
+
+fn bank_prompt_hook(
+    family: &str,
+    point: &str,
+    hook_indices: &[Option<usize>],
+) -> Option<(native::PromptPoint, usize)> {
+    let descriptor = bank_family_descriptor(family)?;
+    let mut rows = native::abi::HOOK_CHARACTERIZATIONS
+        .iter()
+        .filter(|row| row.families().contains(&family) && row.member() == point);
+    let characterization = rows.next()?;
+    if rows.next().is_some() {
+        return None;
+    }
+    let point = native::PromptPoint::from_contract_row(characterization)?;
+    let index = descriptor
+        .callbacks
+        .iter()
+        .position(|member| *member == point.member())?;
+    Some((point, hook_indices.get(index).copied().flatten()?))
+}
+
+fn queue_bank_decision(
+    id: RequestId,
+    sequence: DecisionSequence,
+    answer: Value,
+) -> Result<(), String> {
+    let answer = crate::channel::encode(&answer)?;
+    if answer.len() > isolate_fb::MAX_SEAT_BINARY_BYTES {
+        return Err(format!(
+            "native bank decision exceeds {} bytes",
+            isolate_fb::MAX_SEAT_BINARY_BYTES
+        ));
+    }
+    HOST.with(|host| {
+        let mut host = host.borrow_mut();
+        if host.execution.is_none() {
+            return Err("native bank decision has no active execution".into());
+        }
+        if host
+            .pending_decisions
+            .iter()
+            .any(|decision| decision.of == id && decision.sequence == sequence)
+        {
+            return Ok(());
+        }
+        if host.pending_decisions.len() >= isolate_fb::MAX_SEAT_DECISIONS {
+            return Err("native bank decision carry is full".into());
+        }
+        host.pending_decisions.push(PendingSeatDecision {
+            of: id,
+            sequence,
+            answer,
+        });
+        Ok(())
+    })
+}
+
+fn clear_bank_mirror(id: RequestId) {
+    HOST.with(|host| {
+        let mut host = host.borrow_mut();
+        host.bank_mirrors.retain(|mirror| mirror.id != id);
+        host.pending_decisions.retain(|decision| decision.of != id);
+        host.pending_cancels.retain(|cancel| cancel.of != id);
+    });
+}
+
 pub(crate) struct SeatBatchCarry<'a> {
     pub(crate) consumed_terminal_seq: u64,
     pub(crate) terminal_ack_pending: bool,
     pub(crate) starts: Result<Vec<isolate_fb::SeatStartRef<'a>>, String>,
+    pub(crate) decisions: Vec<isolate_fb::SeatDecisionRef<'a>>,
     pub(crate) cancels: Vec<isolate_fb::SeatCancelInput>,
     pub(crate) mirror_revokes: Vec<isolate_fb::SeatMirrorRevoke>,
     pub(crate) machine_events: Vec<MachineEvent>,
@@ -904,6 +2072,7 @@ impl SeatBatchCarry<'_> {
         self.terminal_ack_pending
             || self.starts.as_ref().is_ok_and(|starts| !starts.is_empty())
             || self.starts.is_err()
+            || !self.decisions.is_empty()
             || !self.cancels.is_empty()
             || !self.mirror_revokes.is_empty()
             || !self.machine_events.is_empty()
@@ -991,7 +2160,7 @@ struct Row {
     /// [`Family::SYNC_HOOKS`].
     sync_hooks: &'static [usize],
     clock: InstantTaskClock,
-    hooks: Vec<Hook>,
+    hooks: Vec<Rc<Hook>>,
     /// Callbacks run this tick, across both passes.
     calls: usize,
     /// Last `(tick, evidence sequence)` pass this row consumed.
@@ -1095,7 +2264,9 @@ struct Host {
     settled: Vec<(Handle, Outcome)>,
     ops: Vec<PlacedOp>,
     pending_starts: Vec<PendingSeatStart>,
+    pending_decisions: Vec<PendingSeatDecision>,
     pending_cancels: Vec<PendingSeatCancel>,
+    bank_mirrors: Vec<BankMirror>,
     mirror_revokes: Vec<MirrorRevokeCarry>,
     machine_events: Vec<MachineEvent>,
     consumed_terminal_seq: u64,
@@ -1126,6 +2297,36 @@ thread_local! {
     static WALK_BASELINE: Cell<Option<u64>> = const { Cell::new(None) };
     /// Latest takeover sequence delivered through the ordered host queue.
     static TAKEOVER_SEQ: Cell<u64> = const { Cell::new(0) };
+    /// Child drops that occur while `HOST` is borrowed are reconciled before
+    /// the next seat batch is inspected or encoded.
+    static DEFERRED_BANK_CANCELS: RefCell<Vec<RequestId>> = const { RefCell::new(Vec::new()) };
+}
+
+fn defer_bank_cancel(id: RequestId) {
+    DEFERRED_BANK_CANCELS.with(|pending| {
+        let mut pending = pending.borrow_mut();
+        if !pending.contains(&id) {
+            pending.push(id);
+        }
+    });
+}
+
+fn flush_deferred_bank_cancels() {
+    let pending = DEFERRED_BANK_CANCELS.with(|pending| std::mem::take(&mut *pending.borrow_mut()));
+    if pending.is_empty() {
+        return;
+    }
+    HOST.with(|host| {
+        let mut host = host.borrow_mut();
+        for id in pending {
+            host.pending_decisions
+                .retain(|decision| decision.of != id);
+            host.queue_cancel(id, CallbackCancelReason::ParentAborted);
+            if let Some(mirror) = host.bank_mirrors.iter_mut().find(|row| row.id == id) {
+                mirror.orphaned = true;
+            }
+        }
+    });
 }
 
 struct WalkBaselineGuard(Option<u64>);
@@ -1160,7 +2361,9 @@ impl Host {
             settled: Vec::new(),
             ops: Vec::new(),
             pending_starts: Vec::new(),
+            pending_decisions: Vec::new(),
             pending_cancels: Vec::new(),
+            bank_mirrors: Vec::new(),
             mirror_revokes: Vec::new(),
             machine_events: Vec::new(),
             consumed_terminal_seq: 0,
@@ -1670,13 +2873,16 @@ impl Host {
         self.stepping.clear();
         self.ops.clear();
         self.pending_starts.clear();
+        self.pending_decisions.clear();
         self.pending_cancels.clear();
+        self.bank_mirrors.clear();
         self.mirror_revokes.clear();
         self.machine_events.clear();
         self.consumed_terminal_seq = 0;
         self.terminal_ack_pending = false;
         self.mirror_revokes_consumed = 0;
         self.publish_walking();
+        DEFERRED_BANK_CANCELS.with(|pending| pending.borrow_mut().clear());
     }
 
     fn stop(&mut self) {
@@ -1685,8 +2891,16 @@ impl Host {
         self.stepping.clear();
         self.settled.clear();
         self.ops.clear();
+        self.pending_starts.clear();
+        self.pending_decisions.clear();
+        self.pending_cancels.clear();
+        self.bank_mirrors.clear();
+        self.mirror_revokes.clear();
+        self.machine_events.clear();
+        self.terminal_ack_pending = false;
         self.publish_walking();
         self.walking_publication = None;
+        DEFERRED_BANK_CANCELS.with(|pending| pending.borrow_mut().clear());
     }
 }
 
@@ -1771,6 +2985,18 @@ fn seat_result_outcome(
 }
 
 fn settle_seat_result(host: &mut Host, id: RequestId, outcome: Outcome) {
+    let orphaned = if let Some(mirror) = host.bank_mirrors.iter_mut().find(|row| row.id == id) {
+        mirror.prompt = None;
+        mirror.terminal = Some(outcome.clone());
+        mirror.orphaned
+    } else {
+        false
+    };
+    if orphaned {
+        host.bank_mirrors.retain(|mirror| mirror.id != id);
+        host.pending_decisions.retain(|decision| decision.of != id);
+        return;
+    }
     let Ok(handle) = RequestId::isolate(id.get()) else {
         return;
     };
@@ -1826,6 +3052,9 @@ fn settle_seat_result(host: &mut Host, id: RequestId, outcome: Outcome) {
         return;
     }
     let mut row = host.rows.remove(position);
+    host.bank_mirrors.retain(|mirror| mirror.id != id);
+    host.pending_decisions
+        .retain(|decision| decision.of != id);
     let outcome = product_result.map_or(outcome, Outcome::Done);
     let abort_reason = match &outcome {
         Outcome::Aborted(reason) => Some(*reason),
@@ -1849,10 +3078,12 @@ pub(crate) fn set_execution(execution: Option<ExecutionId>) {
 }
 
 pub(crate) fn has_pending_seat_batch() -> bool {
+    flush_deferred_bank_cancels();
     HOST.with(|host| {
         let host = host.borrow();
         host.execution.is_some()
             && (!host.pending_starts.is_empty()
+                || !host.pending_decisions.is_empty()
                 || !host.pending_cancels.is_empty()
                 || !host.mirror_revokes.is_empty()
                 || host.machine_events.iter().any(|event| event.admitted)
@@ -1861,6 +3092,7 @@ pub(crate) fn has_pending_seat_batch() -> bool {
 }
 
 pub(crate) fn with_seat_batch<R>(f: impl FnOnce(Option<SeatBatchCarry<'_>>) -> R) -> R {
+    flush_deferred_bank_cancels();
     HOST.with(|host| {
         let host = host.borrow();
         let Some(execution) = host.execution else {
@@ -1870,6 +3102,15 @@ pub(crate) fn with_seat_batch<R>(f: impl FnOnce(Option<SeatBatchCarry<'_>>) -> R
             .pending_starts
             .iter()
             .map(|start| start.as_ref(execution))
+            .collect();
+        let decisions = host
+            .pending_decisions
+            .iter()
+            .map(|decision| isolate_fb::SeatDecisionRef {
+                of: decision.of,
+                sequence: decision.sequence,
+                answer: &decision.answer,
+            })
             .collect();
         let cancels = host
             .pending_cancels
@@ -1888,6 +3129,7 @@ pub(crate) fn with_seat_batch<R>(f: impl FnOnce(Option<SeatBatchCarry<'_>>) -> R
             consumed_terminal_seq: host.consumed_terminal_seq,
             terminal_ack_pending: host.terminal_ack_pending,
             starts,
+            decisions,
             cancels,
             mirror_revokes,
             machine_events: machine_events_for_batch(&host),
@@ -1925,14 +3167,43 @@ fn reconcile_machine_events(
     });
 }
 pub(crate) fn on_snapshot(snapshot: &isolate_fb::Snapshot<'_>) -> Result<(), String> {
+    flush_deferred_bank_cancels();
     let live = snapshot.seat_live();
     let results = snapshot.seat_results();
     let mut live_rows = Vec::with_capacity(live.as_ref().map_or(0, |rows| rows.len()));
+    let mut bank_live_rows = Vec::new();
     if let Some(rows) = live.as_ref() {
         for row in rows.iter() {
             let id = RequestId::from_raw(row.id())
                 .ok_or_else(|| format!("seat live row has invalid identity {}", row.id()))?;
-            live_rows.push((id, seat_phase_from_wire(row.phase())?));
+            let phase = seat_phase_from_wire(row.phase())?;
+            live_rows.push((id, phase));
+            if HOST.with(|host| {
+                host.borrow()
+                    .bank_mirrors
+                    .iter()
+                    .any(|mirror| mirror.id == id)
+            }) {
+                let prompt = row
+                    .prompt()
+                    .map(|prompt| {
+                        let sequence = DecisionSequence::from_raw(prompt.seq())
+                            .ok_or_else(|| format!("bank prompt for {} has zero sequence", id.get()))?;
+                        let point = prompt
+                            .point()
+                            .ok_or_else(|| format!("bank prompt for {} has no point", id.get()))?;
+                        let args = prompt
+                            .args()
+                            .ok_or_else(|| format!("bank prompt for {} has no arguments", id.get()))?;
+                        Ok(BankPrompt {
+                            sequence,
+                            point: point.to_owned(),
+                            args: args.bytes().to_vec(),
+                        })
+                    })
+                    .transpose()?;
+                bank_live_rows.push((id, row.decisions_consumed(), prompt));
+            }
         }
     }
     let has_results_page = results.is_some();
@@ -1953,7 +3224,19 @@ pub(crate) fn on_snapshot(snapshot: &isolate_fb::Snapshot<'_>) -> Result<(), Str
                 row.phase = *phase;
             }
         }
+        for (id, _, prompt) in &bank_live_rows {
+            if let Some(mirror) = host.bank_mirrors.iter_mut().find(|mirror| mirror.id == *id) {
+                mirror.admitted = true;
+                mirror.prompt = prompt.clone();
+            }
+        }
         let result_ids: Vec<_> = result_rows.iter().map(|(id, _, _)| *id).collect();
+        host.pending_decisions.retain(|decision| {
+            !result_ids.contains(&decision.of)
+                && !bank_live_rows.iter().any(|(id, consumed, _)| {
+                    decision.of == *id && decision.sequence.get() <= *consumed
+                })
+        });
         host.pending_starts.retain(|start| {
             !live_rows.iter().any(|(id, _)| *id == start.id) && !result_ids.contains(&start.id)
         });
@@ -1985,6 +3268,9 @@ pub(crate) fn capture_push(parent: Option<Handle>) -> CapturedLineage {
 }
 
 fn native_kind_for_family(family: &str) -> Option<native::request::NativeKind> {
+    if let Some(descriptor) = bank_family_descriptor(family) {
+        return Some(descriptor.kind);
+    }
     use native::request::NativeKind;
     Some(match family {
         "gather" => NativeKind::Gather,
@@ -1993,7 +3279,6 @@ fn native_kind_for_family(family: &str) -> Option<native::request::NativeKind> {
         "hunt-fight" | "hunt-hold" | "hunt-retreat" | "hunt-walkspot" | "hunt-enter" => {
             NativeKind::Hunt
         }
-        "bank_nearest" => NativeKind::BankNearest,
         "periodic_bank" => NativeKind::PeriodicBank,
         _ => return None,
     })
@@ -2050,7 +3335,25 @@ fn begin_row<F: Family>(handle: Handle, args: Value, hooks: Vec<Hook>, at: usize
         Ok(args) => args,
         Err(e) => return Started::Refused(format!("{} arguments: {e}", F::NAME)),
     };
+    let hooks = hooks.into_iter().map(Rc::new).collect::<Vec<_>>();
     let context = START_CONTEXT.with(Cell::get).unwrap_or_default();
+    let native_owner = HOST.with(|host| {
+        host.borrow().execution.is_some() && native_kind_for_family(F::NAME).is_some()
+    });
+    let row_context = StartContext {
+        parent_row: Some(handle),
+        seat_parent: if native_owner {
+            RequestId::isolate(handle).ok()
+        } else {
+            context.seat_parent
+        },
+        local_parent: if native_owner {
+            None
+        } else {
+            RequestId::isolate(handle).ok()
+        },
+        ..StartContext::default()
+    };
     let inherited_baseline = WALK_BASELINE.with(Cell::get);
     let intent_baseline = inherited_baseline.unwrap_or_else(observed_user_move_intent_seq);
     let carries_walk_baseline = inherited_baseline.is_some() || F::WALKING_OPERATION;
@@ -2067,10 +3370,12 @@ fn begin_row<F: Family>(handle: Handle, args: Value, hooks: Vec<Hook>, at: usize
                 reply: None,
                 hooks: &hooks,
                 handle,
+                context: row_context,
                 js: None,
                 intent_baseline,
                 asks: 0,
                 ending: None,
+                callback_path: None,
             },
         )
     });
@@ -2187,6 +3492,171 @@ pub(crate) fn start(family: &str, args: Value, hooks: Vec<Hook>, at: usize) -> S
     start_with_parent(family, args, hooks, at, None)
 }
 
+fn start_bank_family(
+    family: &'static str,
+    value: Value,
+    hooks: Vec<Hook>,
+    at: usize,
+    parent: Option<Handle>,
+) -> Started {
+    flush_deferred_bank_cancels();
+    let Some(descriptor) = bank_family_descriptor(family) else {
+        return Started::Refused(format!("unknown bank family {family:?}"));
+    };
+    let context = HOST.with(|host| host.borrow().start_context_for(parent));
+    if context.history_expired {
+        return Started::Refused("history expired".into());
+    }
+    if context.parent_revoked {
+        return Started::Refused("parent not live".into());
+    }
+    if !HOST.with(|host| host.borrow().execution.is_some()) {
+        return Started::Refused("native bank seat requires an active execution".into());
+    }
+    match bank_op_immediate_outcome(family, &value) {
+        Ok(Some(outcome)) => return Started::Settled(outcome),
+        Ok(None) => {}
+        Err(error) => return Started::Refused(error),
+    }
+    let mut args = match parse_bank_start(family, value) {
+        Ok(args) => args,
+        Err(error) => return Started::Refused(error),
+    };
+    if bank_family_for_operation(args.operation) != family {
+        return Started::Refused(format!(
+            "bank operation {:?} does not belong to {family}",
+            args.operation
+        ));
+    }
+    if let Err(error) = args.validate(descriptor.kind) {
+        return Started::Refused(error);
+    }
+    if family == "bank_deposit"
+        && HOST.with(|host| {
+            host.borrow().bank_mirrors.iter().any(|mirror| {
+                mirror.family == family && mirror.terminal.is_none()
+            })
+        })
+    {
+        return Started::Settled(Outcome::Done(Value::Null));
+    }
+    if hooks.len() != descriptor.callbacks.len() {
+        return Started::Refused(format!(
+            "{family} callback count does not match its descriptor"
+        ));
+    }
+    let mut hook_map = [("", 0usize); 3];
+    if descriptor.callbacks.len() > hook_map.len() {
+        return Started::Refused(format!("{family} has too many callback members"));
+    }
+    for (index, callback) in descriptor.callbacks.iter().enumerate() {
+        hook_map[index] = (*callback, index);
+    }
+    let hook_map = &hook_map[..descriptor.callbacks.len()];
+    let (hook_indices, hooks_present) = match bank_hook_indices(
+        descriptor,
+        args.operation,
+        hook_map,
+        hooks.len(),
+        |index| hooks[index].present,
+    ) {
+        Ok(result) => result,
+        Err(error) => return Started::Refused(error),
+    };
+    if let Err(error) = require_bank_hooks(args.operation, hooks_present) {
+        return Started::Refused(error);
+    }
+    args.hooks_present = hooks_present;
+    if let Err(error) = args.validate(descriptor.kind) {
+        return Started::Refused(error);
+    }
+    if HOST.with(|host| host.borrow().pending_starts.len() >= MAX_PENDING_SEAT_STARTS) {
+        return Started::Refused("native seat start carry is full".into());
+    }
+    let Some(handle) = HOST.with(|host| host.borrow_mut().allocate_handle()) else {
+        return Started::Refused("machine handle exhausted".into());
+    };
+    let id = match RequestId::isolate(handle) {
+        Ok(id) => id,
+        Err(_) => return Started::Refused("native bank seat identity exhausted".into()),
+    };
+    if let Err(error) = enqueue_bank_child(id, family, args, context) {
+        return Started::Refused(error);
+    }
+    let hooks = hooks.into_iter().map(Rc::new).collect();
+    let mut host = HOST.with(|host| host.borrow_mut());
+    if let Some(group) = descriptor.exclusive_group {
+        host.newest.retain(|(newest, _)| *newest != group);
+        host.newest.push((group, handle));
+        host.abort_superseded(at);
+    }
+    let clock = host.fresh_clock();
+    let inherited_baseline = WALK_BASELINE.with(Cell::get);
+    let intent_baseline = inherited_baseline.unwrap_or_else(observed_user_move_intent_seq);
+    let carries_walk_baseline = inherited_baseline.is_some();
+    host.rows.push(Row {
+        handle,
+        family,
+        exclusive: descriptor.exclusive_group,
+        sync_hooks: &[],
+        clock,
+        hooks,
+        calls: 0,
+        last_snapshot: None,
+        reply: None,
+        pending: None,
+        machine: Box::new(BankSeatMachine(NativeBankChild {
+            id,
+            family,
+            hook_indices,
+            seen_prompt: 0,
+            awaiting_reply: None,
+            cancel_on_drop: false,
+            finished: false,
+        })),
+        seat_parent: context.seat_parent,
+        parent_row: context.parent_row,
+        native_kind: Some(descriptor.kind),
+        admitted: false,
+        awaiting_seat_terminal: false,
+        authority_revoked: false,
+        phase: native::NativePhase::Preparing,
+        manual_walk_event_sent: false,
+        intent_baseline,
+        carries_walk_baseline,
+        walking_operation: false,
+        rebaseline_on_resume: false,
+    });
+    host.publish_walking();
+    Started::Running(handle)
+}
+
+struct BankSeatMachine(NativeBankChild);
+
+impl Machine for BankSeatMachine {
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+        self.0.step(cx)
+    }
+
+    fn snapshot_sensitive(&self) -> bool {
+        true
+    }
+
+    fn snapshot_step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+        self.0.step(cx)
+    }
+
+    fn abort(&mut self, _why: AbortReason) {}
+
+    fn release(&self) -> Option<InteractReq> {
+        None
+    }
+
+    fn walking_operation(&self) -> bool {
+        false
+    }
+}
+
 pub(crate) fn start_with_parent(
     family: &str,
     args: Value,
@@ -2196,6 +3666,9 @@ pub(crate) fn start_with_parent(
 ) -> Started {
     if IN_BEGIN.with(Cell::get) {
         return Started::Refused("a machine begin may not start a machine".into());
+    }
+    if let Some(descriptor) = bank_family_descriptor(family) {
+        return start_bank_family(descriptor.name, args, hooks, at, parent);
     }
     let Some(entry) = FAMILIES.iter().find(|entry| entry.name == family) else {
         return Started::Refused(format!("unknown machine family {family:?}"));
@@ -2439,10 +3912,12 @@ fn drive_inner(row: &mut Row, js: &mut impl Js, at: &mut usize, snapshot: bool) 
             reply: row.reply.take(),
             hooks: &row.hooks,
             handle: row.handle,
+            context: row.start_context(),
             js: Some(&mut *js),
             asks: 0,
             intent_baseline: row.intent_baseline,
             ending: None,
+            callback_path: None,
         };
         // Callback continuations belong to the same pass: a snapshot-only
         // pass must not fall back to the normal tick step after a JS call.
@@ -2451,6 +3926,7 @@ fn drive_inner(row: &mut Row, js: &mut impl Js, at: &mut usize, snapshot: bool) 
         } else {
             row.machine.step(&mut cx)
         };
+        let callback_path = cx.callback_path.take();
         let asked = cx.asks > 0;
         // An ask that failed ends the row whatever the step returned; the
         // ops of that step are dropped with it.
@@ -2501,6 +3977,10 @@ fn drive_inner(row: &mut Row, js: &mut impl Js, at: &mut usize, snapshot: bool) 
             Step::Call(call) => {
                 let hook = row.hooks.get(call.hook).map(|hook| &hook.callback);
                 let called = js.call_for(row.handle, hook, &call.args);
+                let synchronous = callback_path.map_or_else(
+                    || row.sync_hooks.contains(&call.hook),
+                    |path| path == native::abi::HookPath::CallSync,
+                );
                 row.calls += 1;
                 *at = js.queue_len();
                 match called {
@@ -2513,7 +3993,7 @@ fn drive_inner(row: &mut Row, js: &mut impl Js, at: &mut usize, snapshot: bool) 
                             });
                         }
                     }
-                    Called::Pending(pending) if !row.sync_hooks.contains(&call.hook) => {
+                    Called::Pending(pending) if !synchronous => {
                         row.pending = Some(pending);
                         if row.native_kind.is_some() {
                             HOST.with(|host| {
@@ -2756,6 +4236,160 @@ pub(crate) mod tests {
     use serde::Deserialize;
     use serde_json::json;
     use std::time::Duration;
+
+    #[test]
+    fn bank_op_withdraw_preserves_frozen_numeric_and_string_tiers() {
+        use crate::bank::request::BankSeatOperation;
+
+        let parse = |amount: Value| {
+            parse_bank_start(
+                "bank_op",
+                json!({ "kind": "withdraw", "name": "Feather", "amount": amount }),
+            )
+            .unwrap()
+        };
+        for (amount, threshold) in [
+            (json!(12), 12),
+            (json!(11), 11),
+            (json!(10.9), 10),
+            (json!(4), 1),
+            (json!(null), 1),
+            (json!(true), 1),
+        ] {
+            let args = parse(amount);
+            assert_eq!(args.operation, BankSeatOperation::WithdrawLabel);
+            assert_eq!(args.item_name.as_deref(), Some("Feather"));
+            assert_eq!(args.menu_op, None);
+            assert_eq!(args.quantity, Some(threshold));
+            args.validate(native::request::NativeKind::BankPlan)
+                .unwrap();
+        }
+        let args = parse(json!(9_007_199_254_741_000u64));
+        assert_eq!(args.quantity, Some(9_007_199_254_740_991));
+
+        for (amount, label) in [
+            (json!("all"), "Withdraw All"),
+            (json!("ALL"), "Withdraw All"),
+            (json!("Withdraw 5"), "Withdraw 5"),
+        ] {
+            let args = parse(amount);
+            assert_eq!(args.operation, BankSeatOperation::WithdrawLabel);
+            assert_eq!(args.menu_op.as_deref(), Some(label));
+            assert_eq!(args.quantity, None);
+            args.validate(native::request::NativeKind::BankPlan)
+                .unwrap();
+        }
+        for (op, action) in [
+            ("all", "Withdraw All"),
+            ("withdraw-all", "Withdraw All"),
+            ("withdraw-5", "withdraw 5"),
+            ("Withdraw 5", "Withdraw 5"),
+        ] {
+            let args = parse_bank_start(
+                "bank_op",
+                json!({ "kind": "withdraw-id", "id": 314, "op": op }),
+            )
+            .unwrap();
+            assert_eq!(args.operation, BankSeatOperation::WithdrawLabel);
+            assert_eq!(args.item_id, Some(314));
+            assert_eq!(args.menu_op.as_deref(), Some(action));
+            assert_eq!(args.quantity, None);
+            args.validate(native::request::NativeKind::BankPlan)
+                .unwrap();
+        }
+        let absent = parse_bank_start(
+            "bank_op",
+            json!({ "kind": "withdraw", "name": "Feather" }),
+        )
+        .unwrap();
+        assert_eq!(absent.quantity, Some(1));
+        assert_eq!(absent.menu_op, None);
+
+        let args = parse_bank_start(
+            "bank_op",
+            json!({ "kind": "withdraw-x", "name": "Feather", "count": "5" }),
+        )
+        .unwrap();
+        assert_eq!(args.operation, BankSeatOperation::WithdrawDelta);
+        assert_eq!(args.item_name.as_deref(), Some("Feather"));
+        assert_eq!(args.quantity, Some(5));
+        args.validate(native::request::NativeKind::BankPlan)
+            .unwrap();
+
+        let args = parse_bank_start(
+            "bank_op",
+            json!({ "kind": "withdraw-x-id", "id": 314.0, "count": true, "lands_as": "9" }),
+        )
+        .unwrap();
+        assert_eq!(args.operation, BankSeatOperation::WithdrawDelta);
+        assert_eq!(args.item_id, Some(314));
+        assert_eq!(args.quantity, Some(1));
+        assert_eq!(args.lands_as_id, Some(9));
+        args.validate(native::request::NativeKind::BankPlan)
+            .unwrap();
+    }
+
+    #[test]
+    fn bank_op_withdraw_x_invalid_and_zero_counts_settle_before_seat_start() {
+        let immediate = |value| bank_op_immediate_outcome("bank_op", &value).unwrap();
+        assert_eq!(
+            immediate(json!({ "kind": "withdraw-x", "name": "Feather", "count": 0 })),
+            Some(Outcome::Done(json!(true)))
+        );
+        assert_eq!(
+            immediate(json!({ "kind": "withdraw-x", "name": "Feather", "count": -3 })),
+            Some(Outcome::Done(json!(true)))
+        );
+        assert_eq!(
+            immediate(json!({ "kind": "withdraw-x", "name": "Feather", "count": 1.5 })),
+            Some(Outcome::Done(json!(false)))
+        );
+        assert_eq!(
+            immediate(json!({ "kind": "withdraw-x", "name": "Feather", "count": "bad" })),
+            Some(Outcome::Done(json!(false)))
+        );
+        assert_eq!(
+            immediate(json!({
+                "kind": "withdraw-x-id",
+                "id": null,
+                "count": 0,
+            })),
+            Some(Outcome::Done(json!(true)))
+        );
+        assert_eq!(
+            immediate(json!({
+                "kind": "withdraw-x-id",
+                "id": "314",
+                "count": 2,
+                "lands_as": 9,
+            })),
+            Some(Outcome::Done(json!(false)))
+        );
+        assert_eq!(
+            immediate(json!({
+                "kind": "withdraw-x-id",
+                "id": 314,
+                "count": 2,
+            })),
+            Some(Outcome::Done(json!(false)))
+        );
+        assert_eq!(
+            immediate(json!({
+                "kind": "withdraw-id",
+                "id": "314",
+                "op": "Withdraw 1",
+            })),
+            Some(Outcome::Done(json!(false)))
+        );
+        assert_eq!(
+            immediate(json!({
+                "kind": "withdraw-x",
+                "name": "Feather",
+                "count": 5,
+            })),
+            None
+        );
+    }
 
     /// Test family: emits `if-button {button}` at begin, one `if-button`
     /// per step for `steps` steps, then completes with the step count.
@@ -4221,16 +5855,33 @@ pub(crate) mod tests {
                 }
             }
         }
+        for descriptor in super::BANK_FAMILY_DESCRIPTORS {
+            for member in descriptor.callbacks {
+                let rows = HOOK_CHARACTERIZATIONS
+                    .iter()
+                    .filter(|row| {
+                        row.families().contains(&descriptor.name) && row.member() == *member
+                    })
+                    .collect::<Vec<_>>();
+                assert!(
+                    !rows.is_empty(),
+                    "no ABI row for bank descriptor {} / {member}",
+                    descriptor.name
+                );
+            }
+        }
         for row in HOOK_CHARACTERIZATIONS {
             for name in row.families() {
-                let family = super::FAMILIES
+                let callbacks = super::FAMILIES
                     .iter()
                     .find(|family| {
                         family.name == *name && !TEST_FAMILY_NAMES.contains(&family.name)
                     })
+                    .map(|family| family.callbacks)
+                    .or_else(|| super::bank_family_descriptor(name).map(|family| family.callbacks))
                     .unwrap_or_else(|| panic!("ABI row names unregistered family {name}"));
                 assert!(
-                    family.callbacks.contains(&row.member()),
+                    callbacks.contains(&row.member()),
                     "ABI row {name} / {} is not a registered callback",
                     row.member()
                 );
