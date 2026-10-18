@@ -1584,7 +1584,55 @@ impl BankTripReceipt {
     }
 }
 
+/// The recorder path that made a sighting of the selected tool. The first
+/// sighting of each kind keeps its source, so a receipt names the durable
+/// path that supplied the wield proof.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolSightingSource {
+    Start,
+    Frame,
+    Status,
+}
+
+impl ToolSightingSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::Frame => "frame",
+            Self::Status => "status",
+        }
+    }
+}
+
 impl Witness {
+    /// Stamps one durable sighting of the selected tool. All three recorder
+    /// paths (Start, frame snapshots, status rows) share this counter, so
+    /// the first pack-unworn sighting and the first worn sighting compare in
+    /// observation order. Only the first sighting of each kind keeps its
+    /// index: a later frame or row cannot reorder the proof.
+    fn record_tool_sighting(&mut self, source: ToolSightingSource, worn: bool) {
+        self.tool_sighting_count = self.tool_sighting_count.saturating_add(1);
+        let at = self.tool_sighting_count;
+        if worn {
+            if self.tool_worn_first.is_none() {
+                self.tool_worn_first = Some(at);
+                self.tool_worn_source = Some(source);
+            }
+        } else if self.tool_held_not_worn_first.is_none() {
+            self.tool_held_not_worn_first = Some(at);
+            self.tool_held_not_worn_source = Some(source);
+        }
+    }
+
+    /// The wield proof: the first pack-unworn sighting was recorded before
+    /// the first worn one. A worn-first shape is rejected even if a bare
+    /// row or frame follows it.
+    fn tool_wield_proved(&self) -> bool {
+        self.tool_held_not_worn_first
+            .zip(self.tool_worn_first)
+            .is_some_and(|(held, worn)| held < worn)
+    }
+
     fn fish_bank_complete(&self, seeded_casket_required: bool) -> bool {
         (!seeded_casket_required
             || (self.seeded_casket_baseline_verified
@@ -1696,13 +1744,22 @@ struct Witness {
     post_bank_yields: u32,
     waiting_for_bank_yield: bool,
     waiting_for_return_yield: bool,
-    tool_worn_observed: bool,
-    /// The selected tool was observed in the pack and not worn before it was
-    /// observed worn: the bank-close status row, a frame between the
-    /// withdrawal and the wear action, or the seeded Start pack. The bank
-    /// fixture banks the axe, so a correct run records this after the
-    /// withdrawal rather than at Start.
-    tool_held_not_worn_observed: bool,
+    /// First sighting of the selected tool worn, in the monotonic order of
+    /// [`Witness::record_tool_sighting`].
+    tool_worn_first: Option<u64>,
+    /// Which recorder path made the first worn sighting.
+    tool_worn_source: Option<ToolSightingSource>,
+    /// First sighting of the selected tool in the pack and not worn. The
+    /// bank-close status row, a frame between the withdrawal and the wear
+    /// action, or the seeded Start pack. The bank fixture banks the axe, so
+    /// a correct run records this after the withdrawal; the oracle requires
+    /// it before the first worn sighting.
+    tool_held_not_worn_first: Option<u64>,
+    /// Which recorder path made the first held-not-worn sighting.
+    tool_held_not_worn_source: Option<ToolSightingSource>,
+    /// Monotonic counter shared by every recorder path, so the two first
+    /// sightings above compare across status rows, frames and Start.
+    tool_sighting_count: u64,
     /// The selected tool was already worn at Start (after seeding). A run
     /// must fetch and wield it, so the oracle rejects this.
     tool_worn_at_start: bool,
@@ -3131,22 +3188,28 @@ impl GatherSlot {
             self.case,
             LiveCase::WoodcuttingBank | LiveCase::WoodcuttingBankUnwieldable
         ) {
+            // Stamp this frame's durable sighting. The pack state and the
+            // equipment state are exclusive here, so one frame makes at most
+            // one sighting and the shared counter keeps their order.
             let worn = self
                 .snapshot
                 .equipment()
                 .iter()
                 .any(|item| item.def.id == self.tool_id);
-            if !worn
-                && self
-                    .snapshot
-                    .inventory()
-                    .iter()
-                    .any(|item| item.def.id == self.tool_id && item.count > 0)
+            if worn {
+                self.witness
+                    .record_tool_sighting(ToolSightingSource::Frame, true);
+            } else if self
+                .snapshot
+                .inventory()
+                .iter()
+                .any(|item| item.def.id == self.tool_id && item.count > 0)
             {
-                self.witness.tool_held_not_worn_observed = true;
+                self.witness
+                    .record_tool_sighting(ToolSightingSource::Frame, false);
             }
-            self.witness.tool_worn_observed |= worn;
-            if self.case == LiveCase::WoodcuttingBankUnwieldable && self.witness.tool_worn_observed
+            if self.case == LiveCase::WoodcuttingBankUnwieldable
+                && self.witness.tool_worn_first.is_some()
             {
                 return Err("unwieldable rune axe was equipped".into());
             }
@@ -3835,8 +3898,12 @@ impl GatherSlot {
             // equipment; the wield oracle requires it to be absent from the
             // equipment here and observed unworn later.
             self.witness.tool_worn_at_start = self.item_equipped();
-            if self.item_in_inventory() && !self.witness.tool_worn_at_start {
-                self.witness.tool_held_not_worn_observed = true;
+            if self.witness.tool_worn_at_start {
+                self.witness
+                    .record_tool_sighting(ToolSightingSource::Start, true);
+            } else if self.item_in_inventory() {
+                self.witness
+                    .record_tool_sighting(ToolSightingSource::Start, false);
             }
         }
         let seeded_gem = self.cell == Cell::Mining && self.case == LiveCase::Power;
@@ -4217,13 +4284,15 @@ impl GatherSlot {
                 let expected = self.tool_id.to_string();
                 if tool == expected {
                     self.witness.tool_selected_observed = true;
-                    // A bare id is the selected tool in the pack, unworn: the
-                    // bank-close row and any frame before the wear action.
-                    self.witness.tool_held_not_worn_observed = true;
+                    // A bare id is the selected tool in the pack, unworn:
+                    // the bank-close row and any row before the wear action.
+                    self.witness
+                        .record_tool_sighting(ToolSightingSource::Status, false);
                 } else if let Some(id) = tool.strip_suffix(" (worn)") {
                     if id == expected {
                         self.witness.tool_selected_observed = true;
-                        self.witness.tool_worn_observed = true;
+                        self.witness
+                            .record_tool_sighting(ToolSightingSource::Status, true);
                         if self.case == LiveCase::WoodcuttingBankUnwieldable {
                             return Err("unwieldable rune axe status says worn".into());
                         }
@@ -4564,18 +4633,19 @@ impl GatherSlot {
         Ok(())
     }
 
-    /// The Woodcutting bank cells' tool fact: the selected axe was fetched
-    /// into the pack while not worn, and observed worn later. The old gate
-    /// sampled the transient `last_event = "wielding tool"`, which the
-    /// product may set and replace within one game tick; these facts are
-    /// durable because the bank-close row and the worn equipment persist.
-    /// A run that started with the axe already worn, or never wore it,
-    /// still fails.
+    /// The Woodcutting bank cells' tool fact: the selected axe was first
+    /// observed in the pack while not worn, then observed worn, in that
+    /// order. The old gate sampled the transient
+    /// `last_event = "wielding tool"`, which the product may set and replace
+    /// within one game tick; these facts are durable because the bank-close
+    /// row and the worn equipment persist. The order comes from one
+    /// monotonic sighting index shared by the Start, frame and status
+    /// recorders, so the reviewer's worn-row-then-bare-row shape fails as it
+    /// did under the old gate. A run that started with the axe already
+    /// worn, or never wore it, still fails.
     fn qualifies_wield(&self) -> Result<(), String> {
         if self.case == LiveCase::WoodcuttingBank
-            && (!self.witness.tool_worn_observed
-                || self.witness.tool_worn_at_start
-                || !self.witness.tool_held_not_worn_observed)
+            && (self.witness.tool_worn_at_start || !self.witness.tool_wield_proved())
         {
             return Err(format!(
                 "{} did not fetch the selected bronze axe unworn and then wear it: {:?}",
@@ -4583,7 +4653,9 @@ impl GatherSlot {
                 self.witness
             ));
         }
-        if self.case == LiveCase::WoodcuttingBankUnwieldable && self.witness.tool_worn_observed {
+        if self.case == LiveCase::WoodcuttingBankUnwieldable
+            && self.witness.tool_worn_first.is_some()
+        {
             return Err(format!(
                 "{} incorrectly marked the unwieldable rune axe worn: {:?}",
                 self.name(),
@@ -7187,9 +7259,16 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "bank_loaded": witness.bank_loaded_observed,
             "bank_closed": witness.bank_closed_observed,
             "tool_selected": witness.tool_selected_observed,
-            "tool_worn": witness.tool_worn_observed,
-            "tool_held_not_worn": witness.tool_held_not_worn_observed,
+            "tool_worn": witness.tool_worn_first.is_some(),
+            "tool_held_not_worn": witness.tool_held_not_worn_first.is_some(),
             "tool_worn_at_start": witness.tool_worn_at_start,
+            // The wield proof depends on the order of these two sightings, so
+            // the receipt carries the first sighting's recorder path and index
+            // for each; a passing receipt shows held-before-worn.
+            "tool_held_not_worn_source": witness.tool_held_not_worn_source.map(ToolSightingSource::as_str),
+            "tool_held_not_worn_seq": witness.tool_held_not_worn_first,
+            "tool_worn_source": witness.tool_worn_source.map(ToolSightingSource::as_str),
+            "tool_worn_seq": witness.tool_worn_first,
             "bait_exact": witness.bait_exact,
             "coin_balance_exact": witness.coin_balance_exact,
             "reserve_runes_intact": witness.reserve_runes_intact,
@@ -9138,11 +9217,24 @@ mod woodcutting_wield_oracle_tests {
         }
     }
 
+    fn pack_row(id: i32) -> api::snapshot::ItemView {
+        api::snapshot::ItemView {
+            container: api::snapshot::ItemContainer::Inventory,
+            slot: 0,
+            ..equipment_row(id)
+        }
+    }
+
+    /// A constructed passing witness: the first pack-unworn sighting was
+    /// stamped before the first worn one, as a status row pair would.
     fn wielded_witness() -> Witness {
         Witness {
             tool_selected_observed: true,
-            tool_held_not_worn_observed: true,
-            tool_worn_observed: true,
+            tool_sighting_count: 2,
+            tool_held_not_worn_first: Some(1),
+            tool_held_not_worn_source: Some(ToolSightingSource::Status),
+            tool_worn_first: Some(2),
+            tool_worn_source: Some(ToolSightingSource::Status),
             ..Witness::default()
         }
     }
@@ -9167,7 +9259,8 @@ mod woodcutting_wield_oracle_tests {
     fn wield_oracle_rejects_an_axe_never_worn() {
         let mut slot = slot_for(LiveCase::WoodcuttingBank);
         let mut witness = wielded_witness();
-        witness.tool_worn_observed = false;
+        witness.tool_worn_first = None;
+        witness.tool_worn_source = None;
         slot.witness = witness;
         let error = slot.qualifies_wield().unwrap_err();
         assert!(error.contains("did not fetch"), "{error}");
@@ -9185,6 +9278,42 @@ mod woodcutting_wield_oracle_tests {
         assert!(error.contains("did not fetch"), "{error}");
     }
 
+    /// A worn sighting with no pack-unworn sighting at all is a refusal:
+    /// the durable facts must show the fetch, not only the wear.
+    #[test]
+    fn wield_oracle_rejects_a_worn_axe_with_no_unworn_sighting() {
+        let mut slot = slot_for(LiveCase::WoodcuttingBank);
+        slot.witness = Witness {
+            tool_selected_observed: true,
+            tool_sighting_count: 1,
+            tool_worn_first: Some(1),
+            tool_worn_source: Some(ToolSightingSource::Status),
+            ..Witness::default()
+        };
+        let error = slot.qualifies_wield().unwrap_err();
+        assert!(error.contains("did not fetch"), "{error}");
+    }
+
+    /// The reviewer's constructed probe: a worn sighting is stamped first and
+    /// a bare pack sighting later. The old oracle refused this run because it
+    /// never sampled a `wielding tool` event; the ordered witness refuses it
+    /// because the first wear was not preceded by a pack sighting.
+    #[test]
+    fn wield_oracle_rejects_a_worn_sighting_before_the_unworn_one() {
+        let mut slot = slot_for(LiveCase::WoodcuttingBank);
+        slot.witness = Witness {
+            tool_selected_observed: true,
+            tool_sighting_count: 2,
+            tool_worn_first: Some(1),
+            tool_worn_source: Some(ToolSightingSource::Status),
+            tool_held_not_worn_first: Some(2),
+            tool_held_not_worn_source: Some(ToolSightingSource::Status),
+            ..Witness::default()
+        };
+        let error = slot.qualifies_wield().unwrap_err();
+        assert!(error.contains("did not fetch"), "{error}");
+    }
+
     /// The unwieldable sibling keeps its old rejection unchanged: the rune
     /// axe observed worn always fails, and the same witness without the wear
     /// passes.
@@ -9194,7 +9323,8 @@ mod woodcutting_wield_oracle_tests {
         slot.witness = wielded_witness();
         let error = slot.qualifies_wield().unwrap_err();
         assert!(error.contains("unwieldable"), "{error}");
-        slot.witness.tool_worn_observed = false;
+        slot.witness.tool_worn_first = None;
+        slot.witness.tool_worn_source = None;
         assert!(slot.qualifies_wield().is_ok());
     }
 
@@ -9208,11 +9338,48 @@ mod woodcutting_wield_oracle_tests {
         slot.apply_status(&tool_status(tool_id.to_string()))
             .unwrap();
         assert!(slot.witness.tool_selected_observed);
-        assert!(slot.witness.tool_held_not_worn_observed);
-        assert!(!slot.witness.tool_worn_observed);
+        assert_eq!(slot.witness.tool_held_not_worn_first, Some(1));
+        assert_eq!(
+            slot.witness.tool_held_not_worn_source,
+            Some(ToolSightingSource::Status)
+        );
+        assert_eq!(slot.witness.tool_worn_first, None);
         slot.apply_status(&tool_status(format!("{tool_id} (worn)")))
             .unwrap();
-        assert!(slot.witness.tool_worn_observed);
+        assert_eq!(slot.witness.tool_worn_first, Some(2));
+        assert_eq!(
+            slot.witness.tool_worn_source,
+            Some(ToolSightingSource::Status)
+        );
+        assert!(slot.qualifies_wield().is_ok());
+    }
+
+    /// The frame recorder, not the status path, supplies both sightings: the
+    /// axe in the pack unworn, then the same axe in the equipment. A frame
+    /// after the wear cannot reorder the proof, and the oracle accepts.
+    #[test]
+    fn wield_witness_orders_the_frame_pack_then_equipment() {
+        let mut slot = slot_for(LiveCase::WoodcuttingBank);
+        let tool_id = slot.tool_id;
+        let before = slot.capture();
+        slot.snapshot.seed_inventory(vec![pack_row(tool_id)], 28);
+        let held = slot.capture();
+        slot.observe_running(Some(before), held.clone()).unwrap();
+        assert_eq!(slot.witness.tool_held_not_worn_first, Some(1));
+        assert_eq!(
+            slot.witness.tool_held_not_worn_source,
+            Some(ToolSightingSource::Frame)
+        );
+        assert_eq!(slot.witness.tool_worn_first, None);
+        slot.snapshot.seed_inventory(Vec::new(), 28);
+        slot.snapshot.seed_equipment(vec![equipment_row(tool_id)]);
+        let worn = slot.capture();
+        slot.observe_running(Some(held), worn).unwrap();
+        assert_eq!(slot.witness.tool_worn_first, Some(2));
+        assert_eq!(
+            slot.witness.tool_worn_source,
+            Some(ToolSightingSource::Frame)
+        );
         assert!(slot.qualifies_wield().is_ok());
     }
 
@@ -9231,7 +9398,12 @@ mod woodcutting_wield_oracle_tests {
             "{error}"
         );
         assert!(slot.witness.tool_worn_at_start);
-        assert!(!slot.witness.tool_held_not_worn_observed);
+        assert_eq!(slot.witness.tool_worn_first, Some(1));
+        assert_eq!(
+            slot.witness.tool_worn_source,
+            Some(ToolSightingSource::Start)
+        );
+        assert_eq!(slot.witness.tool_held_not_worn_first, None);
     }
 }
 
