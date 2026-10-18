@@ -402,6 +402,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - Windows now promptly cancels blocked login transport I/O when a login attempt
   ends.
 
+#### Windows
+
+- On Windows, the instance-lock warning names the live panel or TUI that
+  already holds the lock, even when this Windows account cannot open that
+  process. It no longer calls that live copy an unknown process.
+
 ### Release engineering
 
 - The architecture check refuses candidate Cargo configuration files without
