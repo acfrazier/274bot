@@ -44,6 +44,8 @@ fn crypto_stub_keeps_uuid_and_random_values_without_subtle_or_url() {
                     cryptoKeys: Object.getOwnPropertyNames(crypto).sort(),
                     urlUndefined: typeof URL === "undefined",
                     urlSearchParamsUndefined: typeof URLSearchParams === "undefined",
+                    removedGlobals: ["URLPattern", "Crypto", "CryptoKey", "SubtleCrypto"]
+                        .filter((name) => typeof globalThis[name] !== "undefined"),
                 };
             })()"#,
         )
@@ -64,4 +66,5 @@ fn crypto_stub_keeps_uuid_and_random_values_without_subtle_or_url() {
     );
     assert_eq!(result["urlUndefined"], true);
     assert_eq!(result["urlSearchParamsUndefined"], true);
+    assert_eq!(result["removedGlobals"], serde_json::json!([]));
 }
