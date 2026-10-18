@@ -2,7 +2,7 @@ use super::*;
 use api::script_contract::{AbortReason, CallbackCancelReason, ChildOrigin};
 use script::api_progress::ProgressPage;
 use script::isolate_fb::{
-    BankSelectionInput, NativeFactsInput, SeatLiveDetails, SeatPageInput, SeatStartArgs,
+    NativeFactsInput, SeatLiveDetails, SeatPageInput, SeatResultValue, SeatStartArgs,
     SeatStartInput, TileInput,
 };
 use script::load::QueuedSeatBatch;
@@ -87,6 +87,16 @@ fn seat_reqs(
 
 fn seat_starts(batches: &[QueuedSeatBatch]) -> impl Iterator<Item = &SeatStartInput> {
     batches.iter().flat_map(|batch| batch.batch.starts.iter())
+}
+
+fn assert_bank_start_operation(start: &SeatStartInput, operation: &str) {
+    let SeatStartArgs::Bank(args) = &start.args else {
+        panic!("bank starts require typed bank arguments: {:?}", start.args);
+    };
+    assert!(
+        format!("{args:?}").contains(&format!("operation: {operation},")),
+        "expected bank operation {operation}, got {args:?}"
+    );
 }
 
 #[test]
@@ -194,6 +204,10 @@ export function tick(api) {
         "leave-context"
     );
     assert_eq!(iso.probe("globalThis.__siteUnchanged").unwrap(), true);
+    let bank_open = seat_starts(&batches)
+        .find(|start| start.kind == NativeKind::BankPlan)
+        .expect("Banking.open starts a typed bank seat");
+    assert_bank_start_operation(bank_open, "Open");
     let order = iso.probe("globalThis.__leaveOrder").unwrap();
     let order = order.as_array().unwrap();
     let position = |name: &str| order.iter().position(|item| item == name).unwrap();
@@ -605,6 +619,7 @@ export function tick(api) {
             .find(|start| start.kind == NativeKind::BankNearest)
             .expect("Banking.bankNearest starts a real typed Capability child");
         assert_eq!(child.parent, Some(parent_id));
+        assert_bank_start_operation(child, "BankNearest");
         child.id
     };
 
@@ -710,14 +725,16 @@ export function tick(api) {
     post_test_tick(&iso, &mut snapshot, 1);
     batches.extend(iso.drain_seat_batches());
 
-    let select = seat_reqs(&batches)
-        .find_map(|row| match &row.request {
-            InteractReq::SelectBank { request_id, .. } => Some((*request_id, row)),
-            _ => None,
-        })
-        .expect("bankNearestReachable emits a real SelectBank product request");
-    assert!(select.1.lineage.is_none());
-    assert!(select.1.mirror_owner.is_some());
+    let bank = seat_starts(&batches)
+        .find(|start| start.kind == NativeKind::BankPlan)
+        .expect("bankNearestReachable starts a typed bank Select seat");
+    assert_eq!(bank.parent, None);
+    assert_bank_start_operation(bank, "Select");
+    let bank_id = bank.id;
+    assert!(
+        !seat_reqs(&batches).any(|row| matches!(&row.request, InteractReq::SelectBank { .. })),
+        "bank selection runs in the typed bank seat, not an isolate-owned interaction"
+    );
     let progress = seat_starts(&batches)
         .find(|start| start.kind == NativeKind::QuestProgress)
         .expect("questProgress is carried as its typed native family start");
@@ -730,22 +747,24 @@ export function tick(api) {
     );
     let progress_id = progress.id;
     let progress_token = progress_id.get();
-    assert!(select.0 > 0);
 
-    let live = [root_seat_entry(progress_id, NativeKind::QuestProgress)];
-    let details = [root_seat_details(progress_id)];
+    let live = [
+        root_seat_entry(bank_id, NativeKind::BankPlan),
+        root_seat_entry(progress_id, NativeKind::QuestProgress),
+    ];
+    let bank_details = SeatLiveDetails {
+        id: bank_id,
+        phase: script::native::NativePhase::Waiting,
+        prompt: None,
+    };
+    let progress_details = root_seat_details(progress_id);
+    let details = [bank_details, progress_details];
     let live_page = SeatPageInput::new(&live, &[], &details, 0).unwrap();
     post_test_tick_with_native(
         &iso,
         &mut snapshot,
         2,
         NativeFactsInput {
-            bank_selection: BankSelectionInput {
-                request_id: select.0,
-                generation: 1,
-                bank_index: 0,
-                kind: 2,
-            },
             seat_page: Some(live_page),
             ..NativeFactsInput::default()
         },
@@ -757,15 +776,32 @@ export function tick(api) {
         token: progress_token,
         reason: Arc::from("unknown-path"),
     };
-    let terminal = [SeatResult {
-        id: progress_id,
-        seq: 1,
-        outcome: SeatTerminal::Failed,
-        prior_parent: None,
-        session: Some(progress_id),
-        authority_revoked: false,
+    let terminal = [
+        SeatResult {
+            id: bank_id,
+            seq: 1,
+            outcome: SeatTerminal::Done,
+            prior_parent: None,
+            session: Some(bank_id),
+            authority_revoked: false,
+        },
+        SeatResult {
+            id: progress_id,
+            seq: 2,
+            outcome: SeatTerminal::Failed,
+            prior_parent: None,
+            session: Some(progress_id),
+            authority_revoked: false,
+        },
+    ];
+    let bank_value = [SeatResultValue {
+        id: bank_id,
+        value: b"null",
     }];
-    let terminal_page = SeatPageInput::new(&[], &terminal, &[], 0).unwrap();
+    let terminal_page = SeatPageInput::new(&[], &terminal, &[], 0)
+        .unwrap()
+        .with_result_values(&bank_value)
+        .unwrap();
     post_test_tick_with_native(
         &iso,
         &mut snapshot,
@@ -786,7 +822,7 @@ export function tick(api) {
     assert_eq!(values[1]["kind"], "done");
     assert_eq!(values[1]["value"]["end"], "refused");
     assert_eq!(values[1]["value"]["reason"], "unknown-path");
-    assert_eq!(batches.last().unwrap().batch.consumed_terminal_seq, 1);
+    assert_eq!(batches.last().unwrap().batch.consumed_terminal_seq, 2);
     iso.join();
 }
 
@@ -891,6 +927,7 @@ export default class T extends LoopingBot {
         Some(hunt_id),
         "local Walk is a mirror, not a seat parent"
     );
+    assert_bank_start_operation(bank, "BankNearest");
     let bank_id = bank.id;
     let (walk_id, mirror_owner) = seat_reqs(&batches)
         .find_map(|row| match &row.request {
@@ -1034,6 +1071,7 @@ export function tick() {
         child.parent, None,
         "an in-isolate parent cannot invent a seat ancestor"
     );
+    assert_bank_start_operation(child, "BankNearest");
     let child_id = child.id;
     let live = [root_seat_entry(child_id, NativeKind::BankNearest)];
     let details = [root_seat_details(child_id)];
