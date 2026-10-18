@@ -84,7 +84,67 @@ fn windows_memory_counters() -> Option<(usize, usize)> {
 
 #[cfg(windows)]
 fn windows_cpu_seconds_total() -> Option<f64> {
-    windows_cpu_user_kernel().map(|(u, k)| u + k)
+    process_cpu_user_kernel().map(|(user, kernel)| user + kernel)
+}
+
+/// Process CPU time in seconds: `(user, kernel)`.
+///
+/// `None` when this OS has no sampler or the sampler fails. Callers that need
+/// one total use `user + kernel` only where that sum is already the published
+/// value. [`sample_process`] on macOS and Linux keeps its previous four-term
+/// sum, because adding this pair is not bit-identical.
+///
+/// The memory-profile caller is feature-gated. On Windows, [`sample_process`]
+/// uses this function too, so it stays available there without that feature.
+#[cfg(any(feature = "memory-profile", windows))]
+pub(crate) fn process_cpu_user_kernel() -> Option<(f64, f64)> {
+    #[cfg(unix)]
+    {
+        self_rusage().map(|usage| unix_cpu_user_kernel(&usage))
+    }
+    #[cfg(windows)]
+    {
+        windows_cpu_user_kernel()
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        None
+    }
+}
+
+#[cfg(unix)]
+fn self_rusage() -> Option<libc::rusage> {
+    // SAFETY: `rusage` is a plain C struct. Zero is a valid initial value.
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    // SAFETY: `usage` is a writable `rusage` for this call. `RUSAGE_SELF` names this process.
+    let rc = unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+    if rc != 0 {
+        None
+    } else {
+        Some(usage)
+    }
+}
+
+#[cfg(all(unix, feature = "memory-profile"))]
+fn timeval_seconds(value: libc::timeval) -> f64 {
+    value.tv_sec as f64 + value.tv_usec as f64 / 1_000_000.0
+}
+
+#[cfg(all(unix, feature = "memory-profile"))]
+fn unix_cpu_user_kernel(usage: &libc::rusage) -> (f64, f64) {
+    (
+        timeval_seconds(usage.ru_utime),
+        timeval_seconds(usage.ru_stime),
+    )
+}
+
+/// The previous [`sample_process`] CPU sum. Do not replace it with `user + kernel`.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn unix_sample_cpu_seconds(usage: &libc::rusage) -> f64 {
+    usage.ru_utime.tv_sec as f64
+        + usage.ru_utime.tv_usec as f64 / 1e6
+        + usage.ru_stime.tv_sec as f64
+        + usage.ru_stime.tv_usec as f64 / 1e6
 }
 
 #[cfg(windows)]
@@ -117,17 +177,11 @@ pub(crate) fn windows_cpu_user_kernel() -> Option<(f64, f64)> {
 pub fn sample_process() -> (u64, f64) {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
-        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
-        let rc = unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
-        if rc != 0 {
+        let Some(usage) = self_rusage() else {
             return (0, 0.0);
-        }
+        };
         let rss = rss_bytes_from_ru_maxrss(usage.ru_maxrss);
-        let cpu = usage.ru_utime.tv_sec as f64
-            + usage.ru_utime.tv_usec as f64 / 1e6
-            + usage.ru_stime.tv_sec as f64
-            + usage.ru_stime.tv_usec as f64 / 1e6;
-        (rss, cpu)
+        (rss, unix_sample_cpu_seconds(&usage))
     }
     #[cfg(windows)]
     {
