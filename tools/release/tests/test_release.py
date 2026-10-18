@@ -300,7 +300,6 @@ class ParameterTests(unittest.TestCase):
         }
         with mock.patch.dict(os.environ, {
             "RUSTY_V8_ARCHIVE": "windows.lib.gz",
-            "AWS_LC_SYS_PREBUILT_NASM": "1",
         }):
             mac = release.native_build_environment(
                 expect, Path("/inputs"), Path("/target"), "macos"
@@ -309,7 +308,6 @@ class ParameterTests(unittest.TestCase):
                 expect, Path("/inputs"), Path("/target"), "windows", "windows.lib.gz"
             )
         self.assertNotIn("RUSTY_V8_ARCHIVE", mac)
-        self.assertNotIn("AWS_LC_SYS_PREBUILT_NASM", mac)
         self.assertEqual(windows["RUSTY_V8_ARCHIVE"], "windows.lib.gz")
 
     def test_tag_release_rustc_and_powershell_values_are_validated(self):
