@@ -1439,7 +1439,7 @@ const PROBES: &[&str] = &[
     "fs::remove_file(",
     "fs::rename(",
     "host_play::open_map_demand(",
-    "host_play::bake_shipped_map_images(",
+    "host_play::bake_shipped_map_bundle(",
     ".open_profile(",
     "set_value(",
     "map_demand = None",

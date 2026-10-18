@@ -4,8 +4,8 @@
 
 use crate::map_cache::{
     MapCacheError, MapCacheRoot, MapDemand, MapDemandHandle, MapDemandManager, MapJobStatus,
-    MapProfileDescriptor, PreparedMapInput, ReadyCatalogue, ReadyImages, ReadyMap,
-    ShippedMapImages,
+    MapProfileDescriptor, PreparedMapInput, ReadyCatalogue, ReadyImages, ReadyMap, ShippedMap,
+    ShippedMapBundle,
 };
 use crate::map_producer::{map_artifact_policies, NativeMapProducer};
 use crate::nav_identity::install_resource_root;
@@ -14,7 +14,7 @@ use crate::ServerProfile;
 use api::work::{
     Checkpoint, CooperativeJob, RetainedState, StepContext, StepOutcome, WalkMapDecodePhase,
 };
-use nav::map::formats::{ServicePois, ShippedImages, NAVPOIS_HEADER_BYTES};
+use nav::map::formats::{ServicePois, NAVPOIS_HEADER_BYTES};
 use nav::map::identity::Digest;
 use std::fs;
 use std::io::Cursor;
@@ -26,13 +26,13 @@ pub use crate::map_producer::map_artifact_policies as artifact_policies;
 
 static MANAGER: OnceLock<MapDemandManager> = OnceLock::new();
 
-/// Directory of the release's shipped map terrain under an install resource
+/// Directory of the release's shipped map data under an install resource
 /// root (next to `nav/`).
 pub const SHIPPED_MAP_DIR: &str = "map";
 
 /// One process-wide manager. First explicit map open creates it against
-/// `~/.274bot/map-cache` and the native producer; terrain shipped under the
-/// install resource root's `map/` is installed when it matches exactly.
+/// `~/.274bot/map-cache` and the native producer; map data shipped under
+/// the install resource root's `map/` is installed when it matches exactly.
 pub fn map_demand_manager() -> Result<&'static MapDemandManager, MapCacheError> {
     if let Some(manager) = MANAGER.get() {
         return Ok(manager);
@@ -40,10 +40,10 @@ pub fn map_demand_manager() -> Result<&'static MapDemandManager, MapCacheError> 
     let root = MapCacheRoot::current()?;
     let producer = Arc::new(NativeMapProducer::new());
     let created = match std::env::current_exe() {
-        Ok(exe) => MapDemandManager::with_shipped_images(
+        Ok(exe) => MapDemandManager::with_shipped_map(
             root,
             producer,
-            ShippedMapImages::at(install_resource_root(&exe).join(SHIPPED_MAP_DIR)),
+            ShippedMap::at(install_resource_root(&exe).join(SHIPPED_MAP_DIR)),
         ),
         Err(_) => MapDemandManager::new(root, producer),
     };
@@ -93,10 +93,11 @@ pub fn open_map_demand(
 /// not that the disk cache is absent. The caller can submit an admitted
 /// [`MapDemand::ReadyImages`] probe to check the disk cache.
 ///
-/// A known terrain lease stays with the handle while the worker derives a
-/// missing catalogue. The adopt-only image stage never starts a local bake.
-/// It settles catalogue-only when no usable terrain exists, so the front end
-/// can ask before baking.
+/// A known terrain lease stays with the handle while the worker supplies a
+/// missing catalogue (installed from the shipped bundle when it matches,
+/// derived locally otherwise). The adopt-only image stage never starts a
+/// local bake. It settles catalogue-only when no usable terrain exists, so
+/// the front end can ask before baking.
 pub fn open_map_ready_terrain(
     manager: &MapDemandManager,
     descriptor: MapProfileDescriptor,
@@ -111,38 +112,51 @@ pub fn open_map_ready_terrain(
     Ok(None)
 }
 
-/// Bake map images for `revision` below `out/map/<revision>`, where `out` is
-/// the install resource root. `progress` receives each published WorkAdmission
-/// status until the bake settles.
-pub fn bake_shipped_map_images(
+/// Bake the shipped map bundle (catalogue and terrain) for `revision`
+/// below `out/map/<revision>`, where `out` is the install resource root.
+/// `progress` receives each published WorkAdmission status until the bake
+/// settles.
+pub fn bake_shipped_map_bundle(
     revision: u16,
     jag_dir: &Path,
     snapshot_root: &Path,
     out: &Path,
     progress: impl FnMut(&MapJobStatus),
-) -> Result<ShippedImages, MapCacheError> {
+) -> Result<ShippedMapBundle, MapCacheError> {
     let input = PreparedMapInput::offline(revision, jag_dir, snapshot_root)?;
-    ship_map_images(input, out, progress)
+    ship_map_bundle(input, out, progress)
 }
 
-pub(crate) fn ship_map_images(
+pub(crate) fn ship_map_bundle(
     input: PreparedMapInput,
     out: &Path,
     mut progress: impl FnMut(&MapJobStatus),
-) -> Result<ShippedImages, MapCacheError> {
+) -> Result<ShippedMapBundle, MapCacheError> {
     let (image, catalogue) = map_artifact_policies()?;
     let descriptor =
         MapProfileDescriptor::new(input.revision(), input.content(), image, catalogue)?
             .with_input(input)?;
-    let shipped = ShippedMapImages::at(out.join(SHIPPED_MAP_DIR));
-    if shipped.description_path(descriptor.revision()).exists() {
-        return Err(MapCacheError::Message(format!(
-            "shipped map terrain already exists under {}",
-            shipped.path().display()
-        )));
+    let shipped = ShippedMap::at(out.join(SHIPPED_MAP_DIR));
+    for (what, description) in [
+        (
+            "terrain",
+            shipped.images_description_path(descriptor.revision()),
+        ),
+        (
+            "catalogue",
+            shipped.catalogue_description_path(descriptor.revision()),
+        ),
+    ] {
+        if description.exists() {
+            return Err(MapCacheError::Message(format!(
+                "shipped map {what} already exists under {}",
+                shipped.path().display()
+            )));
+        }
     }
     // A scratch cache on the output's volume: the same manager, producer,
-    // writer and publication as a local bake.
+    // writer and publication as a local bake. The Images demand derives the
+    // catalogue first, so one bake publishes both artifacts to ship.
     let scratch = out.join(format!(".map-bake-{}", std::process::id()));
     let root = MapCacheRoot::from_root(&scratch);
     let result = (|| {
@@ -186,7 +200,10 @@ pub(crate) fn ship_map_images(
         }
         drop(handle);
         manager.reap();
-        shipped.ship_from(&root, descriptor.image_identity())
+        Ok(ShippedMapBundle {
+            images: shipped.ship_images_from(&root, descriptor.image_identity())?,
+            catalogue: shipped.ship_catalogue_from(&root, descriptor.catalogue_identity())?,
+        })
     })();
     match (result, fs::remove_dir_all(&scratch)) {
         (Ok(_), Err(error)) if error.kind() != std::io::ErrorKind::NotFound => Err(

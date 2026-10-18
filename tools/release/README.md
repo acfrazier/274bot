@@ -258,26 +258,31 @@ artifact's relative path to its SHA-256. It verifies hashes before staging.
 It copies only the selected binaries, navigation artifacts, and public docs;
 it excludes machine-local bake stamps, engine/cache data and credentials.
 
-Revision 289 packages also ship the WalkTo map terrain. After staging the
-binaries, `package.py` runs the staged
-`tui-play --map-bundle` against the pinned client cache the nav bundle was
-built from: `--map-cache` (its jag directory) and `--map-unpack` (the snapshot
-root holding its decoded snapshot). Both are required, either explicitly or
-through `BOT_NAV_ENGINE_DIR` (or `ENGINE_DIR`) plus
-`BOT_NAV_SNAPSHOT_ROOT`; there are no operator-filesystem defaults.
+Revision 289 packages also ship the WalkTo map catalogue and terrain. After
+staging the binaries, `package.py` runs the staged `tui-play --map-bundle`
+against the pinned client cache the nav bundle was built from: `--map-cache`
+(its jag directory) and `--map-unpack` (the snapshot root holding its decoded
+snapshot). Both are required, either explicitly or through
+`BOT_NAV_ENGINE_DIR` (or `ENGINE_DIR`) plus `BOT_NAV_SNAPSHOT_ROOT`; there are
+no operator-filesystem defaults.
 The bake runs the production map-cache path (the same producer, writer and
-publication as a local bake) in a scratch cache and ships the published
-directory as `map/289/images/<key>/` (image `manifest.json` plus terrain
-PNGs), with `map/289/274bot.mapimages.json` recording the image identity
-(revision, decoded client content, bake policy), key, the manifest's size and
-SHA-256 and the tile totals. `package.py` refuses terrain whose content
-identity differs from `274bot.navpack.json`'s `content_id`, re-verifies every
-shipped file against those receipts, records the description as
-`map_images` in `release-manifest.json` (whose `files` list, and so the
-archive `SHA256SUMS`, covers every tile), and copies `map/` into the macOS
-bundle's `Contents/Resources` beside `nav/`. The app installs it into
-`~/.274bot/map-cache` only when the identity matches the bound client cache
-exactly; otherwise the local bake stays behind the operator's consent.
+publication as a local bake; the image demand derives its catalogue first, so
+one bake yields both) in a scratch cache and ships the published directories
+as `map/289/catalogues/<key>/` (catalogue `manifest.json` plus
+`client-pois.json`) and `map/289/images/<key>/` (image `manifest.json` plus
+terrain PNGs), with `map/289/274bot.mapcatalogue.json` recording the catalogue
+identity (revision, decoded client content, derive policy), key, the
+manifest's size and SHA-256, the record count and the payload size, and
+`map/289/274bot.mapimages.json` recording the same for the terrain.
+`package.py` refuses a bundle whose content identity differs from
+`274bot.navpack.json`'s `content_id`, re-verifies every shipped file against
+those receipts, records the descriptions as `map_catalogue` and `map_images`
+in `release-manifest.json` (whose `files` list, and so the archive
+`SHA256SUMS`, covers every shipped file), and copies `map/` into the macOS
+bundle's `Contents/Resources` beside `nav/`. The app installs each artifact
+into `~/.274bot/map-cache` only when its identity matches the bound client
+cache exactly; otherwise the catalogue is derived locally and the local
+terrain bake stays behind the operator's consent.
 
 Example, after recording the build receipt:
 
@@ -291,7 +296,7 @@ python3 tools/release/package.py --platform macos \
 
 `--check` (no `--output`, no signing) stages the same package into a
 temporary directory, verifies every staged file against its release manifest,
-prints a JSON summary (file count, bytes, shipped map terrain) and removes it.
+prints a JSON summary (file count, bytes, shipped map bundle) and removes it.
 
 The app's Finder launch selects `rs2b2t` through its Info.plist environment.
 The standalone executables retain their normal CLI profile selection. The

@@ -90,7 +90,7 @@ mod walk_arm;
 mod walk_permissions;
 mod walk_plan;
 pub use map_bind::{
-    bake_shipped_map_images, load_navpois, map_demand_manager, map_profile_descriptor, map_ready,
+    bake_shipped_map_bundle, load_navpois, map_demand_manager, map_profile_descriptor, map_ready,
     map_ready_catalogue, map_ready_images, open_map_demand, open_map_ready_terrain,
     peek_map_catalogue, poll_map_status, reap_map_demand,
 };
