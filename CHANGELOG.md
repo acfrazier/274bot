@@ -364,7 +364,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   same routes.
 - Repeated route searches on macOS and Linux no longer retain and clear large
   unused search buffers. Synchronous searches avoid extra lookup suspension,
-  indirect lookup calls and repeated heap-order checks without changing routes,
+  per-edge call overhead and repeated heap-order checks without changing routes,
   search budgets or cooperative cancellation checks.
 
 #### Maps

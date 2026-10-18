@@ -8301,7 +8301,7 @@ async fn search_kernel(
     clippy::too_many_arguments,
     reason = "the compact relaxation updates the shared table and heap without copying state"
 )]
-async fn relax_packed<B: Budget>(
+fn relax_packed<B: Budget>(
     table: &mut PackedSearchTable,
     heap: &mut PackedMinMaxHeap,
     maximum_table_capacity: usize,
@@ -8312,67 +8312,72 @@ async fn relax_packed<B: Budget>(
     action_index: usize,
     pending_limit: usize,
     pending_after_limit: &mut bool,
-) -> Result<(), SearchStop> {
-    let balance = key.tie();
-    if balance > 0x3fff {
-        return Err(SearchStop::Budget);
-    }
-    let action_index = u32::try_from(action_index).map_err(|_| SearchStop::Budget)?;
-    if action_index > 0x00ff_ffff {
-        return Err(SearchStop::Budget);
-    }
-    let lookup = loop {
-        // Legacy searches do not construct and poll a lookup future per edge.
-        // Cooperative searches retain their collision-by-collision suspension.
-        let result = if SYNCHRONOUS_WORK.get() {
-            table.locate_for_insert(key.tile(), balance)
-        } else {
-            table.locate(key.tile(), balance).await
-        };
-        match result {
-            Ok(lookup) => break lookup,
-            Err(()) if pending_limit == 0 => {
-                *pending_after_limit = true;
-                return Ok(());
-            }
-            Err(()) => match table.try_grow(heap, maximum_table_capacity) {
-                Ok(true) => {}
-                Ok(false) => return Err(SearchStop::Budget),
-                Err(_) => return Err(SearchStop::Allocation),
-            },
+) -> impl Future<Output = Result<(), SearchStop>> {
+    // The pinned compiler weakens an async-fn attribute to an inline hint.
+    // Put the attribute on the poll body to retain forced inlining.
+    #[inline(always)]
+    async move {
+        let balance = key.tie();
+        if balance > 0x3fff {
+            return Err(SearchStop::Budget);
         }
-    };
-    match lookup {
-        PackedLookup::Found(id) => {
-            if table.is_settled(id) || table.slot(id).cost() <= cost {
-                return Ok(());
-            }
-            table.update(id, action, action_index, cost);
-            heap.decrease_key(table, id, parent);
+        let action_index = u32::try_from(action_index).map_err(|_| SearchStop::Budget)?;
+        if action_index > 0x00ff_ffff {
+            return Err(SearchStop::Budget);
         }
-        PackedLookup::Vacant(id) => {
-            let mut id = id;
-            if pending_limit == 0 {
-                *pending_after_limit = true;
-                return Ok(());
-            }
-            if heap.len() >= pending_limit {
-                let worst = heap.worst_id(table).await.ok_or(SearchStop::Budget)?;
-                if !table
-                    .compare_candidate(cost, key.tile(), balance, worst)
-                    .is_lt()
-                {
+        let lookup = loop {
+            // Legacy searches do not construct and poll a lookup future per edge.
+            // Cooperative searches retain their collision-by-collision suspension.
+            let result = if SYNCHRONOUS_WORK.get() {
+                table.locate_for_insert(key.tile(), balance)
+            } else {
+                table.locate(key.tile(), balance).await
+            };
+            match result {
+                Ok(lookup) => break lookup,
+                Err(()) if pending_limit == 0 => {
+                    *pending_after_limit = true;
                     return Ok(());
                 }
-                let removed = heap.remove_worst(table).await.ok_or(SearchStop::Budget)?;
-                table.tombstone(removed).await;
-                id = table.vacant_id().ok_or(SearchStop::Budget)?;
+                Err(()) => match table.try_grow(heap, maximum_table_capacity) {
+                    Ok(true) => {}
+                    Ok(false) => return Err(SearchStop::Budget),
+                    Err(_) => return Err(SearchStop::Allocation),
+                },
             }
-            table.insert(id, key.tile(), balance, action, action_index, cost);
-            heap.push(table, id, parent);
+        };
+        match lookup {
+            PackedLookup::Found(id) => {
+                if table.is_settled(id) || table.slot(id).cost() <= cost {
+                    return Ok(());
+                }
+                table.update(id, action, action_index, cost);
+                heap.decrease_key(table, id, parent);
+            }
+            PackedLookup::Vacant(id) => {
+                let mut id = id;
+                if pending_limit == 0 {
+                    *pending_after_limit = true;
+                    return Ok(());
+                }
+                if heap.len() >= pending_limit {
+                    let worst = heap.worst_id(table).await.ok_or(SearchStop::Budget)?;
+                    if !table
+                        .compare_candidate(cost, key.tile(), balance, worst)
+                        .is_lt()
+                    {
+                        return Ok(());
+                    }
+                    let removed = heap.remove_worst(table).await.ok_or(SearchStop::Budget)?;
+                    table.tombstone(removed).await;
+                    id = table.vacant_id().ok_or(SearchStop::Budget)?;
+                }
+                table.insert(id, key.tile(), balance, action, action_index, cost);
+                heap.push(table, id, parent);
+            }
         }
+        Ok(())
     }
-    Ok(())
 }
 
 #[expect(
