@@ -1965,12 +1965,12 @@ fn first_target_proof_of_reachability_lifts_the_unproven_budget() {
         ..FindOptions::default()
     };
     let state = WorldState::empty();
-    let search = |reachable_budget| {
+    let search = |stands: &[WorldTile], reachable_budget| {
         super::first_search(
             &wc,
             &graph,
             from,
-            &stands,
+            stands,
             &[],
             opts,
             &state,
@@ -1981,14 +1981,21 @@ fn first_target_proof_of_reachability_lifts_the_unproven_budget() {
         )
     };
 
-    let lifted = search(super::NODE_BUDGET);
-    assert_eq!(lifted.proof(), ReverseProof::Reachable);
-    let route = lifted
-        .route()
-        .expect("the teleport reaches the sealed stand");
-    assert_eq!(route.dest, stands[0]);
-    assert!(lifted.settled() > 64);
-    assert_eq!(search(64).route().err(), Some(RouteError::BudgetExhausted));
+    // A goal at the landing proves reachability during initialization. The
+    // farther goal needs backward steps before releasing its proof scratch.
+    for stands in [stands, [tile(200, 200, 0)]] {
+        let lifted = search(&stands, super::NODE_BUDGET);
+        assert_eq!(lifted.proof(), ReverseProof::Reachable);
+        let route = lifted
+            .route()
+            .expect("the teleport reaches the sealed stand");
+        assert_eq!(route.dest, stands[0]);
+        assert!(lifted.settled() > 64);
+        assert_eq!(
+            search(&stands, 64).route().err(),
+            Some(RouteError::BudgetExhausted)
+        );
+    }
 }
 
 /// R6-B1: a fallback set keeps its own proof when the preferred budget stops

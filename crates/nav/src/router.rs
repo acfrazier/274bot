@@ -7477,9 +7477,13 @@ impl<'a> FirstGoals<'a> {
             }
             self.fallback.accept(tile, cost);
         }
-        self.preferred
-            .prove_to(self.gates, settled, self.reachable_budget)
-            .await?;
+        // Initialization consumes the first result. A finished proof has no
+        // further work or budget change, so do not construct its future again.
+        if self.preferred.proof.closure.is_some() {
+            self.preferred
+                .prove_to(self.gates, settled, self.reachable_budget)
+                .await?;
+        }
         if self.preferred.live() {
             return Ok(Settle::Continue);
         }
@@ -7911,7 +7915,7 @@ impl<'a> ReverseClosure<'a> {
             };
             if step_ok(self.collision, before, d)
                 && wildy_step_ok(self.graph, before, tile, self.allow_wilderness)
-                && self.zone_step_ok(before, tile).await
+                && (self.zones.is_none() || self.zone_step_ok(before, tile).await)
             {
                 if let Some(proof) = std::pin::pin!(self.admit(before)).await? {
                     return Ok(Some(proof));
