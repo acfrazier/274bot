@@ -424,6 +424,7 @@ mod tests {
         const MAPPED_PAYLOAD: u64 = (RECORDS * size_of::<PackedSearchSlot>()) as u64;
         const TOUCH_LEN: usize = (16 * 1024) / size_of::<PackedSearchSlot>();
         const TOUCH_PAYLOAD: usize = TOUCH_LEN * size_of::<PackedSearchSlot>();
+        const _: () = assert!(TOUCH_PAYLOAD <= 16 * 1024);
 
         let baseline = current_phys_footprint();
         let mut values = ZeroedBuffer::<PackedSearchSlot>::try_new(RECORDS).unwrap();
@@ -441,7 +442,6 @@ mod tests {
         }
         let after_touch = current_phys_footprint();
         let touched_growth = after_touch.saturating_sub(baseline);
-        assert!(TOUCH_PAYLOAD <= 16 * 1024);
         assert!(
             touched_growth > 0 && touched_growth < MAPPED_PAYLOAD / 4,
             "writing {TOUCH_PAYLOAD} bytes grew phys_footprint by {touched_growth} bytes"
