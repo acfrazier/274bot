@@ -377,7 +377,8 @@ unchanged manifest; compression does not change selected-content identities.
 
 All search goals use one packed table and one bounded doubling and rehash
 method. Records have dense IDs. Hashing selects a three-byte bucket head,
-not a position across the record array.
+not a position across the record array. There is one bucket per twelve records.
+The multiply-high reduction does not need a power-of-two bucket count.
 
 Cooperative cursors reserve their complete settle-cap backing once. Slot
 fields use a zero-valued tuple of primitive arrays and integers. Each record

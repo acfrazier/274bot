@@ -252,7 +252,7 @@ impl PackedSearchTable {
         if capacity > PACKED_ID_MASK as usize {
             return None;
         }
-        let buckets = Self::bucket_count_for(capacity)?;
+        let buckets = Self::bucket_count_for(capacity);
         let link_count = buckets.checked_add(capacity)?;
         std::alloc::Layout::array::<PackedSearchSlot>(capacity).ok()?;
         std::alloc::Layout::array::<[u8; 3]>(link_count).ok()?;
@@ -281,12 +281,8 @@ impl PackedSearchTable {
         self.slots.len()
     }
 
-    fn bucket_count_for(capacity: usize) -> Option<usize> {
-        if capacity == 0 {
-            Some(0)
-        } else {
-            capacity.div_ceil(16).checked_next_power_of_two()
-        }
+    fn bucket_count_for(capacity: usize) -> usize {
+        capacity.div_ceil(12)
     }
 
     fn next(&self, id: u32) -> u32 {
@@ -323,7 +319,7 @@ impl PackedSearchTable {
         if new_capacity <= old_capacity {
             return Some(false);
         }
-        let buckets = Self::bucket_count_for(new_capacity)?;
+        let buckets = Self::bucket_count_for(new_capacity);
         let link_id_mask = packed_link_id_mask(new_capacity);
         let link_count = buckets.checked_add(new_capacity)?;
         let mut links = Vec::new();
@@ -550,7 +546,7 @@ pub(super) fn packed_predecessor_storage_bound(settle_budget: usize) -> Option<u
     if capacity > PACKED_ID_MASK as usize {
         return None;
     }
-    let links = capacity.checked_add(PackedSearchTable::bucket_count_for(capacity)?)?;
+    let links = capacity.checked_add(PackedSearchTable::bucket_count_for(capacity))?;
     capacity
         .checked_mul(std::mem::size_of::<PackedSearchSlot>())?
         .checked_add(links.checked_mul(std::mem::size_of::<[u8; 3]>())?)
@@ -1725,10 +1721,12 @@ mod packed_search_tests {
         super::super::drive_to_completion(async {
             let mut table = PackedSearchTable::try_new_capacity(32).expect("small table");
             let mut heap = PackedMinMaxHeap::try_new(32).expect("small heap");
+            let grown_buckets = PackedSearchTable::bucket_count_for(64);
             let origin = (0..100)
                 .map(tile)
                 .find(|&candidate| {
-                    packed_hash_index(candidate, 0, 2) != packed_hash_index(candidate, 0, 4)
+                    packed_hash_index(candidate, 0, table.buckets)
+                        != packed_hash_index(candidate, 0, grown_buckets)
                 })
                 .expect("a key that changes bucket on growth");
             let current = match table.locate(origin, 0).await.unwrap() {
@@ -1750,6 +1748,7 @@ mod packed_search_tests {
             }
             let old_current = current;
             assert_eq!(table.try_grow(&mut heap, 64), Some(true));
+            assert_eq!(table.buckets, grown_buckets);
             assert_eq!(current, old_current, "the local expanding id stays valid");
             assert_eq!(table.slot(current).tile(), origin);
             assert_eq!(table.slot(current).parent(), PACKED_ROOT_ID);
@@ -1896,8 +1895,8 @@ mod packed_search_tests {
         );
         assert_eq!(
             packed_search_storage_bound(NODE_BUDGET),
-            Some(148_786_506),
-            "cooperative backing keeps the existing full-budget reservation"
+            Some(149_000_076),
+            "cooperative backing includes one bucket per twelve records"
         );
         assert!(packed_search_storage_bound(usize::MAX).is_none());
     }
