@@ -58,6 +58,7 @@ const PROJECTION: &str = "projection copy into the front end's buffer; presentat
 const FORMAT: &str = "pure formatting or parsing; no state";
 const LOG_VIEW: &str =
     "control of the log read projection (scope, filter, follow); not transport, work admission or a durable write";
+const SEAM_ROWS: &str = "the command seam: every row, chosen by its literal argument";
 const STARTUP: &str = "startup wiring of a store path or adapter; no operator decision";
 const ACCESSOR: &str = "accessor exposing an owned model (T3.1 accessor migration), not a decision";
 const SETTINGS_KIND: &str = "the card kind of the selection decides the row";
@@ -628,6 +629,20 @@ const CORE: &[(&str, Decision)] = &[
     ("session.rs::OperatorSession::load", Row(C::Load)),
     ("session.rs::OperatorSession::load_all", Row(C::Load)),
     ("session.rs::OperatorSession::login", Row(C::Login)),
+    // session/commands.rs: the command seam (T3.3). The row is the literal
+    // argument; surface calls are checked through their row names.
+    ("session/commands.rs::OperatorSession::submit", Rows(&OperatorCommand::ALL, SEAM_ROWS)),
+    ("session/commands.rs::OperatorSession::submit_at", Rows(&OperatorCommand::ALL, SEAM_ROWS)),
+    (
+        "session/commands.rs::OperatorSession::submit_detached",
+        Rows(&OperatorCommand::ALL, SEAM_ROWS),
+    ),
+    (
+        "session/commands.rs::OperatorSession::set_focus_hint",
+        Row(C::Load),
+    ),
+    ("driver.rs::HeadlessDriver::submit", Rows(&OperatorCommand::ALL, SEAM_ROWS)),
+    ("driver.rs::HeadlessDriver::poll", Excluded(PUMP)),
     ("session.rs::OperatorSession::login_all", Row(C::Login)),
     ("session.rs::OperatorSession::login_members", Row(C::Login)),
     ("session.rs::OperatorSession::logout", Row(C::Logout)),
@@ -1141,6 +1156,25 @@ fn workspace_root() -> std::path::PathBuf {
         .to_path_buf()
 }
 
+/// The command seam's dispatcher entries: their row is the literal
+/// `OperatorCommand::Row` argument (`SurfaceFn::row_calls`).
+const SEAM: &[&str] = &[
+    "session/commands.rs::OperatorSession::submit",
+    "session/commands.rs::OperatorSession::submit_at",
+    "session/commands.rs::OperatorSession::submit_detached",
+];
+
+/// The headless driver's forwarding entry into the seam.
+const DRIVER_SUBMIT: &str = "driver.rs::HeadlessDriver::submit";
+
+/// The row of [`OperatorCommand::ALL`] whose variant is `name`.
+fn row_named(name: &str) -> Option<OperatorCommand> {
+    OperatorCommand::ALL.into_iter().find(|row| {
+        let debug = format!("{row:?}");
+        debug.split('(').next() == Some(name)
+    })
+}
+
 fn same_row(a: OperatorCommand, b: OperatorCommand) -> bool {
     std::mem::discriminant(&a) == std::mem::discriminant(&b)
 }
@@ -1230,8 +1264,11 @@ fn every_row_is_reached_by_an_entry_point() {
     let core: BTreeMap<&str, Decision> = CORE.iter().copied().collect();
     let surface: BTreeMap<&str, Decision> = SURFACE.iter().copied().collect();
     let mut reached: Vec<OperatorCommand> = Vec::new();
+    // The dispatchers name every row; a row counts as reached through a
+    // literal argument at a call site instead.
     for decision in CORE
         .iter()
+        .filter(|(key, _)| !SEAM.contains(key) && *key != DRIVER_SUBMIT)
         .map(|(_, d)| *d)
         .chain(SURFACE.iter().map(|(_, d)| *d))
     {
@@ -1251,7 +1288,15 @@ fn every_row_is_reached_by_an_entry_point() {
         if surface.contains_key(surface_key(item).as_str()) {
             continue;
         }
+        reached.extend(
+            item.row_calls
+                .iter()
+                .filter_map(|(name, _)| row_named(name)),
+        );
         for call in &item.core_calls {
+            if SEAM.contains(&call.key.as_str()) {
+                continue;
+            }
             if let Some(decision) = core.get(call.key.as_str()) {
                 reached.extend(rows_of(*decision));
             }
@@ -1300,7 +1345,18 @@ fn every_surface_handler_is_one_rows_or_registered() {
         // Per core call, the rows it can issue (a dispatching entry point
         // lists several); excluded entry points issue none.
         let mut calls: Vec<(u32, &str, Vec<OperatorCommand>)> = Vec::new();
+        // A call of the command seam issues the literal row it names; the
+        // dispatcher entry itself names no row.
+        for (name, line) in &item.row_calls {
+            match row_named(name) {
+                Some(row) => calls.push((*line, "OperatorCommand", vec![row])),
+                None => problems.push(format!("{key}:{line} names unknown row {name}")),
+            }
+        }
         for call in &item.core_calls {
+            if SEAM.contains(&call.key.as_str()) {
+                continue;
+            }
             match core.get(call.key.as_str()) {
                 Some(decision) => {
                     let rows = rows_of(*decision);

@@ -62,6 +62,9 @@ use crate::walk_permissions::DangerLevel;
 /// `OperationBook`, `operations.rs:9-14`).
 pub const SETTLED_REPORT_CAP: usize = 64;
 
+/// Evicted member lists kept for reuse.
+const SPARE_MEMBER_LISTS: usize = 4;
+
 /// One operator command. Each row documents the current code it
 /// characterizes. Rows with a parameter take only scalar values; the
 /// subjects are supplied per member to [`CommandBook::open`].
@@ -1395,6 +1398,9 @@ impl CommandReport {
 pub struct CommandBook {
     pending: Vec<CommandReport>,
     settled: VecDeque<CommandReport>,
+    /// Member buffers of evicted reports, reused by [`Self::open`] so a
+    /// steady stream of commands allocates no member lists.
+    spare: Vec<Vec<MemberReport>>,
 }
 
 impl CommandBook {
@@ -1454,19 +1460,17 @@ impl CommandBook {
             }
             None => MemberState::Pending(Pending::Accepted),
         };
-        let members = targets
-            .iter()
-            .map(|&(subject, scope)| MemberReport {
-                subject,
-                scope,
-                stage: Stage::Admitted,
-                state: match &state {
-                    MemberState::Pending(pending) => MemberState::Pending(*pending),
-                    MemberState::Settled(terminal) => MemberState::Settled(terminal.clone()),
-                },
-                detail: None,
-            })
-            .collect();
+        let mut members = self.spare.pop().unwrap_or_default();
+        members.extend(targets.iter().map(|&(subject, scope)| MemberReport {
+            subject,
+            scope,
+            stage: Stage::Admitted,
+            state: match &state {
+                MemberState::Pending(pending) => MemberState::Pending(*pending),
+                MemberState::Settled(terminal) => MemberState::Settled(terminal.clone()),
+            },
+            detail: None,
+        }));
         self.pending.push(CommandReport {
             request,
             command,
@@ -1474,6 +1478,11 @@ impl CommandBook {
         });
         self.file_settled();
         Ok(())
+    }
+
+    /// Whether any report still has a pending member.
+    pub fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
     }
 
     /// The report for `request`.
@@ -1955,7 +1964,13 @@ impl CommandBook {
             }
         }
         while self.settled.len() > SETTLED_REPORT_CAP {
-            self.settled.pop_front();
+            if let Some(evicted) = self.settled.pop_front() {
+                let mut members = evicted.members;
+                members.clear();
+                if self.spare.len() < SPARE_MEMBER_LISTS {
+                    self.spare.push(members);
+                }
+            }
         }
     }
 }

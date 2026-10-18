@@ -60,7 +60,7 @@ use vault::{Profile, ProfileSettings, RandomEventPolicy, Secret, Vault};
 use crate::focus::{draw_for_slot, full_rate_for};
 use crate::nav_settings::{from_scenario, parse_html_color, NavSettings};
 use crate::wall::Wall;
-use frontend_core::{OperatorSession, SlotAttach, SlotSurface};
+use frontend_core::{OperatorCommand, OperatorSession, SlotAttach, SlotSurface, Targets};
 
 fn scenario_fixture_loadouts(settings: &scenario::ScenarioSettings) -> Vec<api::loadout::Loadout> {
     settings
@@ -2580,9 +2580,7 @@ impl Session {
         })?;
         self.set_multibox(true);
         for name in &run.names {
-            let (core, mut surface) = self.core_and_surface();
-            let (op, _) = core.load(name, &mut surface);
-            self.report_failure(op);
+            self.submit_reporting(OperatorCommand::Load, Targets::Profile(name));
         }
         self.sync_wall_focus();
         self.wall.chooser_open = false;
@@ -2682,9 +2680,7 @@ impl Session {
         // reattach the renderer; memory stays queued until the next login.
         // s00 is focused last so it is FIFO head.
         for (name, _) in &names {
-            let (core, mut surface) = self.core_and_surface();
-            let (op, _) = core.load(name, &mut surface);
-            self.report_failure(op);
+            self.submit_reporting(OperatorCommand::Load, Targets::Profile(name));
         }
         self.sync_wall_focus();
         self.wall.chooser_open = false;
@@ -3999,7 +3995,8 @@ impl Session {
         let (old, capture) = {
             let focus = self.focus.lock().unwrap();
             if focus.focused.as_deref() == Some(name) {
-                self.core.select(name);
+                drop(focus);
+                self.submit(OperatorCommand::Select, Targets::Profile(name));
                 return;
             }
             (focus.focused.clone(), focus.capture)
@@ -4023,7 +4020,7 @@ impl Session {
         }
         // Detach before waking the outgoing worker: its first disabled
         // drain releases held input even if the UI has not run ownership.
-        self.core.select(name);
+        self.submit(OperatorCommand::Select, Targets::Profile(name));
         // The General config mirrors the profile's raster/mem so the pane
         // shows what the slot actually runs (display only — no write-back,
         // no re-role). The profile editor's fields stay on the profile
@@ -4225,7 +4222,7 @@ impl Session {
     /// focus, without spawn, persistence or capture effects.
     #[cfg(test)]
     pub(crate) fn set_focus_for_test(&mut self, name: &str) {
-        self.core.select(name);
+        self.submit(OperatorCommand::Select, Targets::Profile(name));
         self.focus.lock().unwrap().focused = Some(name.to_string());
     }
 
@@ -4254,6 +4251,38 @@ impl Session {
                 walk_dest: &mut self.walk_dest,
             },
         )
+    }
+
+    /// Issue one operator command through the core's command seam (the
+    /// entry point the TUI and the headless driver use). A refused command
+    /// shows on the banner.
+    fn submit(
+        &mut self,
+        command: OperatorCommand,
+        targets: Targets<'_>,
+    ) -> Option<frontend_core::Submitted> {
+        let (core, mut surface) = self.core_and_surface();
+        match core.submit(command, targets, &mut surface) {
+            Ok(submitted) => Some(submitted),
+            Err(error) => {
+                self.error = Some(error.to_string());
+                None
+            }
+        }
+    }
+
+    /// [`Self::submit`], then show the command's failed operation on the
+    /// banner (today's lifecycle reporting).
+    fn submit_reporting(
+        &mut self,
+        command: OperatorCommand,
+        targets: Targets<'_>,
+    ) -> Option<frontend_core::Submitted> {
+        let submitted = self.submit(command, targets)?;
+        if let Some(op) = submitted.operation() {
+            self.report_failure(op);
+        }
+        Some(submitted)
     }
 
     /// Show a failed lifecycle operation on the banner.
@@ -4285,9 +4314,7 @@ impl Session {
     /// Credentials Log in: clear the logout latch, arm an explicit one-shot
     /// handshake, then select (spawn if needed).
     pub fn login(&mut self, name: &str) {
-        let (core, mut surface) = self.core_and_surface();
-        let op = core.login(name, &mut surface);
-        self.report_failure(op);
+        self.submit_reporting(OperatorCommand::Login, Targets::Profile(name));
         self.select(name);
     }
 
@@ -4299,15 +4326,28 @@ impl Session {
         self.scripts.cancel_queued_as(name, "logged out");
         self.scripts.publish_start_places(&mut self.core);
         self.apply_script_notice();
-        self.core.logout(name);
+        self.submit(OperatorCommand::Logout, Targets::Profile(name));
     }
 
     /// Persist the focused profile's auto-login checkbox to the vault
     /// (`ProfileSettings.auto_login`) and mirror it onto a running slot's
     /// `arm.auto_login`. Never spawns or stops a slot.
     pub fn set_auto_login(&mut self, name: &str, on: bool) -> bool {
-        let result = self.core.set_auto_login(name, on).map(|_| ());
+        let result = self.submit_profile_write(OperatorCommand::SetAutoLogin(on), name);
         self.apply_result(result)
+    }
+
+    /// Submit a profile-write row for `name`; a dispatch refusal comes back
+    /// as its owner's text (today's `Err` of the core write).
+    fn submit_profile_write(&mut self, command: OperatorCommand, name: &str) -> Result<(), String> {
+        let (core, mut surface) = self.core_and_surface();
+        let submitted = core
+            .submit(command, Targets::Profile(name), &mut surface)
+            .map_err(|error| error.to_string())?;
+        match self.core.command_failure(submitted.request()) {
+            Some(reason) => Err(reason.to_string()),
+            None => Ok(()),
+        }
     }
 
     fn apply_result(&mut self, result: Result<(), String>) -> bool {
@@ -4418,8 +4458,13 @@ impl Session {
         };
         // The shared command only queues the next login mode. Neither the
         // client nor its speaker changes while this setting is saved.
-        match self.core.set_memory_mode(&name, lowmem) {
-            Ok(_) => true,
+        let mode = if lowmem {
+            api::lifecycle::MemoryMode::Low
+        } else {
+            api::lifecycle::MemoryMode::High
+        };
+        match self.submit_profile_write(OperatorCommand::SetMemoryMode(mode), &name) {
+            Ok(()) => true,
             Err(error) => {
                 self.error = Some(error);
                 false
@@ -4459,9 +4504,7 @@ impl Session {
         self.scripts.cancel_queued_as(&name, "logged out");
         self.scripts.publish_start_places(&mut self.core);
         self.apply_script_notice();
-        let (core, mut surface) = self.core_and_surface();
-        let op = core.request_memory_relog(&name, &mut surface);
-        self.report_failure(op);
+        self.submit_reporting(OperatorCommand::RelogNow, Targets::Profile(&name));
         true
     }
 
@@ -4509,9 +4552,9 @@ impl Session {
         if self.refuse_saving(name) {
             return false;
         }
-        let (core, mut surface) = self.core_and_surface();
-        let (op, added) = core.load(name, &mut surface);
-        self.report_failure(op);
+        let added = self
+            .submit_reporting(OperatorCommand::Load, Targets::Profile(name))
+            .is_some_and(|submitted| submitted.added() > 0);
         // Load all / chooser rows spawn onto the rail and focus the member
         // (the flat model's "click" — the Game pane samples this slot). The
         // script card follows the focused profile, as in `select`.
@@ -4531,11 +4574,25 @@ impl Session {
         } else {
             None
         };
-        let (op, added) = {
+        self.core.set_focus_hint(last.as_deref());
+        // Nothing left to load is not an error for Load all, as before.
+        let added = {
             let (core, mut surface) = self.core_and_surface();
-            core.load_all(&mut surface, last.as_deref())
+            core.submit(OperatorCommand::Load, Targets::Everyone, &mut surface)
         };
-        self.report_failure(op);
+        let added = match added {
+            Ok(submitted) => {
+                if let Some(op) = submitted.operation() {
+                    self.report_failure(op);
+                }
+                submitted.added()
+            }
+            Err(frontend_core::SubmitError::NoTarget(_)) => 0,
+            Err(error) => {
+                self.error = Some(error.to_string());
+                0
+            }
+        };
         // Never steal an existing focus. When nothing was focused, the core
         // already picked with `pick_focus`; mirror that onto the Game pane
         // so the chosen bot draws. Applying last-member focus here used to
@@ -4599,9 +4656,20 @@ impl Session {
     /// armed after the handshake). Queue membership follows worker arrival at
     /// Queueing; the focused slot is the sole priority exception.
     pub fn login_all(&mut self) {
-        let (core, mut surface) = self.core_and_surface();
-        let op = core.login_all(&mut surface);
-        self.report_failure(op);
+        // An empty fleet logs in nobody; that is not an error, as before.
+        let submitted = {
+            let (core, mut surface) = self.core_and_surface();
+            core.submit(OperatorCommand::Login, Targets::Everyone, &mut surface)
+        };
+        match submitted {
+            Ok(submitted) => {
+                if let Some(op) = submitted.operation() {
+                    self.report_failure(op);
+                }
+            }
+            Err(frontend_core::SubmitError::NoTarget(_)) => {}
+            Err(error) => self.error = Some(error.to_string()),
+        }
     }
 
     /// Log out every wall member: record the latch (blocks auto-login
@@ -4609,7 +4677,9 @@ impl Session {
     /// `want_login` is cleared too so a title-screen member does not
     /// handshake right back in.
     pub fn logout_all(&mut self) {
-        self.core.logout_all();
+        let (core, mut surface) = self.core_and_surface();
+        // Nobody to log out is not an error.
+        let _ = core.submit(OperatorCommand::Logout, Targets::Everyone, &mut surface);
     }
 
     /// MultiBox toggle. On: seed the wall with every already-running slot
@@ -4703,12 +4773,33 @@ impl Session {
         if self.mem_relog_armed.as_deref() == Some(name) {
             self.mem_relog_armed = None;
         }
-        let (core, mut surface) = self.core_and_surface();
-        let removal = core.remove(name, now, &mut surface);
+        let submitted = {
+            let (core, mut surface) = self.core_and_surface();
+            core.submit_at(
+                OperatorCommand::Remove,
+                Targets::Profile(name),
+                now,
+                &mut surface,
+            )
+        };
+        let submitted = match submitted {
+            Ok(submitted) => submitted,
+            Err(error) => {
+                self.error = Some(error.to_string());
+                return;
+            }
+        };
+        let Some(removal) = submitted.removal() else {
+            return;
+        };
+        let (reselected, cleared) = (
+            removal.reselected().map(str::to_string),
+            removal.selection_cleared(),
+        );
         self.sync_wall_focus();
-        if let Some(next) = removal.reselected() {
+        if let Some(next) = reselected.as_deref() {
             self.select(next);
-        } else if removal.selection_cleared() {
+        } else if cleared {
             self.focus.lock().unwrap().focused = None;
             self.capture_tx = None;
             // Last focused slot gone and no neighbour: no remaining drawer
@@ -5507,7 +5598,12 @@ impl Session {
             return;
         };
         if self.core.play().is_some() {
-            self.core.toggle_pause(&name);
+            let row = if self.core.script_paused(&name) {
+                OperatorCommand::ResumeScript
+            } else {
+                OperatorCommand::PauseScript
+            };
+            self.submit(row, Targets::Profile(&name));
         }
     }
 
@@ -5519,7 +5615,7 @@ impl Session {
         self.scripts.cancel_queued(&name);
         self.scripts.publish_start_places(&mut self.core);
         if self.core.play().is_some() {
-            self.core.stop_script(&name);
+            self.submit(OperatorCommand::StopScript, Targets::Profile(&name));
         }
     }
 

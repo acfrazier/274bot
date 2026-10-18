@@ -6681,6 +6681,22 @@
     {
       "path": "crates/script/tests/script_seam_engine.rs",
       "owner": "T2"
+    },
+    {
+      "path": "crates/frontend-core/src/driver.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/driver_tests.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/session/commands.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/tests/command_book_alloc.rs",
+      "owner": "T3"
     }
   ]
 }

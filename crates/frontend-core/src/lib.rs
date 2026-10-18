@@ -19,6 +19,7 @@
 pub mod bulk;
 pub mod capacity;
 pub mod command;
+pub mod driver;
 pub mod fleet;
 pub mod group_walk;
 pub mod log;
@@ -46,6 +47,7 @@ pub mod walk_permissions;
 pub use bulk::{BulkOutcome, BulkReport, BulkRow};
 pub use capacity::{CapacityNotice, CapacityWarning, RenderPolicyLabel};
 pub use command::{CommandBook, CommandReport, FleetOrder, OperatorCommand};
+pub use driver::HeadlessDriver;
 pub use fleet::{
     contains_ci, fill_visible_indices, fill_visible_row_indices, fleet_row_matches, member_row,
     state_label, Fleet,
@@ -81,7 +83,7 @@ pub use selection::{
 };
 pub use session::{
     pick_focus, ArmMirror, MemoryNotice, OperatorSession, Removal, ScriptStart, Selection,
-    SlotTransition, StartSettled, Transition, SLOT_REMOVE_TIMEOUT,
+    SlotTransition, StartSettled, SubmitError, Submitted, Targets, Transition, SLOT_REMOVE_TIMEOUT,
 };
 pub use surface::{HeadlessSurface, SlotAttach, SlotSurface};
 pub use views::{FleetCounts, FleetRow, FleetView, Light, OpBrief, Phase, QueuePlace, SlotDetail};

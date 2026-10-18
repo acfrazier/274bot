@@ -8,9 +8,10 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use crate::bulk::{BulkOutcome, BulkReport, BulkRow};
+use crate::command::OperatorCommand;
 use crate::scripts::{Scripts, SyncScope};
 use crate::selection::{profile_rows, BulkSkip, MarkedSelection, ProfileIdentity};
-use crate::session::OperatorSession;
+use crate::session::{OperatorSession, Targets};
 use crate::surface::SlotSurface;
 use crate::views::{FleetRow, Phase};
 
@@ -537,7 +538,7 @@ fn enqueue_assigned_restarts<Io>(
         }
     }
     if !stopping.is_empty() {
-        core.stop_scripts(&stopping);
+        let _ = core.submit_detached(OperatorCommand::StopScript, Targets::Profiles(&stopping));
     }
     scripts.admit_starts(core, catalog_root);
     scripts.publish_bulk();
@@ -665,19 +666,27 @@ pub fn login_marked<Io, S: SlotSurface<Io = Io>>(
             )),
             _ => {
                 if !member {
-                    core.load(&name, surface);
+                    let _ = core.submit(OperatorCommand::Load, Targets::Profile(&name), surface);
                 }
                 eligible.push(name);
             }
         }
     }
     if !eligible.is_empty() {
-        core.login_members(&eligible, surface);
-        rows.extend(
-            eligible
-                .into_iter()
-                .map(|name| BulkRow::new(name, BulkOutcome::Done)),
-        );
+        let refused = core
+            .submit(
+                OperatorCommand::Login,
+                Targets::Profiles(&eligible),
+                surface,
+            )
+            .err()
+            .map(|error| error.to_string());
+        rows.extend(eligible.into_iter().map(|name| {
+            let outcome = refused
+                .as_ref()
+                .map_or(BulkOutcome::Done, BulkOutcome::failed);
+            BulkRow::new(name, outcome)
+        }));
     }
     BulkReport::new(LABEL, DONE, rows, None)
 }
@@ -709,12 +718,16 @@ pub fn logout_marked<Io>(
             scripts.cancel_queued_as(name, "logged out");
         }
         scripts.publish_start_places(core);
-        core.logout_members(&eligible);
-        rows.extend(
-            eligible
-                .into_iter()
-                .map(|name| BulkRow::new(name, BulkOutcome::Done)),
-        );
+        let refused = core
+            .submit_detached(OperatorCommand::Logout, Targets::Profiles(&eligible))
+            .err()
+            .map(|error| error.to_string());
+        rows.extend(eligible.into_iter().map(|name| {
+            let outcome = refused
+                .as_ref()
+                .map_or(BulkOutcome::Done, BulkOutcome::failed);
+            BulkRow::new(name, outcome)
+        }));
     }
     BulkReport::new(LABEL, DONE, rows, None)
 }
