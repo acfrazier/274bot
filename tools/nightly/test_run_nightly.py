@@ -4,7 +4,10 @@
 The guard stops the Windows nightly from filling its disk: a Cargo target
 folder over `NIGHTLY_TARGET_CAP_GB` is removed before the lanes and before
 the build, and the night is UNAVAILABLE when the drive still has less free
-space than `NIGHTLY_MIN_FREE_GB` after that. The stable tree path
+space than `NIGHTLY_MIN_FREE_GB` after that. A target folder whose size
+cannot be read in full counts as over the cap. Removal never follows a
+symlink or a Windows junction. The logon catch-up writes its UNAVAILABLE
+summary without running the guard. The stable tree path
 (`trees/<branch>`, a clean clone into the same path every night) stops Cargo
 from adding a new set of artefacts for every new source path.
 
@@ -14,12 +17,15 @@ Run on Linux or Windows with the standard library only:
 """
 
 import json
+import gc
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from unittest import mock
 
@@ -35,6 +41,33 @@ def make_target(root: Path, name: str, size: int) -> Path:
     target.mkdir(parents=True)
     (target / "artefact").write_bytes(b"x" * size)
     return target
+
+
+def mode_of(path: Path) -> int:
+    return stat.S_IMODE(path.stat().st_mode)
+
+
+def make_symlink(link: Path, target: Path, *, directory: bool = False) -> None:
+    try:
+        os.symlink(target, link, target_is_directory=directory)
+    except (OSError, NotImplementedError) as error:
+        raise unittest.SkipTest(f"cannot create a symlink here: {error}")
+
+
+def make_junction(link: Path, target: Path) -> None:
+    result = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        raise unittest.SkipTest(f"mklink /J failed: {result.stdout} {result.stderr}")
+
+
+def make_outside(root: Path) -> tuple[Path, Path]:
+    """A directory outside the target under test, with one file in it."""
+    outside = root / "outside"
+    outside.mkdir()
+    keep = outside / "keep.txt"
+    keep.write_text("keep\n", encoding="utf-8")
+    return outside, keep
 
 
 class FakeDrive:
@@ -62,6 +95,22 @@ class DirSizeTests(unittest.TestCase):
     def test_missing_path_is_zero(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(rn.dir_size(Path(tmp) / "nope"), 0)
+
+    @unittest.skipIf(os.name == "nt", "mode 000 does not stop a listing on Windows")
+    @unittest.skipIf(getattr(os, "geteuid", lambda: 1)() == 0, "root can list a mode 000 folder")
+    def test_an_unreadable_subfolder_raises_instead_of_a_partial_size(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "visible.bin").write_bytes(b"x" * 100)
+            sub = root / "sub"
+            sub.mkdir()
+            (sub / "hidden.bin").write_bytes(b"y" * 5000)
+            os.chmod(sub, 0)
+            try:
+                with self.assertRaises(OSError):
+                    rn.dir_size(root)
+            finally:
+                os.chmod(sub, 0o700)
 
     def test_free_bytes_uses_existing_parent(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -158,6 +207,110 @@ class DiskGuardTests(unittest.TestCase):
             reason = rn.disk_guard([missing], 1000, 1000, free_of=lambda _path: 0)
             self.assertIsNotNone(reason)
             self.assertIn("not enough free disk space", reason)
+
+    def test_a_target_whose_size_cannot_be_read_is_removed_as_over_the_cap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            primary = make_target(Path(tmp), "dev-ci", 5000)
+
+            def bad_size(_path):
+                raise OSError("cannot list a subfolder")
+
+            logs: list[str] = []
+            with mock.patch.object(rn, "log", logs.append):
+                reason = rn.disk_guard([primary], 1000, 1000, size_of=bad_size,
+                                       free_of=lambda _path: 10**7)
+            self.assertIsNone(reason)
+            self.assertFalse(os.path.lexists(primary))
+            self.assertEqual(len(logs), 1)
+            self.assertIn("disk guard: removed", logs[0])
+            self.assertIn("size could not be read", logs[0])
+
+    @unittest.skipIf(os.name == "nt", "mode 000 does not stop a listing on Windows")
+    @unittest.skipIf(getattr(os, "geteuid", lambda: 1)() == 0, "root can list a mode 000 folder")
+    def test_an_unreadable_subfolder_inside_an_over_cap_target_is_removed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "dev-ci"
+            target.mkdir()
+            (target / "visible.bin").write_bytes(b"x" * 100)
+            sub = target / "sub"
+            sub.mkdir()
+            (sub / "hidden.bin").write_bytes(b"y" * 5000)
+            os.chmod(sub, 0)
+            logs: list[str] = []
+            try:
+                with mock.patch.object(rn, "log", logs.append):
+                    reason = rn.disk_guard([target], 1000, 1000, free_of=lambda _path: 10**7)
+                self.assertIsNone(reason)
+                self.assertFalse(os.path.lexists(target))
+                self.assertEqual(len(logs), 1)
+                self.assertIn("size could not be read", logs[0])
+            finally:
+                if sub.exists():
+                    os.chmod(sub, 0o700)
+
+    def test_a_removal_that_leaves_the_target_in_place_is_a_guard_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            primary = make_target(Path(tmp), "dev-ci", 5000)
+            logs: list[str] = []
+            with mock.patch.object(rn, "log", logs.append):
+                with self.assertRaises(OSError):
+                    rn.disk_guard([primary], 1000, 1000, free_of=lambda _path: 10**7,
+                                  remove=lambda _path: None)
+            self.assertTrue(os.path.lexists(primary))
+            self.assertEqual(logs, [])
+
+    def test_a_removal_that_fails_twice_marks_the_night_unavailable(self):
+        # The real removal code, with every unlink locked. The first try
+        # and the retry after the permission fix both fail.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            primary = make_target(root / "target", "dev-ci", 5000)
+            before = mode_of(primary)
+            logs: list[str] = []
+            try:
+                with mock.patch.object(rn, "ROOT", root), \
+                        mock.patch.object(rn, "GB", 1), \
+                        mock.patch.object(rn, "TARGET_CAP_GB", 1000), \
+                        mock.patch.object(rn, "MIN_FREE_GB", 0), \
+                        mock.patch.object(rn, "log", logs.append), \
+                        mock.patch("os.unlink", side_effect=OSError("folder is locked")) as unlink:
+                    reason = rn.guard_disk("dev", primary)
+                self.assertIsNotNone(reason)
+                self.assertIn("disk guard failed", reason)
+                self.assertIn("folder is locked", reason)
+                self.assertIn("nothing was built", reason)
+                self.assertGreaterEqual(unlink.call_count, 2)
+                self.assertTrue(os.path.lexists(primary))
+                self.assertEqual(logs, [])
+                # A permission fix adds permissions. It never strips them.
+                self.assertEqual(mode_of(primary), before)
+            finally:
+                if primary.exists():
+                    os.chmod(primary, 0o755)
+
+    def test_a_top_level_symlink_target_is_unlinked_and_the_outside_folder_is_untouched(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside, keep = make_outside(root)
+            before = mode_of(outside)
+            link = root / "dev-ci"
+            make_symlink(link, outside, directory=True)
+            logs: list[str] = []
+            try:
+                with mock.patch.object(rn, "log", logs.append):
+                    reason = rn.disk_guard(
+                        [link], 10**9, 1000,
+                        free_of=lambda _path: 0 if os.path.lexists(link) else 10**7)
+                self.assertIsNone(reason)
+                self.assertFalse(os.path.lexists(link))
+                self.assertEqual(keep.read_text(encoding="utf-8"), "keep\n")
+                self.assertEqual(mode_of(outside), before)
+                self.assertEqual(len(logs), 1)
+                self.assertIn("disk guard: removed", logs[0])
+            finally:
+                if outside.exists():
+                    os.chmod(outside, 0o755)
 
 
 def git(*args: str, cwd: Path) -> str:
@@ -284,6 +437,148 @@ class RunBranchDiskGuardTests(unittest.TestCase):
             self.assertTrue((run_dir / "DONE").is_file())
             self.assertFalse(ci.exists())
             self.assertFalse(build_target.exists())
+
+
+class RmtreeTests(unittest.TestCase):
+    def test_a_top_level_symlink_to_an_outside_folder_is_unlinked_not_followed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside, keep = make_outside(root)
+            before = mode_of(outside)
+            link = root / "dev-ci"
+            make_symlink(link, outside, directory=True)
+            try:
+                rn.rmtree(link)
+                self.assertFalse(os.path.lexists(link))
+                self.assertEqual(keep.read_text(encoding="utf-8"), "keep\n")
+                self.assertEqual(mode_of(outside), before)
+            finally:
+                if outside.exists():
+                    os.chmod(outside, 0o755)
+
+    def test_a_nested_symlink_to_an_outside_folder_is_unlinked_not_followed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside, keep = make_outside(root)
+            outside_file = root / "outside.bin"
+            outside_file.write_bytes(b"z" * 100)
+            before_dir = mode_of(outside)
+            before_file = mode_of(outside_file)
+            target = make_target(root, "dev-ci", 500)
+            make_symlink(target / "linkdir", outside, directory=True)
+            make_symlink(target / "linkfile", outside_file)
+            try:
+                rn.rmtree(target)
+                self.assertFalse(os.path.lexists(target))
+                self.assertEqual(keep.read_text(encoding="utf-8"), "keep\n")
+                self.assertEqual(outside_file.read_bytes(), b"z" * 100)
+                self.assertEqual(mode_of(outside), before_dir)
+                self.assertEqual(mode_of(outside_file), before_file)
+            finally:
+                if outside.exists():
+                    os.chmod(outside, 0o755)
+
+    def test_a_removal_that_fails_twice_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = make_target(Path(tmp), "dev-ci", 500)
+            before = mode_of(target)
+            try:
+                with mock.patch("os.unlink", side_effect=OSError("folder is locked")) as unlink:
+                    with self.assertRaises(OSError):
+                        rn.rmtree(target)
+                # The first try and the retry after the permission fix both ran.
+                self.assertGreaterEqual(unlink.call_count, 2)
+                self.assertTrue(os.path.lexists(target))
+                # A permission fix adds permissions. It never strips them.
+                self.assertEqual(mode_of(target), before)
+            finally:
+                if target.exists():
+                    os.chmod(target, 0o755)
+
+    @unittest.skipUnless(os.name == "nt", "junctions exist only on Windows")
+    def test_a_top_level_junction_to_an_outside_folder_is_unlinked_not_followed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside, keep = make_outside(root)
+            before = mode_of(outside)
+            link = root / "dev-ci"
+            make_junction(link, outside)
+            self.assertTrue(os.path.isjunction(link))
+            rn.rmtree(link)
+            self.assertFalse(os.path.lexists(link))
+            self.assertEqual(keep.read_text(encoding="utf-8"), "keep\n")
+            self.assertEqual(mode_of(outside), before)
+
+    @unittest.skipUnless(os.name == "nt", "junctions exist only on Windows")
+    def test_a_nested_junction_to_an_outside_folder_is_unlinked_not_followed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside, keep = make_outside(root)
+            before = mode_of(outside)
+            target = make_target(root, "dev-ci", 500)
+            make_junction(target / "linkdir", outside)
+            rn.rmtree(target)
+            self.assertFalse(os.path.lexists(target))
+            self.assertEqual(keep.read_text(encoding="utf-8"), "keep\n")
+            self.assertEqual(mode_of(outside), before)
+
+
+class CatchUpTests(unittest.TestCase):
+    def test_catch_up_writes_the_summary_without_running_the_disk_guard(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            over_cap = make_target(root / "target", "dev-ci", 5000)
+
+            def fake_update_tree(_branch, tree, _build_log):
+                catalog = tree / rn.CATALOG_RS
+                catalog.parent.mkdir(parents=True)
+                catalog.write_text(
+                    'const REGISTRY: &[Entry] = &[\n    Entry::new("walk"),\n];\n', encoding="utf-8")
+                return "b" * 40, "b" * 9
+
+            guard = mock.Mock(side_effect=AssertionError("the disk guard ran during catch-up"))
+            patches = [
+                mock.patch.object(rn, "ROOT", root),
+                mock.patch.object(rn, "STEPS", ["lanes", "tui"]),
+                mock.patch.object(rn, "FRESH_TREES", False),
+                mock.patch.object(rn, "REQUIRE_CONSOLE", False),
+                mock.patch.object(rn, "ENGINE_MODE", "remote"),
+                mock.patch.object(rn, "TARGET_CAP_GB", 40),
+                mock.patch.object(rn, "MIN_FREE_GB", 100),
+                mock.patch.object(rn, "free_bytes", lambda _path: 0),
+                mock.patch.object(rn, "update_tree", fake_update_tree),
+                mock.patch.object(rn, "guard_disk", guard),
+                mock.patch.object(rn, "log", lambda _message: None),
+                mock.patch.object(sys, "argv", ["run_nightly.py", "--catch-up", "--branch", "dev"]),
+            ]
+            for patch in patches:
+                patch.start()
+            try:
+                # main() holds the lock file open for the life of the
+                # process. In this test process that only warns at return.
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", ResourceWarning)
+                    result = rn.main()
+                    gc.collect()
+            finally:
+                for patch in patches:
+                    patch.stop()
+
+            self.assertEqual(result, 0)
+            guard.assert_not_called()
+            summaries = sorted((root / "runs").glob("*/summary.json"))
+            self.assertEqual(len(summaries), 1)
+            run_dir = summaries[0].parent
+            summary = json.loads(summaries[0].read_text(encoding="utf-8"))
+            self.assertIn("console session not active", summary["unavailable"])
+            self.assertTrue(summary["lanes"])
+            self.assertEqual({row["result"] for row in summary["lanes"]}, {"UNAVAILABLE"})
+            self.assertEqual({row["result"] for row in summary["cells"]}, {"UNAVAILABLE"})
+            self.assertFalse(summary["build"]["ran"])
+            self.assertTrue((run_dir / "DONE").is_file())
+            # The guard did not run, so nothing was removed either. The next
+            # scheduled night removes the over-cap target.
+            self.assertTrue(os.path.lexists(over_cap))
 
 
 if __name__ == "__main__":

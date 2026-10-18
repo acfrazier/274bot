@@ -330,7 +330,9 @@ start at all while BotTest is logged off (after a reboot, the host does not log 
 itself), so `274bot-nightly-catchup` runs at BotTest's next logon: if the last 23:00
 night left no `state\started-<date>` marker, it writes that night as a run with every
 lane and cell `UNAVAILABLE: BotTest console session not active at the scheduled 23:00
-start`.
+start`. Catch-up writes only that summary. It does not run the disk guard. Its task
+limit is 30 minutes, and a large removal killed at that limit would leave the missed
+night with no summary at all. The next scheduled night runs the guard again.
 
 **One night, in order, each step with its own deadline:**
 
@@ -386,13 +388,18 @@ apart from other agents' accounts; the runner itself sends no cheats or world co
 release build, the runner measures the branch's Cargo target folders
 (`target\<branch>-ci`, `target\<branch>` and `target\navskip`) and the free
 space on their drive. It removes a target folder that is bigger than
-`NIGHTLY_TARGET_CAP_GB` (40 on this host). If the drive still has less free
-space than `NIGHTLY_MIN_FREE_GB` (100 on this host), it removes the other
-target folders too, and it logs one line per removal with the sizes. If free
-space is still below the floor after that, the whole night is `UNAVAILABLE`
-with that reason and nothing is built, so the nightly cannot fill the disk.
+`NIGHTLY_TARGET_CAP_GB` (40 on this host). A target folder whose size cannot
+be read in full counts as bigger than the cap and is removed too. If the drive
+still has less free space than `NIGHTLY_MIN_FREE_GB` (100 on this host), it
+removes the other target folders too, and it logs one line per removal with
+the sizes. If free space is still below the floor after that, the whole night
+is `UNAVAILABLE` with that reason and nothing is built, so the nightly cannot
+fill the disk. A removal that fails also makes the night `UNAVAILABLE`.
+Removal never follows a symlink or a junction. It unlinks the link itself.
+It changes permissions only on real files and folders inside the folder that
+it removes. The logon catch-up does not run the guard (see Tasks above).
 A setting of 0 turns that check off. Both checks are off by default on
-Linux, whose disk is 100 GB in total and whose tree path is already stable.
+Linux, whose disk is 100 GB in total and whose tree path was already stable.
 They run when the variables are set there.
 
 **What persists between nights:** BotTest's `CARGO_HOME` and `RUSTUP_HOME`, the build
