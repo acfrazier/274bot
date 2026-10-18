@@ -142,13 +142,20 @@ pub enum PublicationWaitOutcome {
 }
 
 static WORK_INITIALIZED: AtomicBool = AtomicBool::new(false);
+static PROCESS_INCARNATION: LazyLock<Result<ProcessIncarnation, WorkStartError>> =
+    LazyLock::new(WorkService::draw_incarnation);
 static SHARED_WORK: LazyLock<Result<Arc<Mutex<WorkService>>, WorkStartError>> =
     LazyLock::new(|| {
-        let incarnation = WorkService::draw_incarnation()?;
-        let service = Arc::new(Mutex::new(WorkService::new(incarnation)));
+        let service = Arc::new(Mutex::new(WorkService::new(process_incarnation()?)));
         WORK_INITIALIZED.store(true, Ordering::Release);
         Ok(service)
     });
+
+/// Name this process without starting the lazy WorkAdmission worker.
+/// The OS CSPRNG failure is retained as a typed start refusal.
+pub fn process_incarnation() -> Result<ProcessIncarnation, WorkStartError> {
+    *PROCESS_INCARNATION
+}
 
 /// The process-wide WorkAdmission scheduler.
 ///
@@ -280,11 +287,19 @@ impl WorkService {
     }
 
     fn draw_incarnation() -> Result<ProcessIncarnation, WorkStartError> {
+        Self::draw_incarnation_with(|bytes| {
+            rand::rngs::OsRng
+                .try_fill_bytes(bytes)
+                .map_err(|_| WorkStartError::OsRandom)
+        })
+    }
+
+    fn draw_incarnation_with(
+        mut fill: impl FnMut(&mut [u8]) -> Result<(), WorkStartError>,
+    ) -> Result<ProcessIncarnation, WorkStartError> {
         loop {
             let mut bytes = [0_u8; std::mem::size_of::<u64>()];
-            rand::rngs::OsRng
-                .try_fill_bytes(&mut bytes)
-                .map_err(|_| WorkStartError::OsRandom)?;
+            fill(&mut bytes)?;
             if let Some(nonce) = NonZeroU64::new(u64::from_ne_bytes(bytes)) {
                 return Ok(ProcessIncarnation::from_start_nonce(nonce));
             }

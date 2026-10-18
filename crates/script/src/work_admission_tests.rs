@@ -249,6 +249,34 @@ impl CooperativeJob for QueueJob {
 }
 
 #[test]
+fn process_incarnation_is_stable_without_constructing_work_service() {
+    let first = process_incarnation().expect("OS process identity");
+    assert_eq!(process_incarnation(), Ok(first));
+    // This tests the draw path without touching SHARED_WORK; the separate
+    // worker initializer obtains this exact cached value on first demand.
+    assert_eq!(WorkService::draw_incarnation_with(|_| Err(WorkStartError::OsRandom)),
+        Err(WorkStartError::OsRandom));
+}
+
+#[test]
+fn injected_zero_draw_retries_and_os_failure_remains_typed() {
+    let mut draws = 0;
+    let name = WorkService::draw_incarnation_with(|bytes| {
+        draws += 1;
+        if draws == 2 {
+            bytes[0] = 3;
+        }
+        Ok(())
+    }).unwrap();
+    assert_eq!(draws, 2);
+    assert_eq!(name.start_nonce().get(), 3);
+    assert_eq!(
+        WorkService::draw_incarnation_with(|_| Err(WorkStartError::OsRandom)),
+        Err(WorkStartError::OsRandom),
+    );
+}
+
+#[test]
 fn worker_start_failure_latches_typed_unavailable_without_replacement() {
     assert_eq!(
         WorkStartError::OsRandom.to_string(),
