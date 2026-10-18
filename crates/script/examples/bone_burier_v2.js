@@ -1,4 +1,5 @@
 // crates/script/examples/bone_burier_v2.ts
+import { Bank } from '../../api/bank/Bank.js';
 export const apiVersion = 2;
 export const SETTINGS = {
   boneName: {
@@ -64,21 +65,6 @@ function observePending(api, bone, invCount) {
     phase = "burying";
     return true;
   }
-  if (work.kind === "load") {
-    if (invCount > work.before) {
-      pending = null;
-      phase = "loading";
-      return true;
-    }
-    if (api.snapshot.withdraw_load_result_seq > work.seq) {
-      if (api.snapshot.withdraw_load_result) {
-        pending = null;
-        return true;
-      }
-      fail(api, "withdraw refused or inventory has no free slot");
-      return true;
-    }
-  }
   if (work.kind === "open" && api.snapshot.bank_open) {
     pending = null;
     phase = "opening-bank";
@@ -109,7 +95,7 @@ function observePending(api, bone, invCount) {
   }
   return false;
 }
-export function tick(api) {
+export async function tick(api) {
   const bone = api.settings.str("boneName", "Bones").trim() || "Bones";
   if (activeBone && activeBone !== bone) {
     pending = null;
@@ -182,17 +168,10 @@ export function tick(api) {
       return;
     }
     phase = "loading";
-    pending = {
-      kind: "load",
-      sent: api.tick,
-      before: invCount,
-      seq: api.snapshot.withdraw_load_result_seq
-    };
-    api.request({
-      op: "withdraw-load",
-      name: bone,
-      bank_generation: api.snapshot.bank_generation
-    });
+    const loaded = await Bank.withdrawLoad(bone);
+    if (!loaded || count(api.snapshot.inv, bone) <= invCount) {
+      fail(api, "withdraw refused or inventory has no free slot");
+    }
     return;
   }
   const stand = supportedStand(api, banks, bankApproaches);
