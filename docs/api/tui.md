@@ -42,11 +42,12 @@ prompt and end it with Enter (`\r` or `\n`). `BOT_VAULT_PASS` and
 `--vault-pass` were removed; see [vault.md](vault.md#passphrase-sourcing).
 
 `--map-bundle OUT --revision 289 --cache JAG_DIR --unpack SNAPSHOT_ROOT` is a
-release-packaging run, not a panel: it bakes the WalkTo map terrain for that
-offline client cache through the production map-cache path and ships it under
-`OUT/map/<revision>/` (see [release packaging](../../tools/release/README.md)),
-then prints the shipped description (identity, key, manifest receipt, tile
-totals) as JSON and exits.
+release-packaging run, not a panel: it bakes the WalkTo map catalogue and
+terrain for that offline client cache through the production map-cache path
+and ships them under `OUT/map/<revision>/` (see
+[release packaging](../../tools/release/README.md)), then prints the shipped
+descriptions (`{"images": …, "catalogue": …}`: each identity, key, manifest
+receipt and totals) as JSON and exits.
 
 ## Layout
 
