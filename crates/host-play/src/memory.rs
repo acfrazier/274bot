@@ -102,24 +102,7 @@ pub const BENCHMARK_ALLOCATOR: BenchmarkAllocator = System;
 /// Process CPU time, distinct from overlapping per-thread wall durations.
 /// Returns `(user_seconds, kernel/system_seconds)` when the OS sampler works.
 fn process_cpu_seconds() -> Option<(f64, f64)> {
-    #[cfg(unix)]
-    {
-        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
-        if unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } != 0 {
-            return None;
-        }
-        let seconds = |v: libc::timeval| v.tv_sec as f64 + v.tv_usec as f64 / 1_000_000.0;
-        Some((seconds(usage.ru_utime), seconds(usage.ru_stime)))
-    }
-    #[cfg(windows)]
-    {
-        // User + kernel from GetProcessTimes; optional fields stay null on fail.
-        crate::rss::windows_cpu_user_kernel()
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        None
-    }
+    crate::rss::process_cpu_user_kernel()
 }
 
 unsafe impl GlobalAlloc for CountingAllocator {

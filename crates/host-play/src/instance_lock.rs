@@ -249,48 +249,23 @@ fn parse_holder(text: &str) -> Option<InstanceHolder> {
     })
 }
 
-/// Unix `kill(pid, 0)` (exists if success or `EPERM`); Windows `OpenProcess`
-/// and `STILL_ACTIVE`. Justified unsafe: the same OS probes host-play already
-/// uses for RSS/CPU. No `cfg(windows)` beyond this helper.
+/// The client's process probe.
+///
+/// A pid this lock did not query stays dead: pid 0 on Unix and Windows, and a
+/// Unix value that does not fit in `i32`. The client treats those as alive so
+/// a staging directory is kept. That client reading is unchanged.
+///
+/// On Windows the probe follows the client. Only `ERROR_INVALID_PARAMETER`
+/// from `OpenProcess` means dead. Access denied and every other error mean
+/// alive, including a lock held by another user's live process.
 fn pid_alive(pid: u32) -> bool {
-    #[cfg(unix)]
-    {
-        let Ok(raw) = i32::try_from(pid) else {
-            return false;
-        };
-        if raw <= 0 {
-            return false;
-        }
-        if unsafe { libc::kill(raw as libc::pid_t, 0) } == 0 {
-            return true;
-        }
-        std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+    if cfg!(any(unix, windows)) && pid == 0 {
+        return false;
     }
-    #[cfg(windows)]
-    {
-        use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
-        use windows_sys::Win32::System::Threading::{
-            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-        };
-        if pid == 0 {
-            return false;
-        }
-        unsafe {
-            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-            if handle.is_null() {
-                return false;
-            }
-            let mut code = 0u32;
-            let ok = GetExitCodeProcess(handle, &mut code);
-            CloseHandle(handle);
-            ok != 0 && code == STILL_ACTIVE as u32
-        }
+    if cfg!(unix) && i32::try_from(pid).is_err() {
+        return false;
     }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = pid;
-        true
-    }
+    client::unpack::process_is_alive(pid)
 }
 
 #[cfg(test)]
@@ -299,6 +274,15 @@ mod tests {
     use std::io::{BufRead, BufReader, Read};
     use std::process::{Command, Stdio};
     use std::sync::{mpsc, Mutex, MutexGuard};
+
+    #[test]
+    fn pid_alive_accepts_this_process_and_rejects_pid_zero() {
+        assert!(pid_alive(std::process::id()));
+        assert!(!pid_alive(0));
+        if cfg!(unix) {
+            assert!(!pid_alive(u32::MAX));
+        }
+    }
 
     fn lock_test_guard() -> MutexGuard<'static, ()> {
         static LOCK: Mutex<()> = Mutex::new(());
