@@ -120,6 +120,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Navigation
 
+- Release packages now also ship the 289 WalkTo map catalogue beside the
+  shipped map terrain. The first map open installs it like the shipped
+  terrain (identity and integrity checked) instead of deriving it from the
+  client cache, so it opens faster. A catalogue shipped for another client
+  cache, or a damaged one, falls back to the existing local derive.
 - Route planning now runs independently for each request, with a 192 MiB
   memory limit for each search. A request waits when search capacity is full.
   Replacing or stopping a walk cancels its old search, so a late result

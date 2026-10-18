@@ -305,7 +305,7 @@ fn a_0181_home_opens_walkto_on_shipped_terrain_without_asking_and_keeps_its_file
     assert!(!root.path().exists(), "0.1.8.1 wrote no map cache");
     let shipped = ship_fixture_terrain(&scratch.0.join("package"));
     let producer = Arc::new(CountingMapProducer::default());
-    let manager = MapDemandManager::with_shipped_images(root.clone(), producer.clone(), shipped);
+    let manager = MapDemandManager::with_shipped_map(root.clone(), producer.clone(), shipped);
     let mut gate = MapBakeGate::new(prefs.map_bake);
     let handle = gate
         .open(&manager, fixture_descriptor(), MapDemand::Images)

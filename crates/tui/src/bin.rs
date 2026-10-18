@@ -102,8 +102,8 @@ pub struct Args {
     /// witness (the panel `pair_watch` mode).
     pub pair_core: bool,
     /// `--map-bundle OUT`: release packaging only; bake the shipped WalkTo
-    /// map terrain for `--revision`, `--cache` and `--unpack` under `OUT`
-    /// and exit.
+    /// map bundle (catalogue and terrain) for `--revision`, `--cache` and
+    /// `--unpack` under `OUT` and exit.
     pub map_bundle: Option<PathBuf>,
 }
 
@@ -114,7 +114,7 @@ const USAGE: &str = "usage: tui-play [--profile NAME|--rs2b2t] [--revision 274|2
          [--world N] [--live script_<name> [--catalog-core | --pair-core]] [--user USER]... \
          (default user: first vault profile)\n\
          release packaging: tui-play --map-bundle OUT --revision 274|289 --cache JAG_DIR \
-         --unpack SNAPSHOT_ROOT (bakes the shipped WalkTo map terrain into OUT/map/<revision>)";
+         --unpack SNAPSHOT_ROOT (bakes the shipped WalkTo map bundle into OUT/map/<revision>)";
 
 fn exit_after_work_shutdown(code: i32) -> ! {
     let code = match script::work_admission::WorkService::shutdown_if_started() {
@@ -3814,8 +3814,9 @@ pub fn main() -> ExitCode {
 }
 
 /// `--map-bundle OUT` (release packaging, `tools/release/package.py`): bake
-/// the shipped WalkTo map terrain for the pinned client cache into
-/// `OUT/map/<revision>/` and print its description (JSON) on stdout.
+/// the shipped WalkTo map bundle (catalogue and terrain) for the pinned
+/// client cache into `OUT/map/<revision>/` and print its descriptions
+/// (JSON) on stdout.
 /// Progress goes to stderr at most once a second.
 fn map_bundle(profile: &ProfileOptions, out: &Path) -> ExitCode {
     let (Some(revision), Some(cache), Some(unpack)) = (
@@ -3833,7 +3834,7 @@ fn map_bundle(profile: &ProfileOptions, out: &Path) -> ExitCode {
         }
     };
     let mut reported: Option<(Instant, MapStage)> = None;
-    let result = host_play::bake_shipped_map_images(revision, cache, unpack, out, |status| {
+    let result = host_play::bake_shipped_map_bundle(revision, cache, unpack, out, |status| {
         let MapJobStatus::Running(progress) = status else {
             return;
         };

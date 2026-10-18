@@ -29,6 +29,9 @@ pub const NAVPOIS_HEADER_BYTES: usize = 77;
 pub const SHIPPED_IMAGES_SCHEMA: u16 = 1;
 /// One identity, one receipt and two totals; far below the JSON cap.
 pub const MAX_SHIPPED_IMAGES_BYTES: usize = 4 * 1024;
+pub const SHIPPED_CATALOGUE_SCHEMA: u16 = 1;
+/// One identity, one receipt and two totals; far below the JSON cap.
+pub const MAX_SHIPPED_CATALOGUE_BYTES: usize = 4 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -162,15 +165,19 @@ pub struct CatalogueManifest {
 impl CatalogueManifest {
     pub fn decode(bytes: &[u8], expected: CatalogueIdentity) -> Result<Self, MapError> {
         let manifest: Self = super::json(bytes, MAX_JSON_BYTES)?;
-        super::version("catalogue manifest", manifest.schema, CATALOGUE_SCHEMA)?;
-        if manifest.identity != expected || manifest.key != expected.key()? {
+        manifest.validate(expected)?;
+        Ok(manifest)
+    }
+    pub fn validate(&self, expected: CatalogueIdentity) -> Result<(), MapError> {
+        super::version("catalogue manifest", self.schema, CATALOGUE_SCHEMA)?;
+        if self.identity != expected || self.key != expected.key()? {
             return Err(MapError::Identity);
         }
-        if manifest.record_count as usize > MAX_POIS {
+        if self.record_count as usize > MAX_POIS {
             return Err(MapError::Limit("POI count"));
         }
-        manifest.payload.validate(MAX_JSON_BYTES as u32)?;
-        Ok(manifest)
+        self.payload.validate(MAX_JSON_BYTES as u32)?;
+        Ok(())
     }
     pub fn read_payload(&self, bytes: &[u8]) -> Result<ClientPois, MapError> {
         self.payload.verify(bytes, MAX_JSON_BYTES as u32)?;
@@ -179,6 +186,10 @@ impl CatalogueManifest {
             return Err(MapError::Invalid("POI receipt count"));
         }
         Ok(pois)
+    }
+    pub fn encode(&self) -> Result<Vec<u8>, MapError> {
+        self.validate(self.identity)?;
+        encode_json(self)
     }
 }
 
@@ -421,6 +432,80 @@ impl ShippedImages {
         }
         if manifest.encode()? != bytes {
             return Err(MapError::Invalid("noncanonical shipped image manifest"));
+        }
+        Ok(manifest)
+    }
+    pub fn encode(&self) -> Result<Vec<u8>, MapError> {
+        self.validate(self.identity)?;
+        encode_json(self)
+    }
+}
+
+/// `274bot.mapcatalogue.json`: the map catalogue a release package ships for
+/// one catalogue identity. It pins the shipped catalogue directory's
+/// `manifest.json` (the published cache format) by receipt; that manifest
+/// pins `client-pois.json` by its own payload receipt and record count.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShippedCatalogue {
+    pub schema: u16,
+    pub identity: CatalogueIdentity,
+    pub key: CatalogueKey,
+    pub manifest: PayloadReceipt,
+    pub records: u32,
+    pub payload_bytes: u32,
+}
+impl ShippedCatalogue {
+    /// Describe `manifest`, whose exact encoded bytes are `manifest_bytes`.
+    pub fn describe(manifest: &CatalogueManifest, manifest_bytes: &[u8]) -> Result<Self, MapError> {
+        let shipped = Self {
+            schema: SHIPPED_CATALOGUE_SCHEMA,
+            identity: manifest.identity,
+            key: manifest.key,
+            manifest: PayloadReceipt {
+                bytes: u32::try_from(manifest_bytes.len())
+                    .map_err(|_| MapError::Limit("catalogue manifest bytes"))?,
+                sha256: Digest::of(manifest_bytes),
+            },
+            records: manifest.record_count,
+            payload_bytes: manifest.payload.bytes,
+        };
+        shipped.read_manifest(manifest_bytes)?;
+        Ok(shipped)
+    }
+    /// A shipped description for exactly `expected`; another client cache or
+    /// derive policy is [`MapError::Identity`].
+    pub fn decode(bytes: &[u8], expected: CatalogueIdentity) -> Result<Self, MapError> {
+        let shipped: Self = super::json(bytes, MAX_SHIPPED_CATALOGUE_BYTES)?;
+        shipped.validate(expected)?;
+        Ok(shipped)
+    }
+    pub fn validate(&self, expected: CatalogueIdentity) -> Result<(), MapError> {
+        super::version("shipped catalogue", self.schema, SHIPPED_CATALOGUE_SCHEMA)?;
+        if self.identity != expected || self.key != expected.key()? {
+            return Err(MapError::Identity);
+        }
+        self.manifest.validate(MAX_JSON_BYTES as u32)?;
+        if self.records as usize > MAX_POIS {
+            return Err(MapError::Limit("shipped POI count"));
+        }
+        if self.payload_bytes == 0 || self.payload_bytes as usize > MAX_JSON_BYTES {
+            return Err(MapError::Limit("shipped payload bytes"));
+        }
+        Ok(())
+    }
+    /// The catalogue manifest these receipts describe: exactly the pinned
+    /// bytes, in canonical encoding, listing exactly the pinned record
+    /// count and payload size.
+    pub fn read_manifest(&self, bytes: &[u8]) -> Result<CatalogueManifest, MapError> {
+        self.validate(self.identity)?;
+        self.manifest.verify(bytes, MAX_JSON_BYTES as u32)?;
+        let manifest = CatalogueManifest::decode(bytes, self.identity)?;
+        if manifest.record_count != self.records || manifest.payload.bytes != self.payload_bytes {
+            return Err(MapError::Invalid("shipped catalogue totals"));
+        }
+        if manifest.encode()? != bytes {
+            return Err(MapError::Invalid("noncanonical shipped catalogue manifest"));
         }
         Ok(manifest)
     }
