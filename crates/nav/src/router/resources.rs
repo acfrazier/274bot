@@ -85,6 +85,7 @@ const _: () = assert!(
 );
 
 pub(super) trait PackedSearchSlotExt: Copy {
+    #[cfg(any(test, not(unix)))]
     fn empty() -> Self;
     fn cost(self) -> f64;
     fn set_cost(&mut self, cost: f64);
@@ -104,6 +105,7 @@ pub(super) trait PackedSearchSlotExt: Copy {
 }
 
 impl PackedSearchSlotExt for PackedSearchSlot {
+    #[cfg(any(test, not(unix)))]
     fn empty() -> Self {
         ([0; 3], [0; 8], 0, [0; 3], [0; 3])
     }
