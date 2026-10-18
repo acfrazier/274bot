@@ -54,6 +54,20 @@ use resources::{
     Predecessors, ResourceBudget, SearchKey, Unmetered, PACKED_ROOT_ID,
 };
 
+thread_local! {
+    // Only the synchronous driver suppresses cooperative suspension. Cursor
+    // polls keep one Pending result per bounded work unit.
+    static SYNCHRONOUS_WORK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+struct SynchronousWorkGuard(bool);
+
+impl Drop for SynchronousWorkGuard {
+    fn drop(&mut self) {
+        SYNCHRONOUS_WORK.set(self.0);
+    }
+}
+
 struct YieldOnce(bool);
 
 impl Future for YieldOnce {
@@ -69,8 +83,8 @@ impl Future for YieldOnce {
     }
 }
 
-async fn work_unit() {
-    YieldOnce(false).await;
+fn work_unit() -> YieldOnce {
+    YieldOnce(SYNCHRONOUS_WORK.get())
 }
 
 async fn sift_down_by<T>(
@@ -138,6 +152,7 @@ async fn reverse_cooperative<T>(values: &mut [T]) {
 }
 
 fn drive_to_completion<F: Future>(future: F) -> F::Output {
+    let _synchronous_work = SynchronousWorkGuard(SYNCHRONOUS_WORK.replace(true));
     let mut future = std::pin::pin!(future);
     let mut context = Context::from_waker(Waker::noop());
     loop {
@@ -4494,7 +4509,11 @@ async fn zone_goal_proof_cooperative(
     closure.targets = targets;
     for &goal in targets {
         work_unit().await;
-        if let Some(proof) = closure.admit(goal).await? {
+        let proof = {
+            let admission = std::pin::pin!(closure.admit(goal));
+            admission.await?
+        };
+        if let Some(proof) = proof {
             return Ok(closure.report(proof));
         }
     }
@@ -7206,13 +7225,10 @@ impl Goals<'_> {
         }
     }
 
-    async fn settle(
-        &mut self,
-        tile: WorldTile,
-        ticks: f64,
-        settled_at: usize,
-    ) -> Result<Settle, SearchCursorError> {
-        let cost = TargetCost { ticks, settled_at };
+    // These shapes cannot yield. Keep the proof-backed First future out of
+    // their per-node path: its inline state would otherwise be copied twice
+    // even when the selected shape never polls it.
+    fn settle_non_first(&mut self, tile: WorldTile, cost: TargetCost) -> Settle {
         let done = match self {
             Goals::Single { to, cost: found } => {
                 if *to == tile {
@@ -7222,7 +7238,7 @@ impl Goals<'_> {
                     false
                 }
             }
-            Goals::First(first) => return first.settle(tile, cost).await,
+            Goals::First(_) => unreachable!("first goals settle with their cooperative proof"),
             Goals::Many {
                 unique,
                 costs,
@@ -7236,9 +7252,13 @@ impl Goals<'_> {
                 }
                 *remaining == 0
             }
-            Goals::Frontier { .. } => return Ok(Settle::Continue),
+            Goals::Frontier { .. } => return Settle::Continue,
         };
-        Ok(if done { Settle::Stop } else { Settle::Continue })
+        if done {
+            Settle::Stop
+        } else {
+            Settle::Continue
+        }
     }
 
     /// Everything reachable has settled, `settled` nodes in all.
@@ -7433,8 +7453,13 @@ impl<'a> FirstGoals<'a> {
                 },
             );
         }
+        // A late fallback goal counts only if its own proof lifts the budget.
+        // Other nodes need no fallback future.
         if self.fallback.live() && self.fallback.targets.contains(&tile) {
-            self.settle_fallback(tile, cost).await?;
+            if settled > self.fallback.budget {
+                self.decide_fallback(settled - 1, settled).await?;
+            }
+            self.fallback.accept(tile, cost);
         }
         self.preferred
             .prove_to(self.gates, settled, self.reachable_budget)
@@ -7444,25 +7469,6 @@ impl<'a> FirstGoals<'a> {
         }
         self.decide_fallback(settled, settled).await?;
         Ok(Settle::Stop)
-    }
-
-    /// A fallback goal settling past the set's unproven budget counts only
-    /// if the set's proof showed a goal reachable within that budget;
-    /// otherwise a search over the fallback alone stopped at the budget, and
-    /// so does the set. (Settling past the preferred set's lifted budget
-    /// implies its proof decided, dropping its scratch.)
-    async fn settle_fallback(
-        &mut self,
-        tile: WorldTile,
-        cost: TargetCost,
-    ) -> Result<(), SearchCursorError> {
-        debug_assert!(self.fallback.live() && self.fallback.targets.contains(&tile));
-        let settled = cost.settled_at;
-        if settled > self.fallback.budget {
-            self.decide_fallback(settled - 1, settled).await?;
-        }
-        self.fallback.accept(tile, cost);
-        Ok(())
     }
 
     /// Decides the fallback set, where that needs no further settle, after
@@ -7703,7 +7709,11 @@ impl<'a> ReverseRun<'a> {
             let mut closure = ReverseClosure::new(gates).await?;
             for &seed in seeds {
                 work_unit().await;
-                if let Some(proof) = closure.admit(seed).await? {
+                let proof = {
+                    let admission = std::pin::pin!(closure.admit(seed));
+                    admission.await?
+                };
+                if let Some(proof) = proof {
                     self.report = closure.report(proof);
                     return Ok(Some(proof));
                 }
@@ -7886,7 +7896,7 @@ impl<'a> ReverseClosure<'a> {
                 && wildy_step_ok(self.graph, before, tile, self.allow_wilderness)
                 && self.zone_step_ok(before, tile).await
             {
-                if let Some(proof) = self.admit(before).await? {
+                if let Some(proof) = std::pin::pin!(self.admit(before)).await? {
                     return Ok(Some(proof));
                 }
             }
@@ -7965,7 +7975,7 @@ impl<'a> ReverseClosure<'a> {
                 {
                     continue;
                 }
-                if let Some(proof) = self.admit(takeoff).await? {
+                if let Some(proof) = std::pin::pin!(self.admit(takeoff)).await? {
                     return Ok(Some(proof));
                 }
             }
@@ -7992,7 +8002,7 @@ impl<'a> ReverseClosure<'a> {
                     && wildy_step_ok(self.graph, takeoff, to, self.allow_wilderness)
                     && self.zone_step_ok(takeoff, to).await
                 {
-                    if let Some(proof) = self.admit(takeoff).await? {
+                    if let Some(proof) = std::pin::pin!(self.admit(takeoff)).await? {
                         return Ok(Some(proof));
                     }
                 }
@@ -8292,7 +8302,8 @@ async fn relax_packed<B: Budget>(
         return Err(());
     }
     let lookup = loop {
-        match table.locate(key.tile(), balance).await {
+        let result = table.locate(key.tile(), balance).await;
+        match result {
             Ok(lookup) => break lookup,
             Err(()) if pending_limit == 0 => {
                 *pending_after_limit = true;
@@ -8337,7 +8348,10 @@ async fn relax_packed<B: Budget>(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the budgeted kernel keeps its shared search inputs explicit"
+)]
 async fn search_kernel_budget<B: Budget>(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -8479,7 +8493,15 @@ async fn search_kernel_budget<B: Budget>(
                 reached,
             );
         }
-        let stop = match goals.settle(cur, current_cost, expanded).await {
+        let cost = TargetCost {
+            ticks: current_cost,
+            settled_at: expanded,
+        };
+        let decision = match goals {
+            Goals::First(first) => first.settle(cur, cost).await,
+            _ => Ok(goals.settle_non_first(cur, cost)),
+        };
+        let stop = match decision {
             Ok(Settle::Continue) => None,
             Ok(Settle::Stop) => Some((expanded, SearchStop::Completed)),
             Ok(Settle::Spent) => Some((expanded - 1, SearchStop::Budget)),

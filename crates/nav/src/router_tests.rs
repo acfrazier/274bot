@@ -9,6 +9,7 @@ use client::config::LocType;
 use client::dash3d::CollisionFlag;
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::future::Future;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -38,6 +39,112 @@ use crate::transport::{
 };
 use crate::world_state::WorldState;
 use crate::zones::{Zone, ZoneClass, ZoneExempt, ZoneFilterOwned, ZoneKey, ZoneKind, ZoneTable};
+
+#[test]
+fn synchronous_driver_skips_suspension_and_restores_cooperative_mode() {
+    fn unit_is_ready() -> bool {
+        let mut unit = super::work_unit();
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        Future::poll(std::pin::Pin::new(&mut unit), &mut context).is_ready()
+    }
+
+    assert!(!unit_is_ready());
+    super::drive_to_completion(async {
+        assert!(unit_is_ready());
+        super::drive_to_completion(async {
+            assert!(unit_is_ready());
+        });
+        assert!(unit_is_ready());
+    });
+    assert!(!unit_is_ready());
+
+    let panicked = std::panic::catch_unwind(|| {
+        super::drive_to_completion(async {
+            assert!(unit_is_ready());
+            panic!("exercise the synchronous polling guard");
+        });
+    });
+    assert!(panicked.is_err());
+    assert!(!unit_is_ready());
+}
+
+#[test]
+fn non_proof_goals_settle_without_a_future() {
+    use super::{Goals, Settle, TargetCost};
+
+    let target = WorldTile {
+        x: 2,
+        z: 0,
+        level: 0,
+    };
+    let other = WorldTile { x: 1, ..target };
+    let cost = TargetCost {
+        ticks: 3.0,
+        settled_at: 7,
+    };
+    let mut single = Goals::Single {
+        to: target,
+        cost: None,
+    };
+    assert!(matches!(
+        single.settle_non_first(other, cost),
+        Settle::Continue
+    ));
+    assert!(matches!(
+        single.settle_non_first(target, cost),
+        Settle::Stop
+    ));
+    assert!(matches!(single, Goals::Single { cost: Some(found), .. } if found == cost));
+
+    let unique = HashMap::from([(target, 0)]);
+    let mut costs = [Err(TargetError::NotSettled)];
+    let mut many = Goals::Many {
+        unique: &unique,
+        costs: &mut costs,
+        remaining: 1,
+    };
+    assert!(matches!(
+        many.settle_non_first(other, cost),
+        Settle::Continue
+    ));
+    assert!(matches!(many.settle_non_first(target, cost), Settle::Stop));
+    assert_eq!(costs, [Ok(cost)]);
+}
+
+#[test]
+fn pinned_reverse_admission_preserves_seen_and_queue() {
+    let collision = bake(3, 1, &[]);
+    let graph = TransportGraph::default();
+    let state = WorldState::empty();
+    let mut closure = super::drive_to_completion(super::ReverseClosure::new(super::ProofGates {
+        collision: &collision,
+        graph: &graph,
+        state: &state,
+        essence: None,
+        from: tile(0, 0, 0),
+        use_teleports: false,
+        allow_wilderness: false,
+        relax: super::Relax::Strict,
+        inventory_can_grow: false,
+        cooperative_storage: false,
+    }))
+    .unwrap();
+    for (candidate, expected) in [
+        (tile(1, 0, 0), None),
+        (tile(1, 0, 0), None),
+        (tile(0, 0, 0), Some(ReverseProof::Reachable)),
+    ] {
+        let mut future = std::pin::pin!(closure.admit(candidate));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(matches!(
+            Future::poll(future.as_mut(), &mut context),
+            std::task::Poll::Ready(Ok(actual)) if actual == expected
+        ));
+    }
+    assert_eq!(closure.seen.len(), 2);
+    assert_eq!(closure.queue.len(), 1);
+    assert_eq!(closure.queue.front(), Some(&tile(1, 0, 0)));
+}
 
 #[test]
 fn cooperative_cursor_checks_the_clock_once_per_work_boundary() {
