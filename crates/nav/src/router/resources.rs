@@ -223,8 +223,8 @@ pub(super) struct PackedSearchTable {
     next_unused: usize,
     free_head: u32,
     link_id_mask: u32,
-    // Recent positive lookups store only dense IDs. Hits still compare the
-    // full key, and removal invalidates the corresponding cache position.
+    // Cached IDs carry a ten-bit hash tag in their unused upper bits.
+    // Matching tags still require full key equality. Removal invalidates IDs.
     cached_ids: [u32; PACKED_LOOKUP_CACHE_SIZE],
 }
 
@@ -376,12 +376,12 @@ impl PackedSearchTable {
         }
         let hash = packed_hash(tile, balance);
         let cache_index = hash as usize & (PACKED_LOOKUP_CACHE_SIZE - 1);
-        if let Some(id) = self.cached_key(cache_index, tile, balance) {
+        if let Some(id) = self.cached_key(hash, tile, balance) {
             return Ok(PackedLookup::Found(id));
         }
         if SYNCHRONOUS_WORK.get() {
             if let Some(id) = self.locate_hashed(tile, balance, hash) {
-                self.cached_ids[cache_index] = id;
+                self.cached_ids[cache_index] = id | (hash & !PACKED_ID_MASK);
                 return Ok(PackedLookup::Found(id));
             }
             return self.vacant_id().map(PackedLookup::Vacant).ok_or(());
@@ -394,7 +394,7 @@ impl PackedSearchTable {
             if link & !self.link_id_mask == fingerprint {
                 let slot = &self.slots[id as usize];
                 if slot.tile() == tile && slot.balance() == balance {
-                    self.cached_ids[cache_index] = id;
+                    self.cached_ids[cache_index] = id | (hash & !PACKED_ID_MASK);
                     return Ok(PackedLookup::Found(id));
                 }
             }
@@ -413,14 +413,14 @@ impl PackedSearchTable {
             return None;
         }
         let hash = packed_hash(tile, balance);
-        let cache_index = hash as usize & (PACKED_LOOKUP_CACHE_SIZE - 1);
-        self.cached_key(cache_index, tile, balance)
+        self.cached_key(hash, tile, balance)
             .or_else(|| self.locate_hashed(tile, balance, hash))
     }
 
-    fn cached_key(&self, cache_index: usize, tile: WorldTile, balance: u32) -> Option<u32> {
-        let id = self.cached_ids[cache_index];
-        if id == PACKED_ROOT_ID {
+    fn cached_key(&self, hash: u32, tile: WorldTile, balance: u32) -> Option<u32> {
+        let entry = self.cached_ids[hash as usize & (PACKED_LOOKUP_CACHE_SIZE - 1)];
+        let id = entry & PACKED_ID_MASK;
+        if id == PACKED_ROOT_ID || entry & !PACKED_ID_MASK != hash & !PACKED_ID_MASK {
             return None;
         }
         let slot = &self.slots[id as usize];
@@ -466,7 +466,8 @@ impl PackedSearchTable {
         let slot = &mut self.slots[id as usize];
         slot.set_key(tile, balance, action, action_index, cost);
         slot.set_open(0);
-        self.cached_ids[hash as usize & (PACKED_LOOKUP_CACHE_SIZE - 1)] = id;
+        self.cached_ids[hash as usize & (PACKED_LOOKUP_CACHE_SIZE - 1)] =
+            id | (hash & !PACKED_ID_MASK);
     }
 
     pub(super) fn update(&mut self, id: u32, action: u8, action_index: u32, cost: f64) {
@@ -498,7 +499,7 @@ impl PackedSearchTable {
             self.links[self.buckets + previous as usize] = next;
         }
         let cache_index = hash as usize & (PACKED_LOOKUP_CACHE_SIZE - 1);
-        if self.cached_ids[cache_index] == id {
+        if self.cached_ids[cache_index] & PACKED_ID_MASK == id {
             self.cached_ids[cache_index] = PACKED_ROOT_ID;
         }
         self.slots[id as usize].set_tombstone();

@@ -389,11 +389,12 @@ key equality. Growth rebuilds the fingerprints for the new ID width and keeps
 the same dense IDs and collision order.
 
 Each table also keeps 1,024 recent positive record IDs in a fixed 4 KiB array.
-A hit checks the full tile and balance before it returns the ID. Insertions
-and positive lookups refresh this array. Removal invalidates its entry, and
-growth preserves IDs. This avoids repeated collision scans without another
-allocation. The array is part of the admitted future's measured inline size,
-not the vector backing bound.
+The unused upper ID bits hold a ten-bit hash tag, so unrelated cache entries
+do not require a full record read. Matching tags still require the full tile
+and balance. Insertions and positive lookups refresh this array. Removal
+invalidates its entry, and growth preserves IDs. This avoids repeated collision
+scans without another allocation. The array is part of the admitted future's
+measured inline size, not the vector backing bound.
 
 Safe `Vec` construction obtains zeroed backing without an explicit
 initialization pass under the pinned toolchain. The operating system can make
