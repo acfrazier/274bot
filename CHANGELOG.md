@@ -315,8 +315,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - Packed route searches reuse recent positive lookups through a fixed 4 KiB
   ID cache. Hash tags reject unrelated entries before their full-key checks,
   and removals invalidate cached IDs.
-- Packed heap comparisons inline their record-key ordering to avoid repeated
-  calls during queue maintenance.
+- Packed heap comparisons keep their record-key ordering in the sift loop,
+  avoiding a helper call at each queue comparison.
 - Packed search tables use more bucket heads to shorten collision scans.
   Full-budget backing grows by 213,570 bytes within the same job ceiling.
 - One slow disk write no longer leaves script cards, the script catalogue or

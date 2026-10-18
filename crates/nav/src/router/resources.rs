@@ -937,7 +937,8 @@ impl PackedMinMaxHeap {
         best
     }
 
-    #[inline]
+    // Keep borrowed record loads in the sift loop instead of spilling around a call.
+    #[inline(always)]
     fn compare_positions(&self, left: usize, right: usize, table: &PackedSearchTable) -> Ordering {
         let left = table.slot(self.entries[left].node());
         let right = table.slot(self.entries[right].node());
