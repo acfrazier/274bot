@@ -42,6 +42,8 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     callback_v8::install(runtime, "__rs2b0t_nearest_bank", nearest)?;
     callback_v8::install(runtime, "__rs2b0t_nearest_banks", ranked)?;
     callback_v8::install(runtime, "__rs2b0t_nearest_usable_bank", usable)?;
+    callback_v8::install(runtime, "__rs2b0t_bank_materialize", bank_materialize)?;
+    callback_v8::install(runtime, "__rs2b0t_bank_approach", bank_approach)?;
     callback_v8::install(runtime, "__rs2b0t_bank_distance", bank_distance)?;
     callback_v8::install(
         runtime,
@@ -70,17 +72,124 @@ fn origin<'s>(
     })
 }
 
-fn catalog<'s>(
+fn bank_materialize<'s>(
     scope: &mut v8::HandleScope<'s>,
-    _args: v8::FunctionCallbackArguments<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
     rv: v8::ReturnValue,
 ) {
-    let values: Vec<_> = bank_select::banks()
-        .iter()
-        .map(bank_select::bank_value)
-        .collect();
-    let result = serde_v8::to_v8(scope, values)
-        .map_err(|e| callback_v8::type_error(scope, &format!("bank catalog: {e}")));
+    let result = materialize_bank(scope, args.get(1), args.get(0));
+    callback_v8::finish(scope, rv, result);
+}
+
+fn bank_approach<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let bank = args.get(0);
+        let approach = callback_v8::get(scope, bank, "approach")?;
+        if approach.is_null_or_undefined() {
+            callback_v8::get(scope, bank, "tile")
+        } else {
+            Ok(approach)
+        }
+    })();
+    callback_v8::finish(scope, rv, result);
+}
+
+fn materialize_bank<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    tile_constructor: v8::Local<'s, v8::Value>,
+    bank: v8::Local<'s, v8::Value>,
+) -> callback_v8::JsResult<'s, v8::Local<'s, v8::Value>> {
+    if !bank.boolean_value(scope) {
+        return Ok(v8::null(scope).into());
+    }
+    let row = v8::Local::<v8::Object>::try_from(bank)
+        .map_err(|_| callback_v8::type_error(scope, "bank result is not an object"))?;
+    let tile = callback_v8::get(scope, bank, "tile")?;
+    let tile = tile_instance(scope, tile_constructor, tile)?;
+    set_bank_field(scope, row, "tile", tile)?;
+    let approach = callback_v8::get(scope, bank, "approach")?;
+    if approach.boolean_value(scope) {
+        let approach = tile_instance(scope, tile_constructor, approach)?;
+        set_bank_field(scope, row, "approach", approach)?;
+    }
+    Ok(bank)
+}
+
+fn tile_instance<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    tile_constructor: v8::Local<'s, v8::Value>,
+    tile: v8::Local<'s, v8::Value>,
+) -> callback_v8::JsResult<'s, v8::Local<'s, v8::Value>> {
+    let x = callback_v8::get(scope, tile, "x")?;
+    let z = callback_v8::get(scope, tile, "z")?;
+    let level = callback_v8::get(scope, tile, "level")?;
+    let level = if level.is_null_or_undefined() {
+        v8::Integer::new(scope, 0).into()
+    } else {
+        level
+    };
+    callback_v8::construct(scope, tile_constructor, &[x, z, level], "Tile")
+}
+
+fn set_bank_field<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    row: v8::Local<'s, v8::Object>,
+    key: &str,
+    value: v8::Local<'s, v8::Value>,
+) -> callback_v8::JsResult<'s, ()> {
+    let name = callback_v8::string(scope, key);
+    let set = callback_v8::catching(scope, |s| row.set(s, name.into(), value))?;
+    if !set {
+        return Err(callback_v8::type_error(
+            scope,
+            "could not materialize bank tile",
+        ));
+    }
+    Ok(())
+}
+
+fn bank_value_v8<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    tile_constructor: v8::Local<'s, v8::Value>,
+    value: serde_json::Value,
+) -> callback_v8::JsResult<'s, v8::Local<'s, v8::Value>> {
+    let value = serde_v8::to_v8(scope, value)
+        .map_err(|e| callback_v8::type_error(scope, &format!("bank result: {e}")))?;
+    materialize_bank(scope, tile_constructor, value)
+}
+
+fn bank_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    tile_constructor: v8::Local<'s, v8::Value>,
+    banks: Vec<api::named_banks::NamedBank>,
+) -> callback_v8::JsResult<'s, v8::Local<'s, v8::Value>> {
+    let length = i32::try_from(banks.len())
+        .map_err(|_| callback_v8::type_error(scope, "bank results exceed V8 array length"))?;
+    let values = v8::Array::new(scope, length);
+    for (index, bank) in banks.into_iter().enumerate() {
+        let index = u32::try_from(index)
+            .map_err(|_| callback_v8::type_error(scope, "bank results exceed V8 array limit"))?;
+        let value = bank_value_v8(scope, tile_constructor, bank_select::bank_value(&bank))?;
+        if !callback_v8::catching(scope, |s| values.set_index(s, index, value))? {
+            return Err(callback_v8::type_error(
+                scope,
+                "could not materialize bank results",
+            ));
+        }
+    }
+    Ok(values.into())
+}
+
+fn catalog<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = bank_array(scope, args.get(0), bank_select::banks());
     callback_v8::finish(scope, rv, result);
 }
 
@@ -123,8 +232,11 @@ fn locked_at<'s>(
 ) {
     let result = (|| {
         let tile = origin(scope, args.get(0))?;
-        serde_v8::to_v8(scope, bank_select::locked_bank_at(tile))
-            .map_err(|e| callback_v8::type_error(scope, &format!("locked bank result: {e}")))
+        bank_value_v8(
+            scope,
+            args.get(1),
+            bank_select::locked_bank_at(tile),
+        )
     })();
     callback_v8::finish(scope, rv, result);
 }
@@ -217,8 +329,7 @@ fn nearest<'s>(
 ) {
     let result = (|| {
         let from = origin(scope, args.get(0))?;
-        serde_v8::to_v8(scope, bank_select::nearest(from))
-            .map_err(|e| callback_v8::type_error(scope, &format!("bank result: {e}")))
+        bank_value_v8(scope, args.get(1), bank_select::nearest(from))
     })();
     callback_v8::finish(scope, rv, result);
 }
@@ -230,12 +341,7 @@ fn ranked<'s>(
 ) {
     let result = (|| {
         let from = origin(scope, args.get(0))?;
-        let values: Vec<_> = bank_select::ranked(from)
-            .iter()
-            .map(bank_select::bank_value)
-            .collect();
-        serde_v8::to_v8(scope, values)
-            .map_err(|e| callback_v8::type_error(scope, &format!("bank results: {e}")))
+        bank_array(scope, args.get(1), bank_select::ranked(from))
     })();
     callback_v8::finish(scope, rv, result);
 }
@@ -248,21 +354,33 @@ fn usable<'s>(
     let result = (|| {
         let from = origin(scope, args.get(0))?;
         let predicate = callback_v8::Callback::plain(scope, args.get(1), "usable");
-        let mut best = v8::null(scope).into();
+        let tile_constructor = args.get(2);
+        let mut best = None;
         let mut distance = i64::MAX;
         for bank in bank_select::banks() {
-            let value = serde_v8::to_v8(scope, bank_select::bank_value(&bank))
-                .map_err(|e| callback_v8::type_error(scope, &format!("bank candidate: {e}")))?;
-            let accepted = predicate.call(scope, &[value])?;
+            let candidate = bank_value_v8(
+                scope,
+                tile_constructor,
+                bank_select::bank_value(&bank),
+            )?;
+            let accepted = predicate.call(scope, &[candidate])?;
             if accepted.boolean_value(scope) {
-                let candidate = bank_select::air_distance_squared(from, bank.air_tile());
-                if candidate < distance {
-                    distance = candidate;
-                    best = value;
+                let candidate_distance =
+                    bank_select::air_distance_squared(from, bank.air_tile());
+                if candidate_distance < distance {
+                    distance = candidate_distance;
+                    best = Some(bank);
                 }
             }
         }
-        Ok(best)
+        match best {
+            Some(bank) => bank_value_v8(
+                scope,
+                tile_constructor,
+                bank_select::bank_value(&bank),
+            ),
+            None => Ok(v8::null(scope).into()),
+        }
     })();
     callback_v8::finish(scope, rv, result);
 }
