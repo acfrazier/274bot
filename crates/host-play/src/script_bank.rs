@@ -1859,43 +1859,8 @@ pub(super) fn queue_native_bank_pick_scoped(
     );
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Forwards one `SelectBank` request's values, the slot's fishing level and its navigation handles to `queue_bank`."
-)]
-pub(super) fn queue_bank_pick_scoped(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
-    name: &str,
-    scope: Scope,
-    world: &Option<Arc<NavWorld>>,
-    state: Option<WorldState>,
-    from: WorldTile,
-    allow_wilderness: bool,
-    request_id: u64,
-    preferences: BankPreferences,
-    fishing_base: Option<i32>,
-) {
-    queue_bank(
-        navs,
-        name,
-        scope,
-        world,
-        state,
-        from,
-        FindOptions {
-            allow_wilderness,
-            ..Default::default()
-        },
-        request_id,
-        preferences,
-        fishing_base,
-        false,
-        None,
-    );
-}
 
-/// The raw native verb keeps native option defaults. Compatibility callers
-/// use select-only then their own walk, so they retain their explicit options.
+/// The raw native walk-nearest-bank verb keeps native option defaults.
 pub(super) fn queue_bank_walk_scoped(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,

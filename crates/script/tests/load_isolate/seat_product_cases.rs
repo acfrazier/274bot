@@ -880,10 +880,6 @@ export function tick(api) {
     assert_eq!(bank.parent, None);
     assert_bank_start_operation(bank, "Select");
     let bank_id = bank.id;
-    assert!(
-        !seat_reqs(&batches).any(|row| matches!(&row.request, InteractReq::SelectBank { .. })),
-        "bank selection runs in the typed bank seat, not an isolate-owned interaction"
-    );
     let progress = seat_starts(&batches)
         .find(|start| start.kind == NativeKind::QuestProgress)
         .expect("questProgress is carried as its typed native family start");

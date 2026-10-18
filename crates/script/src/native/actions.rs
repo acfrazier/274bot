@@ -66,6 +66,12 @@ impl ActionContext<'_> {
         self.eligible && !self.interaction_event_spent() && !self.entered_scene()
     }
 
+    /// A seat continuation keeps its owned arguments until admission can spend
+    /// a transition. This check does not consume or renew the slot's budget.
+    pub(crate) fn may_begin_this_tick(&self) -> bool {
+        self.may_continue_this_tick() && self.budget.transition_available()
+    }
+
     /// This observed tick is the first to show the player on a new level or
     /// in a rebuilt build area (`ledger::TickBudget::entered_scene`): its
     /// frame can still hold the old locs, so a loc op chosen from it can name
@@ -438,7 +444,6 @@ fn native_interaction(request: &InteractReq) -> bool {
             InteractReq::Walk { .. }
                 | InteractReq::WalkNear { .. }
                 | InteractReq::WalkNearestBank
-                | InteractReq::SelectBank { .. }
                 | InteractReq::AbortWalk { .. }
                 | InteractReq::Mouse { .. }
         )
@@ -932,8 +937,7 @@ mod tests {
                     Err(ServiceError::PromptPortUnavailable)
                 ));
             }
-            // The same real owner frame binds the native prompt port, but
-            // nothing in this build produces callbacks from a JS family.
+            // The same real owner frame binds bounded native prompt custody.
             let mut seat = crate::native::seat::GameplaySeat::<u8>::new(cx.run());
             assert_eq!(
                 seat.start(
@@ -955,17 +959,26 @@ mod tests {
                 .with_prompt_port(&mut seat)
                 .unwrap();
                 assert!(matches!(
-                    services.prompt(id, point, &[0; api::script_contract::HOOK_CHARGE + 1],),
+                    services.prompt(
+                        id,
+                        point,
+                        &[0; api::script_contract::PROMPT_ARGS_MAX_BYTES + 1],
+                    ),
                     Err(ServiceError::Seat(
                         crate::native::seat::SeatError::PromptTooLarge
                     ))
                 ));
                 assert_eq!(
-                    services.prompt(id, point, &[1, 2, 3]).unwrap(),
+                    services
+                        .prompt(id, point, &[1; api::script_contract::PROMPT_ARGS_MAX_BYTES])
+                        .unwrap(),
                     api::script_contract::DecisionSequence::FIRST
                 );
             }
-            assert_eq!(seat.prompt_payload(id).unwrap().args, [1, 2, 3]);
+            assert_eq!(
+                seat.prompt_payload(id).unwrap().args,
+                [1; api::script_contract::PROMPT_ARGS_MAX_BYTES]
+            );
             assert_eq!(
                 seat.decide_with_answer(
                     id,

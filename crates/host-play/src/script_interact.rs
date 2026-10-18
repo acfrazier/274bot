@@ -610,37 +610,6 @@ where
                     abort_script_walk(navs, name);
                 }
             }
-            InteractReq::SelectBank {
-                x,
-                z,
-                level,
-                allow_wilderness,
-                use_mage_bank,
-                use_zanaris_bank,
-                request_id,
-            } => {
-                if let Some(scope) = compatibility_scope {
-                    super::bank::queue_bank_pick_scoped(
-                        navs,
-                        name,
-                        scope,
-                        world,
-                        state.clone(),
-                        WorldTile { x, z, level },
-                        allow_wilderness,
-                        request_id,
-                        api::named_banks::BankPreferences {
-                            use_mage_bank,
-                            use_zanaris_bank,
-                        },
-                        snapshot
-                            .stats()
-                            .iter()
-                            .find(|stat| stat.index == 10)
-                            .map(|stat| stat.base),
-                    );
-                }
-            }
             InteractReq::WalkNearestBank => {
                 if let (Some((x, z, level)), Some(scope)) = (here, compatibility_scope) {
                     wrote |= super::bank::queue_bank_walk_scoped(
