@@ -106,7 +106,7 @@ Results:
 | `PASS` / `FAIL` | the scenario printed its JSON record with that outcome; `first_failure` is its `message`. A lane: `cargo` exited 0 / nonzero |
 | `TIMEOUT` | no record before the outer cap or the step deadline; the process tree was killed |
 | `ERROR` | the frontend exited without a record (startup error, panic); `first_failure` is the first error-looking stderr line |
-| `UNAVAILABLE` | the cell or lane could not run on this host tonight: `reason` says why (Windows: BotTest console session not active, Engine B not reachable, or a paired proof that panel-play has no gate for) |
+| `UNAVAILABLE` | the cell or lane could not run on this host tonight: `reason` says why (Windows: BotTest console session not active, Engine B not reachable, not enough free disk space, or a paired proof that panel-play has no gate for) |
 | `SKIP` | listed in `skip.conf`; `reason` says why |
 | `NOT_RUN` | the build failed, the step deadline passed before it started, or the run was interrupted; `reason` says which |
 
@@ -150,7 +150,8 @@ Settings for the Windows host live in `C:\274bot-nightly\nightly.env`
 ([`windows/nightly.env`](windows/nightly.env) is the deployed copy); the step list
 (`NIGHTLY_STEPS`, default `lanes,panel,tui`), each step's deadline
 (`NIGHTLY_LANES_DEADLINE_S`, `NIGHTLY_BUILD_DEADLINE_S`, `NIGHTLY_PANEL_DEADLINE_S`,
-`NIGHTLY_TUI_DEADLINE_S`) and the whole night's (`NIGHTLY_RUN_DEADLINE_S`) can be set
+`NIGHTLY_TUI_DEADLINE_S`), the whole night's (`NIGHTLY_RUN_DEADLINE_S`) and the disk
+guard's cap and floor (`NIGHTLY_TARGET_CAP_GB`, `NIGHTLY_MIN_FREE_GB`) can be set
 there too.
 
 Pull at once instead of waiting for the hour:
@@ -329,15 +330,26 @@ start at all while BotTest is logged off (after a reboot, the host does not log 
 itself), so `274bot-nightly-catchup` runs at BotTest's next logon: if the last 23:00
 night left no `state\started-<date>` marker, it writes that night as a run with every
 lane and cell `UNAVAILABLE: BotTest console session not active at the scheduled 23:00
-start`.
+start`. Catch-up does not run the disk guard. Its task limit is 30 minutes, and a
+large removal killed at that limit would leave the missed night with no summary at
+all. The next scheduled night runs the guard again. Catch-up still runs the sources
+step (1 below) before it writes the summary, because the summary names the branch's
+commit and lists that commit's cells. On this host that step removes `trees\<branch>`
+and clones it again from the local mirror. That folder holds only sources, not Cargo
+output. If that step fails, catch-up still writes the summary, with the sources
+error in it. If the task is stopped during that step, the missed night has no summary.
 
 **One night, in order, each step with its own deadline:**
 
 1. Sources: an anonymous fetch of the branch into the bare mirror
    `mirror\274bot.git`, then a fresh clone of that exact commit into
-   `trees\<branch>-<commit>-<stamp>`, with the pinned client submodule from
-   `mirror\vendor-fr-client-rust.git`. Trees are never reused; the last 2 are kept
-   for debugging (`NIGHTLY_KEEP_TREES`).
+   `trees\<branch>`, with the pinned client submodule from
+   `mirror\vendor-fr-client-rust.git`. The tree path is the same every night.
+   Last night's tree is removed first and the clone is made again at that
+   path, so the tree holds exactly the new commit and Cargo overwrites its
+   old artefacts instead of adding a new set for a new source path. Trees
+   that are not a branch's stable path (for example the per-commit trees of
+   the old scheme) are removed at the end of the night.
 2. `lanes` (3 h): the Windows platform gate's set (`gate.ps1`) with the GPU on
    (`SKIP_GPU` unset): `build`, `build-vendor`, `clippy`, `clippy-vendor` (with
    `-D warnings`), `test-workspace`, `test-vendor` (`ENGINE_DIR` = the engine copy),
@@ -377,10 +389,31 @@ if either fails, that step's cells are `UNAVAILABLE: Engine B not reachable`. Ac
 are minted fresh under the nightly prefixes (`nw…` for tui-play, `np…` for panel-play),
 apart from other agents' accounts; the runner itself sends no cheats or world commands.
 
+**Disk guard.** Before the sources, before the `lanes` step and before the
+release build, the runner measures the branch's Cargo target folders
+(`target\<branch>-ci`, `target\<branch>` and `target\navskip`) and the free
+space on their drive. It removes a target folder that is bigger than
+`NIGHTLY_TARGET_CAP_GB` (40 on this host). A target folder whose size cannot
+be read in full counts as bigger than the cap and is removed too. If the drive
+still has less free space than `NIGHTLY_MIN_FREE_GB` (100 on this host), it
+removes the other target folders too, and it logs one line per removal with
+the sizes. If free space is still below the floor after that, the whole night
+is `UNAVAILABLE` with that reason and nothing is built, so the nightly cannot
+fill the disk. A removal that fails also makes the night `UNAVAILABLE`.
+Measurement and removal use one walk of the folder. That walk never goes into a
+symlink or a junction, at the top or inside the folder. A link counts as 0 bytes,
+and removal deletes the link itself (a junction with `rmdir`), never what it points
+to. Permission fixes go only to real files and folders inside the folder that is
+being removed, so no file outside it changes, not even its mode.
+The logon catch-up does not run the guard (see Tasks above).
+A setting of 0 turns that check off. Both checks are off by default on
+Linux, whose disk is 100 GB in total and whose tree path was already stable.
+They run when the variables are set there.
+
 **What persists between nights:** BotTest's `CARGO_HOME` and `RUSTUP_HOME`, the build
-caches `target\<branch>` and `target\<branch>-ci` (compiled artefacts only), the bare
-mirrors, the read-only inputs (`engine-pristine`, `rs2b0t`, `nav-snapshot`,
-`fixtures`), `runs\` (14 days), the last 2 trees, `logs\` (30 days), the `state\`
-markers, the venv and the runner checkout. `engine-run\` (a fresh copy of
-`engine-pristine` per step) and `work\` (per-cell and per-lane homes, removed after
-each) carry nothing to the next night.
+caches `target\<branch>` and `target\<branch>-ci` (compiled artefacts only, subject
+to the disk guard above), the bare mirrors, the read-only inputs (`engine-pristine`,
+`rs2b0t`, `nav-snapshot`, `fixtures`), `runs\` (14 days), the branch's tree
+`trees\<branch>`, `logs\` (30 days), the `state\` markers, the venv and the runner
+checkout. `engine-run\` (a fresh copy of `engine-pristine` per step) and `work\`
+(per-cell and per-lane homes, removed after each) carry nothing to the next night.
