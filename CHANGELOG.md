@@ -360,24 +360,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   search budget, so later planning stages do not refuse short routes.
 - A card's first walk now starts correctly. Bank-planned walks keep the selected
   approach tile and can equip a carried item without requiring a bank visit.
-- Single-target and multi-target route searches no longer copy an unused
-  first-goal proof future for every settled node.
-- Synchronous route searches no longer suspend and immediately resume their
-  internal futures at every work boundary. Admitted searches still yield at
-  each boundary.
-- Synchronous packed-table lookups now scan each collision chain directly.
-  Cooperative lookups keep the same work boundaries.
-- First-goal searches no longer copy an unused fallback proof future per node.
-  Reverse proofs pin admission futures before polling them.
-- Packed route searches filter collision links with hash fingerprints before
-  reading full records, without increasing the reserved search storage.
-- Packed route searches reuse recent positive lookups through a fixed 4 KiB
-  ID cache. Hash tags reject unrelated entries before their full-key checks,
-  and removals invalidate cached IDs.
-- Packed heap comparisons keep their record-key ordering in the sift loop,
-  avoiding a helper call at each queue comparison.
-- Packed search tables use more bucket heads to shorten collision scans.
-  Full-budget backing grows by 213,570 bytes within the same job ceiling.
+- Route searches are faster, especially for large searches. They return the
+  same routes.
 
 #### Maps
 

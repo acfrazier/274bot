@@ -402,8 +402,8 @@ remains 28 bytes with four-byte alignment. Bucket heads and next links share
 a separate array of three-byte links. Each link uses only the ID bits its
 table capacity needs; the remaining bits hold a hash fingerprint. A fingerprint
 mismatch skips the full record read. Matching fingerprints still require full
-key equality. Growth rebuilds the fingerprints for the new ID width and keeps
-the same dense IDs and collision order.
+key equality. Growth rebuilds the collision chains for the new bucket count.
+It keeps the same dense IDs, but it can change the order of records in a chain.
 
 Each table also keeps 1,024 recent positive record IDs in a fixed 4 KiB array.
 The unused upper ID bits hold a ten-bit hash tag, so unrelated cache entries

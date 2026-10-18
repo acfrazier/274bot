@@ -8348,7 +8348,10 @@ async fn relax_packed<B: Budget>(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the budgeted kernel keeps its shared search inputs explicit"
+)]
 async fn search_kernel_budget<B: Budget>(
     collision: &WorldCollision,
     graph: &TransportGraph,
