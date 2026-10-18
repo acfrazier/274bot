@@ -313,7 +313,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - Packed route searches filter collision links with hash fingerprints before
   reading full records, without increasing the reserved search storage.
 - Packed route searches reuse recent positive lookups through a fixed 4 KiB
-  ID cache. Every hit still checks the full key, and removals invalidate it.
+  ID cache. Hash tags reject unrelated entries before their full-key checks,
+  and removals invalidate cached IDs.
 - One slow disk write no longer leaves script cards, the script catalogue or
   profiles stopped until 274bot restarts.
 - Windows now recovers damaged panel preferences and repairs duplicate loadout
