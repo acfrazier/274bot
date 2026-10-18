@@ -12,6 +12,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- Scripts no longer have WebCrypto (`crypto.subtle`, `Crypto`, `CryptoKey`,
+  `SubtleCrypto`) or the `URL`, `URLSearchParams` and `URLPattern` globals.
+  `crypto.randomUUID()` and `crypto.getRandomValues()` still work.
 - Script operations now share a bounded request seat across native cards and
   JavaScript. A second top-level Gatherer, combat, quest progress or Hunt
   Session reports **busy** while one Session is live. Capability roots started
