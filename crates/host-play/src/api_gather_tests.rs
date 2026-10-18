@@ -245,9 +245,13 @@ fn start_source(
     source: &str,
 ) {
     let cell = script_slot_or_insert(scripts, SLOT);
-    cell.lock()
-        .unwrap()
-        .start_load_with_loadouts_and_game_data(
+    {
+        let mut slot = cell.lock().unwrap();
+        if slot.work_scope().is_none() {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+            slot.bind_incarnation(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        }
+        slot.start_load_with_loadouts_and_game_data(
             source.into(),
             script::LoadShape::NativeTick,
             vec![],
@@ -256,6 +260,7 @@ fn start_source(
             Arc::new(api::named_banks::NamedBankFacts::empty()),
         )
         .expect("v2 isolate starts");
+    }
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         match cell.lock().unwrap().poll_start() {
@@ -317,6 +322,7 @@ fn observe_frame(
         None,
         service_arm,
     );
+    crate::script_runtime::pump_route_work(navs, SLOT);
     let mut packets = Vec::new();
     assert!(api::interact::Driver::trace_packets(
         client,
@@ -1334,7 +1340,7 @@ fn manual_movement_takes_over_a_gather_session_with_no_walk_in_flight() {
             .lock()
             .unwrap()
             .get(SLOT)
-            .is_none_or(|bot| bot.route.is_none()
+            .is_none_or(|bot| !bot.has_route()
                 && bot.pending_route.is_none()
                 && !bot.native_walk.as_ref().is_some_and(|owner| owner.live())),
         "no host walk is in flight"
@@ -1950,12 +1956,13 @@ fn load_gather_watchdog_arm_walk_keeps_load_script_options() {
 
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
-        if rig.navs.lock().unwrap()[SLOT].route_worker.is_none() {
+        crate::script_runtime::pump_route_work(&rig.navs, SLOT);
+        if !rig.navs.lock().unwrap()[SLOT].route_work_pending() {
             break;
         }
         assert!(
             Instant::now() < deadline,
-            "watchdog ArmWalk route worker did not settle"
+            "watchdog ArmWalk route work did not settle"
         );
         std::thread::yield_now();
     }
@@ -1965,7 +1972,7 @@ fn load_gather_watchdog_arm_walk_keeps_load_script_options() {
         bot.walk_outcome_failed,
         "the non-inheriting arm cannot cross"
     );
-    assert!(bot.route.is_none());
+    assert!(!bot.has_route());
     assert!(bot.requested_route.is_none());
     drop(navs);
     rig.slot().lock().unwrap().stop();

@@ -195,9 +195,15 @@ pub fn arm_walk_on(
             crate::admission::log(focused, &assessment, false);
             let (route, bank_fetch) = match outcome {
                 RouteOutcome::Routed(route) => (Arc::new(route), None),
-                RouteOutcome::BankSession { pending, .. } => {
-                    (Arc::clone(&pending.final_route), Some(pending))
-                }
+                RouteOutcome::BankSession { pending, .. } => (
+                    Arc::clone(
+                        pending
+                            .final_route
+                            .legacy_route()
+                            .expect("panel route session retains its legacy route"),
+                    ),
+                    Some(pending),
+                ),
                 RouteOutcome::NoPath => unreachable!(),
             };
             replace_walk_arm(
@@ -407,7 +413,7 @@ fn replace_walk_arm(
         arm.admission = Some(Box::new(admission));
         arm.assessment = Some(assessment);
         arm.basis = Some(Arc::new(RouteBasis {
-            route: Arc::clone(&route),
+            _route: crate::walk_plan::RoutePath::legacy(Arc::clone(&route)),
             options,
             avoid: Arc::from([]),
             quest_evidence: state.quest_evidence.clone(),

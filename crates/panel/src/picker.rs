@@ -22,10 +22,17 @@ use dear_imgui_rs::{Condition, Key, MouseButton, Ui, WindowFlags};
 use frontend_core::{
     MapBakePrompt, DANGER_THIS_WALK_LABEL, GLOBAL_DANGER_WARNING, MAP_BAKE_TITLE, MAP_BAKE_WARNING,
 };
-use host_play::walk_map::{ActionError, MapModel, RouteProjection, RouteSource, Selection};
+use host_play::walk_map::{
+    ActionError, MapModel, RouteProjection, RouteProjectionPath, RouteSource, Selection,
+};
+use nav::contract::LegView;
+#[cfg(test)]
+use nav::contract::RouteView;
 use nav::map::spatial::GameTile;
 use nav::paint::{bake_reach, flood_components};
-use nav::router::{Leg, Route};
+use nav::router::Leg;
+#[cfg(test)]
+use nav::router::Route;
 use nav::tile::Tile;
 use nav::world::NavWorld;
 
@@ -1233,47 +1240,75 @@ fn push_flat(tiles: &mut RouteTiles, tile: WorldTile, transport: bool) {
     tiles.push((tile, transport));
 }
 
-fn flatten_route(route: &Route) -> (RouteTiles, Vec<LegSpan>) {
+fn flatten_route(route: RouteProjectionPath<'_>) -> (RouteTiles, Vec<LegSpan>) {
     #[cfg(test)]
     ROUTE_FLATTEN_COUNT.fetch_add(1, Ordering::Relaxed);
     let mut tiles = Vec::new();
     let mut legs = Vec::new();
-    for leg in &route.legs {
-        match leg {
-            Leg::Walk { tiles: walk } => {
-                if walk.is_empty() {
-                    continue;
-                }
-                let start_len = tiles.len();
-                for tile in walk {
-                    push_flat(&mut tiles, *tile, false);
-                }
-                let start = if tiles.len() > start_len {
-                    start_len
-                } else {
-                    start_len.saturating_sub(1)
-                };
-                if !tiles.is_empty() {
-                    legs.push(LegSpan {
-                        transport: false,
-                        start,
-                        end: tiles.len() - 1,
-                    });
+    match route {
+        RouteProjectionPath::Legacy(route) => {
+            for leg in &route.legs {
+                match leg {
+                    Leg::Walk { tiles: walk } => push_walk_leg(&mut tiles, &mut legs, walk),
+                    Leg::Transport { edge } => {
+                        push_transport_leg(&mut tiles, &mut legs, edge.at, edge.to)
+                    }
                 }
             }
-            Leg::Transport { edge } => {
-                push_flat(&mut tiles, edge.at, true);
-                let at_idx = tiles.len() - 1;
-                push_flat(&mut tiles, edge.to, true);
-                legs.push(LegSpan {
-                    transport: true,
-                    start: at_idx,
-                    end: tiles.len() - 1,
-                });
+        }
+        RouteProjectionPath::Compact(view) => {
+            for leg in view.legs() {
+                match leg {
+                    LegView::Walk(walk) => push_walk_leg(&mut tiles, &mut legs, walk),
+                    LegView::Transport(transport) => push_transport_leg(
+                        &mut tiles,
+                        &mut legs,
+                        transport.anchor(),
+                        transport.landing(),
+                    ),
+                }
             }
         }
     }
     (tiles, legs)
+}
+
+fn push_walk_leg(tiles: &mut RouteTiles, legs: &mut Vec<LegSpan>, walk: &[WorldTile]) {
+    if walk.is_empty() {
+        return;
+    }
+    let start_len = tiles.len();
+    for tile in walk {
+        push_flat(tiles, *tile, false);
+    }
+    let start = if tiles.len() > start_len {
+        start_len
+    } else {
+        start_len.saturating_sub(1)
+    };
+    if !tiles.is_empty() {
+        legs.push(LegSpan {
+            transport: false,
+            start,
+            end: tiles.len() - 1,
+        });
+    }
+}
+
+fn push_transport_leg(
+    tiles: &mut RouteTiles,
+    legs: &mut Vec<LegSpan>,
+    at: WorldTile,
+    to: WorldTile,
+) {
+    push_flat(tiles, at, true);
+    let at_idx = tiles.len() - 1;
+    push_flat(tiles, to, true);
+    legs.push(LegSpan {
+        transport: true,
+        start: at_idx,
+        end: tiles.len() - 1,
+    });
 }
 
 fn remaining_start(
@@ -1309,7 +1344,10 @@ fn remaining_start(
     computed.max(floor)
 }
 
-fn update_route_cache(computed: Option<(RouteSource, u64, &Route)>, here: Option<WorldTile>) {
+fn update_route_cache(
+    computed: Option<(RouteSource, u64, RouteProjectionPath<'_>)>,
+    here: Option<WorldTile>,
+) {
     // Nav statics first (lock order); tests share one route cache.
     let _nav = lock_nav_statics();
     let mut cache = lock_data(&ROUTE_TILES);
@@ -1339,6 +1377,19 @@ fn update_route_cache(computed: Option<(RouteSource, u64, &Route)>, here: Option
         legs,
         start,
     });
+}
+#[cfg(test)]
+fn cached_remaining_path_view(
+    view: RouteView<'_>,
+    source: RouteSource,
+    generation: u64,
+    here: Option<WorldTile>,
+) -> Vec<(WorldTile, bool)> {
+    update_route_cache(
+        Some((source, generation, RouteProjectionPath::Compact(view))),
+        here,
+    );
+    lock_route_path().as_slice().to_vec()
 }
 
 /// Remaining path tiles for the focused slot. Delegate live > script > manual
@@ -1431,7 +1482,10 @@ pub(crate) fn cached_remaining_path(
     generation: u64,
     here: Option<WorldTile>,
 ) -> Vec<(WorldTile, bool)> {
-    update_route_cache(Some((source, generation, route)), here);
+    update_route_cache(
+        Some((source, generation, RouteProjectionPath::Legacy(route))),
+        here,
+    );
     lock_route_path().as_slice().to_vec()
 }
 

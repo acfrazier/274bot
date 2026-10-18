@@ -1119,6 +1119,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/src/script_bank_harness.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/src/script_bank_tests.rs",
       "owner": "T1"
     },
@@ -1224,6 +1228,10 @@
     },
     {
       "path": "crates/host-play/tests/bank_choice_live.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/bank_pick_work_live.rs",
       "owner": "T1"
     },
     {
@@ -2056,6 +2064,14 @@
     },
     {
       "path": "crates/nav/src/zones_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/tests/arrival_candidate_parity.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/tests/arrival_candidate_qualification.rs",
       "owner": "T5"
     },
     {
@@ -6556,6 +6572,10 @@
     },
     {
       "path": "crates/host-play/src/script_nav_facade_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/host-play/src/route_work_tests.rs",
       "owner": "T5"
     },
     {

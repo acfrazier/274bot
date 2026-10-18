@@ -108,10 +108,8 @@
 //! }
 //! ```
 //!
-//! Current producers this vocabulary will migrate (characterization in the
-//! producers' own crates, not cooperation): T5 map bake `run_job`
-//! (`crates/host-play/src/map_cache.rs:1960-2043`, `MapJobStatus`/`MapProgress`
-//! at `:844-869,1939-1946`, `finish_job` at `:2045-2053`); T4 walk-map decode
+//! Remaining producers that will migrate (characterization in the
+//! producers' own crates, not cooperation): T4 walk-map decode
 //! (`crates/panel/src/walk_map.rs:109-126,1165-1187`); T1 `script_bank.rs`
 //! bank-pick; T5 `route_inspect.rs` inspection; card preparation
 //! (`crates/api/src/selected.rs:310-330`).
@@ -385,13 +383,11 @@ impl WorkFamily {
     }
 
     /// Cancellation mapping. Every WorkAdmission reason settles as
-    /// [`Settlement::Cancelled`]; the family adapter decides what today's
-    /// consumers observe. For map bake the real producer has exactly one
-    /// stopped-before-done ending, the resumable `MapJobStatus::Paused`:
-    /// `finish_job` maps `MapCacheError::Cancelled` or a set cancel flag to
-    /// `Paused` (`host-play/src/map_cache.rs:2045-2053`), `map_bind.rs:82`
-    /// retries `Paused`, and `MapJobStatus::Cancelled` is matched but never
-    /// constructed. See [`MapBakeStatus::cancellation_observed_as`].
+    /// [`Settlement::Cancelled`]; the family adapter decides what consumers
+    /// observe. Map-bake cancellation appears as the resumable
+    /// `MapJobStatus::Paused`, with its checkpoint receipt retained for retry.
+    /// `MapJobStatus::Cancelled` is matched but never constructed today.
+    /// See [`MapBakeStatus::cancellation_observed_as`].
     pub const fn cancellation_mapping(self) -> &'static str {
         match self {
             Self::MapBake => {
@@ -510,9 +506,8 @@ impl WorkPhase for MapBakePhase {
     }
 }
 
-/// Characterizes `MapJobStatus` (`map_cache.rs:861-869`) one variant per
-/// variant. The host-play producer's tests map every real variant onto this
-/// enum and drive `finish_job` to pin the cancellation observation.
+/// Characterizes the host map-bake status with one variant per family status.
+/// Host-play tests map each real status to this frozen result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MapBakeStatus {
     /// Accepted, not yet running.
@@ -521,11 +516,9 @@ pub enum MapBakeStatus {
     Running,
     /// Domain success.
     Ready,
-    /// Today's one stopped-before-done ending, resumable from the checkpoint
-    /// receipt: `finish_job` maps `MapCacheError::Cancelled` or a set cancel
-    /// flag here (`map_cache.rs:2045-2053`); the bake's own pause
-    /// (`ImageBakeOutcome::Paused` → `MapCacheError::Cancelled`,
-    /// `map_producer.rs:148`) lands here too. `map_bind.rs:82` retries it.
+    /// Today's stopped-before-done ending. The host keeps the checkpoint
+    /// receipt after cancellation. The map-demand adapter exposes `Paused`
+    /// for an explicit retry after a cancelled bake.
     Paused,
     /// Matched by consumers (`map_bind.rs:154`, `panel/src/session.rs:4612`,
     /// `tui/src/bin.rs:1415`) but never constructed by the producer.
@@ -564,10 +557,8 @@ impl MapBakeStatus {
         matches!(self, Self::Ready | Self::Paused)
     }
 
-    /// Today's status a WorkAdmission [`Settlement::Cancelled`] is observed
-    /// as: `finish_job` lands a set cancel flag on `Paused`
-    /// (`map_cache.rs:2045-2053`). The T5.W(map-bake) adapter translates;
-    /// it does not produce `Cancelled`.
+    /// A WorkAdmission [`Settlement::Cancelled`] is observed as `Paused`.
+    /// The host retains its checkpoint receipt for an explicit retry.
     pub const fn cancellation_observed_as() -> Self {
         Self::Paused
     }

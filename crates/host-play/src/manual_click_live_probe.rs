@@ -41,8 +41,8 @@ impl Play {
         let nav = navs.get(name).map(|bot| {
             serde_json::json!({
                 "armed": bot.script_walk_armed(),
-                "route": bot.route.is_some(),
-                "worker": bot.route_worker.is_some(),
+                "route": bot.has_route(),
+                "route_work_pending": bot.route_work_pending(),
                 "pending": bot.pending_route.is_some(),
                 "requested": bot.requested_route.is_some(),
                 "bank_fetch": bot.bank_fetch.is_some(),
@@ -56,8 +56,8 @@ impl Play {
                     tile.x, tile.z, tile.level,
                 ]),
                 "outcome_radius": bot.walk_outcome_radius,
-                "route_destination": bot.route.as_ref().map(|route| [
-                    route.dest.x, route.dest.z, route.dest.level,
+                "route_destination": bot.route_destination().map(|route| [
+                    route.x, route.z, route.level,
                 ]),
                 "follow_aim": bot.traveller.current_aim().map(|aim| [
                     aim.x, aim.z, aim.level,
