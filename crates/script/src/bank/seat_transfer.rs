@@ -1,7 +1,7 @@
 use crate::bank::ops::{
     self, CloseBaseline, CloseScan, DepositKind, DepositRequest, DepositScan, DepositSpec,
-    LoadClick, NoteIntent, Progress, WithdrawGoal, DEPOSIT_VIEW_MS, MAX_DEPOSITS,
-    SERVER_TICK_MS, TRANSFER_OBSERVED_TICK_LIMIT,
+    LoadClick, NoteIntent, Progress, WithdrawGoal, DEPOSIT_VIEW_MS, MAX_DEPOSITS, SERVER_TICK_MS,
+    TRANSFER_OBSERVED_TICK_LIMIT,
 };
 use crate::bank::request::{
     BankSeatArgs, BankSeatOperation, BANK_NEAREST_HOOK_DEPOSIT, BANK_NEAREST_HOOK_LOG,
@@ -97,7 +97,9 @@ enum Phase {
     DeltaAwait {
         request_id: u64,
         goal: WithdrawGoal,
+        baseline: i32,
         sent_tick: u64,
+        sent_at: Duration,
     },
     LoadAllAwait {
         request_id: u64,
@@ -143,14 +145,21 @@ enum Phase {
 
 enum SendAfter {
     DepositLabel,
-    WithdrawLabel { generation: u64 },
-    Delta { goal: WithdrawGoal },
+    WithdrawLabel {
+        generation: u64,
+    },
+    Delta {
+        goal: WithdrawGoal,
+        baseline: i32,
+    },
     LoadAll {
         item_id: i32,
         used_before: i32,
         generation: u64,
     },
-    LoadFill { goal: WithdrawGoal },
+    LoadFill {
+        goal: WithdrawGoal,
+    },
     Deposit {
         loop_state: DepositLoop,
         id: i32,
@@ -330,11 +339,7 @@ impl DepositLoop {
         }
     }
 
-    fn scan(
-        &mut self,
-        snapshot: SnapshotView<'_>,
-        now: Duration,
-    ) -> DepositStep {
+    fn scan(&mut self, snapshot: SnapshotView<'_>, now: Duration) -> DepositStep {
         let side = snapshot.bank_side().map(|observed| observed.value);
         let pack = snapshot.inventory().map(|observed| observed.value);
         let expired = self.view_expired(now);
@@ -594,6 +599,17 @@ impl NativeMachine for Transfer {
                         self.phase = Phase::Emit { request, after };
                         return Poll::Pending;
                     }
+                    let after = match after {
+                        SendAfter::Delta { goal, baseline } => {
+                            let snapshot = cx.snapshot();
+                            let baseline = snapshot.inventory().map_or(baseline, |observed| {
+                                ops::count_id(observed.value, goal.lands_as_id)
+                            });
+                            SendAfter::Delta { goal, baseline }
+                        }
+                        after => after,
+                    };
+
                     let request_id = match defer_budget(cx.emit(request.clone())) {
                         Poll::Pending => {
                             self.phase = Phase::Emit { request, after };
@@ -604,11 +620,7 @@ impl NativeMachine for Transfer {
                         }
                         Poll::Ready(Ok(request_id)) => request_id,
                     };
-                    self.phase = after.into_phase(
-                        request_id,
-                        cx.evidence().tick,
-                        cx.active_now(),
-                    );
+                    self.phase = after.into_phase(request_id, cx.evidence().tick, cx.active_now());
                     return Poll::Pending;
                 }
                 Phase::AwaitDepositLabel { request_id } => {
@@ -630,9 +642,7 @@ impl NativeMachine for Transfer {
                         return Poll::Pending;
                     };
                     let same_session = self.same_bank_session(cx, generation);
-                    return Poll::Ready(Ok(TransferValue::Bool(
-                        receipt.accepted && same_session,
-                    )));
+                    return Poll::Ready(Ok(TransferValue::Bool(receipt.accepted && same_session)));
                 }
                 Phase::DeltaNext { goal, sent_tick } => {
                     match self.current_withdraw_progress(cx, &goal) {
@@ -660,13 +670,17 @@ impl NativeMachine for Transfer {
                 Phase::DeltaAwait {
                     request_id,
                     goal,
+                    baseline,
                     sent_tick,
+                    sent_at,
                 } => {
                     let Some(receipt) = cx.interaction_receipt(request_id) else {
                         self.phase = Phase::DeltaAwait {
                             request_id,
                             goal,
+                            baseline,
                             sent_tick,
+                            sent_at,
                         };
                         return Poll::Pending;
                     };
@@ -678,18 +692,14 @@ impl NativeMachine for Transfer {
                     let pack = snapshot
                         .inventory()
                         .map_or(&[][..], |observed| observed.value);
+                    let held = ops::count_id(pack, goal.lands_as_id);
                     let full = ops::pack_full(
                         pack,
                         snapshot
                             .inventory_capacity()
                             .map_or(0, |capacity| i32::from(capacity.value)),
                     );
-                    match ops::withdraw_progress(
-                        &goal,
-                        ops::count_id(pack, goal.lands_as_id),
-                        full,
-                        same_session,
-                    ) {
+                    match ops::withdraw_progress(&goal, held, full, same_session) {
                         Progress::Complete | Progress::PackFull => {
                             return Poll::Ready(Ok(TransferValue::Bool(true)));
                         }
@@ -698,11 +708,23 @@ impl NativeMachine for Transfer {
                         }
                         Progress::Incomplete => {}
                     }
-                    if snapshot
-                        .count_dialog_open()
-                        .is_some_and(|dialog| dialog.value)
-                    {
-                        return Poll::Ready(Ok(TransferValue::Bool(false)));
+                    if held <= baseline {
+                        if transfer_expired(
+                            sent_tick,
+                            cx.evidence().tick,
+                            sent_at,
+                            cx.active_now(),
+                        ) {
+                            return Poll::Ready(Ok(TransferValue::Bool(false)));
+                        }
+                        self.phase = Phase::DeltaAwait {
+                            request_id,
+                            goal,
+                            baseline,
+                            sent_tick,
+                            sent_at,
+                        };
+                        return Poll::Pending;
                     }
                     self.phase = Phase::DeltaNext { goal, sent_tick };
                     continue;
@@ -1092,8 +1114,7 @@ impl Transfer {
                     let Some(row) = rows.iter().find(|row| row.def.id == id) else {
                         return Ok(Some(TransferValue::Bool(false)));
                     };
-                    let Some(name) = row.def.name.as_deref().filter(|name| !name.is_empty())
-                    else {
+                    let Some(name) = row.def.name.as_deref().filter(|name| !name.is_empty()) else {
                         return Ok(Some(TransferValue::Bool(false)));
                     };
                     let Some(op) = request.menu_op.as_deref() else {
@@ -1147,8 +1168,7 @@ impl Transfer {
                 else {
                     return Ok(Some(TransferValue::Bool(false)));
                 };
-                if request.item_id.is_some()
-                    && !row_name(row).is_some_and(|name| !name.is_empty())
+                if request.item_id.is_some() && !row_name(row).is_some_and(|name| !name.is_empty())
                 {
                     return Ok(Some(TransferValue::Bool(false)));
                 }
@@ -1171,16 +1191,17 @@ impl Transfer {
                     ops::count_id(pack, lands_as_id),
                     generation,
                 );
-                let Some(click) = ops::withdraw_click(
-                    row,
-                    ops::withdraw_remaining(&goal, goal.baseline),
-                    &goal,
-                ) else {
+                let Some(click) =
+                    ops::withdraw_click(row, ops::withdraw_remaining(&goal, goal.baseline), &goal)
+                else {
                     return Ok(Some(TransferValue::Bool(false)));
                 };
                 self.phase = Phase::Emit {
                     request: click,
-                    after: SendAfter::Delta { goal },
+                    after: SendAfter::Delta {
+                        baseline: goal.baseline,
+                        goal,
+                    },
                 };
                 Ok(None)
             }
@@ -1424,16 +1445,20 @@ impl Transfer {
         else {
             return Poll::Ready(Ok(false));
         };
+        let held_count = ops::count_id(held, goal.lands_as_id);
         let Some(request) = ops::withdraw_click(
             row,
-            ops::withdraw_remaining(&goal, ops::count_id(held, goal.lands_as_id)),
+            ops::withdraw_remaining(&goal, held_count),
             &goal,
         ) else {
             return Poll::Ready(Ok(false));
         };
         self.phase = Phase::Emit {
             request,
-            after: SendAfter::Delta { goal },
+            after: SendAfter::Delta {
+                goal,
+                baseline: held_count,
+            },
         };
         Poll::Ready(Ok(true))
     }
@@ -1492,15 +1517,12 @@ impl Transfer {
 
     fn same_bank_session(&self, cx: &ActionContext<'_>, generation: u64) -> bool {
         cx.run().session == self.login_session
-            && cx.snapshot().bank_session().is_some_and(|session| {
-                session.value.open && session.value.generation == generation
-            })
+            && cx
+                .snapshot()
+                .bank_session()
+                .is_some_and(|session| session.value.open && session.value.generation == generation)
     }
-    fn current_withdraw_progress(
-        &self,
-        cx: &ActionContext<'_>,
-        goal: &WithdrawGoal,
-    ) -> Progress {
+    fn current_withdraw_progress(&self, cx: &ActionContext<'_>, goal: &WithdrawGoal) -> Progress {
         let snapshot = cx.snapshot();
         let pack = snapshot
             .inventory()
@@ -1571,10 +1593,12 @@ impl SendAfter {
                 request_id,
                 generation,
             },
-            Self::Delta { goal } => Phase::DeltaAwait {
+            Self::Delta { goal, baseline } => Phase::DeltaAwait {
                 request_id,
                 goal,
+                baseline,
                 sent_tick: tick,
+                sent_at: now,
             },
             Self::LoadAll {
                 item_id,
@@ -1626,9 +1650,10 @@ impl SendAfter {
     }
 }
 
-
 fn lock_hooks(hooks: &Mutex<TransferHooks>) -> MutexGuard<'_, TransferHooks> {
-    hooks.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    hooks
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn unavailable(message: &'static str) -> ActionError {
@@ -1731,9 +1756,7 @@ fn transfer_expired(
         started_tick,
         current_tick,
         active_now.saturating_sub(started_at)
-            >= Duration::from_millis(
-                TRANSFER_OBSERVED_TICK_LIMIT.saturating_mul(SERVER_TICK_MS),
-            ),
+            >= Duration::from_millis(TRANSFER_OBSERVED_TICK_LIMIT.saturating_mul(SERVER_TICK_MS)),
         TRANSFER_OBSERVED_TICK_LIMIT,
     )
 }
@@ -1742,7 +1765,9 @@ fn js_truthy(value: &Value) -> bool {
     match value {
         Value::Null => false,
         Value::Bool(value) => *value,
-        Value::Number(value) => value.as_f64().is_some_and(|value| value != 0.0 && !value.is_nan()),
+        Value::Number(value) => value
+            .as_f64()
+            .is_some_and(|value| value != 0.0 && !value.is_nan()),
         Value::String(value) => !value.is_empty(),
         Value::Array(_) | Value::Object(_) => true,
     }
@@ -1772,9 +1797,18 @@ mod tests {
             actions: Vec::new(),
             component_id: 1,
         }];
-        assert_eq!(withdraw_amount_action(&rows, "lobster", Some(12)), "Withdraw All");
-        assert_eq!(withdraw_amount_action(&rows, "Lobster", Some(11)), "Withdraw 10");
-        assert_eq!(withdraw_amount_action(&rows, "Lobster", Some(4)), "Withdraw 1");
+        assert_eq!(
+            withdraw_amount_action(&rows, "lobster", Some(12)),
+            "Withdraw All"
+        );
+        assert_eq!(
+            withdraw_amount_action(&rows, "Lobster", Some(11)),
+            "Withdraw 10"
+        );
+        assert_eq!(
+            withdraw_amount_action(&rows, "Lobster", Some(4)),
+            "Withdraw 1"
+        );
         assert_eq!(withdraw_amount_action(&rows, "Lobster", None), "Withdraw 1");
     }
 
@@ -1783,7 +1817,10 @@ mod tests {
         assert_eq!(wait_timeout(None), Duration::from_secs(5));
         assert_eq!(wait_timeout(Some(0.0)), Duration::from_secs(5));
         assert_eq!(wait_timeout(Some(-2.0)), Duration::from_secs(5));
-        assert_eq!(wait_timeout(Some(1_250.5)), Duration::from_micros(1_250_500));
+        assert_eq!(
+            wait_timeout(Some(1_250.5)),
+            Duration::from_micros(1_250_500)
+        );
         assert_eq!(close_timeout(0.0), Duration::ZERO);
         assert_eq!(close_timeout(1_250.9), Duration::from_millis(1_250));
     }
@@ -1800,8 +1837,18 @@ mod tests {
 
     #[test]
     fn observed_transfer_expiry_needs_ticks_and_active_time() {
-        assert!(!transfer_expired(10, 18, Duration::ZERO, Duration::from_secs(4)));
-        assert!(!transfer_expired(10, 17, Duration::ZERO, Duration::from_secs(20)));
+        assert!(!transfer_expired(
+            10,
+            18,
+            Duration::ZERO,
+            Duration::from_secs(4)
+        ));
+        assert!(!transfer_expired(
+            10,
+            17,
+            Duration::ZERO,
+            Duration::from_secs(20)
+        ));
         assert!(transfer_expired(
             10,
             18,
@@ -1858,14 +1905,7 @@ mod tests {
     }
 
     fn side_item(id: i32, name: &str, slot: i32) -> ItemView {
-        item(
-            id,
-            name,
-            1,
-            slot,
-            ItemContainer::BankSide,
-            &["Deposit-All"],
-        )
+        item(id, name, 1, slot, ItemContainer::BankSide, &["Deposit-All"])
     }
 
     fn bank_snapshot(
@@ -1918,7 +1958,9 @@ mod tests {
         tick: u64,
         accepted: bool,
     ) -> HostEffect {
-        let ledger = ledger.as_mut().expect("transfer must have an action ledger");
+        let ledger = ledger
+            .as_mut()
+            .expect("transfer must have an action ledger");
         let action = ledger.outbox.remove(0);
         ledger.complete_interaction(
             &action.authority(),
@@ -1936,10 +1978,7 @@ mod tests {
         action.effect
     }
 
-    fn respond(
-        hooks: &Arc<Mutex<TransferHooks>>,
-        answer: TransferAnswer,
-    ) -> TransferCall {
+    fn respond(hooks: &Arc<Mutex<TransferHooks>>, answer: TransferAnswer) -> TransferCall {
         let mut hooks = lock_hooks(hooks);
         let call = hooks.pending.take().expect("transfer callback is pending");
         hooks.answer = Some(answer);
@@ -1947,15 +1986,7 @@ mod tests {
     }
 
     fn spend_interaction(cx: &mut ActionContext<'_>) {
-        cx.action_id = cx
-            .ledger
-            .as_ref()
-            .unwrap()
-            .owner
-            .as_ref()
-            .unwrap()
-            .id
-            .get();
+        cx.action_id = cx.ledger.as_ref().unwrap().owner.as_ref().unwrap().id.get();
         let request_id = cx
             .emit(InteractReq::ContinueDialog { component_id: None })
             .unwrap();
@@ -2010,10 +2041,7 @@ mod tests {
         let hooks = Arc::clone(&args.hooks);
         let mut ledger = None;
         let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
-            let handle = tick
-                .actions
-                .begin::<Transfer>(args, &mut tick.cx)
-                .unwrap();
+            let handle = tick.actions.begin::<Transfer>(args, &mut tick.cx).unwrap();
             spend_interaction(&mut tick.cx);
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
 
@@ -2032,11 +2060,7 @@ mod tests {
         assert!(poll_transfer(&snapshot, &mut ledger, &handle, 2).is_pending());
         assert!(matches!(
             acknowledge(&mut ledger, 2, true),
-            HostEffect::Interaction(InteractReq::InvButton {
-                id: 1,
-                slot: 0,
-                ..
-            })
+            HostEffect::Interaction(InteractReq::InvButton { id: 1, slot: 0, .. })
         ));
         assert!(poll_transfer(&snapshot, &mut ledger, &handle, 2).is_pending());
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
@@ -2136,7 +2160,6 @@ mod tests {
                 ..
             })
         ));
-        assert!(poll_transfer(&snapshot, &mut ledger, &handle, 1).is_pending());
         assert!(matches!(
             acknowledge(&mut ledger, 1, true),
             HostEffect::Interaction(InteractReq::WithdrawX {
@@ -2148,11 +2171,80 @@ mod tests {
         ));
         assert!(poll_transfer(&snapshot, &mut ledger, &handle, 1).is_pending());
 
+        assert!(poll_transfer(&snapshot, &mut ledger, &handle, 2).is_pending());
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
         snapshot.seed_inventory(vec![pack_item(2, "Lobster", 0)], 28);
         assert!(matches!(
-            poll_transfer(&snapshot, &mut ledger, &handle, 2),
+            poll_transfer(&snapshot, &mut ledger, &handle, 3),
             Poll::Ready(Ok(TransferValue::Bool(true)))
         ));
+    }
+
+    #[test]
+    fn delta_withdraw_waits_for_each_partial_landing_before_the_next_bounded_click() {
+        let mut snapshot = bank_snapshot(
+            Vec::new(),
+            vec![bank_item(2, "Lobster", 10, &["Withdraw-5", "Withdraw-1"])],
+            Vec::new(),
+        );
+        let mut args = transfer_args(BankSeatOperation::WithdrawDelta);
+        args.request.item_id = Some(2);
+        args.request.quantity = Some(7);
+        let mut ledger = None;
+        let handle = begin_transfer(&snapshot, &mut ledger, args);
+
+        assert!(poll_transfer(&snapshot, &mut ledger, &handle, 1).is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1, true),
+            HostEffect::Interaction(InteractReq::WithdrawX {
+                bank_item_id: 2,
+                count: 5,
+                ..
+            })
+        ));
+        assert!(poll_transfer(&snapshot, &mut ledger, &handle, 1).is_pending());
+        assert!(poll_transfer(&snapshot, &mut ledger, &handle, 2).is_pending());
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
+        snapshot.seed_inventory(pack_with_withdrawn(5), 28);
+        assert!(poll_transfer(&snapshot, &mut ledger, &handle, 3).is_pending());
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox[0].effect,
+            HostEffect::Interaction(InteractReq::WithdrawX {
+                bank_item_id: 2,
+                count: 1,
+                ..
+            })
+        ));
+        assert!(matches!(
+            acknowledge(&mut ledger, 3, true),
+            HostEffect::Interaction(InteractReq::WithdrawX { count: 1, .. })
+        ));
+        assert!(poll_transfer(&snapshot, &mut ledger, &handle, 3).is_pending());
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
+        snapshot.seed_inventory(pack_with_withdrawn(6), 28);
+        assert!(poll_transfer(&snapshot, &mut ledger, &handle, 4).is_pending());
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox[0].effect,
+            HostEffect::Interaction(InteractReq::WithdrawX {
+                bank_item_id: 2,
+                count: 1,
+                ..
+            })
+        ));
+        assert!(matches!(
+            acknowledge(&mut ledger, 4, true),
+            HostEffect::Interaction(InteractReq::WithdrawX { count: 1, .. })
+        ));
+
+        snapshot.seed_inventory(pack_with_withdrawn(7), 28);
+        assert!(matches!(
+            poll_transfer(&snapshot, &mut ledger, &handle, 5),
+            Poll::Ready(Ok(TransferValue::Bool(true)))
+        ));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
     }
 
     #[test]
@@ -2189,14 +2281,9 @@ mod tests {
 
     #[test]
     fn withdraw_load_uses_the_fixed_ladder_and_settles_each_click() {
-        let snapshot = bank_snapshot(
+        let mut snapshot = bank_snapshot(
             filler_rows(21),
-            vec![bank_item(
-                2,
-                "Lobster",
-                10,
-                &["Withdraw-5", "Withdraw-1"],
-            )],
+            vec![bank_item(2, "Lobster", 10, &["Withdraw-5", "Withdraw-1"])],
             Vec::new(),
         );
         let mut args = transfer_args(BankSeatOperation::WithdrawLoad);
@@ -2248,12 +2335,7 @@ mod tests {
     fn withdraw_load_all_waits_for_a_posted_pack_change() {
         let mut snapshot = bank_snapshot(
             vec![pack_item(9, "Rune", 0)],
-            vec![bank_item(
-                2,
-                "Lobster",
-                30,
-                &["Withdraw-All", "Withdraw-1"],
-            )],
+            vec![bank_item(2, "Lobster", 30, &["Withdraw-All", "Withdraw-1"])],
             Vec::new(),
         );
         let mut args = transfer_args(BankSeatOperation::WithdrawLoad);
@@ -2366,4 +2448,41 @@ mod tests {
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
     }
 
+    #[test]
+    fn labelled_withdraw_keeps_the_original_amount_to_action_characterization() {
+        for (label, quantity, expected) in [
+            (Some("all"), None, "Withdraw All"),
+            (Some("Withdraw 5"), None, "Withdraw 5"),
+            (None, Some(12), "Withdraw All"),
+            (None, Some(11), "Withdraw 10"),
+            (None, Some(4), "Withdraw 1"),
+            (None, None, "Withdraw 1"),
+        ] {
+            let snapshot = bank_snapshot(
+                Vec::new(),
+                vec![bank_item(379, "Lobster", 12, &[])],
+                Vec::new(),
+            );
+            let mut args = transfer_args(BankSeatOperation::WithdrawLabel);
+            args.request.item_name = Some("Lobster".into());
+            args.request.menu_op = label.map(str::to_owned);
+            args.request.quantity = quantity;
+            let mut ledger = None;
+            let handle = begin_transfer(&snapshot, &mut ledger, args);
+            assert!(poll_transfer(&snapshot, &mut ledger, &handle, 1).is_pending());
+            assert!(matches!(
+                acknowledge(&mut ledger, 1, true),
+                HostEffect::Interaction(InteractReq::Withdraw { name, action })
+                    if name == "Lobster" && action == expected
+            ));
+            assert!(matches!(
+                poll_transfer(&snapshot, &mut ledger, &handle, 2),
+                Poll::Ready(Ok(TransferValue::Bool(true)))
+            ));
+            assert!(
+                ledger.as_ref().unwrap().outbox.is_empty(),
+                "exactly one label click"
+            );
+        }
+    }
 }
