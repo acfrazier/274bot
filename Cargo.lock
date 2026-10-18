@@ -3055,6 +3055,7 @@ dependencies = [
  "allocation-counter",
  "api",
  "client",
+ "libc",
  "png",
  "serde",
  "serde_json",
