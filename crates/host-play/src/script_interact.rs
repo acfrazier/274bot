@@ -184,7 +184,7 @@ pub(crate) fn dispatch_script_interact(
             here,
             navs,
             world,
-            state: &state,
+            state: state.as_ref(),
             bank: Some(&bank),
             name,
             compatibility_scope: Some(api::identity::Scope::Slot(
@@ -276,7 +276,7 @@ where
             here,
             navs,
             world,
-            state: &state,
+            state: state.as_ref(),
             bank,
             name,
             compatibility_scope: None,
@@ -290,7 +290,9 @@ where
 /// The slot context of one interaction dispatch pass. An observe pass makes
 /// it once and every dispatch in that pass reads it; the driver stays a
 /// separate argument because the pass also writes through it between
-/// dispatches.
+/// dispatches. `state` borrows the frame's gating facts: only an arm that
+/// queues work (walk, bank selection, route inspection) copies them, and the
+/// queued request keeps that copy of this frame.
 #[derive(Clone, Copy)]
 pub(crate) struct InteractContext<'a> {
     pub(crate) snapshot: &'a GameSnapshot,
@@ -298,7 +300,7 @@ pub(crate) struct InteractContext<'a> {
     pub(crate) here: Option<(i32, i32, i32)>,
     pub(crate) navs: &'a Arc<Mutex<HashMap<String, NavBot>>>,
     pub(crate) world: &'a Option<Arc<NavWorld>>,
-    pub(crate) state: &'a Option<WorldState>,
+    pub(crate) state: Option<&'a WorldState>,
     pub(crate) bank: Option<&'a RwLock<BankMemory>>,
     pub(crate) name: &'a str,
     pub(crate) compatibility_scope: Option<api::identity::Scope>,
@@ -500,7 +502,7 @@ where
                     world: world.clone(),
                     navs: Arc::clone(navs),
                     name: name.to_string(),
-                    state: state.clone(),
+                    state: state.cloned(),
                     bank: super::slot_bank_memory::planner_rows(bank),
                 };
                 let queued = arm.queue_fixed_route_in_snapshot_avoiding(
@@ -565,7 +567,7 @@ where
                     world: world.clone(),
                     navs: Arc::clone(navs),
                     name: name.to_string(),
-                    state: state.clone(),
+                    state: state.cloned(),
                     bank: super::slot_bank_memory::planner_rows(bank),
                 };
                 let queued = arm.queue_route_in_snapshot_avoiding(
@@ -625,7 +627,7 @@ where
                         name,
                         scope,
                         world,
-                        state.clone(),
+                        state,
                         WorldTile { x, z, level },
                         allow_wilderness,
                         request_id,
@@ -648,7 +650,7 @@ where
                         name,
                         scope,
                         world,
-                        state.clone(),
+                        state,
                         WorldTile { x, z, level },
                         snapshot
                             .stats()
@@ -695,7 +697,7 @@ where
                 };
                 let to = WorldTile { x, z, level };
                 let empty_state = WorldState::empty();
-                let route_state = state.as_ref().unwrap_or(&empty_state);
+                let route_state = state.unwrap_or(&empty_state);
                 let opts = super::walk_permissions::compiled_options(
                     navs,
                     name,
@@ -734,7 +736,7 @@ where
                     navs,
                     name,
                     world,
-                    state.clone(),
+                    state,
                     super::slot_bank_memory::planner_rows(bank),
                     cache.clone(),
                     obj_names_arc.clone(),
