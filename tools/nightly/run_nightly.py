@@ -41,7 +41,7 @@ import time
 import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 IS_WINDOWS = os.name == "nt"
@@ -96,10 +96,18 @@ HTTP_PORT = int(os.environ.get("NIGHTLY_HTTP_PORT", "3080"))
 ENGINE_CRC_SHA256 = os.environ.get(
     "NIGHTLY_ENGINE_CRC_SHA256", "687190c8ef08bb94a1422f4262d62bb7a76a55dfe0634ea43f0e63e0235dc623")
 ENGINE_LABEL = os.environ.get("NIGHTLY_ENGINE_LABEL", "Engine B")
-# Fresh exact-commit clone per run from local bare mirrors (Windows), instead of
-# one reused checkout per branch (malbec).
+# Fresh exact-commit clone per run from local bare mirrors (Windows) into the
+# branch's one stable tree path, instead of one reused checkout per branch
+# (malbec). The stable path means Cargo overwrites last night's artefacts
+# instead of adding a new set for every new source path.
 FRESH_TREES = env_flag("NIGHTLY_FRESH_TREES", IS_WINDOWS)
-KEEP_TREES = int(os.environ.get("NIGHTLY_KEEP_TREES", "2"))
+# Disk guard: a Cargo target directory bigger than the cap is removed before
+# the lanes and before the build, and the night is UNAVAILABLE when the drive
+# still has less free space than the floor after that. 0 turns a check off.
+# The Linux VM's disk is 100 GB in total and its tree path is already stable,
+# so both checks are off there unless the variables are set.
+TARGET_CAP_GB = int(os.environ.get("NIGHTLY_TARGET_CAP_GB", "40" if IS_WINDOWS else "0"))
+MIN_FREE_GB = int(os.environ.get("NIGHTLY_MIN_FREE_GB", "100" if IS_WINDOWS else "0"))
 # The BotTest console session is required for the GPU and the panel windows.
 REQUIRE_CONSOLE = env_flag("NIGHTLY_REQUIRE_CONSOLE", IS_WINDOWS)
 STEPS = [s for s in os.environ.get("NIGHTLY_STEPS", "lanes,panel,tui" if IS_WINDOWS else "tui").split(",") if s]
@@ -267,16 +275,181 @@ def git_env() -> dict:
     return dict(os.environ, GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
 
 
-def rmtree(path: Path) -> None:
-    """Remove a tree, including git's read-only object files on Windows."""
-    def retry(func, target, _exc):
-        os.chmod(target, stat.S_IWRITE)
-        func(target)
-    if path.exists():
-        if sys.version_info >= (3, 12):
-            shutil.rmtree(path, onexc=retry)
+# A Windows stat result has this bit in `st_file_attributes` for a junction,
+# a directory symlink or any other reparse point.
+_REPARSE_POINT = stat.FILE_ATTRIBUTE_REPARSE_POINT
+
+
+def _kind(info: os.stat_result, link: bool) -> str:
+    """"link", "dir" or "file" for one `lstat` result.
+
+    `link` is the caller's symlink and junction check. A directory with the
+    Windows reparse-point bit is a link too. The disk code never walks into
+    a link, never measures what it points to and never changes its
+    permissions. It removes the link itself.
+    """
+    if link or stat.S_ISLNK(info.st_mode):
+        return "link"
+    if stat.S_ISDIR(info.st_mode):
+        if getattr(info, "st_file_attributes", 0) & _REPARSE_POINT:
+            return "link"
+        return "dir"
+    return "file"
+
+
+def _path_kind(path: Path) -> tuple[str, os.stat_result]:
+    isjunction = getattr(os.path, "isjunction", None)
+    info = os.lstat(path)
+    return _kind(info, os.path.islink(path) or bool(isjunction and isjunction(path))), info
+
+
+def _entry_kind(entry: os.DirEntry) -> tuple[str, os.stat_result]:
+    is_junction = getattr(entry, "is_junction", None)
+    info = entry.stat(follow_symlinks=False)
+    return _kind(info, entry.is_symlink() or bool(is_junction and is_junction())), info
+
+
+def _walk(top: Path, top_info: os.stat_result, *, prepare: Callable[[Path], None] | None = None,
+          onerror: Callable[[OSError], None] | None = None
+          ) -> Iterator[tuple[Path, str, os.stat_result]]:
+    """Yield each entry under the real directory `top`, then `top` itself.
+
+    This is the one traversal that `dir_size` and `rmtree` share. Each item
+    is `(path, kind, lstat result)`, with kind "link", "dir" or "file" (see
+    `_kind`). A directory comes after everything in it, so the caller can
+    remove each item when it arrives. The walk goes only into real
+    directories. A symlink or a junction comes out as one "link" item and
+    the walk never goes into it, so every item is inside `top`.
+
+    `prepare(folder)` runs on each real directory before the walk lists it.
+    An error from `prepare`, from a listing or from an `lstat` goes to
+    `onerror`, and the walk continues without that part. With no `onerror`
+    the error is raised. An entry that is gone before the walk reaches it
+    is skipped.
+    """
+    def listing(folder: Path) -> Iterator[os.DirEntry]:
+        try:
+            if prepare is not None:
+                prepare(folder)
+            with os.scandir(folder) as entries:
+                return iter(list(entries))
+        except FileNotFoundError:
+            return iter(())
+        except OSError as error:
+            if onerror is None:
+                raise
+            onerror(error)
+            return iter(())
+
+    # An explicit stack, so a deep tree cannot raise RecursionError.
+    stack = [(top, top_info, listing(top))]
+    while stack:
+        folder, info, entries = stack[-1]
+        entry = next(entries, None)
+        if entry is None:
+            stack.pop()
+            yield folder, "dir", info
+            continue
+        path = Path(entry.path)
+        try:
+            kind, child_info = _entry_kind(entry)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            if onerror is None:
+                raise
+            onerror(error)
+            continue
+        if kind == "dir":
+            stack.append((path, child_info, listing(path)))
         else:
-            shutil.rmtree(path, onerror=retry)
+            yield path, kind, child_info
+
+
+def _add_permissions(path: Path, bits: int) -> None:
+    """Add `bits` to the mode of one real file or directory.
+
+    `lstat` decides what `path` is. A link is refused, so a fix never goes
+    through a symlink or a junction to the thing that it points to. The
+    callers pass only `rmtree`'s own path or paths that `_walk` reached, so
+    every fix is inside the tree that is being removed. Bits are only
+    added, never taken away.
+    """
+    kind, info = _path_kind(path)
+    if kind == "link":
+        raise OSError(f"refusing to change permissions through a link: {path}")
+    mode = stat.S_IMODE(info.st_mode)
+    if mode & bits == bits:
+        return
+    if os.chmod in os.supports_follow_symlinks:
+        os.chmod(path, mode | bits, follow_symlinks=False)
+    else:
+        os.chmod(path, mode | bits)
+
+
+def _make_listable(folder: Path) -> None:
+    # Owner read, write and search: list the folder and remove its entries.
+    _add_permissions(folder, stat.S_IRWXU)
+
+
+def _remove_link(path: Path, info: os.stat_result) -> None:
+    """Remove a symlink or a junction itself, never the thing it points to."""
+    if stat.S_ISDIR(info.st_mode):
+        # A Windows junction or another directory reparse point. rmdir
+        # removes only the link. It never removes the contents of a folder.
+        os.rmdir(path)
+    else:
+        os.unlink(path)
+
+
+def _remove_file(path: Path) -> None:
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        return
+    except OSError:
+        # Windows refuses to unlink a read-only file (git's object files).
+        # Add owner write and try once more.
+        _add_permissions(path, stat.S_IWRITE)
+        os.unlink(path)
+
+
+def rmtree(path: Path) -> None:
+    """Remove a file, a link or a directory tree.
+
+    The removal uses `_walk`, so it never goes into a symlink or a junction,
+    at the top or nested. Each link is removed as a link, and nothing
+    outside `path` is changed or removed. Each real directory gets owner
+    read, write and search before the walk lists it. A file that cannot be
+    unlinked gets owner write and one more try. The removal continues past
+    a failure and removes what it can. Raise one OSError when any part
+    could not be removed. Return only when `path` no longer exists.
+    """
+    try:
+        kind, info = _path_kind(path)
+    except FileNotFoundError:
+        return
+    failures: list[OSError] = []
+    if kind == "dir":
+        items = _walk(path, info, prepare=_make_listable, onerror=failures.append)
+    else:
+        items = iter([(path, kind, info)])
+    for item, item_kind, item_info in items:
+        try:
+            if item_kind == "link":
+                _remove_link(item, item_info)
+            elif item_kind == "file":
+                _remove_file(item)
+            else:
+                os.rmdir(item)
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            failures.append(error)
+    if failures:
+        raise OSError(f"could not remove {path}: {failures[0]}")
+    if os.path.lexists(path):
+        raise OSError(f"could not remove {path}: the path still exists")
 
 
 def read_list(path: Path) -> list[str]:
@@ -315,6 +488,136 @@ def catalog_cells(tree: Path) -> list[str]:
     return names
 
 
+# ---------------------------------------------------------------- disk guard
+
+GB = 1024 ** 3
+
+
+def fmt_gb(nbytes: int) -> str:
+    return f"{nbytes / GB:.1f}"
+
+
+def dir_size(path: Path) -> int:
+    """Total size of the real files under `path` in bytes; 0 when it does not exist.
+
+    The size comes from `_walk`, the same traversal that `rmtree` uses. It
+    never follows a symlink or a junction. A link counts as 0 bytes, at the
+    top or nested, and the thing that it points to is not measured. Raise
+    OSError when any part of the tree cannot be listed or measured. A
+    partial total is never returned as if it were the true size.
+    """
+    try:
+        kind, info = _path_kind(path)
+    except FileNotFoundError:
+        return 0
+    if kind == "link":
+        return 0
+    if kind == "file":
+        return info.st_size
+    return sum(item_info.st_size for _item, item_kind, item_info in _walk(path, info)
+               if item_kind == "file")
+
+
+def free_bytes(path: Path) -> int:
+    """Free space on the drive that holds `path` (or its nearest existing parent)."""
+    probe = path
+    while not probe.exists() and probe.parent != probe:
+        probe = probe.parent
+    return shutil.disk_usage(probe).free
+
+
+def disk_guard(targets: list[Path], cap_bytes: int | None = None, min_free_bytes: int | None = None,
+               *, size_of=None, free_of=None, remove=None) -> str | None:
+    """Keep the Cargo target directories from filling the disk.
+
+    Remove a target that is bigger than the cap (`NIGHTLY_TARGET_CAP_GB`).
+    A target whose size cannot be read completely counts as bigger than
+    the cap and is removed too. The target folders are disposable Cargo
+    output, and a partial size must never keep an over-cap folder alive.
+    If the drive then still has less free space than the floor
+    (`NIGHTLY_MIN_FREE_GB`), remove the remaining targets too, the first one
+    first. Return the reason the night is UNAVAILABLE when free space is
+    still below the floor after that, else None. A cap or floor of 0 turns
+    that check off (the Linux defaults, so nothing is measured or removed).
+    Raise OSError when a removal fails or leaves the target in place.
+    `guard_disk` turns that error into an UNAVAILABLE night.
+    """
+    if cap_bytes is None:
+        cap_bytes = TARGET_CAP_GB * GB
+    if min_free_bytes is None:
+        min_free_bytes = MIN_FREE_GB * GB
+    if cap_bytes <= 0 and min_free_bytes <= 0:
+        return None
+    size_of = size_of or dir_size
+    free_of = free_of or free_bytes
+    remove = remove or rmtree
+    free = free_of(targets[0])
+    removed: set[Path] = set()
+
+    cap_text = f"{fmt_gb(cap_bytes)} GB" if cap_bytes > 0 else "off"
+    floor_text = f"{fmt_gb(min_free_bytes)} GB" if min_free_bytes > 0 else "off"
+
+    def drop(target: Path, size: int | None, why: str) -> None:
+        nonlocal free
+        before = free
+        remove(target)
+        if os.path.lexists(target):
+            raise OSError(f"disk guard could not remove {target}: the path still exists")
+        removed.add(target)
+        free = free_of(target)
+        size_text = f"{fmt_gb(size)} GB" if size is not None else "unknown"
+        log(f"disk guard: removed {target} ({why}: size {size_text}, cap {cap_text}, "
+            f"free {fmt_gb(before)} -> {fmt_gb(free)} GB, floor {floor_text})")
+
+    for target in targets:
+        if cap_bytes > 0 and os.path.lexists(target):
+            try:
+                size = size_of(target)
+            except OSError:
+                drop(target, None, "size could not be read, counted as over the cap")
+                continue
+            if size > cap_bytes:
+                drop(target, size, "over the cap")
+    for target in targets:
+        if min_free_bytes <= 0 or free >= min_free_bytes:
+            break
+        if target not in removed and os.path.lexists(target):
+            try:
+                size = size_of(target)
+            except OSError:
+                size = None
+            drop(target, size, "free space below the floor")
+    if min_free_bytes > 0 and free < min_free_bytes:
+        return (f"not enough free disk space: {fmt_gb(free)} GB free on the drive that holds "
+                f"{targets[0]}, the floor is {fmt_gb(min_free_bytes)} GB (NIGHTLY_MIN_FREE_GB); "
+                "nothing was built")
+    return None
+
+
+def tree_path(branch: str) -> Path:
+    """The branch's one stable tree path, the same every night."""
+    return ROOT / "trees" / slug(branch)
+
+
+def branch_targets(branch: str) -> list[Path]:
+    """The Cargo target directories of one branch: CI lanes, release build, nav bootstrap."""
+    targets = ROOT / "target"
+    return [targets / f"{slug(branch)}-ci", targets / slug(branch), targets / "navskip"]
+
+
+def guard_disk(branch: str, primary: Path) -> str | None:
+    """`disk_guard` over the branch's targets, the next step's target (`primary`) first.
+
+    A guard error (for example a target folder that cannot be removed)
+    fails closed: the night is UNAVAILABLE with that reason instead of
+    building into a disk the guard could not measure or clear.
+    """
+    try:
+        return disk_guard([primary] + [target for target in branch_targets(branch) if target != primary])
+    except OSError as error:
+        return f"disk guard failed: {error}; nothing was built"
+
+
 # ---------------------------------------------------------------- sources
 
 
@@ -348,19 +651,23 @@ def has_commit(repo: Path, sha: str) -> bool:
 
 
 def fresh_tree(branch: str, build_log: Path) -> tuple[Path, str, str]:
-    """Fetch the branch tip into the bare mirrors and clone it into a new tree.
+    """Fetch the branch tip into the bare mirrors and clone it into the tree.
 
-    The tree holds exactly that commit and the pinned submodule commits; it is
-    never reused. Only the mirrors persist between nights.
+    The tree holds exactly that commit and the pinned submodule commits.
+    Last night's tree is removed and the clone is made again at the same
+    stable path (`trees/<branch>`), so no stale file can survive and Cargo
+    sees the same package paths every night and overwrites its artefacts
+    instead of adding a new set per source path. Only the mirrors and the
+    one tree per branch persist between nights.
     """
     env = git_env()
     mirrors = ROOT / "mirror"
     root_mirror = mirrors / "274bot.git"
     mirror_fetch(REPO_URL, root_mirror, [f"+refs/heads/{branch}:refs/heads/{branch}"], build_log)
     full = run(git_cmd("-C", str(root_mirror), "rev-parse", f"refs/heads/{branch}^{{commit}}")).stdout.strip()
-    stamp = now().strftime("%Y%m%dT%H%M%S")
-    tree = ROOT / "trees" / f"{slug(branch)}-{full[:9]}-{stamp}"
+    tree = tree_path(branch)
     tree.parent.mkdir(parents=True, exist_ok=True)
+    rmtree(tree)
     run(git_cmd("clone", "-q", "--no-checkout", str(root_mirror), str(tree)), env=env, log_to=build_log)
     git = git_cmd("-C", str(tree))
     run(git + ["checkout", "-q", "--detach", full], env=env, log_to=build_log)
@@ -392,13 +699,19 @@ def fresh_tree(branch: str, build_log: Path) -> tuple[Path, str, str]:
     return tree, full, full[:9]
 
 
-def prune_trees() -> None:
+def prune_trees(branches: list[str]) -> None:
+    """Remove every tree that is not a branch's stable tree path.
+
+    This removes the per-commit trees (`trees/<branch>-<commit>-<stamp>`) the
+    old fresh-tree scheme left behind, and the stable tree of a branch that
+    is no longer tested. A removed tree is cloned again on its next night.
+    """
+    keep = {slug(branch) for branch in branches}
     trees = ROOT / "trees"
-    entries = sorted((p for p in trees.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime) \
-        if trees.is_dir() else []
-    for entry in entries[:-KEEP_TREES] if KEEP_TREES > 0 else entries:
-        rmtree(entry)
-        log(f"removed tree {entry.name} (keeping the last {KEEP_TREES})")
+    for entry in trees.iterdir() if trees.is_dir() else []:
+        if entry.is_dir() and entry.name not in keep:
+            rmtree(entry)
+            log(f"removed tree {entry.name} (not a branch's stable tree path)")
 
 
 def build_env(target: Path, **extra: str) -> dict:
@@ -1208,11 +1521,15 @@ def run_dir_for(branch: str, commit: str, date: dt.date | None = None) -> Path:
 
 
 def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: list[str] | None,
-               unavailable: str | None = None, date: dt.date | None = None) -> Path:
+               unavailable: str | None = None, date: dt.date | None = None,
+               summary_only: bool = False) -> Path:
     """One branch: sources, the steps in order, summary, DONE.
 
     `unavailable` writes a complete run where every lane and cell is
     UNAVAILABLE with that reason (nothing is built or started).
+    `summary_only` is the logon catch-up for a missed night. It writes
+    that same UNAVAILABLE run and does no other work. In particular it
+    does not run the disk guard. See the guard call below.
     """
     ident = platform_id()
     target = ROOT / "target" / slug(branch)
@@ -1234,11 +1551,26 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         session = {"status": detail, **facts}
         if not ok:
             unavailable = detail
+    # The disk guard runs before the sources too, so a full disk cannot fail
+    # the clone that the UNAVAILABLE summary needs for its cell list. A
+    # summary-only catch-up skips the guard. Catch-up runs in a 30-minute
+    # task (windows/install-tasks.ps1). A large removal there could be
+    # killed at that limit before the summary exists, and the missed night
+    # would leave no record at all. Catch-up builds nothing, so it needs no
+    # cleared disk. The next scheduled night runs the guard again, inside
+    # its 11-hour task, and removes any over-cap target then.
+    if summary_only:
+        log(f"{branch}: summary only; the disk guard does not run")
+        disk_reason = None
+    else:
+        disk_reason = guard_disk(branch, ROOT / "target" / f"{slug(branch)}-ci" if "lanes" in STEPS else target)
+    if unavailable is None:
+        unavailable = disk_reason
     try:
         if FRESH_TREES:
             tree, commit_full, commit = fresh_tree(branch, build_log)
         else:
-            tree = ROOT / "trees" / slug(branch)
+            tree = tree_path(branch)
             commit_full, commit = update_tree(branch, tree, build_log)
     except (subprocess.SubprocessError, OSError, RuntimeError, IndexError) as error:
         build_ok, build_error = False, f"sources: {error}"
@@ -1284,18 +1616,27 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         elif tree is None or not build_ok:
             lanes, step["status"] = lane_rows("NOT_RUN", "sources failed; see build.log"), "not run: sources failed"
         else:
-            ok, detail, _ = console_session()
-            if not ok:
-                lanes, step["status"] = lane_rows("UNAVAILABLE", detail), f"unavailable: {detail}"
+            disk_reason = guard_disk(branch, ROOT / "target" / f"{slug(branch)}-ci")
+            if disk_reason:
+                unavailable = disk_reason
+                lanes, step["status"] = lane_rows("UNAVAILABLE", disk_reason), f"unavailable: {disk_reason}"
             else:
-                copy_engine(run_dir)
-                lanes = run_lanes(tree, run_dir, work, lane_base, step_deadline("lanes", step_start), branch,
-                                  only_lanes)
-                step["status"] = "ran: " + counts_text(count(lanes))
+                ok, detail, _ = console_session()
+                if not ok:
+                    lanes, step["status"] = lane_rows("UNAVAILABLE", detail), f"unavailable: {detail}"
+                else:
+                    copy_engine(run_dir)
+                    lanes = run_lanes(tree, run_dir, work, lane_base, step_deadline("lanes", step_start),
+                                      branch, only_lanes)
+                    step["status"] = "ran: " + counts_text(count(lanes))
         step["wall_s"] = round(time.monotonic() - step_start, 1)
 
     cell_steps = [name for name in STEPS if name in ("panel", "tui")]
     build_ran = bool(cell_steps and not unavailable and tree is not None and build_ok)
+    if build_ran:
+        disk_reason = guard_disk(branch, target)
+        if disk_reason:
+            unavailable, build_ran = disk_reason, False
     if build_ran:
         build_started = time.monotonic()
         try:
@@ -1465,7 +1806,8 @@ def main() -> int:
                   f"(the interactive task cannot run without it; recorded at logon {moment.isoformat(timespec='seconds')})")
         wtext(started_marker(night), moment.isoformat(timespec="seconds") + " catch-up\n")
         for branch in branches:
-            run_branch(branch, args.parallel, only, only_lanes, unavailable=reason, date=night)
+            run_branch(branch, args.parallel, only, only_lanes, unavailable=reason, date=night,
+                       summary_only=True)
         return 0
     wtext(started_marker(night_of(moment)), moment.isoformat(timespec="seconds") + "\n")
     global _run_deadline
@@ -1477,7 +1819,7 @@ def main() -> int:
             break
         run_branch(branch, args.parallel, only, only_lanes)
     if FRESH_TREES:
-        prune_trees()
+        prune_trees(branches)
     prune_local()
     log("nightly done")
     return 0
