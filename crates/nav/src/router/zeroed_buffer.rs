@@ -421,7 +421,7 @@ mod tests {
     #[ignore = "run alone on macOS for native phys_footprint measurement"]
     fn mapped_lazy_commit_releases_phys_footprint_after_drop() {
         const RECORDS: usize = 4_000_002;
-        const MAPPED_PAYLOAD: usize = RECORDS * size_of::<PackedSearchSlot>();
+        const MAPPED_PAYLOAD: u64 = (RECORDS * size_of::<PackedSearchSlot>()) as u64;
         const TOUCH_LEN: usize = (16 * 1024) / size_of::<PackedSearchSlot>();
         const TOUCH_PAYLOAD: usize = TOUCH_LEN * size_of::<PackedSearchSlot>();
 
