@@ -123,10 +123,19 @@ impl BankSlot {
 
     /// Publish a full/delta script page while updating the persistent native view.
     pub fn post_snapshot(&mut self, input: &SnapshotInput<'_>, native: NativeFactsInput<'_>) {
+        let native = self.with_slot_bank_selection(native);
         let bytes = self
             .slot
             .encode_snapshot_delta_with_native(input, native, false);
         self.post_snapshot_bytes(bytes, input, native);
+    }
+
+    fn with_slot_bank_selection(
+        &self,
+        mut native: NativeFactsInput<'_>,
+    ) -> NativeFactsInput<'_> {
+        native.bank_selection = self.slot.bank_selection_input();
+        native
     }
 
     /// Post a caller-encoded delta while keeping the native view independent.
@@ -136,6 +145,7 @@ impl BankSlot {
         input: &SnapshotInput<'_>,
         native: NativeFactsInput<'_>,
     ) {
+        let native = self.with_slot_bank_selection(native);
         assert!(
             self.slot.post_snapshot(bytes),
             "SlotScript rejected snapshot"
@@ -216,6 +226,7 @@ impl BankSlot {
         snapshot: &GameSnapshot,
     ) {
         for _ in 0..8 {
+            let native = self.with_slot_bank_selection(native);
             let bytes = self
                 .slot
                 .encode_snapshot_delta_with_native(input, native, false);

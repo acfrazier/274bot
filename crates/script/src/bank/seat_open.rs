@@ -5,7 +5,7 @@
 
 use crate::bank::compat::{BANK_READY_MS, WALK_BOUND_MS};
 use crate::bank::npc;
-use crate::bank::ops::{self, LocRow};
+use crate::bank::ops;
 use crate::bank::request::{
     BankSeatArgs, BankSeatDestination, BankSeatNpcAccess, BankSeatObjectAccess, BankSeatOperation,
     HOOK_LOG,
@@ -14,7 +14,7 @@ use crate::bank::seat_transfer::{TransferAnswer, TransferCall, TransferHooks};
 use crate::native::{
     ActionContext, ActionError, NativeMachine, WalkAllow, WalkBit, WalkOptions, WalkRequest,
 };
-use crate::native_bank::{BankSelector, Select, SelectArgs, SelectedBank};
+use crate::native_bank::{BankSelector, PickKind, Select, SelectArgs, SelectedBank};
 use crate::shim::InteractReq;
 use api::named_banks::{BankPreferences, NamedBank, NamedBankFacts};
 use api::snapshot::{LocView, WorldTile};
@@ -45,7 +45,10 @@ pub struct OpeningArgs {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpeningValue {
     Bool(bool),
-    Selected(Option<NamedBank>),
+    Selected {
+        bank: Option<NamedBank>,
+        selected: SelectedBank,
+    },
 }
 
 /// One native owner for every I-family bank-opening operation.
@@ -87,10 +90,9 @@ impl NativeMachine for Opening {
                     None => Core::Immediate(OpeningValue::Bool(false)),
                 }
             }
-            BankSeatOperation::OpenNearestWorld => Core::Banking(BankingOpen::new(
-                &args.request,
-                args.preferences,
-            )),
+            BankSeatOperation::OpenNearestWorld => {
+                Core::Banking(BankingOpen::new(&args.request, args.preferences))
+            }
             BankSeatOperation::OpenObject => match args.request.object_access.as_ref() {
                 Some(access) => Core::Object(ObjectOpen::new(object_access(access))),
                 None => Core::Immediate(OpeningValue::Bool(false)),
@@ -105,10 +107,9 @@ impl NativeMachine for Opening {
                 args.request.fallback_access.as_ref().map(object_access),
                 default_access("Bank booth", "Use-quickly"),
             )),
-            BankSeatOperation::Open => Core::Banking(BankingOpen::new(
-                &args.request,
-                args.preferences,
-            )),
+            BankSeatOperation::Open => {
+                Core::Banking(BankingOpen::new(&args.request, args.preferences))
+            }
             BankSeatOperation::Select => {
                 let preferences = effective_preferences(&args.request, args.preferences);
                 match SelectorCore::begin(
@@ -119,7 +120,10 @@ impl NativeMachine for Opening {
                     cx,
                 )? {
                     Some(select) => Core::Select(select),
-                    None => Core::Immediate(OpeningValue::Selected(None)),
+                    None => Core::Immediate(OpeningValue::Selected {
+                        bank: None,
+                        selected: no_candidate_selection(),
+                    }),
                 }
             }
             _ => {
@@ -138,34 +142,31 @@ impl NativeMachine for Opening {
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
-        loop {
-            match self.log.poll(&self.hooks) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(())) => {}
+        match self.log.poll(&self.hooks) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+            Poll::Ready(Ok(())) => {}
+        }
+        match &mut self.core {
+            Core::Immediate(value) => Poll::Ready(Ok(value.clone())),
+            Core::Booth(open) => map_bool(open.poll(cx, &mut self.log, self.log_enabled)),
+            Core::Object(open) => map_bool(open.poll(cx, &mut self.log, self.log_enabled)),
+            Core::Npc(open) => map_bool(open.poll(cx, &mut self.log, self.log_enabled)),
+            Core::Access(open) => map_bool(open.poll(cx, &mut self.log, self.log_enabled)),
+            Core::Banking(open) => {
+                map_bool(open.poll(cx, &self.facts, &mut self.log, self.log_enabled))
             }
-            let result = match &mut self.core {
-                Core::Immediate(value) => Poll::Ready(Ok(value.clone())),
-                Core::Booth(open) => map_bool(open.poll(cx, &mut self.log, self.log_enabled)),
-                Core::Object(open) => map_bool(open.poll(cx, &mut self.log, self.log_enabled)),
-                Core::Npc(open) => map_bool(open.poll(cx, &mut self.log, self.log_enabled)),
-                Core::Access(open) => map_bool(open.poll(cx, &mut self.log, self.log_enabled)),
-                Core::Banking(open) => {
-                    map_bool(open.poll(cx, &self.facts, &mut self.log, self.log_enabled))
+            Core::Select(select) => match select.poll(cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+                Poll::Ready(Ok(selection)) => {
+                    let (bank, selected) = selection.map_or_else(
+                        || (None, no_candidate_selection()),
+                        |selection| (Some(selection.bank), selection.selected),
+                    );
+                    Poll::Ready(Ok(OpeningValue::Selected { bank, selected }))
                 }
-                Core::Select(select) => match select.poll(cx) {
-                    Poll::Pending => Poll::Pending,
-                    Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
-                    Poll::Ready(Ok(selection)) => Poll::Ready(Ok(OpeningValue::Selected(
-                        selection.map(|selection| selection.bank),
-                    ))),
-                },
-            };
-            match result {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(value)) => return Poll::Ready(Ok(value)),
-            }
+            },
         }
     }
 }
@@ -494,7 +495,7 @@ impl NpcOpen {
                 Ok(npc::Step::Done(value)) => return Poll::Ready(Ok(value)),
                 Ok(npc::Step::Note(note)) => {
                     if log_enabled {
-                        log.queue(npc_note(note, &self.args.name), true);
+                        log.queue(note.message(&self.args.name), true);
                         return Poll::Pending;
                     }
                 }
@@ -502,15 +503,6 @@ impl NpcOpen {
                 Err(error) => return Poll::Ready(Err(error)),
             }
         }
-    }
-}
-
-fn npc_note(note: npc::Note, name: &str) -> String {
-    match note {
-        npc::Note::NoBanker => format!("no '{name}' in the scene to bank with"),
-        npc::Note::NoDialogue => format!("'{name}' never opened a dialogue"),
-        npc::Note::NotOpened => format!("could not get {name} to open the bank"),
-        npc::Note::Unloaded => "bank: opened but the item list never arrived".into(),
     }
 }
 
@@ -777,7 +769,8 @@ impl ObjectOpen {
                     if bank_state(cx).0 {
                         self.phase = ObjectPhase::Ready(None);
                     } else if self.default_booth() {
-                        let Some(booth) = nearest_booth(cx) else {
+                        let Some(booth) = BoothOpen::new(BoothMode::Booth, None, None).select(cx)
+                        else {
                             self.queue_log(
                                 format!("no usable '{}' in the scene", self.args.name),
                                 ObjectPhase::Finish(false),
@@ -967,13 +960,13 @@ impl ObjectOpen {
                     let (open, _, _) = bank_state(cx);
                     let chat = native_chat(cx);
                     if chat.can_continue {
-                        let after = if first {
-                            AfterContinue::Approach(loc)
-                        } else {
-                            AfterContinue::Next
-                        };
                         match DialogPress::send(cx, false, chat) {
                             Ok(press) => {
+                                let after = if first {
+                                    AfterContinue::Approach(loc)
+                                } else {
+                                    AfterContinue::Next
+                                };
                                 self.phase = ObjectPhase::Continue {
                                     attempt,
                                     press,
@@ -1594,9 +1587,7 @@ impl BoothOpen {
             .value
             .iter()
             .find(|row| row.id == selected.id && row.tile == selected.tile)?;
-        let reach = snapshot.reach()?;
-        let flood = reach.value.flood_reach()?;
-        let approach = reach.value.booth_approach(loc, &flood)?;
+        let approach = snapshot.booth_approach(loc)?.value;
         Some(booth_approach(approach.can_operate, approach.dest))
     }
 
@@ -1721,6 +1712,16 @@ fn nearest_scene_booth_distance(
 struct SelectionResult {
     bank: NamedBank,
     tile: WorldTile,
+    selected: SelectedBank,
+}
+
+fn no_candidate_selection() -> SelectedBank {
+    SelectedBank {
+        bank_index: u16::MAX,
+        access_tile: WorldTile { x: 0, z: 0, level: 0 },
+        kind: PickKind::NoCandidate,
+        access: None,
+    }
 }
 
 enum WorldTarget {
@@ -1998,13 +1999,7 @@ impl BankingOpen {
                 WorldTarget::Access(Some(AccessSpec::from_wire(&destination))),
             );
         } else if let Some(from) = here {
-            match SelectorCore::begin(
-                Arc::clone(facts),
-                self.preferences,
-                Some(from),
-                true,
-                cx,
-            )? {
+            match SelectorCore::begin(Arc::clone(facts), self.preferences, Some(from), true, cx)? {
                 Some(select) => self.phase = BankingPhase::Select(select),
                 None => self.phase = BankingPhase::Access(self.default_access()),
             }
@@ -2077,7 +2072,7 @@ fn nearest_eligible_bank(
     let snapshot = cx.snapshot();
     let stats = snapshot.stats().map_or(&[][..], |rows| rows.value);
     let quests = snapshot.quest_statuses().map_or(&[][..], |rows| rows.value);
-    eligible_air_fallback(facts, preferences, stats, quests, from)
+    eligible_air_fallback(facts, preferences, stats, quests, from).map(|(_, bank)| bank)
 }
 
 fn eligible_air_fallback(
@@ -2086,12 +2081,18 @@ fn eligible_air_fallback(
     stats: &[api::snapshot::StatView],
     quests: &[api::snapshot::QuestStatusView],
     from: WorldTile,
-) -> Option<NamedBank> {
+) -> Option<(u16, NamedBank)> {
     BankSelector::new(Arc::clone(facts), preferences)
         .eligible_indices(stats, quests)
         .into_iter()
-        .filter_map(|index| facts.banks().get(usize::from(index)).copied())
-        .min_by_key(|bank| air_distance_squared(from, bank.air_tile()))
+        .filter_map(|index| {
+            facts
+                .banks()
+                .get(usize::from(index))
+                .copied()
+                .map(|bank| (index, bank))
+        })
+        .min_by_key(|(_, bank)| air_distance_squared(from, bank.air_tile()))
 }
 
 fn air_distance_squared(a: WorldTile, b: WorldTile) -> u128 {
@@ -2106,7 +2107,7 @@ struct SelectorCore {
     from: WorldTile,
     preferences: BankPreferences,
     options: WalkOptions,
-    fallback: Option<NamedBank>,
+    fallback: Option<(u16, NamedBank)>,
     started: Duration,
 }
 
@@ -2182,6 +2183,7 @@ impl SelectorCore {
                     Err(error) => Poll::Ready(Err(error)),
                 }
             }
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
             Poll::Ready(Ok(selected)) => Poll::Ready(Ok(selected_bank(&self.facts, selected))),
             Poll::Pending => match fallback_selection(self.started, cx.active_now(), self.fallback)
             {
@@ -2198,18 +2200,27 @@ fn fallback_due(started: Duration, now: Duration) -> bool {
 fn fallback_selection(
     started: Duration,
     now: Duration,
-    fallback: Option<NamedBank>,
+    fallback: Option<(u16, NamedBank)>,
 ) -> Option<Option<SelectionResult>> {
     fallback_due(started, now).then(|| {
-        fallback.map(|bank| SelectionResult {
-            tile: bank.air_tile(),
-            bank,
+        fallback.map(|(bank_index, bank)| {
+            let tile = bank.air_tile();
+            SelectionResult {
+                bank,
+                tile,
+                selected: SelectedBank {
+                    bank_index,
+                    access_tile: tile,
+                    kind: PickKind::AirFallback,
+                    access: None,
+                },
+            }
         })
     })
 }
 
 fn selected_bank(facts: &NamedBankFacts, selected: SelectedBank) -> Option<SelectionResult> {
-    if selected.kind == crate::native_bank::PickKind::NoCandidate {
+    if selected.kind == PickKind::NoCandidate {
         return None;
     }
     facts
@@ -2219,6 +2230,7 @@ fn selected_bank(facts: &NamedBankFacts, selected: SelectedBank) -> Option<Selec
         .map(|bank| SelectionResult {
             bank,
             tile: selected.access_tile,
+            selected,
         })
 }
 
@@ -2385,7 +2397,7 @@ mod tests {
         };
         let rows = [row.clone()];
         let selected = ops::booth_named(&rows, "bank booth", "use-quickly", Some(0)).unwrap();
-        assert_eq!(selected.id(), 12);
+        assert_eq!(selected.id, 12);
         let selected = BoothSelection {
             id: 12,
             tile: row.tile,
