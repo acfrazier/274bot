@@ -159,12 +159,11 @@ impl PackedSearchSlotExt for PackedSearchSlot {
     }
 
     fn set_open(&mut self, position: usize) {
-        self.4 = write_u24(
-            (PACKED_OPEN << PACKED_STATUS_SHIFT)
-                | u32::try_from(position).expect(
-                    "table capacity is at most PACKED_ID_MASK, so a heap position fits in 22 bits",
-                ),
+        assert!(
+            position <= u32::MAX as usize,
+            "table capacity is at most PACKED_ID_MASK, so a heap position fits in 22 bits"
         );
+        self.4 = write_u24((PACKED_OPEN << PACKED_STATUS_SHIFT) | position as u32);
     }
 
     fn set_settled(&mut self, parent: u32) {
@@ -576,11 +575,21 @@ impl PackedSearchTable {
         other: u32,
     ) -> Ordering {
         let other = self.slot(other);
-        cost.total_cmp(&other.cost())
-            .then_with(|| other.tile().x.cmp(&tile.x))
-            .then_with(|| other.tile().z.cmp(&tile.z))
-            .then_with(|| other.tile().level.cmp(&tile.level))
-            .then_with(|| other.balance().cmp(&balance))
+        let order = cost.total_cmp(&other.cost());
+        if order != Ordering::Equal {
+            return order;
+        }
+        let other_tile = other.tile();
+        if other_tile.x != tile.x {
+            return other_tile.x.cmp(&tile.x);
+        }
+        if other_tile.z != tile.z {
+            return other_tile.z.cmp(&tile.z);
+        }
+        if other_tile.level != tile.level {
+            return other_tile.level.cmp(&tile.level);
+        }
+        other.balance().cmp(&balance)
     }
 }
 
@@ -1581,6 +1590,68 @@ mod packed_search_tests {
         slot.set_settled(PACKED_ROOT_ID);
         assert_eq!(slot.state(), PACKED_SETTLED);
         assert_eq!(slot.parent(), PACKED_ROOT_ID);
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    #[should_panic(
+        expected = "table capacity is at most PACKED_ID_MASK, so a heap position fits in 22 bits"
+    )]
+    fn packed_slot_rejects_heap_positions_above_u32() {
+        PackedSearchSlot::empty().set_open(u32::MAX as usize + 1);
+    }
+
+    #[test]
+    fn packed_candidate_comparison_preserves_every_ordering_field() {
+        let costs = [
+            f64::NEG_INFINITY,
+            -1.0,
+            -0.0,
+            0.0,
+            1.0,
+            f64::INFINITY,
+            f64::from_bits(0xfff8_0000_0000_0042),
+            f64::from_bits(0x7ff8_0000_0000_0042),
+            f64::from_bits(0x7ff8_0000_0000_0043),
+        ];
+        let tiles = [
+            tile(0),
+            tile(i32::MIN),
+            tile(i32::MAX),
+            WorldTile {
+                x: 0,
+                z: i32::MAX,
+                level: 0,
+            },
+            WorldTile {
+                x: 0,
+                z: 0,
+                level: i32::MIN,
+            },
+        ];
+        let keys: Vec<_> = costs
+            .into_iter()
+            .flat_map(|cost| {
+                tiles.into_iter().flat_map(move |tile| {
+                    [0, u32::from(PACKED_BALANCE_MASK)]
+                        .into_iter()
+                        .map(move |balance| (cost, tile, balance))
+                })
+            })
+            .collect();
+        let mut table = PackedSearchTable::try_new_capacity(1).expect("comparison table");
+        for &(other_cost, other_tile, other_balance) in &keys {
+            table.slots[0].set_key(other_tile, other_balance, 0, 0, other_cost);
+            for &(cost, tile, balance) in &keys {
+                let expected = cost
+                    .total_cmp(&other_cost)
+                    .then_with(|| other_tile.x.cmp(&tile.x))
+                    .then_with(|| other_tile.z.cmp(&tile.z))
+                    .then_with(|| other_tile.level.cmp(&tile.level))
+                    .then_with(|| other_balance.cmp(&balance));
+                assert_eq!(table.compare_candidate(cost, tile, balance, 0), expected);
+            }
+        }
     }
 
     #[test]
