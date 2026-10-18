@@ -4273,7 +4273,10 @@ pub fn find_first_with_avoid(
 }
 
 /// First-goal search with explicit unproven and reachable settle caps.
-#[allow(clippy::too_many_arguments)] // route inputs and explicit settle caps
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The first-goal route inputs plus the two explicit settle caps."
+)]
 pub(crate) fn find_first_with_avoid_budgets(
     collision: &WorldCollision,
     graph: &TransportGraph,
