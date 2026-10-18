@@ -735,10 +735,82 @@ enum SeatPhase: ubyte {
   Complete
 }
 
+enum BankSeatOperation: ubyte {
+  None = 0,
+  OpenBooth,
+  OpenNearest,
+  OpenNearestWorld,
+  OpenObject,
+  OpenNpc,
+  OpenAccess,
+  Open,
+  Select,
+  DepositLabel,
+  WithdrawLabel,
+  WithdrawDelta,
+  WithdrawLoad,
+  DepositAll,
+  DepositKeep,
+  DepositMatch,
+  SetNoteMode,
+  Close,
+  WaitReady,
+  WaitSnapshotAfter,
+  BankNearest
+}
+
+table BankSeatObjectAccess {
+  name: string;
+  op: string;
+  open_first_name: string;
+  open_first_op: string;
+}
+
+table BankSeatNpcAccess {
+  name: string;
+  op: string;
+  choose: string;
+}
+
+table BankSeatDestination {
+  tile: Tile;
+  object_access: BankSeatObjectAccess;
+  npc_access: BankSeatNpcAccess;
+}
+
+table BankSeatArgs {
+  operation: BankSeatOperation = None;
+  item_id: int = null;
+  item_name: string;
+  menu_op: string;
+  quantity: long = null;
+  lands_as_id: int = null;
+  stand: Tile;
+  destination: BankSeatDestination;
+  object_access: BankSeatObjectAccess;
+  npc_access: BankSeatNpcAccess;
+  fallback_access: BankSeatObjectAccess;
+  return_to: Tile;
+  keep_names: [string];
+  timeout_ms: double = null;
+  baseline_generation: double = null;
+  prefer_nearby: bool = null;
+  nearby_radius: double = null;
+  obstacles: [string];
+  allow_wilderness: bool = false;
+  use_mage_bank: bool = null;
+  use_zanaris_bank: bool = null;
+  note_mode: bool = false;
+  deposit_all: bool = false;
+  common_junk: bool = true;
+  hooks_present: uint = 0;
+}
+
 table SeatArgs {
   gather_settings: [SettingRow];
   combat: CombatFight;
   progress_name: string;
+  bank: BankSeatArgs;
 }
 
 table NativeRequest {
