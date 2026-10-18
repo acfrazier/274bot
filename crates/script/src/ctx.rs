@@ -2,6 +2,7 @@
 //! never this raw driver. Walk options are shared with Load and host navigation.
 
 use api::interact::Driver;
+use api::lifecycle::SessionGate;
 pub use api::random::{DetectedRandom, RandomClaim};
 
 /// Walk opt-ins a script may pass to [`ScriptCtx::walk_with`]. All default
@@ -17,12 +18,10 @@ pub struct FindOptions {
     pub allow_bank_fetch: bool,
 }
 
-/// The facts a compiled script reads and only the host can supply: the
-/// selected-revision pin its `Start` carried, the frame's cooperative
-/// interrupt, and the queue its verbs go on. One struct so a ctx literal
-/// that needs none of them says so once ([`CompiledTick::default`]); the
-/// isolate path reads none of it (its own post and fan-out carry the same
-/// facts).
+/// The facts a compiled script reads and only the host can supply: its
+/// selected-revision pin, cooperative interrupt, owner-held session gate,
+/// and enqueue sink. One struct lets a context with no compiled facts use
+/// [`CompiledTick::default`]; the isolate path reads none of these facts.
 #[derive(Default)]
 pub struct CompiledTick<'a> {
     /// The selected-revision generated facts `Play` pinned when this
@@ -43,6 +42,10 @@ pub struct CompiledTick<'a> {
     /// Packed world collision for off-scene Area arrival (resource return
     /// stands). `None` in a bare ctx or when the host has no nav pack.
     pub collision: Option<nav::contract::CollisionView<'a>>,
+    /// The actual owner-held session gate. The host borrows it from
+    /// `SlotArm.lifecycle` for a live compiled callback; bare contexts use
+    /// `None`, and the isolate path does not read it.
+    pub service_gate: Option<&'a SessionGate>,
     /// The frame's cooperative interrupt: the guardian's `hold` or the
     /// detected-`ours` flag — the same pair `EventSignal.pending()` reads.
     /// `false` on a frame neither gate fired.
@@ -97,9 +100,10 @@ pub struct ScriptCtx<'a> {
     /// [`ScriptCtx::has_item`].
     pub obj_names: Option<&'a api::obj_names::ObjNames>,
     /// The compiled-path facts: the `Start` pin, this frame's cooperative
-    /// interrupt, and the slot's enqueue sink. The host fills the first two
-    /// around every observed tick and [`crate::slot::SlotScript`] installs
-    /// the sink around the compiled tick; the isolate path never reads it.
+    /// interrupt, the slot's enqueue sink, and its owner-held session gate.
+    /// The host supplies available frame facts and borrows the real gate for
+    /// live compiled callbacks. [`crate::slot::SlotScript`] installs the sink.
+    /// The isolate path ignores these facts.
     pub compiled: CompiledTick<'a>,
 }
 

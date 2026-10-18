@@ -7,6 +7,7 @@
 
 pub mod curated;
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fmt;
 use std::mem::{align_of, size_of};
@@ -26,6 +27,8 @@ pub const NO_SHAPE: u16 = u16::MAX;
 pub const MAX_ZONE_KEYS: usize = 8;
 /// Frozen compat `avoidZones` catalog names, shared by script and host validation.
 pub const AVOID_CATALOG_IDS: &[&str] = &["white-wolf-mountain", "draynor-jail-guards"];
+const BLOCKED_DETAIL_PREFIX: &str = "blocked by danger zones: ";
+
 const BUCKET_SIDE: i32 = 8;
 const MAX_GRID_SIDE: u32 = 16_384;
 
@@ -352,6 +355,8 @@ pub struct ZoneTable {
     origin: WorldTile,
     cols: u32,
     rows: u32,
+    blocking_detail_bytes_bound: usize,
+    max_bucket_zones: usize,
 }
 
 /// Malformed or internally inconsistent zone-table input.
@@ -436,6 +441,20 @@ impl ZoneTable {
             buckets,
             entries,
         } = build_index(&zones, origin, cols, rows)?;
+        // Every tile query examines only one bucket. Later predicates only
+        // remove candidates, so this also bounds each goal's zone-ID row.
+        let max_bucket_zones = buckets
+            .iter()
+            .enumerate()
+            .map(|(index, &(_, start))| {
+                let end = buckets
+                    .get(index + 1)
+                    .map_or(entries.len(), |&(_, start)| start as usize);
+                end - start as usize
+            })
+            .max()
+            .unwrap_or(0);
+        let blocking_detail_bytes_bound = blocking_detail_bytes_bound(&zones, &kinds, &groups);
         Ok(Self {
             zones: zones.into_boxed_slice(),
             kinds: kinds.into_boxed_slice(),
@@ -448,12 +467,19 @@ impl ZoneTable {
             origin,
             cols,
             rows,
+            blocking_detail_bytes_bound,
+            max_bucket_zones,
         })
     }
 
     /// Zone rows in deterministic pack order.
     pub fn zones(&self) -> &[Zone] {
         &self.zones
+    }
+
+    /// Content-derived upper bound on zone IDs returned for any one tile.
+    pub(crate) const fn max_zones_per_tile(&self) -> usize {
+        self.max_bucket_zones
     }
 
     /// Packed kind descriptions.
@@ -591,6 +617,104 @@ impl ZoneTable {
                     })
             }
         }
+    }
+    /// The cached upper bound for any blocked-zone diagnostic from this table.
+    ///
+    /// The bound includes the fixed prefix and every ungrouped zone and group.
+    /// It requires no scan or allocation.
+    pub fn blocking_detail_bytes_bound(&self) -> usize {
+        self.blocking_detail_bytes_bound
+    }
+
+    /// Exact byte length of one formatted key detail, without allocating.
+    pub fn blocking_detail_item_bytes(&self, key: ZoneKey) -> usize {
+        let lengths = match key {
+            ZoneKey::Group(index) => self
+                .groups
+                .get(usize::from(index))
+                .map(|group| (group.label.len(), group.id.len())),
+            ZoneKey::Zone(index) => self.zones.get(usize::from(index)).and_then(|zone| {
+                self.kinds
+                    .get(usize::from(zone.kind))
+                    .map(|kind| zone_text_bytes(zone, kind))
+            }),
+        };
+        lengths.map_or(3, |(label, name)| {
+            label.saturating_add(name).saturating_add(3)
+        })
+    }
+
+    /// Append one formatted key detail without temporary strings.
+    pub fn write_blocking_detail_item(&self, key: ZoneKey, output: &mut String) -> fmt::Result {
+        use fmt::Write as _;
+
+        self.write_label(key, output)?;
+        output.write_str(" [")?;
+        self.write_name(key, output)?;
+        output.write_char(']')
+    }
+
+    /// Append the exact existing blocked-zone diagnostic prefix.
+    pub fn write_blocking_detail_prefix(&self, output: &mut String) -> fmt::Result {
+        use fmt::Write as _;
+
+        output.write_str(BLOCKED_DETAIL_PREFIX)
+    }
+
+    fn write_label(&self, key: ZoneKey, output: &mut String) -> fmt::Result {
+        use fmt::Write as _;
+
+        match key {
+            ZoneKey::Group(index) => {
+                if let Some(group) = self.groups.get(usize::from(index)) {
+                    output.write_str(&group.label)?;
+                }
+            }
+            ZoneKey::Zone(index) => {
+                if let Some(zone) = self.zones.get(usize::from(index)) {
+                    if let Some(kind) = self.kinds.get(usize::from(zone.kind)) {
+                        if kind.npc_id < 0 {
+                            output.write_str(&kind.label)?;
+                        } else {
+                            write!(
+                                output,
+                                "{} at {},{} level {}",
+                                kind.label, zone.spawn_x, zone.spawn_z, zone.level
+                            )?;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn write_name(&self, key: ZoneKey, output: &mut String) -> fmt::Result {
+        use fmt::Write as _;
+
+        match key {
+            ZoneKey::Group(index) => {
+                if let Some(group) = self.groups.get(usize::from(index)) {
+                    output.write_str(&group.id)?;
+                }
+            }
+            ZoneKey::Zone(index) => {
+                if let Some(zone) = self.zones.get(usize::from(index)) {
+                    if let Some(kind) = self.kinds.get(usize::from(zone.kind)) {
+                        if kind.npc_id < 0 {
+                            output.write_str(&kind.id)?;
+                        } else {
+                            write!(
+                                output,
+                                "{}@{},{},{}",
+                                kind.id, zone.spawn_x, zone.spawn_z, zone.level
+                            )?;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// The key that represents a zone in diagnostics. A grouped member maps
@@ -732,6 +856,63 @@ impl ZoneTable {
             .any(|(_, rect)| rect.contains(tile))
     }
 }
+fn blocking_detail_bytes_bound(zones: &[Zone], kinds: &[ZoneKind], groups: &[ZoneGroup]) -> usize {
+    let mut bytes = BLOCKED_DETAIL_PREFIX.len();
+    let mut keys = 0usize;
+    for zone in zones.iter().filter(|zone| zone.group == NO_GROUP) {
+        let Some(kind) = kinds.get(usize::from(zone.kind)) else {
+            continue;
+        };
+        let (label, name) = zone_text_bytes(zone, kind);
+        bytes = bytes.saturating_add(label.saturating_add(name).saturating_add(3));
+        keys = keys.saturating_add(1);
+    }
+    for group in groups {
+        bytes = bytes.saturating_add(
+            group
+                .label
+                .len()
+                .saturating_add(group.id.len())
+                .saturating_add(3),
+        );
+        keys = keys.saturating_add(1);
+    }
+    bytes.saturating_add(keys.saturating_sub(1).saturating_mul(2))
+}
+
+fn zone_text_bytes(zone: &Zone, kind: &ZoneKind) -> (usize, usize) {
+    if kind.npc_id < 0 {
+        (kind.label.len(), kind.id.len())
+    } else {
+        let x = display_i32_bytes(zone.spawn_x);
+        let z = display_i32_bytes(zone.spawn_z);
+        let level = display_i32_bytes(i32::from(zone.level));
+        (
+            kind.label
+                .len()
+                .saturating_add(12)
+                .saturating_add(x)
+                .saturating_add(z)
+                .saturating_add(level),
+            kind.id
+                .len()
+                .saturating_add(3)
+                .saturating_add(x)
+                .saturating_add(z)
+                .saturating_add(level),
+        )
+    }
+}
+
+fn display_i32_bytes(value: i32) -> usize {
+    let mut magnitude = value.unsigned_abs();
+    let mut digits = 1usize;
+    while magnitude >= 10 {
+        magnitude /= 10;
+        digits += 1;
+    }
+    digits + usize::from(value < 0)
+}
 
 /// Iterator over the zones geometrically containing one tile.
 pub struct ZoneAt<'a> {
@@ -755,7 +936,7 @@ impl Iterator for ZoneAt<'_> {
 pub struct ZoneFilter<'a> {
     table: &'a ZoneTable,
     combat: i32,
-    mask: Box<[u64]>,
+    mask: Cow<'a, [u64]>,
     origin: Option<WorldTile>,
     destination: Option<WorldTile>,
     all: bool,
@@ -775,7 +956,7 @@ impl<'a> ZoneFilter<'a> {
             return Self {
                 table,
                 combat: combat_level.unwrap_or(0),
-                mask: Box::new([]),
+                mask: Cow::Owned(Vec::new()),
                 origin: endpoints.first().copied(),
                 destination: endpoints.get(1).copied(),
                 all: true,
@@ -796,8 +977,8 @@ impl<'a> ZoneFilter<'a> {
         }
         Self {
             table,
+            mask: Cow::Owned(mask),
             combat: combat_level.unwrap_or(0),
-            mask: mask.into_boxed_slice(),
             origin: endpoints.first().copied(),
             destination: endpoints.get(1).copied(),
             all: false,
@@ -910,6 +1091,144 @@ impl<'a> ZoneFilter<'a> {
         zone.class == ZoneClass::Always
             || self.combat <= i32::from(zone.cap)
             || wilderness.contains(tile)
+    }
+}
+
+/// Incrementally built, owned zone predicate for a cooperative search.
+/// One `advance` work item expands at most one named zone/group member.
+pub struct ZoneFilterOwned {
+    zone_count: usize,
+    table_address: Option<usize>,
+    combat: i32,
+    mask: Box<[u64]>,
+    origin: Option<WorldTile>,
+    destination: Option<WorldTile>,
+    all: bool,
+    exempt: ZoneExempt,
+    key_index: usize,
+    group_member_index: usize,
+    ready: bool,
+    invalid_table: bool,
+}
+
+impl ZoneFilterOwned {
+    /// Allocate the bounded mask once; group expansion is done by `advance`.
+    pub fn new(
+        zone_count: usize,
+        combat_level: Option<i32>,
+        endpoints: &[WorldTile],
+        exempt: ZoneExempt,
+    ) -> Result<Self, std::collections::TryReserveError> {
+        let mut mask = Vec::new();
+        if !exempt.is_all() && !exempt.keys().is_empty() {
+            mask.try_reserve_exact(zone_count.div_ceil(64))?;
+            mask.resize(zone_count.div_ceil(64), 0);
+        }
+        Ok(Self {
+            zone_count,
+            table_address: None,
+            combat: combat_level.unwrap_or(0),
+            mask: mask.into_boxed_slice(),
+            origin: endpoints.first().copied(),
+            destination: endpoints.get(1).copied(),
+            all: exempt.is_all(),
+            exempt,
+            key_index: 0,
+            group_member_index: 0,
+            ready: exempt.is_all() || exempt.keys().is_empty(),
+            invalid_table: false,
+        })
+    }
+
+    /// Expand at most `max_members` named members; returns true when ready.
+    pub fn advance(&mut self, table: &ZoneTable, max_members: usize) -> bool {
+        let address = table as *const ZoneTable as usize;
+        if self
+            .table_address
+            .is_some_and(|previous| previous != address)
+            || table.zones.len() != self.zone_count
+        {
+            self.invalid_table = true;
+            self.ready = false;
+            return false;
+        }
+        self.table_address = Some(address);
+        if self.invalid_table || self.ready {
+            return self.ready && !self.invalid_table;
+        }
+        let mut processed = 0;
+        while processed < max_members {
+            let Some(&packed) = self.exempt.keys().get(self.key_index) else {
+                self.ready = true;
+                break;
+            };
+            if packed & 0x8000 == 0 {
+                set_mask(&mut self.mask, packed);
+                self.key_index += 1;
+                processed += 1;
+                continue;
+            }
+            let group_index = usize::from(packed & 0x7fff);
+            let member = table
+                .groups
+                .get(group_index)
+                .and_then(|group| group.members.get(self.group_member_index).copied());
+            if let Some(zone) = member {
+                set_mask(&mut self.mask, zone);
+                self.group_member_index += 1;
+                processed += 1;
+            } else {
+                self.key_index += 1;
+                self.group_member_index = 0;
+            }
+        }
+        if self.exempt.keys().get(self.key_index).is_none() {
+            self.ready = true;
+        }
+        self.ready && !self.invalid_table
+    }
+
+    /// Whether all named group members have been expanded.
+    pub fn is_ready(&self) -> bool {
+        self.ready && !self.invalid_table
+    }
+
+    /// Number of rows in the table this filter was sized for.
+    pub fn zone_count(&self) -> usize {
+        self.zone_count
+    }
+
+    /// Select a per-pass completion endpoint without rebuilding the mask.
+    pub fn select_destination(&mut self, destination: Option<WorldTile>) {
+        self.destination = destination;
+    }
+
+    /// Borrow the ready filter only with the exact table used to build it.
+    pub fn view<'a>(&'a self, table: &'a ZoneTable) -> Option<ZoneFilter<'a>> {
+        let address = table as *const ZoneTable as usize;
+        let table_matches = self.table_address == Some(address)
+            || (self.table_address.is_none() && (self.all || self.exempt.keys().is_empty()));
+        if !self.is_ready() || self.zone_count != table.zones.len() || !table_matches {
+            return None;
+        }
+        Some(ZoneFilter {
+            table,
+            combat: self.combat,
+            mask: Cow::Borrowed(&self.mask),
+            origin: self.origin,
+            destination: self.destination,
+            all: self.all,
+        })
+    }
+
+    /// Exact builder storage, including inline state and the mask allocation.
+    pub fn retained_bytes(&self) -> Option<usize> {
+        size_of::<Self>().checked_add(self.mask.len().checked_mul(size_of::<u64>())?)
+    }
+
+    /// Static maximum owned bytes for this table size.
+    pub fn worst_case_bytes(zone_count: usize) -> Option<usize> {
+        size_of::<Self>().checked_add(zone_count.div_ceil(64).checked_mul(size_of::<u64>())?)
     }
 }
 

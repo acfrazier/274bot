@@ -38,6 +38,14 @@ impl Cancel {
 pub(super) enum CombatSeat {
     #[default]
     Idle,
+    AwaitingAdmission {
+        token: u64,
+        run: RunKey,
+        selected: Arc<api::game_data::SelectedGameData>,
+        request: Arc<CombatSessionRequest>,
+        cell: SettleCell,
+        cancelled: Option<InterruptCause>,
+    },
     Preparing {
         token: u64,
         job: Preparation,
@@ -56,7 +64,9 @@ impl CombatSeat {
     pub(super) fn token(&self) -> Option<u64> {
         match self {
             Self::Idle => None,
-            Self::Preparing { token, .. } | Self::Running { token, .. } => Some(*token),
+            Self::AwaitingAdmission { token, .. }
+            | Self::Preparing { token, .. }
+            | Self::Running { token, .. } => Some(*token),
         }
     }
 }
@@ -78,8 +88,38 @@ fn terminal(token: u64, settle: Settle) -> CombatEnd {
     }
 }
 
+fn prepare_combat(
+    run: RunKey,
+    selected: Arc<api::game_data::SelectedGameData>,
+    request: Arc<CombatSessionRequest>,
+    cell: &SettleCell,
+) -> Result<Preparation, compiled::PrepareRunError> {
+    let card_cell = Arc::clone(cell);
+    compiled::prepare_native_run(run, selected, String::new(), move |data| {
+        // Built per session on the preparation worker and dropped with
+        // the card: nothing is retained while no session is live.
+        let tables = CombatTables::build(Arc::clone(data))
+            .map_err(|_| StartError::Unavailable("combat tables unavailable".into()))?;
+        let native = request.resolve(&tables).map_err(StartError::Config)?;
+        let config = PreparedConfig::new(
+            crate::combat_session::CARD_ID,
+            1,
+            1,
+            Arc::new(SettingsBag::new()),
+            (),
+        );
+        let card: Box<dyn Script> =
+            Box::new(CombatSessionCard::new(Arc::new(native), tables, card_cell));
+        Ok((card, config))
+    })
+}
+
 impl SlotScript {
-    pub(super) fn start_api_combat(&mut self, token: u64, request: &Arc<CombatSessionRequest>) {
+    pub(in crate::slot) fn start_api_combat(
+        &mut self,
+        token: u64,
+        request: &Arc<CombatSessionRequest>,
+    ) {
         if !self.load_active() {
             return;
         }
@@ -122,34 +162,16 @@ impl SlotScript {
         let run = RunKey {
             slot: self.incarnation,
             run: generation,
-            session: self.work_epoch,
+            session: self
+                .seat
+                .as_ref()
+                .map_or(self.work_epoch, |seat| seat.run().session),
         };
         let cell = SettleCell::default();
-        let card_cell = Arc::clone(&cell);
-        let request = Arc::clone(request);
-        let prepared = compiled::prepare_native_run(run, selected, String::new(), move |data| {
-            // Built per session on the preparation worker and dropped with
-            // the card: nothing is retained while no session is live.
-            let tables = CombatTables::build(Arc::clone(data))
-                .map_err(|_| StartError::Unavailable("combat tables unavailable".into()))?;
-            let native = request.resolve(&tables).map_err(StartError::Config)?;
-            let config = PreparedConfig::new(
-                crate::combat_session::CARD_ID,
-                1,
-                1,
-                Arc::new(SettingsBag::new()),
-                (),
-            );
-            let card: Box<dyn Script> =
-                Box::new(CombatSessionCard::new(Arc::new(native), tables, card_cell));
-            Ok((card, config))
-        });
+        let prepared = prepare_combat(run, Arc::clone(&selected), Arc::clone(request), &cell);
         match prepared {
             Ok(job) => {
                 self.control_generation = generation;
-                seat.dropped_rows = 0;
-                seat.reported_drops = 0;
-                seat.dropped_owner = None;
                 seat.combat_page = Some(Arc::new(CombatPage {
                     token,
                     phase: GatherPhase::Preparing,
@@ -162,7 +184,23 @@ impl SlotScript {
                     cancelled: None,
                 };
             }
-            Err(error) => refuse(seat, &refusal(error)),
+            Err(compiled::PrepareRunError::Full) => {
+                self.control_generation = generation;
+                seat.combat_page = Some(Arc::new(CombatPage {
+                    token,
+                    phase: GatherPhase::Preparing,
+                    status: None,
+                }));
+                seat.combat = CombatSeat::AwaitingAdmission {
+                    token,
+                    run,
+                    selected,
+                    request: Arc::clone(request),
+                    cell,
+                    cancelled: None,
+                };
+            }
+            Err(compiled::PrepareRunError::Other(error)) => refuse(seat, &refusal(error)),
         }
     }
 
@@ -192,6 +230,7 @@ impl SlotScript {
         seat.combat_page = None;
         seat.combat_terminal = Some(CombatEnd::Stopped { token });
         match state {
+            CombatSeat::AwaitingAdmission { .. } => {}
             CombatSeat::Preparing { job, .. } => seat.retiring.push(job),
             CombatSeat::Running { run, .. } => self.retire_combat_run(run, StopReason::Operator),
             CombatSeat::Idle => unreachable!(),
@@ -199,6 +238,44 @@ impl SlotScript {
     }
 
     pub(super) fn tick_api_combat(&mut self, seat: &mut ApiSeat, ctx: &mut ScriptCtx<'_>) {
+        if let CombatSeat::AwaitingAdmission {
+            token,
+            run,
+            selected,
+            request,
+            cell,
+            cancelled,
+        } = &seat.combat
+        {
+            if let Some(cause) = *cancelled {
+                let token = *token;
+                seat.combat = CombatSeat::Idle;
+                seat.combat_page = None;
+                seat.combat_terminal = Some(CombatEnd::Interrupted { token, cause });
+                return;
+            }
+            match prepare_combat(*run, Arc::clone(selected), Arc::clone(request), cell) {
+                Ok(job) => {
+                    seat.combat = CombatSeat::Preparing {
+                        token: *token,
+                        job,
+                        cell: Arc::clone(cell),
+                        cancelled: None,
+                    };
+                }
+                Err(compiled::PrepareRunError::Full) => return,
+                Err(compiled::PrepareRunError::Other(error)) => {
+                    let token = *token;
+                    seat.combat = CombatSeat::Idle;
+                    seat.combat_page = None;
+                    seat.combat_terminal = Some(CombatEnd::Refused {
+                        token,
+                        reason: refusal(error).into(),
+                    });
+                    return;
+                }
+            }
+        }
         if let CombatSeat::Preparing {
             cancelled: Some(cause),
             ..
@@ -223,7 +300,7 @@ impl SlotScript {
             };
             match job.join() {
                 Ok(mut run) => {
-                    run.rekey_session(self.work_epoch);
+                    run.rekey_session(self.api_session_epoch());
                     seat.combat_page = Some(running_page(token, None));
                     seat.combat = CombatSeat::Running {
                         token,
@@ -254,13 +331,28 @@ impl SlotScript {
                 .get_or_insert_with(|| Arc::new(Mutex::new(RetainedMemory::default())))
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            run.tick(
+            let (result, interacts) = run.tick(
                 ctx,
                 &mut retained,
                 &mut self.native_runtime,
                 None,
                 self.local_state.as_deref(),
-            )
+                crate::slot::compiled::SeatTickPorts {
+                    authority: None,
+                    prompt: self
+                        .seat
+                        .as_mut()
+                        .map(|seat| seat.as_mut() as &mut dyn crate::native::SeatPromptPort),
+                },
+            );
+            #[cfg(feature = "load")]
+            {
+                ctx.compiled.interacts = interacts;
+            }
+            #[cfg(not(feature = "load"))]
+            let _ = interacts;
+            run.finish_tick();
+            result
         };
         let changed = match seat
             .combat_page
@@ -322,7 +414,8 @@ impl SlotScript {
         };
         let (token, run) = match &mut seat.combat {
             CombatSeat::Idle => return,
-            CombatSeat::Preparing { cancelled, .. } => {
+            CombatSeat::AwaitingAdmission { cancelled, .. }
+            | CombatSeat::Preparing { cancelled, .. } => {
                 cancelled.get_or_insert(cancel.cause());
                 return;
             }
@@ -363,6 +456,7 @@ impl SlotScript {
         seat.combat_page = None;
         seat.combat_terminal = None;
         match std::mem::take(&mut seat.combat) {
+            CombatSeat::AwaitingAdmission { .. } => {}
             CombatSeat::Preparing { job, .. } => seat.retiring.push(job),
             CombatSeat::Running { run, .. } => self.retire_combat_run(run, StopReason::Replaced),
             CombatSeat::Idle => {}

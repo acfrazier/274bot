@@ -678,6 +678,7 @@ fn pause_resume_before_escape_dispatch_reissues_walk_without_hazard_click() {
 }
 
 fn tick_with_hold(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64, hold: bool) {
+    slot.seat_guardian_hold(hold);
     slot.on_game_tick(&mut ScriptCtx {
         driver: &mut Rec::default(),
         tick,
@@ -1573,6 +1574,7 @@ fn restart_required_edit_is_not_applied_in_place() {
             Arc::new(bag),
             prepared_selected,
             Arc::default(),
+            None,
         )
     })
     .unwrap()
@@ -1738,6 +1740,7 @@ fn restart_required_edit_supersedes_an_older_boundary_edit() {
                 Arc::new(bag),
                 selected,
                 Arc::default(),
+                None,
             )
         })
         .unwrap()
@@ -1827,6 +1830,7 @@ fn power_to_bank_edit_waits_for_the_live_drop_batch_and_the_next_full_pack() {
             ),
             preparation_selected,
             Arc::default(),
+            None,
         )
     })
     .unwrap()
@@ -2238,6 +2242,7 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
                 Arc::new(settings),
                 selected,
                 facts,
+                None,
             )
         }
     })
@@ -3385,6 +3390,7 @@ fn site_first_walk_resume_and_changed_site_fresh_start_keep_selected_resource_an
             Arc::new(changed),
             worker_selected,
             Arc::default(),
+            None,
         )
     })
     .unwrap()

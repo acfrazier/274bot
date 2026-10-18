@@ -660,7 +660,7 @@ pub(super) fn quarantine_copy(path: &Path, bytes: &[u8], kind: &str) -> io::Resu
         });
         match vault::create_private_file(&candidate, bytes) {
             Ok(()) => {
-                let mut file = File::open(&candidate)?;
+                let mut file = OpenOptions::new().read(true).write(true).open(&candidate)?;
                 let mut held = Vec::with_capacity(bytes.len());
                 (&mut file)
                     .take(bytes.len() as u64 + 1)

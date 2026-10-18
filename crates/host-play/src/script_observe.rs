@@ -13,18 +13,20 @@ use client::config::Cache;
 use host::{ScriptRunPolicy, SlotInput};
 use nav::world::NavWorld;
 use nav::WorldState;
+use script::slot::SeatWalkTerminal;
 use script::{ScriptCtx, SlotScript};
 
 use super::{
     abort_script_walk, apply_watchdog_nav_action, dispatch_native_bank_deposit,
-    dispatch_observed_bank_op, dispatch_script_interact_cached, fill_withdraw_action,
-    pack_cached_reach, recovery_walk_idle, reset_script_nav, resumed_walk, route_inspect,
-    script_slot, take_carried_walk, with_script_snapshot_input_shorts, BankDepositDispatch, NavBot,
-    PostedWalkOutcome, ScriptWall,
+    dispatch_observed_bank_op, dispatch_script_interact_cached_scoped, pack_cached_reach,
+    recovery_walk_idle, reset_script_nav, resumed_walk, route_inspect, script_slot,
+    take_carried_walk, with_script_snapshot_input_shorts, BankDepositDispatch, InteractContext,
+    NavBot, PostedWalkOutcome, ScriptWall,
 };
 use crate::debug_enabled;
 #[cfg(feature = "memory-profile")]
 use crate::memory_diagnostics;
+use crate::play_login::SlotArm;
 #[cfg(test)]
 use std::sync::{Condvar, LazyLock, Weak};
 
@@ -209,12 +211,14 @@ fn emit_script_debug_logs(slot: &mut SlotScript, name: &str) {
 /// isolate post read. Queued effects require that observed frame and pass the
 /// single shared host dispatch fence. Walk find runs off-pump and follow stays
 /// on the slot pump; compiled cards no longer receive direct route closures.
-/// `hold` is the guardian's
-/// random-event freeze: while true the tick is not dispatched (follow is
+/// `hold` is the slot loop's frame hold (the scene is not ready, the
+/// welcome modal is up, the random-event guardian holds, or a session
+/// boundary applies): while true the tick is not dispatched (follow is
 /// frozen by the pump too), so a script cannot walk through an in-flight
 /// dialog or a trapped maze/mime/box — the snapshot blob still posts on
 /// the held tick edge, so EventSignal reads the freeze the script is
-/// frozen by. `ours` is the guardian's published
+/// frozen by. `guardian_hold` is the guardian's part of `hold`; only it
+/// freezes the seat (`SessionHeld`). `ours` is the guardian's published
 /// detected-ours flag (posted into the isolate for `EventSignal.pending()`).
 /// Returns whether the driver's
 /// out buffer was written (the slot's own `Client` sends on its next
@@ -296,6 +300,8 @@ pub(crate) fn script_observe_cached(
         navs,
         world,
         hold,
+        // The test wrappers model the guardian's hold.
+        hold,
         ours,
         canlight,
         slot_input,
@@ -304,6 +310,7 @@ pub(crate) fn script_observe_cached(
         None,
         super::script_channels::BrokerWorld::Unavailable,
         run_policy,
+        None,
         None,
     )
     .wrote
@@ -370,6 +377,7 @@ pub(crate) fn script_observe_cached_with_channels(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     world: &Option<Arc<NavWorld>>,
     hold: bool,
+    guardian_hold: bool,
     ours: bool,
     canlight: Option<&[u64]>,
     slot_input: Option<&SlotInput>,
@@ -379,6 +387,7 @@ pub(crate) fn script_observe_cached_with_channels(
     channel_world: super::script_channels::BrokerWorld,
     run_policy: Option<&mut ScriptRunPolicy>,
     mut debug_replies: Option<&mut super::debug_replies::DebugReplies>,
+    service_arm: Option<&SlotArm>,
 ) -> ScriptObservation {
     if let Some(inp) = slot_input {
         inp.set_host_consume_allowed(up && !hold);
@@ -390,6 +399,7 @@ pub(crate) fn script_observe_cached_with_channels(
     let mut interact = Vec::new();
     let mut pending_withdraw_x_active = false;
     let mut pending_bank_op_active = false;
+    route_inspect::poll_inspection(navs, name);
     let observed_slot = script_slot(scripts, name);
     let mut slot_work_epoch = None;
     let mut has_native_actions = false;
@@ -405,6 +415,25 @@ pub(crate) fn script_observe_cached_with_channels(
             break 'script_slot;
         };
         slot.observe_lifecycle();
+        let work_scope = slot.work_scope();
+        if let Some(bot) = navs
+            .lock()
+            .expect("navigation state mutex is not poisoned")
+            .get_mut(name)
+        {
+            bot.work_scope = work_scope;
+        }
+        // Only the random-event guardian holds the seat (`SessionHeld`,
+        // `28-seat-sg.md:65`; `27-decision-r5.md` §6). Every other frame
+        // hold is a held tick (`28-seat-sg.md:64`): the seat is not frozen,
+        // it drops the held frames' gameplay, and it keeps the abort releases
+        // for the first frame after the hold (operator decision
+        // 2026-10-16, `SlotScript::seat_host_hold`). A session boundary
+        // reconnects or resets the seat (`SlotScript::reconnect_session_work`,
+        // `reset_session_work`); a native run's seat also holds through
+        // `align_seat_session`.
+        slot.seat_guardian_hold(guardian_hold);
+        slot.seat_host_hold(hold && !guardian_hold);
         let stop_prayers = slot.take_stop_prayer_cleanup();
         let prayer_cleanup_hold = if let Some(snapshot) = snapshot.filter(|_| up) {
             let mut bots = navs.lock().unwrap();
@@ -470,12 +499,34 @@ pub(crate) fn script_observe_cached_with_channels(
         // Deliver only the terminal belonging to this still-live native owner.
         // The slot repeats the run/action fence before accepting the receipt.
         let mut host_results_dirty = false;
+        let bank_selection = super::bank::poll_bank_pick(navs, name, std::time::Instant::now());
         if let Some(bot) = navs.lock().unwrap().get_mut(name) {
-            let bank_selection = bot.bank_pick.poll(std::time::Instant::now());
             host_results_dirty |= host_completion_changed(&slot, bot, bank_selection);
+            let native_terminal =
+                bot.native_end.as_ref().is_some_and(|(owner, _)| {
+                    owner.request_id().get() == bot.walk_outcome_request_id
+                }) || bot.native_walk.as_ref().is_some_and(|owner| {
+                    owner.live() && owner.request_id().get() == bot.walk_outcome_request_id
+                });
             deliver_native_walk_end(&mut slot, bot, tick);
             host_results_dirty |= deliver_native_advice(&mut slot, bot);
-            host_results_dirty |= slot.observe_walk_outcome_seq(bot.walk_outcome_seq);
+            // A newly armed walk may already have replaced the completed
+            // route. Its predecessor still owns a release slot. Only when
+            // the same request id remains armed must the route generation
+            // match, so a stale outcome cannot free the new arm.
+            let terminal_request = api::identity::RequestId::from_raw(bot.walk_outcome_request_id)
+                .filter(|request| {
+                    request.get() != bot.walk_request_id
+                        || bot.walk_outcome_generation == bot.route_generation
+                })
+                .map(|request| {
+                    if native_terminal {
+                        SeatWalkTerminal::Native(request)
+                    } else {
+                        SeatWalkTerminal::Load(request)
+                    }
+                });
+            host_results_dirty |= slot.observe_walk_outcome(bot.walk_outcome_seq, terminal_request);
         }
         slot_work_epoch = Some(slot.work_epoch());
         channel_generation = slot.runtime_generation();
@@ -736,7 +787,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                 b.user_move_intent_seq,
                                 b.walk_missing_carry.clone(),
                                 b.inspect.posted(),
-                                b.bank_pick.poll(std::time::Instant::now()),
+                                bank_selection,
                             );
                             // The live refusal guard is released only once
                             // the isolate accepts the snapshot carrying this
@@ -843,6 +894,9 @@ pub(crate) fn script_observe_cached_with_channels(
                 slot.store_last_world_id(world_id);
             }
             if isolate_hold {
+                if !guardian_hold {
+                    slot.seat_held_tick();
+                }
                 // Isolate: tick for onPaint only (hold gate inside V8 via
                 // snapshot.hold). Recovery hold is distinct from guardian
                 // hold: nav follow of the owned recovery route continues,
@@ -882,6 +936,14 @@ pub(crate) fn script_observe_cached_with_channels(
                 // (design-bank-snapshot §1.2): the guard ends with this
                 // block, before effect dispatch, logging and queued cheats.
                 let bank_memory = bank_memory.map(parking_lot::RwLock::read);
+                // Keep the real lifecycle gate stable through this callback.
+                // Its guard drops before host effect dispatch below.
+                let service_gate_guard = if slot.native_run().is_some() || slot.load_active() {
+                    service_arm.map(SlotArm::session_gate)
+                } else {
+                    None
+                };
+                let service_gate = service_gate_guard.as_deref();
                 let mut ctx = ScriptCtx {
                     driver,
                     tick,
@@ -892,6 +954,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     snapshot,
                     obj_names,
                     compiled: script::CompiledTick {
+                        service_gate,
                         selected: selected.as_deref(),
                         reach: packed.as_ref().map(|packed| packed.view.as_ref()),
                         reach_flood: packed.as_ref().and_then(|packed| packed.flood.as_deref()),
@@ -904,6 +967,9 @@ pub(crate) fn script_observe_cached_with_channels(
                         ..Default::default()
                     },
                 };
+                if let Some(gate) = service_gate {
+                    slot.align_seat_session(gate.ready());
+                }
                 if wake_waits {
                     slot.on_snapshot_change(&mut ctx);
                 } else {
@@ -915,13 +981,17 @@ pub(crate) fn script_observe_cached_with_channels(
         {
             let mut navs = navs.lock().unwrap();
             let bot = navs.entry(name.to_owned()).or_default();
+            bot.work_scope = slot.work_scope();
             bot.native_permissions = slot.native_walk_permissions();
             bot.compat_v1 = slot.api_family() == Some(script::ApiFamily::V1);
         }
         emit_script_debug_logs(&mut slot, name);
-        // Fold forwarded shim requests on running frames. Pause leaves the
-        // isolate queue untouched so Resume can dispatch it; guardian hold
-        // retains the existing drain/drop policy below.
+        if slot.load_active() && slot.state() != script::RunState::Running {
+            slot.retain_held_seat_batches();
+        }
+        // Ordinary Pause leaves the isolate queue untouched. Guardian hold
+        // has already discarded gameplay and bounded repeated control pages.
+        // Running frames drain those controls through the seat below.
         if slot.load_active() || slot.native_run().is_some() {
             let mut lifecycle = Vec::new();
             if slot.state() == script::RunState::Running {
@@ -1051,31 +1121,27 @@ pub(crate) fn script_observe_cached_with_channels(
         }
         if slot.load_active() {
             if slot.state() == script::RunState::Running {
-                // Admit controls before taking any carried walks. Both ownership
-                // edges (and a run/Stop pair within this batch) suppress replay.
+                // The seat admits controls and filters captured gameplay before
+                // this host stage. A live API Session still fences a carried
+                // pre-seat route, not releases or already-admitted rows.
                 let (update, reqs, owned) = drain_observed_host_interacts(&mut slot);
                 if slot.watchdog().holds_script_actions() || owned {
                     if owned {
-                        // Admission already discarded held script walks. The
-                        // host's carried walk is also discarded, but is not a
-                        // script row and must not inflate its drop count.
                         let _ = take_carried_walk(navs, name, slot.runtime_generation());
-                        interact.extend(reqs);
+                        interact.extend(take_script_interacts(reqs, slot_input));
                     }
                     if let Some(update) = update {
                         run_policy_update = Some(update);
                     }
                 } else {
-                    let mut queued = Vec::new();
                     let mut carried = None;
                     if up && !hold && here.is_some() && snapshot.is_some() {
                         carried = take_carried_walk(navs, name, slot.runtime_generation());
-                        queued.extend(slot.take_held_host_walks());
                     }
                     if let Some(update) = update {
                         run_policy_update = Some(update);
                     }
-                    queued.extend(take_script_interacts(reqs, slot_input));
+                    let queued = take_script_interacts(reqs, slot_input);
                     let resumed =
                         resumed_walk(carried, queued.iter().map(|q| &q.req), |dest, radius| {
                             let (Some((x, z, level)), Some(snapshot)) = (here, snapshot) else {
@@ -1109,9 +1175,10 @@ pub(crate) fn script_observe_cached_with_channels(
                     interact.extend(queued);
                 }
             }
-        } else if slot.state() == script::RunState::Running
+        } else if (slot.state() == script::RunState::Running
             && !slot.watchdog().holds_script_actions()
-            && !prayer_cleanup_hold
+            && !prayer_cleanup_hold)
+            || slot.completed_seat_dispatch_open()
         {
             let (update, reqs, _) = drain_observed_host_interacts(&mut slot);
             if let Some(update) = update {
@@ -1186,14 +1253,52 @@ pub(crate) fn script_observe_cached_with_channels(
                     };
                 };
                 if same_lifetime
-                    && slot.state() == script::RunState::Running
+                    && (slot.state() == script::RunState::Running
+                        || slot.completed_seat_dispatch_open())
                     && Some(slot.work_epoch()) == slot_work_epoch
                 {
+                    let compatibility_work_scope = slot.work_scope();
                     {
                         let mut navs = navs.lock().unwrap();
                         let bot = navs.entry(name.to_owned()).or_default();
+                        bot.work_scope = slot.work_scope();
                         bot.native_permissions = slot.native_walk_permissions();
                         bot.compat_v1 = slot.api_family() == Some(script::ApiFamily::V1);
+                    }
+                    let interact_context = InteractContext {
+                        snapshot,
+                        obj_names,
+                        here,
+                        navs,
+                        world,
+                        state: &state,
+                        bank: bank_memory,
+                        name,
+                        compatibility_scope: compatibility_work_scope,
+                        cache: &cache,
+                        obj_names_arc: &obj_names_arc,
+                    };
+                    // The native seat encodes release rows ahead of gameplay,
+                    // but its two host consumers drain separately. Deliver JS
+                    // Walk releases before the native action loop as well, so
+                    // a fresh native drive cannot overtake a reserved stop.
+                    if interact.iter().any(|queued| {
+                        matches!(queued.req, script::shim::InteractReq::AbortWalk { .. })
+                    }) {
+                        let (releases, remaining): (Vec<_>, Vec<_>) = std::mem::take(&mut interact)
+                            .into_iter()
+                            .partition(|queued| {
+                                matches!(queued.req, script::shim::InteractReq::AbortWalk { .. })
+                            });
+                        interact = remaining;
+                        wrote |= dispatch_script_interact_cached_scoped(
+                            driver,
+                            &interact_context,
+                            releases
+                                .into_iter()
+                                .map(|queued| queued.req)
+                                .collect::<Vec<_>>(),
+                        );
                     }
                     let mut refused_batch = None;
                     while let Some(action) = slot.take_native_action() {
@@ -1278,6 +1383,17 @@ pub(crate) fn script_observe_cached_with_channels(
                                             && *bank_generation == trace.generation
                                     );
                                     if matches {
+                                        #[cfg(test)]
+                                        if super::gatherer_recovery_live::refuse_deposit_once(
+                                            name, &authority, trace, tick,
+                                        ) {
+                                            return BankDepositDispatch {
+                                                accepted: false,
+                                                refusal: Some(
+                                                    "bank deposit dispatch was refused".to_owned(),
+                                                ),
+                                            };
+                                        }
                                         dispatch_native_bank_deposit(driver, snapshot, trace)
                                     } else {
                                         BankDepositDispatch {
@@ -1306,19 +1422,10 @@ pub(crate) fn script_observe_cached_with_channels(
                                         false
                                     }
                                 } else {
-                                    dispatch_script_interact_cached(
+                                    dispatch_script_interact_cached_scoped(
                                         driver,
-                                        snapshot,
-                                        obj_names,
-                                        here,
-                                        navs,
-                                        world,
-                                        state.clone(),
-                                        bank_memory,
-                                        name,
+                                        &interact_context,
                                         [request],
-                                        cache.clone(),
-                                        obj_names_arc.clone(),
                                     )
                                 };
                                 let mut emitted_packets = 0;
@@ -1475,17 +1582,32 @@ pub(crate) fn script_observe_cached_with_channels(
                                 );
                             }
                             script::native::HostEffect::BankPick(request) => {
-                                super::bank::queue_native_bank_pick(
+                                let evidence = api::quest_progress::EvidenceStamp {
+                                    run: authority.run(),
+                                    tick,
+                                    sequence: tick,
+                                };
+                                let Some(scope) = compatibility_work_scope else {
+                                    slot.complete_native_bank_pick(
+                                        &authority,
+                                        script::native_bank::BankPickReceipt {
+                                            request_id: authority.request_id().get(),
+                                            evidence,
+                                            selected: super::bank::native_no_candidate(),
+                                        },
+                                    );
+                                    continue;
+                                };
+                                super::bank::queue_native_bank_pick_scoped(
                                     navs,
                                     name,
+                                    scope,
                                     world,
                                     state.clone(),
-                                    request,
-                                    authority.clone(),
-                                    api::quest_progress::EvidenceStamp {
-                                        run: authority.run(),
-                                        tick,
-                                        sequence: tick,
+                                    super::bank::NativeBankPickInput {
+                                        request,
+                                        authority,
+                                        evidence,
                                     },
                                     slot.api_gather_walk_permissions(),
                                 );
@@ -1574,7 +1696,11 @@ pub(crate) fn script_observe_cached_with_channels(
                                         let bank_item_id = item.def.id;
                                         let count = item.count.min(free as i32);
                                         if let Some((op, needs_dialog)) =
-                                            fill_withdraw_action(&item.actions, count, item.count)
+                                            script::bank::ops::fill_click_in(
+                                                &item.actions,
+                                                count,
+                                                item.count,
+                                            )
                                         {
                                             let sent = matches!(
                                                 ix.interact(
@@ -1621,19 +1747,10 @@ pub(crate) fn script_observe_cached_with_channels(
                             req => dispatchable.push(req),
                         }
                     }
-                    wrote |= dispatch_script_interact_cached(
+                    wrote |= dispatch_script_interact_cached_scoped(
                         driver,
-                        snapshot,
-                        obj_names,
-                        here,
-                        navs,
-                        world,
-                        state.clone(),
-                        bank_memory,
-                        name,
+                        &interact_context,
                         dispatchable,
-                        cache.clone(),
-                        obj_names_arc.clone(),
                     );
                     if (armed.is_some()
                         || armed_bank_op.is_some()
@@ -1892,17 +2009,21 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
     {
         return;
     }
-    let end = if bot.walk_outcome_blocked {
-        script::native::WalkEnd::Blocked
-    } else if bot.walk_outcome_failed {
-        bot.native_walk_failure
-            .as_ref()
-            .filter(|(request, _)| *request == owner.request_id().get())
-            .map_or(script::native::WalkEnd::Failed, |(_, end)| end.clone())
-    } else {
-        script::native::WalkEnd::RouteEnded
-    };
     let request_id = owner.request_id().get();
+    let typed_failure = bot
+        .native_walk_failure
+        .as_ref()
+        .filter(|(request, _)| *request == request_id)
+        .map(|(_, end)| end.clone());
+    let end = typed_failure.unwrap_or({
+        if bot.walk_outcome_blocked {
+            script::native::WalkEnd::Blocked
+        } else if bot.walk_outcome_failed {
+            script::native::WalkEnd::Failed
+        } else {
+            script::native::WalkEnd::RouteEnded
+        }
+    });
     let blocked = bot
         .native_walk_blocked
         .as_ref()

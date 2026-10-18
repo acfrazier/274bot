@@ -3,14 +3,23 @@
 use super::*;
 #[path = "script_bank.rs"]
 mod bank;
-pub(super) use bank::fill_withdraw_action;
+use bank::dispatch_observed_bank_op;
+#[cfg(all(target_os = "linux", feature = "test-support"))]
+pub use bank::harness::measures_captured_native_bank_pick_cpu;
 pub(crate) use bank::open_bank_at_here;
-use bank::{action_slot, all_slot, dispatch_observed_bank_op};
+#[cfg(any(test, all(feature = "live-harness", feature = "test-support")))]
+pub(crate) use bank::BankPickWorkObservation;
+#[cfg(test)]
+pub(super) fn poll_bank_pick_for_test(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
+    bank::poll_bank_pick(navs, name, Instant::now());
+}
 #[path = "script_nav.rs"]
 mod script_nav;
+pub(crate) use script_nav::pump_route_work;
 #[cfg(test)]
 pub(super) use script_nav::{
-    approach_tiles, resolve_route_exclusions, route_world_state, CarriedWalk, ScriptRouteRequest,
+    approach_tiles, publish_route_owner_refusal, resolve_route_exclusions, route_world_state,
+    CarriedWalk, RouteDemandKind, ScriptRouteRequest,
 };
 pub(super) use script_nav::{
     blocked_zone_detail, hold_script_nav, reset_script_nav, NavBot, PostedWalkOutcome,
@@ -39,10 +48,13 @@ pub(super) use script_snapshot::{slot_arrival_reach, with_script_snapshot_input_
 #[path = "script_interact.rs"]
 mod script_interact;
 pub(super) use script_interact::{
-    dispatch_native_bank_deposit, dispatch_script_interact_cached, BankDepositDispatch,
+    dispatch_native_bank_deposit, dispatch_script_interact_cached_scoped, BankDepositDispatch,
+    InteractContext,
 };
 #[cfg(test)]
-pub(super) use script_interact::{dispatch_script_interact, validated_duel_accept};
+pub(super) use script_interact::{
+    dispatch_script_interact, dispatch_script_interact_cached, validated_duel_accept,
+};
 #[path = "script_paint.rs"]
 mod script_paint;
 pub(super) use script_paint::{
@@ -53,6 +65,11 @@ pub(super) use script_paint::{
 mod route_inspect;
 #[cfg(test)]
 pub(super) use route_inspect::PostedInspect;
+
+#[cfg(test)]
+pub(super) fn poll_inspection_for_test(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
+    route_inspect::poll_inspection(navs, name);
+}
 
 #[path = "script_observe.rs"]
 mod script_observe;

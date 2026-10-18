@@ -169,7 +169,16 @@ layout), or from `LOGIN_RSAN` / `LOGIN_RSAE`.
 `--rs2b2t`, `--profile rs2b2t`, or `BOT_SERVER_PROFILE=rs2b2t` selects the
 rs2b2t roster (w1, w2 and w3 on port 443 by default). `public-289` is a profile
 name alias; `--prod` and `BOT_TARGET` were removed.
-The shared cache is fetched from the first reachable asset world. Each vault account stores
+The shared cache is fetched from the first reachable world. If 274bot cannot
+reach a world's cache server, or cannot look up the name of a world's
+server, while it prepares the cache, it moves to the next world as a whole,
+and auto accounts start on that world. After a server name fails to look up,
+274bot skips each later world that uses that name. There is one exception. A
+cache server name can look up at first and then fail to look up during the
+cache download. Then `host-play` and the TUI (at each start), and the panel
+(only before it selects its server profile), can look up that name again for
+the next world, with one more lookup wait for each such world. Each vault
+account stores
 an optional world number: auto rotates on response 7, waits after all
 worlds report full, and pinned accounts stay on their chosen world.
 The client uses the selected world's node id and fetches its login RSA

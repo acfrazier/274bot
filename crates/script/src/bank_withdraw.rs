@@ -1,13 +1,14 @@
 //! Rust-owned `stealRules` bank sequences: frozen `withdrawTo` (the
 //! `bank_withdraw_to` [`crate::machine`] family) and
-//! `closeBankAndConfirmCount` (`bank_close_confirm`), plus the frozen
-//! `nextWithdrawChunk` ladder they and the hunt bank share.
+//! `closeBankAndConfirmCount` (`bank_close_confirm`). Their chunking is
+//! the kernel's frozen ladder policy ([`crate::bank::ops::next_chunk`]),
+//! shared with the hunt bank.
 //!
 //! The caller's `count` callback is called through the callback path in the
 //! frozen order; without one the count is `Inventory.count(name)` read from
 //! the posted backpack. Pack-full is read from the scene.
 
-use crate::bank::ops::same_name;
+use crate::bank::ops::{next_chunk, same_name, Chunk};
 use crate::bank_op::{js_number, BankView, Closing, Op, Sent};
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step, Thrown};
 use crate::observed::{self, Scene};
@@ -20,31 +21,6 @@ const ROUNDS: u32 = 40;
 pub const LAND_MS: u64 = 2_500;
 /// Frozen `closeBankAndConfirmCount` count wait.
 pub const CONFIRM_MS: u64 = 3_000;
-
-/// One frozen `nextWithdrawChunk` step.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Chunk {
-    /// Withdraw-X for this many.
-    X(f64),
-    /// `Withdraw-10` / `Withdraw-5` / `Withdraw-1`.
-    Op(&'static str),
-}
-
-/// Frozen `nextWithdrawChunk(need)`: Withdraw-X above 10, else the 10/5/1
-/// ladder; nothing for no need.
-pub(crate) fn next_chunk(need: f64) -> Option<Chunk> {
-    if need <= 0.0 {
-        None
-    } else if need > 10.0 {
-        Some(Chunk::X(need))
-    } else if need >= 10.0 {
-        Some(Chunk::Op("Withdraw-10"))
-    } else if need >= 5.0 {
-        Some(Chunk::Op("Withdraw-5"))
-    } else {
-        Some(Chunk::Op("Withdraw-1"))
-    }
-}
 
 /// `Inventory.count(name)` from the posted backpack.
 fn inventory_count(scene: &Scene, name: &str) -> f64 {
@@ -571,13 +547,49 @@ mod tests {
         );
     }
 
+    /// Characterization (T2.2): the frozen chunk ladder at the family seam.
+    /// Need 7 is Withdraw-5 then Withdraw-1 twice, never Withdraw-X/7, and
+    /// the run settles with the gained count.
     #[test]
-    fn next_chunk_is_the_frozen_ladder() {
-        assert_eq!(next_chunk(0.0), None);
-        assert_eq!(next_chunk(-3.0), None);
-        assert_eq!(next_chunk(11.0), Some(Chunk::X(11.0)));
-        assert_eq!(next_chunk(10.0), Some(Chunk::Op("Withdraw-10")));
-        assert_eq!(next_chunk(7.0), Some(Chunk::Op("Withdraw-5")));
-        assert_eq!(next_chunk(4.0), Some(Chunk::Op("Withdraw-1")));
+    fn a_need_of_seven_clicks_five_then_one_then_one() {
+        let withdraw = |action: &str| InteractReq::Withdraw {
+            name: "Lobster".into(),
+            action: action.into(),
+        };
+        observed::on_reset();
+        post(1, &LADDER, 0, 0, 0);
+        let handle = running(start(7));
+        assert_eq!(tick(), vec![withdraw("Withdraw-5")]);
+        post(2, &LADDER, 5, 0, 1);
+        assert_eq!(tick(), vec![withdraw("Withdraw-1")]);
+        post(3, &LADDER, 6, 0, 2);
+        assert_eq!(tick(), vec![withdraw("Withdraw-1")]);
+        post(4, &LADDER, 7, 0, 3);
+        assert!(tick().is_empty());
+        assert_eq!(
+            machine::take(handle),
+            Take::Settled(Outcome::Done(json!(7.0)))
+        );
+    }
+
+    /// Characterization (T2.2): one transfer at a time. While another bank
+    /// transfer family is live, `bank_withdraw_to` settles with zero
+    /// gained and emits nothing.
+    #[test]
+    fn withdraw_to_settles_zero_while_a_deposit_is_live() {
+        observed::on_reset();
+        post(1, &LADDER, 0, 0, 0);
+        machine::on_reset();
+        let deposit = machine::start("bank_deposit", json!({ "all": true }), Vec::new(), 0);
+        assert!(matches!(deposit, Started::Running(_)), "{deposit:?}");
+        assert!(crate::bank_op::busy());
+        let started = machine::start(
+            WithdrawTo::NAME,
+            json!({ "name": "Lobster", "target": 7 }),
+            Vec::new(),
+            0,
+        );
+        assert_eq!(started, Started::Settled(Outcome::Done(json!(0))));
+        assert!(machine::merge_ops(Vec::new()).is_empty());
     }
 }

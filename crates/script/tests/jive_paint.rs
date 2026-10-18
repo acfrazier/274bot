@@ -320,7 +320,7 @@ fn xp_tracker_reset_and_isolate_isolation() {
     assert_eq!(left.probe("__progress").unwrap()[0]["gained"], 200);
     assert_eq!(right.probe("__progress").unwrap()[0]["gained"], 200);
 
-    left.reset_session_work();
+    left.reset_session_work(None);
     let _ = left.probe("true");
     left.probe("globalThis.__doBegin = false").unwrap();
     tick(&left, 3);

@@ -455,6 +455,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/frontend-core/src/map_decode.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/frontend-core/src/marked.rs",
       "owner": "T3"
     },
@@ -863,7 +867,15 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/src/gather_held_live.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/src/gather_return_live.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/src/gatherer_recovery_live.rs",
       "owner": "T1"
     },
     {
@@ -1107,6 +1119,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/src/script_bank_harness.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/src/script_bank_tests.rs",
       "owner": "T1"
     },
@@ -1215,6 +1231,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/tests/bank_pick_work_live.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/tests/bundled_nav_build.rs",
       "owner": "T1"
     },
@@ -1256,6 +1276,10 @@
     },
     {
       "path": "crates/host-play/tests/clue_walk_arrive_pack.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/cold_fill_lookups.rs",
       "owner": "T1"
     },
     {
@@ -1309,6 +1333,10 @@
     {
       "path": "crates/host-play/tests/m3_render_contention.rs",
       "owner": "T4"
+    },
+    {
+      "path": "crates/host-play/tests/map_decode_alloc.rs",
+      "owner": "T5"
     },
     {
       "path": "crates/host-play/tests/nav_fares_live.rs",
@@ -1408,6 +1436,10 @@
     },
     {
       "path": "crates/host-play/tests/script_api_live.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/seat_live.rs",
       "owner": "T1"
     },
     {
@@ -1568,6 +1600,22 @@
     },
     {
       "path": "crates/nav/src/bank_fetch.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/bank_fetch/cursor.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/bank_fetch/cursor_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/bank_fetch/overlay.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/bank_fetch/planning.rs",
       "owner": "T5"
     },
     {
@@ -1788,6 +1836,10 @@
     },
     {
       "path": "crates/nav/src/router/resources.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/router/zeroed_buffer.rs",
       "owner": "T5"
     },
     {
@@ -2019,6 +2071,14 @@
       "owner": "T5"
     },
     {
+      "path": "crates/nav/tests/arrival_candidate_parity.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/tests/arrival_candidate_qualification.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/nav/tests/death_plateau_real_pack.rs",
       "owner": "T5"
     },
@@ -2047,6 +2107,10 @@
       "owner": "T5"
     },
     {
+      "path": "crates/nav/tests/small_cooperative_memory.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/nav/tests/wwm_back_route_real_pack.rs",
       "owner": "T5"
     },
@@ -2068,6 +2132,10 @@
     },
     {
       "path": "crates/panel/src/app.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/panel/src/app_teardown_tests.rs",
       "owner": "T3"
     },
     {
@@ -3395,6 +3463,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/load/lineage_v8.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/script/src/load/loadout_v8.rs",
       "owner": "T1"
     },
@@ -3593,6 +3665,10 @@
     {
       "path": "crates/script/src/prayer.rs",
       "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/preparation.rs",
+      "owner": "T1"
     },
     {
       "path": "crates/script/src/production.rs",
@@ -4375,6 +4451,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/script/src/slot/held_fold_tests.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/script/src/slot/pending.rs",
       "owner": "T1"
     },
@@ -4384,6 +4464,14 @@
     },
     {
       "path": "crates/script/src/slot/progress_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/slot/seat_family_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/slot/seat_wire_tests.rs",
       "owner": "T1"
     },
     {
@@ -4424,6 +4512,26 @@
     },
     {
       "path": "crates/script/src/watchdog.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/work_admission.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/work_admission/cancellation.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/work_admission/cancellation_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/work_admission/request_thread_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/work_admission_tests.rs",
       "owner": "T1"
     },
     {
@@ -4732,6 +4840,10 @@
     },
     {
       "path": "crates/script/tests/load_isolate.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/tests/load_isolate/seat_product_cases.rs",
       "owner": "T1"
     },
     {
@@ -5327,43 +5439,7 @@
       "owner": "T1"
     },
     {
-      "path": "tools/architecture/check.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/e2e_trusted_gate.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/graph.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/inventories.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/ownership.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/test_graph.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/test_inventories.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/test_ownership.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/test_trusted_gate.py",
-      "owner": "T1"
-    },
-    {
-      "path": "tools/architecture/trusted_gate.py",
+      "path": "tools/architecture/run.sh",
       "owner": "T1"
     },
     {
@@ -5484,6 +5560,34 @@
     },
     {
       "path": "tools/harness/write_player_fixture.ts",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/lint-ratchet/lint_ratchet.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/lint-ratchet/test_lint_ratchet.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/cellar-pull-windows.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/cellar-pull.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/mirror-pull.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/run_nightly.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/test_run_nightly.py",
       "owner": "T1"
     },
     {
@@ -5987,6 +6091,18 @@
       "owner": "T1"
     },
     {
+      "path": "vendor/fr-client-rust/crates/client/src/unpack/fill.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/src/unpack/fill_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/src/unpack/http.rs",
+      "owner": "T1"
+    },
+    {
       "path": "vendor/fr-client-rust/crates/client/src/unpack/mod.rs",
       "owner": "T1"
     },
@@ -6048,6 +6164,14 @@
     },
     {
       "path": "vendor/fr-client-rust/crates/client/tests/client_stream.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/tests/cold_fill_resolver.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/tests/cold_fill_steps.rs",
       "owner": "T1"
     },
     {
@@ -6463,6 +6587,10 @@
       "owner": "T5"
     },
     {
+      "path": "crates/host-play/src/route_work_tests.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/nav/src/contract/mod.rs",
       "owner": "T5"
     },
@@ -6533,6 +6661,18 @@
     {
       "path": "crates/script/src/native/request.rs",
       "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/native/seat.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/native/seat_product_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/native/seat_tests.rs",
+      "owner": "T1"
     },
     {
       "path": "crates/script/src/native/services.rs",

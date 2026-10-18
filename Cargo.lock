@@ -722,6 +722,7 @@ dependencies = [
  "rustysynth",
  "serde_json",
  "sha2",
+ "socket2",
  "softbuffer",
  "tungstenite",
  "wgpu",
@@ -2007,6 +2008,7 @@ dependencies = [
  "libc",
  "nav",
  "parking_lot",
+ "png",
  "scenario",
  "script",
  "serde",
@@ -2413,6 +2415,7 @@ dependencies = [
  "crossterm",
  "host",
  "libc",
+ "native-tls",
  "nav",
  "parking_lot",
  "png",
@@ -3049,8 +3052,10 @@ dependencies = [
 name = "nav"
 version = "0.2.3"
 dependencies = [
+ "allocation-counter",
  "api",
  "client",
+ "libc",
  "png",
  "serde",
  "serde_json",

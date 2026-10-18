@@ -1,15 +1,22 @@
-//! The one bank transfer kernel. Compiled cards ([`crate::native_bank`]) and
-//! the compatibility families ([`crate::bank_op`]) both call it.
+//! The one bank transfer kernel. Compiled cards ([`crate::native_bank`]),
+//! the compatibility families ([`crate::bank_op`]) and the host dispatch
+//! paths for their requests all decide through here.
 //!
 //! The kernel is stateless and copies nothing. Callers pass the rows they
 //! already hold through [`BankRow`]: native `ItemView` and isolate `ItemRow`
 //! both implement it, so a scan never converts or collects a row. Machines
 //! own the clocks, the emits and the loops; the kernel only decides.
+//!
+//! Where callers' historic semantics differ — the kernel withdraw ladder
+//! vs the frozen [`next_chunk`] ladder, the fill rules of `withdrawLoad`
+//! vs the host's [`fill_click_in`], folded vs normalized label matching —
+//! each keeps its own named policy below. They decide alike wherever the
+//! content labels (bank `option1..5`) reach.
 
 #[cfg(feature = "load")]
-use crate::observed::ItemRow;
+use crate::observed::{EntityRow, ItemRow, SceneRow};
 use crate::shim::InteractReq;
-use api::snapshot::ItemView;
+use api::snapshot::{ItemView, LocView, NpcView, WorldTile};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -55,6 +62,58 @@ pub const DEPOSIT_VIEW_MS: u64 = 1_200;
 pub const MAX_DEPOSITS: u8 = 32;
 /// Cap on caller id lists (keep, only, memo, withdrawals).
 pub const MAX_MEMO: usize = 64;
+
+/// A deposit dispatch or content refusal, distinct from an observed transfer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum DepositFailure {
+    #[error("{}", self.message())]
+    DispatchRefused,
+    #[error("{}", self.message())]
+    DispatchMissing,
+    #[error("{}", self.message())]
+    NoCountFall,
+    #[error("{}", self.message())]
+    FullStack,
+    #[error("{}", self.message())]
+    BankFull,
+    #[error("{}", self.message())]
+    Unbankable,
+}
+
+impl DepositFailure {
+    /// Shared user-facing text for status, traces and `Display`, without allocation.
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::DispatchRefused => "bank deposit dispatch was refused",
+            Self::DispatchMissing => "bank deposit dispatch receipt was not observed",
+            Self::NoCountFall => "bank deposit did not move inventory",
+            Self::FullStack => "bank deposit refused: full stack in bank",
+            Self::BankFull => "bank deposit refused: bank is full",
+            Self::Unbankable => "bank deposit refused: item cannot be banked",
+        }
+    }
+}
+
+/// Exact messages emitted by `interface_bank/scripts/bank.rs2:87-98,129-159`.
+/// Callers must scope these to game messages newer than the dispatch baseline.
+pub fn deposit_content_refusal(message: &str) -> Option<DepositFailure> {
+    if message.eq_ignore_ascii_case("You already have a full stack of that item in the bank.") {
+        Some(DepositFailure::FullStack)
+    } else if message.eq_ignore_ascii_case("You don't have enough space in your bank account.")
+        || message
+            .eq_ignore_ascii_case("You need to subscribe for a members account if you want to")
+        || message.eq_ignore_ascii_case("store any more items in the bank.")
+    {
+        Some(DepositFailure::BankFull)
+    } else if message.eq_ignore_ascii_case("A magical force prevents you from banking this item!")
+        || message.eq_ignore_ascii_case("You have more urgent things to do with this anthem!")
+        || message.eq_ignore_ascii_case("Sorry, you can't bank the monkey!")
+    {
+        Some(DepositFailure::Unbankable)
+    } else {
+        None
+    }
+}
 
 // --- borrowed row ----------------------------------------------------------
 
@@ -207,17 +266,65 @@ pub fn pack_full<R: BankRow>(inv: &[R], inv_size: i32) -> bool {
     inv_size > 0 && occupied(inv) >= inv_size
 }
 
-/// Label bytes with whitespace, `-` and `_` gone, ASCII-folded.
-pub fn normalized_action_bytes(value: &str) -> impl Iterator<Item = u8> + '_ {
-    value
-        .bytes()
-        .filter(|byte| !byte.is_ascii_whitespace() && !matches!(*byte, b'-' | b'_'))
-        .map(|byte| byte.to_ascii_lowercase())
+/// Label chars as the deleted host `norm_action` folded them: the full
+/// Unicode lowercase of `value` (exactly `str::to_lowercase`), with every
+/// Unicode whitespace char (VT and NBSP included), `-` and `_` gone.
+///
+/// Lazy and allocation-free for every label without a capital sigma: the
+/// standard lowercase mapping is per-char except for `Σ`, whose final-sigma
+/// rule depends on the Unicode `Cased`/`Case_Ignorable` tables that `char`
+/// does not expose. A label containing `Σ` is folded through
+/// `str::to_lowercase` itself (allocating; such labels are rare and come
+/// only from scripts), so it matches exactly.
+pub fn normalized_action_chars(value: &str) -> impl Iterator<Item = char> + '_ {
+    let chars = if value.contains('\u{3a3}') {
+        FoldSource::Lowered(value.to_lowercase().chars().collect::<Vec<_>>().into_iter())
+    } else {
+        FoldSource::PerChar {
+            chars: value.chars(),
+            pending: None,
+        }
+    };
+    chars.filter(|&c| kept(c))
+}
+
+enum FoldSource<'a> {
+    /// Context-free path: each source char's own lowercase expansion
+    /// (full Unicode lowercase can expand one char into several, e.g.
+    /// `İ` → `i̇`).
+    PerChar {
+        chars: std::str::Chars<'a>,
+        pending: Option<std::char::ToLowercase>,
+    },
+    /// A label with a capital sigma, lowered by `str::to_lowercase`.
+    Lowered(std::vec::IntoIter<char>),
+}
+
+impl Iterator for FoldSource<'_> {
+    type Item = char;
+
+    fn next(&mut self) -> Option<char> {
+        match self {
+            Self::Lowered(chars) => chars.next(),
+            Self::PerChar { chars, pending } => loop {
+                if let Some(c) = pending.as_mut().and_then(Iterator::next) {
+                    return Some(c);
+                }
+                *pending = Some(chars.next()?.to_lowercase());
+            },
+        }
+    }
+}
+
+/// The fold keeps a lowered char unless it is Unicode whitespace (per
+/// `char::is_whitespace`, so VT counts), `-` or `_`.
+fn kept(c: char) -> bool {
+    !c.is_whitespace() && c != '-' && c != '_'
 }
 
 /// `Withdraw-1`, `withdraw 1` and `Withdraw_1` are one label.
 pub fn normalized_action_eq(actual: &str, expected: &str) -> bool {
-    normalized_action_bytes(actual).eq(normalized_action_bytes(expected))
+    normalized_action_chars(actual).eq(normalized_action_chars(expected))
 }
 
 /// The 1-based op slot whose normalized label equals `wanted`.
@@ -228,23 +335,47 @@ pub fn action_op<R: BankRow>(row: &R, wanted: &str) -> Option<i32> {
     })
 }
 
-/// The sweep op: the first label containing `all`, else the last non-empty
-/// label (frozen `depositAllMatching` / `bestOpIndex`).
+/// The All op: the first label whose normalized form contains `all`
+/// (even inside another word), 1-based. No fallback: a row without such
+/// a label has no All op.
+pub fn all_op<R: BankRow>(row: &R) -> Option<i32> {
+    (1..=row.op_len()).find(|&op| row.op_label(op).is_some_and(contains_all))
+}
+
+/// The sweep op: the All op, else the last non-empty label (frozen
+/// `depositAllMatching` / `bestOpIndex`).
 pub fn sweep_op<R: BankRow>(row: &R) -> Option<i32> {
-    (1..=row.op_len())
-        .find(|&op| row.op_label(op).is_some_and(contains_all))
-        .or_else(|| {
-            (1..=row.op_len())
-                .rev()
-                .find(|&op| row.op_label(op).is_some())
+    all_op(row).or_else(|| {
+        (1..=row.op_len())
+            .rev()
+            .find(|&op| row.op_label(op).is_some())
+    })
+}
+
+/// The hunt's X-label spelling: `-` and space are one separator (other
+/// separators are not), the ends are trimmed after that replacement, and
+/// the rest folds ASCII case. `Withdraw-X` and `withdraw x` match
+/// `Withdraw X`; `Withdraw_X` and `Withdraw  X` do not.
+pub fn dash_space_eq(actual: &str, expected: &str) -> bool {
+    let edge = |c: char| c.is_whitespace() || c == '-';
+    let start = actual.find(|c: char| !edge(c)).unwrap_or(actual.len());
+    let end = actual.rfind(|c: char| !edge(c)).map_or(start, |at| {
+        at + actual[at..].chars().next().map_or(0, char::len_utf8)
+    });
+    let actual = &actual.as_bytes()[start..end];
+    let expected = expected.as_bytes();
+    actual.len() == expected.len()
+        && actual.iter().zip(expected).all(|(&got, &want)| {
+            let got = if got == b'-' { b' ' } else { got };
+            got.eq_ignore_ascii_case(&want)
         })
 }
 
 fn contains_all(label: &str) -> bool {
-    let mut window = [0u8; 3];
-    normalized_action_bytes(label).any(|byte| {
-        window = [window[1], window[2], byte];
-        &window == b"all"
+    let mut window = ['\0'; 3];
+    normalized_action_chars(label).any(|c| {
+        window = [window[1], window[2], c];
+        window == ['a', 'l', 'l']
     })
 }
 
@@ -799,6 +930,384 @@ pub fn close_progress(
     } else {
         CloseScan::Waiting
     }
+}
+
+// --- frozen chunk ladder ---------------------------------------------------
+
+/// One frozen `nextWithdrawChunk` step.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Chunk {
+    /// Withdraw-X for this many.
+    X(f64),
+    /// `Withdraw-10` / `Withdraw-5` / `Withdraw-1`.
+    Op(&'static str),
+}
+
+/// Frozen `nextWithdrawChunk(need)`: Withdraw-X above 10, else the 10/5/1
+/// ladder; nothing for no need. This published compatibility policy is
+/// deliberately not [`withdraw_click`]'s ladder (need 7 is Withdraw-5
+/// here, Withdraw-X/7 there); the callers that chunk by it — compat
+/// `withdrawTo` and the hunt bank — keep their recorded emits.
+pub fn next_chunk(need: f64) -> Option<Chunk> {
+    if need <= 0.0 {
+        None
+    } else if need > 10.0 {
+        Some(Chunk::X(need))
+    } else if need >= 10.0 {
+        Some(Chunk::Op("Withdraw-10"))
+    } else if need >= 5.0 {
+        Some(Chunk::Op("Withdraw-5"))
+    } else {
+        Some(Chunk::Op("Withdraw-1"))
+    }
+}
+
+// --- host actions-slice policy ---------------------------------------------
+//
+// The host re-resolves a request against the live snapshot rows, whose
+// `actions` tables it already holds as `Vec<Option<String>>`. These are
+// the same normalized decisions over that slice, holes keeping their
+// 1-based positions.
+
+/// The 1-based op slot in `actions` whose normalized label equals
+/// `wanted`, first match wins.
+pub fn action_op_in(actions: &[Option<String>], wanted: &str) -> Option<i32> {
+    actions
+        .iter()
+        .position(|label| {
+            label
+                .as_deref()
+                .is_some_and(|label| normalized_action_eq(label, wanted))
+        })
+        .map(|index| index as i32 + 1)
+}
+
+/// The 1-based All slot in `actions`: the first label whose normalized
+/// form contains `all`, no fallback ([`all_op`] over the slice).
+pub fn all_op_in(actions: &[Option<String>]) -> Option<i32> {
+    actions
+        .iter()
+        .position(|label| label.as_deref().is_some_and(contains_all))
+        .map(|index| index as i32 + 1)
+}
+
+/// The slot of the label for exactly `count` (`Withdraw {count}`, any
+/// separator spelling). The `-` of a negative count normalizes away, as
+/// it does for a `Withdraw-10` label.
+pub fn withdraw_count_op_in(actions: &[Option<String>], count: i32) -> Option<i32> {
+    let mut digits = ['\0'; 10];
+    let mut at = digits.len();
+    let mut n = i64::from(count).unsigned_abs();
+    loop {
+        at -= 1;
+        digits[at] = char::from_digit(u32::try_from(n % 10).unwrap_or(0), 10).unwrap_or('0');
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    let digits = &digits[at..];
+    actions
+        .iter()
+        .position(|label| {
+            label.as_deref().is_some_and(|label| {
+                normalized_action_chars(label).eq("withdraw".chars().chain(digits.iter().copied()))
+            })
+        })
+        .map(|index| index as i32 + 1)
+}
+
+/// The host fill policy (BankBudget's bounded fill and the legacy
+/// `withdraw-load` dispatch): an exact `Withdraw {count}` label, then
+/// All only when the fill consumes the current stock, then the
+/// Withdraw-X continuation. The boolean is "needs the amount dialog".
+/// Distinct from [`load_click`], the compat `withdrawLoad` policy.
+pub fn fill_click_in(actions: &[Option<String>], count: i32, stock: i32) -> Option<(i32, bool)> {
+    withdraw_count_op_in(actions, count)
+        .map(|op| (op, false))
+        .or_else(|| {
+            (count == stock)
+                .then(|| all_op_in(actions).map(|op| (op, false)))
+                .flatten()
+        })
+        .or_else(|| action_op_in(actions, "Withdraw X").map(|op| (op, true)))
+}
+
+// --- open: booth and teller rows -------------------------------------------
+
+/// The op table of a scene row, as the row's representation stores it.
+/// `op_label` is the raw label at a 1-based slot: `None` for a hole the
+/// representation stores as absent (native views), `Some("")` for one it
+/// posts as an empty label (isolate rows).
+pub trait OpLabels {
+    fn op_len(&self) -> i32;
+    fn op_label(&self, one_based: i32) -> Option<&str>;
+}
+
+/// A loc row a bank-open decision scans.
+pub trait LocRow: OpLabels {
+    fn id(&self) -> i32;
+    fn tile(&self) -> WorldTile;
+    fn distance(&self) -> i32;
+    fn name(&self) -> Option<&str>;
+}
+
+/// An npc row a bank-open decision scans.
+pub trait NpcRow: OpLabels {
+    fn tile(&self) -> WorldTile;
+    fn distance(&self) -> i32;
+    fn name(&self) -> Option<&str>;
+}
+
+impl OpLabels for LocView {
+    fn op_len(&self) -> i32 {
+        i32::try_from(self.actions.len()).unwrap_or(i32::MAX)
+    }
+
+    fn op_label(&self, one_based: i32) -> Option<&str> {
+        self.actions.get(op_index(one_based)?)?.as_deref()
+    }
+}
+
+impl LocRow for LocView {
+    fn id(&self) -> i32 {
+        self.id
+    }
+
+    fn tile(&self) -> WorldTile {
+        self.tile
+    }
+
+    fn distance(&self) -> i32 {
+        self.distance
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+}
+
+impl OpLabels for NpcView {
+    fn op_len(&self) -> i32 {
+        i32::try_from(self.actions.len()).unwrap_or(i32::MAX)
+    }
+
+    fn op_label(&self, one_based: i32) -> Option<&str> {
+        self.actions.get(op_index(one_based)?)?.as_deref()
+    }
+}
+
+impl NpcRow for NpcView {
+    fn tile(&self) -> WorldTile {
+        self.tile
+    }
+
+    fn distance(&self) -> i32 {
+        self.distance
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+}
+
+#[cfg(feature = "load")]
+impl OpLabels for SceneRow {
+    fn op_len(&self) -> i32 {
+        i32::try_from(self.actions.len()).unwrap_or(i32::MAX)
+    }
+
+    fn op_label(&self, one_based: i32) -> Option<&str> {
+        self.actions.get(op_index(one_based)?).map(|label| &**label)
+    }
+}
+
+#[cfg(feature = "load")]
+impl LocRow for SceneRow {
+    fn id(&self) -> i32 {
+        self.id
+    }
+
+    fn tile(&self) -> WorldTile {
+        WorldTile {
+            x: self.x,
+            z: self.z,
+            level: self.level,
+        }
+    }
+
+    fn distance(&self) -> i32 {
+        self.distance
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+}
+
+#[cfg(feature = "load")]
+impl OpLabels for EntityRow {
+    fn op_len(&self) -> i32 {
+        i32::try_from(self.actions.len()).unwrap_or(i32::MAX)
+    }
+
+    fn op_label(&self, one_based: i32) -> Option<&str> {
+        self.actions.get(op_index(one_based)?).map(|label| &**label)
+    }
+}
+
+#[cfg(feature = "load")]
+impl NpcRow for EntityRow {
+    fn tile(&self) -> WorldTile {
+        WorldTile {
+            x: self.x,
+            z: self.z,
+            level: self.level,
+        }
+    }
+
+    fn distance(&self) -> i32 {
+        self.distance
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+}
+
+/// How an op label is compared: folded ASCII case only (the loc/npc
+/// config spellings: `Use-quickly`, a catalog operation name), or the
+/// normalized menu-label equality of [`normalized_action_eq`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LabelMatch {
+    Folded,
+    Normalized,
+}
+
+fn label_eq(label: &str, wanted: &str, policy: LabelMatch) -> bool {
+    match policy {
+        LabelMatch::Folded => label.eq_ignore_ascii_case(wanted),
+        LabelMatch::Normalized => normalized_action_eq(label, wanted),
+    }
+}
+
+/// Whether any label of `row` matches `wanted` under `policy`.
+fn any_label<R: OpLabels>(row: &R, wanted: &str, policy: LabelMatch) -> bool {
+    (1..=row.op_len()).any(|op| {
+        row.op_label(op)
+            .is_some_and(|label| label_eq(label, wanted, policy))
+    })
+}
+
+/// The 1-based op slot of `row` matching `wanted` under `policy`, first
+/// match wins.
+pub fn op_slot<R: OpLabels>(row: &R, wanted: &str, policy: LabelMatch) -> Option<i32> {
+    (1..=row.op_len()).find(|&op| {
+        row.op_label(op)
+            .is_some_and(|label| label_eq(label, wanted, policy))
+    })
+}
+
+/// A packed 1-based op slot, kept only while that slot still carries a
+/// non-empty label.
+pub fn packed_op<R: OpLabels>(row: &R, packed: i32) -> Option<i32> {
+    (packed >= 1 && row.op_label(packed).is_some_and(|label| !label.is_empty())).then_some(packed)
+}
+
+/// The compat named booth: a live row (id ≥ 0) named `name` carrying
+/// `action`, on the player's plane when it is known, nearest first.
+pub fn booth_named<'a, R: LocRow>(
+    rows: &'a [R],
+    name: &str,
+    action: &str,
+    here_level: Option<i32>,
+) -> Option<&'a R> {
+    rows.iter()
+        .filter(|row| {
+            row.id() >= 0
+                && row.name().is_some_and(|got| got.eq_ignore_ascii_case(name))
+                && any_label(*row, action, LabelMatch::Folded)
+                && here_level.is_none_or(|level| level == row.tile().level)
+        })
+        .min_by_key(|row| row.distance())
+}
+
+/// The nearest row on `level` carrying `action` (the native no-stand
+/// booth: a catalog operation's op, or `Use-quickly`).
+pub fn booth_nearest_action<'a, R: LocRow>(
+    rows: &'a [R],
+    level: i32,
+    action: &str,
+) -> Option<&'a R> {
+    rows.iter()
+        .filter(|row| row.tile().level == level && any_label(*row, action, LabelMatch::Folded))
+        .min_by_key(|row| row.distance())
+}
+
+/// The first row standing exactly on `tile`, named `name` when one is
+/// given.
+pub fn booth_at<'a, R: LocRow>(
+    rows: &'a [R],
+    tile: WorldTile,
+    name: Option<&str>,
+) -> Option<&'a R> {
+    rows.iter().find(|row| {
+        row.tile() == tile
+            && name.is_none_or(|wanted| {
+                row.name()
+                    .is_some_and(|got| got.eq_ignore_ascii_case(wanted))
+            })
+    })
+}
+
+/// The exact snapshot-selected booth identity: this id on this tile,
+/// still named `name` and still carrying `action`.
+pub fn booth_exact<'a, R: LocRow>(
+    rows: &'a [R],
+    tile: WorldTile,
+    id: i32,
+    name: &str,
+    action: &str,
+) -> Option<&'a R> {
+    rows.iter().find(|row| {
+        row.id() == id
+            && row.tile() == tile
+            && row.name().is_some_and(|got| got.eq_ignore_ascii_case(name))
+            && any_label(*row, action, LabelMatch::Folded)
+    })
+}
+
+/// The catalog bank object around its declared stand: named `name`,
+/// carrying `action`, within Chebyshev `radius` of `stand` on its
+/// plane, nearest first and by id on a tie.
+pub fn booth_catalog<'a, R: LocRow>(
+    rows: &'a [R],
+    stand: WorldTile,
+    radius: i32,
+    name: &str,
+    action: &str,
+) -> Option<&'a R> {
+    let chebyshev = |row: &R| {
+        row.tile()
+            .x
+            .abs_diff(stand.x)
+            .max(row.tile().z.abs_diff(stand.z))
+    };
+    rows.iter()
+        .filter(|row| {
+            row.tile().level == stand.level
+                && chebyshev(row) <= u32::try_from(radius).unwrap_or(u32::MAX)
+                && row.name().is_some_and(|got| got.eq_ignore_ascii_case(name))
+                && any_label(*row, action, LabelMatch::Folded)
+        })
+        .min_by_key(|row| (chebyshev(row), row.id()))
+}
+
+/// The first npc standing exactly on `tile`, named `name`.
+pub fn npc_at<'a, R: NpcRow>(rows: &'a [R], tile: WorldTile, name: &str) -> Option<&'a R> {
+    rows.iter().find(|row| {
+        row.tile() == tile && row.name().is_some_and(|got| got.eq_ignore_ascii_case(name))
+    })
 }
 
 #[cfg(test)]

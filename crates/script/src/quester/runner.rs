@@ -17,9 +17,11 @@ use crate::native::{
     ActionError, ActionHandle, Interrupt, NativeOutput, NativePhase, NativeTick, Script,
     ScriptFailure, ScriptFlow, ScriptStatus, StatusField, StatusValue, StopReason,
 };
+use crate::preparation::{self, PreparationInput, PreparationKind, PreparedTask};
 use crate::quest_journal::{JournalMachine, JournalRequest};
 use crate::CompiledId;
 use api::game_data::SelectedGameData;
+use api::identity::{Cancellation, Scope, SlotKey};
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{EvidenceStamp, JournalRead, QuestProgress};
 use api::selected::{FactKey, Knowledge, RunKey, Truth};
@@ -277,6 +279,7 @@ fn trace_error_reason(error: &ActionError) -> &str {
         ActionError::Unavailable(reason)
         | ActionError::Failed(reason)
         | ActionError::Blocked(reason) => reason.as_ref(),
+        ActionError::BankDeposit(reason) => reason.message(),
         ActionError::NeedsEvidence(_) => "needs evidence",
         ActionError::CombatInterrupted => "dialogue interrupted by combat",
         ActionError::UserInput => super::families::MANUAL_MOVEMENT_MESSAGE,
@@ -1063,6 +1066,9 @@ impl Quester {
             ActionError::Unavailable(reason)
             | ActionError::Failed(reason)
             | ActionError::Blocked(reason) => (QuesterFailureKind::Other, reason),
+            ActionError::BankDeposit(reason) => {
+                (QuesterFailureKind::Other, Arc::from(reason.message()))
+            }
             ActionError::CombatInterrupted => (
                 QuesterFailureKind::Other,
                 Arc::from("dialogue interrupted by combat"),
@@ -3255,7 +3261,7 @@ pub struct QueuedQuester {
     queue: super::queue::Queue,
     active: Option<Box<Quester>>,
     active_index: Option<usize>,
-    preparing: Option<std::thread::JoinHandle<Result<Arc<CompiledPath>, Arc<str>>>>,
+    preparing: Option<PreparedTask<Result<Arc<CompiledPath>, Arc<str>>>>,
     gang_reader: super::gang::GangRead,
     pair_selection: Option<(usize, super::pair::Gang)>,
     completed: u16,
@@ -3729,7 +3735,7 @@ impl Script for QueuedQuester {
                 failure => {
                     let reason = match failure {
                         Ok(Err(reason)) => reason,
-                        Err(_) => Arc::from("Path compiler worker panicked"),
+                        Err(error) => Arc::from(format!("Path compiler worker: {error}")),
                         Ok(Ok(_)) => unreachable!(),
                     };
                     self.queue
@@ -3788,35 +3794,69 @@ impl Script for QueuedQuester {
                     return Ok(ScriptFlow::Continue);
                 }
             };
-            tick.output.log(
-                api::hostlog::Level::Info,
-                &format!("quester queue: preparing next Path {id}"),
-            );
             let bytes = self.queue.path_bytes(index);
             let selected = Arc::clone(&self.selected);
             let quests = Arc::clone(&self.quests);
             self.active_index = Some(index);
-            let worker = api::selected::FamilyPreparation::run(move |cap| {
-                let bytes =
-                    bytes.ok_or_else(|| Arc::<str>::from(format!("Path {id} is unavailable")))?;
-                super::compile::compile_path_for_gang(
-                    bytes.as_ref(),
-                    &selected,
-                    &quests,
-                    cap,
-                    gang,
-                    &operator,
-                )
-                .map_err(|error| {
-                    let detail = error.detail.as_deref().unwrap_or("Path compilation failed");
-                    Arc::from(match &error.step {
-                        Some(step) => format!("{} [{}]: {detail}", error.code, step.0),
-                        None => format!("{}: {detail}", error.code),
-                    })
-                })
-            });
+            let input = PreparationInput::new(
+                self.run.run,
+                bytes.as_ref().map_or(0, |source| source.as_ref().len()),
+                2 * 1024 * 1024,
+                2 * 1024 * 1024,
+            );
+            let slot = SlotKey::from_incarnation(self.run.slot);
+            let worker = match (input, slot) {
+                (Ok(input), Some(slot)) => preparation::submit(
+                    PreparationKind::Profile,
+                    Scope::Slot(slot),
+                    input.with_quester_progress_compile(),
+                    move |cap| {
+                        let bytes = bytes
+                            .ok_or_else(|| Arc::<str>::from(format!("Path {id} is unavailable")))?;
+                        let compiled = super::compile::compile_path_for_gang(
+                            bytes.as_ref(),
+                            &selected,
+                            &quests,
+                            cap,
+                            gang,
+                            &operator,
+                        );
+                        compiled.map_err(|error| {
+                            let detail =
+                                error.detail.as_deref().unwrap_or("Path compilation failed");
+                            Arc::from(match &error.step {
+                                Some(step) => format!("{} [{}]: {detail}", error.code, step.0),
+                                None => format!("{}: {detail}", error.code),
+                            })
+                        })
+                    },
+                ),
+                (Err(error), _) => Err(error.into()),
+                (_, None) => {
+                    self.queue
+                        .mark_blocked(index, "Path preparation: slot not bound".into());
+                    self.refresh_fields();
+                    self.dirty = true;
+                    self.publish(tick.output, NativePhase::Preparing);
+                    return Ok(ScriptFlow::Continue);
+                }
+            };
             match worker {
-                Ok(worker) => self.preparing = Some(worker),
+                Ok(worker) => {
+                    tick.output.log(
+                        api::hostlog::Level::Info,
+                        &format!(
+                            "quester queue: preparing next Path {}",
+                            self.queue.id(index).expect("selected queue row")
+                        ),
+                    );
+                    self.preparing = Some(worker);
+                }
+                Err(preparation::PreparationError::Refused(api::work::SubmissionRefusal::Full)) => {
+                    // No Path failed. The bounded queue retains this candidate
+                    // and the next game tick retries admission without blocking.
+                    self.active_index = None;
+                }
                 Err(error) => {
                     self.queue
                         .mark_blocked(index, Arc::from(format!("Path preparation: {error}")));
@@ -3851,6 +3891,9 @@ impl Script for QueuedQuester {
     fn on_stop(&mut self, reason: StopReason) {
         self.gang_reader.cancel();
         self.pair_selection = None;
+        if let Some(preparing) = &mut self.preparing {
+            preparing.cancel(Cancellation::Operator);
+        }
         if let Some(active) = self.active.as_mut() {
             active.on_stop(reason);
         }

@@ -2,18 +2,23 @@
 //! Production never encodes tiles or invents POIs.
 
 use std::collections::BTreeMap;
-use std::io::Cursor;
+use std::sync::Arc;
 
-use nav::map::formats::MAX_PNG_BYTES;
 use nav::map::identity::{Digest, ImageIdentity};
 use nav::map::poi::PoiRecord;
-use nav::map::spatial::{TileKey, MAX_LOD, TILE_PIXELS, TILE_RGBA_BYTES};
+use nav::map::spatial::{TileKey, MAX_LOD};
+
+#[cfg(test)]
+use nav::map::formats::MAX_PNG_BYTES;
+#[cfg(test)]
+use nav::map::spatial::{TILE_PIXELS, TILE_RGBA_BYTES};
+#[cfg(test)]
 use nav::map::MapError;
+#[cfg(test)]
+use std::io::Cursor;
 
 #[cfg(test)]
 use nav::map::formats::TileReceipt;
-#[cfg(test)]
-use nav::map::identity::CatalogueIdentity;
 #[cfg(test)]
 use nav::map::poi::{
     CapabilityEvidence, DisplayAnchor, EntityKind, Footprint, PoiKey, PoiKind, SourceSpace,
@@ -40,21 +45,11 @@ pub fn image_identity() -> ImageIdentity {
     }
 }
 
-#[cfg(test)]
-#[allow(dead_code)]
-pub fn catalogue_identity() -> CatalogueIdentity {
-    CatalogueIdentity {
-        revision: 289,
-        content: Digest([0xf1; 32]),
-        policy: Digest([0xf3; 32]),
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Store {
     pub identity: ImageIdentity,
     pub max_lod: u8,
-    tiles: BTreeMap<TileKey, Vec<u8>>,
+    tiles: BTreeMap<TileKey, Arc<[u8]>>,
     pub pois: Vec<PoiRecord>,
 }
 
@@ -89,7 +84,7 @@ impl Store {
                 x,
                 z,
             };
-            tiles.insert(key, encode_tile(key)?);
+            tiles.insert(key, Arc::from(encode_tile(key)?));
         }
         let parent = TileKey {
             plane: 0,
@@ -97,7 +92,7 @@ impl Store {
             x: LUMB_LOD1.0,
             z: LUMB_LOD1.1,
         };
-        tiles.insert(parent, encode_tile(parent)?);
+        tiles.insert(parent, Arc::from(encode_tile(parent)?));
         Ok(Self {
             identity,
             max_lod: FIXTURE_MAX_LOD,
@@ -106,8 +101,8 @@ impl Store {
         })
     }
 
-    pub fn get(&self, key: TileKey) -> Option<&[u8]> {
-        self.tiles.get(&key).map(Vec::as_slice)
+    pub fn get_arc(&self, key: TileKey) -> Option<Arc<[u8]>> {
+        self.tiles.get(&key).map(Arc::clone)
     }
 
     #[cfg(test)]
@@ -117,7 +112,7 @@ impl Store {
         let mut max_lod = 0u8;
         for key in keys {
             max_lod = max_lod.max(key.lod);
-            tiles.insert(key, encode_tile(key)?);
+            tiles.insert(key, Arc::from(encode_tile(key)?));
         }
         Ok(Self {
             identity,
@@ -162,6 +157,7 @@ pub fn encode_tile(key: TileKey) -> Result<Vec<u8>, MapError> {
     Ok(out)
 }
 
+#[cfg(test)]
 pub fn decode_tile(bytes: &[u8]) -> Result<Vec<u8>, MapError> {
     if bytes.len() < 33 {
         return Err(MapError::Truncated);

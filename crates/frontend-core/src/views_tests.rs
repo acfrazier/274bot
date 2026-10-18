@@ -151,6 +151,11 @@ fn a_member_row_follows_every_offline_transition() {
         detail(&s).state,
         "waiting in login queue (1/3): next in line, another bot is logging in"
     );
+    step(&mut s, &|r| r.queue_blocker = Some(AdmitBlocker::Retiring));
+    assert_eq!(
+        detail(&s).state,
+        "waiting in login queue (1/3): next in line, previous login is finishing"
+    );
     step(&mut s, &|r| {
         r.queue_blocker = Some(AdmitBlocker::AddressBudget {
             attempts: 29,

@@ -227,7 +227,12 @@ pub(super) fn finish_teardown_hook(teardown: &std::sync::Arc<Mutex<TeardownState
 
 pub(super) fn drain_bot_log(runtime: &mut Runtime, out: &Sender<ThreadMsg>) {
     let bot_log: Result<Vec<String>, rustyscript::Error> =
-        runtime.call_function_immediate(None, "__rs2b0t_drain_log", json_args!());
+        super::super::lineage_v8::call_function_immediate(
+            runtime,
+            None,
+            "__rs2b0t_drain_log",
+            json_args!(),
+        );
     if let Ok(rows) = bot_log {
         for line in rows {
             let _ = out.send(ThreadMsg::Log(line));
@@ -321,7 +326,12 @@ pub(super) fn teardown_once(
         .invoked
         .store(true, std::sync::atomic::Ordering::SeqCst);
     let threw: Result<Option<String>, rustyscript::Error> =
-        runtime.call_function_immediate(None, "__rs2b0t_invoke_on_stop", json_args!());
+        super::super::lineage_v8::call_function_immediate(
+            runtime,
+            None,
+            "__rs2b0t_invoke_on_stop",
+            json_args!(),
+        );
     match threw {
         Ok(Some(msg)) => {
             let _ = out.send(ThreadMsg::Log(format!("onStop threw: {msg}")));
@@ -332,8 +342,8 @@ pub(super) fn teardown_once(
         }
     }
     drain_bot_log(runtime, out);
-    let _ = runtime.deno_runtime().execute_script(
-        "<onStop-clear-interact>",
+    let _ = super::super::lineage_v8::eval::<()>(
+        runtime,
         "if (globalThis.__rs2b0t_host) globalThis.__rs2b0t_host.interact = []",
     );
     finish_teardown_hook(teardown);

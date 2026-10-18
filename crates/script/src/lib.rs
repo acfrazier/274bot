@@ -59,6 +59,7 @@ pub mod native_bank;
 pub mod native_equipment;
 pub mod native_production;
 pub mod native_shop;
+pub mod preparation;
 pub mod quester;
 /// Pure ranged supply predicate (`rangeSupplyEmpty`).
 pub mod ranged;
@@ -71,6 +72,7 @@ mod shop_open;
 pub mod slot;
 pub mod trade_screen;
 pub mod watchdog;
+pub mod work_admission;
 
 pub use ctx::{CompiledTick, DetectedRandom, FindOptions, RandomClaim, ScriptCtx};
 #[cfg(feature = "load")]
@@ -196,8 +198,6 @@ mod machine;
 /// Frozen market catalog facts over the selected revision's items.
 #[cfg(feature = "load")]
 mod market_catalog;
-// The frozen JS pick helpers are reached only through the `load` isolate.
-#[cfg_attr(not(feature = "load"), allow(dead_code))]
 mod melee_weapons;
 #[cfg(feature = "load")]
 mod modals;

@@ -39,7 +39,22 @@ struct TempRoot(PathBuf);
 
 impl TempRoot {
     fn new(name: &str) -> Self {
-        let path = std::env::temp_dir().join(format!(
+        Self::under(&std::env::temp_dir(), name)
+    }
+
+    /// On tmpfs where the host has one, so step timings measure the steps,
+    /// not the disk's fsync latency.
+    fn in_memory(name: &str) -> Self {
+        let shm = Path::new("/dev/shm");
+        if shm.is_dir() {
+            Self::under(shm, name)
+        } else {
+            Self::new(name)
+        }
+    }
+
+    fn under(base: &Path, name: &str) -> Self {
+        let path = base.join(format!(
             "274bot-runtime-bind-{name}-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
@@ -126,14 +141,28 @@ fn write_packs(dir: &Path, packs: &[Vec<u8>]) {
 /// Seed retained inputs through the real verified publisher, not a size-only
 /// marker. These synthetic records isolate profile binding from a game server.
 fn snapshot(root: &Path, revision: u16, packs: &[Vec<u8>]) -> PathBuf {
-    struct FixtureEntries;
+    struct FixtureEntries(Vec<(i32, i32)>);
     impl client::unpack::EntrySource for FixtureEntries {
-        fn fetch_entries(
+        fn request_entry(&mut self, archive: i32, file: i32) -> Result<(), String> {
+            self.0.push((archive, file));
+            Ok(())
+        }
+
+        fn take_entries(
             &mut self,
-            _archive: i32,
-            files: &[i32],
-        ) -> Result<Vec<(i32, Vec<u8>)>, String> {
-            Ok(files.iter().map(|&file| (file, b"body".to_vec())).collect())
+            _until: std::time::Instant,
+            out: &mut Vec<client::unpack::FetchedEntry>,
+        ) -> Result<(), String> {
+            out.extend(
+                self.0
+                    .drain(..)
+                    .map(|(archive, file)| client::unpack::FetchedEntry {
+                        archive,
+                        file,
+                        payload: b"body".to_vec(),
+                    }),
+            );
+            Ok(())
         }
     }
     let transfer = nav::manifest::hash_bytes(&packs[4]);
@@ -147,7 +176,7 @@ fn snapshot(root: &Path, revision: u16, packs: &[Vec<u8>]) -> PathBuf {
     let manifest = client::unpack::fetch_snapshot(
         &input.to_string_lossy(),
         &out.to_string_lossy(),
-        &mut FixtureEntries,
+        &mut FixtureEntries(Vec::new()),
     )
     .unwrap();
     PathBuf::from(manifest.dir)
@@ -489,4 +518,135 @@ fn offline_bind_freezes_local_files_without_network() {
         profile.cache_availability(),
         host_play::cache::CacheAvailability::Degraded(_)
     ));
+}
+
+/// A retained public snapshot behind a local cache whose manifest is
+/// captured; returns the public packs and the namespace's preparation lock.
+fn stepped_fixture(name: &str) -> (TempRoot, Vec<Vec<u8>>, PathBuf) {
+    let root = TempRoot::in_memory(name);
+    let cache = root.join("cache");
+    write_packs(&cache, &packs(1));
+    let public = packs(2);
+    snapshot(&root.join("unpack"), 274, &public);
+    std::fs::write(
+        root.join("cache-manifest.json"),
+        serde_json::to_vec(&host_play::profile::CacheManifest::capture(274, &cache).unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    let negotiated = nav::manifest::hash_bytes(&crc_body(&public)[..36]);
+    let lock = root
+        .join("unpack")
+        .join("revision-274")
+        .join(format!(".{negotiated}.lock"));
+    (root, public, lock)
+}
+
+/// Another preparation of the same namespace holds the lock for `held`.
+fn hold_lock(path: &Path, held: std::time::Duration) -> thread::JoinHandle<()> {
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)
+        .unwrap();
+    file.lock().unwrap();
+    thread::spawn(move || {
+        thread::sleep(held);
+        file.unlock().unwrap();
+    })
+}
+
+/// While another preparation holds the cache lock, the stepped template
+/// preparation waits in short steps, never in one long one, and binds once
+/// the lock is free. The root is on tmpfs: the bound is the steps' own work,
+/// not the disk's fsync latency.
+#[test]
+fn template_preparation_steps_stay_bounded_while_the_cache_lock_is_held() {
+    use host_play::progress::ProfileProgressObserver;
+    use std::time::{Duration, Instant};
+    let (root, public, lock) = stepped_fixture("stepped-lock");
+    let held = Duration::from_millis(1500);
+    // The hold starts when the lock is taken, so the total is measured from
+    // there too, not from after the server and preparation setup.
+    let started = Instant::now();
+    let release = hold_lock(&lock, held);
+    let (port, server) = serve_packs(public, 0);
+    let mut preparation = selection(&root, "274", port).begin_template_preparation();
+    let observer = ProfileProgressObserver::default();
+    let (mut longest, mut steps) = (Duration::ZERO, 0);
+    let template = loop {
+        let step_started = Instant::now();
+        let step = preparation.step(step_started + host_play::TEMPLATE_STEP_WAIT, &observer);
+        longest = longest.max(step_started.elapsed());
+        steps += 1;
+        if let host_play::TemplateStep::Complete(result) = step {
+            break result.unwrap();
+        }
+    };
+    let elapsed = started.elapsed();
+    release.join().unwrap();
+    server.join().unwrap();
+    eprintln!("stepped lock wait: {steps} steps, longest {longest:?}, total {elapsed:?}");
+    assert!(elapsed >= held, "the lock was honoured: {elapsed:?}");
+    assert!(steps > 50, "{steps} steps");
+    assert!(
+        longest < Duration::from_millis(250),
+        "longest step {longest:?}"
+    );
+    template.validate_for_play().unwrap();
+}
+
+/// Cancelling the WorkAdmission job ends a preparation that waits for the
+/// cache lock at its next step and releases what it holds; a later
+/// preparation binds normally.
+#[test]
+fn cancelled_template_preparation_ends_promptly_and_the_next_one_binds() {
+    use host_play::progress::ProfileProgressObserver;
+    use script::preparation::CooperativePreparationStep as Step;
+    use std::time::{Duration, Instant};
+    let (root, public, lock) = stepped_fixture("stepped-cancel");
+    let held = Duration::from_millis(3000);
+    let release = hold_lock(&lock, held);
+    let (port, server) = serve_packs(public.clone(), 0);
+    let mut preparation = selection(&root, "274", port).begin_template_preparation();
+    let observer = ProfileProgressObserver::default();
+    let mut task = script::preparation::submit_cooperative(
+        script::preparation::PreparationKind::Profile,
+        api::identity::Scope::Process,
+        script::preparation::PreparationInput::new(1, 0, 0, 0).unwrap(),
+        move |_| match preparation.step(Instant::now() + host_play::TEMPLATE_STEP_WAIT, &observer) {
+            host_play::TemplateStep::Continue { completed, total } => {
+                Step::Continue { completed, total }
+            }
+            host_play::TemplateStep::Complete(output) => Step::Complete {
+                output: output.map(|_| ()),
+                completed: 1,
+                total: Some(1),
+            },
+        },
+    )
+    .unwrap();
+    // `/crc` is served: the preparation now waits for the held lock.
+    server.join().unwrap();
+    thread::sleep(Duration::from_millis(100));
+    let cancelled_at = Instant::now();
+    task.cancel(api::identity::Cancellation::Operator);
+    while !task.is_finished() {
+        assert!(
+            cancelled_at.elapsed() < Duration::from_secs(1),
+            "cancel did not end the preparation while the lock was held"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(matches!(
+        task.join(),
+        Err(script::preparation::PreparationError::Cancelled(_))
+    ));
+    release.join().unwrap();
+    let (port, server) = serve_packs(public, 0);
+    let template = selection(&root, "274", port).prepare_template().unwrap();
+    server.join().unwrap();
+    template.validate_for_play().unwrap();
 }

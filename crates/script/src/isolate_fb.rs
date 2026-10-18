@@ -20,6 +20,16 @@
 //! The per-slot last-post [`SnapshotFingerprint`] is compared by value
 //! (equality, not a hash) once per slot per tick.
 
+use crate::native::request::NativeKind;
+use crate::native::seat::{SeatEntry, SeatResult as NativeSeatResult, SeatTerminal};
+use crate::native::NativePhase;
+use api::identity::RequestId;
+use api::script_contract::{
+    AbortReason, CallbackCancelReason, DecisionSequence, Refusal, RequestStamp,
+    CONTROL_RESERVATION, MAX_CANCEL_CARRY, MAX_DECIDE_CARRY, MAX_ENCODED_GAMEPLAY,
+    MAX_INTERACT_REQS as CONTRACT_MAX_INTERACT_REQS, MAX_LIVE, MAX_PENDING_STARTS, MAX_RESULTS,
+    MAX_START_CHARGE, MAX_WALK_RELEASES,
+};
 use api::snapshot::{ActorKind, ProjectileView, MAX_PROJECTILES_PER_SNAPSHOT};
 use flatbuffers::{
     root_with_opts, FlatBufferBuilder, InvalidFlatbuffer, VerifierOptions, WIPOffset,
@@ -28,16 +38,19 @@ use std::sync::Arc;
 
 #[path = "../schema/generated/isolate_generated.rs"]
 #[rustfmt::skip]
-#[allow(dead_code, clippy::all, rustdoc::all)]
+#[expect(clippy::all, reason = "flatc 25.12.19 output is checked in byte-identical; clippy lints on generated code are upstream")]
+#[expect(rustdoc::all, reason = "flatc output carries no docs; rustdoc lints on generated code are upstream")]
 pub(crate) mod generated;
 use generated::rs_2b_0t::isolate::*;
 pub use generated::rs_2b_0t::isolate::{
     ApiCombatOutcome, ApiGather, ApiGatherOutcome, ApiProgress, AvoidRect, BankApproach, BankStand,
     Booth, Carry, ChatLine, ChatOption, Collision, CombatFight, CombatProjectile, CombatStyle,
-    InspectHop, Interact, InteractBatch, MainModalTexts, MakeButton, MakeProduct, NearestBooth,
-    NpcBox, ProgressFlagRow, PuzzleBoard, QuestProgressRow, QuestStatus, Reach, Row, SceneEntity,
-    SettingRow, SideTabIface, Snapshot, Stat, StatusField, Tile, Varp, WalkCancelReason,
-    WidgetText,
+    InspectHop, Interact, InteractBatch, MainModalTexts, MakeButton, MakeProduct, MirrorRevoke,
+    NativeRequest, NearestBooth, NpcBox, ProgressFlagRow, PuzzleBoard, QuestProgressRow,
+    QuestStatus, Reach, Row, SceneEntity, SeatAbortReason, SeatCancel, SeatCancelReason,
+    SeatDecide, SeatKind, SeatLive, SeatOutcome, SeatOutcomeKind, SeatPhase, SeatPrompt,
+    SeatRefusal, SeatResult, SettingRow, SideTabIface, Snapshot, Stat, StatusField, Tile, Varp,
+    WalkCancelReason, WidgetText,
 };
 pub(crate) const LOCAL_PLAYER_MOTION_UNKNOWN: u8 = 0;
 pub(crate) const LOCAL_PLAYER_MOTION_STATIONARY: u8 = 1;
@@ -71,7 +84,26 @@ macro_rules! presence_methods {
 }
 
 /// Max shim interact rows per tick (isolate→host).
-const MAX_INTERACT_REQS: usize = 256;
+const MAX_INTERACT_REQS: usize = CONTRACT_MAX_INTERACT_REQS;
+/// Seat starts retained by the adapter and encoded per batch (§28.4–28.5).
+pub const MAX_SEAT_STARTS: usize = MAX_PENDING_STARTS;
+/// Seat decisions carried until terminal receipt (§28.5).
+pub const MAX_SEAT_DECISIONS: usize = MAX_DECIDE_CARRY;
+/// Seat cancellations carried for live and pending children (§28.5).
+pub const MAX_SEAT_CANCELS: usize = MAX_CANCEL_CARRY;
+/// Total reserved controls and legacy releases (§28.5).
+pub const MAX_SEAT_RESERVED_ROWS: usize = CONTROL_RESERVATION;
+/// Remaining gameplay/lifecycle rows after reservation (§28.5).
+pub const MAX_SEAT_GAMEPLAY_ROWS: usize = MAX_ENCODED_GAMEPLAY;
+/// Maximum live entries on one seat page.
+pub const MAX_SEAT_LIVE: usize = MAX_LIVE;
+/// Maximum retained terminal results on one seat page.
+pub const MAX_SEAT_RESULTS: usize = MAX_RESULTS;
+/// Maximum bytes in each structured-clone wire vector.
+pub const MAX_SEAT_BINARY_BYTES: usize = MAX_START_CHARGE;
+/// Maximum distinct mirror revocations carried in one interact batch.
+pub const MAX_SEAT_MIRROR_REVOKES: usize = 141;
+
 /// Max paint lines per frame (isolate→host).
 const MAX_PAINT_LINES: usize = 512;
 /// Max advertised paint buttons per frame (isolate→host).
@@ -411,6 +443,365 @@ pub struct SnapshotInput<'a> {
     pub walk_outcome_cancel_reason: WalkCancelReason,
 }
 
+/// Borrowed prompt data for one live seat request.
+#[derive(Clone, Copy)]
+pub struct SeatPromptInput<'a> {
+    /// Nonzero sequence associated with the current prompt.
+    pub sequence: DecisionSequence,
+    /// Family-specific decision point.
+    pub point: &'a str,
+    /// Bounded binary structured-clone prompt arguments.
+    pub args: &'a [u8],
+}
+
+/// The family-owned portion of one seat live-page row.
+#[derive(Clone, Copy)]
+pub struct SeatLiveDetails<'a> {
+    /// Must identify the corresponding [`SeatEntry`] at the same index.
+    pub id: RequestId,
+    /// Family phase represented on the status page.
+    pub phase: NativePhase,
+    /// Borrowed current prompt, if the family is awaiting a decision.
+    pub prompt: Option<SeatPromptInput<'a>>,
+}
+
+/// Borrowed snapshot view of the seat forest and retained terminal ledger.
+///
+/// `live_details` has exactly one row per `live` entry, in the same order.
+/// The family machine or isolate adapter owns phase and prompt payloads;
+/// this projection never fabricates them from forest state.
+/// `mirror_revokes_consumed` is the highest contiguous mirror revoke applied by the host.
+#[derive(Clone, Copy)]
+pub struct SeatPageInput<'a> {
+    live: &'a [SeatEntry],
+    results: &'a [NativeSeatResult],
+    live_details: &'a [SeatLiveDetails<'a>],
+    mirror_revokes_consumed: u64,
+}
+
+impl<'a> SeatPageInput<'a> {
+    /// Validate and borrow one complete seat page and its revoke acknowledgement.
+    pub fn new(
+        live: &'a [SeatEntry],
+        results: &'a [NativeSeatResult],
+        live_details: &'a [SeatLiveDetails<'a>],
+        mirror_revokes_consumed: u64,
+    ) -> Result<Self, String> {
+        let page = Self {
+            live,
+            results,
+            live_details,
+            mirror_revokes_consumed,
+        };
+        validate_seat_page(&page)?;
+        Ok(page)
+    }
+}
+
+fn seat_refusal_wire(refusal: Refusal) -> Result<SeatRefusal, String> {
+    match refusal {
+        Refusal::Busy => Ok(SeatRefusal::Busy),
+        Refusal::ParentBusy => Ok(SeatRefusal::ParentBusy),
+        Refusal::ParentNotLive => Ok(SeatRefusal::ParentNotLive),
+        Refusal::LineageDepth => Ok(SeatRefusal::LineageDepth),
+        Refusal::ArgsTooLarge => {
+            Err("local ArgsTooLarge refusal cannot be published on the seat wire".into())
+        }
+        Refusal::HistoryExpired => Ok(SeatRefusal::HistoryExpired),
+        Refusal::Unknown => Ok(SeatRefusal::Unknown),
+        Refusal::AwaitingDecision => Ok(SeatRefusal::AwaitingDecision),
+    }
+}
+
+fn seat_abort_wire(reason: AbortReason) -> Result<SeatAbortReason, String> {
+    match reason {
+        AbortReason::Reset => Err("Reset is not a seat-published terminal".into()),
+        AbortReason::Superseded => Ok(SeatAbortReason::Superseded),
+        AbortReason::Terminated => Err("Terminated is not a seat-published terminal".into()),
+        AbortReason::UserInput => Ok(SeatAbortReason::UserInput),
+        AbortReason::ParentAborted => Ok(SeatAbortReason::ParentAborted),
+    }
+}
+fn seat_phase_wire(phase: NativePhase) -> SeatPhase {
+    match phase {
+        NativePhase::Preparing => SeatPhase::Preparing,
+        NativePhase::Working => SeatPhase::Working,
+        NativePhase::Waiting => SeatPhase::Waiting,
+        NativePhase::Blocked => SeatPhase::Blocked,
+        NativePhase::Complete => SeatPhase::Complete,
+    }
+}
+
+fn native_phase_from_wire(phase: SeatPhase) -> Result<NativePhase, String> {
+    match phase {
+        SeatPhase::Preparing => Ok(NativePhase::Preparing),
+        SeatPhase::Working => Ok(NativePhase::Working),
+        SeatPhase::Waiting => Ok(NativePhase::Waiting),
+        SeatPhase::Blocked => Ok(NativePhase::Blocked),
+        SeatPhase::Complete => Ok(NativePhase::Complete),
+        SeatPhase::None => Err("seat live row has no phase".into()),
+        _ => Err("seat live row has unknown phase enum".into()),
+    }
+}
+
+fn seat_terminal_wire(
+    terminal: SeatTerminal,
+) -> Result<(SeatOutcomeKind, SeatRefusal, SeatAbortReason), String> {
+    match terminal {
+        SeatTerminal::Done => Ok((
+            SeatOutcomeKind::Done,
+            SeatRefusal::None,
+            SeatAbortReason::None,
+        )),
+        SeatTerminal::Failed => Ok((
+            SeatOutcomeKind::Failed,
+            SeatRefusal::None,
+            SeatAbortReason::None,
+        )),
+        SeatTerminal::Refused(refusal) => Ok((
+            SeatOutcomeKind::Refused,
+            seat_refusal_wire(refusal)?,
+            SeatAbortReason::None,
+        )),
+        SeatTerminal::Aborted(reason) => Ok((
+            SeatOutcomeKind::Aborted,
+            SeatRefusal::None,
+            seat_abort_wire(reason)?,
+        )),
+    }
+}
+
+fn validate_seat_page(page: &SeatPageInput<'_>) -> Result<(), String> {
+    if page.live.len() > MAX_SEAT_LIVE {
+        return Err(format!(
+            "seat live vector length {} exceeds cap {MAX_SEAT_LIVE}",
+            page.live.len()
+        ));
+    }
+    if page.results.len() > MAX_SEAT_RESULTS {
+        return Err(format!(
+            "seat result vector length {} exceeds cap {MAX_SEAT_RESULTS}",
+            page.results.len()
+        ));
+    }
+    if page.live.len() + page.results.len() > MAX_RESULTS {
+        return Err(format!(
+            "seat live and result credits exceed cap {MAX_RESULTS}"
+        ));
+    }
+    let mut ids = [0u64; MAX_RESULTS];
+    let mut id_count = 0usize;
+    if page.live_details.len() != page.live.len() {
+        return Err(format!(
+            "seat live/detail count mismatch: {} live, {} details",
+            page.live.len(),
+            page.live_details.len()
+        ));
+    }
+    for (index, (entry, details)) in page.live.iter().zip(page.live_details).enumerate() {
+        if entry.id != details.id {
+            return Err(format!("seat live/detail id mismatch at index {index}"));
+        }
+        if entry.parent == Some(entry.id) {
+            return Err(format!(
+                "seat live entry {} is its own parent",
+                entry.id.get()
+            ));
+        }
+        ids[id_count] = entry.id.get();
+        id_count += 1;
+        match details.prompt {
+            Some(prompt)
+                if entry.prompt == Some(prompt.sequence.get())
+                    && entry.decisions_consumed.checked_add(1) == Some(prompt.sequence.get()) =>
+            {
+                if prompt.args.len() > MAX_SEAT_BINARY_BYTES {
+                    return Err(format!(
+                        "seat prompt args length {} exceeds cap {MAX_SEAT_BINARY_BYTES}",
+                        prompt.args.len()
+                    ));
+                }
+            }
+            None if entry.prompt.is_none() => {}
+            _ => {
+                return Err(format!(
+                    "seat live entry {} has misaligned prompt sequence",
+                    entry.id.get()
+                ))
+            }
+        }
+    }
+    let mut previous_seq = 0;
+    for result in page.results.iter() {
+        if result.seq == 0 || result.seq <= previous_seq {
+            return Err("seat results are not strictly ordered by terminal sequence".into());
+        }
+        ids[id_count] = result.id.get();
+        id_count += 1;
+        seat_terminal_wire(result.outcome)?;
+        previous_seq = result.seq;
+    }
+    ids[..id_count].sort_unstable();
+    if ids[..id_count].windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err("duplicate live/terminal seat id".into());
+    }
+    Ok(())
+}
+
+/// Typed family arguments for a native start being encoded.
+pub enum SeatStartArgsRef<'a> {
+    /// This family has no typed I-wire payload yet.
+    Empty,
+    /// Typed gather settings payload.
+    Gather(&'a crate::native::SettingsBag),
+    /// Typed combat-session request.
+    Combat(&'a crate::api_combat::CombatSessionRequest),
+    /// Typed quest-progress name.
+    QuestProgress(&'a str),
+}
+
+/// One start with its push-time request stamp and typed family payload.
+pub struct SeatStartRef<'a> {
+    /// Push-time request identity, parent, and RunKey stamp.
+    pub stamp: RequestStamp,
+    /// Semantic family of this start.
+    pub kind: NativeKind,
+    /// Family arguments; only Gather, Combat, and QuestProgress have typed I-wire fields.
+    pub args: SeatStartArgsRef<'a>,
+}
+
+/// One typed decision answer carried until terminal receipt.
+pub struct SeatDecisionRef<'a> {
+    /// Request this decision answers.
+    pub of: RequestId,
+    /// Nonzero per-request prompt sequence.
+    pub sequence: DecisionSequence,
+    /// Bounded binary structured-clone answer.
+    pub answer: &'a [u8],
+}
+
+/// One typed cancellation carried until terminal receipt.
+#[derive(Clone, Copy)]
+pub struct SeatCancelInput {
+    /// Request whose callback or subtree is cancelled.
+    pub of: RequestId,
+    /// Typed cancellation reason.
+    pub reason: CallbackCancelReason,
+}
+/// One coalesced, sequence-ordered in-isolate mirror revocation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SeatMirrorRevoke {
+    /// Revoked mirror owner.
+    pub owner: RequestId,
+    /// Monotone revoke sequence, retried until acknowledged by the page.
+    pub seq: u64,
+}
+
+/// A gameplay/control row with push-time seat lineage and local mirror owner.
+pub struct SeatInteractRequest<'a> {
+    /// `None` is a proven root; the containing field itself is required.
+    pub lineage: Option<RequestId>,
+    /// In-isolate machine mirror that owned this emission, if any.
+    /// Must not collide with `lineage` when both are present.
+    pub mirror_owner: Option<RequestId>,
+    /// Interaction payload to encode after reserved rows.
+    pub request: &'a crate::shim::InteractReq,
+}
+
+/// Borrowed producer input for the complete isolate-to-host seat batch.
+pub struct SeatInteractBatchInput<'a> {
+    /// Highest retained terminal consumed by the isolate.
+    pub consumed_terminal_seq: u64,
+    /// Pending starts in adapter carry order.
+    pub starts: &'a [SeatStartRef<'a>],
+    /// Carried typed decisions.
+    pub decisions: &'a [SeatDecisionRef<'a>],
+    /// Carried typed cancellations.
+    pub cancels: &'a [SeatCancelInput],
+    /// Mirror revocations carried in contiguous sequence order.
+    pub mirror_revokes: &'a [SeatMirrorRevoke],
+    /// Interactions with captured push-time lineage.
+    pub reqs: &'a [SeatInteractRequest<'a>],
+}
+
+/// One decoded start; the slot owner constructs its generation-bound stamp.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeatStartInput {
+    /// Nonzero request identity.
+    pub id: RequestId,
+    /// Nearest seat ancestor; `None` denotes a proven root.
+    pub parent: Option<RequestId>,
+    /// Raw RunKey run stamp; slot construction binds it.
+    pub run: u64,
+    /// Raw RunKey session-epoch stamp; not a login-session seat entry.
+    pub session: u64,
+    /// Semantic family of the request.
+    pub kind: NativeKind,
+    /// Family arguments decoded from the wire.
+    pub args: SeatStartArgs,
+}
+
+/// Owned typed arguments decoded from a native start.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SeatStartArgs {
+    /// No typed argument schema is active for this family.
+    Empty,
+    /// Decoded gather settings.
+    Gather(crate::native::SettingsBag),
+    /// Decoded combat-session request.
+    Combat(crate::api_combat::CombatSessionRequest),
+    /// Decoded quest-progress name.
+    QuestProgress(String),
+}
+
+/// One decoded decision answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeatDecisionInput {
+    /// Request this decision answers.
+    pub of: RequestId,
+    /// Nonzero per-request prompt sequence.
+    pub sequence: DecisionSequence,
+    /// Owned bounded binary structured-clone answer.
+    pub answer: Vec<u8>,
+}
+
+/// One decoded cancellation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SeatCancelDecoded {
+    /// Request whose callback or subtree is cancelled.
+    pub of: RequestId,
+    /// Typed cancellation reason.
+    pub reason: CallbackCancelReason,
+}
+
+/// One decoded legacy interaction row with required captured lineage.
+#[derive(Debug)]
+pub struct SeatInteractDecoded {
+    /// Required physical wire lineage; `None` is a proven Root.
+    pub lineage: Option<RequestId>,
+    /// In-isolate machine mirror that owned this emission, if any.
+    pub mirror_owner: Option<RequestId>,
+    /// Request payload to dispatch with the captured lineage.
+    pub request: crate::shim::InteractReq,
+}
+
+/// Fully decoded wire batch, including controls, mirror revocations, and rows.
+#[derive(Debug)]
+pub struct DecodedSeatBatch {
+    /// Highest retained terminal consumed by this batch.
+    pub consumed_terminal_seq: u64,
+    /// Decoded pending starts.
+    pub starts: Vec<SeatStartInput>,
+    /// Decoded carried decisions.
+    pub decisions: Vec<SeatDecisionInput>,
+    /// Decoded carried cancellations.
+    pub cancels: Vec<SeatCancelDecoded>,
+    /// Decoded, sequence-ordered mirror revocations.
+    pub mirror_revokes: Vec<SeatMirrorRevoke>,
+    /// Decoded interaction rows with their captured lineage.
+    pub reqs: Vec<SeatInteractDecoded>,
+}
+
 /// Optional native facts appended to the isolate snapshot. Kept separate
 /// from [`SnapshotInput`] so callers can omit these facts when unused.
 #[derive(Clone, Copy, Default)]
@@ -500,6 +891,9 @@ pub struct NativeFactsInput<'a> {
     /// fact for `bank_side`. `None` omits the slot; the isolate keeps its
     /// last root.
     pub side_modal_id: Option<i32>,
+    /// The complete forest/result status page. `None` omits it; `Some` with
+    /// empty slices explicitly clears both wire vectors.
+    pub seat_page: Option<SeatPageInput<'a>>,
 }
 
 /// A terminal select-only result. Its ordinal is resolved against Start's
@@ -660,7 +1054,144 @@ pub struct WidgetTextInput<'a> {
 }
 /// Decode `buf` as a root-`Snapshot` FlatBuffer after bounded verification.
 pub fn decode_snapshot(buf: &[u8]) -> Result<Snapshot<'_>, String> {
-    Snapshot::from_bytes(buf)
+    let snapshot = Snapshot::from_bytes(buf)?;
+    validate_seat_snapshot(&snapshot)?;
+    Ok(snapshot)
+}
+
+fn validate_seat_snapshot(snapshot: &Snapshot<'_>) -> Result<(), String> {
+    let live = snapshot.seat_live();
+    let results = snapshot.seat_results();
+    if live.is_some() != results.is_some() {
+        return Err("snapshot carries only one half of the seat page".into());
+    }
+    let (Some(live), Some(results)) = (live, results) else {
+        return Ok(());
+    };
+    if live.len() > MAX_SEAT_LIVE {
+        return Err(format!(
+            "seat live vector length {} exceeds cap {MAX_SEAT_LIVE}",
+            live.len()
+        ));
+    }
+    if results.len() > MAX_SEAT_RESULTS {
+        return Err(format!(
+            "seat result vector length {} exceeds cap {MAX_SEAT_RESULTS}",
+            results.len()
+        ));
+    }
+    if live.len() + results.len() > MAX_RESULTS {
+        return Err(format!(
+            "seat live and result credits exceed cap {MAX_RESULTS}"
+        ));
+    }
+    let mut ids = [0u64; MAX_RESULTS];
+    let mut id_count = 0usize;
+    for (index, row) in live.iter().enumerate() {
+        if RequestId::from_raw(row.id()).is_none() || row.parent() == row.id() {
+            return Err(format!("seat live row {index} has invalid identity"));
+        }
+        ids[id_count] = row.id();
+        id_count += 1;
+        native_phase_from_wire(row.phase())
+            .map_err(|error| format!("seat live row {index} {error}"))?;
+        match row.prompt() {
+            Some(prompt)
+                if prompt.seq() != 0
+                    && row.decisions_consumed().checked_add(1) == Some(prompt.seq()) =>
+            {
+                if prompt.point().is_none() {
+                    return Err(format!("seat live row {index} prompt has no point"));
+                }
+                let args = prompt
+                    .args()
+                    .ok_or_else(|| format!("seat live row {index} prompt has no args vector"))?;
+                if args.len() > MAX_SEAT_BINARY_BYTES {
+                    return Err(format!(
+                        "seat prompt args exceed cap {MAX_SEAT_BINARY_BYTES}"
+                    ));
+                }
+            }
+            None => {}
+            Some(_) => return Err(format!("seat live row {index} has invalid prompt sequence")),
+        }
+    }
+    let mut previous_seq = 0;
+    for row in results.iter() {
+        if RequestId::from_raw(row.id()).is_none()
+            || row.terminal_seq() == 0
+            || row.terminal_seq() <= previous_seq
+        {
+            return Err("seat results are not strictly ordered by terminal sequence".into());
+        }
+        ids[id_count] = row.id();
+        id_count += 1;
+        let outcome = row
+            .outcome()
+            .ok_or_else(|| format!("seat result {} has no outcome", row.id()))?;
+        let value = outcome.value();
+        if value.is_some_and(|bytes| bytes.len() > MAX_SEAT_BINARY_BYTES) {
+            return Err(format!(
+                "seat outcome value exceeds cap {MAX_SEAT_BINARY_BYTES}"
+            ));
+        }
+        match outcome.kind() {
+            SeatOutcomeKind::Done | SeatOutcomeKind::Failed
+                if outcome.refusal() == SeatRefusal::None
+                    && outcome.abort_reason() == SeatAbortReason::None => {}
+            SeatOutcomeKind::Refused
+                if value.is_none() && outcome.abort_reason() == SeatAbortReason::None =>
+            {
+                match outcome.refusal() {
+                    SeatRefusal::Busy
+                    | SeatRefusal::ParentBusy
+                    | SeatRefusal::ParentNotLive
+                    | SeatRefusal::LineageDepth
+                    | SeatRefusal::HistoryExpired
+                    | SeatRefusal::Unknown
+                    | SeatRefusal::AwaitingDecision => {}
+                    SeatRefusal::None => {
+                        return Err(format!("seat result {} has no refusal reason", row.id()))
+                    }
+                    SeatRefusal::ArgsTooLarge => {
+                        return Err("local ArgsTooLarge refusal appeared on the seat wire".into())
+                    }
+                    _ => return Err("seat result has unknown refusal enum".into()),
+                }
+            }
+            SeatOutcomeKind::Aborted
+                if value.is_none() && outcome.refusal() == SeatRefusal::None =>
+            {
+                match outcome.abort_reason() {
+                    SeatAbortReason::Superseded
+                    | SeatAbortReason::UserInput
+                    | SeatAbortReason::ParentAborted => {}
+                    SeatAbortReason::None => {
+                        return Err(format!("seat result {} has no abort reason", row.id()))
+                    }
+                    SeatAbortReason::Reset | SeatAbortReason::Terminated => {
+                        return Err("local abort reason appeared on the seat wire".into())
+                    }
+                    _ => return Err("seat result has unknown abort enum".into()),
+                }
+            }
+            SeatOutcomeKind::None => {
+                return Err(format!("seat result {} has no outcome kind", row.id()))
+            }
+            _ => {
+                return Err(format!(
+                    "seat result {} has inconsistent outcome fields",
+                    row.id()
+                ))
+            }
+        }
+        previous_seq = row.terminal_seq();
+    }
+    ids[..id_count].sort_unstable();
+    if ids[..id_count].windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err("duplicate live/terminal seat id".into());
+    }
+    Ok(())
 }
 
 impl<'a> Snapshot<'a> {
@@ -1155,6 +1686,58 @@ fn local_target_projectiles<'a>(
         .take(MAX_PROJECTILES_PER_SNAPSHOT)
 }
 
+#[derive(Clone, Default, PartialEq, Eq)]
+struct SeatPageFingerprint {
+    live: Vec<SeatLiveFingerprint>,
+    results: Vec<(u64, u64, SeatTerminal)>,
+    mirror_revokes_consumed: u64,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct SeatLiveFingerprint {
+    id: u64,
+    parent: u64,
+    phase: NativePhase,
+    decisions_consumed: u32,
+    prompt: Option<SeatPromptFingerprint>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct SeatPromptFingerprint {
+    sequence: u32,
+    point: String,
+    args: Vec<u8>,
+}
+
+impl From<SeatPageInput<'_>> for SeatPageFingerprint {
+    fn from(page: SeatPageInput<'_>) -> Self {
+        Self {
+            live: page
+                .live
+                .iter()
+                .zip(page.live_details)
+                .map(|(entry, details)| SeatLiveFingerprint {
+                    id: entry.id.get(),
+                    parent: entry.parent.map_or(0, RequestId::get),
+                    phase: details.phase,
+                    decisions_consumed: entry.decisions_consumed,
+                    prompt: details.prompt.map(|prompt| SeatPromptFingerprint {
+                        sequence: prompt.sequence.get(),
+                        point: prompt.point.to_string(),
+                        args: prompt.args.to_vec(),
+                    }),
+                })
+                .collect(),
+            results: page
+                .results
+                .iter()
+                .map(|result| (result.id.get(), result.seq, result.outcome))
+                .collect(),
+            mirror_revokes_consumed: page.mirror_revokes_consumed,
+        }
+    }
+}
+
 /// The per-slot last-post fingerprint: an owned copy of the snapshot
 /// fields the host last posted, compared against the next input to build
 /// the delta. Content equality (not a hash) is fine — the tables are
@@ -1286,6 +1869,7 @@ pub struct SnapshotFingerprint {
     pub bank_snapshot_generation: Option<i64>,
     pub chat_page_fingerprint: u64,
     pub side_modal_id: Option<i32>,
+    seat_page: Option<SeatPageFingerprint>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -1585,6 +2169,7 @@ impl SnapshotFingerprint {
             api_progress: native.api_progress.map(|page| (page.token(), page.kind())),
             chat_page_fingerprint: native.chat_page_fingerprint,
             side_modal_id: native.side_modal_id,
+            seat_page: native.seat_page.map(SeatPageFingerprint::from),
         }
     }
 }
@@ -1752,6 +2337,8 @@ pub struct DeltaMask {
     pub chat_page_fingerprint: bool,
     /// The side modal root; written only when supplied.
     pub side_modal_id: bool,
+    /// One bit for the seat live and retained-result pages, posted together.
+    pub seat_page: bool,
 }
 
 impl DeltaMask {
@@ -1853,6 +2440,7 @@ impl DeltaMask {
             api_progress: true,
             chat_page_fingerprint: true,
             side_modal_id: true,
+            seat_page: true,
         }
     }
 
@@ -1981,6 +2569,7 @@ impl DeltaMask {
             api_progress: next.api_progress.is_some() && next.api_progress != last.api_progress,
             chat_page_fingerprint: next.chat_page_fingerprint != last.chat_page_fingerprint,
             side_modal_id: next.side_modal_id != last.side_modal_id,
+            seat_page: next.seat_page != last.seat_page,
         }
     }
     /// Whether this delta carries an actual evidence change. The tick and
@@ -2077,6 +2666,7 @@ impl DeltaMask {
             || self.api_progress
             || self.chat_page_fingerprint
             || self.side_modal_id
+            || self.seat_page
             || (self.banks && next.banks != last.banks)
             || (self.hold && next.hold != last.hold)
     }
@@ -2243,6 +2833,16 @@ impl IsolateBuf {
         self.builder.reset();
         encode_interact_batch_into(&mut self.builder, reqs);
         self.copy_finished()
+    }
+
+    /// Encode one complete seat batch after validating all reservation bounds.
+    pub fn encode_seat_interact_batch(
+        &mut self,
+        input: &SeatInteractBatchInput<'_>,
+    ) -> Result<Vec<u8>, String> {
+        self.builder.reset();
+        encode_seat_interact_batch_into(&mut self.builder, input)?;
+        Ok(self.copy_finished())
     }
 }
 
@@ -2714,6 +3314,15 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let seat_page_slots = if mask.seat_page {
+        native.seat_page.map(|page| {
+            let (live, results) =
+                seat_page_vectors_off(b, page).expect("seat page validated before encoding");
+            (live, results, page.mirror_revokes_consumed)
+        })
+    } else {
+        None
+    };
     let projectiles_off = if mask.projectiles {
         native.projectiles.map(|rows| {
             let mut offsets = [WIPOffset::new(0); MAX_PROJECTILES_PER_SNAPSHOT];
@@ -3086,6 +3695,11 @@ fn encode_snapshot_masked_into(
     }
     if let Some(off) = api_progress_slot {
         table.add_api_progress(off);
+    }
+    if let Some((live, results, mirror_revokes_consumed)) = seat_page_slots {
+        table.add_seat_live(live);
+        table.add_seat_results(results);
+        table.add_mirror_revokes_consumed(mirror_revokes_consumed);
     }
     if let Some(off) = projectiles_off {
         table.add_projectiles(off);
@@ -3854,6 +4468,83 @@ fn api_progress_off<'b>(
     table.finish()
 }
 
+fn seat_prompt_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    prompt: SeatPromptInput<'_>,
+) -> WIPOffset<SeatPrompt<'b>> {
+    let point = b.create_string(prompt.point);
+    let args = b.create_vector(prompt.args);
+    let mut table = SeatPromptBuilder::new(b);
+    table.add_seq(prompt.sequence.get());
+    table.add_point(point);
+    table.add_args(args);
+    table.finish()
+}
+
+fn seat_live_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    entry: &SeatEntry,
+    details: SeatLiveDetails<'_>,
+) -> WIPOffset<SeatLive<'b>> {
+    let prompt = details.prompt.map(|prompt| seat_prompt_off(b, prompt));
+    let mut table = SeatLiveBuilder::new(b);
+    table.add_id(entry.id.get());
+    table.add_parent(entry.parent.map_or(0, RequestId::get));
+    table.add_phase(seat_phase_wire(details.phase));
+    table.add_decisions_consumed(entry.decisions_consumed);
+    if let Some(prompt) = prompt {
+        table.add_prompt(prompt);
+    }
+    table.finish()
+}
+
+fn seat_outcome_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    terminal: SeatTerminal,
+) -> Result<WIPOffset<SeatOutcome<'b>>, String> {
+    let (kind, refusal, abort_reason) = seat_terminal_wire(terminal)?;
+    let mut table = SeatOutcomeBuilder::new(b);
+    table.add_kind(kind);
+    table.add_refusal(refusal);
+    table.add_abort_reason(abort_reason);
+    Ok(table.finish())
+}
+
+fn seat_result_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    result: &NativeSeatResult,
+) -> Result<WIPOffset<SeatResult<'b>>, String> {
+    let outcome = seat_outcome_off(b, result.outcome)?;
+    let mut table = SeatResultBuilder::new(b);
+    table.add_id(result.id.get());
+    table.add_terminal_seq(result.seq);
+    table.add_outcome(outcome);
+    Ok(table.finish())
+}
+
+type SeatLiveVector<'b> =
+    WIPOffset<flatbuffers::Vector<'b, flatbuffers::ForwardsUOffset<SeatLive<'b>>>>;
+type SeatResultVector<'b> =
+    WIPOffset<flatbuffers::Vector<'b, flatbuffers::ForwardsUOffset<SeatResult<'b>>>>;
+
+fn seat_page_vectors_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    page: SeatPageInput<'_>,
+) -> Result<(SeatLiveVector<'b>, SeatResultVector<'b>), String> {
+    validate_seat_page(&page)?;
+    let mut live_offsets = [WIPOffset::new(0); MAX_SEAT_LIVE];
+    for (index, (entry, details)) in page.live.iter().zip(page.live_details).enumerate() {
+        live_offsets[index] = seat_live_off(b, entry, *details);
+    }
+    let live = b.create_vector(&live_offsets[..page.live.len()]);
+    let mut result_offsets = [WIPOffset::new(0); MAX_SEAT_RESULTS];
+    for (index, result) in page.results.iter().enumerate() {
+        result_offsets[index] = seat_result_off(b, result)?;
+    }
+    let results = b.create_vector(&result_offsets[..page.results.len()]);
+    Ok((live, results))
+}
+
 fn booth_off<'b>(b: &mut FlatBufferBuilder<'b>, t: TileInput) -> WIPOffset<Booth<'b>> {
     let mut table = BoothBuilder::new(b);
     table.add_x(t.x);
@@ -4264,17 +4955,404 @@ fn nearest_booth_table_off<'b>(
 pub fn encode_interact_batch(reqs: &[crate::shim::InteractReq]) -> Vec<u8> {
     IsolateBuf::new().encode_interact_batch(reqs)
 }
+/// Encode a typed seat batch, enforcing its reserved-control and gameplay caps.
+pub fn encode_seat_interact_batch(input: &SeatInteractBatchInput<'_>) -> Result<Vec<u8>, String> {
+    IsolateBuf::new().encode_seat_interact_batch(input)
+}
 
 fn encode_interact_batch_into(b: &mut FlatBufferBuilder<'_>, reqs: &[crate::shim::InteractReq]) {
     let offs = reqs
         .iter()
-        .map(|req| interact_off(b, req))
+        .map(|req| interact_off(b, req, None, None))
         .collect::<Vec<_>>();
     let reqs_off = b.create_vector(&offs);
     let mut table = InteractBatchBuilder::new(b);
     table.add_reqs(reqs_off);
     let root = table.finish();
     b.finish(root, None);
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SeatInteractClass {
+    WalkRelease,
+    GatherRelease,
+    CombatRelease,
+    RunPolicy,
+    Gameplay,
+}
+
+fn seat_interact_class(request: &crate::shim::InteractReq) -> Result<SeatInteractClass, String> {
+    use crate::shim::InteractReq;
+    match request {
+        InteractReq::AbortWalk { .. } => Ok(SeatInteractClass::WalkRelease),
+        InteractReq::GatherStop { .. } => Ok(SeatInteractClass::GatherRelease),
+        InteractReq::CombatStop { .. } => Ok(SeatInteractClass::CombatRelease),
+        InteractReq::RunPolicyOverride { .. } => Ok(SeatInteractClass::RunPolicy),
+        InteractReq::GatherRun { .. }
+        | InteractReq::CombatFight { .. }
+        | InteractReq::ProgressRead { .. } => {
+            Err("native family starts must use typed seat starts".into())
+        }
+        _ => Ok(SeatInteractClass::Gameplay),
+    }
+}
+
+fn validate_seat_start(start: &SeatStartRef<'_>) -> Result<(), String> {
+    match (start.kind, &start.args) {
+        (NativeKind::Gather, SeatStartArgsRef::Gather(settings)) => {
+            if !gather_settings_within_limit(settings) {
+                return Err("gather start settings exceed the encoded settings cap".into());
+            }
+        }
+        (NativeKind::Combat, SeatStartArgsRef::Combat(_)) => {}
+        (NativeKind::QuestProgress, SeatStartArgsRef::QuestProgress(name)) => {
+            if name.len() > MAX_START_CHARGE {
+                return Err(format!(
+                    "progress start name length {} exceeds cap {MAX_START_CHARGE}",
+                    name.len()
+                ));
+            }
+        }
+        (NativeKind::Gather | NativeKind::Combat | NativeKind::QuestProgress, _) => {
+            return Err("native start arguments do not match the family kind".into())
+        }
+        (_, SeatStartArgsRef::Empty) => {}
+        _ => return Err("unsupported typed arguments for native start kind".into()),
+    }
+    Ok(())
+}
+
+fn validate_seat_batch(input: &SeatInteractBatchInput<'_>) -> Result<(), String> {
+    for (name, len, cap) in [
+        ("starts", input.starts.len(), MAX_SEAT_STARTS),
+        ("decisions", input.decisions.len(), MAX_SEAT_DECISIONS),
+        ("cancels", input.cancels.len(), MAX_SEAT_CANCELS),
+    ] {
+        if len > cap {
+            return Err(format!("seat {name} vector length {len} exceeds cap {cap}"));
+        }
+    }
+    let mut reserved_rows = input.starts.len() + input.decisions.len() + input.cancels.len();
+    let mut gameplay_rows = 0usize;
+    let mut walk_releases = [0u64; MAX_WALK_RELEASES];
+    let mut walk_release_count = 0;
+    let mut gather_releases = 0;
+    let mut combat_releases = 0;
+    let mut run_policy_rows = 0;
+    for start in input.starts {
+        validate_seat_start(start)?;
+    }
+    for decision in input.decisions {
+        if decision.answer.len() > MAX_SEAT_BINARY_BYTES {
+            return Err(format!(
+                "seat decision answer length {} exceeds cap {MAX_SEAT_BINARY_BYTES}",
+                decision.answer.len()
+            ));
+        }
+    }
+    for row in input.reqs {
+        if row.lineage.is_some() && row.lineage == row.mirror_owner {
+            return Err("interact mirror owner collides with captured seat lineage".into());
+        }
+        match seat_interact_class(row.request)? {
+            SeatInteractClass::WalkRelease => {
+                let crate::shim::InteractReq::AbortWalk { request_id } = row.request else {
+                    unreachable!("walk release class comes only from AbortWalk")
+                };
+                if *request_id == 0 {
+                    return Err("AbortWalk release has no positive handle".into());
+                }
+                if walk_releases[..walk_release_count].contains(request_id) {
+                    return Err(format!("duplicate AbortWalk release handle {request_id}"));
+                }
+                if walk_release_count == MAX_WALK_RELEASES {
+                    return Err(format!(
+                        "AbortWalk release count exceeds cap {MAX_WALK_RELEASES}"
+                    ));
+                }
+                walk_releases[walk_release_count] = *request_id;
+                walk_release_count += 1;
+                reserved_rows += 1;
+            }
+            SeatInteractClass::GatherRelease => {
+                gather_releases += 1;
+                if gather_releases > 1 {
+                    return Err("more than one coalesced GatherStop release".into());
+                }
+                reserved_rows += 1;
+            }
+            SeatInteractClass::CombatRelease => {
+                combat_releases += 1;
+                if combat_releases > 1 {
+                    return Err("more than one coalesced CombatStop release".into());
+                }
+                reserved_rows += 1;
+            }
+            SeatInteractClass::RunPolicy => {
+                run_policy_rows += 1;
+                if run_policy_rows > 1 {
+                    return Err(format!(
+                        "run-policy row count exceeds cap {}",
+                        api::script_contract::MAX_RUN_POLICY
+                    ));
+                }
+                reserved_rows += 1;
+            }
+            SeatInteractClass::Gameplay => {
+                gameplay_rows += 1;
+                if gameplay_rows > MAX_SEAT_GAMEPLAY_ROWS {
+                    return Err(format!(
+                        "seat gameplay row count {} exceeds cap {MAX_SEAT_GAMEPLAY_ROWS}",
+                        gameplay_rows
+                    ));
+                }
+            }
+        }
+    }
+    if reserved_rows > MAX_SEAT_RESERVED_ROWS {
+        return Err(format!(
+            "seat reserved row count {reserved_rows} exceeds cap {MAX_SEAT_RESERVED_ROWS}"
+        ));
+    }
+    validate_seat_mirror_revokes(input.mirror_revokes)?;
+    if reserved_rows + gameplay_rows > CONTRACT_MAX_INTERACT_REQS {
+        return Err(format!(
+            "seat batch row count {} exceeds cap {CONTRACT_MAX_INTERACT_REQS}",
+            reserved_rows + gameplay_rows
+        ));
+    }
+    Ok(())
+}
+fn validate_seat_mirror_revokes(revokes: &[SeatMirrorRevoke]) -> Result<(), String> {
+    if revokes.len() > MAX_SEAT_MIRROR_REVOKES {
+        return Err(format!(
+            "seat mirror revoke vector length {} exceeds cap {MAX_SEAT_MIRROR_REVOKES}",
+            revokes.len()
+        ));
+    }
+    let mut owners = [0u64; MAX_SEAT_MIRROR_REVOKES];
+    let mut previous_seq = None;
+    for (index, revoke) in revokes.iter().enumerate() {
+        if revoke.seq == 0 {
+            return Err("seat mirror revoke has zero sequence".into());
+        }
+        if previous_seq.is_some_and(|previous: u64| previous.checked_add(1) != Some(revoke.seq)) {
+            return Err("seat mirror revoke sequences are not contiguous".into());
+        }
+        owners[index] = revoke.owner.get();
+        previous_seq = Some(revoke.seq);
+    }
+    owners[..revokes.len()].sort_unstable();
+    if owners[..revokes.len()]
+        .windows(2)
+        .any(|pair| pair[0] == pair[1])
+    {
+        return Err("duplicate seat mirror revoke owner".into());
+    }
+    Ok(())
+}
+
+fn seat_kind_wire(kind: NativeKind) -> SeatKind {
+    match kind {
+        NativeKind::Gather => SeatKind::Gather,
+        NativeKind::Combat => SeatKind::Combat,
+        NativeKind::Hunt => SeatKind::Hunt,
+        NativeKind::Quester => SeatKind::Quester,
+        NativeKind::DeathRecovery => SeatKind::DeathRecovery,
+        NativeKind::QuestProgress => SeatKind::QuestProgress,
+        NativeKind::Walk => SeatKind::Walk,
+        NativeKind::BankPlan => SeatKind::BankPlan,
+        NativeKind::BankNearest => SeatKind::BankNearest,
+        NativeKind::PeriodicBank => SeatKind::PeriodicBank,
+        NativeKind::Dialogue => SeatKind::Dialogue,
+        NativeKind::MakeX => SeatKind::MakeX,
+        NativeKind::Shop => SeatKind::Shop,
+        NativeKind::Trade => SeatKind::Trade,
+        NativeKind::PartnerTrade => SeatKind::PartnerTrade,
+        NativeKind::Teleport => SeatKind::Teleport,
+        NativeKind::Reach => SeatKind::Reach,
+        NativeKind::Prayer => SeatKind::Prayer,
+        NativeKind::Autocast => SeatKind::Autocast,
+        NativeKind::Special => SeatKind::Special,
+        NativeKind::Modals => SeatKind::Modals,
+        NativeKind::Fire => SeatKind::Fire,
+        NativeKind::Clue => SeatKind::Clue,
+        NativeKind::Duel => SeatKind::Duel,
+        NativeKind::CakeStall => SeatKind::CakeStall,
+    }
+}
+
+fn native_kind_from_wire(kind: SeatKind) -> Result<NativeKind, String> {
+    match kind {
+        SeatKind::Gather => Ok(NativeKind::Gather),
+        SeatKind::Combat => Ok(NativeKind::Combat),
+        SeatKind::Hunt => Ok(NativeKind::Hunt),
+        SeatKind::Quester => Ok(NativeKind::Quester),
+        SeatKind::DeathRecovery => Ok(NativeKind::DeathRecovery),
+        SeatKind::QuestProgress => Ok(NativeKind::QuestProgress),
+        SeatKind::Walk => Ok(NativeKind::Walk),
+        SeatKind::BankPlan => Ok(NativeKind::BankPlan),
+        SeatKind::BankNearest => Ok(NativeKind::BankNearest),
+        SeatKind::PeriodicBank => Ok(NativeKind::PeriodicBank),
+        SeatKind::Dialogue => Ok(NativeKind::Dialogue),
+        SeatKind::MakeX => Ok(NativeKind::MakeX),
+        SeatKind::Shop => Ok(NativeKind::Shop),
+        SeatKind::Trade => Ok(NativeKind::Trade),
+        SeatKind::PartnerTrade => Ok(NativeKind::PartnerTrade),
+        SeatKind::Teleport => Ok(NativeKind::Teleport),
+        SeatKind::Reach => Ok(NativeKind::Reach),
+        SeatKind::Prayer => Ok(NativeKind::Prayer),
+        SeatKind::Autocast => Ok(NativeKind::Autocast),
+        SeatKind::Special => Ok(NativeKind::Special),
+        SeatKind::Modals => Ok(NativeKind::Modals),
+        SeatKind::Fire => Ok(NativeKind::Fire),
+        SeatKind::Clue => Ok(NativeKind::Clue),
+        SeatKind::Duel => Ok(NativeKind::Duel),
+        SeatKind::CakeStall => Ok(NativeKind::CakeStall),
+        SeatKind::None => Err("native start has no family kind".into()),
+        _ => Err(format!("native start has unknown family kind {kind:?}")),
+    }
+}
+
+fn native_request_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    start: &SeatStartRef<'_>,
+) -> Result<WIPOffset<NativeRequest<'b>>, String> {
+    let gather_settings = if let SeatStartArgsRef::Gather(settings) = &start.args {
+        Some(settings_vector_off(b, settings)?)
+    } else {
+        None
+    };
+    let combat = if let SeatStartArgsRef::Combat(request) = &start.args {
+        Some(combat_fight_off(b, request))
+    } else {
+        None
+    };
+    let progress_name = if let SeatStartArgsRef::QuestProgress(name) = &start.args {
+        Some(b.create_string(name))
+    } else {
+        None
+    };
+    let mut args = SeatArgsBuilder::new(b);
+    if let Some(settings) = gather_settings {
+        args.add_gather_settings(settings);
+    }
+    if let Some(combat) = combat {
+        args.add_combat(combat);
+    }
+    if let Some(progress_name) = progress_name {
+        args.add_progress_name(progress_name);
+    }
+    let args = args.finish();
+    let run = start.stamp.run();
+    let mut table = NativeRequestBuilder::new(b);
+    table.add_id(start.stamp.id().get());
+    table.add_parent(start.stamp.parent().map_or(0, RequestId::get));
+    table.add_run(run.run);
+    table.add_session(run.session);
+    table.add_kind(seat_kind_wire(start.kind));
+    table.add_args(args);
+    Ok(table.finish())
+}
+
+fn seat_decide_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    decision: &SeatDecisionRef<'_>,
+) -> WIPOffset<SeatDecide<'b>> {
+    let answer = b.create_vector(decision.answer);
+    let mut table = SeatDecideBuilder::new(b);
+    table.add_of(decision.of.get());
+    table.add_decision_seq(decision.sequence.get());
+    table.add_answer(answer);
+    table.finish()
+}
+
+fn seat_cancel_reason_wire(reason: CallbackCancelReason) -> SeatCancelReason {
+    match reason {
+        CallbackCancelReason::HookThrew => SeatCancelReason::HookThrew,
+        CallbackCancelReason::ParentAborted => SeatCancelReason::ParentAborted,
+    }
+}
+
+fn seat_cancel_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    cancel: SeatCancelInput,
+) -> WIPOffset<SeatCancel<'b>> {
+    let mut table = SeatCancelBuilder::new(b);
+    table.add_of(cancel.of.get());
+    table.add_reason(seat_cancel_reason_wire(cancel.reason));
+    table.finish()
+}
+
+fn seat_mirror_revoke_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    revoke: SeatMirrorRevoke,
+) -> WIPOffset<MirrorRevoke<'b>> {
+    let mut table = MirrorRevokeBuilder::new(b);
+    table.add_owner(revoke.owner.get());
+    table.add_seq(revoke.seq);
+    table.finish()
+}
+fn encode_seat_interact_batch_into(
+    b: &mut FlatBufferBuilder<'_>,
+    input: &SeatInteractBatchInput<'_>,
+) -> Result<(), String> {
+    validate_seat_batch(input)?;
+    let mut starts = [WIPOffset::new(0); MAX_SEAT_STARTS];
+    for (index, start) in input.starts.iter().enumerate() {
+        starts[index] = native_request_off(b, start)?;
+    }
+    let starts = b.create_vector(&starts[..input.starts.len()]);
+    let mut decisions = [WIPOffset::new(0); MAX_SEAT_DECISIONS];
+    for (index, decision) in input.decisions.iter().enumerate() {
+        decisions[index] = seat_decide_off(b, decision);
+    }
+    let decisions = b.create_vector(&decisions[..input.decisions.len()]);
+    let mut cancels = [WIPOffset::new(0); MAX_SEAT_CANCELS];
+    for (index, cancel) in input.cancels.iter().enumerate() {
+        cancels[index] = seat_cancel_off(b, *cancel);
+    }
+    let cancels = b.create_vector(&cancels[..input.cancels.len()]);
+    let mut mirror_revokes = [WIPOffset::new(0); MAX_SEAT_MIRROR_REVOKES];
+    for (index, revoke) in input.mirror_revokes.iter().enumerate() {
+        mirror_revokes[index] = seat_mirror_revoke_off(b, *revoke);
+    }
+    let mirror_revokes = b.create_vector(&mirror_revokes[..input.mirror_revokes.len()]);
+    let mut reqs = [WIPOffset::new(0); CONTRACT_MAX_INTERACT_REQS];
+    let mut req_count = 0usize;
+    for row in input.reqs {
+        if seat_interact_class(row.request)? != SeatInteractClass::Gameplay {
+            reqs[req_count] = interact_off(
+                b,
+                row.request,
+                Some(row.lineage.map_or(0, RequestId::get)),
+                row.mirror_owner.map(RequestId::get),
+            );
+            req_count += 1;
+        }
+    }
+    for row in input.reqs {
+        if seat_interact_class(row.request)? == SeatInteractClass::Gameplay {
+            reqs[req_count] = interact_off(
+                b,
+                row.request,
+                Some(row.lineage.map_or(0, RequestId::get)),
+                row.mirror_owner.map(RequestId::get),
+            );
+            req_count += 1;
+        }
+    }
+    let reqs = b.create_vector(&reqs[..req_count]);
+    let mut table = InteractBatchBuilder::new(b);
+    table.add_reqs(reqs);
+    table.add_consumed_terminal_seq(input.consumed_terminal_seq);
+    table.add_starts(starts);
+    table.add_decisions(decisions);
+    table.add_cancels(cancels);
+    table.add_mirror_revokes(mirror_revokes);
+    let root = table.finish();
+    b.finish(root, None);
+    Ok(())
 }
 
 /// The isolate→host paint limits for the structured half of a frame: rows,
@@ -4372,9 +5450,41 @@ fn decoded_run_policy(
     }
 }
 
+struct InteractDecodeOutput {
+    rows: Vec<SeatInteractDecoded>,
+    lineage: Option<RequestId>,
+    mirror_owner: Option<RequestId>,
+}
+
+impl InteractDecodeOutput {
+    fn new(capacity: usize) -> Self {
+        Self {
+            rows: Vec::with_capacity(capacity),
+            lineage: None,
+            mirror_owner: None,
+        }
+    }
+
+    fn push(&mut self, request: crate::shim::InteractReq) {
+        self.rows.push(SeatInteractDecoded {
+            lineage: self.lineage,
+            mirror_owner: self.mirror_owner,
+            request,
+        });
+    }
+}
+
 pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>, String> {
     let batch = InteractBatch::from_bytes(buf)?;
-    let Some(rows) = batch.reqs() else {
+    let decoded = decode_interact_rows(batch.reqs(), false)?;
+    Ok(decoded.into_iter().map(|row| row.request).collect())
+}
+
+fn decode_interact_rows<'a>(
+    rows: Option<flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<Interact<'a>>>>,
+    require_lineage: bool,
+) -> Result<Vec<SeatInteractDecoded>, String> {
+    let Some(rows) = rows else {
         return Ok(Vec::new());
     };
     if rows.len() > MAX_INTERACT_REQS {
@@ -4383,8 +5493,17 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
             rows.len()
         ));
     }
-    let mut out = Vec::with_capacity(rows.len());
+    let mut out = InteractDecodeOutput::new(rows.len());
     for row in rows.iter() {
+        out.lineage = if require_lineage {
+            if row._tab.vtable().get(Interact::VT_LINEAGE) == 0 {
+                return Err("interact row is missing captured lineage".into());
+            }
+            RequestId::from_raw(row.lineage())
+        } else {
+            None
+        };
+        out.mirror_owner = RequestId::from_raw(row.mirror_owner());
         let op = row
             .op()
             .ok_or_else(|| "interact row has no op".to_string())?;
@@ -4870,12 +5989,289 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
             other => return Err(format!("unknown interact op: {other}")),
         }
     }
-    Ok(out)
+    Ok(out.rows)
+}
+fn validate_seat_wire_reqs<'a>(
+    rows: Option<flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<Interact<'a>>>>,
+) -> Result<(usize, usize), String> {
+    let Some(rows) = rows else {
+        return Ok((0, 0));
+    };
+    if rows.len() > MAX_INTERACT_REQS {
+        return Err(format!(
+            "vector length {} exceeds cap {MAX_INTERACT_REQS}",
+            rows.len()
+        ));
+    }
+    let mut reserved = 0usize;
+    let mut gameplay = 0usize;
+    let mut walk_ids = [0u64; MAX_WALK_RELEASES];
+    let mut walk_count = 0usize;
+    let mut gather_count = 0usize;
+    let mut combat_count = 0usize;
+    let mut policy_count = 0usize;
+    let mut gameplay_seen = false;
+    for row in rows.iter() {
+        if row._tab.vtable().get(Interact::VT_LINEAGE) == 0 {
+            return Err("interact row is missing captured lineage".into());
+        }
+        if row.mirror_owner() != 0 && row.mirror_owner() == row.lineage() {
+            return Err("interact mirror owner collides with captured seat lineage".into());
+        }
+        let op = row
+            .op()
+            .ok_or_else(|| "interact row has no op".to_string())?;
+        let class = match op {
+            "abort-walk" => {
+                let id = row.request_id();
+                if id == 0 {
+                    return Err("AbortWalk release has no positive handle".into());
+                }
+                if walk_ids[..walk_count].contains(&id) {
+                    return Err(format!("duplicate AbortWalk release handle {id}"));
+                }
+                if walk_count == MAX_WALK_RELEASES {
+                    return Err(format!(
+                        "AbortWalk release count exceeds cap {MAX_WALK_RELEASES}"
+                    ));
+                }
+                walk_ids[walk_count] = id;
+                walk_count += 1;
+                reserved += 1;
+                SeatInteractClass::WalkRelease
+            }
+            "gather-stop" => {
+                gather_count += 1;
+                if gather_count > 1 {
+                    return Err("more than one coalesced GatherStop release".into());
+                }
+                reserved += 1;
+                SeatInteractClass::GatherRelease
+            }
+            "combat-stop" => {
+                combat_count += 1;
+                if combat_count > 1 {
+                    return Err("more than one coalesced CombatStop release".into());
+                }
+                reserved += 1;
+                SeatInteractClass::CombatRelease
+            }
+            "run-policy" => {
+                policy_count += 1;
+                if policy_count > api::script_contract::MAX_RUN_POLICY {
+                    return Err("run-policy row count exceeds cap".into());
+                }
+                reserved += 1;
+                SeatInteractClass::RunPolicy
+            }
+            "gather-run" | "combat-fight" | "progress-read" => {
+                return Err("native family starts must use typed seat starts".into())
+            }
+            _ => SeatInteractClass::Gameplay,
+        };
+        if class == SeatInteractClass::Gameplay {
+            gameplay_seen = true;
+            gameplay += 1;
+            if gameplay > MAX_SEAT_GAMEPLAY_ROWS {
+                return Err(format!(
+                    "seat gameplay row count {gameplay} exceeds cap {MAX_SEAT_GAMEPLAY_ROWS}"
+                ));
+            }
+        } else if gameplay_seen {
+            return Err("reserved interact rows must precede gameplay rows".into());
+        }
+    }
+    Ok((reserved, gameplay))
+}
+
+fn decode_native_request(row: NativeRequest<'_>) -> Result<SeatStartInput, String> {
+    let id = RequestId::from_raw(row.id())
+        .ok_or_else(|| "native start has no positive request id".to_string())?;
+    let parent = RequestId::from_raw(row.parent());
+    if parent == Some(id) {
+        return Err(format!("native start {} is its own parent", id.get()));
+    }
+    let kind = native_kind_from_wire(row.kind())?;
+    let args = row
+        .args()
+        .ok_or_else(|| format!("native start {} has no argument table", id.get()))?;
+    let gather_settings = args.gather_settings();
+    let combat = args.combat();
+    let progress_name = args.progress_name();
+    let decoded_args = match kind {
+        NativeKind::Gather => {
+            let settings = gather_settings
+                .ok_or_else(|| "Gather start has no typed settings vector".to_string())?;
+            if combat.is_some() || progress_name.is_some() {
+                return Err("Gather start carries mismatched typed arguments".into());
+            }
+            SeatStartArgs::Gather(decode_gather_settings(settings)?)
+        }
+        NativeKind::Combat => {
+            let combat = combat.ok_or_else(|| "Combat start has no typed request".to_string())?;
+            if gather_settings.is_some() || progress_name.is_some() {
+                return Err("Combat start carries mismatched typed arguments".into());
+            }
+            SeatStartArgs::Combat(decode_combat_fight(combat)?)
+        }
+        NativeKind::QuestProgress => {
+            let name =
+                progress_name.ok_or_else(|| "QuestProgress start has no typed name".to_string())?;
+            if gather_settings.is_some() || combat.is_some() {
+                return Err("QuestProgress start carries mismatched typed arguments".into());
+            }
+            if name.len() > MAX_START_CHARGE {
+                return Err(format!(
+                    "progress start name length {} exceeds cap {MAX_START_CHARGE}",
+                    name.len()
+                ));
+            }
+            SeatStartArgs::QuestProgress(name.to_string())
+        }
+        _ => {
+            if gather_settings.is_some() || combat.is_some() || progress_name.is_some() {
+                return Err("native start carries unsupported typed arguments".into());
+            }
+            SeatStartArgs::Empty
+        }
+    };
+    Ok(SeatStartInput {
+        id,
+        parent,
+        run: row.run(),
+        session: row.session(),
+        kind,
+        args: decoded_args,
+    })
+}
+
+fn decode_seat_cancel_reason(reason: SeatCancelReason) -> Result<CallbackCancelReason, String> {
+    match reason {
+        SeatCancelReason::HookThrew => Ok(CallbackCancelReason::HookThrew),
+        SeatCancelReason::ParentAborted => Ok(CallbackCancelReason::ParentAborted),
+        SeatCancelReason::None => Err("seat cancellation has no reason".into()),
+        _ => Err("seat cancellation has unknown reason enum".into()),
+    }
+}
+
+fn decode_seat_mirror_revokes(
+    rows: Option<flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<MirrorRevoke<'_>>>>,
+) -> Result<Vec<SeatMirrorRevoke>, String> {
+    let Some(rows) = rows else {
+        return Ok(Vec::new());
+    };
+    if rows.len() > MAX_SEAT_MIRROR_REVOKES {
+        return Err(format!(
+            "seat mirror revoke vector length {} exceeds cap {MAX_SEAT_MIRROR_REVOKES}",
+            rows.len()
+        ));
+    }
+    let mut revokes = Vec::with_capacity(rows.len());
+    for row in rows.iter() {
+        revokes.push(SeatMirrorRevoke {
+            owner: RequestId::from_raw(row.owner())
+                .ok_or_else(|| "seat mirror revoke has no positive owner".to_string())?,
+            seq: row.seq(),
+        });
+    }
+    validate_seat_mirror_revokes(&revokes)?;
+    Ok(revokes)
+}
+
+/// Decode a root seat batch after bounded verification and strict lineage checks.
+pub fn decode_seat_interact_batch(buf: &[u8]) -> Result<DecodedSeatBatch, String> {
+    let batch = InteractBatch::from_bytes(buf)?;
+    let starts = batch.starts();
+    let decisions = batch.decisions();
+    let cancels = batch.cancels();
+    let (reserved_reqs, gameplay_reqs) = validate_seat_wire_reqs(batch.reqs())?;
+    let start_count = starts.map_or(0, |rows| rows.len());
+    let decision_count = decisions.map_or(0, |rows| rows.len());
+    let cancel_count = cancels.map_or(0, |rows| rows.len());
+    for (name, len, cap) in [
+        ("starts", start_count, MAX_SEAT_STARTS),
+        ("decisions", decision_count, MAX_SEAT_DECISIONS),
+        ("cancels", cancel_count, MAX_SEAT_CANCELS),
+    ] {
+        if len > cap {
+            return Err(format!("seat {name} vector length {len} exceeds cap {cap}"));
+        }
+    }
+    let reserved_rows = start_count + decision_count + cancel_count + reserved_reqs;
+    if reserved_rows > MAX_SEAT_RESERVED_ROWS {
+        return Err(format!(
+            "seat reserved row count {reserved_rows} exceeds cap {MAX_SEAT_RESERVED_ROWS}"
+        ));
+    }
+    if reserved_rows + gameplay_reqs > CONTRACT_MAX_INTERACT_REQS {
+        return Err(format!(
+            "seat batch row count {} exceeds cap {CONTRACT_MAX_INTERACT_REQS}",
+            reserved_rows + gameplay_reqs
+        ));
+    }
+    let starts = starts
+        .map(|rows| rows.iter().map(decode_native_request).collect())
+        .transpose()?
+        .unwrap_or_default();
+    let decisions = decisions
+        .map(|rows| {
+            rows.iter()
+                .map(|row| {
+                    let of = RequestId::from_raw(row.of())
+                        .ok_or_else(|| "seat decision has no positive target id".to_string())?;
+                    let sequence = DecisionSequence::from_raw(row.decision_seq())
+                        .ok_or_else(|| "seat decision has zero sequence".to_string())?;
+                    let answer = row
+                        .answer()
+                        .ok_or_else(|| "seat decision has no answer vector".to_string())?;
+                    if answer.len() > MAX_SEAT_BINARY_BYTES {
+                        return Err(format!(
+                            "seat decision answer length {} exceeds cap {MAX_SEAT_BINARY_BYTES}",
+                            answer.len()
+                        ));
+                    }
+                    Ok(SeatDecisionInput {
+                        of,
+                        sequence,
+                        answer: answer.iter().collect(),
+                    })
+                })
+                .collect()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let cancels = cancels
+        .map(|rows| {
+            rows.iter()
+                .map(|row| {
+                    Ok::<SeatCancelDecoded, String>(SeatCancelDecoded {
+                        of: RequestId::from_raw(row.of()).ok_or_else(|| {
+                            "seat cancellation has no positive target id".to_string()
+                        })?,
+                        reason: decode_seat_cancel_reason(row.reason())?,
+                    })
+                })
+                .collect()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let mirror_revokes = decode_seat_mirror_revokes(batch.mirror_revokes())?;
+    let reqs = decode_interact_rows(batch.reqs(), true)?;
+    Ok(DecodedSeatBatch {
+        consumed_terminal_seq: batch.consumed_terminal_seq(),
+        starts,
+        decisions,
+        cancels,
+        mirror_revokes,
+        reqs,
+    })
 }
 
 fn interact_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     req: &crate::shim::InteractReq,
+    lineage: Option<u64>,
+    mirror_owner: Option<u64>,
 ) -> WIPOffset<Interact<'b>> {
     use crate::shim::InteractReq;
     let op_off = b.create_string(match req {
@@ -5064,6 +6460,12 @@ fn interact_off<'b>(
     };
     let mut table = InteractBuilder::new(b);
     table.add_op(op_off);
+    if let Some(lineage) = lineage {
+        table.add_lineage(lineage);
+    }
+    if let Some(mirror_owner) = mirror_owner {
+        table.add_mirror_owner(mirror_owner);
+    }
     match req {
         InteractReq::GatherRun { request_id, .. } => {
             table.add_request_id(*request_id);
@@ -7775,5 +9177,1112 @@ pub(crate) mod tests {
         assert!(!view.walk_outcome_blocked());
     }
 
+    #[test]
+    fn seat_page_keyframe_and_delta_round_trip_typed_terminals() {
+        let live_id = RequestId::from_raw(101).expect("live id");
+        let live = [SeatEntry {
+            id: live_id,
+            parent: None,
+            kind: NativeKind::Hunt,
+            origin: api::script_contract::ChildOrigin::Started,
+            depth: 0,
+            decisions_consumed: 0,
+            prompt: Some(1),
+        }];
+        let prompt_args = [4, 8, 15, 16];
+        let details = [SeatLiveDetails {
+            id: live_id,
+            phase: NativePhase::Waiting,
+            prompt: Some(SeatPromptInput {
+                sequence: DecisionSequence::from_raw(1).expect("sequence"),
+                point: "target",
+                args: &prompt_args,
+            }),
+        }];
+        let results = [
+            NativeSeatResult {
+                id: RequestId::from_raw(102).expect("result id"),
+                seq: 1,
+                outcome: SeatTerminal::Done,
+                prior_parent: None,
+                session: None,
+                authority_revoked: false,
+            },
+            NativeSeatResult {
+                id: RequestId::from_raw(103).expect("result id"),
+                seq: 2,
+                outcome: SeatTerminal::Failed,
+                prior_parent: None,
+                session: None,
+                authority_revoked: false,
+            },
+            NativeSeatResult {
+                id: RequestId::from_raw(104).expect("result id"),
+                seq: 3,
+                outcome: SeatTerminal::Refused(Refusal::Busy),
+                prior_parent: None,
+                session: None,
+                authority_revoked: false,
+            },
+            NativeSeatResult {
+                id: RequestId::from_raw(105).expect("result id"),
+                seq: 4,
+                outcome: SeatTerminal::Aborted(AbortReason::Superseded),
+                prior_parent: None,
+                session: None,
+                authority_revoked: false,
+            },
+        ];
+        let page = SeatPageInput::new(&live, &results, &details, 0).expect("valid page");
+        let facts = NativeFactsInput {
+            seat_page: Some(page),
+            ..NativeFactsInput::default()
+        };
+        let (keyframe, fingerprint) =
+            encode_snapshot_delta_with_native(None, &empty_input(1), facts, false);
+        let view = decode_snapshot(&keyframe).expect("seat keyframe");
+        assert!(view.seat_live().is_some());
+        assert!(view.seat_results().is_some());
+        assert_eq!(view.mirror_revokes_consumed(), Some(0));
+        let wire_live = view.seat_live().expect("live vector");
+        assert_eq!(wire_live.len(), 1);
+        let wire_prompt = wire_live.get(0).prompt().expect("prompt");
+        assert_eq!(wire_prompt.seq(), 1);
+        assert_eq!(wire_prompt.point(), Some("target"));
+        assert_eq!(
+            wire_prompt
+                .args()
+                .expect("prompt args")
+                .iter()
+                .collect::<Vec<_>>(),
+            prompt_args
+        );
+        let wire_results = view.seat_results().expect("results vector");
+        assert_eq!(wire_results.len(), 4);
+        assert_eq!(
+            wire_results.get(0).outcome().expect("done outcome").kind(),
+            SeatOutcomeKind::Done
+        );
+        assert_eq!(
+            wire_results
+                .get(1)
+                .outcome()
+                .expect("failed outcome")
+                .kind(),
+            SeatOutcomeKind::Failed
+        );
+        assert_eq!(
+            wire_results
+                .get(2)
+                .outcome()
+                .expect("refused outcome")
+                .refusal(),
+            SeatRefusal::Busy
+        );
+        assert_eq!(
+            wire_results
+                .get(3)
+                .outcome()
+                .expect("aborted outcome")
+                .abort_reason(),
+            SeatAbortReason::Superseded
+        );
+
+        let changed_details = [SeatLiveDetails {
+            id: live_id,
+            phase: NativePhase::Waiting,
+            prompt: Some(SeatPromptInput {
+                sequence: DecisionSequence::from_raw(1).expect("sequence"),
+                point: "target-next",
+                args: &prompt_args,
+            }),
+        }];
+        let changed_page =
+            SeatPageInput::new(&live, &results, &changed_details, 1).expect("changed page");
+        let changed_facts = NativeFactsInput {
+            seat_page: Some(changed_page),
+            ..NativeFactsInput::default()
+        };
+        let (delta, changed_fingerprint) = encode_snapshot_delta_with_native(
+            Some(&fingerprint),
+            &empty_input(2),
+            changed_facts,
+            false,
+        );
+        let delta = decode_snapshot(&delta).expect("seat page delta");
+        assert!(delta.seat_live().is_some());
+        assert!(delta.seat_results().is_some());
+        assert_eq!(delta.mirror_revokes_consumed(), Some(1));
+        assert_eq!(
+            delta
+                .seat_live()
+                .expect("changed live vector")
+                .get(0)
+                .prompt()
+                .expect("changed prompt")
+                .point(),
+            Some("target-next")
+        );
+        let (omitted_ack, _) = encode_snapshot_delta_with_native(
+            Some(&changed_fingerprint),
+            &empty_input(3),
+            NativeFactsInput::default(),
+            false,
+        );
+        let omitted_ack = decode_snapshot(&omitted_ack).expect("delta without page");
+        assert!(
+            omitted_ack.mirror_revokes_consumed().is_none(),
+            "an omitted delta ack keeps the host's previous level"
+        );
+    }
+
+    #[test]
+    fn seat_terminal_and_cancellation_mappings_cover_native_variants() {
+        let refusals = [
+            (Refusal::Busy, SeatRefusal::Busy),
+            (Refusal::ParentBusy, SeatRefusal::ParentBusy),
+            (Refusal::ParentNotLive, SeatRefusal::ParentNotLive),
+            (Refusal::LineageDepth, SeatRefusal::LineageDepth),
+            (Refusal::HistoryExpired, SeatRefusal::HistoryExpired),
+            (Refusal::Unknown, SeatRefusal::Unknown),
+            (Refusal::AwaitingDecision, SeatRefusal::AwaitingDecision),
+        ];
+        for (native, wire) in refusals {
+            assert_eq!(seat_refusal_wire(native).expect("wire refusal"), wire);
+            let terminal = seat_terminal_wire(SeatTerminal::Refused(native)).expect("terminal");
+            assert_eq!(terminal.0, SeatOutcomeKind::Refused);
+            assert_eq!(terminal.1, wire);
+            assert_eq!(terminal.2, SeatAbortReason::None);
+        }
+        assert!(seat_refusal_wire(Refusal::ArgsTooLarge).is_err());
+
+        for (native, wire) in [
+            (AbortReason::Superseded, SeatAbortReason::Superseded),
+            (AbortReason::UserInput, SeatAbortReason::UserInput),
+            (AbortReason::ParentAborted, SeatAbortReason::ParentAborted),
+        ] {
+            assert_eq!(seat_abort_wire(native).expect("wire abort"), wire);
+            let terminal = seat_terminal_wire(SeatTerminal::Aborted(native)).expect("terminal");
+            assert_eq!(terminal.0, SeatOutcomeKind::Aborted);
+            assert_eq!(terminal.1, SeatRefusal::None);
+            assert_eq!(terminal.2, wire);
+        }
+        assert!(seat_abort_wire(AbortReason::Reset).is_err());
+        assert!(seat_abort_wire(AbortReason::Terminated).is_err());
+
+        for reason in [
+            CallbackCancelReason::HookThrew,
+            CallbackCancelReason::ParentAborted,
+        ] {
+            assert_eq!(
+                decode_seat_cancel_reason(seat_cancel_reason_wire(reason)).expect("cancel reason"),
+                reason
+            );
+        }
+    }
+
+    #[test]
+    fn native_phase_wire_mapping_covers_every_phase() {
+        let phases = [
+            NativePhase::Preparing,
+            NativePhase::Working,
+            NativePhase::Waiting,
+            NativePhase::Blocked,
+            NativePhase::Complete,
+        ];
+        let live = phases
+            .iter()
+            .enumerate()
+            .map(|(index, _)| SeatEntry {
+                id: RequestId::from_raw(index as u64 + 1).expect("live id"),
+                parent: None,
+                kind: NativeKind::Hunt,
+                origin: api::script_contract::ChildOrigin::Started,
+                depth: 0,
+                decisions_consumed: 0,
+                prompt: None,
+            })
+            .collect::<Vec<_>>();
+        let details = phases
+            .iter()
+            .enumerate()
+            .map(|(index, phase)| SeatLiveDetails {
+                id: live[index].id,
+                phase: *phase,
+                prompt: None,
+            })
+            .collect::<Vec<_>>();
+        let page = SeatPageInput::new(&live, &[], &details, 0).expect("valid phase page");
+        let bytes = encode_snapshot_with_native(
+            &empty_input(1),
+            NativeFactsInput {
+                seat_page: Some(page),
+                ..NativeFactsInput::default()
+            },
+        );
+        let snapshot = decode_snapshot(&bytes).expect("phase keyframe");
+        for (row, expected) in snapshot.seat_live().expect("live rows").iter().zip(phases) {
+            assert_eq!(
+                native_phase_from_wire(row.phase()).expect("known wire phase"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn seat_page_rejects_unsorted_and_overbound_pages() {
+        let result = |id, seq| NativeSeatResult {
+            id: RequestId::from_raw(id).expect("result id"),
+            seq,
+            outcome: SeatTerminal::Done,
+            prior_parent: None,
+            session: None,
+            authority_revoked: false,
+        };
+        let unsorted = [result(501, 2), result(502, 1)];
+        assert!(SeatPageInput::new(&[], &unsorted, &[], 0)
+            .err()
+            .expect("terminal sequence must be ordered")
+            .contains("strictly ordered"));
+
+        let too_many_results = (0..=MAX_SEAT_RESULTS)
+            .map(|index| result(600 + index as u64, index as u64 + 1))
+            .collect::<Vec<_>>();
+        assert!(SeatPageInput::new(&[], &too_many_results, &[], 0)
+            .err()
+            .expect("result vector must stay bounded")
+            .contains("exceeds cap"));
+
+        let live = (0..=MAX_SEAT_LIVE)
+            .map(|index| SeatEntry {
+                id: RequestId::from_raw(800 + index as u64).expect("live id"),
+                parent: None,
+                kind: NativeKind::Hunt,
+                origin: api::script_contract::ChildOrigin::Started,
+                depth: 0,
+                decisions_consumed: 0,
+                prompt: None,
+            })
+            .collect::<Vec<_>>();
+        let details = live
+            .iter()
+            .map(|entry| SeatLiveDetails {
+                id: entry.id,
+                phase: NativePhase::Working,
+                prompt: None,
+            })
+            .collect::<Vec<_>>();
+        assert!(SeatPageInput::new(&live, &[], &details, 0)
+            .err()
+            .expect("live vector must stay bounded")
+            .contains("exceeds cap"));
+        assert!(SeatPageInput::new(&live[..1], &[], &[], 0)
+            .err()
+            .expect("live/detail vectors must align")
+            .contains("count mismatch"));
+    }
+
+    #[test]
+    fn typed_seat_batch_round_trips_starts_controls_and_physical_lineage() {
+        use crate::shim::InteractReq;
+
+        let stamp = |raw| {
+            RequestStamp::new(
+                RequestId::from_raw(raw).expect("request id"),
+                None,
+                None,
+                api::identity::ExecutionId::first(api::selected::RunKey {
+                    slot: 1,
+                    run: 77,
+                    session: 2,
+                }),
+            )
+            .expect("request stamp")
+        };
+        let settings = crate::native::SettingsBag::new();
+        let combat = crate::api_combat::CombatSessionRequest::default();
+        let starts = [
+            SeatStartRef {
+                stamp: stamp(201),
+                kind: NativeKind::Gather,
+                args: SeatStartArgsRef::Gather(&settings),
+            },
+            SeatStartRef {
+                stamp: stamp(202),
+                kind: NativeKind::Combat,
+                args: SeatStartArgsRef::Combat(&combat),
+            },
+            SeatStartRef {
+                stamp: stamp(203),
+                kind: NativeKind::QuestProgress,
+                args: SeatStartArgsRef::QuestProgress("cook"),
+            },
+        ];
+        let decision_answer = [1, 3, 5, 7];
+        let decisions = [SeatDecisionRef {
+            of: RequestId::from_raw(201).expect("decision target"),
+            sequence: DecisionSequence::from_raw(2).expect("decision sequence"),
+            answer: &decision_answer,
+        }];
+        let cancels = [SeatCancelInput {
+            of: RequestId::from_raw(202).expect("cancel target"),
+            reason: CallbackCancelReason::ParentAborted,
+        }];
+        let requests = [
+            InteractReq::Close,
+            InteractReq::AbortWalk { request_id: 33 },
+            InteractReq::GatherStop { request_id: 201 },
+            InteractReq::CombatStop { request_id: 202 },
+        ];
+        let parent = RequestId::from_raw(45).expect("lineage id");
+        let reqs = [
+            SeatInteractRequest {
+                lineage: None,
+                mirror_owner: None,
+                request: &requests[0],
+            },
+            SeatInteractRequest {
+                lineage: Some(parent),
+                mirror_owner: Some(RequestId::from_raw(47).expect("mirror owner")),
+                request: &requests[1],
+            },
+            SeatInteractRequest {
+                lineage: Some(parent),
+                mirror_owner: None,
+                request: &requests[2],
+            },
+            SeatInteractRequest {
+                lineage: Some(parent),
+                mirror_owner: None,
+                request: &requests[3],
+            },
+        ];
+        let mirror_revokes = [
+            SeatMirrorRevoke {
+                owner: RequestId::from_raw(46).expect("mirror parent"),
+                seq: 20,
+            },
+            SeatMirrorRevoke {
+                owner: RequestId::from_raw(47).expect("mirror child"),
+                seq: 21,
+            },
+        ];
+        let input = SeatInteractBatchInput {
+            consumed_terminal_seq: 19,
+            starts: &starts,
+            decisions: &decisions,
+            cancels: &cancels,
+            mirror_revokes: &mirror_revokes,
+            reqs: &reqs,
+        };
+        let bytes = encode_seat_interact_batch(&input).expect("encode typed batch");
+        let batch = decode_seat_interact_batch(&bytes).expect("decode typed batch");
+        assert_eq!(batch.mirror_revokes, mirror_revokes);
+        let retried = decode_seat_interact_batch(
+            &encode_seat_interact_batch(&input).expect("resend unacknowledged revokes"),
+        )
+        .expect("decode retried batch");
+        assert_eq!(
+            retried.mirror_revokes, mirror_revokes,
+            "a dropped batch is retried with the same sequence and owner"
+        );
+        assert_eq!(batch.consumed_terminal_seq, 19);
+        assert_eq!(batch.starts.len(), 3);
+        assert_eq!(
+            batch.starts[0].args,
+            SeatStartArgs::Gather(settings.clone())
+        );
+        assert_eq!(batch.starts[1].args, SeatStartArgs::Combat(combat.clone()));
+        assert_eq!(
+            batch.starts[2].args,
+            SeatStartArgs::QuestProgress("cook".into())
+        );
+        assert_eq!(batch.decisions.len(), 1);
+        assert_eq!(batch.decisions[0].sequence.get(), 2);
+        assert_eq!(batch.decisions[0].answer.as_slice(), decision_answer);
+        assert_eq!(
+            batch.cancels,
+            [SeatCancelDecoded {
+                of: RequestId::from_raw(202).expect("cancel target"),
+                reason: CallbackCancelReason::ParentAborted,
+            }]
+        );
+        assert_eq!(batch.reqs.len(), 4);
+        assert_eq!(
+            batch.reqs[0].mirror_owner,
+            Some(RequestId::from_raw(47).expect("mirror owner"))
+        );
+        assert_eq!(batch.reqs[0].lineage, Some(parent));
+        assert_ne!(
+            batch.reqs[0].lineage, batch.reqs[0].mirror_owner,
+            "seat and in-isolate owners share RequestId but cannot collide"
+        );
+        assert!(matches!(
+            batch.reqs[0].request,
+            InteractReq::AbortWalk { request_id: 33 }
+        ));
+        assert!(matches!(
+            batch.reqs[1].request,
+            InteractReq::GatherStop { request_id: 201 }
+        ));
+        assert!(matches!(
+            batch.reqs[2].request,
+            InteractReq::CombatStop { request_id: 202 }
+        ));
+        assert_eq!(batch.reqs[3].lineage, None);
+        assert!(matches!(batch.reqs[3].request, InteractReq::Close));
+        assert_eq!(batch.reqs[3].mirror_owner, None);
+    }
+    #[test]
+    fn native_kind_wire_mapping_covers_every_family() {
+        let stamp = |raw| {
+            RequestStamp::new(
+                RequestId::from_raw(raw).expect("request id"),
+                None,
+                None,
+                api::identity::ExecutionId::first(api::selected::RunKey {
+                    slot: 1,
+                    run: 77,
+                    session: 2,
+                }),
+            )
+            .expect("request stamp")
+        };
+        let settings = crate::native::SettingsBag::new();
+        let combat = crate::api_combat::CombatSessionRequest::default();
+        let starts = NativeKind::ALL
+            .iter()
+            .enumerate()
+            .map(|(index, kind)| {
+                let args = match *kind {
+                    NativeKind::Gather => SeatStartArgsRef::Gather(&settings),
+                    NativeKind::Combat => SeatStartArgsRef::Combat(&combat),
+                    NativeKind::QuestProgress => SeatStartArgsRef::QuestProgress("cook"),
+                    _ => SeatStartArgsRef::Empty,
+                };
+                SeatStartRef {
+                    stamp: stamp(300 + index as u64),
+                    kind: *kind,
+                    args,
+                }
+            })
+            .collect::<Vec<_>>();
+        let decisions: [SeatDecisionRef<'_>; 0] = [];
+        let cancels: [SeatCancelInput; 0] = [];
+        let reqs: [SeatInteractRequest<'_>; 0] = [];
+        let input = SeatInteractBatchInput {
+            consumed_terminal_seq: 0,
+            starts: &starts,
+            decisions: &decisions,
+            cancels: &cancels,
+            mirror_revokes: &[],
+            reqs: &reqs,
+        };
+        let decoded = decode_seat_interact_batch(
+            &encode_seat_interact_batch(&input).expect("encode all native families"),
+        )
+        .expect("decode all native families");
+        assert_eq!(
+            decoded
+                .starts
+                .iter()
+                .map(|start| start.kind)
+                .collect::<Vec<_>>(),
+            NativeKind::ALL.to_vec()
+        );
+    }
+
+    fn raw_seat_batch_with_start_kind(kind: SeatKind) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let args = SeatArgsBuilder::new(&mut builder).finish();
+        let mut start = NativeRequestBuilder::new(&mut builder);
+        start.add_id(1);
+        start.add_kind(kind);
+        start.add_args(args);
+        let start = start.finish();
+        let starts = builder.create_vector(&[start]);
+        let decisions = builder.create_vector::<WIPOffset<SeatDecide<'_>>>(&[]);
+        let cancels = builder.create_vector::<WIPOffset<SeatCancel<'_>>>(&[]);
+        let reqs = builder.create_vector::<WIPOffset<Interact<'_>>>(&[]);
+        let mut batch = InteractBatchBuilder::new(&mut builder);
+        batch.add_reqs(reqs);
+        batch.add_starts(starts);
+        batch.add_decisions(decisions);
+        batch.add_cancels(cancels);
+        let root = batch.finish();
+        builder.finish(root, None);
+        builder.finished_data().to_vec()
+    }
+
+    fn raw_seat_batch_with_start_count(count: usize) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let mut starts = Vec::with_capacity(count);
+        for index in 0..count {
+            let args = SeatArgsBuilder::new(&mut builder).finish();
+            let mut start = NativeRequestBuilder::new(&mut builder);
+            start.add_id(index as u64 + 1);
+            start.add_kind(SeatKind::Hunt);
+            start.add_args(args);
+            starts.push(start.finish());
+        }
+        let starts = builder.create_vector(&starts);
+        let decisions = builder.create_vector::<WIPOffset<SeatDecide<'_>>>(&[]);
+        let cancels = builder.create_vector::<WIPOffset<SeatCancel<'_>>>(&[]);
+        let reqs = builder.create_vector::<WIPOffset<Interact<'_>>>(&[]);
+        let mut batch = InteractBatchBuilder::new(&mut builder);
+        batch.add_reqs(reqs);
+        batch.add_starts(starts);
+        batch.add_decisions(decisions);
+        batch.add_cancels(cancels);
+        let root = batch.finish();
+        builder.finish(root, None);
+        builder.finished_data().to_vec()
+    }
+    fn raw_seat_batch_with_mirror_revokes(rows: &[(u64, u64)]) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let mut revokes = Vec::with_capacity(rows.len());
+        for &(owner, seq) in rows {
+            let mut revoke = MirrorRevokeBuilder::new(&mut builder);
+            revoke.add_owner(owner);
+            revoke.add_seq(seq);
+            revokes.push(revoke.finish());
+        }
+        let revokes = builder.create_vector(&revokes);
+        let reqs = builder.create_vector::<WIPOffset<Interact<'_>>>(&[]);
+        let mut batch = InteractBatchBuilder::new(&mut builder);
+        batch.add_reqs(reqs);
+        batch.add_mirror_revokes(revokes);
+        let root = batch.finish();
+        builder.finish(root, None);
+        builder.finished_data().to_vec()
+    }
+    fn raw_seat_batch_with_mirror_owner(lineage: u64, mirror_owner: u64) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let op = builder.create_string("close");
+        let mut row = InteractBuilder::new(&mut builder);
+        row.add_op(op);
+        row.add_lineage(lineage);
+        row.add_mirror_owner(mirror_owner);
+        let row = row.finish();
+        let reqs = builder.create_vector(&[row]);
+        let mut batch = InteractBatchBuilder::new(&mut builder);
+        batch.add_reqs(reqs);
+        let root = batch.finish();
+        builder.finish(root, None);
+        builder.finished_data().to_vec()
+    }
+
+    fn raw_seat_batch_with_cancel_reason(reason: SeatCancelReason) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let mut cancel = SeatCancelBuilder::new(&mut builder);
+        cancel.add_of(1);
+        cancel.add_reason(reason);
+        let cancel = cancel.finish();
+        let starts = builder.create_vector::<WIPOffset<NativeRequest<'_>>>(&[]);
+        let decisions = builder.create_vector::<WIPOffset<SeatDecide<'_>>>(&[]);
+        let cancels = builder.create_vector(&[cancel]);
+        let reqs = builder.create_vector::<WIPOffset<Interact<'_>>>(&[]);
+        let mut batch = InteractBatchBuilder::new(&mut builder);
+        batch.add_reqs(reqs);
+        batch.add_starts(starts);
+        batch.add_decisions(decisions);
+        batch.add_cancels(cancels);
+        let root = batch.finish();
+        builder.finish(root, None);
+        builder.finished_data().to_vec()
+    }
+    fn raw_seat_batch_with_decision_answer_size(size: usize) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let answer_bytes = vec![0u8; size];
+        let answer = builder.create_vector(&answer_bytes);
+        let mut decision = SeatDecideBuilder::new(&mut builder);
+        decision.add_of(1);
+        decision.add_decision_seq(1);
+        decision.add_answer(answer);
+        let decision = decision.finish();
+        let starts = builder.create_vector::<WIPOffset<NativeRequest<'_>>>(&[]);
+        let decisions = builder.create_vector(&[decision]);
+        let cancels = builder.create_vector::<WIPOffset<SeatCancel<'_>>>(&[]);
+        let reqs = builder.create_vector::<WIPOffset<Interact<'_>>>(&[]);
+        let mut batch = InteractBatchBuilder::new(&mut builder);
+        batch.add_reqs(reqs);
+        batch.add_starts(starts);
+        batch.add_decisions(decisions);
+        batch.add_cancels(cancels);
+        let root = batch.finish();
+        builder.finish(root, None);
+        builder.finished_data().to_vec()
+    }
+
+    fn raw_snapshot_with_seat_phase(phase: SeatPhase) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let mut live = SeatLiveBuilder::new(&mut builder);
+        live.add_id(1);
+        live.add_phase(phase);
+        let live = live.finish();
+        let live = builder.create_vector(&[live]);
+        let results = builder.create_vector::<WIPOffset<SeatResult<'_>>>(&[]);
+        let mut snapshot = SnapshotBuilder::new(&mut builder);
+        snapshot.add_tick(1);
+        snapshot.add_seat_live(live);
+        snapshot.add_seat_results(results);
+        let root = snapshot.finish();
+        builder.finish(root, None);
+        builder.finished_data().to_vec()
+    }
+
+    fn raw_snapshot_with_seat_counts(live_count: usize, result_count: usize) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let mut live_rows = Vec::with_capacity(live_count);
+        for index in 0..live_count {
+            let mut live = SeatLiveBuilder::new(&mut builder);
+            live.add_id(index as u64 + 1);
+            live.add_phase(SeatPhase::Working);
+            live_rows.push(live.finish());
+        }
+        let live = builder.create_vector(&live_rows);
+        let mut result_rows = Vec::with_capacity(result_count);
+        for index in 0..result_count {
+            let mut outcome = SeatOutcomeBuilder::new(&mut builder);
+            outcome.add_kind(SeatOutcomeKind::Done);
+            let outcome = outcome.finish();
+            let mut result = SeatResultBuilder::new(&mut builder);
+            result.add_id(index as u64 + 1000);
+            result.add_terminal_seq(index as u64 + 1);
+            result.add_outcome(outcome);
+            result_rows.push(result.finish());
+        }
+        let results = builder.create_vector(&result_rows);
+        let mut snapshot = SnapshotBuilder::new(&mut builder);
+        snapshot.add_tick(1);
+        snapshot.add_seat_live(live);
+        snapshot.add_seat_results(results);
+        let root = snapshot.finish();
+        builder.finish(root, None);
+        builder.finished_data().to_vec()
+    }
+
+    fn raw_snapshot_with_seat_outcome(
+        kind: SeatOutcomeKind,
+        refusal: SeatRefusal,
+        abort_reason: SeatAbortReason,
+    ) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let mut outcome = SeatOutcomeBuilder::new(&mut builder);
+        outcome.add_kind(kind);
+        outcome.add_refusal(refusal);
+        outcome.add_abort_reason(abort_reason);
+        let outcome = outcome.finish();
+        let mut result = SeatResultBuilder::new(&mut builder);
+        result.add_id(1);
+        result.add_terminal_seq(1);
+        result.add_outcome(outcome);
+        let result = result.finish();
+        let live = builder.create_vector::<WIPOffset<SeatLive<'_>>>(&[]);
+        let results = builder.create_vector(&[result]);
+        let mut snapshot = SnapshotBuilder::new(&mut builder);
+        snapshot.add_tick(1);
+        snapshot.add_seat_live(live);
+        snapshot.add_seat_results(results);
+        let root = snapshot.finish();
+        builder.finish(root, None);
+        builder.finished_data().to_vec()
+    }
+
+    fn raw_snapshot_with_prompt_args_size(size: usize) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let args_bytes = vec![0u8; size];
+        let args = builder.create_vector(&args_bytes);
+        let point = builder.create_string("target");
+        let mut prompt = SeatPromptBuilder::new(&mut builder);
+        prompt.add_seq(1);
+        prompt.add_point(point);
+        prompt.add_args(args);
+        let prompt = prompt.finish();
+        let mut live = SeatLiveBuilder::new(&mut builder);
+        live.add_id(1);
+        live.add_phase(SeatPhase::Waiting);
+        live.add_prompt(prompt);
+        let live = live.finish();
+        let live = builder.create_vector(&[live]);
+        let results = builder.create_vector::<WIPOffset<SeatResult<'_>>>(&[]);
+        let mut snapshot = SnapshotBuilder::new(&mut builder);
+        snapshot.add_tick(1);
+        snapshot.add_seat_live(live);
+        snapshot.add_seat_results(results);
+        let root = snapshot.finish();
+        builder.finish(root, None);
+        builder.finished_data().to_vec()
+    }
+
+    fn raw_snapshot_with_outcome_value_size(size: usize) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let value_bytes = vec![0u8; size];
+        let value = builder.create_vector(&value_bytes);
+        let mut outcome = SeatOutcomeBuilder::new(&mut builder);
+        outcome.add_kind(SeatOutcomeKind::Done);
+        outcome.add_value(value);
+        let outcome = outcome.finish();
+        let mut result = SeatResultBuilder::new(&mut builder);
+        result.add_id(1);
+        result.add_terminal_seq(1);
+        result.add_outcome(outcome);
+        let result = result.finish();
+        let live = builder.create_vector::<WIPOffset<SeatLive<'_>>>(&[]);
+        let results = builder.create_vector(&[result]);
+        let mut snapshot = SnapshotBuilder::new(&mut builder);
+        snapshot.add_tick(1);
+        snapshot.add_seat_live(live);
+        snapshot.add_seat_results(results);
+        let root = snapshot.finish();
+        builder.finish(root, None);
+        builder.finished_data().to_vec()
+    }
+
+    #[test]
+    fn seat_snapshot_decoder_rejects_terminal_enum_defects() {
+        assert!(decode_snapshot(&raw_snapshot_with_seat_outcome(
+            SeatOutcomeKind::None,
+            SeatRefusal::None,
+            SeatAbortReason::None,
+        ))
+        .expect_err("None outcome")
+        .contains("no outcome kind"));
+        assert!(decode_snapshot(&raw_snapshot_with_seat_outcome(
+            SeatOutcomeKind(255),
+            SeatRefusal::None,
+            SeatAbortReason::None,
+        ))
+        .expect_err("unknown outcome kind")
+        .contains("inconsistent outcome fields"));
+        assert!(decode_snapshot(&raw_snapshot_with_seat_outcome(
+            SeatOutcomeKind::Refused,
+            SeatRefusal::ArgsTooLarge,
+            SeatAbortReason::None,
+        ))
+        .expect_err("local refusal")
+        .contains("ArgsTooLarge"));
+        assert!(decode_snapshot(&raw_snapshot_with_seat_outcome(
+            SeatOutcomeKind::Refused,
+            SeatRefusal(255),
+            SeatAbortReason::None,
+        ))
+        .expect_err("unknown refusal")
+        .contains("unknown refusal enum"));
+        assert!(decode_snapshot(&raw_snapshot_with_seat_outcome(
+            SeatOutcomeKind::Aborted,
+            SeatRefusal::None,
+            SeatAbortReason(255),
+        ))
+        .expect_err("unknown abort reason")
+        .contains("unknown abort enum"));
+    }
+
+    #[test]
+    fn seat_wire_binary_vectors_share_the_start_charge_cap() {
+        let size = MAX_SEAT_BINARY_BYTES + 1;
+        assert!(
+            decode_seat_interact_batch(&raw_seat_batch_with_decision_answer_size(size))
+                .expect_err("decoded answer cap")
+                .contains("answer length")
+        );
+        assert!(decode_snapshot(&raw_snapshot_with_prompt_args_size(size))
+            .expect_err("decoded prompt-args cap")
+            .contains("prompt args exceed cap"));
+        assert!(decode_snapshot(&raw_snapshot_with_outcome_value_size(size))
+            .expect_err("decoded terminal value cap")
+            .contains("outcome value exceeds cap"));
+
+        let id = RequestId::from_raw(1).expect("live id");
+        let live = [SeatEntry {
+            id,
+            parent: None,
+            kind: NativeKind::Hunt,
+            origin: api::script_contract::ChildOrigin::Started,
+            depth: 0,
+            decisions_consumed: 0,
+            prompt: Some(1),
+        }];
+        let args = vec![0u8; size];
+        let details = [SeatLiveDetails {
+            id,
+            phase: NativePhase::Waiting,
+            prompt: Some(SeatPromptInput {
+                sequence: DecisionSequence::from_raw(1).expect("prompt sequence"),
+                point: "target",
+                args: &args,
+            }),
+        }];
+        assert!(SeatPageInput::new(&live, &[], &details, 0)
+            .err()
+            .expect("producer prompt-args cap")
+            .contains("prompt args length"));
+    }
+
+    #[test]
+    fn seat_snapshot_decoder_enforces_live_and_result_vector_caps() {
+        assert!(
+            decode_snapshot(&raw_snapshot_with_seat_counts(MAX_SEAT_LIVE + 1, 0))
+                .expect_err("decoded live cap")
+                .contains("live vector length")
+        );
+        assert!(
+            decode_snapshot(&raw_snapshot_with_seat_counts(0, MAX_SEAT_RESULTS + 1))
+                .expect_err("decoded result cap")
+                .contains("result vector length")
+        );
+    }
+
+    #[test]
+    fn seat_batch_vector_and_binary_bounds_are_enforced() {
+        use crate::shim::InteractReq;
+
+        let stamp = |raw| {
+            RequestStamp::new(
+                RequestId::from_raw(raw).expect("request id"),
+                None,
+                None,
+                api::identity::ExecutionId::first(api::selected::RunKey {
+                    slot: 1,
+                    run: 77,
+                    session: 2,
+                }),
+            )
+            .expect("request stamp")
+        };
+        let empty_starts: [SeatStartRef<'_>; 0] = [];
+        let empty_decisions: [SeatDecisionRef<'_>; 0] = [];
+        let empty_cancels: [SeatCancelInput; 0] = [];
+        let empty_reqs: [SeatInteractRequest<'_>; 0] = [];
+
+        let too_many_starts = (0..=MAX_SEAT_STARTS)
+            .map(|index| SeatStartRef {
+                stamp: stamp(1000 + index as u64),
+                kind: NativeKind::Hunt,
+                args: SeatStartArgsRef::Empty,
+            })
+            .collect::<Vec<_>>();
+        let input = SeatInteractBatchInput {
+            consumed_terminal_seq: 0,
+            starts: &too_many_starts,
+            decisions: &empty_decisions,
+            cancels: &empty_cancels,
+            mirror_revokes: &[],
+            reqs: &empty_reqs,
+        };
+        assert!(encode_seat_interact_batch(&input)
+            .expect_err("start cap")
+            .contains("starts vector length"));
+        assert!(
+            decode_seat_interact_batch(&raw_seat_batch_with_start_count(MAX_SEAT_STARTS + 1))
+                .expect_err("decoded start cap")
+                .contains("starts vector length")
+        );
+
+        let target = RequestId::from_raw(2000).expect("decision target");
+        let sequence = DecisionSequence::from_raw(1).expect("decision sequence");
+        let too_many_decisions = (0..=MAX_SEAT_DECISIONS)
+            .map(|_| SeatDecisionRef {
+                of: target,
+                sequence,
+                answer: &[],
+            })
+            .collect::<Vec<_>>();
+        let input = SeatInteractBatchInput {
+            consumed_terminal_seq: 0,
+            starts: &empty_starts,
+            decisions: &too_many_decisions,
+            cancels: &empty_cancels,
+            mirror_revokes: &[],
+            reqs: &empty_reqs,
+        };
+        assert!(encode_seat_interact_batch(&input)
+            .expect_err("decision cap")
+            .contains("decisions vector length"));
+
+        let too_many_cancels = vec![
+            SeatCancelInput {
+                of: target,
+                reason: CallbackCancelReason::HookThrew,
+            };
+            MAX_SEAT_CANCELS + 1
+        ];
+        let input = SeatInteractBatchInput {
+            consumed_terminal_seq: 0,
+            starts: &empty_starts,
+            decisions: &empty_decisions,
+            cancels: &too_many_cancels,
+            mirror_revokes: &[],
+            reqs: &empty_reqs,
+        };
+        assert!(encode_seat_interact_batch(&input)
+            .expect_err("cancel cap")
+            .contains("cancels vector length"));
+        let too_many_mirror_revokes = (0..=MAX_SEAT_MIRROR_REVOKES)
+            .map(|index| SeatMirrorRevoke {
+                owner: RequestId::from_raw(index as u64 + 1).expect("mirror owner"),
+                seq: index as u64 + 1,
+            })
+            .collect::<Vec<_>>();
+        let input = SeatInteractBatchInput {
+            consumed_terminal_seq: 0,
+            starts: &empty_starts,
+            decisions: &empty_decisions,
+            cancels: &empty_cancels,
+            mirror_revokes: &too_many_mirror_revokes,
+            reqs: &empty_reqs,
+        };
+        assert!(encode_seat_interact_batch(&input)
+            .expect_err("mirror revoke encoder cap")
+            .contains("mirror revoke vector length"));
+        let raw_revokes = too_many_mirror_revokes
+            .iter()
+            .map(|revoke| (revoke.owner.get(), revoke.seq))
+            .collect::<Vec<_>>();
+        assert!(
+            decode_seat_interact_batch(&raw_seat_batch_with_mirror_revokes(&raw_revokes))
+                .expect_err("mirror revoke decoder cap")
+                .contains("mirror revoke vector length")
+        );
+
+        let requests = vec![InteractReq::Close; MAX_SEAT_GAMEPLAY_ROWS + 1];
+        let gameplay = requests
+            .iter()
+            .map(|request| SeatInteractRequest {
+                lineage: None,
+                mirror_owner: None,
+                request,
+            })
+            .collect::<Vec<_>>();
+        let input = SeatInteractBatchInput {
+            consumed_terminal_seq: 0,
+            starts: &empty_starts,
+            decisions: &empty_decisions,
+            cancels: &empty_cancels,
+            mirror_revokes: &[],
+            reqs: &gameplay,
+        };
+        assert!(encode_seat_interact_batch(&input)
+            .expect_err("gameplay cap")
+            .contains("gameplay row count"));
+
+        let large_answer = vec![0; MAX_SEAT_BINARY_BYTES + 1];
+        let overbound_decision = [SeatDecisionRef {
+            of: target,
+            sequence,
+            answer: &large_answer,
+        }];
+        let input = SeatInteractBatchInput {
+            consumed_terminal_seq: 0,
+            starts: &empty_starts,
+            decisions: &overbound_decision,
+            cancels: &empty_cancels,
+            mirror_revokes: &[],
+            reqs: &empty_reqs,
+        };
+        assert!(encode_seat_interact_batch(&input)
+            .expect_err("answer byte cap")
+            .contains("answer length"));
+    }
+    #[test]
+    fn seat_mirror_revokes_require_unique_owners_and_contiguous_nonzero_sequences() {
+        for (rows, expected) in [
+            (&[(41, 20), (42, 22)][..], "not contiguous"),
+            (&[(0, 20)][..], "no positive owner"),
+            (&[(41, 0)][..], "zero sequence"),
+            (
+                &[(41, 20), (41, 21)][..],
+                "duplicate seat mirror revoke owner",
+            ),
+        ] {
+            assert!(
+                decode_seat_interact_batch(&raw_seat_batch_with_mirror_revokes(rows))
+                    .expect_err("invalid mirror revokes")
+                    .contains(expected)
+            );
+        }
+
+        let starts: [SeatStartRef<'_>; 0] = [];
+        let decisions: [SeatDecisionRef<'_>; 0] = [];
+        let cancels: [SeatCancelInput; 0] = [];
+        let reqs: [SeatInteractRequest<'_>; 0] = [];
+        let mirror_revokes = [
+            SeatMirrorRevoke {
+                owner: RequestId::from_raw(41).expect("mirror owner"),
+                seq: 20,
+            },
+            SeatMirrorRevoke {
+                owner: RequestId::from_raw(42).expect("mirror owner"),
+                seq: 22,
+            },
+        ];
+        let input = SeatInteractBatchInput {
+            consumed_terminal_seq: 0,
+            starts: &starts,
+            decisions: &decisions,
+            cancels: &cancels,
+            mirror_revokes: &mirror_revokes,
+            reqs: &reqs,
+        };
+        assert!(encode_seat_interact_batch(&input)
+            .expect_err("noncontiguous producer sequence")
+            .contains("not contiguous"));
+    }
+    #[test]
+    fn seat_mirror_owner_and_lineage_collision_is_rejected() {
+        use crate::shim::InteractReq;
+
+        let id = RequestId::from_raw(41).expect("shared request id");
+        let request = InteractReq::Close;
+        let row = [SeatInteractRequest {
+            lineage: Some(id),
+            mirror_owner: Some(id),
+            request: &request,
+        }];
+        let starts: [SeatStartRef<'_>; 0] = [];
+        let decisions: [SeatDecisionRef<'_>; 0] = [];
+        let cancels: [SeatCancelInput; 0] = [];
+        let input = SeatInteractBatchInput {
+            consumed_terminal_seq: 0,
+            starts: &starts,
+            decisions: &decisions,
+            cancels: &cancels,
+            mirror_revokes: &[],
+            reqs: &row,
+        };
+        assert!(encode_seat_interact_batch(&input)
+            .expect_err("encoder rejects colliding IDs")
+            .contains("collides with captured seat lineage"));
+        assert!(
+            decode_seat_interact_batch(&raw_seat_batch_with_mirror_owner(41, 41))
+                .expect_err("decoder rejects colliding IDs")
+                .contains("collides with captured seat lineage")
+        );
+    }
+
+    #[test]
+    fn seat_batch_decoder_rejects_missing_lineage_and_unknown_enums() {
+        use crate::shim::InteractReq;
+
+        let legacy = encode_interact_batch(&[InteractReq::Close]);
+        assert!(decode_seat_interact_batch(&legacy)
+            .expect_err("missing physical lineage must fail")
+            .contains("missing captured lineage"));
+        assert!(
+            decode_seat_interact_batch(&raw_seat_batch_with_start_kind(SeatKind(255)))
+                .expect_err("unknown family enum must fail")
+                .contains("unknown family kind")
+        );
+        assert!(
+            decode_seat_interact_batch(&raw_seat_batch_with_cancel_reason(SeatCancelReason(255)))
+                .expect_err("unknown cancellation enum must fail")
+                .contains("unknown reason")
+        );
+        assert!(
+            decode_snapshot(&raw_snapshot_with_seat_phase(SeatPhase(255)))
+                .expect_err("unknown phase enum must fail")
+                .contains("unknown phase enum")
+        );
+    }
     include!("isolate_fb_schema_roundtrip.rs");
 }

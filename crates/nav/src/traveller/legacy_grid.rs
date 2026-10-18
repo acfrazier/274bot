@@ -117,7 +117,7 @@ impl Traveller {
 
         // Stub world: every route dest is a walkable tile, so arrival is
         // exactly standing on it. Solid-adjacent arrival comes later.
-        if grid_arrived(here, dest, true) {
+        if crate::arrival::arrived(here, dest, true) {
             self.status = NavStatus::Arrived;
             let status = self.status;
             self.clear();

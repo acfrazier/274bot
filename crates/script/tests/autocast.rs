@@ -366,7 +366,7 @@ fn pause_and_hold_freeze_mid_arm_without_late_press() {
         iso.drain_interacts().is_empty(),
         "Guardian hold must freeze the parked chooser wait"
     );
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     snap.hold = false;
     snap.tick = 6;
     post_snapshot_input(&iso, &snap);

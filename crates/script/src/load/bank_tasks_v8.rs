@@ -14,7 +14,7 @@
 //!   posted tile is on the anchor's level and within its normalized radius;
 //!   answer due.
 //! - `__rs2b0t_next_withdraw_chunk(need)`: frozen `nextWithdrawChunk`
-//!   ([`crate::bank_withdraw::next_chunk`]), `null` or `{ kind, count }` /
+//!   ([`crate::bank::ops::next_chunk`]), `null` or `{ kind, count }` /
 //!   `{ kind, op }`.
 //! - `__rs2b0t_withdraw_op(ops, amount)`: frozen `withdrawOp`
 //!   ([`crate::bank_op::withdraw_op`]), the matching op label or `null`.
@@ -122,7 +122,7 @@ fn next_withdraw_chunk<'s>(
     args: v8::FunctionCallbackArguments<'s>,
     rv: v8::ReturnValue,
 ) {
-    use crate::bank_withdraw::{next_chunk, Chunk};
+    use crate::bank::ops::{next_chunk, Chunk};
     let result = cb::number(scope, args.get(0)).and_then(|need| match next_chunk(need) {
         None => Ok(v8::null(scope).into()),
         Some(Chunk::X(count)) => {

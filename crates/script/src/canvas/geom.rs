@@ -218,7 +218,7 @@ pub fn finite_f32(v: f64) -> Option<f32> {
     }
 }
 
-#[cfg(any(feature = "load", test))]
+#[cfg(feature = "load")]
 /// Conservative axis-aligned bounds of path points and control points.
 pub fn path_bounds(segs: &[PathSeg]) -> Option<(f32, f32, f32, f32)> {
     let mut minx = f32::MAX;

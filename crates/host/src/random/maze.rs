@@ -22,7 +22,7 @@ const MAZE_SHRINE_SIZE: i32 = 3;
 pub const MAZE_SHRINE_DOOR: (i32, i32) = (2910, 4576);
 /// The spawn corners (rs2b0t `MAZE_SPAWNS`); consumed by the spawn
 /// route tests (each must solve to the chamber door).
-#[allow(dead_code)]
+#[cfg(test)]
 pub const MAZE_SPAWNS: [(i32, i32); 4] = [
     (2891, 4597), // NW local (11,53)
     (2933, 4597), // NE local (53,53)

@@ -278,18 +278,6 @@ impl RouteService {
             TargetError::NotSettled => Err(RouteFamilyError::NotSettled),
         }
     }
-
-    /// Wrap a backend route as a family result against `lease`. Test-only
-    /// until T5.W(route) drives the search.
-    #[cfg(test)]
-    pub(crate) fn path(
-        lease: &NavLease,
-        identity: api::identity::WorkIdentity,
-        revision: InputRevision,
-        route: crate::router::Route,
-    ) -> RouteFamilyResult {
-        RouteFamilyResult::Path(lease.publish_route(identity, revision, route))
-    }
 }
 
 impl WorkFamilySpec for RouteService {

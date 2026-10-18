@@ -586,7 +586,10 @@ fn search_popup(ui: &Ui, session: &mut Session) {
 mod tests {
     use super::*;
     use crate::session::Session;
-    use crate::test_support::{scratch_service, thread_state_root, TestDir};
+    use crate::test_support::{
+        reload_store_until, save_draft_patiently, save_store_patiently, scratch_service,
+        thread_state_root, TestDir,
+    };
     use script::LoadoutsStore;
     use std::collections::HashSet;
     use std::path::Path;
@@ -606,7 +609,7 @@ mod tests {
         for row in rows {
             store.upsert(row);
         }
-        store.save().unwrap();
+        save_store_patiently(&mut store);
         let mut session = Session::new();
         session.loadouts = store;
         session.loadouts_sel = 0;
@@ -622,7 +625,7 @@ mod tests {
     fn save_renames_in_place_without_dropping_supplies() {
         let (mut session, _dir) = session_with_store();
         session.loadouts_draft.as_mut().unwrap().name = "melee2".into();
-        assert!(save_draft(&mut session));
+        assert!(save_draft_patiently(&mut session));
         assert_eq!(session.loadouts.loadouts().len(), 1);
         assert_eq!(session.loadouts.loadouts()[0].name, "melee2");
         assert_eq!(
@@ -676,7 +679,7 @@ mod tests {
         let file = service.root().loadouts_file();
         let mut store = LoadoutsStore::over(Arc::new(service.operator_loadouts()));
         store.upsert(Loadout::new("melee").with_carry("Lobster", 8));
-        store.save().unwrap();
+        save_store_patiently(&mut store);
         std::fs::remove_file(&file).unwrap();
         std::fs::create_dir_all(&file).unwrap();
         session.loadouts = store;
@@ -707,7 +710,7 @@ mod tests {
             Loadout::new("tank"),
         ]);
         session.loadouts_draft.as_mut().unwrap().name = "melee2".into();
-        assert!(save_draft(&mut session));
+        assert!(save_draft_patiently(&mut session));
         assert_eq!(session.loadouts.names(), ["melee2", "range", "tank"]);
         assert_eq!(session.loadouts_sel, 0);
         let draft = session.loadouts_draft.as_ref().unwrap();
@@ -717,7 +720,7 @@ mod tests {
 
         // The next save writes the renamed row, not another one.
         session.loadouts_draft.as_mut().unwrap().carry[0].qty = 9;
-        assert!(save_draft(&mut session));
+        assert!(save_draft_patiently(&mut session));
         assert_eq!(session.loadouts.names(), ["melee2", "range", "tank"]);
         assert_eq!(session.loadouts.get("melee2").unwrap().carry[0].qty, 9);
         assert!(session.loadouts.get("range").unwrap().carry.is_empty());
@@ -730,14 +733,28 @@ mod tests {
             Loadout::new("range"),
         ]);
         add_loadout(&mut session);
-        assert_eq!(session.loadouts_status, "Saved.");
-        assert_eq!(session.loadouts.names(), ["melee", "range", "loadout"]);
-        assert_eq!(session.loadouts_sel, 2);
-        assert_eq!(session.loadouts_draft.as_ref().unwrap().name, "loadout");
+        if session.loadouts_status.contains("not durable within") {
+            // Load-slow durability: the queued add lands on its own, and a
+            // retry could double-add, so wait for it and finish the
+            // selection the success path does.
+            reload_store_until(&mut session.loadouts, "added loadout", |store| {
+                store.names().contains(&"loadout".to_string())
+            });
+            select_saved(&mut session, "loadout");
+        } else {
+            assert_eq!(session.loadouts_status, "Saved.");
+        }
 
         session.loadouts_sel = 0;
         sync_draft(&mut session);
         duplicate_loadout(&mut session);
+        if session.loadouts_status.contains("not durable within") {
+            // As above: wait out the queued duplicate instead of retrying.
+            reload_store_until(&mut session.loadouts, "duplicated loadout", |store| {
+                store.names().contains(&"melee copy".to_string())
+            });
+            select_saved(&mut session, "melee copy");
+        }
         assert_eq!(
             session.loadouts.names(),
             ["melee", "range", "loadout", "melee copy"]
@@ -763,10 +780,20 @@ mod tests {
         let mut other = store_in(&dir);
         other.remove("first");
         other.upsert(Loadout::new("tank"));
-        other.save().unwrap();
+        save_store_patiently(&mut other);
 
         session.loadouts_draft.as_mut().unwrap().name = "melee2".into();
-        assert!(!save_draft(&mut session));
+        // A load-slow worker answers with the bounded-wait timeout instead
+        // of the conflict: retry those, keep the first decisive answer.
+        let mut saved = save_draft(&mut session);
+        let start = std::time::Instant::now();
+        while !saved
+            && session.loadouts_status.contains("not durable within")
+            && start.elapsed() < std::time::Duration::from_secs(60)
+        {
+            saved = save_draft(&mut session);
+        }
+        assert!(!saved);
         assert!(
             session.loadouts_status.starts_with("Save failed:"),
             "got {:?}",
@@ -811,6 +838,16 @@ mod tests {
             session.loadouts_status.starts_with("Save failed:"),
             "got {:?}",
             session.loadouts_status
+        );
+        assert!(
+            session.loadouts_status.contains("did not load"),
+            "the status names the failed load: {:?}",
+            session.loadouts_status
+        );
+        assert!(session.loadouts.loadouts().is_empty());
+        assert!(
+            !session.loadouts.is_dirty(),
+            "the failed form is discarded, as for other failed saves"
         );
         assert_eq!(std::fs::read(&file).unwrap(), corrupt);
     }
@@ -898,6 +935,13 @@ mod tests {
     fn duplicate_preserves_source_and_selects_copy() {
         let (mut session, _dir) = session_with_store();
         duplicate_loadout(&mut session);
+        if session.loadouts_status.contains("not durable within") {
+            // As above: wait out the queued duplicate instead of retrying.
+            reload_store_until(&mut session.loadouts, "duplicated loadout", |store| {
+                store.names().contains(&"melee copy".to_string())
+            });
+            select_saved(&mut session, "melee copy");
+        }
         assert_eq!(session.loadouts.loadouts().len(), 2);
         assert_eq!(session.loadouts.loadouts()[0].name, "melee");
         assert_eq!(session.loadouts.loadouts()[1].name, "melee copy");

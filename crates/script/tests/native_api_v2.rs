@@ -584,7 +584,7 @@ export function tick() {
     assert_eq!(iso.probe("globalThis.__rs_v2_tick_pending").unwrap(), true);
     assert!(iso.drain_lifecycle().is_empty());
 
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     let _ = iso.probe("globalThis.__rs_release(); true");
     assert_eq!(iso.probe("globalThis.__rs_v2_tick_pending").unwrap(), false);
     post_base(&iso, 2);
@@ -633,7 +633,7 @@ export function tick(api) {
             .any(|r| matches!(r, InteractReq::WalkNearestBank)),
         "{before:?}"
     );
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     iso.on_game_tick(2);
     // Generation skip: the post-reset tick of a new generation may enqueue
     // a fresh request; stale queued success is the old generation batch.
@@ -1231,6 +1231,12 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+    let prepared = std::sync::Arc::clone(&data);
+    api::selected::FamilyPreparation::run(move |worker| prepared.prepare_gathering(worker))
+        .unwrap()
+        .join()
+        .unwrap()
+        .expect("prepare the real gathering family before probing its sync helpers");
     let iso =
         LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     post_base(&iso, 1);

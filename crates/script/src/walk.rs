@@ -722,6 +722,11 @@ fn shut_obstacle_at(door: WorldTile, obstacles: &[String]) -> Option<SceneRow> {
         .min_by_key(|loc| loc.distance)
 }
 
+struct WalkOptions {
+    avoid: Vec<InspectAvoidWire>,
+    cross: Vec<String>,
+}
+
 /// One native walk: arrival check, then the settled outcome. Frozen
 /// `walkResilient`'s baked `walkTo`; `walk-hops` and `walk-resilient` share it.
 pub(crate) struct Walk {
@@ -729,6 +734,8 @@ pub(crate) struct Walk {
     dest: WorldTile,
     radius: i32,
     allow_teleports: bool,
+    options: Option<Box<WalkOptions>>,
+    compat_tile_intent: bool,
 }
 
 impl Walk {
@@ -825,13 +832,20 @@ impl Walk {
         }))
         .as_u64()
         .unwrap_or(0);
+        let options = if avoid.is_empty() && cross.is_empty() {
+            None
+        } else {
+            Some(Box::new(WalkOptions { avoid, cross }))
+        };
         let walk = Self {
             token,
             dest,
             radius,
             allow_teleports,
+            options,
+            compat_tile_intent,
         };
-        cx.emit(walk.request(avoid, cross, compat_tile_intent));
+        cx.emit(walk.request());
         cx.clock().arm(timeout_ms);
         Ok(walk)
     }
@@ -852,6 +866,9 @@ impl Walk {
                     .unwrap_or(false),
             );
         }
+        if walk_wait::take_rearm(self.token) {
+            cx.emit(self.request());
+        }
         if !cx.clock().bound_reached() {
             return None;
         }
@@ -864,20 +881,19 @@ impl Walk {
     }
 
     /// The host walk this wait is for.
-    fn request(
-        &self,
-        avoid: Vec<InspectAvoidWire>,
-        cross: Vec<String>,
-        compat_tile_intent: bool,
-    ) -> InteractReq {
+    fn request(&self) -> InteractReq {
         let WorldTile { x, z, level } = self.dest;
+        let (avoid, cross) = self.options.as_ref().map_or_else(
+            || (Vec::new(), Vec::new()),
+            |options| (options.avoid.clone(), options.cross.clone()),
+        );
         if self.radius > 0 {
             InteractReq::WalkNear {
                 x,
                 z,
                 level,
                 radius: self.radius,
-                compat_tile_intent,
+                compat_tile_intent: self.compat_tile_intent,
                 allow_teleports: self.allow_teleports,
                 allow_wilderness: true,
                 allow_bank_fetch: true,

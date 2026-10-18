@@ -1068,10 +1068,8 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         s.locs()
             .iter()
             .filter(|l| {
-                l.actions.iter().any(|a| {
-                    a.as_deref()
-                        .is_some_and(|a| a.eq_ignore_ascii_case("Use-quickly"))
-                })
+                script::bank::ops::op_slot(*l, "Use-quickly", script::bank::ops::LabelMatch::Folded)
+                    .is_some()
             })
             .map(|l| TileInput {
                 x: l.tile.x,
@@ -1523,6 +1521,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         api_combat: None,
         api_combat_outcome: None,
         api_progress: None,
+        seat_page: None,
         side_modal_id: Some(modals.map_or(-1, |m| m.side)),
         projectiles: snapshot.map(|snapshot| snapshot.projectiles()),
     };

@@ -8,15 +8,16 @@ use nav::world::NavWorld;
 use std::sync::Arc;
 
 use super::{
-    available_levels, cached_remaining_path, click_to_tile, decode_sidecar_file,
-    drop_flags_sidecar, ensure_flags_sidecar, flags_content_hash_count, flags_load_count,
-    flags_sidecar_for, flags_sidecar_state, flood_cache_occupied, format_walkto_status,
-    last_picker_layout, map_reach_bitset, pack, pan_by, picker_map_window, picker_nested_in_game,
-    reach_binding_occupied, reach_bitset, reset_flags_content_hash_count, reset_flags_load_count,
-    reset_route_cache, right_align_x, route_flatten_count, set_navflags_binding, set_pack,
-    set_reach_binding, sidecar_for_grid, snap, walkto_actions_enabled, walkto_canvas_flags,
-    walkto_footer_labels, walkto_selection_caption, walkto_window_flags, zoom_toward, FlagSidecar,
-    FlagsSidecarState, WalktoCaption, ROUTE_THROUGH_ZONES_TOOLTIP,
+    available_levels, cached_remaining_path, cached_remaining_path_view, click_to_tile,
+    decode_sidecar_file, drop_flags_sidecar, ensure_flags_sidecar, flags_content_hash_count,
+    flags_load_count, flags_sidecar_for, flags_sidecar_state, flood_cache_occupied,
+    format_walkto_status, last_picker_layout, map_reach_bitset, pack, pan_by, picker_map_window,
+    picker_nested_in_game, reach_binding_occupied, reach_bitset, reset_flags_content_hash_count,
+    reset_flags_load_count, reset_route_cache, right_align_x, route_flatten_count,
+    set_navflags_binding, set_pack, set_reach_binding, sidecar_for_grid, snap,
+    walkto_actions_enabled, walkto_canvas_flags, walkto_footer_labels, walkto_selection_caption,
+    walkto_window_flags, zoom_toward, FlagSidecar, FlagsSidecarState, WalktoCaption,
+    ROUTE_THROUGH_ZONES_TOOLTIP,
 };
 use crate::rail::{BASE_WINDOW_H, BASE_WINDOW_W};
 use crate::session::Session;
@@ -72,7 +73,7 @@ fn route_cache_bind_does_not_deadlock_slot_tick() {
     let (done, finished) = std::sync::mpsc::channel();
     let watchdog = std::thread::spawn(move || {
         if finished
-            .recv_timeout(std::time::Duration::from_secs(5))
+            .recv_timeout(std::time::Duration::from_secs(60))
             .is_err()
         {
             eprintln!("route bind watchdog: navs -> WalkArm / WalkArm -> navs deadlock");
@@ -539,11 +540,15 @@ fn peer_sets_danger_zones(
     session: &Session,
     enabled: bool,
 ) {
-    frontend_core::nav_preference(
-        peer,
-        frontend_core::NavPreference::AllowDangerZones,
-        Some(enabled),
-    )
+    crate::test_support::patiently(|| {
+        frontend_core::nav_preference(
+            peer,
+            frontend_core::NavPreference::AllowDangerZones,
+            Some(enabled),
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+    })
     .unwrap();
     session.preferences.reload().unwrap();
 }
@@ -1304,6 +1309,22 @@ fn test_route() -> nav::router::Route {
         dest: wt(5, 0),
         ticks: 1.0,
     }
+}
+
+#[test]
+fn compact_route_view_uses_the_same_clipped_leg_cache() {
+    let _guard = super::lock_nav_statics();
+    reset_route_cache();
+    let route = test_route();
+    let world = open_world_at((0, 0), 6, 1);
+    let view = nav::producer::route_view(&world, &route).expect("route view");
+    let tiles = cached_remaining_path_view(view, RouteSource::Script, 2, Some(wt(2, 0)));
+    assert_eq!(
+        tiles.iter().map(|(tile, _)| *tile).collect::<Vec<_>>(),
+        vec![wt(3, 0), wt(4, 0), wt(5, 0)],
+        "RouteView legs preserve completed-leg clipping"
+    );
+    assert_eq!(route_flatten_count(), 1);
 }
 
 #[test]

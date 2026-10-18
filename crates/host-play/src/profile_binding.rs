@@ -273,7 +273,7 @@ impl ProfileSelection {
         table: &[BundledNavIdentity],
         resource_root: Option<&Path>,
     ) -> Result<Arc<ServerProfile>, String> {
-        self.bind_inner(observer, table, resource_root, false, &mut false)
+        self.bind_inner(observer, table, resource_root, false, &mut None)
     }
 
     /// Negotiate the selected endpoint before freezing a complete owned cache.
@@ -287,19 +287,11 @@ impl ProfileSelection {
         &self,
         observer: &ProfileProgressObserver,
     ) -> Result<Arc<ServerProfile>, String> {
-        let worlds = self.public_worlds.as_deref();
+        let mut fallback = WorldFallback::new(self);
         let mut selected = self.clone();
-        let count = worlds.map_or(1, |w| w.worlds.len());
-        let initial = worlds
-            .and_then(|w| {
-                w.worlds.iter().position(|world| {
-                    world.host == self.asset_host && world.port == self.asset_port
-                })
-            })
-            .unwrap_or(0);
-        for attempt in 0..count {
-            let mut asset_connection_failed = false;
-            match selected.bind_inner(
+        loop {
+            let mut fill_error = None;
+            let error = match selected.bind_inner(
                 observer,
                 bundled_nav_identities(),
                 std::env::current_exe()
@@ -307,19 +299,15 @@ impl ProfileSelection {
                     .map(|exe| install_resource_root(&exe))
                     .as_deref(),
                 true,
-                &mut asset_connection_failed,
+                &mut fill_error,
             ) {
                 Ok(profile) => return Ok(profile),
-                Err(_) if attempt + 1 < count && asset_connection_failed => {
-                    let world = &worlds.expect("public worlds for fallback").worlds
-                        [(initial + attempt + 1) % count];
-                    selected.asset_host = world.host.clone();
-                    selected.asset_port = world.port;
-                }
-                Err(error) => return Err(error),
+                Err(error) => error,
+            };
+            if !fill_error.is_some_and(|fill_error| fallback.next(&mut selected, &fill_error)) {
+                return Err(error);
             }
         }
-        unreachable!("at least one world or one local endpoint")
     }
 
     fn bind_inner(
@@ -328,11 +316,44 @@ impl ProfileSelection {
         table: &[BundledNavIdentity],
         resource_root: Option<&Path>,
         runtime: bool,
-        asset_connection_failed: &mut bool,
+        fill_error: &mut Option<client::unpack::RuntimeCacheError>,
     ) -> Result<Arc<ServerProfile>, String> {
-        // The declared identity is read before any preparation: a manifest for
-        // another revision must be rejected without touching the update server
-        // for the selected cache directory.
+        let supplied = self.supplied_manifest(runtime)?;
+        let runtime_cache = if runtime {
+            observer.report(ProfileProgress::steps(
+                ProfileProgressStage::PreparingCache,
+                0,
+                1,
+            ));
+            let prepared = client::unpack::prepare_runtime_cache(&self.runtime_cache_request())
+                .map_err(|error| {
+                    let message = error.to_string();
+                    *fill_error = Some(error);
+                    message
+                })?;
+            observer.report(ProfileProgress::steps(
+                ProfileProgressStage::PreparingCache,
+                1,
+                1,
+            ));
+            Some(prepared)
+        } else {
+            None
+        };
+        self.bind_with_cache(
+            observer,
+            table,
+            resource_root,
+            runtime,
+            supplied,
+            runtime_cache,
+        )
+    }
+
+    /// The declared cache manifest, read before any preparation: a manifest
+    /// for another revision must be rejected without touching the update
+    /// server for the selected cache directory.
+    fn supplied_manifest(&self, runtime: bool) -> Result<Option<CacheManifest>, String> {
         let supplied = match &self.cache_manifest {
             Some(path) => {
                 let bytes = std::fs::read(path)
@@ -359,37 +380,33 @@ impl ProfileSelection {
                 manifest.verify(self.revision().as_i32() as u16, &self.cache_dir)?;
             }
         }
+        Ok(supplied)
+    }
 
-        let runtime_cache = if runtime {
-            observer.report(ProfileProgress::steps(
-                ProfileProgressStage::PreparingCache,
-                0,
-                1,
-            ));
-            let prepared =
-                client::unpack::prepare_runtime_cache(&client::unpack::RuntimeCacheRequest {
-                    revision: self.revision(),
-                    transport: self.transport(),
-                    jag_source: &self.cache_dir,
-                    snapshot_root: &self.unpack_dir,
-                    asset_host: &self.asset_host,
-                    asset_port: self.asset_port,
-                    game_host: &self.game_host,
-                    game_port: self.game_port,
-                })
-                .map_err(|error| {
-                    *asset_connection_failed = error.is_connection();
-                    error.to_string()
-                })?;
-            observer.report(ProfileProgress::steps(
-                ProfileProgressStage::PreparingCache,
-                1,
-                1,
-            ));
-            Some(prepared)
-        } else {
-            None
-        };
+    fn runtime_cache_request(&self) -> client::unpack::RuntimeCacheRequest<'_> {
+        client::unpack::RuntimeCacheRequest {
+            revision: self.revision(),
+            transport: self.transport(),
+            jag_source: &self.cache_dir,
+            snapshot_root: &self.unpack_dir,
+            asset_host: &self.asset_host,
+            asset_port: self.asset_port,
+            game_host: &self.game_host,
+            game_port: self.game_port,
+        }
+    }
+
+    /// Everything after the runtime cache: archives, identity, login key,
+    /// navigation, game data and the frozen client binding.
+    fn bind_with_cache(
+        &self,
+        observer: &ProfileProgressObserver,
+        table: &[BundledNavIdentity],
+        resource_root: Option<&Path>,
+        runtime: bool,
+        supplied: Option<CacheManifest>,
+        runtime_cache: Option<Arc<client::unpack::PreparedRuntimeCache>>,
+    ) -> Result<Arc<ServerProfile>, String> {
         let cache_dir = runtime_cache
             .as_ref()
             .map_or(self.cache_dir.as_path(), |p| p.jag_dir.as_path());
@@ -739,6 +756,17 @@ impl ProfileSelection {
         )
     }
 
+    /// [`Self::prepare_template_with_progress`] in bounded steps for the
+    /// WorkAdmission worker. See [`TemplatePreparation`].
+    pub fn begin_template_preparation(&self) -> TemplatePreparation {
+        TemplatePreparation {
+            fallback: WorldFallback::new(self),
+            selected: self.clone(),
+            last_total: None,
+            stage: TemplateStage::Start,
+        }
+    }
+
     fn load_nav(
         &self,
         origin: &NavOrigin,
@@ -921,6 +949,248 @@ impl ProfileSelection {
             canlight,
             counters,
         })
+    }
+}
+
+/// The world fallback of a runtime cache fill. After a connection failure,
+/// the fill moves on to the next roster world as a whole: its game endpoint
+/// and its asset endpoint together. From the first failed lookup of a name
+/// (`RuntimeCacheError::failed_lookup`), it passes over each later world
+/// whose game host or asset host is that name. The stepped fill and the
+/// one-call fill both report a failed lookup of either host.
+///
+/// Limit: the one-call fill (`prepare_runtime_cache`) looks up the asset
+/// host again for each JAG download, and that error does not name the host.
+/// So a name that looked up for `/crc` and then fails at the JAG download
+/// can be looked up again for the next world that shares it. The cost is
+/// one more resolver wait for each such world. Only a public (wss) roster
+/// has more than one world.
+struct WorldFallback {
+    count: usize,
+    /// The roster index of the selected world.
+    initial: usize,
+    /// The number of roster worlds after `initial` that the chain passed.
+    passed: usize,
+    failed_lookups: Vec<String>,
+}
+
+impl WorldFallback {
+    fn new(selection: &ProfileSelection) -> Self {
+        let worlds = &selection.profile.worlds;
+        let count = selection.public_worlds.as_ref().map_or(1, |_| worlds.len());
+        let initial = worlds
+            .iter()
+            .position(|world| {
+                world.host == selection.game_host
+                    && world.port == selection.game_port
+                    && world.asset_host == selection.asset_host
+                    && world.asset_port == selection.asset_port
+            })
+            .unwrap_or(0);
+        Self {
+            count,
+            initial,
+            passed: 0,
+            failed_lookups: Vec::new(),
+        }
+    }
+
+    /// After the fill of `selection` failed with `error`, select the next
+    /// world in `selection`. False if `error` is not a connection failure
+    /// or no world is left to try.
+    fn next(
+        &mut self,
+        selection: &mut ProfileSelection,
+        error: &client::unpack::RuntimeCacheError,
+    ) -> bool {
+        if !error.is_connection() {
+            return false;
+        }
+        if let Some(host) = error.failed_lookup() {
+            self.failed_lookups.push(host.to_owned());
+        }
+        let worlds = &selection.profile.worlds;
+        while self.passed + 1 < self.count {
+            self.passed += 1;
+            let world = &worlds[(self.initial + self.passed) % worlds.len()];
+            if self
+                .failed_lookups
+                .iter()
+                .any(|name| *name == world.host || *name == world.asset_host)
+            {
+                continue;
+            }
+            selection.game_host.clone_from(&world.host);
+            selection.game_port = world.port;
+            selection.asset_host.clone_from(&world.asset_host);
+            selection.asset_port = world.asset_port;
+            return true;
+        }
+        false
+    }
+}
+
+/// Log a cache-fill name lookup step that ended after its deadline, the
+/// one exception to the step deadline ([`client::unpack::SlowLookup`]).
+fn log_slow_lookup(lookup: &client::unpack::SlowLookup<'_>) {
+    host_log!(
+        stderr;
+        Category::Lifecycle,
+        Level::Warn,
+        "cache preparation: name lookup of the {} {} took {:?}, {:?} past the step deadline \
+         (the system resolver cannot be interrupted)",
+        lookup.role,
+        lookup.host,
+        lookup.took,
+        lookup.past_deadline
+    );
+}
+
+/// Longest wait for the network or the preparation lock inside one
+/// [`TemplatePreparation::step`]. It stays below WorkAdmission's ordinary
+/// slice, so a cache-fill step returns before the slice ends.
+pub const TEMPLATE_STEP_WAIT: std::time::Duration = std::time::Duration::from_millis(8);
+const _: () =
+    assert!(TEMPLATE_STEP_WAIT.as_nanos() < script::work_admission::WORK_SLICE.as_nanos());
+
+/// A runtime template preparation in bounded steps
+/// ([`ProfileSelection::begin_template_preparation`]). The cache fill is a
+/// [`client::unpack::RuntimeCacheFill`]; each step reports
+/// `PreparingCache n/total` once the entry count is known. When the cache is
+/// ready, one step binds the profile and the next loads the template. A
+/// connection failure to the asset host or the game host moves on to the
+/// next world as a whole ([`WorldFallback`]), as
+/// [`ProfileSelection::bind_runtime_with_progress`] does. A name lookup
+/// step that ends after its deadline is logged through `host_log!`.
+/// Dropping the value cancels the fill and releases everything it holds.
+pub struct TemplatePreparation {
+    selected: ProfileSelection,
+    fallback: WorldFallback,
+    last_total: Option<u32>,
+    stage: TemplateStage,
+}
+
+enum TemplateStage {
+    Start,
+    Fill {
+        supplied: Option<CacheManifest>,
+        /// Boxed: the fill is far larger than the other stages.
+        fill: Box<client::unpack::RuntimeCacheFill>,
+    },
+    Bind {
+        supplied: Option<CacheManifest>,
+        prepared: Arc<client::unpack::PreparedRuntimeCache>,
+    },
+    Load(Arc<ServerProfile>),
+    Done,
+}
+
+/// Outcome of one [`TemplatePreparation::step`].
+pub enum TemplateStep {
+    /// More steps follow; `completed`/`total` count cache entries written.
+    Continue {
+        completed: u32,
+        total: Option<u32>,
+    },
+    Complete(Result<Arc<crate::SharedClientTemplate>, String>),
+}
+
+impl TemplatePreparation {
+    /// Do the next bounded unit. Network and lock waits end at `until`.
+    pub fn step(
+        &mut self,
+        until: std::time::Instant,
+        observer: &ProfileProgressObserver,
+    ) -> TemplateStep {
+        let waiting = TemplateStep::Continue {
+            completed: 0,
+            total: None,
+        };
+        match std::mem::replace(&mut self.stage, TemplateStage::Done) {
+            TemplateStage::Start => {
+                let supplied = match self.selected.supplied_manifest(true) {
+                    Ok(supplied) => supplied,
+                    Err(error) => return TemplateStep::Complete(Err(error)),
+                };
+                observer.report(ProfileProgress::steps(
+                    ProfileProgressStage::PreparingCache,
+                    0,
+                    1,
+                ));
+                let mut fill = Box::new(client::unpack::RuntimeCacheFill::begin(
+                    &self.selected.runtime_cache_request(),
+                ));
+                fill.observe_slow_lookups(log_slow_lookup);
+                self.stage = TemplateStage::Fill { supplied, fill };
+                waiting
+            }
+            TemplateStage::Fill { supplied, mut fill } => match fill.step(Some(until)) {
+                Ok(client::unpack::RuntimeCacheStep::Continue { written, total }) => {
+                    if let Some(total) = total {
+                        self.last_total = Some(total);
+                        observer.report(ProfileProgress::steps(
+                            ProfileProgressStage::PreparingCache,
+                            u64::from(written),
+                            u64::from(total),
+                        ));
+                    }
+                    self.stage = TemplateStage::Fill { supplied, fill };
+                    TemplateStep::Continue {
+                        completed: written,
+                        total,
+                    }
+                }
+                Ok(client::unpack::RuntimeCacheStep::Ready(prepared)) => {
+                    let total = u64::from(self.last_total.unwrap_or(1));
+                    observer.report(ProfileProgress::steps(
+                        ProfileProgressStage::PreparingCache,
+                        total,
+                        total,
+                    ));
+                    self.stage = TemplateStage::Bind { supplied, prepared };
+                    self.progress()
+                }
+                Err(error) if self.fallback.next(&mut self.selected, &error) => {
+                    self.last_total = None;
+                    self.stage = TemplateStage::Start;
+                    waiting
+                }
+                Err(error) => TemplateStep::Complete(Err(error.to_string())),
+            },
+            TemplateStage::Bind { supplied, prepared } => {
+                let bound = self.selected.bind_with_cache(
+                    observer,
+                    bundled_nav_identities(),
+                    std::env::current_exe()
+                        .ok()
+                        .map(|exe| install_resource_root(&exe))
+                        .as_deref(),
+                    true,
+                    supplied,
+                    Some(prepared),
+                );
+                match bound {
+                    Ok(profile) => {
+                        self.stage = TemplateStage::Load(profile);
+                        self.progress()
+                    }
+                    Err(error) => TemplateStep::Complete(Err(error)),
+                }
+            }
+            TemplateStage::Load(profile) => TemplateStep::Complete(
+                crate::SharedClientTemplate::load_with_progress(profile, observer),
+            ),
+            TemplateStage::Done => {
+                TemplateStep::Complete(Err("profile preparation already finished".into()))
+            }
+        }
+    }
+
+    fn progress(&self) -> TemplateStep {
+        TemplateStep::Continue {
+            completed: self.last_total.unwrap_or(1),
+            total: Some(self.last_total.unwrap_or(1)),
+        }
     }
 }
 

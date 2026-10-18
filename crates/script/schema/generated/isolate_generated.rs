@@ -94,6 +94,682 @@ impl<'a> ::flatbuffers::Verifiable for WalkCancelReason {
 }
 
 impl ::flatbuffers::SimpleToVerifyInSlice for WalkCancelReason {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_SEAT_KIND: u8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_SEAT_KIND: u8 = 25;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_SEAT_KIND: [SeatKind; 26] = [
+  SeatKind::None,
+  SeatKind::Gather,
+  SeatKind::Combat,
+  SeatKind::Hunt,
+  SeatKind::Quester,
+  SeatKind::DeathRecovery,
+  SeatKind::QuestProgress,
+  SeatKind::Walk,
+  SeatKind::BankPlan,
+  SeatKind::BankNearest,
+  SeatKind::PeriodicBank,
+  SeatKind::Dialogue,
+  SeatKind::MakeX,
+  SeatKind::Shop,
+  SeatKind::Trade,
+  SeatKind::PartnerTrade,
+  SeatKind::Teleport,
+  SeatKind::Reach,
+  SeatKind::Prayer,
+  SeatKind::Autocast,
+  SeatKind::Special,
+  SeatKind::Modals,
+  SeatKind::Fire,
+  SeatKind::Clue,
+  SeatKind::Duel,
+  SeatKind::CakeStall,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct SeatKind(pub u8);
+#[allow(non_upper_case_globals)]
+impl SeatKind {
+  pub const None: Self = Self(0);
+  pub const Gather: Self = Self(1);
+  pub const Combat: Self = Self(2);
+  pub const Hunt: Self = Self(3);
+  pub const Quester: Self = Self(4);
+  pub const DeathRecovery: Self = Self(5);
+  pub const QuestProgress: Self = Self(6);
+  pub const Walk: Self = Self(7);
+  pub const BankPlan: Self = Self(8);
+  pub const BankNearest: Self = Self(9);
+  pub const PeriodicBank: Self = Self(10);
+  pub const Dialogue: Self = Self(11);
+  pub const MakeX: Self = Self(12);
+  pub const Shop: Self = Self(13);
+  pub const Trade: Self = Self(14);
+  pub const PartnerTrade: Self = Self(15);
+  pub const Teleport: Self = Self(16);
+  pub const Reach: Self = Self(17);
+  pub const Prayer: Self = Self(18);
+  pub const Autocast: Self = Self(19);
+  pub const Special: Self = Self(20);
+  pub const Modals: Self = Self(21);
+  pub const Fire: Self = Self(22);
+  pub const Clue: Self = Self(23);
+  pub const Duel: Self = Self(24);
+  pub const CakeStall: Self = Self(25);
+
+  pub const ENUM_MIN: u8 = 0;
+  pub const ENUM_MAX: u8 = 25;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::None,
+    Self::Gather,
+    Self::Combat,
+    Self::Hunt,
+    Self::Quester,
+    Self::DeathRecovery,
+    Self::QuestProgress,
+    Self::Walk,
+    Self::BankPlan,
+    Self::BankNearest,
+    Self::PeriodicBank,
+    Self::Dialogue,
+    Self::MakeX,
+    Self::Shop,
+    Self::Trade,
+    Self::PartnerTrade,
+    Self::Teleport,
+    Self::Reach,
+    Self::Prayer,
+    Self::Autocast,
+    Self::Special,
+    Self::Modals,
+    Self::Fire,
+    Self::Clue,
+    Self::Duel,
+    Self::CakeStall,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::None => Some("None"),
+      Self::Gather => Some("Gather"),
+      Self::Combat => Some("Combat"),
+      Self::Hunt => Some("Hunt"),
+      Self::Quester => Some("Quester"),
+      Self::DeathRecovery => Some("DeathRecovery"),
+      Self::QuestProgress => Some("QuestProgress"),
+      Self::Walk => Some("Walk"),
+      Self::BankPlan => Some("BankPlan"),
+      Self::BankNearest => Some("BankNearest"),
+      Self::PeriodicBank => Some("PeriodicBank"),
+      Self::Dialogue => Some("Dialogue"),
+      Self::MakeX => Some("MakeX"),
+      Self::Shop => Some("Shop"),
+      Self::Trade => Some("Trade"),
+      Self::PartnerTrade => Some("PartnerTrade"),
+      Self::Teleport => Some("Teleport"),
+      Self::Reach => Some("Reach"),
+      Self::Prayer => Some("Prayer"),
+      Self::Autocast => Some("Autocast"),
+      Self::Special => Some("Special"),
+      Self::Modals => Some("Modals"),
+      Self::Fire => Some("Fire"),
+      Self::Clue => Some("Clue"),
+      Self::Duel => Some("Duel"),
+      Self::CakeStall => Some("CakeStall"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for SeatKind {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for SeatKind {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<u8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for SeatKind {
+    type Output = SeatKind;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<u8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for SeatKind {
+  type Scalar = u8;
+  #[inline]
+  fn to_little_endian(self) -> u8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: u8) -> Self {
+    let b = u8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for SeatKind {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    u8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for SeatKind {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_SEAT_CANCEL_REASON: u8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_SEAT_CANCEL_REASON: u8 = 2;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_SEAT_CANCEL_REASON: [SeatCancelReason; 3] = [
+  SeatCancelReason::None,
+  SeatCancelReason::HookThrew,
+  SeatCancelReason::ParentAborted,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct SeatCancelReason(pub u8);
+#[allow(non_upper_case_globals)]
+impl SeatCancelReason {
+  pub const None: Self = Self(0);
+  pub const HookThrew: Self = Self(1);
+  pub const ParentAborted: Self = Self(2);
+
+  pub const ENUM_MIN: u8 = 0;
+  pub const ENUM_MAX: u8 = 2;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::None,
+    Self::HookThrew,
+    Self::ParentAborted,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::None => Some("None"),
+      Self::HookThrew => Some("HookThrew"),
+      Self::ParentAborted => Some("ParentAborted"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for SeatCancelReason {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for SeatCancelReason {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<u8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for SeatCancelReason {
+    type Output = SeatCancelReason;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<u8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for SeatCancelReason {
+  type Scalar = u8;
+  #[inline]
+  fn to_little_endian(self) -> u8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: u8) -> Self {
+    let b = u8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for SeatCancelReason {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    u8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for SeatCancelReason {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_SEAT_REFUSAL: u8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_SEAT_REFUSAL: u8 = 8;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_SEAT_REFUSAL: [SeatRefusal; 9] = [
+  SeatRefusal::None,
+  SeatRefusal::Busy,
+  SeatRefusal::ParentBusy,
+  SeatRefusal::ParentNotLive,
+  SeatRefusal::LineageDepth,
+  SeatRefusal::ArgsTooLarge,
+  SeatRefusal::HistoryExpired,
+  SeatRefusal::Unknown,
+  SeatRefusal::AwaitingDecision,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct SeatRefusal(pub u8);
+#[allow(non_upper_case_globals)]
+impl SeatRefusal {
+  pub const None: Self = Self(0);
+  pub const Busy: Self = Self(1);
+  pub const ParentBusy: Self = Self(2);
+  pub const ParentNotLive: Self = Self(3);
+  pub const LineageDepth: Self = Self(4);
+  pub const ArgsTooLarge: Self = Self(5);
+  pub const HistoryExpired: Self = Self(6);
+  pub const Unknown: Self = Self(7);
+  pub const AwaitingDecision: Self = Self(8);
+
+  pub const ENUM_MIN: u8 = 0;
+  pub const ENUM_MAX: u8 = 8;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::None,
+    Self::Busy,
+    Self::ParentBusy,
+    Self::ParentNotLive,
+    Self::LineageDepth,
+    Self::ArgsTooLarge,
+    Self::HistoryExpired,
+    Self::Unknown,
+    Self::AwaitingDecision,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::None => Some("None"),
+      Self::Busy => Some("Busy"),
+      Self::ParentBusy => Some("ParentBusy"),
+      Self::ParentNotLive => Some("ParentNotLive"),
+      Self::LineageDepth => Some("LineageDepth"),
+      Self::ArgsTooLarge => Some("ArgsTooLarge"),
+      Self::HistoryExpired => Some("HistoryExpired"),
+      Self::Unknown => Some("Unknown"),
+      Self::AwaitingDecision => Some("AwaitingDecision"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for SeatRefusal {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for SeatRefusal {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<u8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for SeatRefusal {
+    type Output = SeatRefusal;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<u8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for SeatRefusal {
+  type Scalar = u8;
+  #[inline]
+  fn to_little_endian(self) -> u8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: u8) -> Self {
+    let b = u8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for SeatRefusal {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    u8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for SeatRefusal {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_SEAT_ABORT_REASON: u8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_SEAT_ABORT_REASON: u8 = 5;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_SEAT_ABORT_REASON: [SeatAbortReason; 6] = [
+  SeatAbortReason::None,
+  SeatAbortReason::Reset,
+  SeatAbortReason::Superseded,
+  SeatAbortReason::Terminated,
+  SeatAbortReason::UserInput,
+  SeatAbortReason::ParentAborted,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct SeatAbortReason(pub u8);
+#[allow(non_upper_case_globals)]
+impl SeatAbortReason {
+  pub const None: Self = Self(0);
+  pub const Reset: Self = Self(1);
+  pub const Superseded: Self = Self(2);
+  pub const Terminated: Self = Self(3);
+  pub const UserInput: Self = Self(4);
+  pub const ParentAborted: Self = Self(5);
+
+  pub const ENUM_MIN: u8 = 0;
+  pub const ENUM_MAX: u8 = 5;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::None,
+    Self::Reset,
+    Self::Superseded,
+    Self::Terminated,
+    Self::UserInput,
+    Self::ParentAborted,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::None => Some("None"),
+      Self::Reset => Some("Reset"),
+      Self::Superseded => Some("Superseded"),
+      Self::Terminated => Some("Terminated"),
+      Self::UserInput => Some("UserInput"),
+      Self::ParentAborted => Some("ParentAborted"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for SeatAbortReason {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for SeatAbortReason {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<u8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for SeatAbortReason {
+    type Output = SeatAbortReason;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<u8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for SeatAbortReason {
+  type Scalar = u8;
+  #[inline]
+  fn to_little_endian(self) -> u8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: u8) -> Self {
+    let b = u8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for SeatAbortReason {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    u8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for SeatAbortReason {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_SEAT_OUTCOME_KIND: u8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_SEAT_OUTCOME_KIND: u8 = 4;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_SEAT_OUTCOME_KIND: [SeatOutcomeKind; 5] = [
+  SeatOutcomeKind::None,
+  SeatOutcomeKind::Done,
+  SeatOutcomeKind::Failed,
+  SeatOutcomeKind::Refused,
+  SeatOutcomeKind::Aborted,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct SeatOutcomeKind(pub u8);
+#[allow(non_upper_case_globals)]
+impl SeatOutcomeKind {
+  pub const None: Self = Self(0);
+  pub const Done: Self = Self(1);
+  pub const Failed: Self = Self(2);
+  pub const Refused: Self = Self(3);
+  pub const Aborted: Self = Self(4);
+
+  pub const ENUM_MIN: u8 = 0;
+  pub const ENUM_MAX: u8 = 4;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::None,
+    Self::Done,
+    Self::Failed,
+    Self::Refused,
+    Self::Aborted,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::None => Some("None"),
+      Self::Done => Some("Done"),
+      Self::Failed => Some("Failed"),
+      Self::Refused => Some("Refused"),
+      Self::Aborted => Some("Aborted"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for SeatOutcomeKind {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for SeatOutcomeKind {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<u8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for SeatOutcomeKind {
+    type Output = SeatOutcomeKind;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<u8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for SeatOutcomeKind {
+  type Scalar = u8;
+  #[inline]
+  fn to_little_endian(self) -> u8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: u8) -> Self {
+    let b = u8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for SeatOutcomeKind {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    u8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for SeatOutcomeKind {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_SEAT_PHASE: u8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_SEAT_PHASE: u8 = 5;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_SEAT_PHASE: [SeatPhase; 6] = [
+  SeatPhase::None,
+  SeatPhase::Preparing,
+  SeatPhase::Working,
+  SeatPhase::Waiting,
+  SeatPhase::Blocked,
+  SeatPhase::Complete,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct SeatPhase(pub u8);
+#[allow(non_upper_case_globals)]
+impl SeatPhase {
+  pub const None: Self = Self(0);
+  pub const Preparing: Self = Self(1);
+  pub const Working: Self = Self(2);
+  pub const Waiting: Self = Self(3);
+  pub const Blocked: Self = Self(4);
+  pub const Complete: Self = Self(5);
+
+  pub const ENUM_MIN: u8 = 0;
+  pub const ENUM_MAX: u8 = 5;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::None,
+    Self::Preparing,
+    Self::Working,
+    Self::Waiting,
+    Self::Blocked,
+    Self::Complete,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::None => Some("None"),
+      Self::Preparing => Some("Preparing"),
+      Self::Working => Some("Working"),
+      Self::Waiting => Some("Waiting"),
+      Self::Blocked => Some("Blocked"),
+      Self::Complete => Some("Complete"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for SeatPhase {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for SeatPhase {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<u8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for SeatPhase {
+    type Output = SeatPhase;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<u8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for SeatPhase {
+  type Scalar = u8;
+  #[inline]
+  fn to_little_endian(self) -> u8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: u8) -> Self {
+    let b = u8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for SeatPhase {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    u8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for SeatPhase {}
 pub enum TileOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -5678,6 +6354,9 @@ impl<'a> Snapshot<'a> {
   pub const VT_LOCAL_PLAYER_MOTION: ::flatbuffers::VOffsetT = 286;
   pub const VT_API_COMBAT: ::flatbuffers::VOffsetT = 288;
   pub const VT_API_COMBAT_OUTCOME: ::flatbuffers::VOffsetT = 290;
+  pub const VT_SEAT_LIVE: ::flatbuffers::VOffsetT = 292;
+  pub const VT_SEAT_RESULTS: ::flatbuffers::VOffsetT = 294;
+  pub const VT_MIRROR_REVOKES_CONSUMED: ::flatbuffers::VOffsetT = 296;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -5689,6 +6368,7 @@ impl<'a> Snapshot<'a> {
     args: &'args SnapshotArgs<'args>
   ) -> ::flatbuffers::WIPOffset<Snapshot<'bldr>> {
     let mut builder = SnapshotBuilder::new(_fbb);
+    if let Some(x) = args.mirror_revokes_consumed { builder.add_mirror_revokes_consumed(x); }
     builder.add_chat_page_fingerprint(args.chat_page_fingerprint);
     builder.add_user_move_intent_seq(args.user_move_intent_seq);
     builder.add_bank_snapshot_generation(args.bank_snapshot_generation);
@@ -5720,6 +6400,8 @@ impl<'a> Snapshot<'a> {
     builder.add_withdraw_x_result_seq(args.withdraw_x_result_seq);
     builder.add_bank_generation(args.bank_generation);
     builder.add_tick(args.tick);
+    if let Some(x) = args.seat_results { builder.add_seat_results(x); }
+    if let Some(x) = args.seat_live { builder.add_seat_live(x); }
     if let Some(x) = args.api_combat_outcome { builder.add_api_combat_outcome(x); }
     if let Some(x) = args.api_combat { builder.add_api_combat(x); }
     builder.add_side_modal_id(args.side_modal_id);
@@ -6846,6 +7528,27 @@ impl<'a> Snapshot<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<ApiCombatOutcome>>(Snapshot::VT_API_COMBAT_OUTCOME, None)}
   }
+  #[inline]
+  pub fn seat_live(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SeatLive<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SeatLive>>>>(Snapshot::VT_SEAT_LIVE, None)}
+  }
+  #[inline]
+  pub fn seat_results(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SeatResult<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SeatResult>>>>(Snapshot::VT_SEAT_RESULTS, None)}
+  }
+  #[inline]
+  pub fn mirror_revokes_consumed(&self) -> Option<u64> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(Snapshot::VT_MIRROR_REVOKES_CONSUMED, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Snapshot<'_> {
@@ -6998,6 +7701,9 @@ impl ::flatbuffers::Verifiable for Snapshot<'_> {
      .visit_field::<u8>("local_player_motion", Self::VT_LOCAL_PLAYER_MOTION, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<ApiGather>>("api_combat", Self::VT_API_COMBAT, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<ApiCombatOutcome>>("api_combat_outcome", Self::VT_API_COMBAT_OUTCOME, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SeatLive>>>>("seat_live", Self::VT_SEAT_LIVE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SeatResult>>>>("seat_results", Self::VT_SEAT_RESULTS, false)?
+     .visit_field::<u64>("mirror_revokes_consumed", Self::VT_MIRROR_REVOKES_CONSUMED, false)?
      .finish();
     Ok(())
   }
@@ -7147,6 +7853,9 @@ pub struct SnapshotArgs<'a> {
     pub local_player_motion: u8,
     pub api_combat: Option<::flatbuffers::WIPOffset<ApiGather<'a>>>,
     pub api_combat_outcome: Option<::flatbuffers::WIPOffset<ApiCombatOutcome<'a>>>,
+    pub seat_live: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SeatLive<'a>>>>>,
+    pub seat_results: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SeatResult<'a>>>>>,
+    pub mirror_revokes_consumed: Option<u64>,
 }
 impl<'a> Default for SnapshotArgs<'a> {
   #[inline]
@@ -7296,6 +8005,9 @@ impl<'a> Default for SnapshotArgs<'a> {
       local_player_motion: 0,
       api_combat: None,
       api_combat_outcome: None,
+      seat_live: None,
+      seat_results: None,
+      mirror_revokes_consumed: None,
     }
   }
 }
@@ -7882,6 +8594,18 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SnapshotBuilder<'a, 'b, A> {
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<ApiCombatOutcome>>(Snapshot::VT_API_COMBAT_OUTCOME, api_combat_outcome);
   }
   #[inline]
+  pub fn add_seat_live(&mut self, seat_live: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<SeatLive<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Snapshot::VT_SEAT_LIVE, seat_live);
+  }
+  #[inline]
+  pub fn add_seat_results(&mut self, seat_results: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<SeatResult<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Snapshot::VT_SEAT_RESULTS, seat_results);
+  }
+  #[inline]
+  pub fn add_mirror_revokes_consumed(&mut self, mirror_revokes_consumed: u64) {
+    self.fbb_.push_slot_always::<u64>(Snapshot::VT_MIRROR_REVOKES_CONSUMED, mirror_revokes_consumed);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SnapshotBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SnapshotBuilder {
@@ -8043,6 +8767,9 @@ impl ::core::fmt::Debug for Snapshot<'_> {
       ds.field("local_player_motion", &self.local_player_motion());
       ds.field("api_combat", &self.api_combat());
       ds.field("api_combat_outcome", &self.api_combat_outcome());
+      ds.field("seat_live", &self.seat_live());
+      ds.field("seat_results", &self.seat_results());
+      ds.field("mirror_revokes_consumed", &self.mirror_revokes_consumed());
       ds.finish()
   }
 }
@@ -9127,6 +9854,1244 @@ impl ::core::fmt::Debug for CombatFight<'_> {
       ds.finish()
   }
 }
+pub enum SeatArgsOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct SeatArgs<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for SeatArgs<'a> {
+  type Inner = SeatArgs<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> SeatArgs<'a> {
+  pub const VT_GATHER_SETTINGS: ::flatbuffers::VOffsetT = 4;
+  pub const VT_COMBAT: ::flatbuffers::VOffsetT = 6;
+  pub const VT_PROGRESS_NAME: ::flatbuffers::VOffsetT = 8;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    SeatArgs { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args SeatArgsArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<SeatArgs<'bldr>> {
+    let mut builder = SeatArgsBuilder::new(_fbb);
+    if let Some(x) = args.progress_name { builder.add_progress_name(x); }
+    if let Some(x) = args.combat { builder.add_combat(x); }
+    if let Some(x) = args.gather_settings { builder.add_gather_settings(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn gather_settings(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SettingRow<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SettingRow>>>>(SeatArgs::VT_GATHER_SETTINGS, None)}
+  }
+  #[inline]
+  pub fn combat(&self) -> Option<CombatFight<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<CombatFight>>(SeatArgs::VT_COMBAT, None)}
+  }
+  #[inline]
+  pub fn progress_name(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(SeatArgs::VT_PROGRESS_NAME, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for SeatArgs<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SettingRow>>>>("gather_settings", Self::VT_GATHER_SETTINGS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<CombatFight>>("combat", Self::VT_COMBAT, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("progress_name", Self::VT_PROGRESS_NAME, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct SeatArgsArgs<'a> {
+    pub gather_settings: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SettingRow<'a>>>>>,
+    pub combat: Option<::flatbuffers::WIPOffset<CombatFight<'a>>>,
+    pub progress_name: Option<::flatbuffers::WIPOffset<&'a str>>,
+}
+impl<'a> Default for SeatArgsArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    SeatArgsArgs {
+      gather_settings: None,
+      combat: None,
+      progress_name: None,
+    }
+  }
+}
+
+pub struct SeatArgsBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SeatArgsBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_gather_settings(&mut self, gather_settings: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<SettingRow<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(SeatArgs::VT_GATHER_SETTINGS, gather_settings);
+  }
+  #[inline]
+  pub fn add_combat(&mut self, combat: ::flatbuffers::WIPOffset<CombatFight<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<CombatFight>>(SeatArgs::VT_COMBAT, combat);
+  }
+  #[inline]
+  pub fn add_progress_name(&mut self, progress_name: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(SeatArgs::VT_PROGRESS_NAME, progress_name);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SeatArgsBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    SeatArgsBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<SeatArgs<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for SeatArgs<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("SeatArgs");
+      ds.field("gather_settings", &self.gather_settings());
+      ds.field("combat", &self.combat());
+      ds.field("progress_name", &self.progress_name());
+      ds.finish()
+  }
+}
+pub enum NativeRequestOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct NativeRequest<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for NativeRequest<'a> {
+  type Inner = NativeRequest<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> NativeRequest<'a> {
+  pub const VT_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_PARENT: ::flatbuffers::VOffsetT = 6;
+  pub const VT_RUN: ::flatbuffers::VOffsetT = 8;
+  pub const VT_SESSION: ::flatbuffers::VOffsetT = 10;
+  pub const VT_KIND: ::flatbuffers::VOffsetT = 12;
+  pub const VT_ARGS: ::flatbuffers::VOffsetT = 14;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    NativeRequest { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args NativeRequestArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<NativeRequest<'bldr>> {
+    let mut builder = NativeRequestBuilder::new(_fbb);
+    builder.add_session(args.session);
+    builder.add_run(args.run);
+    builder.add_parent(args.parent);
+    builder.add_id(args.id);
+    if let Some(x) = args.args { builder.add_args(x); }
+    builder.add_kind(args.kind);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn id(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(NativeRequest::VT_ID, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn parent(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(NativeRequest::VT_PARENT, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn run(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(NativeRequest::VT_RUN, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn session(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(NativeRequest::VT_SESSION, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn kind(&self) -> SeatKind {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<SeatKind>(NativeRequest::VT_KIND, Some(SeatKind::None)).unwrap()}
+  }
+  #[inline]
+  pub fn args(&self) -> Option<SeatArgs<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<SeatArgs>>(NativeRequest::VT_ARGS, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for NativeRequest<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<u64>("id", Self::VT_ID, false)?
+     .visit_field::<u64>("parent", Self::VT_PARENT, false)?
+     .visit_field::<u64>("run", Self::VT_RUN, false)?
+     .visit_field::<u64>("session", Self::VT_SESSION, false)?
+     .visit_field::<SeatKind>("kind", Self::VT_KIND, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<SeatArgs>>("args", Self::VT_ARGS, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct NativeRequestArgs<'a> {
+    pub id: u64,
+    pub parent: u64,
+    pub run: u64,
+    pub session: u64,
+    pub kind: SeatKind,
+    pub args: Option<::flatbuffers::WIPOffset<SeatArgs<'a>>>,
+}
+impl<'a> Default for NativeRequestArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    NativeRequestArgs {
+      id: 0,
+      parent: 0,
+      run: 0,
+      session: 0,
+      kind: SeatKind::None,
+      args: None,
+    }
+  }
+}
+
+pub struct NativeRequestBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> NativeRequestBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_id(&mut self, id: u64) {
+    self.fbb_.push_slot::<u64>(NativeRequest::VT_ID, id, 0);
+  }
+  #[inline]
+  pub fn add_parent(&mut self, parent: u64) {
+    self.fbb_.push_slot::<u64>(NativeRequest::VT_PARENT, parent, 0);
+  }
+  #[inline]
+  pub fn add_run(&mut self, run: u64) {
+    self.fbb_.push_slot::<u64>(NativeRequest::VT_RUN, run, 0);
+  }
+  #[inline]
+  pub fn add_session(&mut self, session: u64) {
+    self.fbb_.push_slot::<u64>(NativeRequest::VT_SESSION, session, 0);
+  }
+  #[inline]
+  pub fn add_kind(&mut self, kind: SeatKind) {
+    self.fbb_.push_slot::<SeatKind>(NativeRequest::VT_KIND, kind, SeatKind::None);
+  }
+  #[inline]
+  pub fn add_args(&mut self, args: ::flatbuffers::WIPOffset<SeatArgs<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<SeatArgs>>(NativeRequest::VT_ARGS, args);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> NativeRequestBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    NativeRequestBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<NativeRequest<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for NativeRequest<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("NativeRequest");
+      ds.field("id", &self.id());
+      ds.field("parent", &self.parent());
+      ds.field("run", &self.run());
+      ds.field("session", &self.session());
+      ds.field("kind", &self.kind());
+      ds.field("args", &self.args());
+      ds.finish()
+  }
+}
+pub enum SeatDecideOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct SeatDecide<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for SeatDecide<'a> {
+  type Inner = SeatDecide<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> SeatDecide<'a> {
+  pub const VT_OF: ::flatbuffers::VOffsetT = 4;
+  pub const VT_DECISION_SEQ: ::flatbuffers::VOffsetT = 6;
+  pub const VT_ANSWER: ::flatbuffers::VOffsetT = 8;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    SeatDecide { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args SeatDecideArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<SeatDecide<'bldr>> {
+    let mut builder = SeatDecideBuilder::new(_fbb);
+    builder.add_of(args.of);
+    if let Some(x) = args.answer { builder.add_answer(x); }
+    builder.add_decision_seq(args.decision_seq);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn of(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(SeatDecide::VT_OF, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn decision_seq(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(SeatDecide::VT_DECISION_SEQ, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn answer(&self) -> Option<::flatbuffers::Vector<'a, u8>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, u8>>>(SeatDecide::VT_ANSWER, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for SeatDecide<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<u64>("of", Self::VT_OF, false)?
+     .visit_field::<u32>("decision_seq", Self::VT_DECISION_SEQ, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, u8>>>("answer", Self::VT_ANSWER, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct SeatDecideArgs<'a> {
+    pub of: u64,
+    pub decision_seq: u32,
+    pub answer: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, u8>>>,
+}
+impl<'a> Default for SeatDecideArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    SeatDecideArgs {
+      of: 0,
+      decision_seq: 0,
+      answer: None,
+    }
+  }
+}
+
+pub struct SeatDecideBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SeatDecideBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_of(&mut self, of: u64) {
+    self.fbb_.push_slot::<u64>(SeatDecide::VT_OF, of, 0);
+  }
+  #[inline]
+  pub fn add_decision_seq(&mut self, decision_seq: u32) {
+    self.fbb_.push_slot::<u32>(SeatDecide::VT_DECISION_SEQ, decision_seq, 0);
+  }
+  #[inline]
+  pub fn add_answer(&mut self, answer: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , u8>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(SeatDecide::VT_ANSWER, answer);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SeatDecideBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    SeatDecideBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<SeatDecide<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for SeatDecide<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("SeatDecide");
+      ds.field("of", &self.of());
+      ds.field("decision_seq", &self.decision_seq());
+      ds.field("answer", &self.answer());
+      ds.finish()
+  }
+}
+pub enum SeatCancelOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct SeatCancel<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for SeatCancel<'a> {
+  type Inner = SeatCancel<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> SeatCancel<'a> {
+  pub const VT_OF: ::flatbuffers::VOffsetT = 4;
+  pub const VT_REASON: ::flatbuffers::VOffsetT = 6;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    SeatCancel { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args SeatCancelArgs
+  ) -> ::flatbuffers::WIPOffset<SeatCancel<'bldr>> {
+    let mut builder = SeatCancelBuilder::new(_fbb);
+    builder.add_of(args.of);
+    builder.add_reason(args.reason);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn of(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(SeatCancel::VT_OF, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn reason(&self) -> SeatCancelReason {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<SeatCancelReason>(SeatCancel::VT_REASON, Some(SeatCancelReason::None)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for SeatCancel<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<u64>("of", Self::VT_OF, false)?
+     .visit_field::<SeatCancelReason>("reason", Self::VT_REASON, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct SeatCancelArgs {
+    pub of: u64,
+    pub reason: SeatCancelReason,
+}
+impl<'a> Default for SeatCancelArgs {
+  #[inline]
+  fn default() -> Self {
+    SeatCancelArgs {
+      of: 0,
+      reason: SeatCancelReason::None,
+    }
+  }
+}
+
+pub struct SeatCancelBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SeatCancelBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_of(&mut self, of: u64) {
+    self.fbb_.push_slot::<u64>(SeatCancel::VT_OF, of, 0);
+  }
+  #[inline]
+  pub fn add_reason(&mut self, reason: SeatCancelReason) {
+    self.fbb_.push_slot::<SeatCancelReason>(SeatCancel::VT_REASON, reason, SeatCancelReason::None);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SeatCancelBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    SeatCancelBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<SeatCancel<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for SeatCancel<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("SeatCancel");
+      ds.field("of", &self.of());
+      ds.field("reason", &self.reason());
+      ds.finish()
+  }
+}
+pub enum MirrorRevokeOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct MirrorRevoke<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for MirrorRevoke<'a> {
+  type Inner = MirrorRevoke<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> MirrorRevoke<'a> {
+  pub const VT_OWNER: ::flatbuffers::VOffsetT = 4;
+  pub const VT_SEQ: ::flatbuffers::VOffsetT = 6;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    MirrorRevoke { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args MirrorRevokeArgs
+  ) -> ::flatbuffers::WIPOffset<MirrorRevoke<'bldr>> {
+    let mut builder = MirrorRevokeBuilder::new(_fbb);
+    builder.add_seq(args.seq);
+    builder.add_owner(args.owner);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn owner(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(MirrorRevoke::VT_OWNER, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn seq(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(MirrorRevoke::VT_SEQ, Some(0)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for MirrorRevoke<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<u64>("owner", Self::VT_OWNER, false)?
+     .visit_field::<u64>("seq", Self::VT_SEQ, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct MirrorRevokeArgs {
+    pub owner: u64,
+    pub seq: u64,
+}
+impl<'a> Default for MirrorRevokeArgs {
+  #[inline]
+  fn default() -> Self {
+    MirrorRevokeArgs {
+      owner: 0,
+      seq: 0,
+    }
+  }
+}
+
+pub struct MirrorRevokeBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> MirrorRevokeBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_owner(&mut self, owner: u64) {
+    self.fbb_.push_slot::<u64>(MirrorRevoke::VT_OWNER, owner, 0);
+  }
+  #[inline]
+  pub fn add_seq(&mut self, seq: u64) {
+    self.fbb_.push_slot::<u64>(MirrorRevoke::VT_SEQ, seq, 0);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> MirrorRevokeBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    MirrorRevokeBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<MirrorRevoke<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for MirrorRevoke<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("MirrorRevoke");
+      ds.field("owner", &self.owner());
+      ds.field("seq", &self.seq());
+      ds.finish()
+  }
+}
+pub enum SeatPromptOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct SeatPrompt<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for SeatPrompt<'a> {
+  type Inner = SeatPrompt<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> SeatPrompt<'a> {
+  pub const VT_SEQ: ::flatbuffers::VOffsetT = 4;
+  pub const VT_POINT: ::flatbuffers::VOffsetT = 6;
+  pub const VT_ARGS: ::flatbuffers::VOffsetT = 8;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    SeatPrompt { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args SeatPromptArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<SeatPrompt<'bldr>> {
+    let mut builder = SeatPromptBuilder::new(_fbb);
+    if let Some(x) = args.args { builder.add_args(x); }
+    if let Some(x) = args.point { builder.add_point(x); }
+    builder.add_seq(args.seq);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn seq(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(SeatPrompt::VT_SEQ, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn point(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(SeatPrompt::VT_POINT, None)}
+  }
+  #[inline]
+  pub fn args(&self) -> Option<::flatbuffers::Vector<'a, u8>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, u8>>>(SeatPrompt::VT_ARGS, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for SeatPrompt<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<u32>("seq", Self::VT_SEQ, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("point", Self::VT_POINT, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, u8>>>("args", Self::VT_ARGS, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct SeatPromptArgs<'a> {
+    pub seq: u32,
+    pub point: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub args: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, u8>>>,
+}
+impl<'a> Default for SeatPromptArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    SeatPromptArgs {
+      seq: 0,
+      point: None,
+      args: None,
+    }
+  }
+}
+
+pub struct SeatPromptBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SeatPromptBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_seq(&mut self, seq: u32) {
+    self.fbb_.push_slot::<u32>(SeatPrompt::VT_SEQ, seq, 0);
+  }
+  #[inline]
+  pub fn add_point(&mut self, point: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(SeatPrompt::VT_POINT, point);
+  }
+  #[inline]
+  pub fn add_args(&mut self, args: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , u8>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(SeatPrompt::VT_ARGS, args);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SeatPromptBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    SeatPromptBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<SeatPrompt<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for SeatPrompt<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("SeatPrompt");
+      ds.field("seq", &self.seq());
+      ds.field("point", &self.point());
+      ds.field("args", &self.args());
+      ds.finish()
+  }
+}
+pub enum SeatLiveOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct SeatLive<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for SeatLive<'a> {
+  type Inner = SeatLive<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> SeatLive<'a> {
+  pub const VT_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_PARENT: ::flatbuffers::VOffsetT = 6;
+  pub const VT_PHASE: ::flatbuffers::VOffsetT = 8;
+  pub const VT_DECISIONS_CONSUMED: ::flatbuffers::VOffsetT = 10;
+  pub const VT_PROMPT: ::flatbuffers::VOffsetT = 12;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    SeatLive { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args SeatLiveArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<SeatLive<'bldr>> {
+    let mut builder = SeatLiveBuilder::new(_fbb);
+    builder.add_parent(args.parent);
+    builder.add_id(args.id);
+    if let Some(x) = args.prompt { builder.add_prompt(x); }
+    builder.add_decisions_consumed(args.decisions_consumed);
+    builder.add_phase(args.phase);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn id(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(SeatLive::VT_ID, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn parent(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(SeatLive::VT_PARENT, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn phase(&self) -> SeatPhase {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<SeatPhase>(SeatLive::VT_PHASE, Some(SeatPhase::None)).unwrap()}
+  }
+  #[inline]
+  pub fn decisions_consumed(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(SeatLive::VT_DECISIONS_CONSUMED, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn prompt(&self) -> Option<SeatPrompt<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<SeatPrompt>>(SeatLive::VT_PROMPT, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for SeatLive<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<u64>("id", Self::VT_ID, false)?
+     .visit_field::<u64>("parent", Self::VT_PARENT, false)?
+     .visit_field::<SeatPhase>("phase", Self::VT_PHASE, false)?
+     .visit_field::<u32>("decisions_consumed", Self::VT_DECISIONS_CONSUMED, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<SeatPrompt>>("prompt", Self::VT_PROMPT, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct SeatLiveArgs<'a> {
+    pub id: u64,
+    pub parent: u64,
+    pub phase: SeatPhase,
+    pub decisions_consumed: u32,
+    pub prompt: Option<::flatbuffers::WIPOffset<SeatPrompt<'a>>>,
+}
+impl<'a> Default for SeatLiveArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    SeatLiveArgs {
+      id: 0,
+      parent: 0,
+      phase: SeatPhase::None,
+      decisions_consumed: 0,
+      prompt: None,
+    }
+  }
+}
+
+pub struct SeatLiveBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SeatLiveBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_id(&mut self, id: u64) {
+    self.fbb_.push_slot::<u64>(SeatLive::VT_ID, id, 0);
+  }
+  #[inline]
+  pub fn add_parent(&mut self, parent: u64) {
+    self.fbb_.push_slot::<u64>(SeatLive::VT_PARENT, parent, 0);
+  }
+  #[inline]
+  pub fn add_phase(&mut self, phase: SeatPhase) {
+    self.fbb_.push_slot::<SeatPhase>(SeatLive::VT_PHASE, phase, SeatPhase::None);
+  }
+  #[inline]
+  pub fn add_decisions_consumed(&mut self, decisions_consumed: u32) {
+    self.fbb_.push_slot::<u32>(SeatLive::VT_DECISIONS_CONSUMED, decisions_consumed, 0);
+  }
+  #[inline]
+  pub fn add_prompt(&mut self, prompt: ::flatbuffers::WIPOffset<SeatPrompt<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<SeatPrompt>>(SeatLive::VT_PROMPT, prompt);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SeatLiveBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    SeatLiveBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<SeatLive<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for SeatLive<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("SeatLive");
+      ds.field("id", &self.id());
+      ds.field("parent", &self.parent());
+      ds.field("phase", &self.phase());
+      ds.field("decisions_consumed", &self.decisions_consumed());
+      ds.field("prompt", &self.prompt());
+      ds.finish()
+  }
+}
+pub enum SeatOutcomeOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct SeatOutcome<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for SeatOutcome<'a> {
+  type Inner = SeatOutcome<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> SeatOutcome<'a> {
+  pub const VT_KIND: ::flatbuffers::VOffsetT = 4;
+  pub const VT_VALUE: ::flatbuffers::VOffsetT = 6;
+  pub const VT_REFUSAL: ::flatbuffers::VOffsetT = 8;
+  pub const VT_ABORT_REASON: ::flatbuffers::VOffsetT = 10;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    SeatOutcome { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args SeatOutcomeArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<SeatOutcome<'bldr>> {
+    let mut builder = SeatOutcomeBuilder::new(_fbb);
+    if let Some(x) = args.value { builder.add_value(x); }
+    builder.add_abort_reason(args.abort_reason);
+    builder.add_refusal(args.refusal);
+    builder.add_kind(args.kind);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn kind(&self) -> SeatOutcomeKind {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<SeatOutcomeKind>(SeatOutcome::VT_KIND, Some(SeatOutcomeKind::None)).unwrap()}
+  }
+  #[inline]
+  pub fn value(&self) -> Option<::flatbuffers::Vector<'a, u8>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, u8>>>(SeatOutcome::VT_VALUE, None)}
+  }
+  #[inline]
+  pub fn refusal(&self) -> SeatRefusal {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<SeatRefusal>(SeatOutcome::VT_REFUSAL, Some(SeatRefusal::None)).unwrap()}
+  }
+  #[inline]
+  pub fn abort_reason(&self) -> SeatAbortReason {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<SeatAbortReason>(SeatOutcome::VT_ABORT_REASON, Some(SeatAbortReason::None)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for SeatOutcome<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<SeatOutcomeKind>("kind", Self::VT_KIND, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, u8>>>("value", Self::VT_VALUE, false)?
+     .visit_field::<SeatRefusal>("refusal", Self::VT_REFUSAL, false)?
+     .visit_field::<SeatAbortReason>("abort_reason", Self::VT_ABORT_REASON, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct SeatOutcomeArgs<'a> {
+    pub kind: SeatOutcomeKind,
+    pub value: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, u8>>>,
+    pub refusal: SeatRefusal,
+    pub abort_reason: SeatAbortReason,
+}
+impl<'a> Default for SeatOutcomeArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    SeatOutcomeArgs {
+      kind: SeatOutcomeKind::None,
+      value: None,
+      refusal: SeatRefusal::None,
+      abort_reason: SeatAbortReason::None,
+    }
+  }
+}
+
+pub struct SeatOutcomeBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SeatOutcomeBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_kind(&mut self, kind: SeatOutcomeKind) {
+    self.fbb_.push_slot::<SeatOutcomeKind>(SeatOutcome::VT_KIND, kind, SeatOutcomeKind::None);
+  }
+  #[inline]
+  pub fn add_value(&mut self, value: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , u8>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(SeatOutcome::VT_VALUE, value);
+  }
+  #[inline]
+  pub fn add_refusal(&mut self, refusal: SeatRefusal) {
+    self.fbb_.push_slot::<SeatRefusal>(SeatOutcome::VT_REFUSAL, refusal, SeatRefusal::None);
+  }
+  #[inline]
+  pub fn add_abort_reason(&mut self, abort_reason: SeatAbortReason) {
+    self.fbb_.push_slot::<SeatAbortReason>(SeatOutcome::VT_ABORT_REASON, abort_reason, SeatAbortReason::None);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SeatOutcomeBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    SeatOutcomeBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<SeatOutcome<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for SeatOutcome<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("SeatOutcome");
+      ds.field("kind", &self.kind());
+      ds.field("value", &self.value());
+      ds.field("refusal", &self.refusal());
+      ds.field("abort_reason", &self.abort_reason());
+      ds.finish()
+  }
+}
+pub enum SeatResultOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct SeatResult<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for SeatResult<'a> {
+  type Inner = SeatResult<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> SeatResult<'a> {
+  pub const VT_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_TERMINAL_SEQ: ::flatbuffers::VOffsetT = 6;
+  pub const VT_OUTCOME: ::flatbuffers::VOffsetT = 8;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    SeatResult { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args SeatResultArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<SeatResult<'bldr>> {
+    let mut builder = SeatResultBuilder::new(_fbb);
+    builder.add_terminal_seq(args.terminal_seq);
+    builder.add_id(args.id);
+    if let Some(x) = args.outcome { builder.add_outcome(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn id(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(SeatResult::VT_ID, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn terminal_seq(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(SeatResult::VT_TERMINAL_SEQ, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn outcome(&self) -> Option<SeatOutcome<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<SeatOutcome>>(SeatResult::VT_OUTCOME, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for SeatResult<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<u64>("id", Self::VT_ID, false)?
+     .visit_field::<u64>("terminal_seq", Self::VT_TERMINAL_SEQ, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<SeatOutcome>>("outcome", Self::VT_OUTCOME, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct SeatResultArgs<'a> {
+    pub id: u64,
+    pub terminal_seq: u64,
+    pub outcome: Option<::flatbuffers::WIPOffset<SeatOutcome<'a>>>,
+}
+impl<'a> Default for SeatResultArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    SeatResultArgs {
+      id: 0,
+      terminal_seq: 0,
+      outcome: None,
+    }
+  }
+}
+
+pub struct SeatResultBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SeatResultBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_id(&mut self, id: u64) {
+    self.fbb_.push_slot::<u64>(SeatResult::VT_ID, id, 0);
+  }
+  #[inline]
+  pub fn add_terminal_seq(&mut self, terminal_seq: u64) {
+    self.fbb_.push_slot::<u64>(SeatResult::VT_TERMINAL_SEQ, terminal_seq, 0);
+  }
+  #[inline]
+  pub fn add_outcome(&mut self, outcome: ::flatbuffers::WIPOffset<SeatOutcome<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<SeatOutcome>>(SeatResult::VT_OUTCOME, outcome);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SeatResultBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    SeatResultBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<SeatResult<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for SeatResult<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("SeatResult");
+      ds.field("id", &self.id());
+      ds.field("terminal_seq", &self.terminal_seq());
+      ds.field("outcome", &self.outcome());
+      ds.finish()
+  }
+}
 pub enum InteractOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -9187,6 +11152,8 @@ impl<'a> Interact<'a> {
   pub const VT_CROSS: ::flatbuffers::VOffsetT = 86;
   pub const VT_COMBAT: ::flatbuffers::VOffsetT = 88;
   pub const VT_COMPAT_TILE_INTENT: ::flatbuffers::VOffsetT = 90;
+  pub const VT_LINEAGE: ::flatbuffers::VOffsetT = 92;
+  pub const VT_MIRROR_OWNER: ::flatbuffers::VOffsetT = 94;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -9198,6 +11165,8 @@ impl<'a> Interact<'a> {
     args: &'args InteractArgs<'args>
   ) -> ::flatbuffers::WIPOffset<Interact<'bldr>> {
     let mut builder = InteractBuilder::new(_fbb);
+    builder.add_mirror_owner(args.mirror_owner);
+    builder.add_lineage(args.lineage);
     builder.add_seq(args.seq);
     builder.add_channel_id(args.channel_id);
     builder.add_inspect_ack_generation(args.inspect_ack_generation);
@@ -9554,6 +11523,20 @@ impl<'a> Interact<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<bool>(Interact::VT_COMPAT_TILE_INTENT, Some(false)).unwrap()}
   }
+  #[inline]
+  pub fn lineage(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(Interact::VT_LINEAGE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn mirror_owner(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(Interact::VT_MIRROR_OWNER, Some(0)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Interact<'_> {
@@ -9606,6 +11589,8 @@ impl ::flatbuffers::Verifiable for Interact<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<&'_ str>>>>("cross", Self::VT_CROSS, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<CombatFight>>("combat", Self::VT_COMBAT, false)?
      .visit_field::<bool>("compat_tile_intent", Self::VT_COMPAT_TILE_INTENT, false)?
+     .visit_field::<u64>("lineage", Self::VT_LINEAGE, false)?
+     .visit_field::<u64>("mirror_owner", Self::VT_MIRROR_OWNER, false)?
      .finish();
     Ok(())
   }
@@ -9655,6 +11640,8 @@ pub struct InteractArgs<'a> {
     pub cross: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>,
     pub combat: Option<::flatbuffers::WIPOffset<CombatFight<'a>>>,
     pub compat_tile_intent: bool,
+    pub lineage: u64,
+    pub mirror_owner: u64,
 }
 impl<'a> Default for InteractArgs<'a> {
   #[inline]
@@ -9704,6 +11691,8 @@ impl<'a> Default for InteractArgs<'a> {
       cross: None,
       combat: None,
       compat_tile_intent: false,
+      lineage: 0,
+      mirror_owner: 0,
     }
   }
 }
@@ -9890,6 +11879,14 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> InteractBuilder<'a, 'b, A> {
     self.fbb_.push_slot::<bool>(Interact::VT_COMPAT_TILE_INTENT, compat_tile_intent, false);
   }
   #[inline]
+  pub fn add_lineage(&mut self, lineage: u64) {
+    self.fbb_.push_slot::<u64>(Interact::VT_LINEAGE, lineage, 0);
+  }
+  #[inline]
+  pub fn add_mirror_owner(&mut self, mirror_owner: u64) {
+    self.fbb_.push_slot::<u64>(Interact::VT_MIRROR_OWNER, mirror_owner, 0);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> InteractBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     InteractBuilder {
@@ -9951,6 +11948,8 @@ impl ::core::fmt::Debug for Interact<'_> {
       ds.field("cross", &self.cross());
       ds.field("combat", &self.combat());
       ds.field("compat_tile_intent", &self.compat_tile_intent());
+      ds.field("lineage", &self.lineage());
+      ds.field("mirror_owner", &self.mirror_owner());
       ds.finish()
   }
 }
@@ -9971,6 +11970,11 @@ impl<'a> ::flatbuffers::Follow<'a> for InteractBatch<'a> {
 
 impl<'a> InteractBatch<'a> {
   pub const VT_REQS: ::flatbuffers::VOffsetT = 4;
+  pub const VT_CONSUMED_TERMINAL_SEQ: ::flatbuffers::VOffsetT = 6;
+  pub const VT_STARTS: ::flatbuffers::VOffsetT = 8;
+  pub const VT_DECISIONS: ::flatbuffers::VOffsetT = 10;
+  pub const VT_CANCELS: ::flatbuffers::VOffsetT = 12;
+  pub const VT_MIRROR_REVOKES: ::flatbuffers::VOffsetT = 14;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -9982,6 +11986,11 @@ impl<'a> InteractBatch<'a> {
     args: &'args InteractBatchArgs<'args>
   ) -> ::flatbuffers::WIPOffset<InteractBatch<'bldr>> {
     let mut builder = InteractBatchBuilder::new(_fbb);
+    builder.add_consumed_terminal_seq(args.consumed_terminal_seq);
+    if let Some(x) = args.mirror_revokes { builder.add_mirror_revokes(x); }
+    if let Some(x) = args.cancels { builder.add_cancels(x); }
+    if let Some(x) = args.decisions { builder.add_decisions(x); }
+    if let Some(x) = args.starts { builder.add_starts(x); }
     if let Some(x) = args.reqs { builder.add_reqs(x); }
     builder.finish()
   }
@@ -9994,6 +12003,41 @@ impl<'a> InteractBatch<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Interact>>>>(InteractBatch::VT_REQS, None)}
   }
+  #[inline]
+  pub fn consumed_terminal_seq(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(InteractBatch::VT_CONSUMED_TERMINAL_SEQ, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn starts(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<NativeRequest<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<NativeRequest>>>>(InteractBatch::VT_STARTS, None)}
+  }
+  #[inline]
+  pub fn decisions(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SeatDecide<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SeatDecide>>>>(InteractBatch::VT_DECISIONS, None)}
+  }
+  #[inline]
+  pub fn cancels(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SeatCancel<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SeatCancel>>>>(InteractBatch::VT_CANCELS, None)}
+  }
+  #[inline]
+  pub fn mirror_revokes(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<MirrorRevoke<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<MirrorRevoke>>>>(InteractBatch::VT_MIRROR_REVOKES, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for InteractBatch<'_> {
@@ -10003,18 +12047,33 @@ impl ::flatbuffers::Verifiable for InteractBatch<'_> {
   ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
     v.visit_table(pos)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<Interact>>>>("reqs", Self::VT_REQS, false)?
+     .visit_field::<u64>("consumed_terminal_seq", Self::VT_CONSUMED_TERMINAL_SEQ, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<NativeRequest>>>>("starts", Self::VT_STARTS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SeatDecide>>>>("decisions", Self::VT_DECISIONS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SeatCancel>>>>("cancels", Self::VT_CANCELS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<MirrorRevoke>>>>("mirror_revokes", Self::VT_MIRROR_REVOKES, false)?
      .finish();
     Ok(())
   }
 }
 pub struct InteractBatchArgs<'a> {
     pub reqs: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Interact<'a>>>>>,
+    pub consumed_terminal_seq: u64,
+    pub starts: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<NativeRequest<'a>>>>>,
+    pub decisions: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SeatDecide<'a>>>>>,
+    pub cancels: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SeatCancel<'a>>>>>,
+    pub mirror_revokes: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<MirrorRevoke<'a>>>>>,
 }
 impl<'a> Default for InteractBatchArgs<'a> {
   #[inline]
   fn default() -> Self {
     InteractBatchArgs {
       reqs: None,
+      consumed_terminal_seq: 0,
+      starts: None,
+      decisions: None,
+      cancels: None,
+      mirror_revokes: None,
     }
   }
 }
@@ -10027,6 +12086,26 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> InteractBatchBuilder<'a, 'b, 
   #[inline]
   pub fn add_reqs(&mut self, reqs: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<Interact<'b >>>>) {
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(InteractBatch::VT_REQS, reqs);
+  }
+  #[inline]
+  pub fn add_consumed_terminal_seq(&mut self, consumed_terminal_seq: u64) {
+    self.fbb_.push_slot::<u64>(InteractBatch::VT_CONSUMED_TERMINAL_SEQ, consumed_terminal_seq, 0);
+  }
+  #[inline]
+  pub fn add_starts(&mut self, starts: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<NativeRequest<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(InteractBatch::VT_STARTS, starts);
+  }
+  #[inline]
+  pub fn add_decisions(&mut self, decisions: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<SeatDecide<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(InteractBatch::VT_DECISIONS, decisions);
+  }
+  #[inline]
+  pub fn add_cancels(&mut self, cancels: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<SeatCancel<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(InteractBatch::VT_CANCELS, cancels);
+  }
+  #[inline]
+  pub fn add_mirror_revokes(&mut self, mirror_revokes: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<MirrorRevoke<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(InteractBatch::VT_MIRROR_REVOKES, mirror_revokes);
   }
   #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> InteractBatchBuilder<'a, 'b, A> {
@@ -10047,6 +12126,11 @@ impl ::core::fmt::Debug for InteractBatch<'_> {
   fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
     let mut ds = f.debug_struct("InteractBatch");
       ds.field("reqs", &self.reqs());
+      ds.field("consumed_terminal_seq", &self.consumed_terminal_seq());
+      ds.field("starts", &self.starts());
+      ds.field("decisions", &self.decisions());
+      ds.field("cancels", &self.cancels());
+      ds.field("mirror_revokes", &self.mirror_revokes());
       ds.finish()
   }
 }

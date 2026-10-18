@@ -29,7 +29,7 @@ pub mod world;
 pub mod world_state;
 pub mod zones;
 
-pub use world_state::WorldState;
+pub use world_state::{WorldState, WorldStateGrowthBound};
 
 /// Verbose nav/traveller dumps (`BOT_DEBUG=1` or host `--debug`).
 pub fn debug_enabled() -> bool {

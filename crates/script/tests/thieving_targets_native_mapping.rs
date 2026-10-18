@@ -619,10 +619,8 @@ export default class T extends LoopingBot {{
             // Keep the NPC/stat pages and a known-closed chat bit, but omit
             // the inventory vector so the host observes inventory as unknown.
             snapshot.chat_open = false;
-            let last = SnapshotFingerprint {
-                chat_open: true,
-                ..SnapshotFingerprint::default()
-            };
+            let mut last = SnapshotFingerprint::default();
+            last.chat_open = true;
             encode_snapshot_delta(Some(&last), &snapshot, false).0
         }
         SnapshotMode::ChatUnknown => {

@@ -28,9 +28,6 @@ pub(super) struct ApiSeat {
     progress: ProgressSeat,
     pub(super) progress_page: Option<crate::api_progress::ProgressPage>,
     progress_retiring: Vec<progress::ProgressJob>,
-    dropped_rows: usize,
-    reported_drops: usize,
-    dropped_owner: Option<DropOwner>,
     #[cfg(feature = "test-hooks")]
     journal_evidence: Option<(
         api::quest_progress::EvidenceStamp,
@@ -42,6 +39,15 @@ pub(super) struct ApiSeat {
 enum GatherSeat {
     #[default]
     Idle,
+    AwaitingAdmission {
+        token: u64,
+        run: RunKey,
+        settings: Arc<SettingsBag>,
+        selected: Arc<api::game_data::SelectedGameData>,
+        banks: Arc<api::named_banks::NamedBankFacts>,
+        retained: Arc<Mutex<RetainedMemory>>,
+        user_input: bool,
+    },
     Preparing {
         token: u64,
         job: Preparation,
@@ -58,24 +64,9 @@ impl GatherSeat {
     fn token(&self) -> Option<u64> {
         match self {
             Self::Idle => None,
-            Self::Preparing { token, .. } | Self::Running { token, .. } => Some(*token),
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum DropOwner {
-    Gather,
-    Combat,
-    Progress,
-}
-
-impl DropOwner {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Gather => "gather",
-            Self::Combat => "combat",
-            Self::Progress => "progress",
+            Self::AwaitingAdmission { token, .. }
+            | Self::Preparing { token, .. }
+            | Self::Running { token, .. } => Some(*token),
         }
     }
 }
@@ -102,6 +93,7 @@ pub(super) fn counts(status: Option<&ScriptStatus>) -> GatherCounts {
 fn refusal(error: StartError) -> String {
     match error {
         StartError::Busy => "busy".into(),
+        StartError::WorkRefused(refusal) => format!("work-refused:{refusal}"),
         StartError::Unavailable(reason) => format!("unavailable:{reason}"),
         StartError::Facts(error) => format!("facts:{error:?}"),
         StartError::Config(error) => crate::api_gather::settings_refusal(error),
@@ -129,17 +121,6 @@ impl ApiSeat {
             }
         }
     }
-    fn foreground_owner(&self) -> Option<DropOwner> {
-        if self.gather.token().is_some() {
-            Some(DropOwner::Gather)
-        } else if self.combat.token().is_some() {
-            Some(DropOwner::Combat)
-        } else if self.progress.token().is_some() {
-            Some(DropOwner::Progress)
-        } else {
-            None
-        }
-    }
 
     /// Any live API session: they share the slot's one foreground.
     fn busy(&self) -> bool {
@@ -147,9 +128,70 @@ impl ApiSeat {
             || self.combat.token().is_some()
             || self.progress.token().is_some()
     }
+
+    /// The phase of an admitted API Session, not the preparation worker's
+    /// own progress. Other native/JS families own their own page details.
+    pub(super) fn phase_for(&self, id: RequestId) -> Option<crate::native::NativePhase> {
+        use crate::native::NativePhase;
+        let token = id.get();
+        match &self.gather {
+            GatherSeat::AwaitingAdmission { token: live, .. }
+            | GatherSeat::Preparing { token: live, .. }
+                if *live == token =>
+            {
+                return Some(NativePhase::Preparing)
+            }
+            GatherSeat::Running { token: live, run } if *live == token => {
+                return Some(
+                    run.output
+                        .status
+                        .as_ref()
+                        .map_or(NativePhase::Working, |s| s.phase),
+                )
+            }
+            _ => {}
+        }
+        match &self.combat {
+            CombatSeat::AwaitingAdmission { token: live, .. }
+            | CombatSeat::Preparing { token: live, .. }
+                if *live == token =>
+            {
+                return Some(NativePhase::Preparing)
+            }
+            CombatSeat::Running {
+                token: live, run, ..
+            } if *live == token => {
+                return Some(
+                    run.output
+                        .status
+                        .as_ref()
+                        .map_or(NativePhase::Working, |s| s.phase),
+                )
+            }
+            _ => {}
+        }
+        match &self.progress {
+            ProgressSeat::AwaitingAdmission { token: live, .. }
+            | ProgressSeat::Preparing { token: live, .. }
+                if *live == token =>
+            {
+                Some(NativePhase::Preparing)
+            }
+            ProgressSeat::Reading { token: live, .. } if *live == token => {
+                Some(NativePhase::Waiting)
+            }
+            _ => None,
+        }
+    }
 }
 
 impl SlotScript {
+    fn api_session_epoch(&self) -> u64 {
+        self.seat
+            .as_ref()
+            .map_or(self.work_epoch, |seat| seat.run().session)
+    }
+
     pub fn api_owns_foreground(&self) -> bool {
         self.api.as_ref().is_some_and(|seat| seat.busy())
     }
@@ -172,7 +214,8 @@ impl SlotScript {
         };
         match &mut seat.gather {
             GatherSeat::Idle => {}
-            GatherSeat::Preparing { user_input, .. } => *user_input = true,
+            GatherSeat::AwaitingAdmission { user_input, .. }
+            | GatherSeat::Preparing { user_input, .. } => *user_input = true,
             GatherSeat::Running { .. } => {
                 // The Gatherer blocks `manual-movement`, as for a cancelled walk.
                 self.signal_api_gather(|script| script.user_input());
@@ -236,10 +279,15 @@ impl SlotScript {
         let seat = self.api.as_ref()?;
         match &seat.gather {
             GatherSeat::Running { run, .. } => Some(run.config.walk_permissions()),
-            GatherSeat::Idle | GatherSeat::Preparing { .. } => None,
+            GatherSeat::Idle
+            | GatherSeat::AwaitingAdmission { .. }
+            | GatherSeat::Preparing { .. } => None,
         }
     }
 
+    /// Legacy family-level test injection only. Production starts cross the
+    /// typed seat admission path in `SlotScript::consume_seat_batch`.
+    #[cfg(test)]
     pub(super) fn consume_api_control(&mut self, request: &crate::shim::InteractReq) {
         match request {
             crate::shim::InteractReq::GatherRun {
@@ -263,9 +311,129 @@ impl SlotScript {
             }
             _ => unreachable!("API control admission"),
         }
+        self.settle_api_seat_terminals();
     }
 
-    fn start_api_gather(&mut self, token: u64, settings: &Arc<SettingsBag>) {
+    pub(super) fn consume_api_release(&mut self, request: &crate::shim::InteractReq) {
+        match request {
+            crate::shim::InteractReq::GatherStop { request_id } => {
+                self.stop_api_gather(*request_id)
+            }
+            crate::shim::InteractReq::CombatStop { request_id } => {
+                self.stop_api_combat(*request_id)
+            }
+            _ => unreachable!("only reserved API release reaches this entry"),
+        }
+        self.settle_api_seat_terminals();
+    }
+
+    /// The family page keeps the full typed result; the seat publishes its
+    /// bounded authority terminal. Final-tick native actions must be captured
+    /// before this call, so ordinary completion cannot re-root them.
+    pub(super) fn settle_api_seat_terminals(&mut self) {
+        use api::script_contract::{AbortReason, AuthorityStatus};
+        let (Some(families), Some(seat)) = (self.api.as_ref(), self.seat.as_mut()) else {
+            return;
+        };
+        enum End {
+            Done,
+            Failed,
+            Manual,
+        }
+        let gather = families.terminal.as_ref().map(|end| {
+            (
+                end.token(),
+                if matches!(end, GatherEnd::Stopped { .. }) {
+                    End::Done
+                } else {
+                    End::Failed
+                },
+            )
+        });
+        let combat = families.combat_terminal.as_ref().map(|end| {
+            (
+                end.token(),
+                match end {
+                    CombatEnd::Fought { .. }
+                    | CombatEnd::Stopped { .. }
+                    | CombatEnd::Interrupted { .. } => {
+                        if matches!(
+                            end,
+                            CombatEnd::Interrupted {
+                                cause: crate::api_combat::InterruptCause::UserInput,
+                                ..
+                            }
+                        ) {
+                            End::Manual
+                        } else {
+                            End::Done
+                        }
+                    }
+                    CombatEnd::Refused { .. } | CombatEnd::Failed { .. } => End::Failed,
+                },
+            )
+        });
+        let progress = families.progress_page.as_ref().and_then(|page| match page {
+            crate::api_progress::ProgressPage::Done { token, .. } => Some((*token, End::Done)),
+            crate::api_progress::ProgressPage::Refused { token, .. } => Some((*token, End::Failed)),
+            crate::api_progress::ProgressPage::Reading { .. } => None,
+        });
+        for (token, end) in [gather, combat, progress].into_iter().flatten() {
+            let Ok(id) = RequestId::isolate(token) else {
+                self.pending_logs.push(format!(
+                    "seat API terminal has invalid isolate request id: {token}"
+                ));
+                continue;
+            };
+            if seat.lookup(id) != AuthorityStatus::Live {
+                continue;
+            }
+            let settled = match end {
+                End::Done => seat.complete(id, false),
+                End::Failed => seat.complete(id, true),
+                End::Manual => seat.revoke(id, AbortReason::UserInput),
+            };
+            if let Err(error) = settled {
+                self.pending_logs
+                    .push(format!("seat API terminal refused: {error:?}"));
+            }
+        }
+    }
+
+    /// A carried Cancel may revoke an admitted API Session (or its ancestor)
+    /// while its family runner is still preparing or working. The seat result
+    /// owns settlement; tear down the native runner before admitting another
+    /// Session, without replacing that result with a family `Stopped` page.
+    pub(super) fn stop_cancelled_api_work(&mut self) {
+        use api::script_contract::AuthorityStatus;
+        let (Some(families), Some(seat)) = (self.api.as_ref(), self.seat.as_ref()) else {
+            return;
+        };
+        let cancelled = |token: Option<u64>| {
+            token.filter(|token| {
+                RequestId::isolate(*token).is_ok_and(|id| seat.lookup(id) != AuthorityStatus::Live)
+            })
+        };
+        let gather = cancelled(families.gather.token());
+        let combat = cancelled(families.combat.token());
+        let progress = cancelled(families.progress.token());
+        if let Some(token) = gather {
+            self.stop_api_gather(token);
+            self.api.as_mut().expect("family seat").terminal = None;
+        }
+        if let Some(token) = combat {
+            self.stop_api_combat(token);
+            self.api.as_mut().expect("family seat").combat_terminal = None;
+        }
+        if progress.is_some() {
+            let families = self.api.as_mut().expect("family seat");
+            families.progress.reset(&mut families.progress_retiring);
+            families.progress_page = None;
+            self.native_runtime.revoke();
+        }
+    }
+
+    pub(super) fn start_api_gather(&mut self, token: u64, settings: &Arc<SettingsBag>) {
         if !self.load_active() {
             return;
         }
@@ -324,23 +492,22 @@ impl SlotScript {
         let run = RunKey {
             slot: self.incarnation,
             run: generation,
-            session: self.work_epoch,
+            session: self
+                .seat
+                .as_ref()
+                .map_or(self.work_epoch, |seat| seat.run().session),
         };
-        let account = String::new();
         match compiled::prepare_run(
             &crate::gatherer::CARD,
             run,
             Arc::clone(settings),
-            selected,
-            banks,
-            retained,
-            account,
+            Arc::clone(&selected),
+            Arc::clone(&banks),
+            Arc::clone(&retained),
+            String::new(),
         ) {
             Ok(job) => {
                 self.control_generation = generation;
-                seat.dropped_rows = 0;
-                seat.reported_drops = 0;
-                seat.dropped_owner = None;
                 seat.page = Some(Arc::new(GatherPage {
                     token,
                     phase: GatherPhase::Preparing,
@@ -352,7 +519,24 @@ impl SlotScript {
                     user_input: false,
                 };
             }
-            Err(error) => {
+            Err(compiled::PrepareRunError::Full) => {
+                self.control_generation = generation;
+                seat.page = Some(Arc::new(GatherPage {
+                    token,
+                    phase: GatherPhase::Preparing,
+                    status: None,
+                }));
+                seat.gather = GatherSeat::AwaitingAdmission {
+                    token,
+                    run,
+                    settings: Arc::clone(settings),
+                    selected,
+                    banks,
+                    retained,
+                    user_input: false,
+                };
+            }
+            Err(compiled::PrepareRunError::Other(error)) => {
                 seat.terminal = Some(GatherEnd::Refused {
                     token,
                     reason: refusal(error).into(),
@@ -374,6 +558,7 @@ impl SlotScript {
         let counts = counts(seat.page.as_ref().and_then(|page| page.status.as_deref()));
         self.native_runtime.revoke();
         match state {
+            GatherSeat::AwaitingAdmission { .. } => {}
             GatherSeat::Preparing { job, .. } => seat.retiring.push(job),
             GatherSeat::Running { run, .. } => {
                 if let Some(error) = compiled::destroy_run(run, StopReason::Operator) {
@@ -397,6 +582,44 @@ impl SlotScript {
             return;
         };
         seat.reap();
+        if let GatherSeat::AwaitingAdmission {
+            token,
+            run,
+            settings,
+            selected,
+            banks,
+            retained,
+            user_input,
+        } = &seat.gather
+        {
+            match compiled::prepare_run(
+                &crate::gatherer::CARD,
+                *run,
+                Arc::clone(settings),
+                Arc::clone(selected),
+                Arc::clone(banks),
+                Arc::clone(retained),
+                String::new(),
+            ) {
+                Ok(job) => {
+                    seat.gather = GatherSeat::Preparing {
+                        token: *token,
+                        job,
+                        user_input: *user_input,
+                    };
+                }
+                Err(compiled::PrepareRunError::Full) => {}
+                Err(compiled::PrepareRunError::Other(error)) => {
+                    let token = *token;
+                    seat.gather = GatherSeat::Idle;
+                    seat.page = None;
+                    seat.terminal = Some(GatherEnd::Refused {
+                        token,
+                        reason: refusal(error).into(),
+                    });
+                }
+            }
+        }
         if matches!(&seat.gather, GatherSeat::Preparing { job, .. } if job.is_finished()) {
             let GatherSeat::Preparing {
                 token,
@@ -408,7 +631,7 @@ impl SlotScript {
             };
             match job.join() {
                 Ok(mut run) => {
-                    run.rekey_session(self.work_epoch);
+                    run.rekey_session(self.api_session_epoch());
                     seat.page = Some(Arc::new(GatherPage {
                         token,
                         phase: GatherPhase::Running,
@@ -444,13 +667,28 @@ impl SlotScript {
                     .expect("seat retention")
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
-                run.tick(
+                let (result, interacts) = run.tick(
                     ctx,
                     &mut retained,
                     &mut self.native_runtime,
                     None,
                     self.local_state.as_deref(),
-                )
+                    compiled::SeatTickPorts {
+                        authority: None,
+                        prompt: self
+                            .seat
+                            .as_mut()
+                            .map(|seat| seat.as_mut() as &mut dyn crate::native::SeatPromptPort),
+                    },
+                );
+                #[cfg(feature = "load")]
+                {
+                    ctx.compiled.interacts = interacts;
+                }
+                #[cfg(not(feature = "load"))]
+                let _ = interacts;
+                run.finish_tick();
+                result
             };
             let changed = match seat.page.as_ref().and_then(|page| page.status.as_ref()) {
                 Some(status) => run
@@ -511,9 +749,6 @@ impl SlotScript {
         }
         self.tick_api_progress(&mut seat, ctx);
         self.api = Some(seat);
-        if !self.api_owns_foreground() {
-            self.log_api_drop_total();
-        }
     }
 
     pub(super) fn interrupt_api(&mut self, event: Interrupt) {
@@ -562,6 +797,7 @@ impl SlotScript {
             }
         } else if let Some(seat) = self.api.as_mut() {
             match std::mem::take(&mut seat.gather) {
+                GatherSeat::AwaitingAdmission { .. } => {}
                 GatherSeat::Preparing { job, .. } => seat.retiring.push(job),
                 GatherSeat::Running { run, .. } => {
                     if let Some(error) = compiled::destroy_run(run, StopReason::Replaced) {
@@ -577,8 +813,32 @@ impl SlotScript {
         }
     }
 
+    /// A transient down observation may advance the local work epoch before
+    /// F0 mints the replacement session. Align retained family run stamps
+    /// without repeating their reconnect cancellation or preparation.
+    pub(super) fn align_api_session(&mut self, session: u64) {
+        let Some(seat) = self.api.as_mut() else {
+            return;
+        };
+        match &mut seat.gather {
+            GatherSeat::AwaitingAdmission { run, .. } => run.session = session,
+            GatherSeat::Running { run, .. } => {
+                run.rekey_session(session);
+                if let Some(page) = seat.page.as_mut() {
+                    Arc::make_mut(page).status = run.output.status.clone();
+                }
+            }
+            GatherSeat::Idle | GatherSeat::Preparing { .. } => {}
+        }
+        match &mut seat.combat {
+            CombatSeat::AwaitingAdmission { run, .. } => run.session = session,
+            CombatSeat::Running { run, .. } => run.rekey_session(session),
+            CombatSeat::Idle | CombatSeat::Preparing { .. } => {}
+        }
+        seat.progress.rekey(session);
+    }
+
     pub(super) fn teardown_api(&mut self, reason: StopReason) {
-        self.log_api_drop_total();
         let Some(mut seat) = self.api.take() else {
             return;
         };
@@ -592,58 +852,6 @@ impl SlotScript {
         // Unfinished packets remain contained by PreparationResult/ScriptOwner.
         // Dropping a JoinHandle never waits in the host pump.
         let _ = catch_unwind(AssertUnwindSafe(|| drop(seat)));
-    }
-
-    pub(super) fn record_api_dropped_rows(&mut self, count: usize) {
-        if count == 0 {
-            return;
-        }
-        let Some(seat) = self.api.as_mut() else {
-            return;
-        };
-        let Some(owner) = seat.foreground_owner() else {
-            return;
-        };
-        if seat.dropped_rows == seat.reported_drops {
-            seat.dropped_owner = Some(owner);
-            api::hostlog::emit(
-                api::hostlog::Emit {
-                    category: api::hostlog::Category::ScriptLifecycle,
-                    level: api::hostlog::Level::Warn,
-                    slot: None,
-                    always_stderr: false,
-                },
-                format_args!(
-                    "{} foreground: dropped {count} script game rows",
-                    owner.label()
-                ),
-            );
-        }
-        seat.dropped_rows = seat.dropped_rows.saturating_add(count);
-    }
-
-    pub(super) fn log_api_drop_total(&mut self) {
-        if let Some(seat) = self.api.as_mut() {
-            if seat.dropped_rows != seat.reported_drops {
-                if let Some(owner) = seat.dropped_owner {
-                    let unreported = seat.dropped_rows.saturating_sub(seat.reported_drops);
-                    api::hostlog::emit(
-                        api::hostlog::Emit {
-                            category: api::hostlog::Category::ScriptLifecycle,
-                            level: api::hostlog::Level::Warn,
-                            slot: None,
-                            always_stderr: false,
-                        },
-                        format_args!(
-                            "{} foreground: dropped {unreported} script game rows total",
-                            owner.label()
-                        ),
-                    );
-                    seat.reported_drops = seat.dropped_rows;
-                    seat.dropped_owner = None;
-                }
-            }
-        }
     }
 
     pub(super) fn api_recovery_anchor(&mut self) -> Option<Option<WatchdogTile>> {

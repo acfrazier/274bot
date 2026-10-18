@@ -21,9 +21,13 @@ mod actions;
 pub mod custody;
 pub mod divergence;
 pub mod request;
+pub mod seat;
 pub mod services;
 pub use request::NativeRequest;
-pub use services::{LocalStateCapability, ScriptServices, ServiceAuthority, ServiceError};
+pub use services::{
+    LocalStateCapability, PromptPoint, ScriptServices, SeatPromptPort, ServiceAuthority,
+    ServiceError,
+};
 pub mod death;
 pub(crate) mod ledger;
 mod owner;
@@ -229,6 +233,8 @@ pub struct CompiledCard {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartError {
     Busy,
+    /// A typed refusal from preparation; temporary Full is retried first.
+    WorkRefused(api::work::SubmissionRefusal),
     Unavailable(Arc<str>),
     Facts(FactError),
     Config(ConfigError),
@@ -254,6 +260,7 @@ impl std::fmt::Display for StartError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Busy => f.write_str("script already active: stop it first"),
+            Self::WorkRefused(refusal) => write!(f, "preparation refused: {refusal}"),
             Self::Unavailable(reason) => f.write_str(reason),
             Self::Facts(error) => write!(f, "selected facts: {error:?}"),
             Self::Config(error) => write!(f, "{}: {} ({})", error.field, error.message, error.code),
@@ -388,11 +395,36 @@ pub struct NativeTick<'a> {
     /// the account's durable identity. `None` when the composition bound
     /// no state service to this slot.
     pub state: Option<&'a crate::local_state::SlotState>,
+    pub service_authority: Option<ServiceAuthority<'a>>,
+    /// Borrow of the owner's admitted seat, not a second request scheduler.
+    pub prompt_port: Option<&'a mut dyn SeatPromptPort>,
     #[cfg(feature = "load")]
     pub(crate) frame: HostFrame<'a>,
 }
 
-impl NativeTick<'_> {
+impl<'frame> NativeTick<'frame> {
+    /// Bind the actual native frame to the host's current execution fence,
+    /// session gate and optional T5.2 state capability. A standalone test
+    /// frame without the host authority cannot mint a service.
+    pub fn services<'service>(
+        &'service mut self,
+    ) -> Result<ScriptServices<'service, 'frame>, ServiceError>
+    where
+        'frame: 'service,
+    {
+        let authority = self
+            .service_authority
+            .ok_or(ServiceError::AuthorityUnavailable)?;
+        let state = self
+            .state
+            .map(|state| LocalStateCapability::new(state.port(), state.account(), state.scope()));
+        match self.prompt_port.as_deref_mut() {
+            Some(port) => ScriptServices::new(authority, self.actions, &mut self.cx, state)?
+                .with_prompt_port(port),
+            None => ScriptServices::new(authority, self.actions, &mut self.cx, state),
+        }
+    }
+
     /// The operator's loadout rows this tick may plan with: the bound
     /// service's current lease, or explicitly absent rows when no service
     /// is bound. `NotReady` while the domain is cold: the card retries on
@@ -563,6 +595,10 @@ pub enum WalkRefusal {
         tried: u8,
         last: Option<crate::combat::risk::Verdict>,
     },
+    RouteTooLarge {
+        required_bytes: usize,
+        maximum_bytes: usize,
+    },
     Unsurvivable,
     FixableWith,
     Unknown(crate::combat::risk::UnknownWhy),
@@ -579,6 +615,13 @@ impl std::fmt::Display for WalkRefusal {
                 }
                 Ok(())
             }
+            Self::RouteTooLarge {
+                required_bytes,
+                maximum_bytes,
+            } => write!(
+                f,
+                "route result needs {required_bytes} bytes, above the {maximum_bytes}-byte limit",
+            ),
             Self::Unsurvivable => f.write_str("route is unsurvivable"),
             Self::FixableWith => f.write_str("route needs additional supplies"),
             Self::Unknown(why) => write!(f, "route risk is unknown: {why:?}"),
@@ -598,11 +641,34 @@ pub struct AssessReceipt {
     pub route_ticks: u32,
 }
 
+/// Native walk failure classification, independent of Traveller internals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkStallReason {
+    /// The hop exhausted its budget after making partial progress.
+    Expired,
+    /// The hop exhausted its budget without leaving the send tile.
+    Dropped,
+    /// The live scene refused the route's final tile.
+    EndBlocked,
+}
+
+/// Cold terminal data stays shared instead of enlarging every native ledger.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalkStall {
+    pub at: WorldTile,
+    pub aiming: WorldTile,
+    pub why: WalkStallReason,
+    pub tries: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WalkEnd {
     Arrived,
     UserInput,
     RouteEnded,
+    /// A Traveller hop reached its finite budget without its aim being reached.
+    /// Retain its actual position, aim, reason and send count for the owner.
+    Stalled(Arc<WalkStall>),
     Refused,
     Blocked,
     Failed,
@@ -622,12 +688,19 @@ pub struct WalkReceipt {
     pub escape: Option<crate::combat::guard::Escape>,
 }
 impl WalkReceipt {
-    /// Prefer host-supplied detail, then the advisory's model reason, then a
-    /// typed refusal description. Callers use this before generic fallbacks.
+    /// Prefer host detail and a typed stall over an advisory's model reason,
+    /// then a typed refusal. Callers use this before generic fallbacks.
     pub fn failure_detail(&self) -> Option<Arc<str>> {
         self.detail
             .as_ref()
             .map(Arc::clone)
+            .or_else(|| match &self.end {
+                WalkEnd::Stalled(stall) => Some(Arc::from(format!(
+                    "walk stalled ({:?}) at {:?}, aiming at {:?}, tries: {}",
+                    stall.why, stall.at, stall.aiming, stall.tries
+                ))),
+                _ => None,
+            })
             .or_else(|| {
                 self.assessment
                     .as_ref()
@@ -654,12 +727,14 @@ impl WalkReceipt {
                     LazyLock::new(|| Arc::from("walk route ended before arrival"));
                 Arc::clone(&REASON)
             }))),
-            WalkEnd::Aborted | WalkEnd::Refused | WalkEnd::Blocked | WalkEnd::Failed => {
-                Err(ActionError::Blocked(failure_detail.unwrap_or_else(|| {
-                    static REASON: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("walk failed"));
-                    Arc::clone(&REASON)
-                })))
-            }
+            WalkEnd::Stalled(_)
+            | WalkEnd::Aborted
+            | WalkEnd::Refused
+            | WalkEnd::Blocked
+            | WalkEnd::Failed => Err(ActionError::Blocked(failure_detail.unwrap_or_else(|| {
+                static REASON: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("walk failed"));
+                Arc::clone(&REASON)
+            }))),
         }
     }
 }
@@ -755,6 +830,8 @@ pub enum ActionError {
     UserInput,
     Unavailable(Arc<str>),
     Failed(Arc<str>),
+    /// A typed permanent refusal from the shared bank-deposit machine.
+    BankDeposit(crate::bank::ops::DepositFailure),
     /// A hit on the local player closed the dialogue before it finished
     /// (the NPC combat scripts `if_close` on every swing, including a
     /// 0-damage miss). Typed so callers never match on a reason string;
@@ -872,6 +949,10 @@ mod walk_permission_tests {
             WalkRefusal::FixableWith,
             WalkRefusal::Unknown(crate::combat::risk::UnknownWhy::MissingFacts),
             WalkRefusal::EscapeInProgress,
+            WalkRefusal::RouteTooLarge {
+                required_bytes: 64 * 1024 * 1024 + 1,
+                maximum_bytes: 64 * 1024 * 1024,
+            },
         ];
         for left in 0..refusals.len() {
             for right in left + 1..refusals.len() {
@@ -1004,6 +1085,7 @@ mod defer_budget_tests {
             ActionError::UserInput,
             ActionError::Unavailable(Arc::from("unavailable")),
             ActionError::Failed(Arc::from("failed")),
+            ActionError::BankDeposit(crate::bank::ops::DepositFailure::FullStack),
             ActionError::Blocked(Arc::from("blocked")),
             ActionError::NeedsEvidence(Arc::<[QuestGate]>::from([])),
         ];

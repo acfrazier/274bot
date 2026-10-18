@@ -5,15 +5,187 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ## Unreleased
 
+### Toolchain
+
+- Pinned the host and client toolchains and CI to Rust 1.98.1, including the
+  trait-object vtable fix.
+
+### Scripts
+
+- Script operations now share a bounded request seat across native cards and
+  JavaScript. A second top-level Gatherer, combat, quest progress or Hunt
+  Session reports **busy** while one Session is live. Capability roots started
+  before a Session may coexist with it; a new Capability root while a Session
+  is live reports busy, including under Hunt. A child started from a Session
+  hook can still run. A fifth concurrent independent operation reports busy
+  instead of silently losing its gameplay actions.
+  A seat-refused replacement leaves the previous awaited operation running
+  until its own terminal result arrives.
+- Stops and walk releases keep their place through a random-event hold and
+  bypass a session's gameplay foreground. Gameplay emitted while the guardian
+  holds the script is discarded, never replayed after the event. Actions
+  accepted before an ordinary operation completes retain their authority;
+  cancelling the operation still invalidates its queued actions. A non-kept
+  Stop or removal drops the old seat before a new run starts.
+  A Gatherer or combat Stop also survives a lost Start batch during a kept
+  reconnect; an interrupted Hunt safespot walk asks the seat for a fresh walk
+  in the new session instead of replaying the old click.
+- Walks that arrive normally free their seat release slot, so repeated walks
+  do not block later actions. A kept reconnect discards old gameplay walks.
+  A wait whose walk was not delivered requests a fresh walk through the new
+  session's seat and still settles on arrival. During a guardian hold, all
+  walk terminals free their slots after resume. A held seat keeps one
+  pending batch and discards only gameplay. Every walk release (up to 16
+  handles), Gather Stop and Combat Stop is kept; a repeated release of the
+  same target and id is kept once. The run policy, camera yaw, recovery
+  anchor reply and progress stamps keep their newest value, so the host
+  applies the value the script set last. Wait enqueue and settle facts fold
+  into one exact summary that gives the watchdog the same wait count as the
+  events in order. BroadcastChannel opens, closes and posts, and route
+  inspections, stay in order. When that batch is full, only later
+  BroadcastChannel posts are refused: the script's channel gets one
+  `messageerror` with the reason, and each refused post is counted. After
+  the hold, the host hands the kept batch to the seat in pages of at most
+  one take (141 rows besides releases and the policy), so no kept open,
+  close, inspection or newest value is lost however long the hold was. The
+  newest values arrive after the ordered rows, and actions that the script
+  makes after the hold wait behind the remaining pages. Kept releases go to
+  the seat with the first page even when the seat queue is full, so a walk
+  abort that frees a release slot is never held back. A new hold while
+  pages still wait keeps the waiting batch's cancels, starts and other
+  controls, which apply after its last page.
+- A stop that a script sends while the map loads, while the welcome screen
+  is open or while the watchdog recovers a stuck bot is no longer lost. The
+  walk aborts reach the game in the first frame after that hold, in the
+  order the script sent them. A Gather Stop or Combat Stop takes effect at
+  once, so it can take effect before a walk abort that the script sent
+  earlier. A run policy that the script sets during such a hold is no
+  longer lost either: the last one the script set applies after the hold.
+  Other game actions that the script sends during the hold are still
+  dropped. A batch that the script sent before a map load started can still
+  reach the game after the load, as it did before this change. Only a
+  random-event hold now freezes the script's request seat: a map load or
+  the welcome screen no longer keeps the script's other actions for later.
+- A saturated script tick keeps its release and control rows ahead of gameplay.
+  It dispatches the first 141 other rows in their original order, drops the
+  excess, and reports one overflow diagnostic instead of failing the batch.
+  The guarded append copies nested row values, refuses accessors and Proxies
+  without calling them, and counts refused rows. Repeated aborts for one walk
+  coalesce; a seventeenth distinct walk release is still refused.
+- Compat cards and native V2 scripts now capture the first and subsequent
+  JavaScript interactions in one guarded queue. Machine actions keep their
+  order relative to queued script actions. The seat still bounds each tick.
+- Native V2 tick listeners run before waits resume on each eligible tick.
+  Their requests retain the root seat context.
+- A quest progress refusal retains its detailed result when its final page
+  and failed seat terminal arrive in the same snapshot.
+- Gatherer and combat Promises wait for the family's detailed terminal after
+  the seat ends their authority, rather than resolving with an empty result.
+  A watchdog recovery-anchor reply also arrives while gameplay is held.
+- Async walk wait and progress facts admitted by the seat reach the watchdog
+  rather than the game-action dispatcher, including after a kept reconnect.
+- Per-slot diagnostics expose dropped seat actions and late control copies as
+  read-only counters. Duplicate acknowledgements count without noisy error logs.
+- Reload and catalog refresh prepare source, siblings and settings off the UI
+  thread. Their buttons show **Reloading…** or **Refreshing catalog…** through
+  preparation and validation, rather than calling both stages validation.
 - Load-script validation now waits for bounded admission without failing
   merely because multiple refreshes submit together. If the independent JS
   deadline service refuses a running execution, its tick error identifies
   the service condition instead of calling the execution runaway.
 - A poisoned Load-script isolate can now retire without stopping the shared
   deadline supervisor or refusing new scripts for other accounts.
+- Path-folder refreshes and Quester starts now prepare bounded Path batches
+  off the UI and game threads. Superseded preparations do not replace the
+  active Path registry.
+
+- Card preparation now admits bounded background jobs for Starts, restarts,
+  settings saves, gathering facts, catalogue refreshes and Path reloads. When
+  the worker is temporarily full, these actions wait for a receipt instead of
+  failing. Invalid or oversized inputs still produce a visible refusal.
+  The settings editor retains at most 64 pending native saves or deliveries.
+  Further requests report a queue-limit refusal until earlier receipts settle.
+- A card's source and sibling graph is limited to 8 MiB. The rs2b0t catalog
+  accepts at most 4,096 registrations and 8,192 source files. Exceeding
+  either limit reports a catalogue error rather than consuming unbounded resources.
+- Background preparation coalesces replaceable progress rather than failing
+  a valid large catalogue at a progress-count limit. If an arbitrary job
+  fills its immutable progress custody, it still completes; later progress
+  updates are dropped and reported as diagnostics. A contained job panic is
+  reported as **background work job failed internally**, not as a slice
+  allowance violation.
+- A Quester folder accepts at most 4,096 entries, 1 MiB per Path document and
+  16 MiB of retained documents. Larger folders or documents report a typed
+  validation error and leave the last successful registry available.
+
+### Navigation
+
+- Route planning now runs independently for each request, with a 192 MiB
+  memory limit for each search. A request waits when search capacity is full.
+  Replacing or stopping a walk cancels its old search, so a late result
+  cannot replace the new walk. Refused routes no longer appear to wait for
+  search capacity.
+  Searches still check cancellation and time limits throughout their work.
+- Routes share transport details instead of copying them for every hop.
+  Plans that fetch banked supplies account for carried and worn requirements
+  without reducing the route-search budget.
+- Bots that need banked route supplies now walk to the bank access with the
+  shortest walking path they can reach, instead of the nearest access in a
+  straight line. An unreachable access at the nearest bank no longer stops the
+  bank trip.
+- Single-tile walks and radius walks keep their existing danger-zone refusal
+  rules, even when a radius search has only one candidate.
+- Route inspection now runs independently, including banked supply planning
+  and danger-zone explanations. Each inspection keeps its 192 MiB memory limit.
+  Reported transport names and actions remain unchanged.
+  Busy search capacity or result storage delays a valid inspection instead
+  of refusing it. Reset cancels the current inspection and prevents stale
+  output. Recent results remain available until acknowledged or replaced.
+
+### Random-event guardian
+
+- Disabling random-event handling no longer leaves Gatherer or other scripts
+  waiting forever on a detected event, such as a held Strange box. Events
+  remain visible, but do not pause scripts while handling is disabled.
+
+### Gatherer and banking
+
+- Bank selection now runs independently of other searches, with a 192 MiB
+  memory limit for each selection. Busy search capacity or result storage
+  delays a selection instead of losing it.
+  After five seconds, a selection that will walk to the bank switches to a
+  fallback route search. If search capacity is still full, it waits for
+  capacity before that search starts. Its result can therefore take longer
+  than five seconds.
+  A selection that does not walk keeps the first bank without a route after
+  five seconds, even when search capacity is full.
+  An oversized request or a failure to start its search reports a failed
+  selection instead of waiting forever. Following a selected bank route and
+  displaying it on the map share one route, which avoids extra route copies.
+
+- A Gatherer that stalls on its return from the bank now replans once from
+  its current position before stopping. It still requires arrival at the
+  gathering site and reports routes that remain blocked.
+- Gatherer and Quester banking now check the current inventory and retry once
+  after a refused or ineffective deposit. Items already deposited are not
+  counted twice, and protected items remain protected. Gatherer keeps unbankable
+  items and continues gathering whenever the pack still has space after depositing,
+  including tool-fetch and supply-only trips that deposit nothing. A pack filled
+  by actual supply withdrawals reports that no gathering space remains. Both
+  scripts report a full bank or full item stack. Quester still refuses
+  unbankable deposits.
+  Unsolved Strange boxes multiply over time and their stacks spread into freed
+  inventory slots. With event handling disabled, if no supply withdrawals fill
+  the pack first, Gatherer stops with the unbankable-item reason once the boxes
+  fill it.
 
 ### Saved state
 
+- A vault file that ends right after its header is now reported as a corrupt
+  vault file, not a wrong passphrase. A file damaged further in still reports
+  a wrong passphrase, because the encryption can't tell the two apart.
+- Vault error messages in the panel and the log no longer quote values from
+  the decrypted vault.
 - A saved bank hint, `loadouts.json` or `panel-ui.json` that 274bot can't
   read (a bank hint from another version or for another account, a file
   larger than its limit or writable by other users, or a damaged bank hint
@@ -72,11 +244,49 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   reported as a conflict, never as saved.
 - No save is reported done before the file and its folder entries are on
   disk, also after a failed attempt. Closing 274bot finishes saves still
-  waiting (up to 10 seconds); a save still waiting past that is reported
+  waiting (up to 60 seconds); a save still waiting past that is reported
   cancelled in the log, one line per save, instead of being dropped
   silently.
 
+### Login
+
+- A login that finishes after its lease deadline, Logout, or world switch
+  cannot become an active session. An expired handshake keeps its place until
+  it actually returns, so another bot cannot overlap it. The queue cancels
+  its socket and then admits the next bot in normal order.
+- A login refused before it starts no longer uses the next bot's login
+  spacing or device/address allowance. Refused and cancelled sockets close
+  before the next queued login is admitted.
+- Relog now keeps the login request after logging out and clears its pending
+  notice when the replacement session starts. Queue cards distinguish a
+  server-imposed login hold from spacing and label a retiring handshake
+  **previous login is finishing**.
+- Editing a running bot's uid applies to its next login without repeatedly
+  cycling the login queue. Saving a new password does not count as a clean
+  logout: clean-logout release pacing remains in effect. A bot already waiting
+  in the login queue refuses its old login and rejoins at the back.
+- Unread session-end boundaries are delivered in order up to a bound of 32;
+  the consuming lifecycle read reports how many older boundaries were missed
+  if the bound fills.
+
 ### Panel
+
+- Map baking now runs independently of other background work. Existing map
+  caches rebuild once for the updated map preparation.
+  Progress shows both catalogue preparation and terrain baking.
+  Map baking continues if another background worker stops responding.
+- Map preparation no longer locks its output cache while it only reads inputs.
+  Oversized caches recover by removing unused files and rebuilding.
+  An interrupted bake checks saved batches and later tiles, then replaces
+  damaged files before it publishes terrain.
+  Opening the map checks existing terrain before starting another bake.
+- Closing a map releases any unused work reservation.
+  Cache cleanup preserves terrain still in use and removes the least recently
+  used entries first. Release packaging waits for a bake to stop before it
+  removes temporary files.
+- WalkTo terrain tiles decode on a background worker using shared bounded work, rather
+  than a separate map-decoding thread.
+- Panning the WalkTo map no longer redraws squares that you just scrolled past.
 
 - The Fleet window's filter matches several words and world numbers, the
   same as the TUI's: every word must match a bot's name or status, and
@@ -98,6 +308,132 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - The Assign & restart confirmation names the bots whose running script
   it stops and the idle bots it starts, as the panel's does: the first
   six of each, with the rest counted ("+N more") beside each total.
+
+### Profiles
+
+- On Windows, giving the rs2b0t import a folder instead of the exported
+  file now says it is not a regular file, as on Linux and macOS, instead of
+  "cannot read …: Access is denied".
+- The first launch downloads the game cache faster. It keeps ten requests
+  to the update server in flight for the whole download, and it reads each
+  answer as soon as it arrives.
+- If 274bot cannot look up the name of the update server, the first
+  launch's game cache download now stops at once with a connection error,
+  and 274bot tries the next world if there is one. Before, the download
+  waited until it timed out.
+- When 274bot cannot reach a world's cache server, or cannot look up the
+  name of a world's server, while it prepares the game cache, it now moves
+  to the next world as a whole: it prepares the cache from that world, and
+  bots set to Auto start on that world. After a server name fails to look
+  up, 274bot skips each later world that uses that name. There is one
+  exception. A cache server name can look up at first and then fail to look
+  up during the cache download. Then `host-play` and the TUI (at each
+  start), and the panel (only before it selects its server profile), can
+  look up that name again for the next world. Each such world costs one
+  more wait for the name lookup. Before, 274bot took only the cache from
+  the next world and kept the first world's game server.
+### Fixed during development
+
+#### Navigation
+
+- Planning a bank trip for route supplies is fast again from places such as
+  the Varrock sewers, where it had slowed to several seconds. If no bank access
+  is reachable, danger-zone refusals keep their explanation, and route
+  inspection checks each bank access before planning with banked supplies.
+- Script routes remain visible in the panel game view. After a bank session,
+  the final route is checked against the updated inventory and gear.
+  Searches waiting for capacity resume when capacity becomes available.
+  Multi-stage routes continue without an extra frame between search stages.
+  Routes keep the same map paths and transport labels.
+  Route overlays no longer block navigation updates while the panel draws the game view.
+- Valid native walks and route assessments no longer fail before their searches
+  start. Concurrent requests no longer cause false search-start failures.
+- Short route searches use memory only for the parts of the search they visit.
+  Their maximum search allowance remains unchanged.
+- Walking to an area or to within reach of a tile with a radius of 17 tiles or
+  more no longer fails before the route search starts. Such walks are planned
+  again within the same memory limit as other routes.
+- Route searches avoid duplicate clock and cancellation checks without changing
+  cancellation or time limits.
+- Large route searches no longer slow sharply as their stored search history grows.
+  Their existing search budget and route order stay unchanged.
+- Radius walks keep the requested center as their first goal when it is valid.
+  Missing-supply checks retain space for the route's transports, not the full
+  search budget, so later planning stages do not refuse short routes.
+- A card's first walk now starts correctly. Bank-planned walks keep the selected
+  approach tile and can equip a carried item without requiring a bank visit.
+- Route searches are faster, especially for large searches. They return the
+  same routes.
+- Repeated route searches on macOS and Linux no longer retain and clear large
+  unused search buffers. Synchronous searches avoid extra lookup suspension,
+  per-edge call overhead and repeated heap-order checks without changing routes,
+  search budgets or cooperative cancellation checks.
+- Route searches avoid repeated comparisons when they select the next tile.
+  They skip finished reachability proofs and unnecessary zone-check futures.
+  Routes, search budgets and cancellation checks stay unchanged.
+
+#### Maps
+
+- Map baking saves progress in batches of 64 tiles. Cancelling or finishing a
+  bake saves the remaining tiles. Terrain and catalogue saves avoid duplicate
+  disk flushes without reducing recovery guarantees.
+- Checking for missing terrain no longer creates cache files.
+  Catalogue preparation avoids empty progress files and redundant disk flushes.
+- A completed catalogue saves its final manifest without first rewriting a
+  progress file. Cancelled and incomplete work still save their progress.
+- Catalogue preparation groups small operations but still checks cancellation
+  and time limits before each placement.
+  It avoids a second world scan when all candidates fit its memory limit.
+  Larger inputs keep the second scan.
+
+#### Startup and saved state
+
+- The first launch's game cache download no longer switches off background
+  work on slower connections, and "Preparing cache snapshot" now shows how
+  far the download has got.
+- One slow disk write no longer leaves script cards, the script catalogue or
+  profiles stopped until 274bot restarts.
+- Windows now recovers damaged panel preferences and repairs duplicate loadout
+  names after preserving the original file in a flushed copy.
+- A loadout list that did not load can no longer save. Add, rename, remove
+  and Save in the panel and the TUI refuse and show why the list did not
+  load. The saved loadouts stay as they were.
+
+#### Login
+
+- Windows now promptly cancels blocked login transport I/O when a login attempt
+  ends.
+
+### Release engineering
+
+- The architecture check refuses candidate Cargo configuration files without
+  ASCII case distinctions, including files in vendored trees and symlinks.
+  The check also refuses an ASCII case variant of `Cargo.toml`, because it
+  replaces the scanned manifest on a case-insensitive file system.
+  Every client `Cargo.toml` is now an exact protected input in `274bot-arch`.
+  Added, removed, or changed manifests need an operator commit to update the pin.
+  This replaces interpretation of vendored workspace membership and inheritance.
+  Fork pointer changes with byte-identical manifests need no pin update.
+  The check now refuses `git` dependency sources in product manifests.
+  Only root patch and replacement entries that protected policy lists may
+  appear in the product root. Other entries need an operator commit first.
+  The check covers default-feature and optional activation for every protected
+  package, even packages outside named configurations.
+  Baseline updates use the branch after it merges current `dev`.
+  Operators review removed records to retain permissions that other branches still need.
+- The architecture checker, its tests, and the crate-edge policy now live
+  in the operator-owned `274bot-arch` repo (`main`); this repo keeps the
+  local-convenience-only `tools/architecture/run.sh` runner, and CI runs
+  the check inline on pushes and PRs — cloning `274bot-arch` `main`,
+  verifying the pinned rust-analyzer binary, then running `check.py
+  --self-test` and `check.py --root` with no candidate-tree script
+  execution and no `ARCH_REPO` override. The fine data (`ownership.json`,
+  `inventories.json`, `foreign_types.json`) stays beside the runner and is
+  reviewed like code. A new crate edge, edge kind, migration,
+  optional-dependency activation, vendored path package, or checker change
+  needs an operator commit in `274bot-arch` (`policy.toml` plus a
+  regenerated `graph-provenance.json`, operator publishes first); propose
+  it as a patch or branch bundle for the operator to push.
 
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 

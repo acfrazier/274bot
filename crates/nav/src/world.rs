@@ -20,7 +20,7 @@ use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
-use crate::contract::{NavIdentity, PackDigest};
+use crate::contract::{NavIdentity, PackDigest, SearchGraphEnvelope};
 use crate::grid::StepGrid;
 use crate::pack::{decode, decode_any_reader, decode_grid, BankStand, PackError};
 use crate::transport::{TransportEdge, TransportGraph, TransportKind};
@@ -37,7 +37,7 @@ pub struct NavWorld {
     pub graph: TransportGraph,
     banks: Vec<BankStand>,
     named_banks: OnceLock<Arc<api::named_banks::NamedBankFacts>>,
-    transport_item_names: OnceLock<HashMap<i32, String>>,
+    transport_item_names: OnceLock<TransportItemNames>,
     risk_facts: OnceLock<Box<dyn Any + Send + Sync>>,
     /// The pack bytes' digest: set by [`Self::from_bytes`], or by the host's
     /// loader from the verified manifest (`crate::producer::bind`). Unset on
@@ -47,6 +47,12 @@ pub struct NavWorld {
     /// (`crate::producer`). [`crate::contract::NavLease::wrap`] mints its
     /// own and never reads this.
     pub(crate) lease_identity: OnceLock<NavIdentity>,
+    pub(crate) search_envelope: OnceLock<SearchGraphEnvelope>,
+}
+
+struct TransportItemNames {
+    by_id: HashMap<i32, String>,
+    max_name_bytes: usize,
 }
 
 impl NavWorld {
@@ -58,6 +64,15 @@ impl NavWorld {
             .get_or_init(|| Box::new(build()))
             .downcast_ref()
             .expect("one admission fact type per navigation world")
+    }
+
+    /// Cached once per immutable world. `producer::bind` pins production
+    /// worlds before publication; a synthetic fixture initializes on its
+    /// first producer lease. Search preflight copies only these scalars.
+    pub(crate) fn search_graph_envelope(&self) -> SearchGraphEnvelope {
+        *self
+            .search_envelope
+            .get_or_init(|| SearchGraphEnvelope::from_graph(&self.graph))
     }
 
     /// The baked bank stands ([`BankStand`]) the banking session walks to
@@ -77,8 +92,19 @@ impl NavWorld {
     pub fn transport_item_name(&self, id: i32) -> Option<&str> {
         self.transport_item_names
             .get()?
+            .by_id
             .get(&id)
             .map(String::as_str)
+    }
+
+    /// Maximum byte length of a selected name returned by
+    /// [`Self::transport_item_name`]. Cached at binding; never scans at admission.
+    /// Zero means no names are bound. Numeric-id fallbacks and formatting text
+    /// are the caller's separate charge.
+    pub fn transport_item_name_bytes_bound(&self) -> usize {
+        self.transport_item_names
+            .get()
+            .map_or(0, |names| names.max_name_bytes)
     }
 
     /// Bind selected-content placements once. A repeated bind is rejected,
@@ -109,17 +135,20 @@ impl NavWorld {
             .collect();
         ids.sort_unstable();
         ids.dedup();
+        let mut max_name_bytes = 0;
         let names = ids
             .into_iter()
             .filter_map(|id| {
-                data.item_by_id(id)?
-                    .name
-                    .as_ref()
-                    .map(|name| (id, name.clone()))
+                let name = data.item_by_id(id)?.name.as_ref()?;
+                max_name_bytes = max_name_bytes.max(name.len());
+                Some((id, name.clone()))
             })
             .collect();
         self.transport_item_names
-            .set(names)
+            .set(TransportItemNames {
+                by_id: names,
+                max_name_bytes,
+            })
             .map_err(|_| "item names already bound")?;
         Ok(())
     }
@@ -175,6 +204,7 @@ impl NavWorld {
             risk_facts: OnceLock::new(),
             content: OnceLock::new(),
             lease_identity: OnceLock::new(),
+            search_envelope: OnceLock::new(),
         }
     }
 

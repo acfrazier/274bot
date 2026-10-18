@@ -108,6 +108,10 @@ fn suite_command(tmp: impl AsRef<Path>) -> Command {
     let engine = home.join("engine");
     let mut command = Command::new(SUITE);
     command
+        // These fixtures bind the pack under their disposable HOME, not the
+        // operator's or validation lane's external navigation inputs.
+        .env_remove("NAV_PACK")
+        .env_remove("NAV_FLAGS")
         .env("HOME", &home)
         .env("USERPROFILE", &home)
         .env("ENGINE_DIR", engine);

@@ -8,42 +8,131 @@ lint stack.
 built, tested and claimed for it. Revision 274 is best-effort: it may run,
 but it is neither tested nor claimed.
 
-The allowed crate edges are defined in `tools/architecture/policy.toml` and
-checked by `tools/architecture/check.py`. Runtime semantics that a manifest
+The allowed crate edges are defined in the operator-owned
+[`274bot-arch` policy](https://github.com/acfrazier/274bot-arch/blob/main/policy.toml)
+and checked by its `check.py`. Runtime semantics that a manifest
 cannot prove stay **review requirements**. Changing a crate edge is a
-deliberate policy edit plus documentation and review; do not sneak a reverse
-or convenience dependency through an alias, target table, or optional rename.
+deliberate rule change in `274bot-arch` (proposed as a patch or branch bundle
+for the operator to review and push) plus documentation and review here; do
+not sneak a reverse or convenience dependency through an alias, target table,
+or optional rename.
 
 ## Local command
 
-Python **3.11+** (stdlib `tomllib`). No Rust rebuild.
+Python **3.11+** (stdlib `tomllib`). No Rust rebuild. The checker, its
+tests, and the graph-creating policy live only in [`acfrazier/274bot-arch`](https://github.com/acfrazier/274bot-arch)
+`main`, as decided in ADR 0010. See the
+[checker README](https://github.com/acfrazier/274bot-arch/blob/main/README.md)
+for its runtime pins and rule-change process. This repo holds the
+local-convenience-only runner `tools/architecture/run.sh`, which fetches
+`274bot-arch` `main` into a local cache and runs it against a tree. CI
+does not use the runner and never executes a candidate-tree script. The
+fine data the checker reads — exactly `tools/architecture/ownership.json`,
+`tools/architecture/inventories.json`, and
+`tools/architecture/foreign_types.json` — stays in this repo beside the
+runner and is reviewed like code. Everything that creates or activates the
+graph stays protected: workspace members, edges/kinds/migrations, the
+configuration feature/activation fields (including optional-dependency
+activation), and the graph provenance baseline.
+Agents and Main use the same runner locally.
 
 ```bash
-python3 tools/architecture/check.py
-python3 tools/architecture/check.py --self-test
+tools/architecture/run.sh
+tools/architecture/run.sh --root /path/to/tree
 ```
 
-If `python3` is older than 3.11, use `python3.11` or newer. The checker reads
-workspace and member `Cargo.toml` files, including `[dependencies]`,
-`[dev-dependencies]`, `[build-dependencies]`, `[target.*.dependencies]`,
-`optional`, `workspace = true` aliases, `path`, and `package` renames. It
-does not parse `.rs` with regex and does not compile.
+With no `--root`, the runner checks the product root it lives in.
+`ARCH_REPO` is a local-only override of where the rules come from: a URL
+(the default remote is always `main`) or a local clone, whose selected
+local `HEAD` is used as pre-push proof of an unpushed rule change. CI has
+no `ARCH_REPO` override. `ARCH_CACHE_DIR` overrides the local fetch cache,
+a bare Git cache defaulting to
+`${XDG_CACHE_HOME:-$HOME/.cache}/274bot-arch`.
 
-Membership is the explicit `workspace.members` path list plus a root
-`[package]` when present (Cargo's implicit root member). Globs, `exclude`,
-and other unsupported workspace shapes fail closed. A path dependency on a
-crate that is not a listed member still appears in the scan and must be a
-policy member or external.
+The runner checks the rust-analyzer executable on `PATH`: SHA-256
+`fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49`,
+`rust-analyzer 0.3.3081-standalone`. The checker reads
+workspace, member, and protected path-package `Cargo.toml` files. It scans
+`[dependencies]`, `[dev-dependencies]` / `[dev_dependencies]`, and
+`[build-dependencies]` / `[build_dependencies]`, including target tables.
+It resolves `optional`, `workspace = true` aliases, `path`, and `package`
+renames, plus path `[patch]` and `[replace]` entries. It does not compile
+candidate code or parse `.rs` with regex.
 
-GitHub Actions runs the same two commands in the `architecture` job, which
-also installs the pinned `flatc` and diffs `crates/script/schema/generated`
-against a fresh `flatc --rust` of `crates/script/schema/isolate.fbs`. That job
-does **not** replace `fmt`, `clippy`, or `test`. Those gates stay as they are.
+Product membership uses explicit `workspace.members` paths plus a root `[package]`
+when present (Cargo's implicit root member). Product workspace `members`,
+`default-members`, and `exclude` entries must resolve to protected manifests.
+Product member globs fail closed.
+Every non-member path
+package must have a canonical manifest binding in protected
+`policy.toml` `[workspace.path_packages]`. Unlisted path packages and symlink
+substitutions are refused. Every listed manifest is scanned, even when unused.
+Edges from listed packages need ordinary protected allowances.
+The checker refuses a `git` key in any dependency table, target table,
+`[workspace.dependencies]`, `[patch.*]`, or `[replace]` entry.
+The refusal names the manifest file and the entry.
+The checker never reads a git crate's manifest.
+A git crate could carry a crate edge or a feature request into a local package.
+Only root `[patch.*]` and `[replace]` entries listed by name and path in
+protected `policy.toml` `[root_patches]` may appear in the product root.
+The list now holds only `dear-imgui-wgpu` at `vendor/dear-imgui-wgpu-0.15.1`.
+A root patch makes a local package reachable from every external crate.
+Any other root patch or replacement needs an operator commit that adds it.
+Registry dependencies stay allowed. A crates.io crate cannot name a local path package without a root patch, and the root patch list covers that route.
 
-The explicit allowlist is [`tools/architecture/policy.toml`](../tools/architecture/policy.toml).
-Every workspace member must appear there, and every edge the manifests
-declare needs an `[[allow]]` with its kind. Unknown members and unlisted
-edges fail closed. crates.io and other non-path crates are ignored. `client`
+Every `Cargo.toml` below `vendor/fr-client-rust/` is pinned in protected
+`274bot-arch/vendor-manifests.json`. One digest covers the sorted path and exact-byte pairs.
+The digest is identity data for a protected input, like policy data, not bookkeeping.
+The checker names every added, removed, or changed manifest and requires an operator commit to update the pin.
+It does not interpret the client workspace's members, exclusions, globs, or inheritance.
+The pinned set has no `workspace = true` dependencies, and such dependencies are refused.
+A fork pointer change with byte-identical manifests needs no pin update.
+Print the digest with `python3 -B vendor_manifests.py /path/to/274bot` from the arch repository.
+Generate a reviewed replacement with
+`python3 -B vendor_manifests.py --emit-pin /path/to/274bot > vendor-manifests.json`.
+
+The checker refuses `.cargo/config` and `.cargo/config.toml` anywhere in the
+candidate tree, including vendored trees and symlinks. Directory and file names
+are matched without ASCII case distinctions. These files can override the graph.
+The checker also refuses an ASCII case variant of `Cargo.toml` anywhere in the tree, because it replaces the scanned manifest on a case-insensitive file system.
+Unicode look-alike names are outside this refusal because Cargo on Linux does not read them.
+One limit stays with review. A product build script can rewrite a vendored
+manifest on disk during a CI job, between steps.
+The checker reads committed manifests only. It does not run build scripts.
+A new `build.rs` needs an ownership row, so a reviewer sees it.
+Dependency aliases are tracked by package name, not by alias or version.
+Default-feature and dev-dependency activation is checked for every protected
+member and listed path package, even when no named configuration reaches it.
+
+GitHub Actions pins Python **3.14.8** and runs the operator-owned check
+inline in one `architecture` job on pushes and pull requests: it keeps the
+pinned rust-analyzer and `flatc` installation steps, then the check step
+itself runs `git clone --depth 1 --branch main
+https://github.com/acfrazier/274bot-arch.git "$RUNNER_TEMP/274bot-arch"`,
+verifies the rust-analyzer binary (SHA-256
+`fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49`,
+`rust-analyzer 0.3.3081-standalone`), then runs `python3 -B
+"$checker_root/check.py" --self-test` and `python3 -B
+"$checker_root/check.py" --root "$GITHUB_WORKSPACE"`. CI never executes a
+candidate-tree script (including `tools/architecture/run.sh`) and has no
+`ARCH_REPO` override. It also installs the pinned `flatc` and diffs
+`crates/script/schema/generated` against a fresh `flatc --rust` of
+`crates/script/schema/isolate.fbs`. That job does **not** replace `fmt`,
+`clippy`, or `test`. Those gates stay as they are.
+
+The explicit allowlist is [`policy.toml` in `274bot-arch`](https://github.com/acfrazier/274bot-arch/blob/main/policy.toml):
+workspace members, edges with their kinds and migrations, and the
+configuration feature/activation fields, all protected. The fine data lives
+beside the runner and is reviewed like code:
+[`tools/architecture/ownership.json`](../tools/architecture/ownership.json),
+[`tools/architecture/inventories.json`](../tools/architecture/inventories.json),
+[`tools/architecture/foreign_types.json`](../tools/architecture/foreign_types.json).
+The checker loads that data from the checked tree, refuses malformed or
+stale data, and cannot widen the protected edge policy.
+Every workspace member must appear in protected `policy.toml`. Every edge
+the manifests declare needs an `[[allow]]` or migration with its kind.
+Unknown members and unlisted edges fail closed. crates.io and other
+non-path crates are ignored. `client`
 is a workspace *alias* to `vendor/fr-client-rust/crates/client`, not a 274bot
 workspace member; it is listed as an architecture external.
 
@@ -112,8 +201,12 @@ claim that `e2e` owns those crates' production behavior.
 - **`host-play` → `nav`** is both a runtime dependency and a build-dependency
   (bake/stage nav identity). Both kinds are listed.
 
-If a future change needs a new edge or kind, edit the policy and this page
-and get review. Do not add a second hidden graph.
+For a new edge, kind, migration, optional-dependency activation, vendored path
+package, or checker change, follow [Changing a boundary](#changing-a-boundary).
+Include the regenerated baseline in the same arch commit as the protected
+rule change. Outside the pinned client manifests, purely local features without
+optional or cross-crate activation need no operator commit. Ownership, inventory, and foreign-type rows remain
+ordinary product diffs. Do not add a second hidden graph.
 
 ## Cargo features
 
@@ -254,7 +347,7 @@ unchanged manifest; compression does not change selected-content identities.
 | `pack/zones.rs` | zone table codec | wire geometry and stable identity of exclusion zones |
 | `paint.rs` | nav-paint buffers | no imgui, no client draw |
 | `quest_gates.rs` | quest-stage gates on transport edges | typed gates over selected progress signals |
-| `router.rs` | world-space Dijkstra | total-ticks cost, gated edges |
+| `router.rs` | world-space Dijkstra | exact-coordinate compact storage, shared synchronous/cooperative kernel, total-ticks cost and gated edges |
 | `router/grid.rs` | legacy grid A-star | `find_on_grid` for traveller and harness |
 | `router/resources.rs` | resource labels on walk nodes | change only at paid hops |
 | `tile.rs` | tile coords and distance | x, z, level |
@@ -280,6 +373,73 @@ unchanged manifest; compression does not change selected-content identities.
 | `bin/nav-input-audit.rs` | input audit CLI | offline cache and content audit |
 | `bin/cache-content-id.rs` | `cache-content-id` CLI | read-only identity export |
 | `required-content-274.tsv`, `required-content-289.tsv` | canonical content inventory | build-checked data, not code |
+
+#### Shared bounded routing
+
+The loaded navigation lease supplies separate carry, worn and diagnosis bounds.
+`max_plan_item_rows` is the smaller of the full diagnosis bound and the sum of
+the carry and worn bounds. Bank planners use this effective item bound, not
+the full search budget. Captured bank rows remain a separate dimension.
+Cursor construction does not allocate. Cursor growth uses checked limits and
+fallible reservations.
+
+Route execution separates completed searches into private jobs in the existing
+Route family. A later job charges retained routes, diagnosis and plan storage
+at their exact sizes as input. Each whole job remains within 192 MiB.
+The shared owner-result ledger holds continuation custody between jobs.
+Cancellation and request-generation checks apply across each gap.
+Public Search/Commit phases and Path/NoPath results do not change.
+
+#### Cooperative search storage
+
+All search goals use one packed table and one bounded doubling and rehash
+method. Records have dense IDs. Hashing selects a three-byte bucket head,
+not a position across the record array. There is one bucket per twelve records.
+The multiply-high reduction does not need a power-of-two bucket count.
+
+Cooperative cursors reserve their complete settle-cap backing once. Slot
+fields use a zero-valued tuple of primitive arrays and integers. Each record
+remains 28 bytes with four-byte alignment. Bucket heads and next links share
+a separate array of three-byte links. Each link uses only the ID bits its
+table capacity needs; the remaining bits hold a hash fingerprint. A fingerprint
+mismatch skips the full record read. Matching fingerprints still require full
+key equality. Growth rebuilds the collision chains for the new bucket count.
+It keeps the same dense IDs, but it can change the order of records in a chain.
+
+Each table also keeps 1,024 recent positive record IDs in a fixed 4 KiB array.
+The unused upper ID bits hold a ten-bit hash tag, so unrelated cache entries
+do not require a full record read. Matching tags still require the full tile
+and balance. Insertions and positive lookups refresh this array. Removal
+invalidates its entry, and growth preserves IDs. This avoids repeated collision
+scans without another allocation. The array is part of the admitted future's
+measured inline size, not the vector backing bound.
+
+Safe `Vec` construction obtains zeroed backing without an explicit
+initialization pass under the pinned toolchain. The operating system can make
+pages resident as the search touches them. Admission charges the complete
+backing, not the observed resident bytes. Fingerprints use existing link bits
+and do not increase that charge.
+
+Legacy synchronous facades start with six settles and grow the same table
+only when needed. Their reverse proofs also retain demand-driven storage.
+Cooperative reverse proofs reserve their bounded capacities once, so an
+ordinary slice never grows or rehashes a complete proof.
+
+The frontier starts as a binary min-heap. Only bounded-frontier eviction
+converts it to a min-max heap, in place and with one checkpoint per parent.
+Ordinary heap operations share the caller's expansion or transport unit.
+A sift has at most 22 levels under the packed capacity limit.
+The comparison order, decrease-key behavior and worst-entry eviction stay unchanged.
+
+One expansion includes its eight fixed collision steps and the first hash-key
+comparison for each relaxation. Further hash-chain links and each transport-list
+entry remain separate work units. Search budgets and live clock and cancellation
+reads at each checkpoint remain unchanged.
+
+Bank-pick qualification uses `bank_pick_work_live`, an integration target behind
+`live-harness` and `test-support`. It calls the same native burst and captured
+job replay as the library tests. The integration binary does not reference
+`allocation-counter`, so its zeroed storage uses the product allocator.
 
 #### Native map data boundary
 
@@ -309,11 +469,12 @@ are fixed to 256-pixel interiors with one-pixel gutters, RGBA8 noninterlaced PNG
 `TileReceipt::verify_png` verifies the receipt and IHDR before pixel allocation;
 the PNG decoder still owns full chunk/CRC validation.
 
-Only `PartialEntry` reads `.<key>.partial` checkpoints. Ready readers require a
-canonical complete directory and validated manifest; ordinary image open does
-not hash/decode the pyramid. Resume verifies completed units and their exact
-policy identity. The cache-job owner (`host-play`) owns the prepared-cache
-`Arc`, locks, atomic publication, cancellation and quotas.
+`PartialEntry` provides checked synchronous resume. The admitted host cache job
+decodes checkpoint metadata, then verifies one completed payload per host unit
+before exposing its receipt to the producer cursor. Ready readers require a
+canonical complete directory and validated manifest. Ordinary image open does
+not hash or decode the pyramid. The cache-job owner (`host-play`) owns the
+prepared-cache `Arc`, locks, atomic publication, cancellation and quotas.
 
 Release packages ship the 289 terrain: release packaging bakes the nav
 bundle's pinned client cache through the production map-cache path and ships
@@ -448,17 +609,17 @@ libtest exception.
 | `live_gate.rs` | live proof gate for every scenario watch | which shared witness a run qualifies under (paired proofs refuse without the pair gate), per-poll core-gate verdicts, the PASS hold: Pending core first, then the 45 s clean-stop grace; panel and `tui-play` both call it |
 | `live_start.rs` | live catalog Start transaction | stashed isolate Starts fired on StartScript, witness armed immediately before each actual Start, setup failures fail the armed witness; the fleet launch panel and `tui-play` both stash (`fleet_catalog_starts`, feature `live-harness`) |
 | `script_runtime.rs` | per-slot observe, dispatch, and nav continuation | script wall and walk continuation |
-| `script_observe.rs`, `script_snapshot.rs`, `script_interact.rs`, `script_nav.rs`, `script_walk.rs`, `script_bank.rs`, `script_paint.rs`, `script_channels.rs` | per-slot script pump pieces | observation and snapshot posting, interact dispatch, route worker and walk continuation, WalkGuard, bank selection, paint status, the BroadcastChannel broker |
-| `walk_arm.rs`, `walk_plan.rs`, `walk_permissions.rs` | operator walk arms and permissions | queued follow and bank-fetch steps, session routes, permission composition at admissions |
+| `script_observe.rs`, `script_snapshot.rs`, `script_interact.rs`, `script_nav.rs`, `script_walk.rs`, `script_bank.rs`, `script_paint.rs`, `script_channels.rs` | per-slot script pump pieces | observation and snapshot posting, interact dispatch, cooperative route-inspection publication and walk continuation, WalkGuard, bank selection as a bounded cursor job on shared WorkAdmission using the shared compact search and one immutable `Arc<WorldState>` backing. Its 192 MiB whole-job charge covers captured input, cursor and result. At five seconds, walking requests use the route-only Single fallback after admission. Non-walking requests return the first candidate without a route, including demand still refused with Full. Full admission and owner-ledger pressure retain retry demand. Other admission refusals and oversized requests publish NoCandidate or walking NoPath. The remaining pieces own paint status and the BroadcastChannel broker. |
+| `walk_arm.rs`, `walk_plan.rs`, `walk_permissions.rs` | operator walk arms and permissions | queued follow and bank-fetch steps, session routes, permission composition at admissions. Selected-bank walks use the same compact route adapter for Traveller and borrowed map paint, without expanding legacy route vectors. |
 | `admission.rs` | shared route-admission seam | advisory survivability estimate under Proceed; no net or poison-clear observer claimed |
 | `slot_bank_memory.rs` | slot thread's hand on its account bank memory | one shared handle per account; the slot thread is the only writer, never across file IO |
 | `evidence_writer.rs` | background live-evidence PNG and JSON writer | one thread per cell; the slot thread only hands over pixels and receipts |
-| `route_inspect.rs` | inspect off-pump job | admission, calculation, publication |
+| `route_inspect.rs` | inspect cooperative-work adapter and owner | Captures one shared `WorldState` and `NavLease`. It runs strict search, borrowed `MissingRequirementsView`, bank-fetch planning, stand and post-bank routing, and zone diagnosis within the 192 MiB job charge. It transfers terminal custody to the shared 256 MiB owner ledger before WorkService consumes the result. It keeps one admitted job, one replaceable pending demand, two replay terminals and one held terminal. It uses acknowledgement, eviction and identity/revision-bound cancellation. |
 | `login_readiness.rs` | login-readiness gate | welcome-modal settle before script work |
 | `nav_identity.rs` | bundled nav identities | build-published table plus checked-in rows |
 | `walk_map.rs`, `walk_map/{actions,catalogue,observations,routes}.rs` | shared WalkTo map model | catalogue, selection, guarded Walk/Teleport, live/script/manual routes |
-| `map_cache.rs`, `map_cache/shipped.rs`, `map_cache/fixture.rs` (`test` / `test-support` fixtures), `map_producer.rs` | WalkTo map cache lifecycle | demand, bake/publication, installing release-shipped terrain that matches the bound image identity; the native producer |
-| `map_bind.rs` | process-wide map demand | manager at first open (shipped terrain under the install root's `map/`), packaging bake |
+| `map_cache.rs`, `map_cache/shipped.rs`, `map_cache/fixture.rs` (`test` / `test-support` fixtures), `map_producer.rs` | WalkTo map cache lifecycle | one `WorkService` MapBake family with resumable bounded producer cursors; demand, bake/publication, installing release-shipped terrain that matches the bound image identity; no private bake worker |
+| `map_bind.rs` | process-wide map demand | manager at first open (shipped terrain under the install root's `map/`), packaging bake, bounded shared-worker terrain PNG decode (258×258 RGBA8; 512 KiB input plus inline job, Arc refcounts and refcount-alignment padding; `png::Limits` allowance of one additional raw RGBA row, 2 MiB scratch covering the overlapping ≤512 KiB eXIf buffer and metadata copy, ≤128 KiB raster buffer, row scratch and bounded inflater tables; 266,256-byte result; text/ICC metadata is skipped) |
 | `bundled-nav-identities.json`, `known-cache-identities.json` | checked-in identity rows | data, not code |
 | `external_loader.rs` | external loader smoke witness | proof infrastructure, disabled by default |
 | `memory.rs` | opt-in memory harness | `BOT_MEMORY_N` only |
@@ -472,6 +633,56 @@ libtest exception.
 | `progress.rs` | preparation progress values | small, copy-free |
 | `quest_pair.rs` | Play-owned pair leases | bounded; never takes a slot lock or retains a world |
 | `*_live.rs`, `*_live_probe.rs`, `*_live_tests.rs` | live cells run through `cargo test` | ignored; see [the harness](harness.md) |
+
+Map-cache census retains at most 1,030 root summaries. Completion transfers that
+allocation without a replacement. A new scan releases previous census storage
+first. Mutation generations fence census, publication and bounded pruning. Entry
+caps are 3,490 per artifact root and 3,594,700 across the cache.
+Disk cache hits pass the same admitted preflight before the manager publishes a
+ready lease. Joined demand can add bake consent but cannot revoke it. Host
+progress uses the frozen map-bake phase indices in both directions.
+The generation counter and empty key-lock files coordinate live processes.
+They are not crash-durable artifact metadata and do not need file syncs.
+New artifact directories still synchronize their changed parent entries.
+A refreshed census resumes the exact producer/publication stage and rebases a
+live writer's whole-cache totals. If pruning removed its unpublished partial,
+the job discards the stale receipts before rebuilding. Clean cursor yields do
+not rewrite an unchanged checkpoint.
+A terrain probe that finds no published or matching shipped terrain creates
+no image directory or key-lock file. Later bake consent restarts path
+preparation and the census before mutation. Catalogue preparation writes no
+empty checkpoint. Normal completion writes its single-payload manifest directly.
+The manifest's parent sync also commits the already-synchronized payload rename,
+without first writing a publishing checkpoint that the manifest supersedes.
+Explicit checkpoints, observed cancellation and incomplete work keep their
+checkpoint flush. The payload and checkpoint file data reach disk first.
+One parent sync then commits both renames before the checkpoint is durable.
+Catalogue placement and marker-candidate work groups at most 64 operations
+per admission unit. Each operation checks the live deadline and cancellation.
+Archive reads, land decoding and finalization remain individual units.
+The shared unit allowance and the 10 ms deadline do not change.
+Catalogue derivation retains at most 32,768 tree or quest-location candidates
+in source order, with their original placement and bridge flag. The first
+scan also records each square's candidate end offset. The charge includes
+both fixed storage bounds, without vector growth overlap. The 274 and 289
+content census found 14,844 and 15,059 candidates. The limit rounds twice
+the larger count up to a power of two. Overflow releases that prefix and
+uses the existing second scan. It neither refuses input nor changes output.
+Each 64-tile terrain checkpoint batch synchronizes each changed tile directory
+and each newly created directory's parent once, from children to parents.
+At most 63 completed tiles await a batch checkpoint. Observed cancellation
+and completion flush the remainder.
+Individual PNG data reaches disk first. The checkpoint file is written and
+synchronized next. Its parent sync also commits the new terrain directory.
+The writer retains only fixed directory bitsets between worker invocations.
+Resume keeps valid partial tiles and regenerates missing or damaged payloads.
+Checkpoint rows remain sorted when regenerated tiles fill earlier holes.
+A payload that contradicts its durable checkpoint receipt is removed and its
+parent directory synced before the native cursor can adopt uncheckpointed tiles.
+Verification reuses one format-bounded payload buffer. Its reservation includes
+the decoded-row capacity and the verified rows while both allocations overlap.
+After admitted validation, publication reuses an immutable ready owner still
+retained by a consumer.
 
 ### scenario
 
@@ -509,6 +720,7 @@ libtest exception.
 | `selection.rs`, `marked.rs`, `bulk.rs` | marked-bot selection and commands | marks keyed by profile identity; Assign, Assign & restart, log in/out on marked rows; one outcome per marked row |
 | `group_walk.rs` | group walk | one WalkTo destination for every marked bot; panel picker and TUI map both call it |
 | `walk_permissions.rs`, `nav_prefs.rs`, `map_bake.rs` | durable walk and nav preferences; terrain-bake consent | shared by both front ends; read fail closed |
+| `map_decode.rs` | cooperative WalkTo image decode | one accepted shared-work ticket, one replaceable pending demand, and generation/image/key-fenced terminal custody |
 | `operations.rs` | operation results | ids, per-member outcomes, bounded book, outcome journal the poll logs as `op#<id>` lines |
 | `views.rs`, `progress.rs` | fleet and detail projections; run-progress wording | one row per member (phase, queue place, login-error retry wait vs operator hold, script state, walking, retained error, newest operation, narrow label), fleet counts, and the selected slot's detail; rows re-derived only when their facts change; runtime, time since progress and levels gained |
 | `resources.rs` | process resource meter | one probe thread sampling at 1 Hz (never on the UI frame); CPU, current and peak process RSS (peak never below current), summed traffic with per-slot-lifetime baselines; measuring / unavailable / error values, plus one narrow line for a header |
@@ -525,6 +737,11 @@ libtest exception.
 | `scripts/reload.rs` | reload and catalog-refresh transaction | worker validation, warning with exact runs and generations, confirm/cancel, fenced replacement |
 | `scripts/sync.rs` | Apply to all (bulk parameter sync) | frozen same-card scope, per-profile writes, generation-fenced live push, separate persistence/live counts; confirmation holds new Starts, and accepted native copies retain that hold through preparation and the writer's durable completion (JS copies release after staging) |
 | `quester_paths.rs` | durable Quester Path configuration | asynchronous folder reload |
+
+The walk-map decode corpus fixture compares every manifest-listed producer tile
+through the shared controller with the legacy test-only decoder. It compares
+serialized identity, generation, tile key and RGBA bytes, and checks ticket
+release after every result. The legacy decoder is not a production fallback.
 
 Accepted native copies keep their Start hold on the existing preparation and
 profile-write operations, not on a separate completion tracker. Preparation
@@ -551,7 +768,7 @@ has released it.
 | `game_view.rs` | game image texture | mailbox frames to texture |
 | `input_capture.rs` | game input capture | keyboard queue and mouse streaming |
 | `picker.rs` | WalkTo picker chrome | pan/zoom/plane/search; Walk/Teleport/selection via `host_play::walk_map` |
-| `walk_map.rs`, `walk_map/overlay.rs`, `walk_map/labels.rs`, `walk_map/fixtures.rs` | app-owned WalkTo renderer | ≤24 terrain slots, one overlay (768×512 / 1.5 MiB cap, never per-tile quads), label ranking, small PNG/POI fixtures |
+| `walk_map.rs`, `walk_map/overlay.rs`, `walk_map/labels.rs`, `walk_map/fixtures.rs` | app-owned WalkTo renderer | ≤24 terrain slots, one overlay (768×512 / 1.5 MiB cap, never per-tile quads), bounded shared-worker decode demand, label ranking, small PNG/POI fixtures |
 | `nav_paint_cache.rs` | nav-paint cache | per-frame reuse of path paint |
 | `grid.rs` | MultiBox grid layout | cell geometry |
 | `fleet.rs`, `fleet_actions.rs`, `fleet_columns.rs` | Fleet window | identity-keyed marks, action bar over marked rows, toggleable status columns; the panel adapter over the shared marked-bot commands |
@@ -681,7 +898,7 @@ need nothing. Profile files and the instance lock are owned by `host-play`
 
 ## Runtime ownership
 
-These are product boundaries. The crate checker does not prove them.
+These are product boundaries. The crate checker (in `274bot-arch`, run via `tools/architecture/run.sh`) does not prove them.
 
 | Boundary | Owner | Not the owner |
 | --- | --- | --- |
@@ -696,9 +913,38 @@ These are product boundaries. The crate checker does not prove them.
 The JS shim must not grow its own API or shared policy. Compatibility maps
 the JavaScript surface onto Rust host APIs.
 
+### Admitted work execution
+
+`api::work::WorkFamily::policy` declares execution and byte admission for every
+registered family. `script::work_admission::WorkService` owns one identity and
+custody ledger, regardless of where a job executes.
+
+Route, Inspection, BankPick and MapBake use one short-lived thread per accepted
+request. Their original thread names and default stack sizes remain unchanged.
+A request drives its cooperative job to a terminal on that same thread.
+Yielded steps never enter the shared background queue. Card, catalogue, profile
+and walk-map decode jobs keep their existing background execution until their
+separate owner migrations.
+
+The ledger retains the 64-job and eight-operation-handle limits. It accounts
+for every declared input, scratch, result and progress reservation. Navigation
+families keep their 192 MiB per-job bounds without a global navigation byte cap.
+MapBake and background families consume the existing bounded byte allowance.
+The published byte total includes both categories.
+
+Thread creation precedes job transfer. A start gate prevents execution before
+registration completes. Spawn failure returns the original job with
+`ThreadStartFailed` and restores its capacity credit. Each request retains its
+own active state, cancellation and contained-panic boundary.
+
+Pump paths never wait for or join a thread. Shutdown uses one fixed deadline
+and joins only threads that already returned. Unreturned request threads are
+reported separately from the background worker. Their custody stays charged
+until actual return, even if shutdown must detach their handles.
+
 ## Behavioral invariants (review unless noted)
 
-The checker does **not** pretend to prove the following. They remain
+The checker in `274bot-arch` does **not** pretend to prove the following. They remain
 independent-review and test requirements unless a later, robust check exists.
 
 - **Isolate ↔ host and game-action wire:** FlatBuffers only. No extra JS↔Rust
@@ -732,10 +978,96 @@ gate on sibling paths.
 those crates for tests is not a claim that test code is the product owner of
 nav, rendering, or the isolate.
 
+## Lint suppression ratchet
+
+`#[allow]` suppressions accumulate silently: each one turns a lint off
+forever, including after the code that needed it is gone. Two mechanisms
+stop that. Both live outside the crate-graph checker above; this section
+documents them together.
+
+**Workspace lints (per-crate opt-in).** The `[workspace.lints.clippy]` table
+in the root `Cargo.toml` holds the set: `undocumented_unsafe_blocks` and
+`unwrap_used` (warn), plus the suppression-hygiene denies
+`allow_attributes` (suppressions must be `#[expect]`, so one that stops
+firing is an error) and `allow_attributes_without_reason`, plus the six
+approved lints `redundant_clone`, `significant_drop_in_scrutinee`,
+`unchecked_time_subtraction`, `needless_collect`,
+`large_types_passed_by_value` and `assigning_clones` (deny). A crate opts
+in with `[lints] workspace = true` in its manifest when a refactor reaches
+it and stays opted in; `vault` is the first. Only `unwrap_used` is scoped
+to non-test code (via `allow-unwrap-in-tests` in `clippy.toml`): clippy
+1.98 offers no per-lint test exemption for the other lints, so opted-in
+crates keep their tests clean too.
+
+**Suppression-count ratchet.** `tools/lint-ratchet/lint_ratchet.py`
+(Python 3, stdlib only; run as `python3 -B`) counts `#[allow(...)]`,
+`#[expect(...)]`, crate-level `#![...]` and `#[cfg_attr(.., ...)]`
+suppressions in `crates/**/*.rs` per crate × lint, with test files counted
+separately, and compares against the committed
+`tools/lint-ratchet/baseline.json`. Any count above its baseline fails, as
+does a suppression for a lint absent from that crate's baseline entry;
+lowering a count is free. `--update` rewrites the baseline. The parser is
+fail-closed: anything suppression-like it cannot read (an unparseable lint
+path, an unbalanced attribute, a macro metavariable such as `$lint:meta` in
+suppression position) is an error with file:line, and `--update` refuses to
+write a baseline while such errors exist. It handles `reason = "..."`
+strings containing commas and parentheses, multi-line attributes, nested
+`cfg_attr` to any depth, whitespace around `::` and before the paren
+(`clippy :: needless_collect`, `allow (dead_code)`). Before matching, one
+normalization pass canonicalizes the token stream: whitespace/comments
+between tokens are dropped (even between `#`, `!`, `[` and the path, so
+`# [allow(..)]` counts), the `r#` raw-identifier prefix is stripped, and
+Unicode format characters (`Cf`, e.g. U+200E/U+200F) are removed; any other
+non-ASCII inside a path stays and fails closed. Suppressions written
+inside macro bodies or passed as macro arguments count, conservatively: a
+macro-emitted suppression is real, and over-counting hides nothing. The
+FlatBuffers output `crates/script/schema/generated/isolate_generated.rs` is
+explicitly exempt (regenerating it rewrites its own allows). The
+`lint-ratchet` lane in the admissions matrix runs the check plus
+`lint_ratchet.py --self-test` (the permanent parser tests in
+`tools/lint-ratchet/test_lint_ratchet.py`), and
+`tools/lint-ratchet/ci-snippet.yml` is the step to fold into the single
+`architecture`/lint CI job.
+
+Limit: the parser is a text tool, not the compiler. Exotic spellings beyond
+the normalization above are covered by clippy's `allow_attributes` lint in
+opted-in crates (the compiler sees every real attribute) and by the
+reviewer. No further parser rounds.
+
+**Adding a justified suppression.** Write
+`#[expect(lint, reason = "...")]` with a reason that says why the code
+needs it, and bump the baseline in the same diff:
+
+```bash
+python3 -B tools/lint-ratchet/lint_ratchet.py --update
+```
+
 ## Changing a boundary
 
-1. Edit [`tools/architecture/policy.toml`](../tools/architecture/policy.toml)
-   with the new or removed `[[allow]]` and a reason.
-2. Update the tables on this page so the public description matches.
-3. Run the local commands above (including `--self-test`).
-4. Get review. Do not land a graph change as a drive-by import.
+An operator commit in protected `274bot-arch` is required for a new crate
+edge (including a new target cfg or cross-crate feature request), an edge kind,
+a migration, an optional-dependency activation, a vendored path package, a client manifest change, a root patch or replacement entry, or a checker change.
+The operator edits `policy.toml` where the rule change needs it.
+First merge current `dev` into the branch being merged.
+Regenerate the baseline from that merged branch tree in the same arch commit:
+
+```bash
+python3 -B check.py --emit-provenance-baseline /path/to/merged-branch > graph-provenance.json
+```
+
+Review removed records. Retain records that other active branches still need.
+
+The operator publishes first; the product change lands after. Only the
+operator can push `274bot-arch`; agents cannot. Propose the policy edit as
+a patch or branch bundle for the operator to review and push.
+Outside the pinned client manifests, purely local features with no optional dependency or cross-crate edge need no operator commit.
+Fine ownership/seam/inventory data also needs no operator commit. Fine-data
+changes (ownership rows, inventory rows, foreign-type rows) are ordinary
+product diffs in `tools/architecture/`, reviewed like code — the checker
+loads them from the checked tree, refuses malformed or stale data, and
+cannot widen the protected edge policy.
+
+1. Update the tables on this page so the public description matches.
+2. Run the local command above (point local-only `ARCH_REPO` at a local
+   `274bot-arch` clone to prove an unpushed policy change before review).
+3. Get review. Do not land a graph change as a drive-by import.

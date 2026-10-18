@@ -251,6 +251,11 @@ impl ProgressWatchdog {
         self.wait_inflight > 0
     }
 
+    #[cfg(all(test, feature = "load"))]
+    pub(crate) fn wait_inflight(&self) -> u32 {
+        self.wait_inflight
+    }
+
     pub fn frozen(&self) -> bool {
         self.frozen
     }

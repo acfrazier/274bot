@@ -147,6 +147,31 @@ const CORE: &[(&str, Decision)] = &[
         "map_bake.rs::MapBakeGate::note_ready_without_terrain",
         Excluded("adopts the ready demand's result (no terrain) into the prompt: owner result"),
     ),
+    // map_decode.rs: frame-driven image work, not operator commands.
+    (
+        "map_decode.rs::WalkMapDecodeController::request",
+        Excluded("visible-tile PNG demand from the map frame's visible-area scan; not an operator decision"),
+    ),
+    (
+        "map_decode.rs::WalkMapDecodeController::retry_pending",
+        Excluded("bounded retry of the frame's pending PNG after capacity or visibility change; not an operator decision"),
+    ),
+    (
+        "map_decode.rs::WalkMapDecodeController::poll",
+        Excluded("frame pump consumes the visible tile's settled RGBA owner result; not an operator decision"),
+    ),
+    (
+        "map_decode.rs::WalkMapDecodeController::cancel_active",
+        Excluded("view visibility or lifecycle invalidates an accepted tile decode; not an operator decision"),
+    ),
+    (
+        "map_decode.rs::WalkMapDecodeController::discard_pending",
+        Excluded("drops the pending tile made obsolete by visible-area or image change; not an operator decision"),
+    ),
+    (
+        "map_decode.rs::WalkMapDecodeController::invalidate",
+        Excluded("map close or image, revision, or generation lifecycle invalidation; not an operator decision"),
+    ),
     // marked.rs
     ("marked.rs::assign_marked", Row(C::AssignScript)),
     ("marked.rs::assign_and_restart_marked", Row(C::AssignAndRestart)),
@@ -347,8 +372,43 @@ const CORE: &[(&str, Decision)] = &[
         "scripts/mod.rs::Scripts::mark_catalog_filled",
         Excluded("marks the first-run catalogue prompt as handled for this session (Browse open with no root to import); no durable write, the durable defer is DeferCatalogImport"),
     ),
-    ("scripts/mod.rs::Scripts::register_catalog", Row(C::ImportCatalog)),
     ("scripts/mod.rs::Scripts::fill_catalog_once", Row(C::ImportCatalog)),
+    (
+        "scripts/reload.rs::Scripts::request_catalog_fill",
+        Row(C::ImportCatalog),
+    ),
+    (
+        "scripts/reload.rs::Scripts::request_catalog_import",
+        Row(C::ImportCatalog),
+    ),
+    (
+        "scripts/reload.rs::Scripts::request_transpile",
+        Excluded("bounded background preparation for an already selected card; no operator decision"),
+    ),
+    (
+        "scripts/reload.rs::Scripts::request_external_loader_transpile",
+        Excluded("bounded background preparation for an already selected file; no operator decision"),
+    ),
+    (
+        "scripts/reload.rs::Scripts::take_catalog_import_result",
+        Excluded(RESULT),
+    ),
+    (
+        "scripts/reload.rs::Scripts::take_transpile_result",
+        Excluded(RESULT),
+    ),
+    (
+        "scripts/reload.rs::Scripts::take_external_loader_transpile_result",
+        Excluded(RESULT),
+    ),
+    (
+        "scripts/reload.rs::Scripts::fill_catalog_blocking",
+        Excluded("synchronous non-interactive live setup before the session starts"),
+    ),
+    (
+        "scripts/reload.rs::Scripts::transpile_blocking",
+        Excluded("synchronous non-interactive live setup before the session starts"),
+    ),
     (
         "scripts/mod.rs::Scripts::set_pending_browse",
         Row(C::SelectScriptCard),
@@ -679,6 +739,10 @@ const SURFACE: &[(&str, Decision)] = &[
     ("panel/main.rs::main", Excluded(PROCESS)),
     ("panel/main.rs::parse_args", Excluded(PROCESS)),
     ("panel/app.rs::fail_startup", Excluded(PROCESS)),
+    (
+        "panel/app.rs::exit_after_work_shutdown",
+        Excluded("final process exit after WorkAdmission shutdown; no operator decision"),
+    ),
     ("panel/app.rs::init_panel_running", Excluded(PROCESS)),
     ("panel/app.rs::run_panel", Excluded(PROCESS)),
     (
@@ -871,6 +935,10 @@ const SURFACE: &[(&str, Decision)] = &[
     // --- tui: process entry, harnesses ---
     ("tui/bin.rs::parse_args", Excluded(PROCESS)),
     ("tui/bin.rs::usage", Excluded(PROCESS)),
+    (
+        "tui/bin.rs::exit_after_work_shutdown",
+        Excluded("final process exit after WorkAdmission shutdown; no operator decision"),
+    ),
     ("tui/bin.rs::temp_live_vault", Excluded(HARNESS)),
     (
         "tui/bin.rs::map_bundle",
@@ -977,6 +1045,10 @@ const SURFACE: &[(&str, Decision)] = &[
     ("tui/bin.rs::TuiSession::defer_rs2b0t_catalog", Row(C::DeferCatalogImport)),
     ("tui/bin.rs::TuiSession::import_rs2b0t_catalog", Row(C::ImportCatalog)),
     (
+        "panel/session_catalog.rs::Session::settle_catalog_import",
+        Excluded("settles a completed catalog import and clears its deferred prompt marker; the Import Catalog decision was made when the import was requested"),
+    ),
+    (
         "tui/bin.rs::TuiSession::profile_import",
         Rows(
             &[
@@ -1008,6 +1080,13 @@ const SURFACE: &[(&str, Decision)] = &[
     ),
     ("tui/app.rs::TuiApp::move_script_sel", Row(C::PickBrowseCard)),
     ("tui/app.rs::TuiApp::script_click", Row(C::PickBrowseCard)),
+    (
+        "tui/bin.rs::TuiSession::poll_scripts",
+        Rows(
+            &[C::ImportCatalog, C::PreviewProfileImport],
+            "polls the requested catalog import, clears its deferred prompt marker on success, and previews the profile import when catalog preparation completes",
+        ),
+    ),
     // --- tui: map, input ---
     ("tui/bin.rs::TuiSession::open_map_catalogue", Row(C::OpenMapDemand)),
     ("tui/bin.rs::TuiSession::release_map_catalogue", Row(C::ReleaseMapDemand)),

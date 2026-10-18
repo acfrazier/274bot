@@ -3,7 +3,7 @@
 //! per loaded world, `NavLease::wrap` still fresh per call, bound
 //! exemptions equal to the router's `ZoneExempt::contains_zone`.
 
-use std::sync::Arc;
+use std::sync::{Arc, Barrier, Mutex};
 
 use api::snapshot::WorldTile;
 
@@ -316,4 +316,105 @@ fn views_of_a_legacy_world_have_no_zone_table() {
         legacy.identity().pack(),
         "the per-tick view and the lease share the world's identity"
     );
+}
+
+#[test]
+fn owner_result_ledger_holds_charge_until_the_last_alias_drops() {
+    let ledger = OwnerResultLedger::with_limits(100, 90);
+    let reservation = ledger.try_reserve_bytes(80).unwrap();
+    let result = reservation.clone().hold(String::from("owned"));
+    let alias = Arc::clone(&result);
+    drop(reservation);
+    drop(result);
+    assert_eq!(ledger.used_bytes(), 80);
+    assert_eq!(alias.value(), "owned");
+    drop(alias);
+    assert_eq!(ledger.used_bytes(), 0);
+}
+
+#[test]
+fn owner_result_ledger_refusals_leave_usage_unchanged() {
+    let ledger = OwnerResultLedger::with_limits(100, 60);
+    let oversized = match ledger.try_reserve_bytes(61) {
+        Err(refusal) => refusal,
+        Ok(_) => panic!("oversized result was reserved"),
+    };
+    assert_eq!(
+        oversized,
+        OwnerResultRefusal::TooLarge {
+            requested: 61,
+            maximum: 60,
+        }
+    );
+    let held = ledger.try_reserve_bytes(60).unwrap();
+    let full = match ledger.try_reserve_bytes(41) {
+        Err(refusal) => refusal,
+        Ok(_) => panic!("full ledger admitted another result"),
+    };
+    assert_eq!(
+        full,
+        OwnerResultRefusal::Full {
+            requested: 41,
+            used: 60,
+            capacity: 100,
+        }
+    );
+    assert_eq!(ledger.used_bytes(), 60);
+    drop(held);
+    assert_eq!(ledger.used_bytes(), 0);
+}
+
+#[test]
+fn owner_result_bytes_includes_over_aligned_arc_padding() {
+    #[repr(align(64))]
+    struct Aligned;
+
+    let ledger = OwnerResultLedger::with_limits(1024, 1024);
+    let declared = OwnerResultLedger::owner_result_bytes::<Aligned>(0).unwrap();
+    let allocations = allocation_counter::measure(|| {
+        let reservation = ledger.try_reserve_bytes(declared).unwrap();
+        let result = reservation.hold(Aligned);
+        assert_eq!(result.charged_bytes(), declared);
+        drop(result);
+    });
+    assert_eq!(usize::try_from(allocations.bytes_max).unwrap(), declared);
+    assert_eq!(allocations.bytes_current, 0);
+    assert_eq!(ledger.used_bytes(), 0);
+}
+
+#[test]
+fn final_owner_arc_drops_under_nav_lock_during_service_reservation() {
+    let ledger = Arc::new(OwnerResultLedger::with_limits(100, 100));
+    let nav = Arc::new(Mutex::new(Some(
+        ledger
+            .try_reserve_bytes(40)
+            .unwrap()
+            .hold(String::from("bank route")),
+    )));
+    let service_operation = Arc::new(Mutex::new(()));
+    let rendezvous = Arc::new(Barrier::new(2));
+
+    let worker_ledger = Arc::clone(&ledger);
+    let worker_nav = Arc::clone(&nav);
+    let worker_service = Arc::clone(&service_operation);
+    let worker_rendezvous = Arc::clone(&rendezvous);
+    let worker = std::thread::spawn(move || {
+        // Model a service operation reserving new capacity while the nav
+        // owner retires its final result Arc under the slot mutex.
+        let _service = worker_service.lock().unwrap();
+        let reservation = worker_ledger.try_reserve_bytes(60).unwrap();
+        worker_rendezvous.wait();
+        let _nav = worker_nav.lock().unwrap();
+        assert_eq!(worker_ledger.used_bytes(), 60);
+        drop(reservation);
+    });
+
+    let mut nav = nav.lock().unwrap();
+    rendezvous.wait();
+    drop(nav.take());
+    assert_eq!(ledger.used_bytes(), 60);
+    drop(nav);
+
+    worker.join().unwrap();
+    assert_eq!(ledger.used_bytes(), 0);
 }

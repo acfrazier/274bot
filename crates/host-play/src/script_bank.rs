@@ -1,14 +1,24 @@
+use api::identity::{Cancellation, PublishSequence, Scope, Settlement, WorkIdentity};
 use api::interact::Driver;
 use api::named_banks::{BankPreferences, NamedBankFacts};
+use api::process_condition::ProcessConditions;
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, WorldTile};
+use api::work::{
+    BankPickPhase, Checkpoint, CooperativeJob, InputRevision, RetainedState, StepContext,
+    StepOutcome, SubmissionRefusal, WorkAdmission, WorkCharge, WorkFamily, WorkFamilySpec,
+    WorkTicket,
+};
 use nav::bank_fetch::SAME_BANK;
+#[cfg(any(test, all(target_os = "linux", feature = "test-support")))]
+use nav::router::{find_first_with, find_many_with_avoid_bounded, find_with};
 use nav::router::{
-    find_first_with, find_many_with_avoid_bounded, find_with, FindOptions, Route,
-    BANK_TARGET_BUDGET,
+    CursorStep, FindOptions, SearchCursor, SearchOutcome, SearchPreflight, SearchRequest,
+    SearchRequestShape, BANK_TARGET_BUDGET, NODE_BUDGET,
 };
 use nav::world::NavWorld;
 use nav::WorldState;
+use script::bank::ops;
 use script::isolate_fb::BankSelectionInput;
 use script::native::HostAuthority;
 use script::native_bank::{
@@ -16,14 +26,21 @@ use script::native_bank::{
     BankPickRequest as NativeBankPickRequest, BankStandAccess, PickKind as NativePickKind,
     SelectedBank,
 };
+use script::work_admission::cancellation::WorkCancellation;
+use script::work_admission::WorkService;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use std::time::{Duration, Instant};
 
 // Host-worker ranking has a wall-time bound, not an observed-tick budget.
-// Per-frame polls may publish its fallback without PLAYER_INFO; they never
-// shorten this window or turn the selected candidate into arrival evidence.
+// Per-frame polls signal admitted work's fallback without PLAYER_INFO.
+// Unadmitted non-walking picks publish the fallback at the same deadline.
 const BANK_SELECTION_WINDOW: Duration = Duration::from_secs(5);
+
+const BANK_PICK_JOB_BYTES: usize = 192 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PickKind {
@@ -32,21 +49,23 @@ enum PickKind {
     AirFallback = 3,
     NoCandidate = 4,
 }
-struct NativeBankPickInput {
-    request: NativeBankPickRequest,
-    authority: HostAuthority,
-    evidence: EvidenceStamp,
+pub(super) struct NativeBankPickInput {
+    pub(super) request: NativeBankPickRequest,
+    pub(super) authority: HostAuthority,
+    pub(super) evidence: EvidenceStamp,
 }
 
-/// Selection completion is independent of movement. Both select-only and
-/// pick-and-walk share one worker and one latest pending replacement.
+/// Selection completion is independent of movement. Each slot retains only
+/// its latest bounded owner demand while shared WorkAdmission is full.
 #[derive(Default)]
 pub(crate) struct BankPickState {
     generation: u64,
     last_id: u64,
-    worker: Option<Arc<()>>,
-    pending: Option<BankPickJob>,
     current: Option<ActivePick>,
+    pending_cancel: Option<(WorkCancellation<BankPickSpec>, Cancellation)>,
+    pending_inline: Option<PendingInlinePick>,
+    owner_result: Option<Arc<nav::producer::OwnerResult<PickResult>>>,
+    retired_owner: Option<Arc<nav::producer::OwnerResult<PickResult>>>,
     pub(crate) posted: BankSelectionInput,
     native_receipt: Option<(HostAuthority, NativeBankPickReceipt)>,
     #[cfg(test)]
@@ -66,103 +85,147 @@ impl BankPickState {
         self.native_receipt.take()
     }
 
-    fn complete_native(
-        &mut self,
-        request: &BankPickRequest,
-        index: Option<usize>,
-        kind: PickKind,
-        access_tile: Option<WorldTile>,
-    ) {
-        let Some(native) = &request.native else {
-            return;
-        };
-        if !native.authority.live() {
-            return;
+    #[cfg(any(test, all(feature = "live-harness", feature = "test-support")))]
+    pub(crate) fn work_observation_for_test(&self) -> Option<BankPickWorkObservation> {
+        let active = self.current.as_ref()?;
+        if let Some(ticket) = active.ticket {
+            return Some(BankPickWorkObservation::Accepted {
+                identity: ticket.identity,
+                revision: ticket.revision,
+            });
         }
-        self.native_receipt = Some((
-            native.authority.clone(),
-            NativeBankPickReceipt {
-                request_id: native.authority.request_id().get(),
-                evidence: native.evidence,
-                selected: request.selected(index, kind, access_tile),
-            },
-        ));
+        let pending = active.pending_job.as_ref()?;
+        if active.submitting || active.last_submission_refusal != Some(SubmissionRefusal::Full) {
+            return None;
+        }
+        Some(BankPickWorkObservation::Full {
+            revision: pending.inner.input.revision,
+            capacity_sequence: active.capacity_sequence?,
+            charge: pending.inner.input.charge,
+        })
+    }
+
+    #[cfg(any(test, all(feature = "live-harness", feature = "test-support")))]
+    pub(crate) fn query_inputs_match_for_test(&self, other: &Self) -> bool {
+        let (Some(left), Some(right)) = (&self.current, &other.current) else {
+            return false;
+        };
+        let left = &left.job.request;
+        let right = &right.job.request;
+        left.lease.identity() == right.lease.identity()
+            && left.facts.banks() == right.facts.banks()
+            && left.from == right.from
+            && left.opts == right.opts
+            && left.state == right.state
+            && left.target_count == right.target_count
+            && left.walk_generation.is_some() == right.walk_generation.is_some()
+            && left.native.is_some() == right.native.is_some()
+            && left.order.len() == right.order.len()
+            && left
+                .order
+                .iter()
+                .zip(&right.order)
+                .all(|(left, right)| left.index == right.index && left.access == right.access)
     }
 }
 
+#[cfg(any(test, all(feature = "live-harness", feature = "test-support")))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BankPickWorkObservation {
+    Accepted {
+        identity: WorkIdentity,
+        revision: InputRevision,
+    },
+    Full {
+        revision: InputRevision,
+        capacity_sequence: PublishSequence,
+        charge: WorkCharge,
+    },
+}
+
 struct ActivePick {
-    deadline: Option<Instant>,
     job: BankPickJob,
+    scope: Scope,
+    deadline: Option<Instant>,
+    ticket: Option<BankPickTicketRef>,
+    cancellation: Option<WorkCancellation<BankPickSpec>>,
+    pending_job: Option<Box<AdmittedBankPickJob>>,
+    submitting: bool,
+    capacity_sequence: Option<PublishSequence>,
+    owner_result_full: bool,
+    #[cfg(any(test, all(feature = "live-harness", feature = "test-support")))]
+    last_submission_refusal: Option<SubmissionRefusal>,
 }
 
 #[derive(Clone)]
 struct BankPickJob {
     generation: u64,
     request: Arc<BankPickRequest>,
-    route_only: bool,
+    deadline: Option<Instant>,
+}
+
+struct PendingInlinePick {
+    generation: u64,
+    request_id: u64,
+    scope: Scope,
+    job: Option<BankPickJob>,
+    ticket: Option<BankPickTicketRef>,
+    result: PickResult,
+    posted: Option<BankSelectionInput>,
+    native_receipt: Option<(HostAuthority, NativeBankPickReceipt)>,
+}
+
+struct PickCommit {
+    generation: u64,
+    request_id: u64,
+    scope: Scope,
+    job: Option<BankPickJob>,
+    ticket: Option<BankPickTicketRef>,
+    posted: Option<BankSelectionInput>,
+    native_receipt: Option<(HostAuthority, NativeBankPickReceipt)>,
 }
 
 impl BankPickState {
+    fn advance_generation(&mut self) -> Option<u64> {
+        self.generation = self.generation.checked_add(1)?;
+        Some(self.generation)
+    }
+
     pub(crate) fn reset(&mut self) {
-        self.generation = self.generation.wrapping_add(1);
-        self.current = None;
-        self.pending = None;
+        let _ = self.advance_generation();
+        self.cancel_active(Cancellation::ScopeInvalidated);
+        self.clear_selection();
+    }
+
+    pub(crate) fn reset_for_route_replacement(&mut self) {
+        let _ = self.advance_generation();
+        self.cancel_active(Cancellation::Superseded);
+        if let Some((mut cancellation, _)) = self.pending_cancel.take() {
+            let _ = cancellation.abandon(Cancellation::Superseded);
+        }
+        self.clear_selection();
+    }
+
+    fn clear_selection(&mut self) {
+        self.pending_inline = None;
         self.last_id = 0;
+        if let Some(owner) = self.owner_result.take() {
+            debug_assert!(self.retired_owner.is_none());
+            self.retired_owner = Some(owner);
+        }
         self.posted = BankSelectionInput::default();
         self.native_receipt = None;
     }
 
-    pub(crate) fn poll(&mut self, now: Instant) -> BankSelectionInput {
-        if self
-            .current
-            .as_ref()
-            .is_some_and(|active| active.deadline.is_some_and(|deadline| now >= deadline))
-        {
-            let active = self.current.take().unwrap();
-            self.generation = self.generation.wrapping_add(1);
-            self.pending = None;
-            if active.job.request.walk_generation.is_some() {
-                // Discard the late ranking result. The same worker may make
-                // one ordinary attempt to the captured air fallback afterward.
-                let job = BankPickJob {
-                    generation: self.generation,
-                    route_only: true,
-                    ..active.job
-                };
-                self.pending = Some(job.clone());
-                self.current = Some(ActivePick {
-                    deadline: None,
-                    job,
-                });
-            } else if active.job.request.native.is_some() {
-                self.complete_native(
-                    &active.job.request,
-                    active.job.request.first(),
-                    PickKind::AirFallback,
-                    None,
-                );
+    fn cancel_active(&mut self, reason: Cancellation) {
+        if let Some(mut active) = self.current.take() {
+            if let Some(cancellation) = active.cancellation.take() {
+                debug_assert!(self.pending_cancel.is_none());
+                self.pending_cancel = Some((cancellation, reason));
             } else {
-                self.posted = active
-                    .job
-                    .result(active.job.request.first(), PickKind::AirFallback);
+                debug_assert!(active.ticket.is_none());
             }
         }
-        self.posted
-    }
-
-    fn complete(&mut self, job: &BankPickJob, result: &PickResult, now: Instant) -> bool {
-        self.poll(now);
-        if self.generation != job.generation || self.current.is_none() {
-            return false;
-        }
-        if job.request.walk_generation.is_none() {
-            if job.request.native.is_some() {
-                self.complete_native(&job.request, result.index, result.kind, result.access_tile);
-            } else {
-                self.posted = job.result(result.index, result.kind);
-            }
-        }
-        true
     }
 }
 
@@ -176,26 +239,1130 @@ struct BankCandidate {
     index: usize,
     access: Option<(Vec<WorldTile>, BankStandAccess)>,
 }
+struct BankCandidates {
+    order: Vec<BankCandidate>,
+    target_count: usize,
+}
 
 struct BankPickRequest {
     request_id: u64,
-    world: Arc<NavWorld>,
+    lease: nav::contract::NavLease,
     facts: Arc<NamedBankFacts>,
     from: WorldTile,
     opts: FindOptions,
-    state: WorldState,
+    state: Arc<WorldState>,
+    timeout_fallback: AtomicBool,
     order: Vec<BankCandidate>,
+    target_count: usize,
     walk_generation: Option<u64>,
     native: Option<NativePickContext>,
-    #[cfg(test)]
-    test_gate: Option<Arc<tests::Gate>>,
 }
 
-struct PickResult {
+pub(super) struct CompactPlan {
+    pub(super) lease: nav::contract::RoutePlanLease,
+}
+
+#[cfg(any(test, all(target_os = "linux", feature = "test-support")))]
+struct LegacyPickResult {
     index: Option<usize>,
     access_tile: Option<WorldTile>,
     kind: PickKind,
-    route: Option<Route>,
+    route: Option<nav::router::Route>,
+}
+
+pub(super) struct PickResult {
+    index: Option<usize>,
+    access_tile: Option<WorldTile>,
+    kind: PickKind,
+    route: Option<nav::router::CompactRoute>,
+    nav_lease: Option<nav::contract::NavLease>,
+    plan: Option<CompactPlan>,
+}
+
+impl PickResult {
+    fn plain(index: Option<usize>, access_tile: Option<WorldTile>, kind: PickKind) -> Self {
+        Self {
+            index,
+            access_tile,
+            kind,
+            route: None,
+            nav_lease: None,
+            plan: None,
+        }
+    }
+
+    fn owner_result_bytes(&self) -> Option<usize> {
+        let retained = self
+            .route
+            .as_ref()
+            .map_or(Some(0), nav::producer::compact_route_storage_bytes)?;
+        nav::producer::OwnerResultLedger::owner_result_bytes::<Self>(retained)
+    }
+
+    fn into_owner_result(
+        mut self,
+        identity: WorkIdentity,
+        revision: InputRevision,
+        reservation: nav::producer::OwnerResultReservation,
+    ) -> Arc<nav::producer::OwnerResult<Self>> {
+        if let Some(route) = self.route.take() {
+            let lease = self
+                .nav_lease
+                .take()
+                .expect("a routed bank pick retains its navigation lease");
+            self.plan = Some(CompactPlan {
+                lease: nav::producer::publish_compact_route(
+                    &lease,
+                    identity,
+                    revision,
+                    route,
+                    reservation.clone(),
+                ),
+            });
+        }
+        reservation.hold(self)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct BankPickInput {
+    revision: InputRevision,
+    charge: WorkCharge,
+    base_input_bytes: usize,
+}
+
+struct BankPickSpec;
+
+const _: () = {
+    fn assert_send_sync<T: Send + Sync>() {}
+    let _ = assert_send_sync::<BankPickSpec>;
+    let _ = assert_send_sync::<WorkCancellation<BankPickSpec>>;
+};
+
+impl WorkFamilySpec for BankPickSpec {
+    const FAMILY: WorkFamily = WorkFamily::BankPick;
+    type Input = BankPickInput;
+    type Output = PickResult;
+    type Error = std::convert::Infallible;
+    type Phase = BankPickPhase;
+
+    fn revision(input: &Self::Input) -> InputRevision {
+        input.revision
+    }
+
+    fn charge(input: &Self::Input) -> WorkCharge {
+        input.charge
+    }
+
+    fn map_cancellation(reason: Cancellation) -> Cancellation {
+        reason
+    }
+}
+
+// Keep only scalar ticket data in seam state. The WorkTicket marker contains
+// a function pointer, so reconstruct its exact type for each service operation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BankPickTicketRef {
+    identity: WorkIdentity,
+    revision: InputRevision,
+}
+
+impl BankPickTicketRef {
+    fn from_ticket(ticket: WorkTicket<BankPickSpec>) -> Self {
+        Self {
+            identity: ticket.identity(),
+            revision: ticket.revision(),
+        }
+    }
+
+    fn ticket(self) -> WorkTicket<BankPickSpec> {
+        WorkTicket::new(self.identity, self.revision)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BankPickStage {
+    StartSearch,
+    MaterializeTargets,
+    Search,
+    ResolveFirst,
+    ResolveManyBest,
+    ResolveMany,
+    Finish,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BankPickSearchKind {
+    Single,
+    Many,
+    First,
+}
+type BankPickTargetResult = Result<nav::router::TargetCost, nav::router::TargetError>;
+
+struct BankPickSearchPreflight {
+    kind: BankPickSearchKind,
+    token: SearchPreflight,
+}
+
+struct BankPickPreflights {
+    primary: Option<BankPickSearchPreflight>,
+    fallback: Option<SearchPreflight>,
+}
+
+struct CooperativeBankPickJob {
+    job: BankPickJob,
+    input: BankPickInput,
+    lease: Option<nav::contract::NavLease>,
+    stage: BankPickStage,
+    search_kind: Option<BankPickSearchKind>,
+    search_preflights: BankPickPreflights,
+    search_request: Option<SearchRequest>,
+    target_buffer: Option<Vec<WorldTile>>,
+    build_order: usize,
+    build_access: usize,
+    cursor: Option<SearchCursor>,
+    scan_order: usize,
+    scan_target: usize,
+    best_scan: usize,
+    best_cost: f64,
+    first_target: Option<usize>,
+    first_access_tile: Option<WorldTile>,
+    first_order: usize,
+    first_access: usize,
+    pending_route: Option<nav::router::CompactRoute>,
+    pending_many_results: Option<Box<[BankPickTargetResult]>>,
+    result: Option<PickResult>,
+    fallback_started: bool,
+}
+impl CooperativeBankPickJob {
+    fn new(job: BankPickJob, input: BankPickInput, preflights: BankPickPreflights) -> Self {
+        let search_kind = preflights.primary.as_ref().map(|primary| primary.kind);
+        Self {
+            lease: Some(job.request.lease.clone()),
+            job,
+            input,
+            stage: BankPickStage::StartSearch,
+            search_kind,
+            search_preflights: preflights,
+            search_request: None,
+            target_buffer: None,
+            build_order: 0,
+            build_access: 0,
+            cursor: None,
+            scan_order: 0,
+            scan_target: 0,
+            best_scan: 0,
+            best_cost: f64::INFINITY,
+            first_target: None,
+            first_access_tile: None,
+            first_order: 0,
+            first_access: 0,
+            pending_route: None,
+            pending_many_results: None,
+            result: None,
+            fallback_started: false,
+        }
+    }
+
+    fn record_result(
+        &mut self,
+        index: Option<usize>,
+        access_tile: Option<WorldTile>,
+        kind: PickKind,
+        route: Option<nav::router::CompactRoute>,
+    ) -> PickResult {
+        PickResult {
+            index,
+            access_tile,
+            kind,
+            route,
+            nav_lease: None,
+            plan: None,
+        }
+    }
+
+    fn release_search_storage(&mut self, keep_fallback: bool) {
+        self.cursor = None;
+        self.search_request = None;
+        self.target_buffer = None;
+        self.search_preflights.primary = None;
+        if !keep_fallback {
+            self.search_preflights.fallback = None;
+        }
+    }
+
+    fn start_fallback_search(&mut self) {
+        self.fallback_started = true;
+        self.release_search_storage(true);
+        self.pending_route = None;
+        self.pending_many_results = None;
+        self.result = None;
+        self.first_target = None;
+        self.first_access_tile = None;
+        self.search_kind = Some(BankPickSearchKind::Single);
+        self.search_request = self.job.request.single_search_request();
+        if self.search_request.is_some() {
+            self.stage = BankPickStage::StartSearch;
+        } else {
+            self.search_preflights.fallback = None;
+            let index = self.job.request.first();
+            self.result = Some(self.record_result(
+                index,
+                None,
+                if index.is_some() {
+                    PickKind::AirFallback
+                } else {
+                    PickKind::NoCandidate
+                },
+                None,
+            ));
+            self.stage = BankPickStage::Finish;
+        }
+    }
+
+    fn start_timeout_fallback(&mut self) {
+        if self.job.request.walk_generation.is_some() {
+            self.start_fallback_search();
+            return;
+        }
+        self.fallback_started = true;
+        self.release_search_storage(false);
+        self.pending_route = None;
+        self.pending_many_results = None;
+        self.first_target = None;
+        self.first_access_tile = None;
+        self.search_kind = None;
+        self.result =
+            Some(self.record_result(self.job.request.first(), None, PickKind::AirFallback, None));
+        self.stage = BankPickStage::Finish;
+    }
+
+    fn timeout_fallback_due(&self, now: Instant) -> bool {
+        !self.fallback_started
+            && (self.timeout_fallback_signaled()
+                || self.job.deadline.is_some_and(|deadline| now >= deadline))
+    }
+
+    fn timeout_fallback_signaled(&self) -> bool {
+        !self.fallback_started && self.job.request.timeout_fallback.load(Ordering::Acquire)
+    }
+
+    fn search_error(&mut self, kind: BankPickSearchKind) {
+        self.release_search_storage(
+            matches!(kind, BankPickSearchKind::Many) && self.job.request.walk_generation.is_some(),
+        );
+        self.search_kind = None;
+        match kind {
+            BankPickSearchKind::First => {
+                self.result = Some(self.record_result(None, None, PickKind::NoCandidate, None));
+                self.stage = BankPickStage::Finish;
+            }
+            BankPickSearchKind::Many if self.job.request.walk_generation.is_some() => {
+                self.start_fallback_search();
+            }
+            BankPickSearchKind::Many | BankPickSearchKind::Single => {
+                let index = self.job.request.first();
+                self.result = Some(self.record_result(
+                    index,
+                    None,
+                    if index.is_some() {
+                        PickKind::AirFallback
+                    } else {
+                        PickKind::NoCandidate
+                    },
+                    None,
+                ));
+                self.stage = BankPickStage::Finish;
+            }
+        }
+    }
+
+    fn checkpoint(
+        &mut self,
+        checkpoint: Checkpoint,
+    ) -> Option<StepOutcome<PickResult, std::convert::Infallible>> {
+        match checkpoint {
+            Checkpoint::Continue => None,
+            Checkpoint::Yield => Some(StepOutcome::Yielded),
+            Checkpoint::Cancel(_) => {
+                self.release_search_storage(false);
+                self.pending_route = None;
+                self.pending_many_results = None;
+                self.result = None;
+                self.first_target = None;
+                self.first_access_tile = None;
+                self.search_kind = None;
+                self.lease = None;
+                Some(StepOutcome::Yielded)
+            }
+        }
+    }
+
+    fn consume_unit(
+        &mut self,
+        ctx: &mut StepContext<'_, BankPickPhase>,
+    ) -> Option<StepOutcome<PickResult, std::convert::Infallible>> {
+        self.checkpoint(ctx.consume_unit())
+    }
+
+    fn begin_search_materialization(
+        &mut self,
+        kind: BankPickSearchKind,
+    ) -> Result<(), BankPickSearchKind> {
+        match kind {
+            BankPickSearchKind::Single => {
+                self.search_request = self.job.request.single_search_request();
+                if self.search_request.is_none() {
+                    return Err(kind);
+                }
+                Ok(())
+            }
+            BankPickSearchKind::Many | BankPickSearchKind::First => {
+                let mut targets = Vec::new();
+                targets
+                    .try_reserve_exact(self.job.request.target_count)
+                    .map_err(|_| kind)?;
+                self.target_buffer = Some(targets);
+                self.build_order = 0;
+                self.build_access = 0;
+                self.stage = BankPickStage::MaterializeTargets;
+                Ok(())
+            }
+        }
+    }
+
+    fn materialize_target_or_row(&mut self, kind: BankPickSearchKind) -> Result<(), ()> {
+        let request = &self.job.request;
+        let target = match kind {
+            BankPickSearchKind::Many => {
+                let Some(candidate) = request.order.get(self.build_order) else {
+                    return Ok(());
+                };
+                self.build_order += 1;
+                request.facts.banks()[candidate.index]
+                    .routable
+                    .then_some(request.facts.banks()[candidate.index].tile)
+            }
+            BankPickSearchKind::First => {
+                let Some(candidate) = request.order.get(self.build_order) else {
+                    return Ok(());
+                };
+                match candidate.access.as_ref() {
+                    Some((tiles, _)) if self.build_access < tiles.len() => {
+                        let target = tiles[self.build_access];
+                        self.build_access += 1;
+                        Some(target)
+                    }
+                    _ => {
+                        self.build_order += 1;
+                        self.build_access = 0;
+                        None
+                    }
+                }
+            }
+            BankPickSearchKind::Single => unreachable!("single searches have no target array"),
+        };
+        if let Some(target) = target {
+            let targets = self
+                .target_buffer
+                .as_mut()
+                .expect("target array is being built");
+            if targets.len() >= request.target_count {
+                return Err(());
+            }
+            targets.push(target);
+        }
+        Ok(())
+    }
+
+    fn finish_target_materialization(&mut self, kind: BankPickSearchKind) -> Result<(), ()> {
+        let targets = self
+            .target_buffer
+            .as_ref()
+            .expect("target array is being built");
+        if targets.len() != self.job.request.target_count {
+            return Err(());
+        }
+        let targets = self
+            .target_buffer
+            .take()
+            .expect("target array is being built")
+            .into_boxed_slice();
+        self.search_request = Some(match kind {
+            BankPickSearchKind::Many => SearchRequest::Many {
+                from: self.job.request.from,
+                targets,
+                options: self.job.request.opts,
+                avoid: Box::default(),
+                max_settles: BANK_TARGET_BUDGET,
+                reconstruct_best: self.job.request.walk_generation.is_some(),
+            },
+            BankPickSearchKind::First => {
+                let mut options = self.job.request.opts;
+                options.allow_teleports = false;
+                SearchRequest::First {
+                    from: self.job.request.from,
+                    targets,
+                    fallback: Box::default(),
+                    options,
+                    avoid: Box::default(),
+                    max_settles: NODE_BUDGET,
+                }
+            }
+            BankPickSearchKind::Single => unreachable!("single searches have no target array"),
+        });
+        Ok(())
+    }
+
+    fn current_preflight(&mut self) -> Option<SearchPreflight> {
+        if self.fallback_started {
+            self.search_preflights.fallback.take()
+        } else {
+            self.search_preflights
+                .primary
+                .take()
+                .map(|primary| primary.token)
+        }
+    }
+}
+
+impl CooperativeJob for CooperativeBankPickJob {
+    type Output = PickResult;
+    type Error = std::convert::Infallible;
+    type Phase = BankPickPhase;
+
+    fn retained(&self) -> RetainedState {
+        let mut retained = self.input.base_input_bytes;
+        let target_bytes = self.target_buffer.as_ref().map_or(0, |targets| {
+            targets
+                .capacity()
+                .saturating_mul(std::mem::size_of::<WorldTile>())
+        });
+        let request_bytes = self.search_request.as_ref().map_or(0, |request| {
+            request.retained_input_bytes().unwrap_or(usize::MAX)
+        });
+        let cursor_bytes = self.cursor.as_ref().map_or(0, |cursor| {
+            cursor
+                .input_bytes()
+                .saturating_add(cursor.future_layout_bytes())
+                .saturating_add(cursor.retained_bytes())
+        });
+        let route_bytes = self.pending_route.as_ref().map_or(0, |route| {
+            nav::producer::compact_route_storage_bytes(route).unwrap_or(usize::MAX)
+        });
+        let result_bytes = self.result.as_ref().map_or(0, |result| {
+            result.route.as_ref().map_or(0, |route| {
+                nav::producer::compact_route_storage_bytes(route).unwrap_or(usize::MAX)
+            })
+        });
+        let many_result_bytes = self.pending_many_results.as_ref().map_or(0, |results| {
+            results
+                .len()
+                .saturating_mul(std::mem::size_of::<BankPickTargetResult>())
+        });
+        for bytes in [
+            target_bytes,
+            request_bytes,
+            cursor_bytes,
+            route_bytes,
+            result_bytes,
+            many_result_bytes,
+        ] {
+            retained = retained.saturating_add(bytes);
+        }
+        RetainedState::clean(retained)
+    }
+
+    fn step(
+        &mut self,
+        ctx: &mut StepContext<'_, Self::Phase>,
+    ) -> StepOutcome<Self::Output, Self::Error> {
+        if let Some(outcome) = self.checkpoint(ctx.checkpoint()) {
+            return outcome;
+        }
+        if self.timeout_fallback_due(Instant::now()) {
+            self.start_timeout_fallback();
+        }
+        loop {
+            if self.timeout_fallback_signaled() {
+                self.start_timeout_fallback();
+                continue;
+            }
+            match self.stage {
+                BankPickStage::StartSearch => {
+                    if let Some(outcome) = self.checkpoint(ctx.checkpoint()) {
+                        return outcome;
+                    }
+                    if self.search_request.is_none() {
+                        let Some(kind) = self.search_kind else {
+                            self.search_error(BankPickSearchKind::Single);
+                            continue;
+                        };
+                        if let Err(kind) = self.begin_search_materialization(kind) {
+                            self.search_error(kind);
+                            continue;
+                        }
+                        if self.stage == BankPickStage::MaterializeTargets {
+                            if let Some(outcome) = self.consume_unit(ctx) {
+                                return outcome;
+                            }
+                            continue;
+                        }
+                    }
+                    let Some(request) = self.search_request.take() else {
+                        self.search_error(self.search_kind.unwrap_or(BankPickSearchKind::Single));
+                        continue;
+                    };
+                    let kind = match &request {
+                        SearchRequest::Single { .. } => BankPickSearchKind::Single,
+                        SearchRequest::Many { .. } => BankPickSearchKind::Many,
+                        SearchRequest::First { .. } => BankPickSearchKind::First,
+                        SearchRequest::MissingItemReqs { .. }
+                        | SearchRequest::MissingItemReqsForRoute { .. }
+                        | SearchRequest::BlockingZones { .. }
+                        | SearchRequest::UnresolvedQuestGates { .. } => {
+                            unreachable!("bank-pick request uses a route search variant")
+                        }
+                    };
+                    let Some(preflight) = self.current_preflight() else {
+                        drop(request);
+                        self.search_error(kind);
+                        continue;
+                    };
+                    match SearchCursor::new_preflighted(
+                        request,
+                        self.job.request.lease.clone(),
+                        Arc::clone(&self.job.request.state),
+                        preflight,
+                    ) {
+                        Ok(cursor) => {
+                            self.cursor = Some(cursor);
+                            self.stage = BankPickStage::Search;
+                            if let Some(outcome) = self.consume_unit(ctx) {
+                                return outcome;
+                            }
+                        }
+                        Err(_) => {
+                            self.search_error(kind);
+                        }
+                    }
+                }
+                BankPickStage::MaterializeTargets => {
+                    if let Some(outcome) = self.checkpoint(ctx.checkpoint()) {
+                        return outcome;
+                    }
+                    let kind = self
+                        .search_kind
+                        .expect("materializing search retains its shape kind");
+                    if self.build_order >= self.job.request.order.len() {
+                        if self.finish_target_materialization(kind).is_err() {
+                            self.search_error(kind);
+                            continue;
+                        }
+                        self.stage = BankPickStage::StartSearch;
+                    } else if self.materialize_target_or_row(kind).is_err() {
+                        self.search_error(kind);
+                        continue;
+                    }
+                    if let Some(outcome) = self.consume_unit(ctx) {
+                        return outcome;
+                    }
+                }
+                BankPickStage::Search => {
+                    let step = self
+                        .cursor
+                        .as_mut()
+                        .expect("active bank-pick search retains its cursor")
+                        .advance(ctx);
+                    match step {
+                        CursorStep::Yielded => {
+                            return self
+                                .checkpoint(ctx.checkpoint())
+                                .unwrap_or(StepOutcome::Yielded);
+                        }
+                        CursorStep::Cancelled(reason) => {
+                            return self
+                                .checkpoint(Checkpoint::Cancel(reason))
+                                .unwrap_or(StepOutcome::Yielded);
+                        }
+                        CursorStep::Failed(_) => {
+                            let kind = self
+                                .search_kind
+                                .expect("active bank-pick search retains its shape kind");
+                            self.search_error(kind);
+                        }
+                        CursorStep::Complete(completion) => {
+                            let forward_settled = completion.forward_settled();
+                            if self.timeout_fallback_due(Instant::now()) {
+                                drop(completion);
+                                self.start_timeout_fallback();
+                                continue;
+                            }
+                            self.cursor = None;
+                            let (outcome, state) = completion.into_parts();
+                            drop(state);
+                            match outcome {
+                                SearchOutcome::Single { route } => {
+                                    let index = self.job.request.first();
+                                    let mut result = match route {
+                                        Ok(route) => self.record_result(
+                                            index,
+                                            None,
+                                            PickKind::AirFallback,
+                                            Some(route),
+                                        ),
+                                        Err(_) => self.record_result(
+                                            index,
+                                            None,
+                                            PickKind::AirFallback,
+                                            None,
+                                        ),
+                                    };
+                                    if result.route.is_some() {
+                                        result.nav_lease = self.lease.take();
+                                    }
+                                    self.result = Some(result);
+                                    self.stage = BankPickStage::Finish;
+                                }
+                                SearchOutcome::First { search } => match search.into_routes().0 {
+                                    Ok(route) => {
+                                        let access_tile = route.destination();
+                                        drop(route);
+                                        self.first_access_tile = Some(access_tile);
+                                        self.first_order = 0;
+                                        self.first_access = 0;
+                                        self.stage = BankPickStage::ResolveFirst;
+                                    }
+                                    Err(_) => {
+                                        self.result = Some(self.record_result(
+                                            None,
+                                            None,
+                                            PickKind::NoCandidate,
+                                            None,
+                                        ));
+                                        self.stage = BankPickStage::Finish;
+                                    }
+                                },
+                                SearchOutcome::Many { results, best } => {
+                                    if let Some((target, route)) = best {
+                                        drop(results);
+                                        self.first_target = Some(target);
+                                        self.pending_route = Some(route);
+                                        self.scan_order = 0;
+                                        self.scan_target = 0;
+                                        self.stage = BankPickStage::ResolveMany;
+                                    } else if self.job.request.walk_generation.is_some() {
+                                        drop(results);
+                                        self.start_fallback_search();
+                                    } else {
+                                        self.pending_many_results = Some(results);
+                                        self.best_scan = 0;
+                                        self.best_cost = f64::INFINITY;
+                                        self.first_target = None;
+                                        self.stage = BankPickStage::ResolveManyBest;
+                                    }
+                                }
+                                SearchOutcome::MissingItemReqs(_)
+                                | SearchOutcome::MissingItemReqsForRoute { .. }
+                                | SearchOutcome::BlockingZones(_)
+                                | SearchOutcome::UnresolvedQuestGates(_) => {
+                                    unreachable!("bank-pick search returns a route outcome")
+                                }
+                            }
+                            if forward_settled > 0 {
+                                ctx.publish_progress(
+                                    BankPickPhase::Search,
+                                    u32::try_from(forward_settled)
+                                        .expect("bank search settlement counts fit u32"),
+                                    None,
+                                );
+                            }
+                            if let Some(outcome) = self.checkpoint(ctx.checkpoint()) {
+                                return outcome;
+                            }
+                        }
+                    }
+                }
+                BankPickStage::ResolveFirst => {
+                    let Some(target) = self.first_access_tile else {
+                        self.result =
+                            Some(self.record_result(None, None, PickKind::NoCandidate, None));
+                        self.stage = BankPickStage::Finish;
+                        continue;
+                    };
+                    if self.first_order >= self.job.request.order.len() {
+                        self.result =
+                            Some(self.record_result(None, Some(target), PickKind::Reachable, None));
+                        self.stage = BankPickStage::Finish;
+                        continue;
+                    }
+                    let candidate = &self.job.request.order[self.first_order];
+                    match candidate.access.as_ref() {
+                        Some((tiles, _)) if self.first_access < tiles.len() => {
+                            let access_tile = tiles[self.first_access];
+                            self.first_access += 1;
+                            if access_tile == target {
+                                self.result = Some(self.record_result(
+                                    Some(candidate.index),
+                                    Some(access_tile),
+                                    PickKind::Reachable,
+                                    None,
+                                ));
+                                self.stage = BankPickStage::Finish;
+                            }
+                        }
+                        _ => {
+                            self.first_order += 1;
+                            self.first_access = 0;
+                        }
+                    }
+                    if let Some(outcome) = self.consume_unit(ctx) {
+                        return outcome;
+                    }
+                }
+                BankPickStage::ResolveManyBest => {
+                    let result_count = self
+                        .pending_many_results
+                        .as_ref()
+                        .expect("non-reconstructing many search retains its bounded results")
+                        .len();
+                    if self.best_scan >= result_count {
+                        self.pending_many_results = None;
+                        if self.first_target.is_some() {
+                            self.scan_order = 0;
+                            self.scan_target = 0;
+                            self.stage = BankPickStage::ResolveMany;
+                        } else {
+                            self.result = Some(self.record_result(
+                                self.job.request.first(),
+                                None,
+                                PickKind::AirFallback,
+                                None,
+                            ));
+                            self.stage = BankPickStage::Finish;
+                        }
+                        continue;
+                    }
+                    let ticks = self
+                        .pending_many_results
+                        .as_ref()
+                        .expect("non-reconstructing many search retains its bounded results")
+                        .get(self.best_scan)
+                        .and_then(|result| result.as_ref().ok())
+                        .map(|result| result.ticks);
+                    if let Some(ticks) = ticks {
+                        if ticks < self.best_cost {
+                            self.best_cost = ticks;
+                            self.first_target = Some(self.best_scan);
+                        }
+                    }
+                    self.best_scan += 1;
+                    if let Some(outcome) = self.consume_unit(ctx) {
+                        return outcome;
+                    }
+                }
+                BankPickStage::ResolveMany => {
+                    let Some(target) = self.first_target else {
+                        unreachable!("settled many-target outcome retains its target index");
+                    };
+                    if self.scan_order >= self.job.request.order.len() {
+                        unreachable!("many-target index maps to a bank candidate");
+                    }
+                    let candidate = &self.job.request.order[self.scan_order];
+                    self.scan_order += 1;
+                    if self.job.request.facts.banks()[candidate.index].routable {
+                        let flat = self.scan_target;
+                        self.scan_target += 1;
+                        if flat == target {
+                            let route = if self.job.request.walk_generation.is_some() {
+                                Some(
+                                    self.pending_route
+                                        .take()
+                                        .expect("walk search reconstructs its selected route"),
+                                )
+                            } else {
+                                self.pending_route = None;
+                                None
+                            };
+                            let mut result = self.record_result(
+                                Some(candidate.index),
+                                None,
+                                PickKind::Reachable,
+                                route,
+                            );
+                            if result.route.is_some() {
+                                result.nav_lease = self.lease.take();
+                            }
+                            self.result = Some(result);
+                            self.stage = BankPickStage::Finish;
+                        }
+                    }
+                    if let Some(outcome) = self.consume_unit(ctx) {
+                        return outcome;
+                    }
+                }
+                BankPickStage::Finish => {
+                    if let Some(outcome) = self.checkpoint(ctx.checkpoint()) {
+                        return outcome;
+                    }
+                    let _ = self
+                        .result
+                        .as_ref()
+                        .expect("completed bank pick has a result");
+                    ctx.publish_progress(BankPickPhase::Post, 1, Some(1));
+                    if let Some(outcome) = self.checkpoint(ctx.checkpoint()) {
+                        return outcome;
+                    }
+                    if self.timeout_fallback_due(Instant::now()) {
+                        self.start_timeout_fallback();
+                        continue;
+                    }
+                    self.search_preflights.primary = None;
+                    self.search_preflights.fallback = None;
+                    self.search_kind = None;
+                    self.search_request = None;
+                    self.target_buffer = None;
+                    return StepOutcome::Completed(
+                        self.result
+                            .take()
+                            .expect("completed bank pick retains its result"),
+                    );
+                }
+            }
+        }
+    }
+}
+
+struct BankPickWorkerJob<J> {
+    inner: J,
+    thread_name: String,
+    #[cfg(test)]
+    gate: Option<BankPickStepGate>,
+}
+
+type AdmittedBankPickJob = BankPickWorkerJob<CooperativeBankPickJob>;
+
+impl<J> BankPickWorkerJob<J> {
+    fn new(name: &str, inner: J) -> Self {
+        let mut thread_name = String::with_capacity("bank-pick-".len() + name.len());
+        thread_name.push_str("bank-pick-");
+        thread_name.push_str(name);
+        Self {
+            inner,
+            thread_name,
+            #[cfg(test)]
+            gate: None,
+        }
+    }
+
+    #[cfg(test)]
+    fn gated(name: &str, inner: J, gate: BankPickStepGate) -> Self {
+        let mut job = Self::new(name, inner);
+        job.gate = Some(gate);
+        job
+    }
+}
+
+#[cfg(test)]
+struct BankPickStepGate {
+    entered: std::sync::mpsc::SyncSender<()>,
+    release: std::sync::mpsc::Receiver<()>,
+}
+
+impl<J> CooperativeJob for BankPickWorkerJob<J>
+where
+    J: CooperativeJob<Output = PickResult, Error = std::convert::Infallible, Phase = BankPickPhase>,
+{
+    type Output = PickResult;
+    type Error = std::convert::Infallible;
+    type Phase = BankPickPhase;
+
+    fn request_thread(&self) -> Option<api::work::RequestThread<'_>> {
+        Some(api::work::RequestThread::new(&self.thread_name))
+    }
+
+    fn retained(&self) -> RetainedState {
+        self.inner.retained()
+    }
+
+    fn step(
+        &mut self,
+        context: &mut StepContext<'_, Self::Phase>,
+    ) -> StepOutcome<Self::Output, Self::Error> {
+        let outcome = self.inner.step(context);
+        #[cfg(test)]
+        if let Some(gate) = self.gate.take() {
+            gate.entered
+                .send(())
+                .expect("bank-pick worker gate receiver remains alive");
+            gate.release
+                .recv_timeout(Duration::from_secs(4))
+                .expect("bank-pick worker gate is released before its bound");
+        }
+        outcome
+    }
+}
+
+impl BankPickWorkerJob<CooperativeBankPickJob> {
+    fn for_job(
+        name: &str,
+        job: BankPickJob,
+        input: BankPickInput,
+        preflights: BankPickPreflights,
+    ) -> Self {
+        Self::new(name, CooperativeBankPickJob::new(job, input, preflights))
+    }
+}
+
+impl BankPickRequest {
+    fn single_search_request(&self) -> Option<SearchRequest> {
+        let index = self.first()?;
+        Some(SearchRequest::Single {
+            from: self.from,
+            to: self.facts.banks()[index].tile,
+            options: self.opts,
+            avoid: Box::default(),
+            max_settles: NODE_BUDGET,
+        })
+    }
+
+    fn single_search_shape(&self) -> Option<SearchRequestShape> {
+        self.first()?;
+        Some(SearchRequestShape::Single {
+            options: self.opts,
+            avoid_capacity: 0,
+            max_settles: NODE_BUDGET,
+        })
+    }
+
+    fn search_shape(&self, route_only: bool) -> Option<(BankPickSearchKind, SearchRequestShape)> {
+        if route_only {
+            return Some((BankPickSearchKind::Single, self.single_search_shape()?));
+        }
+        if self.native.is_some() {
+            let mut options = self.opts;
+            options.allow_teleports = false;
+            return Some((
+                BankPickSearchKind::First,
+                SearchRequestShape::First {
+                    target_capacity: self.target_count,
+                    fallback_capacity: 0,
+                    options,
+                    avoid_capacity: 0,
+                    max_settles: NODE_BUDGET,
+                },
+            ));
+        }
+        if self.target_count == 0 {
+            return if self.walk_generation.is_some() {
+                Some((BankPickSearchKind::Single, self.single_search_shape()?))
+            } else {
+                None
+            };
+        }
+        Some((
+            BankPickSearchKind::Many,
+            SearchRequestShape::Many {
+                target_capacity: self.target_count,
+                options: self.opts,
+                avoid_capacity: 0,
+                max_settles: BANK_TARGET_BUDGET,
+                reconstruct_best: self.walk_generation.is_some(),
+            },
+        ))
+    }
+
+    fn work_input(
+        &self,
+        revision: u64,
+        route_only: bool,
+        name: &str,
+    ) -> Option<(BankPickInput, BankPickPreflights)> {
+        let (kind, shape) = self.search_shape(route_only)?;
+        let primary = SearchCursor::preflight(shape, &self.lease, &self.state)?;
+        let fallback = if self.walk_generation.is_some() {
+            let fallback_shape = self.single_search_shape()?;
+            Some(SearchCursor::preflight(
+                fallback_shape,
+                &self.lease,
+                &self.state,
+            )?)
+        } else {
+            None
+        };
+
+        let mut base_input_bytes = std::mem::size_of::<Self>()
+            .checked_add(std::mem::size_of::<ActivePick>())?
+            .checked_add(std::mem::size_of::<AdmittedBankPickJob>())?
+            .checked_add("bank-pick-".len().checked_add(name.len())?)?
+            .checked_add(2 * std::mem::size_of::<usize>())?
+            .checked_add(
+                self.order
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<BankCandidate>())?,
+            )?
+            .checked_add(self.state.try_shared_retained_bytes()?)?;
+        for candidate in &self.order {
+            if let Some((tiles, access)) = &candidate.access {
+                base_input_bytes = base_input_bytes
+                    .checked_add(
+                        tiles
+                            .capacity()
+                            .checked_mul(std::mem::size_of::<WorldTile>())?,
+                    )?
+                    .checked_add(access.name.as_ref().map_or(0, |name| {
+                        name.len().saturating_add(2 * std::mem::size_of::<usize>())
+                    }))?
+                    .checked_add(access.choose.as_ref().map_or(0, |choose| {
+                        choose
+                            .len()
+                            .saturating_add(2 * std::mem::size_of::<usize>())
+                    }))?;
+            }
+        }
+
+        // The preflight peak includes the co-live search, backtrace, and
+        // result heap. `result_bytes` is an output bound, not another charge.
+        let phase_charge = |preflight: &SearchPreflight| -> Option<WorkCharge> {
+            let reservation = preflight.reservation();
+            let input_bytes = base_input_bytes
+                .checked_add(preflight.input_bytes())?
+                .checked_add(reservation.future_layout_bytes)?;
+            Some(WorkCharge::new(input_bytes, reservation.peak_bytes, 0, 0))
+        };
+        let primary_charge = phase_charge(&primary)?;
+        let fallback_charge = match fallback.as_ref() {
+            Some(preflight) => Some(phase_charge(preflight)?),
+            None => None,
+        };
+        let primary_total = primary_charge.total_bytes()?;
+        let fallback_total = match fallback_charge {
+            Some(charge) => charge.total_bytes()?,
+            None => 0,
+        };
+        let charge = if fallback_total > primary_total {
+            fallback_charge.expect("a larger fallback charge is present")
+        } else {
+            primary_charge
+        };
+        if charge.total_bytes()? > BANK_PICK_JOB_BYTES {
+            return None;
+        }
+        Some((
+            BankPickInput {
+                revision: InputRevision::new(revision),
+                charge,
+                base_input_bytes,
+            },
+            BankPickPreflights {
+                primary: Some(BankPickSearchPreflight {
+                    kind,
+                    token: primary,
+                }),
+                fallback,
+            },
+        ))
+    }
 }
 
 impl BankPickJob {
@@ -205,6 +1372,38 @@ impl BankPickJob {
             request_id: self.request.request_id,
             bank_index: index.map_or(-1, |i| i as i32),
             kind: kind as u8,
+        }
+    }
+}
+impl BankPickJob {
+    fn pending_inline(self, scope: Scope, result: PickResult) -> PendingInlinePick {
+        let posted = (self.request.walk_generation.is_none() && self.request.native.is_none())
+            .then(|| self.result(result.index, result.kind));
+        let native_receipt = self.request.native.as_ref().and_then(|native| {
+            native.authority.live().then(|| {
+                (
+                    native.authority.clone(),
+                    NativeBankPickReceipt {
+                        request_id: native.authority.request_id().get(),
+                        evidence: native.evidence,
+                        selected: self.request.selected(
+                            result.index,
+                            result.kind,
+                            result.access_tile,
+                        ),
+                    },
+                )
+            })
+        });
+        PendingInlinePick {
+            generation: self.generation,
+            request_id: self.request.request_id,
+            scope,
+            job: Some(self),
+            ticket: None,
+            result,
+            posted,
+            native_receipt,
         }
     }
 }
@@ -288,18 +1487,18 @@ impl BankPickRequest {
             access: Some(Arc::new(access.clone())),
         }
     }
-    fn fallback(&self) -> PickResult {
+}
+
+#[cfg(any(test, all(target_os = "linux", feature = "test-support")))]
+impl BankPickRequest {
+    fn legacy_fallback(&self, world: &NavWorld) -> LegacyPickResult {
         let index = self.first();
         let mut route = None;
         if self.walk_generation.is_some() {
             if let Some(index) = index {
-                #[cfg(test)]
-                if let Some(gate) = &self.test_gate {
-                    gate.single_route();
-                }
                 route = find_with(
-                    &self.world.collision,
-                    &self.world.graph,
+                    &world.collision,
+                    &world.graph,
                     self.from,
                     self.facts.banks()[index].tile,
                     self.opts,
@@ -308,7 +1507,7 @@ impl BankPickRequest {
                 .ok();
             }
         }
-        PickResult {
+        LegacyPickResult {
             index,
             access_tile: None,
             kind: PickKind::AirFallback,
@@ -316,9 +1515,9 @@ impl BankPickRequest {
         }
     }
 
-    fn calculate(&self, route_only: bool) -> PickResult {
+    fn legacy_calculate(&self, world: &NavWorld, route_only: bool) -> LegacyPickResult {
         if route_only {
-            return self.fallback();
+            return self.legacy_fallback(world);
         }
         if self.native.is_some() {
             let targets: Vec<_> = self
@@ -327,18 +1526,11 @@ impl BankPickRequest {
                 .filter_map(|candidate| candidate.access.as_ref())
                 .flat_map(|(tiles, _)| tiles.iter().copied())
                 .collect();
-            #[cfg(test)]
-            if let Some(gate) = &self.test_gate {
-                gate.bank_search();
-            }
             let mut opts = self.opts;
-            // Rank every access tile of every chosen stand in one search.
-            // The first settled goal is the cheapest reachable walking approach,
-            // including when the catalog tile is not an InLine access tile.
             opts.allow_teleports = false;
             return match find_first_with(
-                &self.world.collision,
-                &self.world.graph,
+                &world.collision,
+                &world.graph,
                 self.from,
                 &targets,
                 opts,
@@ -346,7 +1538,7 @@ impl BankPickRequest {
             )
             .into_route()
             {
-                Ok(route) => PickResult {
+                Ok(route) => LegacyPickResult {
                     index: self.order.iter().find_map(|candidate| {
                         candidate.access.as_ref().and_then(|(tiles, _)| {
                             tiles.contains(&route.dest).then_some(candidate.index)
@@ -356,7 +1548,7 @@ impl BankPickRequest {
                     kind: PickKind::Reachable,
                     route: None,
                 },
-                Err(_) => PickResult {
+                Err(_) => LegacyPickResult {
                     index: None,
                     access_tile: None,
                     kind: PickKind::NoCandidate,
@@ -371,19 +1563,15 @@ impl BankPickRequest {
             .map(|candidate| candidate.index)
             .collect();
         if routed.is_empty() {
-            return self.fallback();
+            return self.legacy_fallback(world);
         }
         let targets: Vec<_> = routed
             .iter()
             .map(|&index| self.route_target(index))
             .collect();
-        #[cfg(test)]
-        if let Some(gate) = &self.test_gate {
-            gate.bank_search();
-        }
         let routes = find_many_with_avoid_bounded(
-            &self.world.collision,
-            &self.world.graph,
+            &world.collision,
+            &world.graph,
             self.from,
             &targets,
             self.opts,
@@ -407,20 +1595,19 @@ impl BankPickRequest {
                     .route(target)
                     .expect("a settled target has a reconstructible route")
             });
-            return PickResult {
+            return LegacyPickResult {
                 index: Some(routed[target]),
                 access_tile: None,
                 kind: PickKind::Reachable,
                 route,
             };
         }
-        // Do not retain the shared scratch while running the fallback search.
         drop(routes);
-        self.fallback()
+        self.legacy_fallback(world)
     }
 }
 
-fn native_no_candidate() -> SelectedBank {
+pub(super) fn native_no_candidate() -> SelectedBank {
     SelectedBank {
         bank_index: u16::MAX,
         access_tile: WorldTile {
@@ -548,23 +1735,109 @@ fn native_bank_access(
     ))
 }
 
-#[allow(clippy::too_many_arguments)] // Session permissions come from locked slot dispatch.
-pub(super) fn queue_native_bank_pick(
+fn bank_candidates(
+    world: &NavWorld,
+    facts: &NamedBankFacts,
+    from: WorldTile,
+    state: &WorldState,
+    preferences: api::named_banks::BankPreferences,
+    fishing_base: Option<i32>,
+    native: Option<&NativeBankPickRequest>,
+) -> BankCandidates {
+    let mut target_count = 0usize;
+    let mut order = Vec::new();
+    if let Some(native) = native {
+        for &candidate in native.eligible.iter() {
+            let index = usize::from(candidate);
+            if index >= facts.banks().len()
+                || native
+                    .explicit_bank
+                    .is_some_and(|explicit| usize::from(explicit) != index)
+                || !facts.banks()[index].routable
+            {
+                continue;
+            }
+            if let Some(access) = native_bank_access(world, facts.banks()[index]) {
+                target_count = target_count.saturating_add(access.0.len());
+                order.push(BankCandidate {
+                    index,
+                    access: Some(access),
+                });
+            }
+        }
+    } else {
+        for index in 0..facts.banks().len() {
+            if !facts.banks()[index].eligible(
+                |id| if id == 10 { fishing_base } else { None },
+                |quest| state.quests.contains(quest),
+                preferences,
+            ) {
+                continue;
+            }
+            if facts.banks()[index].routable {
+                target_count = target_count.saturating_add(1);
+            }
+            order.push(BankCandidate {
+                index,
+                access: None,
+            });
+        }
+    }
+    order.sort_by_key(|candidate| {
+        bank_air_distance(from, facts.banks()[candidate.index].air_tile())
+    });
+    BankCandidates {
+        order,
+        target_count,
+    }
+}
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each argument is one `BankPickRequest` field. The constructor adds the timeout flag and the state `Arc` for production, harness and tests."
+)]
+fn make_bank_pick_request(
+    request_id: u64,
+    lease: nav::contract::NavLease,
+    facts: Arc<NamedBankFacts>,
+    from: WorldTile,
+    opts: FindOptions,
+    state: WorldState,
+    order: Vec<BankCandidate>,
+    target_count: usize,
+    walk_generation: Option<u64>,
+    native: Option<NativePickContext>,
+) -> Arc<BankPickRequest> {
+    Arc::new(BankPickRequest {
+        request_id,
+        lease,
+        facts,
+        from,
+        opts,
+        state: Arc::new(state),
+        timeout_fallback: AtomicBool::new(false),
+        order,
+        target_count,
+        walk_generation,
+        native,
+    })
+}
+
+pub(super) fn queue_native_bank_pick_scoped(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
+    scope: Scope,
     world: &Option<Arc<NavWorld>>,
     state: Option<WorldState>,
-    request: NativeBankPickRequest,
-    authority: HostAuthority,
-    evidence: EvidenceStamp,
+    input: NativeBankPickInput,
     session_permissions: Option<script::native::WalkPermissions>,
 ) {
-    let from = request.from;
-    let preferences = request.preferences;
-    let request_id = authority.request_id().get();
+    let from = input.request.from;
+    let preferences = input.request.preferences;
+    let request_id = input.authority.request_id().get();
     queue_bank(
         navs,
         name,
+        scope,
         world,
         state,
         from,
@@ -573,7 +1846,7 @@ pub(super) fn queue_native_bank_pick(
             name,
             script::native::WalkOptions {
                 allow_teleports: script::native::WalkBit::Forbid,
-                ..request.options
+                ..input.request.options
             },
             session_permissions,
         )
@@ -582,18 +1855,18 @@ pub(super) fn queue_native_bank_pick(
         preferences,
         None,
         false,
-        Some(NativeBankPickInput {
-            request,
-            authority,
-            evidence,
-        }),
+        Some(input),
     );
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn queue_bank_pick(
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Forwards one `SelectBank` request's values, the slot's fishing level and its navigation handles to `queue_bank`."
+)]
+pub(super) fn queue_bank_pick_scoped(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
+    scope: Scope,
     world: &Option<Arc<NavWorld>>,
     state: Option<WorldState>,
     from: WorldTile,
@@ -605,6 +1878,7 @@ pub(super) fn queue_bank_pick(
     queue_bank(
         navs,
         name,
+        scope,
         world,
         state,
         from,
@@ -622,9 +1896,10 @@ pub(super) fn queue_bank_pick(
 
 /// The raw native verb keeps native option defaults. Compatibility callers
 /// use select-only then their own walk, so they retain their explicit options.
-pub(super) fn queue_bank_walk(
+pub(super) fn queue_bank_walk_scoped(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
+    scope: Scope,
     world: &Option<Arc<NavWorld>>,
     state: Option<WorldState>,
     from: WorldTile,
@@ -633,6 +1908,7 @@ pub(super) fn queue_bank_walk(
     queue_bank(
         navs,
         name,
+        scope,
         world,
         state,
         from,
@@ -645,10 +1921,14 @@ pub(super) fn queue_bank_walk(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one admission path serves native selection, compatibility selection and bank walking"
+)]
 fn queue_bank(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
+    scope: Scope,
     world: &Option<Arc<NavWorld>>,
     state: Option<WorldState>,
     from: WorldTile,
@@ -659,8 +1939,25 @@ fn queue_bank(
     walking: bool,
     native: Option<NativeBankPickInput>,
 ) -> bool {
-    let now = Instant::now();
-    let mut all = navs.lock().unwrap();
+    let queued_at = Instant::now();
+    drain_bank_pick_cancellation(navs, name);
+    drain_bank_pick_retired_owner(navs, name);
+    let lease = match world.as_ref() {
+        Some(world) => match nav::producer::lease(world) {
+            Ok(lease) => Some(lease),
+            Err(error) => {
+                api::host_log!(
+                    api::hostlog::Category::NavEvent,
+                    api::hostlog::Level::Error,
+                    slot = name,
+                    "bank pick navigation lease refused: {error}"
+                );
+                return false;
+            }
+        },
+        None => None,
+    };
+    let mut all = navs.lock().expect("navigation state mutex is not poisoned");
     let bot = all.entry(name.to_string()).or_default();
     if walking {
         if bot.bank_fetch.is_some() {
@@ -668,8 +1965,6 @@ fn queue_bank(
         }
         if let Some(active) = &bot.bank_pick.current {
             match active.job.request.walk_generation {
-                // The raw verb has no waiter to cancel. Do not orphan an
-                // awaited select-only request by replacing it with this verb.
                 None => return false,
                 Some(generation) if generation == bot.route_generation => return true,
                 Some(_) => {}
@@ -678,13 +1973,26 @@ fn queue_bank(
     } else if native.is_none() && (request_id == 0 || request_id <= bot.bank_pick.last_id) {
         return false;
     }
+
     let pick = &mut bot.bank_pick;
-    pick.generation = pick.generation.wrapping_add(1);
+    let Some(generation) = pick.advance_generation() else {
+        api::host_log!(
+            api::hostlog::Category::NavEvent,
+            api::hostlog::Level::Error,
+            slot = name,
+            "bank pick generation exhausted"
+        );
+        return false;
+    };
+    pick.cancel_active(Cancellation::Superseded);
+    pick.pending_inline = None;
+    if let Some(owner) = pick.owner_result.take() {
+        debug_assert!(pick.retired_owner.is_none());
+        pick.retired_owner = Some(owner);
+    }
     if !walking && native.is_none() {
         pick.last_id = request_id;
     }
-    pick.pending = None;
-    pick.current = None;
     pick.native_receipt = None;
     let facts = native
         .as_ref()
@@ -701,73 +2009,62 @@ fn queue_bank(
         facts
     };
     let (Some(world), Some(facts)) = (world.as_ref(), facts) else {
-        if let Some(native) = native.as_ref() {
-            if native.authority.live() {
-                pick.native_receipt = Some((
+        let native_receipt = native.as_ref().and_then(|native| {
+            native.authority.live().then(|| {
+                (
                     native.authority.clone(),
                     NativeBankPickReceipt {
                         request_id,
                         evidence: native.evidence,
                         selected: native_no_candidate(),
                     },
-                ));
-            }
-        } else if !walking {
-            pick.posted = BankSelectionInput {
-                request_id,
-                generation: pick.generation,
-                kind: PickKind::NoCandidate as u8,
-                ..Default::default()
-            };
-        }
+                )
+            })
+        });
+        let posted = (native.is_none() && !walking).then_some(BankSelectionInput {
+            request_id,
+            generation,
+            kind: PickKind::NoCandidate as u8,
+            ..Default::default()
+        });
+        pick.pending_inline = Some(PendingInlinePick {
+            generation,
+            request_id,
+            scope,
+            job: None,
+            ticket: None,
+            result: PickResult::plain(None, None, PickKind::NoCandidate),
+            posted,
+            native_receipt,
+        });
+        drop(all);
+        poll_bank_pick(navs, name, queued_at);
         return false;
+    };
+    let Some(lease) = lease else {
+        unreachable!("a present NavWorld has an owner lease");
     };
     let state = state.unwrap_or_default();
     let from = native.as_ref().map_or(from, |native| native.request.from);
-    let mut order: Vec<BankCandidate> = if let Some(native) = native.as_ref() {
-        native
-            .request
-            .eligible
-            .iter()
-            .map(|&index| usize::from(index))
-            .filter(|&index| {
-                index < facts.banks().len()
-                    && native
-                        .request
-                        .explicit_bank
-                        .is_none_or(|explicit| usize::from(explicit) == index)
-                    && facts.banks()[index].routable
-            })
-            .filter_map(|index| {
-                native_bank_access(world, facts.banks()[index]).map(|access| BankCandidate {
-                    index,
-                    access: Some(access),
-                })
-            })
-            .collect()
-    } else {
-        (0..facts.banks().len())
-            .filter(|&i| {
-                facts.banks()[i].eligible(
-                    |id| if id == 10 { fishing_base } else { None },
-                    |quest| state.quests.contains(quest),
-                    preferences,
-                )
-            })
-            .map(|index| BankCandidate {
-                index,
-                access: None,
-            })
-            .collect()
-    };
-    order.sort_by_key(|candidate| {
-        bank_air_distance(from, facts.banks()[candidate.index].air_tile())
-    });
+    let BankCandidates {
+        order,
+        target_count,
+    } = bank_candidates(
+        world.as_ref(),
+        facts.as_ref(),
+        from,
+        &state,
+        preferences,
+        fishing_base,
+        native.as_ref().map(|native| &native.request),
+    );
     opts.essence = bot.traveller.essence();
     let first = order.first().map(|candidate| candidate.index);
+    let generation = pick.generation;
     let walk_generation = if walking && first.is_some() {
         bot.route_generation = bot.route_generation.wrapping_add(1);
         bot.walk_request_id = 0;
+        bot.supersede_route_work();
         bot.pending_route = None;
         Some(bot.route_generation)
     } else {
@@ -777,193 +2074,953 @@ fn queue_bank(
         authority: native.authority,
         evidence: native.evidence,
     });
-    let request = Arc::new(BankPickRequest {
+    let request = make_bank_pick_request(
         request_id,
-        world: Arc::clone(world),
+        lease,
         facts,
         from,
         opts,
         state,
         order,
+        target_count,
         walk_generation,
         native,
-        #[cfg(test)]
-        test_gate: tests::capture_gate(),
-    });
+    );
     let near = request.native.is_none()
         && first.is_some_and(|index| near_bank(from, request.route_target(index)));
+    let deadline = (!near).then_some(queued_at + BANK_SELECTION_WINDOW);
     let job = BankPickJob {
-        generation: pick.generation,
+        generation,
         request,
-        route_only: near,
+        deadline,
     };
-    if first.is_none() || (near && !walking) {
-        if job.request.native.is_some() {
-            pick.complete_native(
-                &job.request,
-                first,
-                if near {
-                    PickKind::NearShortcut
-                } else {
-                    PickKind::NoCandidate
-                },
-                None,
-            );
-        } else if !walking {
-            pick.posted = job.result(
-                first,
-                if near {
-                    PickKind::NearShortcut
-                } else {
-                    PickKind::NoCandidate
-                },
-            );
-        }
+    let inline_kind = if first.is_none() || (job.request.native.is_some() && target_count == 0) {
+        Some(PickKind::NoCandidate)
+    } else if near && !walking {
+        Some(PickKind::NearShortcut)
+    } else if target_count == 0 && !walking && job.request.native.is_none() {
+        Some(PickKind::AirFallback)
+    } else {
+        None
+    };
+    if let Some(kind) = inline_kind {
+        let index = if job.request.native.is_some() && target_count == 0 {
+            None
+        } else {
+            first
+        };
+        bot.bank_pick.pending_inline =
+            Some(job.pending_inline(scope, PickResult::plain(index, None, kind)));
+        drop(all);
+        poll_bank_pick(navs, name, queued_at);
         return first.is_some();
     }
     if walking {
         bot.requested_route = first.map(|index| job.request.route_key(index));
     }
-    pick.current = Some(ActivePick {
-        deadline: (!near).then_some(now + BANK_SELECTION_WINDOW),
-        job: job.clone(),
-    });
-    pick.pending = Some(job);
-    if pick.worker.is_some() {
-        return true;
-    }
-    let token = Arc::new(());
-    pick.worker = Some(Arc::clone(&token));
-    drop(all);
-    let worker_navs = Arc::clone(navs);
-    let worker_name = name.to_string();
-    let spawned = spawn_bank_worker(format!("bank-pick-{name}"), move || {
-        #[cfg(test)]
-        let mut last_gate: Option<Arc<tests::Gate>> = None;
-        loop {
-            let job = {
-                let mut all = worker_navs.lock().unwrap();
-                let Some(bot) = all.get_mut(&worker_name) else {
-                    return;
-                };
-                let pick = &mut bot.bank_pick;
-                if !pick
-                    .worker
-                    .as_ref()
-                    .is_some_and(|live| Arc::ptr_eq(live, &token))
-                {
-                    return;
-                }
-                pick.poll(Instant::now());
-                let job = match pick.pending.take() {
-                    Some(job) => job,
-                    None => {
-                        pick.worker = None;
-                        #[cfg(test)]
-                        if let Some(gate) = &last_gate {
-                            gate.idle();
-                        }
-                        return;
-                    }
-                };
-                if job.request.walk_generation.is_some_and(|generation| {
-                    generation != bot.route_generation
-                        || bot.walk_request_id != 0
-                        || bot.requested_route
-                            != job
-                                .request
-                                .first()
-                                .map(|index| job.request.route_key(index))
-                }) {
-                    if pick.generation == job.generation {
-                        pick.current = None;
-                    }
-                    continue;
-                }
-                job
-            };
-            // Floods, reconstruction, fallback routing and scratch destruction
-            // all happen without the slot/nav mutex.
-            #[cfg(test)]
-            if let Some(gate) = &job.request.test_gate {
-                last_gate = Some(Arc::clone(gate));
-                gate.enter();
-            }
-            let mut result = job.request.calculate(job.route_only);
-            {
-                let mut all = worker_navs.lock().unwrap();
-                if let Some(bot) = all.get_mut(&worker_name) {
-                    if bot.bank_pick.complete(&job, &result, Instant::now()) {
-                        if let (Some(generation), Some(index), Some(first)) = (
-                            job.request.walk_generation,
-                            result.index,
-                            job.request.first(),
-                        ) {
-                            if bot.route_generation == generation
-                                && bot.walk_request_id == 0
-                                && bot.requested_route == Some(job.request.route_key(first))
-                            {
-                                bot.requested_route = Some(job.request.route_key(index));
-                                bot.publish_route(
-                                    generation,
-                                    0,
-                                    job.request.opts.allow_teleports,
-                                    result.route.take().map_or(
-                                        super::RouteOutcome::NoPath,
-                                        super::RouteOutcome::Routed,
-                                    ),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-            // An obsolete route is also dropped outside the mutex.
-            drop(result);
-            #[cfg(test)]
-            if let Some(gate) = &job.request.test_gate {
-                gate.finished();
-            }
-        }
-    });
-    if spawned.is_err() {
-        if let Some(bot) = navs.lock().unwrap().get_mut(name) {
-            let pick = &mut bot.bank_pick;
-            pick.worker = None;
-            pick.pending = None;
-            if let Some(active) = pick.current.take() {
-                if let Some(generation) = active.job.request.walk_generation {
-                    bot.publish_route(
-                        generation,
-                        0,
-                        active.job.request.opts.allow_teleports,
-                        super::RouteOutcome::NoPath,
-                    );
-                } else if active.job.request.native.is_some() {
-                    pick.complete_native(&active.job.request, None, PickKind::NoCandidate, None);
-                } else {
-                    pick.posted = active
-                        .job
-                        .result(active.job.request.first(), PickKind::AirFallback);
-                }
-            }
-        }
+    let Some((input, preflights)) = job.request.work_input(generation, near, name) else {
+        api::host_log!(
+            api::hostlog::Category::NavEvent,
+            api::hostlog::Level::Warn,
+            slot = name,
+            "bank pick request exceeds the bounded work charge"
+        );
+        bot.bank_pick.pending_inline =
+            Some(job.pending_inline(scope, PickResult::plain(None, None, PickKind::NoCandidate)));
+        drop(all);
+        poll_bank_pick(navs, name, queued_at);
         return false;
-    }
-    true
+    };
+    bot.bank_pick.current = Some(ActivePick {
+        job: job.clone(),
+        scope,
+        deadline,
+        ticket: None,
+        cancellation: None,
+        pending_job: Some(Box::new(BankPickWorkerJob::for_job(
+            name, job, input, preflights,
+        ))),
+        submitting: false,
+        capacity_sequence: None,
+        owner_result_full: false,
+        #[cfg(any(test, all(feature = "live-harness", feature = "test-support")))]
+        last_submission_refusal: None,
+    });
+    drop(all);
+    submit_pending_bank_pick(navs, name, scope, true)
 }
 
-fn spawn_bank_worker(
-    name: String,
-    work: impl FnOnce() + Send + 'static,
-) -> std::io::Result<std::thread::JoinHandle<()>> {
-    #[cfg(test)]
-    if tests::capture_gate()
-        .is_some_and(|gate| gate.fail_spawn.load(std::sync::atomic::Ordering::Relaxed))
-    {
-        return Err(std::io::Error::other("injected bank worker spawn failure"));
+pub(super) fn drain_bank_pick_cancellation(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+) {
+    let pending = navs
+        .lock()
+        .expect("navigation state mutex is not poisoned")
+        .get_mut(name)
+        .and_then(|bot| bot.bank_pick.pending_cancel.take());
+    if let Some((mut cancellation, reason)) = pending {
+        let _ = cancellation.abandon(reason);
     }
-    std::thread::Builder::new().name(name).spawn(work)
+}
+
+pub(super) fn drain_bank_pick_retired_owner(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+) {
+    let retired = navs
+        .lock()
+        .expect("navigation state mutex is not poisoned")
+        .get_mut(name)
+        .and_then(|bot| bot.bank_pick.retired_owner.take());
+    drop(retired);
+}
+
+fn submit_pending_bank_pick(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+    scope: Scope,
+    force: bool,
+) -> bool {
+    let Ok(shared) = WorkService::shared() else {
+        return false;
+    };
+    submit_pending_bank_pick_with_service(navs, name, scope, force, &shared)
+}
+
+fn submit_pending_bank_pick_with_service(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+    scope: Scope,
+    force: bool,
+    shared: &Arc<parking_lot::Mutex<WorkService>>,
+) -> bool {
+    drain_bank_pick_cancellation(navs, name);
+    drain_bank_pick_retired_owner(navs, name);
+    let observed_capacity = shared.lock().publications().capacity().sequence();
+    let Some((generation, request_id, job)) = ({
+        let mut all = navs.lock().expect("navigation state mutex is not poisoned");
+        let Some(bot) = all.get_mut(name) else {
+            return false;
+        };
+        let Some(active) = bot.bank_pick.current.as_mut() else {
+            return false;
+        };
+        if active.scope != scope
+            || active.ticket.is_some()
+            || active.submitting
+            || active.pending_job.is_none()
+            || (!force && active.capacity_sequence == Some(observed_capacity))
+        {
+            return false;
+        }
+        active.submitting = true;
+        Some((
+            active.job.generation,
+            active.job.request.request_id,
+            active.pending_job.take().expect("checked pending job"),
+        ))
+    }) else {
+        return false;
+    };
+
+    enum Attempt {
+        Accepted(WorkTicket<BankPickSpec>, WorkCancellation<BankPickSpec>),
+        Refused(SubmissionRefusal, Box<AdmittedBankPickJob>, PublishSequence),
+        IdentityFailed(Box<AdmittedBankPickJob>, String),
+    }
+    let attempt = {
+        let mut service = shared.lock();
+        let before = service.publications().capacity().sequence();
+        match service.mint_identity(scope, None) {
+            Ok(identity) => {
+                let conditions = ProcessConditions::new(service.incarnation());
+                let input = job.inner.input;
+                match service.try_submit::<BankPickSpec, _>(identity, &input, *job, &conditions) {
+                    Ok(ticket) => {
+                        let cancellation = service
+                            .cancellation_handle(ticket)
+                            .expect("a freshly accepted bank-pick ticket has cancellation custody");
+                        Attempt::Accepted(ticket, cancellation)
+                    }
+                    Err(refused) => {
+                        let (reason, job) = refused.into_parts();
+                        Attempt::Refused(reason, Box::new(job), before)
+                    }
+                }
+            }
+            Err(error) => Attempt::IdentityFailed(job, error.to_string()),
+        }
+    };
+
+    let mut accepted_to_abandon: Option<WorkCancellation<BankPickSpec>> = None;
+    let mut submission_ok = false;
+    {
+        let mut all = navs.lock().expect("navigation state mutex is not poisoned");
+        if let Some(bot) = all.get_mut(name) {
+            let pick = &mut bot.bank_pick;
+            let current = pick.current.as_mut().filter(|active| {
+                active.job.generation == generation
+                    && active.job.request.request_id == request_id
+                    && active.scope == scope
+                    && active.submitting
+            });
+            match attempt {
+                Attempt::Accepted(ticket, cancellation) => {
+                    if let Some(active) = current {
+                        active.ticket = Some(BankPickTicketRef::from_ticket(ticket));
+                        active.cancellation = Some(cancellation);
+                        active.submitting = false;
+                        active.capacity_sequence = None;
+                        #[cfg(any(test, all(feature = "live-harness", feature = "test-support")))]
+                        {
+                            active.last_submission_refusal = None;
+                        }
+                        submission_ok = true;
+                    } else {
+                        accepted_to_abandon = Some(cancellation);
+                    }
+                }
+                Attempt::Refused(reason, job, before) => {
+                    if let Some(active) = current {
+                        if reason == SubmissionRefusal::Full {
+                            active.pending_job = Some(job);
+                            active.submitting = false;
+                            active.capacity_sequence = Some(before);
+                            #[cfg(any(
+                                test,
+                                all(feature = "live-harness", feature = "test-support")
+                            ))]
+                            {
+                                active.last_submission_refusal = Some(reason);
+                            }
+                            submission_ok = true;
+                        } else {
+                            let job = active.job.clone();
+                            pick.current = None;
+                            pick.pending_inline = Some(job.pending_inline(
+                                scope,
+                                PickResult::plain(None, None, PickKind::NoCandidate),
+                            ));
+                            api::host_log!(
+                                api::hostlog::Category::NavEvent,
+                                api::hostlog::Level::Warn,
+                                slot = name,
+                                "bank pick work admission refused: {reason:?}"
+                            );
+                        }
+                    }
+                }
+                Attempt::IdentityFailed(_job, error) => {
+                    if let Some(active) = current {
+                        let job = active.job.clone();
+                        pick.current = None;
+                        pick.pending_inline = Some(job.pending_inline(
+                            scope,
+                            PickResult::plain(None, None, PickKind::NoCandidate),
+                        ));
+                        api::host_log!(
+                            api::hostlog::Category::NavEvent,
+                            api::hostlog::Level::Warn,
+                            slot = name,
+                            "bank pick work identity refused: {error}"
+                        );
+                    }
+                }
+            }
+        } else if let Attempt::Accepted(_, cancellation) = attempt {
+            accepted_to_abandon = Some(cancellation);
+        }
+    }
+    if let Some(mut cancellation) = accepted_to_abandon {
+        let _ = cancellation.abandon(Cancellation::ScopeInvalidated);
+    }
+    drain_bank_pick_cancellation(navs, name);
+    submission_ok
+}
+
+enum BankPickTerminal {
+    Pending,
+    Completed(usize),
+    Failed,
+    Cancelled,
+    InvalidResultSize,
+    LedgerError(api::work::LedgerError),
+}
+
+fn active_ticket_matches(
+    active: &ActivePick,
+    scope: Scope,
+    generation: u64,
+    request_id: u64,
+    ticket: WorkTicket<BankPickSpec>,
+) -> bool {
+    active.scope == scope
+        && active.job.generation == generation
+        && active.job.request.request_id == request_id
+        && active.ticket.map(BankPickTicketRef::ticket) == Some(ticket)
+}
+
+fn restore_pending_inline(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+    pending: PendingInlinePick,
+) {
+    let mut pending = Some(pending);
+    {
+        let mut all = navs.lock().expect("navigation state mutex is not poisoned");
+        if let Some(bot) = all.get_mut(name) {
+            let pick = &mut bot.bank_pick;
+            if pick.generation
+                == pending
+                    .as_ref()
+                    .expect("the pending result is not moved yet")
+                    .generation
+                && pick.pending_inline.is_none()
+            {
+                pick.pending_inline = pending.take();
+            }
+        }
+    }
+    drop(pending);
+}
+
+fn pending_owner_result(
+    pending: PendingInlinePick,
+    reservation: nav::producer::OwnerResultReservation,
+) -> (PickCommit, Arc<nav::producer::OwnerResult<PickResult>>) {
+    let PendingInlinePick {
+        generation,
+        request_id,
+        scope,
+        job,
+        ticket,
+        result,
+        posted,
+        native_receipt,
+    } = pending;
+    let owner = match ticket {
+        Some(ticket) => {
+            let ticket = ticket.ticket();
+            result.into_owner_result(ticket.identity(), ticket.revision(), reservation)
+        }
+        None => reservation.hold(result),
+    };
+    (
+        PickCommit {
+            generation,
+            request_id,
+            scope,
+            job,
+            ticket,
+            posted,
+            native_receipt,
+        },
+        owner,
+    )
+}
+
+fn set_active_owner_result_full(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+    scope: Scope,
+    generation: u64,
+    request_id: u64,
+    ticket: WorkTicket<BankPickSpec>,
+    full: bool,
+) -> bool {
+    let mut all = navs.lock().expect("navigation state mutex is not poisoned");
+    let Some(active) = all
+        .get_mut(name)
+        .and_then(|bot| bot.bank_pick.current.as_mut())
+        .filter(|active| active_ticket_matches(active, scope, generation, request_id, ticket))
+    else {
+        return false;
+    };
+    let first_refusal = full && !active.owner_result_full;
+    active.owner_result_full = full;
+    first_refusal
+}
+
+fn bank_pick_result_within_bound(bytes: usize) -> bool {
+    bytes <= nav::producer::OWNER_RESULT_MAX_BYTES
+}
+
+fn bank_pick_result_bytes(result: &PickResult) -> Option<usize> {
+    result
+        .owner_result_bytes()
+        .filter(|&bytes| bank_pick_result_within_bound(bytes))
+}
+
+fn bank_pick_terminal(
+    ticket: WorkTicket<BankPickSpec>,
+    shared: &Arc<parking_lot::Mutex<WorkService>>,
+) -> Option<BankPickTerminal> {
+    let service = shared.lock();
+    Some(match service.borrow_terminal(&ticket) {
+        Ok(None) => BankPickTerminal::Pending,
+        Ok(Some(Settlement::Completed(result))) => bank_pick_result_bytes(result).map_or(
+            BankPickTerminal::InvalidResultSize,
+            BankPickTerminal::Completed,
+        ),
+        Ok(Some(Settlement::Failed(_))) => BankPickTerminal::Failed,
+        Ok(Some(Settlement::Cancelled(_))) => BankPickTerminal::Cancelled,
+        Err(error) => BankPickTerminal::LedgerError(error),
+    })
+}
+
+fn publish_pending_inline(navs: &Arc<Mutex<HashMap<String, super::NavBot>>>, name: &str) {
+    let pending = navs
+        .lock()
+        .expect("navigation state mutex is not poisoned")
+        .get_mut(name)
+        .and_then(|bot| bot.bank_pick.pending_inline.take());
+    let Some(pending) = pending else {
+        return;
+    };
+    let Some(bytes) = pending.result.owner_result_bytes() else {
+        restore_pending_inline(navs, name, pending);
+        return;
+    };
+    match nav::producer::OwnerResultLedger::shared().try_reserve_bytes(bytes) {
+        Ok(reservation) => {
+            let (commit, owner) = pending_owner_result(pending, reservation);
+            apply_bank_pick_result(navs, name, commit, owner);
+        }
+        Err(nav::producer::OwnerResultRefusal::Full { .. })
+        | Err(nav::producer::OwnerResultRefusal::TooLarge { .. })
+        | Err(nav::producer::OwnerResultRefusal::SizeOverflow) => {
+            restore_pending_inline(navs, name, pending);
+        }
+    }
+}
+
+fn expire_bank_pick_deadline(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+    now: Instant,
+) {
+    let mut all = navs.lock().expect("navigation state mutex is not poisoned");
+    let Some(bot) = all.get_mut(name) else {
+        return;
+    };
+    let pick = &mut bot.bank_pick;
+    let Some(active) = pick.current.as_mut() else {
+        return;
+    };
+    if active.deadline.is_some_and(|deadline| now >= deadline) {
+        active.deadline = None;
+        active
+            .job
+            .request
+            .timeout_fallback
+            .store(true, Ordering::Release);
+        if active.ticket.is_none() && active.job.request.walk_generation.is_none() {
+            let job = active.job.clone();
+            let scope = active.scope;
+            let index = job.request.first();
+            let kind = if index.is_none()
+                || (job.request.native.is_some() && job.request.target_count == 0)
+            {
+                PickKind::NoCandidate
+            } else {
+                PickKind::AirFallback
+            };
+            pick.cancel_active(Cancellation::Superseded);
+            pick.pending_inline =
+                Some(job.pending_inline(scope, PickResult::plain(index, None, kind)));
+        }
+    }
+}
+
+fn apply_bank_pick_result(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+    commit: PickCommit,
+    owner: Arc<nav::producer::OwnerResult<PickResult>>,
+) {
+    drain_bank_pick_retired_owner(navs, name);
+    let mut completed_active = None;
+    let mut retired_owner = None;
+    let mut route_rejected = false;
+    {
+        let mut all = navs.lock().expect("navigation state mutex is not poisoned");
+        let Some(bot) = all.get_mut(name) else {
+            return;
+        };
+        let current = {
+            let pick = &bot.bank_pick;
+            if pick.generation != commit.generation {
+                return;
+            }
+            match commit.ticket {
+                Some(ticket) => pick.current.as_ref().is_some_and(|active| {
+                    active_ticket_matches(
+                        active,
+                        commit.scope,
+                        commit.generation,
+                        commit.request_id,
+                        ticket.ticket(),
+                    )
+                }),
+                None => pick.current.is_none(),
+            }
+        };
+        if !current {
+            return;
+        }
+        if let Some(job) = commit
+            .job
+            .as_ref()
+            .filter(|job| job.request.walk_generation.is_some())
+        {
+            let route_generation = job
+                .request
+                .walk_generation
+                .expect("the job was filtered to walking requests above");
+            let route_is_current = route_generation == bot.route_generation
+                && bot.walk_request_id == 0
+                && bot.requested_route
+                    == job
+                        .request
+                        .first()
+                        .map(|index| job.request.route_key(index));
+            if !route_is_current {
+                route_rejected = true;
+            } else {
+                let applied = if let Some(plan) = owner.value().plan.as_ref() {
+                    let Some(ticket_ref) = commit.ticket else {
+                        return;
+                    };
+                    let ticket = ticket_ref.ticket();
+                    let custody: Arc<dyn std::any::Any + Send + Sync> = owner.clone();
+                    let route = crate::walk_plan::RoutePath::compact(
+                        plan.lease.clone(),
+                        job.request.lease.clone(),
+                        Arc::clone(&custody),
+                    );
+                    bot.publish_compact_route(
+                        route_generation,
+                        0,
+                        ticket.identity(),
+                        ticket.revision(),
+                        job.request.opts.allow_teleports,
+                        route,
+                        None,
+                        custody,
+                        job.request.state.quest_evidence.clone(),
+                    )
+                } else {
+                    bot.publish_route(
+                        route_generation,
+                        0,
+                        job.request.opts.allow_teleports,
+                        super::RouteOutcome::NoPath,
+                    );
+                    true
+                };
+                route_rejected = !applied;
+            }
+        }
+        let pick = &mut bot.bank_pick;
+        if let Some(ticket_ref) = commit.ticket {
+            let ticket = ticket_ref.ticket();
+            let matches = pick.current.as_ref().is_some_and(|active| {
+                active_ticket_matches(
+                    active,
+                    commit.scope,
+                    commit.generation,
+                    commit.request_id,
+                    ticket,
+                )
+            });
+            if matches {
+                completed_active = pick.current.take();
+            } else {
+                return;
+            }
+        }
+        if !route_rejected {
+            retired_owner = pick.owner_result.replace(Arc::clone(&owner));
+            if let Some(posted) = commit.posted {
+                pick.posted = posted;
+            }
+            if let Some(native_receipt) = commit.native_receipt {
+                pick.native_receipt = Some(native_receipt);
+            }
+        }
+    }
+    drop(completed_active);
+    drop(retired_owner);
+    if route_rejected {
+        drop(owner);
+        return;
+    }
+    drain_bank_pick_cancellation(navs, name);
+}
+
+fn active_bank_pick_is_current(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+    scope: Scope,
+    generation: u64,
+    request_id: u64,
+    ticket: WorkTicket<BankPickSpec>,
+) -> bool {
+    navs.lock()
+        .expect("navigation state mutex is not poisoned")
+        .get(name)
+        .and_then(|bot| bot.bank_pick.current.as_ref())
+        .is_some_and(|active| active_ticket_matches(active, scope, generation, request_id, ticket))
+}
+
+fn reserve_bank_pick_result(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+    scope: Scope,
+    job: &BankPickJob,
+    ticket: WorkTicket<BankPickSpec>,
+    bytes: usize,
+    ledger: &nav::producer::OwnerResultLedger,
+) -> Option<nav::producer::OwnerResultReservation> {
+    let generation = job.generation;
+    let request_id = job.request.request_id;
+    if !active_bank_pick_is_current(navs, name, scope, generation, request_id, ticket) {
+        return None;
+    }
+    match ledger.try_reserve_bytes(bytes) {
+        Ok(reservation) => {
+            set_active_owner_result_full(navs, name, scope, generation, request_id, ticket, false);
+            Some(reservation)
+        }
+        Err(nav::producer::OwnerResultRefusal::Full { .. }) => {
+            set_active_owner_result_full(navs, name, scope, generation, request_id, ticket, true);
+            None
+        }
+        Err(nav::producer::OwnerResultRefusal::TooLarge { .. })
+        | Err(nav::producer::OwnerResultRefusal::SizeOverflow) => {
+            if retire_active_bank_pick(navs, name, scope, generation, request_id, ticket) {
+                api::host_log!(
+                    api::hostlog::Category::NavEvent,
+                    api::hostlog::Level::Error,
+                    slot = name,
+                    "bank pick result exceeds its per-result bound or overflows size accounting"
+                );
+            }
+            None
+        }
+    }
+}
+
+fn retire_active_bank_pick(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+    scope: Scope,
+    generation: u64,
+    request_id: u64,
+    ticket: WorkTicket<BankPickSpec>,
+) -> bool {
+    let retired = {
+        let mut all = navs.lock().expect("navigation state mutex is not poisoned");
+        let Some(bot) = all.get_mut(name) else {
+            return false;
+        };
+        if bot.bank_pick.current.as_ref().is_some_and(|active| {
+            active_ticket_matches(active, scope, generation, request_id, ticket)
+        }) {
+            bot.bank_pick.current.take()
+        } else {
+            None
+        }
+    };
+    let removed = retired.is_some();
+    drop(retired);
+    removed
+}
+
+fn publish_work_pick_result(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+    scope: Scope,
+    job: BankPickJob,
+    ticket: WorkTicket<BankPickSpec>,
+    result: PickResult,
+    reservation: nav::producer::OwnerResultReservation,
+) {
+    let mut pending = job.pending_inline(scope, result);
+    pending.ticket = Some(BankPickTicketRef::from_ticket(ticket));
+    let (commit, owner) = pending_owner_result(pending, reservation);
+    apply_bank_pick_result(navs, name, commit, owner);
+}
+
+fn publish_failed_bank_pick(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+    scope: Scope,
+    job: BankPickJob,
+    ticket: WorkTicket<BankPickSpec>,
+    ledger: &nav::producer::OwnerResultLedger,
+) {
+    let result = PickResult::plain(None, None, PickKind::NoCandidate);
+    let Some(bytes) = result.owner_result_bytes() else {
+        return;
+    };
+    let Some(reservation) =
+        reserve_bank_pick_result(navs, name, scope, &job, ticket, bytes, ledger)
+    else {
+        return;
+    };
+    publish_work_pick_result(navs, name, scope, job, ticket, result, reservation);
+}
+
+fn consume_failed_bank_pick(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+    scope: Scope,
+    job: BankPickJob,
+    ticket: WorkTicket<BankPickSpec>,
+    shared: &Arc<parking_lot::Mutex<WorkService>>,
+    ledger: &nav::producer::OwnerResultLedger,
+) {
+    let result = PickResult::plain(None, None, PickKind::NoCandidate);
+    let Some(bytes) = result.owner_result_bytes() else {
+        return;
+    };
+    let Some(reservation) =
+        reserve_bank_pick_result(navs, name, scope, &job, ticket, bytes, ledger)
+    else {
+        return;
+    };
+    let settlement = {
+        let mut service = shared.lock();
+        service.consume(&ticket)
+    };
+    match settlement {
+        Ok(Settlement::Failed(_)) | Ok(Settlement::Cancelled(_)) => {
+            publish_work_pick_result(navs, name, scope, job, ticket, result, reservation);
+        }
+        Ok(Settlement::Completed(_)) => {
+            drop(reservation);
+            api::host_log!(
+                api::hostlog::Category::NavEvent,
+                api::hostlog::Level::Error,
+                slot = name,
+                "bank pick terminal changed after failure observation"
+            );
+            let _ = retire_active_bank_pick(
+                navs,
+                name,
+                scope,
+                job.generation,
+                job.request.request_id,
+                ticket,
+            );
+        }
+        Err(error) => {
+            drop(reservation);
+            api::host_log!(
+                api::hostlog::Category::NavEvent,
+                api::hostlog::Level::Warn,
+                slot = name,
+                "bank pick terminal could not be consumed: {error:?}"
+            );
+            let _ = retire_active_bank_pick(
+                navs,
+                name,
+                scope,
+                job.generation,
+                job.request.request_id,
+                ticket,
+            );
+        }
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Consumes one completed pick for one slot: the job, its ticket and result size, the work service and the ledger that tests replace."
+)]
+fn consume_completed_bank_pick(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+    scope: Scope,
+    job: BankPickJob,
+    ticket: WorkTicket<BankPickSpec>,
+    bytes: usize,
+    shared: &Arc<parking_lot::Mutex<WorkService>>,
+    ledger: &nav::producer::OwnerResultLedger,
+) {
+    let Some(reservation) =
+        reserve_bank_pick_result(navs, name, scope, &job, ticket, bytes, ledger)
+    else {
+        return;
+    };
+    let settlement = {
+        let mut service = shared.lock();
+        service.consume(&ticket)
+    };
+    match settlement {
+        Ok(Settlement::Completed(result)) if result.owner_result_bytes() == Some(bytes) => {
+            publish_work_pick_result(navs, name, scope, job, ticket, result, reservation);
+        }
+        Ok(Settlement::Completed(_)) => {
+            drop(reservation);
+            api::host_log!(
+                api::hostlog::Category::NavEvent,
+                api::hostlog::Level::Error,
+                slot = name,
+                "bank pick result size changed between borrow and consume"
+            );
+            let _ = retire_active_bank_pick(
+                navs,
+                name,
+                scope,
+                job.generation,
+                job.request.request_id,
+                ticket,
+            );
+        }
+        Ok(Settlement::Failed(_)) | Ok(Settlement::Cancelled(_)) => {
+            drop(reservation);
+            publish_failed_bank_pick(navs, name, scope, job, ticket, ledger);
+        }
+        Err(error) => {
+            drop(reservation);
+            api::host_log!(
+                api::hostlog::Category::NavEvent,
+                api::hostlog::Level::Warn,
+                slot = name,
+                "bank pick terminal could not be consumed: {error:?}"
+            );
+            let _ = retire_active_bank_pick(
+                navs,
+                name,
+                scope,
+                job.generation,
+                job.request.request_id,
+                ticket,
+            );
+        }
+    }
+}
+
+pub(super) fn poll_bank_pick(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+    now: Instant,
+) -> BankSelectionInput {
+    let shared = WorkService::shared().ok();
+    poll_bank_pick_inner(navs, name, now, shared.as_ref())
+}
+
+#[cfg(test)]
+fn poll_bank_pick_with_service(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+    now: Instant,
+    shared: &Arc<parking_lot::Mutex<WorkService>>,
+) -> BankSelectionInput {
+    poll_bank_pick_inner(navs, name, now, Some(shared))
+}
+
+fn poll_bank_pick_inner(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+    now: Instant,
+    shared: Option<&Arc<parking_lot::Mutex<WorkService>>>,
+) -> BankSelectionInput {
+    drain_bank_pick_cancellation(navs, name);
+    drain_bank_pick_retired_owner(navs, name);
+    expire_bank_pick_deadline(navs, name, now);
+    drain_bank_pick_cancellation(navs, name);
+    let scope = navs
+        .lock()
+        .expect("navigation state mutex is not poisoned")
+        .get(name)
+        .and_then(|bot| bot.bank_pick.current.as_ref())
+        .map(|active| active.scope);
+    if let (Some(scope), Some(shared)) = (scope, shared) {
+        let _ = submit_pending_bank_pick_with_service(navs, name, scope, false, shared);
+    }
+    drain_bank_pick_cancellation(navs, name);
+    publish_pending_inline(navs, name);
+    let active = navs
+        .lock()
+        .expect("navigation state mutex is not poisoned")
+        .get(name)
+        .and_then(|bot| bot.bank_pick.current.as_ref())
+        .map(|active| {
+            (
+                active.scope,
+                active.job.clone(),
+                active.ticket.map(BankPickTicketRef::ticket),
+            )
+        });
+    if let (Some((scope, job, Some(ticket))), Some(shared)) = (active, shared) {
+        match bank_pick_terminal(ticket, shared) {
+            Some(BankPickTerminal::Pending) | None => {}
+            Some(BankPickTerminal::Completed(bytes)) => {
+                consume_completed_bank_pick(
+                    navs,
+                    name,
+                    scope,
+                    job,
+                    ticket,
+                    bytes,
+                    shared,
+                    nav::producer::OwnerResultLedger::shared(),
+                );
+            }
+            Some(BankPickTerminal::Failed | BankPickTerminal::Cancelled) => {
+                consume_failed_bank_pick(
+                    navs,
+                    name,
+                    scope,
+                    job,
+                    ticket,
+                    shared,
+                    nav::producer::OwnerResultLedger::shared(),
+                );
+            }
+            Some(BankPickTerminal::InvalidResultSize) => {
+                if retire_active_bank_pick(
+                    navs,
+                    name,
+                    scope,
+                    job.generation,
+                    job.request.request_id,
+                    ticket,
+                ) {
+                    api::host_log!(
+                        api::hostlog::Category::NavEvent,
+                        api::hostlog::Level::Error,
+                        slot = name,
+                        "bank pick result exceeds its per-result bound or overflows size accounting"
+                    );
+                }
+            }
+            Some(BankPickTerminal::LedgerError(error)) => {
+                api::host_log!(
+                    api::hostlog::Category::NavEvent,
+                    api::hostlog::Level::Warn,
+                    slot = name,
+                    "bank pick terminal was stale: {error:?}"
+                );
+                let _ = retire_active_bank_pick(
+                    navs,
+                    name,
+                    scope,
+                    job.generation,
+                    job.request.request_id,
+                    ticket,
+                );
+            }
+        }
+    }
+    navs.lock()
+        .expect("navigation state mutex is not poisoned")
+        .get(name)
+        .map_or_else(BankSelectionInput::default, |bot| bot.bank_pick.posted)
 }
 
 pub(super) fn dispatch_observed_bank_op(
@@ -997,7 +3054,7 @@ pub(super) fn dispatch_observed_bank_op(
                     .and_then(|names| names.name(item.def.id))
                     .is_some_and(|actual| actual.eq_ignore_ascii_case(name))
             })?;
-            let op = all_slot(&item.actions)?;
+            let op = ops::all_op_in(&item.actions)?;
             let before_count = snapshot
                 .bank_side()
                 .iter()
@@ -1025,7 +3082,7 @@ pub(super) fn dispatch_observed_bank_op(
                     .and_then(|names| names.name(item.def.id))
                     .is_some_and(|actual| actual.eq_ignore_ascii_case(name))
             })?;
-            let op = action_slot(&item.actions, action)?;
+            let op = ops::action_op_in(&item.actions, action)?;
             let kind = if open_only_withdraw_x(&item.actions, op) {
                 PendingBankOpKind::WithdrawXAction
             } else {
@@ -1091,7 +3148,7 @@ pub(super) fn dispatch_observed_withdraw_x(
                 .and_then(|names| names.name(item.def.id))
                 .is_some_and(|actual| actual.eq_ignore_ascii_case(name))
     })?;
-    let op = action_slot(&item.actions, action)?;
+    let op = ops::action_op_in(&item.actions, action)?;
     if !matches!(
         Interactions::new(snapshot, driver)
             .interact(OpTarget::Item(item), ActionSpec::Operation(op)),
@@ -1124,7 +3181,7 @@ pub(super) fn dispatch_observed_withdraw_x(
     );
     Some(
         if matches!(*count, 1 | 5 | 10)
-            && action_slot(&item.actions, &format!("Withdraw {count}")) == Some(op)
+            && ops::withdraw_count_op_in(&item.actions, *count) == Some(op)
         {
             pending.waiting_settlement()
         } else {
@@ -1133,22 +3190,13 @@ pub(super) fn dispatch_observed_withdraw_x(
     )
 }
 
-/// Action-label lookup matching rs2b0t's `norm` (lowercase, whitespace and
-/// `-`/`_` separators gone): `Withdraw All`, `Withdraw-All` and
-/// `Withdraw  All` all resolve to the same slot.
-pub(super) fn action_slot(actions: &[Option<String>], wanted: &str) -> Option<i32> {
-    let wanted = norm_action(wanted);
-    actions
-        .iter()
-        .position(|a| a.as_deref().map(norm_action).as_deref() == Some(wanted.as_str()))
-        .map(|i| i as i32 + 1)
-}
-
 /// Whether the resolved bank op is the open-only `Withdraw X` label: it
 /// opens the amount dialog and cannot move inventory on its own, so the
 /// accepted send *is* the result (frozen `Bank.withdraw` returns
 /// `Input.invButton` → `actions.menuAction`). Every other withdraw label
-/// settles on the observed delta.
+/// settles on the observed delta. Label decisions themselves are the
+/// kernel's ([`ops::action_op_in`], [`ops::all_op_in`],
+/// [`ops::fill_click_in`]).
 fn open_only_withdraw_x(actions: &[Option<String>], op: i32) -> bool {
     let index = match usize::try_from(op) {
         Ok(index) if index >= 1 => index - 1,
@@ -1157,41 +3205,7 @@ fn open_only_withdraw_x(actions: &[Option<String>], op: i32) -> bool {
     actions
         .get(index)
         .and_then(|label| label.as_deref())
-        .is_some_and(|label| norm_action(label) == norm_action("Withdraw X"))
-}
-
-/// The bank-side op slot whose label contains "all" (Deposit All / the
-/// deposit window's bulk op), 1-based.
-pub(super) fn all_slot(actions: &[Option<String>]) -> Option<i32> {
-    actions
-        .iter()
-        .position(|a| a.as_deref().is_some_and(|s| norm_action(s).contains("all")))
-        .map(|i| i as i32 + 1)
-}
-
-/// Select one bounded fill operation in compatibility order: an exact
-/// amount, then All only when the requested fill consumes current stock,
-/// then the host-owned X continuation.
-pub(crate) fn fill_withdraw_action(
-    actions: &[Option<String>],
-    count: i32,
-    stock: i32,
-) -> Option<(i32, bool)> {
-    action_slot(actions, &format!("Withdraw {count}"))
-        .map(|op| (op, false))
-        .or_else(|| {
-            (count == stock)
-                .then(|| all_slot(actions).map(|op| (op, false)))
-                .flatten()
-        })
-        .or_else(|| action_slot(actions, "Withdraw X").map(|op| (op, true)))
-}
-
-fn norm_action(s: &str) -> String {
-    s.to_lowercase()
-        .chars()
-        .filter(|c| !c.is_whitespace() && *c != '-' && *c != '_')
-        .collect()
+        .is_some_and(|label| ops::normalized_action_eq(label, "Withdraw X"))
 }
 
 /// Open the bank the player stands at, by the packed stands of the one
@@ -1261,7 +3275,7 @@ pub(crate) fn open_bank_at_here<D: Driver>(
     }
     let mut ix = api::interact::Interactions::new(snapshot, driver);
     for loc in snapshot.locs() {
-        if let Some(op) = action_slot(&loc.actions, "Use-quickly") {
+        if let Some(op) = ops::op_slot(loc, "Use-quickly", ops::LabelMatch::Normalized) {
             return matches!(
                 ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(op)),
                 SendResult::Sent { .. }
@@ -1278,16 +3292,9 @@ fn open_booth_stand<D: Driver>(
 ) -> bool {
     use api::interact::{ActionSpec, OpTarget, SendResult};
     let mut ix = api::interact::Interactions::new(snapshot, driver);
-    snapshot
-        .locs()
-        .iter()
-        .find(|loc| {
-            loc.tile.x == stand.tile.x
-                && loc.tile.z == stand.tile.z
-                && loc.tile.level == stand.tile.level
-        })
+    ops::booth_at(snapshot.locs(), stand.tile, None)
         .and_then(|loc| {
-            action_slot(&loc.actions, "Use-quickly").map(|slot| {
+            ops::op_slot(loc, "Use-quickly", ops::LabelMatch::Normalized).map(|slot| {
                 matches!(
                     ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(slot)),
                     SendResult::Sent { .. }
@@ -1324,51 +3331,11 @@ fn open_npc_bank_at_here<D: Driver>(
             return matches!(ix.continue_dialog(None), SendResult::Sent { .. });
         }
     }
-    let wanted = name.trim();
-    let Some(npc) = snapshot
-        .npcs()
-        .iter()
-        .filter(|npc| {
-            npc.name
-                .as_deref()
-                .is_some_and(|got| got.trim().eq_ignore_ascii_case(wanted))
-        })
-        .filter(|npc| {
-            let d_stand = (npc.tile.x - stand.x)
-                .abs()
-                .max((npc.tile.z - stand.z).abs())
-                + i32::from(npc.tile.level != stand.level) * 10_000;
-            let d_here = here
-                .map(|(hx, hz, hl)| {
-                    (npc.tile.x - hx).abs().max((npc.tile.z - hz).abs())
-                        + i32::from(npc.tile.level != hl) * 10_000
-                })
-                .unwrap_or(i32::MAX);
-            d_stand <= SAME_BANK || d_here <= 10
-        })
-        .min_by_key(|npc| {
-            let d_stand = (npc.tile.x - stand.x)
-                .abs()
-                .max((npc.tile.z - stand.z).abs())
-                + i32::from(npc.tile.level != stand.level) * 10_000;
-            let d_here = here
-                .map(|(hx, hz, hl)| {
-                    (npc.tile.x - hx).abs().max((npc.tile.z - hz).abs())
-                        + i32::from(npc.tile.level != hl) * 10_000
-                })
-                .unwrap_or(i32::MAX);
-            (d_stand, d_here, npc.distance, npc.index)
-        })
-    else {
+    let Some(npc) = teller_pick(snapshot.npcs(), here, stand, name) else {
         return false;
     };
-    let packed = (op >= 1).then_some(op).filter(|&slot| {
-        npc.actions
-            .get((slot as usize).saturating_sub(1))
-            .and_then(|a| a.as_deref())
-            .is_some_and(|label| !label.is_empty())
-    });
-    let slot = packed.or_else(|| action_slot(&npc.actions, "Bank"));
+    let slot =
+        ops::packed_op(npc, op).or_else(|| ops::op_slot(npc, "Bank", ops::LabelMatch::Normalized));
     let Some(slot) = slot else {
         return false;
     };
@@ -1377,6 +3344,46 @@ fn open_npc_bank_at_here<D: Driver>(
         SendResult::Sent { .. }
     )
 }
+
+/// The host teller pick for an already nav-chosen `stand`: named `name`
+/// (trimmed, ASCII-folded), within [`SAME_BANK`] of the stand or 10 of
+/// `here` (Chebyshev, +10_000 per plane mismatch); the smallest
+/// `(d_stand, d_here, distance, index)` key wins. This is BankBudget's
+/// stand policy, not `bank::npc::banker_scan`'s scene-order policy.
+fn teller_pick<'a>(
+    npcs: &'a [api::snapshot::NpcView],
+    here: Option<(i32, i32, i32)>,
+    stand: WorldTile,
+    name: &str,
+) -> Option<&'a api::snapshot::NpcView> {
+    let wanted = name.trim();
+    let chebyshev = |npc: &api::snapshot::NpcView, x: i32, z: i32, level: i32| {
+        (npc.tile.x - x).abs().max((npc.tile.z - z).abs())
+            + i32::from(npc.tile.level != level) * 10_000
+    };
+    let key = |npc: &api::snapshot::NpcView| {
+        let d_stand = chebyshev(npc, stand.x, stand.z, stand.level);
+        let d_here = here
+            .map(|(hx, hz, hl)| chebyshev(npc, hx, hz, hl))
+            .unwrap_or(i32::MAX);
+        (d_stand, d_here, npc.distance, npc.index)
+    };
+    npcs.iter()
+        .filter(|npc| {
+            npc.name
+                .as_deref()
+                .is_some_and(|got| got.trim().eq_ignore_ascii_case(wanted))
+        })
+        .filter(|npc| {
+            let (d_stand, d_here, ..) = key(npc);
+            d_stand <= SAME_BANK || d_here <= 10
+        })
+        .min_by_key(|npc| key(npc))
+}
+
+#[cfg(any(test, all(target_os = "linux", feature = "test-support")))]
+#[path = "script_bank_harness.rs"]
+pub(crate) mod harness;
 
 #[cfg(test)]
 #[path = "script_bank_tests.rs"]

@@ -11,7 +11,9 @@
 //! There is no "assume yes". `map_members` is WORLD membership
 //! (`Environment.node.members`), never the account or cache flag.
 
+use std::alloc::Layout;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::AtomicUsize;
 
 use api::selected::Truth;
 use api::snapshot::GameSnapshot;
@@ -63,10 +65,184 @@ pub struct WorldState {
     pub quest_evidence: Option<QuestEvidence>,
 }
 
+/// Checked map-capacity accounting for a bounded bank-state update.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorldStateGrowthBound {
+    /// Current inventory map bytes retained with the input state.
+    pub inventory_old_bytes: usize,
+    /// Prospective inventory allocation bytes during a rehash, or zero if
+    /// the map has enough existing capacity.
+    pub inventory_new_bytes: usize,
+    /// Current worn-id set bytes retained with the input state.
+    pub worn_old_bytes: usize,
+    /// Prospective worn-id allocation bytes during a rehash, or zero if
+    /// the set has enough existing capacity.
+    pub worn_new_bytes: usize,
+}
+
+// HashMap's current RawTable layout uses a 16-byte SIMD control group on the
+// supported x86_64/aarch64 targets. The size bound follows its source layout:
+// aligned bucket storage + one control byte per bucket + one trailing group.
+const HASH_TABLE_GROUP_WIDTH: usize = 16;
+
+fn map_bucket_count(capacity: usize, entry_bytes: usize) -> Option<usize> {
+    if capacity == 0 {
+        return Some(0);
+    }
+    if capacity < 15 {
+        // RawTable's small-capacity branch raises the minimum for narrow
+        // entries so the bucket bytes cover the control alignment.
+        let min_capacity = match entry_bytes {
+            0..=1 => 14,
+            2..=3 => 7,
+            _ => 3,
+        };
+        let adjusted = capacity.max(min_capacity);
+        return Some(if adjusted < 4 {
+            4
+        } else if adjusted < 8 {
+            8
+        } else {
+            16
+        });
+    }
+    capacity
+        .checked_mul(8)?
+        .checked_div(7)?
+        .checked_next_power_of_two()
+}
+
+pub(crate) fn map_storage_bound(
+    capacity: usize,
+    entry_bytes: usize,
+    entry_alignment: usize,
+) -> Option<usize> {
+    let buckets = map_bucket_count(capacity, entry_bytes)?;
+    if buckets == 0 {
+        return Some(0);
+    }
+    let control_alignment = entry_alignment.max(HASH_TABLE_GROUP_WIDTH);
+    if !control_alignment.is_power_of_two() {
+        return None;
+    }
+    let bucket_bytes = entry_bytes.checked_mul(buckets)?;
+    let control_offset =
+        bucket_bytes.checked_add(control_alignment.checked_sub(1)?)? & !(control_alignment - 1);
+    control_offset
+        .checked_add(buckets)?
+        .checked_add(HASH_TABLE_GROUP_WIDTH)
+}
+
+fn map_growth_bound(
+    len: usize,
+    capacity: usize,
+    additions: usize,
+    entry_bytes: usize,
+    entry_alignment: usize,
+) -> Option<usize> {
+    let required = len.checked_add(additions)?;
+    if required <= capacity {
+        return Some(0);
+    }
+    map_storage_bound(required, entry_bytes, entry_alignment)
+}
+
 impl WorldState {
     /// The fail-closed empty state: no facts, so no requirement passes.
     pub fn empty() -> Self {
         WorldState::default()
+    }
+
+    /// Checked bytes retained by one shared `Arc<WorldState>` backing.
+    ///
+    /// Includes the Arc strong/weak counters, this value's inline storage,
+    /// each owned hash-table allocation, and completed-quest string buffers.
+    /// `quest_evidence`'s provider is an independently shared allocation and
+    /// is charged by the owner that retains that provider.
+    pub fn try_shared_retained_bytes(&self) -> Option<usize> {
+        let (arc_layout, _) = Layout::new::<[AtomicUsize; 2]>()
+            .extend(Layout::new::<WorldState>())
+            .ok()?;
+        let mut bytes = arc_layout.pad_to_align().size();
+        for table_bytes in [
+            map_storage_bound(
+                self.inv.capacity(),
+                std::mem::size_of::<(i32, i32)>(),
+                std::mem::align_of::<(i32, i32)>(),
+            ),
+            map_storage_bound(
+                self.worn.capacity(),
+                std::mem::size_of::<i32>(),
+                std::mem::align_of::<i32>(),
+            ),
+            map_storage_bound(
+                self.stats.capacity(),
+                std::mem::size_of::<(i32, i32)>(),
+                std::mem::align_of::<(i32, i32)>(),
+            ),
+            map_storage_bound(
+                self.varps.capacity(),
+                std::mem::size_of::<(i32, i32)>(),
+                std::mem::align_of::<(i32, i32)>(),
+            ),
+            map_storage_bound(
+                self.quests.capacity(),
+                std::mem::size_of::<String>(),
+                std::mem::align_of::<String>(),
+            ),
+        ] {
+            bytes = bytes.checked_add(table_bytes?)?;
+        }
+        self.quests
+            .iter()
+            .try_fold(bytes, |total, quest| total.checked_add(quest.capacity()))
+    }
+
+    /// Bound the existing and prospective capacity of the bank-mutated
+    /// inventory and worn collections. Addition counts must be upper bounds
+    /// on distinct new IDs. Charge old bytes with the captured input and new
+    /// bytes as scratch for possible rehash overlap; this does not clone or
+    /// mutate the state.
+    ///
+    /// The checked capacity estimate follows the current hash-table raw
+    /// layout: aligned entry buckets, one control byte per bucket, and a
+    /// trailing control group. The maximum supported 16-byte group also
+    /// accounts for the small-table alignment padding.
+    pub fn growth_bound(
+        &self,
+        inventory_new_distinct_ids: usize,
+        worn_new_distinct_ids: usize,
+    ) -> Option<WorldStateGrowthBound> {
+        let inventory_entry_bytes = std::mem::size_of::<(i32, i32)>();
+        let inventory_entry_alignment = std::mem::align_of::<(i32, i32)>();
+        let worn_entry_bytes = std::mem::size_of::<i32>();
+        let worn_entry_alignment = std::mem::align_of::<i32>();
+        Some(WorldStateGrowthBound {
+            inventory_old_bytes: map_storage_bound(
+                self.inv.capacity(),
+                inventory_entry_bytes,
+                inventory_entry_alignment,
+            )?,
+            inventory_new_bytes: map_growth_bound(
+                self.inv.len(),
+                self.inv.capacity(),
+                inventory_new_distinct_ids,
+                inventory_entry_bytes,
+                inventory_entry_alignment,
+            )?,
+            worn_old_bytes: map_storage_bound(
+                self.worn.capacity(),
+                worn_entry_bytes,
+                worn_entry_alignment,
+            )?,
+            worn_new_bytes: map_growth_bound(
+                self.worn.len(),
+                self.worn.capacity(),
+                worn_new_distinct_ids,
+                worn_entry_bytes,
+                worn_entry_alignment,
+            )?,
+        })
     }
 
     /// Build from a `GameSnapshot`'s inv, equipment, stats, varps, and

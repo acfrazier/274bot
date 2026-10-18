@@ -7,9 +7,9 @@ use rustyscript::Runtime;
 const PENDING: &str = "__pending__";
 
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
-    runtime
-        .eval::<()>(
-            r#"
+    super::lineage_v8::eval::<()>(
+        runtime,
+        r#"
 globalThis.__rs2b0t_flags_view = function (u8) {
   const ints = (u8 && u8.byteLength)
     ? new Int32Array(u8.buffer, u8.byteOffset, u8.byteLength >> 2)
@@ -27,8 +27,8 @@ globalThis.__rs2b0t_flags_view = function (u8) {
   };
 };
 "#,
-        )
-        .map_err(|e| format!("flags view: {e}"))?;
+    )
+    .map_err(|e| format!("flags view: {e}"))?;
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);

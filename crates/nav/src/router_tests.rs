@@ -1,10 +1,16 @@
+use api::identity::{Cancellation, Deadline};
 use api::obj_names::LocDefs;
 use api::selected::QuestGate;
 use api::snapshot::WorldTile;
+use api::work::{
+    InspectionPhase, MonotonicClock, SharedCancellation, SliceBudget, StepContext, SystemClock,
+};
 use client::config::LocType;
 use client::dash3d::CollisionFlag;
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::future::Future;
+use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -32,7 +38,273 @@ use crate::transport::{
     TransportEdge, TransportGraph, TransportKind, WildernessRules, WildernessZone,
 };
 use crate::world_state::WorldState;
-use crate::zones::{Zone, ZoneClass, ZoneExempt, ZoneKey, ZoneKind, ZoneTable};
+use crate::zones::{Zone, ZoneClass, ZoneExempt, ZoneFilterOwned, ZoneKey, ZoneKind, ZoneTable};
+
+#[test]
+fn synchronous_driver_skips_suspension_and_restores_cooperative_mode() {
+    fn unit_is_ready() -> bool {
+        let mut unit = super::work_unit();
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        Future::poll(std::pin::Pin::new(&mut unit), &mut context).is_ready()
+    }
+
+    assert!(!unit_is_ready());
+    super::drive_to_completion(async {
+        assert!(unit_is_ready());
+        super::drive_to_completion(async {
+            assert!(unit_is_ready());
+        });
+        assert!(unit_is_ready());
+    });
+    assert!(!unit_is_ready());
+
+    let panicked = std::panic::catch_unwind(|| {
+        super::drive_to_completion(async {
+            assert!(unit_is_ready());
+            panic!("exercise the synchronous polling guard");
+        });
+    });
+    assert!(panicked.is_err());
+    assert!(!unit_is_ready());
+}
+
+#[cfg(unix)]
+#[test]
+fn cooperative_mapping_failure_returns_typed_allocation_error() {
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        bake(4096, 1, &[]),
+        TransportGraph::default(),
+        Vec::new(),
+    ));
+    let lease = crate::producer::lease(&world).unwrap();
+    let request = super::SearchRequest::Single {
+        from: tile(0, 0, 0),
+        to: tile(4095, 0, 0),
+        options: FindOptions::default(),
+        avoid: Box::default(),
+        max_settles: 4096,
+    };
+    let mut cursor =
+        super::SearchCursor::new(request, lease, Arc::new(WorldState::empty())).unwrap();
+    let clock = SystemClock;
+    let cancellation = SharedCancellation::new();
+    super::zeroed_buffer::with_mapping_failure(|| {
+        for _ in 0..128 {
+            let budget = SliceBudget::new(
+                NonZeroU32::new(64).unwrap(),
+                Deadline::after(clock.now(), Duration::from_secs(5)),
+            );
+            let mut context = StepContext::<InspectionPhase>::new(&clock, budget, &cancellation);
+            match cursor.advance(&mut context) {
+                super::CursorStep::Failed(error) => {
+                    assert!(matches!(error, super::SearchCursorError::Allocation));
+                    return;
+                }
+                super::CursorStep::Yielded => {}
+                super::CursorStep::Complete(_) | super::CursorStep::Cancelled(_) => {
+                    panic!("a refused mapping must fail the cursor")
+                }
+            }
+        }
+        panic!("a refused mapping must fail within the finite slice limit");
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn synchronous_mapping_failure_preserves_budget_exhausted() {
+    let collision = bake(4096, 1, &[]);
+    let graph = TransportGraph::default();
+    let state = WorldState::empty();
+    super::zeroed_buffer::with_mapping_failure(|| {
+        assert_eq!(
+            find_with_avoid_bounded(
+                &collision,
+                &graph,
+                tile(0, 0, 0),
+                tile(4095, 0, 0),
+                FindOptions::default(),
+                &state,
+                &[],
+                4096,
+            ),
+            Err(RouteError::BudgetExhausted),
+        );
+    });
+}
+
+#[test]
+fn non_proof_goals_settle_without_a_future() {
+    use super::{Goals, Settle, TargetCost};
+
+    let target = WorldTile {
+        x: 2,
+        z: 0,
+        level: 0,
+    };
+    let other = WorldTile { x: 1, ..target };
+    let cost = TargetCost {
+        ticks: 3.0,
+        settled_at: 7,
+    };
+    let mut single = Goals::Single {
+        to: target,
+        cost: None,
+    };
+    assert!(matches!(
+        single.settle_non_first(other, cost),
+        Settle::Continue
+    ));
+    assert!(matches!(
+        single.settle_non_first(target, cost),
+        Settle::Stop
+    ));
+    assert!(matches!(single, Goals::Single { cost: Some(found), .. } if found == cost));
+
+    let unique = HashMap::from([(target, 0)]);
+    let mut costs = [Err(TargetError::NotSettled)];
+    let mut many = Goals::Many {
+        unique: &unique,
+        costs: &mut costs,
+        remaining: 1,
+    };
+    assert!(matches!(
+        many.settle_non_first(other, cost),
+        Settle::Continue
+    ));
+    assert!(matches!(many.settle_non_first(target, cost), Settle::Stop));
+    assert_eq!(costs, [Ok(cost)]);
+}
+
+#[test]
+fn pinned_reverse_admission_preserves_seen_and_queue() {
+    let collision = bake(3, 1, &[]);
+    let graph = TransportGraph::default();
+    let state = WorldState::empty();
+    let mut closure = super::drive_to_completion(super::ReverseClosure::new(super::ProofGates {
+        collision: &collision,
+        graph: &graph,
+        state: &state,
+        essence: None,
+        from: tile(0, 0, 0),
+        use_teleports: false,
+        allow_wilderness: false,
+        relax: super::Relax::Strict,
+        inventory_can_grow: false,
+        cooperative_storage: false,
+    }))
+    .unwrap();
+    for (candidate, expected) in [
+        (tile(1, 0, 0), None),
+        (tile(1, 0, 0), None),
+        (tile(0, 0, 0), Some(ReverseProof::Reachable)),
+    ] {
+        let mut future = std::pin::pin!(closure.admit(candidate));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(matches!(
+            Future::poll(future.as_mut(), &mut context),
+            std::task::Poll::Ready(Ok(actual)) if actual == expected
+        ));
+    }
+    assert_eq!(closure.seen.len(), 2);
+    assert_eq!(closure.queue.len(), 1);
+    assert_eq!(closure.queue.front(), Some(&tile(1, 0, 0)));
+}
+
+#[test]
+fn cooperative_cursor_checks_the_clock_once_per_work_boundary() {
+    struct CountingClock {
+        now: Instant,
+        reads: std::cell::Cell<u32>,
+    }
+
+    impl MonotonicClock for CountingClock {
+        fn now(&self) -> Instant {
+            self.reads.set(self.reads.get() + 1);
+            self.now
+        }
+    }
+
+    let clock = CountingClock {
+        now: Instant::now(),
+        reads: std::cell::Cell::new(0),
+    };
+    let cancellation = SharedCancellation::new();
+    let mut cursor = super::SearchCursor {
+        future: Some(Box::pin(async {
+            for _ in 0..128 {
+                super::work_unit().await;
+            }
+            Err(super::SearchCursorError::AlreadyCompleted)
+        })),
+        progress: Arc::default(),
+        input_bytes: 0,
+        reservation: super::SearchReservation::default(),
+    };
+    let budget = SliceBudget::new(
+        NonZeroU32::new(64).unwrap(),
+        Deadline::after(clock.now, Duration::from_secs(1)),
+    );
+    let mut context = StepContext::<InspectionPhase>::new(&clock, budget, &cancellation);
+
+    assert!(matches!(
+        cursor.advance(&mut context),
+        super::CursorStep::Yielded
+    ));
+    assert_eq!(context.units_this_slice(), 64);
+    assert_eq!(
+        clock.reads.get(),
+        65,
+        "check once before the first poll and after each consumed unit"
+    );
+}
+
+#[test]
+fn cooperative_cursor_returns_cancelled_and_drops_the_future() {
+    let clock = SystemClock;
+    let cancellation = SharedCancellation::new();
+    let mut cursor = super::SearchCursor {
+        future: Some(Box::pin(async {
+            loop {
+                super::work_unit().await;
+            }
+        })),
+        progress: Arc::default(),
+        input_bytes: 0,
+        reservation: super::SearchReservation::default(),
+    };
+    let now = clock.now();
+    let budget = SliceBudget::new(
+        NonZeroU32::new(8).unwrap(),
+        Deadline::after(now, Duration::from_secs(1)),
+    );
+    let mut context = StepContext::<InspectionPhase>::new(&clock, budget, &cancellation);
+    assert!(matches!(
+        cursor.advance(&mut context),
+        super::CursorStep::Yielded
+    ));
+    assert!(
+        cursor.future.is_some(),
+        "a yielded search still owns its future"
+    );
+
+    cancellation
+        .register(Cancellation::Operator)
+        .expect("first cancellation wins");
+    let budget = SliceBudget::new(
+        NonZeroU32::new(8).unwrap(),
+        Deadline::after(now, Duration::from_secs(1)),
+    );
+    let mut context = StepContext::<InspectionPhase>::new(&clock, budget, &cancellation);
+    assert!(matches!(
+        cursor.advance(&mut context),
+        super::CursorStep::Cancelled(Cancellation::Operator)
+    ));
+    assert!(
+        cursor.future.is_none(),
+        "cancellation must drop the search future"
+    );
+}
 
 #[test]
 fn local_component_rejects_invalid_origins_and_clamps_radius() {
@@ -848,6 +1120,66 @@ fn find_exhausts_the_node_budget_before_giving_up() {
 }
 
 #[test]
+fn small_single_search_allocates_for_visited_tiles_not_the_node_budget() {
+    let collision = bake(40, 1, &[]);
+    let graph = TransportGraph::default();
+    let state = WorldState::empty();
+    // The larger measured peak is 3,186 bytes; 4 KiB leaves 910 bytes (28.6%) of headroom.
+    for (destination, reachable) in [(tile(5, 5, 0), false), (tile(2, 0, 0), true)] {
+        let mut result = None;
+        let allocations = allocation_counter::measure(|| {
+            result = Some(find_with(
+                &collision,
+                &graph,
+                tile(0, 0, 0),
+                destination,
+                FindOptions::default(),
+                &state,
+            ));
+        });
+        let result = result.expect("the measured search runs");
+        if reachable {
+            assert_eq!(
+                result.expect("the corridor destination is reachable").dest,
+                destination
+            );
+        } else {
+            assert!(matches!(result, Err(RouteError::NoPath)));
+        }
+        assert!(
+            allocations.bytes_max <= 4 * 1024,
+            "small single search retained maximum-budget storage: {allocations:?}"
+        );
+    }
+}
+
+#[test]
+fn small_first_goal_diagnosis_allocates_for_visited_tiles_not_the_proof_budget() {
+    let collision = bake(40, 1, &[]);
+    let graph = TransportGraph::default();
+    let state = WorldState::empty();
+    let mut result = None;
+    // The measured peak is 1,199 bytes; 2 KiB leaves 849 bytes (70.8%) of headroom.
+    let allocations = allocation_counter::measure(|| {
+        result = Some(find_first_missing_item_reqs_with_avoid(
+            &collision,
+            &graph,
+            tile(0, 0, 0),
+            &[tile(5, 5, 0)],
+            &[],
+            FindOptions::default(),
+            &state,
+            &[],
+        ));
+    });
+    assert!(result.expect("the measured diagnosis runs").is_none());
+    assert!(
+        allocations.bytes_max <= 2 * 1024,
+        "small first-goal diagnosis retained maximum-proof storage: {allocations:?}"
+    );
+}
+
+#[test]
 fn find_prefers_a_cheap_door_over_a_long_walk_around() {
     // A 5×20 bake walled between x=1 and x=2 for z=1..=18 with a door
     // gap at z=10: crossing on foot means walking 20 tiles around the
@@ -999,6 +1331,70 @@ fn exact_stage_window_door_routes_only_on_proven_evidence() {
     let past = evidenced(tbwt_evidence(gate_range(Some(4), Some(6))));
     assert_eq!(route(&past), Err(RouteError::NoPath));
     assert_eq!(needs(&past), Ok(None), "a disproven window needs no read");
+}
+
+#[test]
+fn cooperative_quest_gate_diagnosis_matches_blocked_and_satisfied_stage_fixture() {
+    let gate = gate_window("tbwt", "tbwt_main", Some(3), Some(3));
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        walled_5x5(),
+        stage_door_graph(vec![gate]),
+        Vec::new(),
+    ));
+    let lease = crate::producer::lease(&world).expect("existing stage-door fixture lease");
+    let (from, to) = (tile(0, 0, 0), tile(4, 4, 0));
+    let options = FindOptions::default();
+    for (label, state, blocked) in [
+        ("blocked", WorldState::empty(), true),
+        (
+            "satisfied",
+            evidenced(tbwt_evidence(gate_range(Some(3), Some(3)))),
+            false,
+        ),
+    ] {
+        let route = find_with(&world.collision, &world.graph, from, to, options, &state);
+        let old_gates = find_unresolved_quest_gates(
+            &world.collision,
+            &world.graph,
+            from,
+            &[to],
+            options,
+            &state,
+            &[],
+        );
+        if blocked {
+            assert_eq!(route, Err(RouteError::NoPath), "{label}");
+            assert!(
+                matches!(&old_gates, Ok(Some(gates)) if !gates.is_empty()),
+                "the existing blocked stage fixture must name a gate"
+            );
+        } else {
+            assert!(route.is_ok(), "{label}");
+            assert_eq!(old_gates, Ok(None), "{label}");
+        }
+        let completion = advance_real_route_completion(
+            crate::router::SearchRequest::UnresolvedQuestGates {
+                from,
+                targets: Box::new([to]),
+                options,
+                avoid: Box::new([]),
+                max_settles: crate::router::NODE_BUDGET,
+            },
+            &lease,
+            &state,
+        );
+        assert!(completion.forward_settled() > 0, "{label}");
+        let crate::router::SearchOutcome::UnresolvedQuestGates(new_gates) =
+            completion.into_parts().0
+        else {
+            panic!("quest-gate cursor returned the wrong result shape")
+        };
+        assert_eq!(
+            format!("{old_gates:#?}").as_bytes(),
+            format!("{new_gates:#?}").as_bytes(),
+            "{label}: cooperative stage diagnosis must match the old API"
+        );
+    }
 }
 
 /// An upper-only window `[None,3]` holds for every possible value up to
@@ -1569,12 +1965,12 @@ fn first_target_proof_of_reachability_lifts_the_unproven_budget() {
         ..FindOptions::default()
     };
     let state = WorldState::empty();
-    let search = |reachable_budget| {
+    let search = |stands: &[WorldTile], reachable_budget| {
         super::first_search(
             &wc,
             &graph,
             from,
-            &stands,
+            stands,
             &[],
             opts,
             &state,
@@ -1585,14 +1981,21 @@ fn first_target_proof_of_reachability_lifts_the_unproven_budget() {
         )
     };
 
-    let lifted = search(super::NODE_BUDGET);
-    assert_eq!(lifted.proof(), ReverseProof::Reachable);
-    let route = lifted
-        .route()
-        .expect("the teleport reaches the sealed stand");
-    assert_eq!(route.dest, stands[0]);
-    assert!(lifted.settled() > 64);
-    assert_eq!(search(64).route().err(), Some(RouteError::BudgetExhausted));
+    // A goal at the landing proves reachability during initialization. The
+    // farther goal needs backward steps before releasing its proof scratch.
+    for stands in [stands, [tile(200, 200, 0)]] {
+        let lifted = search(&stands, super::NODE_BUDGET);
+        assert_eq!(lifted.proof(), ReverseProof::Reachable);
+        let route = lifted
+            .route()
+            .expect("the teleport reaches the sealed stand");
+        assert_eq!(route.dest, stands[0]);
+        assert!(lifted.settled() > 64);
+        assert_eq!(
+            search(&stands, 64).route().err(),
+            Some(RouteError::BudgetExhausted)
+        );
+    }
 }
 
 /// R6-B1: a fallback set keeps its own proof when the preferred budget stops
@@ -4744,8 +5147,10 @@ fn refusal_attribution_reports_the_selected_witness_and_multi_goal_frontiers() {
         "one shortest witness traverses only one of the two blocked corridors"
     );
     let witness_zone = *witness_zones.iter().next().unwrap();
+    let single_target =
+        crate::router::find_blocking_zones(&collision, &graph, from, to, opts, &state, &[]);
     assert_eq!(
-        crate::router::find_blocking_zones(&collision, &graph, from, to, opts, &state, &[]),
+        single_target,
         Some(vec![ZoneKey::Zone(witness_zone)]),
         "single-target attribution follows the selected relaxed route"
     );
@@ -4769,6 +5174,95 @@ fn refusal_attribution_reports_the_selected_witness_and_multi_goal_frontiers() {
         first_frontier,
         vec![ZoneKey::Zone(0), ZoneKey::Zone(1)],
         "multigoal attribution includes each feasible frontier and excludes the wall-sealed zone"
+    );
+    let one_goal = [to];
+    let first_goal = crate::router::find_first_blocking_zones(
+        &collision,
+        &graph,
+        from,
+        &one_goal,
+        opts,
+        &state,
+        &[],
+    )
+    .expect("one-goal first-goal witness");
+    assert_eq!(
+        first_goal,
+        vec![ZoneKey::Zone(0), ZoneKey::Zone(1)],
+        "one-goal first-goal attribution includes both feasible corridors"
+    );
+    assert_ne!(
+        first_goal.as_slice(),
+        single_target
+            .as_deref()
+            .expect("single-target witness exists"),
+        "one-goal first-goal attribution differs from the selected-route witness"
+    );
+
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        collision,
+        graph,
+        Vec::new(),
+    ));
+    let lease = crate::producer::lease(&world).expect("synthetic diagnosis lease");
+    let zone_count = world
+        .graph
+        .zones
+        .as_ref()
+        .expect("synthetic zone table")
+        .zones()
+        .len();
+    let diagnose = |diagnosis| {
+        let endpoints = [from, to];
+        let attribution_endpoints = match diagnosis {
+            crate::router::BlockerDiagnosis::SingleTarget => endpoints.as_slice(),
+            crate::router::BlockerDiagnosis::FirstGoal => &endpoints[..1],
+        };
+        let zone_filter = ZoneFilterOwned::new(
+            zone_count,
+            state.combat_level,
+            attribution_endpoints,
+            opts.zones,
+        )
+        .expect("synthetic blocking filter");
+        advance_real_route_cursor(
+            crate::router::SearchRequest::BlockingZones {
+                from,
+                targets: vec![to].into_boxed_slice(),
+                diagnosis,
+                options: opts,
+                avoid: Vec::new().into_boxed_slice(),
+                max_settles: crate::router::NODE_BUDGET,
+                zone_filter,
+            },
+            &lease,
+            &state,
+        )
+    };
+    let crate::router::SearchOutcome::BlockingZones(cooperative_single) =
+        diagnose(crate::router::BlockerDiagnosis::SingleTarget)
+    else {
+        panic!("single-target blocker diagnosis returned the wrong result shape")
+    };
+    assert_eq!(
+        cooperative_single.as_deref(),
+        single_target.as_deref(),
+        "cooperative single-target result matches the old single-target API"
+    );
+    let crate::router::SearchOutcome::BlockingZones(cooperative_first_goal) =
+        diagnose(crate::router::BlockerDiagnosis::FirstGoal)
+    else {
+        panic!("first-goal blocker diagnosis returned the wrong result shape")
+    };
+    assert_eq!(
+        cooperative_first_goal.as_deref(),
+        Some(first_goal.as_slice()),
+        "cooperative one-goal FirstGoal result matches the old API"
+    );
+    assert_ne!(
+        cooperative_single.as_deref(),
+        cooperative_first_goal.as_deref(),
+        "cooperative blocker modes must preserve their distinct witnesses"
     );
 }
 
@@ -5620,6 +6114,186 @@ fn zoned_first_keeps_preferred_priority_and_does_not_use_fallback_zones_for_tran
             if route.dest == zoned && route.ticks == 1.0)
     );
     assert_eq!(empty.completion_partitions(), 0);
+
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        collision,
+        graph,
+        Vec::new(),
+    ));
+    let lease = crate::producer::lease(&world).expect("zoned fixture lease");
+    let preferred = [zoned];
+    let fallback = [from];
+    let beyond = [tile(4, 0, 0)];
+    for (targets, fallback, preferred_wins) in [
+        (&preferred[..], &fallback[..], true),
+        (&beyond[..], &preferred[..], false),
+        (&[][..], &preferred[..], false),
+    ] {
+        let completion = advance_real_route_completion(
+            super::SearchRequest::First {
+                from,
+                targets: targets.to_vec().into_boxed_slice(),
+                fallback: fallback.to_vec().into_boxed_slice(),
+                options: FindOptions::default(),
+                avoid: Box::new([]),
+                max_settles: super::NODE_BUDGET,
+            },
+            &lease,
+            &state,
+        );
+        let super::SearchOutcome::First { search } = completion.into_parts().0 else {
+            panic!("first-goal cursor returned the wrong result shape");
+        };
+        let (route, fallback) = search.into_routes();
+        if preferred_wins {
+            assert_eq!(route.expect("preferred completion").destination(), zoned);
+            assert!(fallback.is_none());
+        } else {
+            assert!(matches!(route, Err(RouteError::NoPath)));
+            assert!(
+                matches!(fallback, Some(super::CompactFallbackRoute::Routed(route))
+                    if route.destination() == zoned && route.ticks() == 1.0)
+            );
+        }
+    }
+}
+
+#[test]
+fn ordered_first_compares_destination_zones_with_safe_arrivals_and_keeps_ties() {
+    let collision = bake(5, 5, &[]);
+    let mut graph = TransportGraph::default();
+    install_zones(&collision, &mut graph, vec![rect_zone(1, 2, 0, 0)]);
+    let from = tile(0, 0, 0);
+    let zoned = tile(2, 0, 0);
+    let tied_safe = tile(0, 2, 0);
+    let farther_safe = tile(0, 4, 0);
+    let state = WorldState::empty();
+    let options = FindOptions {
+        prefer_target_order: true,
+        ..FindOptions::default()
+    };
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        collision,
+        graph,
+        Vec::new(),
+    ));
+    let lease = crate::producer::lease(&world).expect("ordered zone fixture lease");
+    for (targets, expected) in [
+        ([farther_safe, zoned], zoned),
+        ([zoned, tied_safe], zoned),
+        ([tied_safe, zoned], tied_safe),
+    ] {
+        let single = find_with(
+            &world.collision,
+            &world.graph,
+            from,
+            expected,
+            options,
+            &state,
+        )
+        .expect("the destination keeps its own-zone permission");
+        let synchronous = find_first_with(
+            &world.collision,
+            &world.graph,
+            from,
+            &targets,
+            options,
+            &state,
+        )
+        .into_route()
+        .expect("the ordered goal set has a route");
+        assert_eq!(
+            (synchronous.dest, synchronous.ticks),
+            (expected, single.ticks)
+        );
+        let completion = advance_real_route_completion(
+            super::SearchRequest::First {
+                from,
+                targets: Box::new(targets),
+                fallback: Box::new([]),
+                options,
+                avoid: Box::new([]),
+                max_settles: super::NODE_BUDGET,
+            },
+            &lease,
+            &state,
+        );
+        let super::SearchOutcome::First { search } = completion.into_parts().0 else {
+            panic!("ordered first-goal cursor returned the wrong result shape");
+        };
+        let (route, fallback) = search.into_routes();
+        let route = route.expect("the cooperative ordered goal set has a route");
+        assert_eq!(
+            (route.destination(), route.ticks()),
+            (expected, single.ticks)
+        );
+        assert!(fallback.is_none());
+    }
+}
+
+#[test]
+fn ordered_first_keeps_unrelated_zone_transit_grants_as_fallback_permissions() {
+    let collision = bake(5, 7, &[]);
+    let mut graph = TransportGraph::default();
+    install_zones(&collision, &mut graph, vec![rect_zone(1, 3, 0, 6)]);
+    let from = tile(0, 0, 0);
+    let safe = tile(0, 6, 0);
+    let past_zone = tile(4, 0, 0);
+    let state = WorldState::empty();
+    let options = FindOptions {
+        prefer_target_order: true,
+        zones: ZoneExempt::all(),
+        ..FindOptions::default()
+    };
+    let granted = find_with(&collision, &graph, from, past_zone, options, &state).unwrap();
+    let route = find_first_with(
+        &collision,
+        &graph,
+        from,
+        &[past_zone, safe],
+        options,
+        &state,
+    )
+    .into_route()
+    .unwrap();
+    assert_eq!((route.dest, route.ticks), (safe, 3.0));
+    assert!(granted.ticks < route.ticks);
+}
+
+#[test]
+fn ordered_bank_failure_keeps_the_first_access_zone_witness() {
+    let collision = bake(9, 1, &[]);
+    let mut graph = TransportGraph::default();
+    install_zones(&collision, &mut graph, vec![rect_zone(2, 3, 0, 0)]);
+    let stands = [BankStand {
+        name: "Fixture bank".into(),
+        tile: tile(6, 0, 0),
+        access: BankAccess::Booth { op: 2 },
+    }];
+    let from = tile(0, 0, 0);
+    let state = WorldState::empty();
+    let first = crate::bank_fetch::nearest_bank_access(&collision, &stands, from).unwrap();
+    assert_eq!(first, tile(5, 0, 0));
+    let error = crate::bank_fetch::plan_bank_fetch(
+        &[MissingReq::Carry { id: 995, count: 1 }],
+        &state,
+        &[(995, 1)],
+        &stands,
+        from,
+        &collision,
+        &graph,
+        FindOptions::default(),
+        &[],
+    )
+    .expect_err("every access needs unrelated danger-zone transit");
+    assert_eq!(
+        error,
+        crate::bank_fetch::BankFetchError::Access {
+            access: first,
+            error: RouteError::NoPath,
+            blocked_zones: vec![ZoneKey::Zone(0)],
+        }
+    );
 }
 
 #[test]
@@ -5735,6 +6409,1265 @@ fn blocked_normal_ghast_membership_follows_its_engine_wander_over_the_bog() {
     // flags (NAV-WWM-ROUTE-R2 `oracle/engine-audit.ts`) acquires from exactly
     // 187 of the 289 rectangle tiles.
     assert_eq!(members, 187);
+}
+
+#[test]
+fn request_shape_input_bounds_fail_closed_on_overflow() {
+    let many = crate::router::SearchRequestShape::Many {
+        target_capacity: usize::MAX,
+        options: FindOptions::default(),
+        avoid_capacity: 1,
+        max_settles: 64,
+        reconstruct_best: false,
+    };
+    assert!(many.retained_input_bytes().is_none());
+
+    let first = crate::router::SearchRequestShape::First {
+        target_capacity: usize::MAX,
+        fallback_capacity: 1,
+        options: FindOptions::default(),
+        avoid_capacity: 0,
+        max_settles: 64,
+    };
+    assert!(first.target_count().is_none());
+}
+
+#[test]
+fn missing_item_reservations_charge_carry_and_worn_plan_rows() {
+    let mut graph = door(tile(0, 0, 0), tile(1, 0, 0), 1);
+    graph.edges[0].item_req = vec![(10, 1), (11, 1)];
+    graph.edges[0].consumed_req = vec![(12, 1)];
+    graph.edges[0].item_returns = vec![(13, 1)];
+    graph.edges[0].worn_req = vec![20, 21, 22];
+    let mut teleport = teleport(tile(2, 0, 0), 1, Vec::new(), vec![(14, 1)])
+        .teleports
+        .remove(0);
+    teleport.worn_req = vec![21, 22];
+    graph.teleports.push(teleport);
+
+    let envelope = crate::contract::SearchGraphEnvelope::from_graph(&graph);
+    assert_eq!(envelope.carry_rows, 5);
+    assert_eq!(envelope.worn_rows, 5);
+    assert_eq!(envelope.max_worn_ids_per_edge, 3);
+
+    let reservation = super::search_worst_case_reservation(
+        super::SearchRequestShape::MissingItemReqs {
+            target_capacity: 1,
+            fallback_capacity: 1,
+            options: FindOptions::default(),
+            avoid_capacity: 0,
+            max_settles: 8,
+        },
+        &graph,
+        envelope,
+    )
+    .unwrap();
+    assert_eq!(reservation.max_missing_requests, 13);
+    assert_eq!(reservation.max_missing_carry_ids, 5);
+    assert_eq!(reservation.max_missing_worn_ids, 24);
+    assert_eq!(reservation.max_plan_item_rows, 10);
+
+    let route_reservation = super::route_missing_requirements_reservation(0, 1, envelope).unwrap();
+    assert_eq!(route_reservation.max_missing_requests, 6);
+    assert_eq!(route_reservation.max_missing_carry_ids, 5);
+    assert_eq!(route_reservation.max_missing_worn_ids, 3);
+    assert_eq!(route_reservation.max_plan_item_rows, 6);
+}
+
+#[test]
+fn missing_item_result_retention_uses_route_edges_not_the_search_budget() {
+    let mut graph = toll_graph();
+    graph.edges[0].worn_req = vec![7, 8];
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        walled_5x5(),
+        graph,
+        Vec::new(),
+    ));
+    let lease = crate::contract::NavLease::wrap(
+        world,
+        crate::contract::PackDigest::of(b"small toll route with a full search budget"),
+    )
+    .unwrap();
+    let outcome = advance_real_route_cursor(
+        super::SearchRequest::MissingItemReqs {
+            from: tile(0, 0, 0),
+            targets: vec![tile(4, 4, 0)].into_boxed_slice(),
+            fallback: Box::default(),
+            options: FindOptions::default(),
+            avoid: Box::default(),
+            max_settles: super::NODE_BUDGET,
+        },
+        &lease,
+        &WorldState::empty(),
+    );
+    let super::SearchOutcome::MissingItemReqs(Some(missing)) = outcome else {
+        panic!("the toll route must return its real carry and worn requirements");
+    };
+    assert_eq!(missing.len(), 2);
+    assert!(matches!(
+        missing.requirement_at(0),
+        Some(super::MissingReqView::WearAny { ids: [7, 8] })
+    ));
+    assert!(matches!(
+        missing.requirement_at(1),
+        Some(super::MissingReqView::Carry { id: 995, count: 10 })
+    ));
+    assert!(
+        missing.entries.capacity() <= 2,
+        "one traversed edge and one carry ID need only two retained rows, not {}",
+        missing.entries.capacity()
+    );
+}
+
+#[test]
+#[ignore = "loads the two reviewed real nav packs"]
+fn reviewed_real_packs_have_exact_carry_and_worn_row_counts() {
+    for (path, expected_carry, expected_worn) in [
+        (
+            "/srv/dev/scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+            221,
+            3_603,
+        ),
+        (
+            "/srv/dev/scratch/274bot-evidence/TRACK-T5/T5W/membership/nav/274/membership.navpack",
+            152,
+            3_483,
+        ),
+    ] {
+        let world = crate::world::NavWorld::load_pack(&PathBuf::from(path))
+            .expect("load the reviewed pack from its real content");
+        let envelope = crate::contract::SearchGraphEnvelope::from_graph(&world.graph);
+        assert!(envelope.is_representable());
+        assert_eq!(
+            (envelope.carry_rows, envelope.worn_rows),
+            (expected_carry, expected_worn),
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn real_289_preflight_charges_exact_target_capacity_before_materialization() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let world = Arc::new(world);
+    let digest = *world
+        .content
+        .get()
+        .expect("pack records its content digest");
+    let bound_identity = crate::producer::bind(&world, digest).expect("bind the loaded pack once");
+    assert!(
+        world.search_envelope.get().is_some(),
+        "bind pins the checked graph envelope before publication"
+    );
+    let lease = crate::producer::lease(&world).expect("bound real pack lease");
+    assert_eq!(lease.identity(), bound_identity);
+    assert_eq!(
+        lease.search_envelope(),
+        crate::contract::SearchGraphEnvelope::from_graph(&world.graph)
+    );
+    let state = Arc::new(WorldState::empty());
+    let options = FindOptions::default();
+    let shape = crate::router::SearchRequestShape::Many {
+        target_capacity: 3,
+        options,
+        avoid_capacity: 2,
+        max_settles: 64,
+        reconstruct_best: true,
+    };
+    let preflight =
+        crate::router::SearchCursor::preflight(shape, &lease, &state).expect("static preflight");
+    let expected_input_bytes =
+        3 * std::mem::size_of::<WorldTile>() + 2 * std::mem::size_of::<AvoidRect>();
+    assert_eq!(preflight.input_bytes(), expected_input_bytes);
+    assert!(preflight.reservation().future_layout_bytes > 0);
+    let expected_reservation = preflight.reservation();
+
+    let request = crate::router::SearchRequest::Many {
+        from: tile(3222, 3218, 0),
+        targets: vec![
+            tile(3092, 3243, 0),
+            tile(3253, 3420, 0),
+            tile(3092, 3243, 0),
+        ]
+        .into_boxed_slice(),
+        options,
+        avoid: vec![
+            AvoidRect {
+                min_x: 1,
+                max_x: 2,
+                min_z: 3,
+                max_z: 4,
+                level: Some(0),
+            },
+            AvoidRect {
+                min_x: 5,
+                max_x: 6,
+                min_z: 7,
+                max_z: 8,
+                level: Some(0),
+            },
+        ]
+        .into_boxed_slice(),
+        max_settles: 64,
+        reconstruct_best: true,
+    };
+    let cursor = crate::router::SearchCursor::new_preflighted(
+        request,
+        lease.clone(),
+        Arc::clone(&state),
+        preflight,
+    )
+    .expect("materialized request matches its preflight");
+    assert_eq!(cursor.input_bytes(), expected_input_bytes);
+    assert_eq!(cursor.reservation(), expected_reservation);
+    drop(cursor);
+    let capacity_preflight =
+        crate::router::SearchCursor::preflight(shape, &lease, &state).expect("same-pack shape");
+    let too_many_targets = crate::router::SearchRequest::Many {
+        from: tile(3222, 3218, 0),
+        targets: vec![
+            tile(3092, 3243, 0),
+            tile(3253, 3420, 0),
+            tile(3092, 3243, 0),
+            tile(3253, 3420, 0),
+        ]
+        .into_boxed_slice(),
+        options,
+        avoid: Vec::<AvoidRect>::new().into_boxed_slice(),
+        max_settles: 64,
+        reconstruct_best: true,
+    };
+    assert!(matches!(
+        crate::router::SearchCursor::new_preflighted(
+            too_many_targets,
+            lease.clone(),
+            Arc::clone(&state),
+            capacity_preflight,
+        ),
+        Err(crate::router::SearchCursorError::PreflightMismatch)
+    ));
+    let another_preflight =
+        crate::router::SearchCursor::preflight(shape, &lease, &state).expect("same-pack shape");
+    let another_lease = crate::contract::NavLease::wrap(Arc::clone(&world), digest)
+        .expect("new lease identity for identical content");
+    let same_shape_request = crate::router::SearchRequest::Many {
+        from: tile(3222, 3218, 0),
+        targets: vec![tile(3092, 3243, 0)].into_boxed_slice(),
+        options,
+        avoid: Vec::new().into_boxed_slice(),
+        max_settles: 64,
+        reconstruct_best: true,
+    };
+    assert!(matches!(
+        crate::router::SearchCursor::new_preflighted(
+            same_shape_request,
+            another_lease,
+            Arc::clone(&state),
+            another_preflight,
+        ),
+        Err(crate::router::SearchCursorError::PreflightMismatch)
+    ));
+}
+
+fn advance_real_route_completion(
+    request: crate::router::SearchRequest,
+    lease: &crate::contract::NavLease,
+    state: &WorldState,
+) -> crate::router::SearchCompletion {
+    let state = Arc::new(state.clone());
+    let shape = crate::router::SearchRequestShape::from_request(&request)
+        .expect("real-content request input arithmetic fits");
+    let preflight = crate::router::SearchCursor::preflight(shape, lease, &state)
+        .expect("real-content shape fits its static reservation");
+    let input_bytes = preflight.input_bytes();
+    let reservation = preflight.reservation();
+    let mut cursor = crate::router::SearchCursor::new_preflighted(
+        request,
+        lease.clone(),
+        Arc::clone(&state),
+        preflight,
+    )
+    .expect("real-content request fits its static reservation");
+    assert_eq!(cursor.input_bytes(), input_bytes);
+    assert_eq!(cursor.reservation(), reservation);
+    let clock = SystemClock;
+    let cancellation = SharedCancellation::new();
+    let units = NonZeroU32::new(64).expect("finite nonzero work slice");
+    let mut yielded = false;
+    let mut last_forward_settled = 0;
+    loop {
+        let budget = SliceBudget::new(units, Deadline::after(clock.now(), Duration::from_secs(5)));
+        let mut context = StepContext::<InspectionPhase>::new(&clock, budget, &cancellation);
+        match cursor.advance(&mut context) {
+            crate::router::CursorStep::Complete(completion) => {
+                // A borrowed exact-route diagnosis can finish within one slice.
+                assert!(
+                    yielded || completion.forward_settled() < units.get() as usize,
+                    "a real-content forward search that exceeds one slice must yield"
+                );
+                assert_eq!(cursor.forward_settled(), completion.forward_settled());
+                return completion;
+            }
+            crate::router::CursorStep::Yielded => {
+                yielded = true;
+                let settled = cursor.forward_settled();
+                assert!(settled >= last_forward_settled);
+                last_forward_settled = settled;
+            }
+            crate::router::CursorStep::Cancelled(reason) => {
+                panic!("unexpected route-search cancellation: {reason:?}")
+            }
+            crate::router::CursorStep::Failed(error) => {
+                panic!("route-search cursor failed: {error:?}")
+            }
+        }
+    }
+}
+
+fn advance_real_route_cursor(
+    request: crate::router::SearchRequest,
+    lease: &crate::contract::NavLease,
+    state: &WorldState,
+) -> crate::router::SearchOutcome {
+    advance_real_route_completion(request, lease, state)
+        .into_parts()
+        .0
+}
+
+#[test]
+fn retained_compact_view_is_allocation_free_and_pack_checked() {
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        WorldCollision {
+            origin: tile(0, 0, 0),
+            width: 128,
+            height: 1,
+            walk: vec![0; 128 * 4],
+            blocked: vec![0; 8],
+            flags: None,
+        },
+        TransportGraph::default(),
+        Vec::new(),
+    ));
+    let lease = crate::producer::lease(&world).unwrap();
+    let outcome = advance_real_route_cursor(
+        crate::router::SearchRequest::Single {
+            from: tile(0, 0, 0),
+            to: tile(127, 0, 0),
+            options: FindOptions::default(),
+            avoid: Vec::new().into_boxed_slice(),
+            max_settles: 256,
+        },
+        &lease,
+        &WorldState::empty(),
+    );
+    let crate::router::SearchOutcome::Single {
+        route: Ok(mut route),
+    } = outcome
+    else {
+        panic!("synthetic corridor must produce a compact route")
+    };
+    let allocations = allocation_counter::measure(|| {
+        let view = crate::producer::compact_route_view(&lease, &route).unwrap();
+        assert_eq!(view.pack(), lease.identity().pack());
+        assert_eq!(view.destination(), tile(127, 0, 0));
+        assert_eq!(view.ticks(), route.ticks());
+        assert_eq!(view.leg_count(), 1);
+    });
+    assert_eq!(allocations.bytes_total, 0);
+    let foreign = crate::contract::NavLease::wrap(
+        Arc::clone(&world),
+        crate::contract::PackDigest::of(b"foreign compact assessment"),
+    )
+    .unwrap();
+    assert_eq!(
+        crate::producer::compact_route_view(&foreign, &route).unwrap_err(),
+        crate::contract::ContractError::PackMismatch
+    );
+    route.lease = None;
+    assert_eq!(
+        crate::producer::compact_route_view(&lease, &route).unwrap_err(),
+        crate::contract::ContractError::PackMismatch
+    );
+}
+
+#[test]
+fn real_289_cooperative_request_shapes_match_legacy_serialization() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let world = Arc::new(world);
+    let lease = crate::producer::lease(&world).expect("real pack lease");
+    assert_eq!(
+        lease.identity().content().bytes(),
+        [
+            0x42, 0x70, 0xf0, 0x27, 0x11, 0x44, 0x72, 0x67, 0xe0, 0xee, 0x63, 0x95, 0x79, 0xd4,
+            0x15, 0x32, 0x99, 0x6a, 0x3d, 0x37, 0xf7, 0x12, 0xd5, 0xd6, 0x3c, 0xdb, 0x79, 0x05,
+            0x1e, 0x45, 0x30, 0x0f,
+        ],
+        "reference 289 pack SHA-256 is 4270f02711447267e0ee639579d41532996a3d37f712d5d63cdb79051e45300f; update this check for a changed pack"
+    );
+    assert_eq!(
+        world.graph.edges.len(),
+        3_249,
+        "update the reference-pack census"
+    );
+    assert_eq!(
+        world.graph.quest_family, None,
+        "update the no-quest-gates check"
+    );
+    assert!(
+        world
+            .graph
+            .edges
+            .iter()
+            .all(|edge| edge.quest_gates.is_none()),
+        "reference 289 pack has no quest gates; update this check if a later pack adds gates"
+    );
+    let from = tile(3222, 3218, 0);
+    let west_bank = tile(3092, 3243, 0);
+    let east_bank = tile(3253, 3420, 0);
+    let empty = WorldState::empty();
+    let options = FindOptions::default();
+
+    let old_single = find_with(
+        &world.collision,
+        &world.graph,
+        from,
+        west_bank,
+        options,
+        &empty,
+    );
+    assert!(old_single.is_ok(), "real west-bank route must be reachable");
+    let new_single_completion = advance_real_route_completion(
+        crate::router::SearchRequest::Single {
+            from,
+            to: west_bank,
+            options,
+            avoid: Vec::new().into_boxed_slice(),
+            max_settles: crate::router::NODE_BUDGET,
+        },
+        &lease,
+        &empty,
+    );
+    assert!(new_single_completion.forward_settled() > 0);
+    {
+        let view = new_single_completion
+            .route_view(&lease)
+            .expect("same-pack borrowed compact view")
+            .expect("successful single route has a view");
+        assert_eq!(view.destination(), west_bank);
+        assert!(view.leg_count() > 0);
+    }
+    let new_single = new_single_completion.into_parts().0;
+    let crate::router::SearchOutcome::Single { mut route } = new_single else {
+        panic!("single cursor returned the wrong result shape")
+    };
+    if let Ok(route) = &mut route {
+        route.retain_lease(lease.clone());
+    }
+    let old_bytes = format!("{old_single:#?}");
+    let new_bytes = format!("{route:#?}");
+    assert_eq!(
+        old_bytes.as_bytes(),
+        new_bytes.as_bytes(),
+        "single route outcome must serialize byte-for-byte"
+    );
+    let compact_route = route.expect("real single cursor route is published");
+    let result_bytes = crate::producer::compact_route_result_bytes(&compact_route)
+        .expect("real compact plan size fits");
+    let owner = crate::producer::OwnerResultLedger::with_limits(result_bytes, result_bytes);
+    let reservation = owner
+        .reserve_compact_route(&compact_route)
+        .expect("exact real compact result reservation");
+    assert_eq!(reservation.bytes(), result_bytes);
+    let identity = api::identity::WorkIdentity::new(
+        api::identity::RequestIdMinter::new()
+            .mint()
+            .expect("host request id"),
+        api::identity::ProcessIncarnation::from_start_nonce(std::num::NonZeroU64::MIN),
+        api::identity::Scope::Process,
+        None,
+    )
+    .expect("valid route work identity");
+    let plan = crate::producer::publish_compact_route(
+        &lease,
+        identity,
+        api::work::InputRevision::FIRST,
+        compact_route,
+        reservation,
+    );
+    assert_eq!(owner.used_bytes(), result_bytes);
+    assert_eq!(plan.identity(), identity);
+    assert_eq!(plan.revision(), api::work::InputRevision::FIRST);
+    assert_eq!(
+        plan.view(&lease)
+            .expect("same-pack real route view")
+            .destination(),
+        west_bank
+    );
+    let other_lease = crate::contract::NavLease::wrap(
+        Arc::clone(&world),
+        crate::contract::PackDigest::of(b"other real-pack lease"),
+    )
+    .expect("distinct route-view lease");
+    assert_eq!(
+        plan.view(&other_lease).unwrap_err(),
+        crate::contract::ContractError::PackMismatch
+    );
+    let retained_plan = plan.clone();
+    drop(plan);
+    assert_eq!(owner.used_bytes(), result_bytes);
+    drop(retained_plan);
+    assert_eq!(owner.used_bytes(), 0);
+
+    let targets = [west_bank, east_bank, west_bank];
+    let old_many = find_many_with(
+        &world.collision,
+        &world.graph,
+        from,
+        &targets,
+        options,
+        &empty,
+    );
+    let old_best_index = old_many
+        .results()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, result)| result.as_ref().ok().map(|cost| (index, cost.ticks)))
+        .min_by(|(left_index, left_ticks), (right_index, right_ticks)| {
+            left_ticks
+                .total_cmp(right_ticks)
+                .then_with(|| left_index.cmp(right_index))
+        })
+        .map(|(index, _)| index);
+    assert!(
+        old_best_index.is_some(),
+        "real many-target search has a route"
+    );
+    let old_best = old_best_index.map(|index| {
+        (
+            index,
+            old_many
+                .route(index)
+                .expect("settled legacy many-target route"),
+        )
+    });
+    assert!(
+        old_many.results().iter().all(|result| result.is_ok()),
+        "all real bank targets must be reachable"
+    );
+    let old_bytes = format!("results={:#?}\nbest={old_best:#?}", old_many.results());
+    let new_many_completion = advance_real_route_completion(
+        crate::router::SearchRequest::Many {
+            from,
+            targets: targets.to_vec().into_boxed_slice(),
+            options,
+            avoid: Vec::new().into_boxed_slice(),
+            max_settles: crate::router::NODE_BUDGET,
+            reconstruct_best: true,
+        },
+        &lease,
+        &empty,
+    );
+    let many_view = new_many_completion
+        .route_view(&lease)
+        .expect("same-pack borrowed many-target view")
+        .expect("best many-target route has a view");
+    assert_eq!(many_view.destination(), west_bank);
+    let new_many = new_many_completion.into_parts().0;
+    let crate::router::SearchOutcome::Many { results, mut best } = new_many else {
+        panic!("many cursor returned the wrong result shape")
+    };
+    if let Some((_, route)) = &mut best {
+        route.retain_lease(lease.clone());
+    }
+    let new_bytes = format!("results={:#?}\nbest={best:#?}", results.as_ref());
+    assert_eq!(
+        old_bytes.as_bytes(),
+        new_bytes.as_bytes(),
+        "many-target outcomes must serialize byte-for-byte"
+    );
+
+    let preferred = [east_bank];
+    let fallback = [west_bank];
+    let old_first = find_first_with_fallback(
+        &world.collision,
+        &world.graph,
+        from,
+        &preferred,
+        &fallback,
+        options,
+        &empty,
+    );
+    assert!(
+        old_first.route().is_ok(),
+        "preferred real bank must be reachable"
+    );
+    assert!(
+        old_first.fallback().is_none(),
+        "a successful preferred route suppresses the fallback outcome"
+    );
+    let old_settled = old_first.settled();
+    let old_proof = old_first.proof();
+    let old_capacities = old_first.scratch_capacities();
+    let old_partitions = old_first.completion_partitions();
+    let (old_route, old_fallback) = old_first.into_routes();
+    let old_bytes = format!(
+        "routes={:#?}\nsettled={old_settled}\nproof={old_proof:?}\npartitions={old_partitions}",
+        (old_route, old_fallback)
+    );
+    let new_first_completion = advance_real_route_completion(
+        crate::router::SearchRequest::First {
+            from,
+            targets: preferred.to_vec().into_boxed_slice(),
+            fallback: fallback.to_vec().into_boxed_slice(),
+            options,
+            avoid: Vec::new().into_boxed_slice(),
+            max_settles: crate::router::NODE_BUDGET,
+        },
+        &lease,
+        &empty,
+    );
+    let new_first_forward_settled = new_first_completion.forward_settled();
+    let first_view = new_first_completion
+        .route_view(&lease)
+        .expect("same-pack borrowed first-target view")
+        .expect("successful preferred first-target route has a view");
+    assert_eq!(first_view.destination(), east_bank);
+    let new_first = new_first_completion.into_parts().0;
+    let crate::router::SearchOutcome::First { search } = new_first else {
+        panic!("first-goal cursor returned the wrong result shape")
+    };
+    let new_settled = search.settled();
+    assert_eq!(
+        new_first_forward_settled, new_settled,
+        "completion must report every forward label settled by its First passes"
+    );
+    let new_proof = search.proof();
+    let new_capacities = search.scratch_capacities();
+    let new_partitions = search.completion_partitions();
+    let (mut new_route, mut new_fallback) = search.into_routes();
+    assert!(
+        new_route.is_ok(),
+        "preferred real cursor route must be reachable"
+    );
+    assert!(
+        new_fallback.is_none(),
+        "a successful preferred cursor route suppresses the fallback outcome"
+    );
+    if let Ok(route) = &mut new_route {
+        route.retain_lease(lease.clone());
+    }
+    if let Some(crate::router::CompactFallbackRoute::Routed(route)) = &mut new_fallback {
+        route.retain_lease(lease.clone());
+    }
+    let new_bytes = format!(
+        "routes={:#?}\nsettled={new_settled}\nproof={new_proof:?}\npartitions={new_partitions}",
+        (new_route, new_fallback)
+    );
+    assert_eq!(
+        old_bytes.as_bytes(),
+        new_bytes.as_bytes(),
+        "first-goal and fallback outcomes must serialize byte-for-byte"
+    );
+    eprintln!(
+        "first-goal representation capacities: old={old_capacities:#?} new={new_capacities:#?}"
+    );
+
+    let item_state = real_maxed_state();
+    let item_options = real_resilient_opts();
+    let item_from = tile(3202, 9909, 0);
+    let item_targets = [tile(3209, 9891, 0), tile(3210, 9892, 0)];
+    let old_missing = find_first_missing_item_reqs_with_avoid(
+        &world.collision,
+        &world.graph,
+        item_from,
+        &item_targets,
+        &[],
+        item_options,
+        &item_state,
+        &[],
+    );
+    let new_missing = advance_real_route_cursor(
+        crate::router::SearchRequest::MissingItemReqs {
+            from: item_from,
+            targets: item_targets.to_vec().into_boxed_slice(),
+            fallback: Vec::new().into_boxed_slice(),
+            options: item_options,
+            avoid: Vec::new().into_boxed_slice(),
+            max_settles: crate::router::NODE_BUDGET,
+        },
+        &lease,
+        &item_state,
+    );
+    let crate::router::SearchOutcome::MissingItemReqs(missing) = new_missing else {
+        panic!("missing-item cursor returned the wrong result shape")
+    };
+    assert_eq!(
+        old_missing
+            .as_ref()
+            .map(|requests| format!("{requests:#?}")),
+        missing.as_ref().map(|requests| format!("{requests:#?}")),
+        "real sewer-web carry diagnosis must serialize byte-for-byte"
+    );
+    assert_eq!(
+        old_missing,
+        Some(vec![MissingReq::Carry { id: 946, count: 1 }]),
+        "fixture must exercise the real knife gate"
+    );
+
+    let (edge_index, worn_edge, is_teleport) = world
+        .graph
+        .edges
+        .iter()
+        .enumerate()
+        .find(|(_, edge)| edge.worn_req.len() > 1)
+        .map(|(index, edge)| (index, edge, false))
+        .or_else(|| {
+            world
+                .graph
+                .teleports
+                .iter()
+                .enumerate()
+                .find(|(_, edge)| edge.worn_req.len() > 1)
+                .map(|(index, edge)| (index, edge, true))
+        })
+        .expect("the real 289 pack includes a multi-alternative worn transport");
+    assert!(
+        worn_edge.worn_req.windows(2).all(|pair| pair[0] < pair[1]),
+        "the real web loader must retain its canonical sorted unique alternatives"
+    );
+    let edge_index = u32::try_from(edge_index).expect("real worn edge index fits");
+    assert_eq!(edge_index & crate::router::DIAGNOSTIC_TELEPORT_BIT, 0);
+    let old_worn_route = crate::router::Route {
+        legs: vec![crate::router::Leg::Transport {
+            edge: Box::new(worn_edge.clone()),
+        }],
+        dest: worn_edge.to,
+        ticks: f64::from(worn_edge.ticks),
+    };
+    let no_items_or_worn = WorldState::empty();
+    let old_worn = crate::router::missing_item_reqs(&old_worn_route, &no_items_or_worn);
+    let new_worn_route = crate::router::CompactRoute {
+        origin: worn_edge.at,
+        dest: worn_edge.to,
+        ticks: f64::from(worn_edge.ticks),
+        walk_tiles: Vec::new().into_boxed_slice(),
+        tags: vec![if is_teleport { 2 } else { 1 }].into_boxed_slice(),
+        transition_count: 1,
+        leg_count: 1,
+        edge_ids: vec![edge_index].into_boxed_slice(),
+        essence: None,
+        checkpoints: Vec::new().into_boxed_slice(),
+        lease: Some(lease.clone()),
+    };
+    let worn_route_backing = (
+        new_worn_route.tags.as_ptr(),
+        new_worn_route.edge_ids.as_ptr(),
+    );
+    let new_worn_outcome = advance_real_route_cursor(
+        crate::router::SearchRequest::MissingItemReqsForRoute {
+            route: new_worn_route,
+        },
+        &lease,
+        &no_items_or_worn,
+    );
+    let crate::router::SearchOutcome::MissingItemReqsForRoute {
+        route: returned_worn_route,
+        missing: new_worn,
+    } = new_worn_outcome
+    else {
+        panic!("real worn compact-route cursor returned the wrong result shape")
+    };
+    assert_eq!(
+        worn_route_backing,
+        (
+            returned_worn_route.tags.as_ptr(),
+            returned_worn_route.edge_ids.as_ptr(),
+        ),
+        "route diagnosis must return the input route's original backing"
+    );
+    assert_eq!(
+        format!("{old_worn:#?}").as_bytes(),
+        format!("{new_worn:#?}").as_bytes(),
+        "real worn requirements must preserve legacy ordering and serialization"
+    );
+    let worn_index = (0..new_worn.len())
+        .find(|&index| {
+            matches!(
+                new_worn.requirement_at(index),
+                Some(crate::router::MissingReqView::WearAny { .. })
+            )
+        })
+        .expect("real result includes its worn requirement");
+    let Some(crate::router::MissingReqView::WearAny { ids }) = new_worn.requirement_at(worn_index)
+    else {
+        panic!("borrowed real worn requirement has the wrong shape")
+    };
+    assert!(
+        std::ptr::eq(ids.as_ptr(), worn_edge.worn_req.as_ptr()),
+        "worn IDs must borrow their immutable source-edge group"
+    );
+    assert_eq!(ids, worn_edge.worn_req.as_slice());
+
+    let mut fetchable_state = item_state.clone();
+    fetchable_state.inv.insert(946, 1);
+    let route_target = item_targets[0];
+    let old_fetchable_route = find_with(
+        &world.collision,
+        &world.graph,
+        item_from,
+        route_target,
+        item_options,
+        &fetchable_state,
+    )
+    .expect("the real sewer-web route opens with the fetched knife");
+    let new_fetchable_route = advance_real_route_cursor(
+        crate::router::SearchRequest::Single {
+            from: item_from,
+            to: route_target,
+            options: item_options,
+            avoid: Vec::new().into_boxed_slice(),
+            max_settles: crate::router::NODE_BUDGET,
+        },
+        &lease,
+        &fetchable_state,
+    );
+    let crate::router::SearchOutcome::Single {
+        route: Ok(new_fetchable_route),
+    } = new_fetchable_route
+    else {
+        panic!("fetchable real route cursor did not return a compact route")
+    };
+    assert_eq!(
+        format!("{old_fetchable_route:#?}").as_bytes(),
+        format!("{new_fetchable_route:#?}").as_bytes(),
+        "fetchable real route must serialize byte-for-byte"
+    );
+    let old_exact_missing = crate::router::missing_item_reqs(&old_fetchable_route, &item_state);
+    let route_backing = (
+        new_fetchable_route.walk_tiles.as_ptr(),
+        new_fetchable_route.tags.as_ptr(),
+        new_fetchable_route.edge_ids.as_ptr(),
+        new_fetchable_route.checkpoints.as_ptr(),
+    );
+    let route_bytes = new_fetchable_route.try_retained_bytes().unwrap();
+    let envelope = lease.search_envelope();
+    let empty_route_bound = crate::router::route_missing_requirements_reservation(
+        0,
+        new_fetchable_route.edge_ids.len(),
+        envelope,
+    )
+    .unwrap();
+    let owned_route_bound = crate::router::route_missing_requirements_reservation(
+        route_bytes,
+        new_fetchable_route.edge_ids.len(),
+        envelope,
+    )
+    .unwrap();
+    assert_eq!(
+        owned_route_bound.result_bytes - empty_route_bound.result_bytes,
+        route_bytes,
+        "terminal diagnosis must charge its returned route backing"
+    );
+    assert_eq!(
+        owned_route_bound.peak_bytes - empty_route_bound.peak_bytes,
+        route_bytes,
+        "the diagnostic peak must cover its returned route backing"
+    );
+    let new_exact_outcome = advance_real_route_cursor(
+        crate::router::SearchRequest::MissingItemReqsForRoute {
+            route: new_fetchable_route,
+        },
+        &lease,
+        &item_state,
+    );
+    let crate::router::SearchOutcome::MissingItemReqsForRoute {
+        route: returned_route,
+        missing: new_exact_missing,
+    } = new_exact_outcome
+    else {
+        panic!("exact-route cursor returned the wrong result shape")
+    };
+    assert_eq!(
+        route_backing,
+        (
+            returned_route.walk_tiles.as_ptr(),
+            returned_route.tags.as_ptr(),
+            returned_route.edge_ids.as_ptr(),
+            returned_route.checkpoints.as_ptr(),
+        ),
+        "route diagnosis must return the same backing allocations"
+    );
+    assert_eq!(
+        format!("{old_fetchable_route:#?}").as_bytes(),
+        format!("{returned_route:#?}").as_bytes(),
+        "route diagnosis must return the unchanged real route"
+    );
+    assert_eq!(
+        format!("{old_exact_missing:#?}").as_bytes(),
+        format!("{new_exact_missing:#?}").as_bytes(),
+        "exact real compact-route diagnosis must serialize byte-for-byte"
+    );
+    assert_eq!(
+        new_exact_missing.try_retained_bytes(),
+        new_exact_missing
+            .entries
+            .capacity()
+            .checked_mul(std::mem::size_of::<super::MissingReqEntry>())
+    );
+    assert_eq!(
+        old_exact_missing,
+        vec![MissingReq::Carry { id: 946, count: 1 }],
+        "exact route diagnosis must inspect the knife edge after fetchable search"
+    );
+
+    let blocker_state = zones_rich_289_state(Some(126));
+    let mountain = tile(2664, 3664, 0);
+    let old_blockers = crate::router::find_blocking_zones(
+        &world.collision,
+        &world.graph,
+        from,
+        mountain,
+        options,
+        &blocker_state,
+        &[],
+    );
+    let table = world.graph.zones.as_ref().expect("real v12 zone table");
+    let zone_filter = ZoneFilterOwned::new(
+        table.zones().len(),
+        blocker_state.combat_level,
+        &[from, mountain],
+        ZoneExempt::NONE,
+    )
+    .expect("bounded real-content blocking filter");
+    let new_blockers = advance_real_route_cursor(
+        crate::router::SearchRequest::BlockingZones {
+            from,
+            targets: vec![mountain].into_boxed_slice(),
+            diagnosis: crate::router::BlockerDiagnosis::SingleTarget,
+            options,
+            avoid: Vec::new().into_boxed_slice(),
+            max_settles: crate::router::NODE_BUDGET,
+            zone_filter,
+        },
+        &lease,
+        &blocker_state,
+    );
+    let crate::router::SearchOutcome::BlockingZones(new_blockers) = new_blockers else {
+        panic!("blocking-zone cursor returned the wrong result shape")
+    };
+    assert!(
+        old_blockers.as_ref().is_some_and(|keys| !keys.is_empty()),
+        "real white-wolf-mountain content must provide a blocker witness"
+    );
+    let old_bytes = format!("{old_blockers:#?}");
+    let new_bytes = format!("{new_blockers:#?}");
+    assert_eq!(
+        old_bytes.as_bytes(),
+        new_bytes.as_bytes(),
+        "blocking-zone keys must serialize byte-for-byte"
+    );
+    let blocker_keys = old_blockers
+        .as_deref()
+        .expect("blocker witness remains owned");
+    let mut expected_detail = String::from("blocked by danger zones: ");
+    for (index, &key) in blocker_keys.iter().enumerate() {
+        if index != 0 {
+            expected_detail.push_str(", ");
+        }
+        expected_detail.push_str(&table.label(key));
+        expected_detail.push_str(" [");
+        expected_detail.push_str(&table.name(key));
+        expected_detail.push(']');
+    }
+    let mut detail = String::new();
+    detail
+        .try_reserve_exact(table.blocking_detail_bytes_bound())
+        .expect("diagnostic reservation fits the real content");
+    table
+        .write_blocking_detail_prefix(&mut detail)
+        .expect("writing to String cannot fail");
+    for (index, &key) in blocker_keys.iter().enumerate() {
+        if index != 0 {
+            detail.push_str(", ");
+        }
+        table
+            .write_blocking_detail_item(key, &mut detail)
+            .expect("writing to String cannot fail");
+    }
+    assert_eq!(detail, expected_detail);
+    assert!(detail.len() <= table.blocking_detail_bytes_bound());
+
+    let quest_from = from;
+    let quest_to = west_bank;
+    let quest_state = WorldState::empty().with_map_members(true);
+    let quest_options = FindOptions {
+        allow_wilderness: true,
+        zones: ZoneExempt::all(),
+        ..FindOptions::default()
+    };
+    let old_gates = crate::router::find_unresolved_quest_gates(
+        &world.collision,
+        &world.graph,
+        quest_from,
+        &[quest_to],
+        quest_options,
+        &quest_state,
+        &[],
+    );
+    assert_eq!(
+        old_gates,
+        Ok(None),
+        "reference 289 pack has no quest gates; update this check if a later pack adds gates"
+    );
+    let new_gates = advance_real_route_completion(
+        crate::router::SearchRequest::UnresolvedQuestGates {
+            from: quest_from,
+            targets: vec![quest_to].into_boxed_slice(),
+            options: quest_options,
+            avoid: Vec::new().into_boxed_slice(),
+            max_settles: crate::router::NODE_BUDGET,
+        },
+        &lease,
+        &quest_state,
+    );
+    let new_settled = new_gates.forward_settled();
+    assert!(new_settled > 0);
+    let crate::router::SearchOutcome::UnresolvedQuestGates(new_gates) = new_gates.into_parts().0
+    else {
+        panic!("quest-gate cursor returned the wrong result shape")
+    };
+    assert_eq!(
+        new_gates,
+        Ok(None),
+        "the cooperative path must preserve the reference pack's no-gate result"
+    );
+    let old_bytes = format!("{old_gates:#?}");
+    let new_bytes = format!("{new_gates:#?}");
+    assert_eq!(
+        old_bytes.as_bytes(),
+        new_bytes.as_bytes(),
+        "real quest-gate diagnosis must serialize byte-for-byte"
+    );
+}
+
+#[test]
+fn partition_action_trace_preserves_full_i32_coordinates_and_all_step_kinds() {
+    let origin = tile(i32::MIN, i32::MAX - 1, i32::MIN);
+    let after_walk = tile(i32::MIN, i32::MAX, i32::MIN);
+    let after_relative = tile(i32::MIN + 1, i32::MAX - 1, -1);
+    let after_teleport = tile(i32::MAX - 1, i32::MIN, i32::MAX);
+    let after_east = tile(i32::MAX, i32::MIN, i32::MAX);
+    let destination = tile(i32::MIN + 1, i32::MIN + 1, i32::MIN + 1);
+    let mut graph = door(after_walk, after_relative, 7);
+    graph.edges[0].player_delta = Some(tile(1, -1, i32::MAX));
+    let mut teleport = graph.edges[0].clone();
+    teleport.player_delta = None;
+    teleport.to = after_teleport;
+    graph.teleports.push(teleport);
+    let trace = super::RouteTrace {
+        origin,
+        destination,
+        ticks: 25.5,
+        steps: vec![0, 1 << 30, 2 << 30, 2, 3 << 30],
+        essence: Some(crate::essence::EssenceSession {
+            wizard_npc: 553,
+            return_tile: destination,
+        }),
+    };
+    let route = super::drive_to_completion(trace.materialize(&graph))
+        .expect("lossless action trace materializes");
+    assert_eq!(
+        &*route.walk_tiles,
+        &[
+            origin,
+            after_walk,
+            after_relative,
+            after_teleport,
+            after_east,
+            destination
+        ]
+    );
+    assert_eq!(&*route.edge_ids, &[0, 0, 0]);
+    assert_eq!(route.destination(), destination);
+    assert_eq!(route.ticks(), 25.5);
+    assert_eq!(route.leg_count(), 7);
+    let landings: Vec<_> = route
+        .cursor(&graph)
+        .filter_map(|leg| match leg {
+            super::CompactRouteLeg::Transport(step) => Some(step.actual_to()),
+            super::CompactRouteLeg::Walk(_) => None,
+        })
+        .collect();
+    assert_eq!(landings, [after_relative, after_teleport, destination]);
+}
+
+#[test]
+fn cooperative_many_retains_the_cheaper_earlier_zone_partition() {
+    let collision = bake(3, 4, &[]);
+    let mut graph = TransportGraph::default();
+    install_zones(
+        &collision,
+        &mut graph,
+        vec![rect_zone(0, 0, 0, 0), rect_zone(2, 2, 3, 3)],
+    );
+    let from = tile(1, 0, 0);
+    let targets = [tile(0, 0, 0), tile(2, 3, 0)];
+    let state = WorldState::empty();
+    let options = FindOptions::default();
+    let old = find_many_with(&collision, &graph, from, &targets, options, &state);
+    let (costs, best, _) = super::drive_to_completion(super::many_cursor_search(
+        &collision,
+        &graph,
+        from,
+        &targets,
+        options,
+        &state,
+        &[],
+        64,
+        true,
+        None,
+    ))
+    .expect("cooperative partition search");
+    assert_eq!(costs, old.results());
+    let (index, route) = best.expect("a reachable partition wins");
+    assert_eq!(index, 0);
+    assert_eq!(
+        route.to_route(&graph),
+        old.route(0).expect("legacy cheapest route")
+    );
+}
+
+#[test]
+fn real_289_full_budget_phase_reservations_fit_the_whole_job_limit() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let world = Arc::new(world);
+    let lease = crate::producer::lease(&world).expect("real pack lease");
+    let state = Arc::new(WorldState::empty());
+    for allow_teleports in [false, true] {
+        let options = FindOptions {
+            allow_teleports,
+            ..FindOptions::default()
+        };
+        let shapes = [
+            super::SearchRequestShape::Single {
+                options,
+                avoid_capacity: 4,
+                max_settles: super::NODE_BUDGET,
+            },
+            super::SearchRequestShape::Many {
+                target_capacity: 256,
+                options,
+                avoid_capacity: 4,
+                max_settles: super::NODE_BUDGET,
+                reconstruct_best: true,
+            },
+            super::SearchRequestShape::First {
+                target_capacity: 256,
+                fallback_capacity: 256,
+                options,
+                avoid_capacity: 4,
+                max_settles: super::NODE_BUDGET,
+            },
+            super::SearchRequestShape::MissingItemReqs {
+                target_capacity: 256,
+                fallback_capacity: 256,
+                options,
+                avoid_capacity: 4,
+                max_settles: super::NODE_BUDGET,
+            },
+            super::SearchRequestShape::BlockingZones {
+                target_capacity: 256,
+                diagnosis: crate::router::BlockerDiagnosis::FirstGoal,
+                options,
+                avoid_capacity: 4,
+                zone_filter_bytes: ZoneFilterOwned::worst_case_bytes(
+                    world
+                        .graph
+                        .zones
+                        .as_ref()
+                        .expect("real zones")
+                        .zones()
+                        .len(),
+                )
+                .expect("zone filter bound"),
+                max_settles: super::NODE_BUDGET,
+            },
+            super::SearchRequestShape::UnresolvedQuestGates {
+                target_capacity: 256,
+                options,
+                avoid_capacity: 4,
+                max_settles: super::NODE_BUDGET,
+            },
+        ];
+        for shape in shapes {
+            let preflight = super::SearchCursor::preflight(shape, &lease, &state)
+                .expect("full-budget real-content preflight");
+            let reservation = preflight.reservation();
+            let total = preflight.input_bytes()
+                + reservation.future_layout_bytes
+                + reservation.peak_bytes
+                + state
+                    .try_shared_retained_bytes()
+                    .expect("owned state charge");
+            assert!(reservation.result_bytes <= reservation.peak_bytes);
+            assert!(
+                total <= 192 * 1024 * 1024,
+                "{shape:?} needs {total} simultaneously retained bytes"
+            );
+        }
+    }
+}
+
+#[test]
+fn real_289_radius_goal_sets_fit_the_full_budget_reservation() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let world = Arc::new(world);
+    let lease = crate::producer::lease(&world).expect("real pack lease");
+    let state = Arc::new(WorldState::empty());
+    for radius in [40usize, 104] {
+        let candidates = (2 * radius + 1).pow(2);
+        for allow_teleports in [false, true] {
+            let options = FindOptions {
+                allow_teleports,
+                ..FindOptions::default()
+            };
+            for shape in [
+                super::SearchRequestShape::First {
+                    target_capacity: candidates,
+                    fallback_capacity: candidates,
+                    options,
+                    avoid_capacity: 0,
+                    max_settles: super::NODE_BUDGET,
+                },
+                super::SearchRequestShape::MissingItemReqs {
+                    target_capacity: candidates,
+                    fallback_capacity: candidates,
+                    options,
+                    avoid_capacity: 0,
+                    max_settles: super::NODE_BUDGET,
+                },
+            ] {
+                let preflight = super::SearchCursor::preflight(shape, &lease, &state)
+                    .expect("large goal-set preflight");
+                let total = preflight.input_bytes()
+                    + preflight.reservation().future_layout_bytes
+                    + preflight.reservation().peak_bytes
+                    + state.try_shared_retained_bytes().expect("state charge");
+                assert!(
+                    total <= 192 * 1024 * 1024,
+                    "radius {radius}, {shape:?} needs {total} bytes"
+                );
+            }
+        }
+    }
 }
 
 #[path = "router/consumption_tests.rs"]

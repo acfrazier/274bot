@@ -234,7 +234,7 @@ fn generation_skip_drops_pending_click() {
     let iso = spawn(PAINT);
     tick(&iso, 1);
     iso.paint_click("gobank");
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     tick(&iso, 2);
     assert_eq!(clicked(&iso), serde_json::Value::Null);
     iso.join();
@@ -247,7 +247,7 @@ fn stale_frame_generation_rejects_same_id_on_later_script() {
     let stale = iso.paint().expect("first frame");
     assert!(stale.buttons.iter().any(|b| b.id == "gobank"));
     assert_ne!(stale.generation, 0, "host stamps owned generation");
-    iso.reset_session_work();
+    iso.reset_session_work(None);
     tick(&iso, 2);
     let current = iso.paint().expect("later frame");
     assert!(

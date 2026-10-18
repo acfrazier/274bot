@@ -856,9 +856,15 @@ enum LiveCase {
     DeathNoStock,
     DeathReturnRefused,
     // Constructed only by the `live-probe` watchdog cells.
-    #[cfg_attr(not(feature = "live-probe"), allow(dead_code))]
+    #[cfg_attr(
+        not(feature = "live-probe"),
+        expect(dead_code, reason = "constructed only by live-probe watchdog cells")
+    )]
     DeathWatchdogPending,
-    #[cfg_attr(not(feature = "live-probe"), allow(dead_code))]
+    #[cfg_attr(
+        not(feature = "live-probe"),
+        expect(dead_code, reason = "constructed only by live-probe watchdog cells")
+    )]
     DeathWatchdogProving,
     FishNet,
     FishSpotMoves,
@@ -6329,8 +6335,12 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     Ok(preparation) => preparation,
                     Err(error) => break Err(format!("{cell_name} bank settings: {error}")),
                 };
+                let identity = preparation.identity();
                 match preparation.join() {
-                    Ok(Ok(prepared)) => Some(prepared),
+                    Ok(Ok(prepared)) => match prepared.commit(identity) {
+                        Ok(config) => Some(config),
+                        Err(error) => break Err(format!("{cell_name} bank settings: {error}")),
+                    },
                     Ok(Err(error)) => break Err(format!("{cell_name} bank settings: {error}")),
                     Err(_) => break Err(format!("{cell_name} bank settings preparation panicked")),
                 }
@@ -6382,8 +6392,14 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 Ok(preparation) => preparation,
                 Err(error) => break Err(format!("{cell_name} Power to Bank preparation: {error}")),
             };
+            let identity = preparation.identity();
             let prepared = match preparation.join() {
-                Ok(Ok(prepared)) => prepared,
+                Ok(Ok(prepared)) => match prepared.commit(identity) {
+                    Ok(config) => config,
+                    Err(error) => {
+                        break Err(format!("{cell_name} Power to Bank settings: {error}"))
+                    }
+                },
                 Ok(Err(error)) => {
                     break Err(format!("{cell_name} Power to Bank settings: {error}"))
                 }
