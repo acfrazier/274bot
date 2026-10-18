@@ -6,16 +6,16 @@
 #[cfg(feature = "load")]
 #[path = "slot/api.rs"]
 mod api_seat;
+#[cfg(feature = "load")]
+#[path = "slot/bank.rs"]
+mod bank_seat;
 pub(crate) mod compiled;
 mod pending;
 use crate::native::{Interrupt, RetainedMemory, ScriptFailure, ScriptFlow, StopReason};
 pub use compiled::{prepare_config, CompiledDelivery};
 use compiled::{CompiledRun, Preparation};
 
-pub use pending::{
-    PendingBankOp, PendingBankOpKind, PendingFillBaseline, PendingWithdrawResult, PendingWithdrawX,
-    PendingWithdrawXPhase,
-};
+pub use pending::{PendingBankOp, PendingBankOpKind, PendingWithdrawX, PendingWithdrawXPhase};
 
 use crate::native::seat::{Admission, EmissionSource, GameplaySeat};
 use api::identity::{ExecutionId, Fence, RequestId, RequestIdMinter};
@@ -518,6 +518,8 @@ pub struct SlotScript {
     held_channel_refusals: Vec<u64>,
     #[cfg(feature = "load")]
     api: Option<Box<api_seat::ApiSeat>>,
+    #[cfg(feature = "load")]
+    bank: Option<Box<bank_seat::BankSeat>>,
     retained: Option<Arc<std::sync::Mutex<RetainedMemory>>>,
     native_runtime: crate::native::ledger::Runtime,
     quest_pairs: Option<Arc<dyn crate::quester::pair::QuestPairPort>>,
@@ -601,8 +603,6 @@ pub struct SlotScript {
     pending_withdraw_x: Option<PendingWithdrawX>,
     withdraw_x_result_seq: u64,
     withdraw_x_result: bool,
-    withdraw_load_result_seq: u64,
-    withdraw_load_result: bool,
     pending_bank_op: Option<PendingBankOp>,
     bank_op_result_seq: u64,
     bank_op_result: bool,
@@ -671,6 +671,8 @@ impl SlotScript {
             held_channel_refusals: Vec::new(),
             #[cfg(feature = "load")]
             api: None,
+            #[cfg(feature = "load")]
+            bank: None,
             retained: None,
             native_runtime: Default::default(),
             quest_pairs: None,
@@ -717,8 +719,6 @@ impl SlotScript {
             pending_withdraw_x: None,
             withdraw_x_result_seq: 0,
             withdraw_x_result: false,
-            withdraw_load_result_seq: 0,
-            withdraw_load_result: false,
             pending_bank_op: None,
             bank_op_result_seq: 0,
             bank_op_result: false,
@@ -1216,8 +1216,6 @@ impl SlotScript {
         self.pending_withdraw_x = None;
         self.withdraw_x_result_seq = 0;
         self.withdraw_x_result = false;
-        self.withdraw_load_result_seq = 0;
-        self.withdraw_load_result = false;
         self.pending_bank_op = None;
         self.bank_op_result_seq = 0;
         self.bank_op_result = false;
@@ -1253,6 +1251,7 @@ impl SlotScript {
     /// the runtime generation (a queued Start already moved it).
     #[cfg(feature = "load")]
     fn spawn_isolate(&mut self, identity: SlotLoadIdentity, bump: bool) -> Result<(), String> {
+        self.bank_runtime_boundary();
         #[cfg(test)]
         if std::mem::take(&mut self.fail_spawn_for_test) {
             return Err("isolate thread: test-injected spawn failure".to_string());
@@ -1685,6 +1684,8 @@ impl SlotScript {
         self.held_channel_refusals.clear();
         #[cfg(feature = "load")]
         self.teardown_api(reason);
+        #[cfg(feature = "load")]
+        self.bank_runtime_boundary();
         self.native_runtime.revoke();
         self.retained = None;
         self.revoke_native_input();
@@ -1747,7 +1748,7 @@ impl SlotScript {
             #[cfg(feature = "load")]
             self.discard_mouse_interacts();
             if self.pending_withdraw_x.is_some() {
-                self.complete_current_withdrawal(false);
+                self.complete_withdraw_x(false);
             }
             if self.pending_bank_op.is_some() {
                 self.complete_bank_op(false);
@@ -1852,6 +1853,8 @@ impl SlotScript {
         self.seat_fence.revoke();
         #[cfg(feature = "load")]
         self.api_session_boundary(reconnect);
+        #[cfg(feature = "load")]
+        self.bank_session_boundary(reconnect);
         #[cfg(feature = "load")]
         if !self.load_active() {
             // Same rule as Stop: the compiled machine's abort lands on the
@@ -2260,6 +2263,14 @@ impl SlotScript {
                 self.seat_compiled_owner,
             )
         });
+        let mut bank_values = [crate::isolate_fb::SeatResultValue {
+            id: RequestId::isolate(1).expect("isolate namespace"),
+            value: &[],
+        }; api::script_contract::MAX_RESULTS];
+        let bank_values_len = self
+            .bank
+            .as_ref()
+            .map_or(0, |bank| bank.result_values(&mut bank_values));
         if let (Some(seat), Some(details)) = (self.seat.as_ref(), details.as_ref()) {
             native.seat_page = Some(
                 crate::isolate_fb::SeatPageInput::new(
@@ -2268,7 +2279,9 @@ impl SlotScript {
                     &details[..seat.live().len()],
                     seat.mirror_revokes_consumed(),
                 )
-                .expect("slot-owned seat page invariant"),
+                .expect("slot-owned seat page invariant")
+                .with_result_values(&bank_values[..bank_values_len])
+                .expect("slot-owned bank result invariant"),
             );
         }
         let (bytes, fp, evidence_changed) =
@@ -2316,6 +2329,14 @@ impl SlotScript {
                 self.seat_compiled_owner,
             )
         });
+        let mut bank_values = [crate::isolate_fb::SeatResultValue {
+            id: RequestId::isolate(1).expect("isolate namespace"),
+            value: &[],
+        }; api::script_contract::MAX_RESULTS];
+        let bank_values_len = self
+            .bank
+            .as_ref()
+            .map_or(0, |bank| bank.result_values(&mut bank_values));
         if let (Some(seat), Some(details)) = (self.seat.as_ref(), details.as_ref()) {
             native.seat_page = Some(
                 crate::isolate_fb::SeatPageInput::new(
@@ -2324,7 +2345,9 @@ impl SlotScript {
                     &details[..seat.live().len()],
                     seat.mirror_revokes_consumed(),
                 )
-                .expect("slot-owned seat page invariant"),
+                .expect("slot-owned seat page invariant")
+                .with_result_values(&bank_values[..bank_values_len])
+                .expect("slot-owned bank result invariant"),
             );
         }
         let (bytes, fp, evidence_changed) = self.ipc.encode_snapshot_wake_with_native_and_evidence(
@@ -2503,7 +2526,13 @@ impl SlotScript {
             .and_then(|owner| owner.active_walk())
             .and_then(|request| native_walk_id(request.get()));
         seat.retire_inactive_native_walks(active_native_walk);
-        let owner = self.seat_compiled_owner.or_else(|| seat.session());
+        #[cfg(feature = "load")]
+        let bank_owner = self.bank.as_ref().and_then(|bank| bank.action_owner);
+        #[cfg(not(feature = "load"))]
+        let bank_owner = None;
+        let owner = bank_owner
+            .or(self.seat_compiled_owner)
+            .or_else(|| seat.session());
         let source = owner.map_or(EmissionSource::Root, EmissionSource::Owner);
         let Some(ledger) = self.native_runtime.ledger.as_mut() else {
             return;
@@ -2926,6 +2955,7 @@ impl SlotScript {
             }
         }
         self.stop_cancelled_api_work();
+        self.stop_cancelled_bank_work();
         for start in &mut batch.starts {
             let stamp = RequestStamp::new(start.id, start.parent, None, execution)
                 .expect("start stamp was preflighted");
@@ -2971,6 +3001,9 @@ impl SlotScript {
                         }
                         SeatStartArgs::QuestProgress(name) => {
                             self.start_api_progress(start.id.get(), &name);
+                        }
+                        SeatStartArgs::Bank(request) => {
+                            self.start_bank(start.id, request);
                         }
                         SeatStartArgs::Empty => {}
                     }
@@ -4038,6 +4071,7 @@ impl SlotScript {
             let input_identity = self.native_input.lock().identity();
             isolate.on_snapshot_change_at(ctx.tick, input_identity, evidence_sequence);
             self.tick_api(ctx);
+            self.tick_bank(ctx);
             self.capture_native_seat_rows();
             self.settle_api_seat_terminals();
             return;
@@ -4075,6 +4109,7 @@ impl SlotScript {
                 return;
             }
             self.tick_api(ctx);
+            self.tick_bank(ctx);
             self.capture_native_seat_rows();
             self.settle_api_seat_terminals();
             return;

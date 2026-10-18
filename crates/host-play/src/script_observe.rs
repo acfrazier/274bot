@@ -415,6 +415,7 @@ pub(crate) fn script_observe_cached_with_channels(
             break 'script_slot;
         };
         slot.observe_lifecycle();
+        let bank_selection = slot.bank_selection_input();
         let work_scope = slot.work_scope();
         if let Some(bot) = navs
             .lock()
@@ -499,7 +500,6 @@ pub(crate) fn script_observe_cached_with_channels(
         // Deliver only the terminal belonging to this still-live native owner.
         // The slot repeats the run/action fence before accepting the receipt.
         let mut host_results_dirty = false;
-        let bank_selection = super::bank::poll_bank_pick(navs, name, std::time::Instant::now());
         if let Some(bot) = navs.lock().unwrap().get_mut(name) {
             host_results_dirty |= host_completion_changed(&slot, bot, bank_selection);
             let native_terminal =
@@ -829,11 +829,11 @@ pub(crate) fn script_observe_cached_with_channels(
                     },
                     &carry_rows,
                     inspect_posted,
+                    bank_selection,
                     Some(packed.view.as_ref()),
                     packed.flood.as_deref(),
                     packed.stamp,
-                    |input, mut native| {
-                        native.bank_selection = bank_selection;
+                    |input, native| {
                         if wake_waits {
                             slot.encode_snapshot_wake_with_native(
                                 input,
