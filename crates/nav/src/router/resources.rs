@@ -507,6 +507,7 @@ impl PackedSearchTable {
         self.free_head = id;
     }
 
+    #[inline]
     pub(super) fn compare_candidate(
         &self,
         cost: f64,
@@ -940,6 +941,7 @@ impl PackedMinMaxHeap {
         best
     }
 
+    #[inline]
     fn compare_positions(&self, left: usize, right: usize, table: &PackedSearchTable) -> Ordering {
         let left = table.slot(self.entries[left].node());
         let right = table.slot(self.entries[right].node());
