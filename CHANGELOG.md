@@ -12,7 +12,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
-- Scripts no longer have `crypto.subtle`, `URL` or `URLSearchParams`.
+- Scripts no longer have WebCrypto (`crypto.subtle`, `Crypto`, `CryptoKey`,
+  `SubtleCrypto`) or the `URL`, `URLSearchParams` and `URLPattern` globals.
   `crypto.randomUUID()` and `crypto.getRandomValues()` still work.
 - Script operations now share a bounded request seat across native cards and
   JavaScript. A second top-level Gatherer, combat, quest progress or Hunt
@@ -606,8 +607,6 @@ that visibly refuse. Where a fix is planned, the item says so.
 
 **Scripts and compatibility**
 
-- Script isolates do not provide WebCrypto `crypto.subtle` or the `URL` and
-  `URLSearchParams` globals.
 - Some catalog scripts are dimmed in the script picker and can't be started:
   AIOQuester and Barcrawl (the built-in Quester replaces them, and Barcrawl
   is planned for it); GatheringBot's Woodcutter, Miner and Fisher, and
