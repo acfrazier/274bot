@@ -415,10 +415,11 @@ impl PackedSearchTable {
             return Err(());
         }
         let hash = packed_hash(tile, balance);
-        if let Some(id) = self
-            .cached_key(hash, tile, balance)
-            .or_else(|| self.locate_hashed(tile, balance, hash))
-        {
+        if let Some(id) = self.cached_key(hash, tile, balance) {
+            return Ok(PackedLookup::Found(id));
+        }
+        // Keep the chain scan in this caller, not an outlined Option closure.
+        if let Some(id) = self.locate_hashed(tile, balance, hash) {
             self.cached_ids[hash as usize & (PACKED_LOOKUP_CACHE_SIZE - 1)] =
                 id | (hash & !PACKED_ID_MASK);
             return Ok(PackedLookup::Found(id));
@@ -469,8 +470,10 @@ impl PackedSearchTable {
             return None;
         }
         let hash = packed_hash(tile, balance);
-        self.cached_key(hash, tile, balance)
-            .or_else(|| self.locate_hashed(tile, balance, hash))
+        match self.cached_key(hash, tile, balance) {
+            Some(id) => Some(id),
+            None => self.locate_hashed(tile, balance, hash),
+        }
     }
 
     fn cached_key(&self, hash: u32, tile: WorldTile, balance: u32) -> Option<u32> {
@@ -1611,6 +1614,7 @@ mod packed_search_tests {
                     }
                 }
             };
+            table.cached_ids.fill(PACKED_ROOT_ID);
             let synchronous = super::super::drive_to_completion(async {
                 let mut lookup = std::pin::pin!(table.locate(tile, balance));
                 let mut context = Context::from_waker(Waker::noop());
@@ -1619,7 +1623,9 @@ mod packed_search_tests {
                     Poll::Pending => panic!("synchronous lookup suspended"),
                 }
             });
-            for result in [cooperative, synchronous] {
+            let direct = table.locate_for_insert(tile, balance);
+            assert_eq!(table.locate_sync(tile, balance), expected_id);
+            for result in [cooperative, synchronous, direct] {
                 match (expected_id, result) {
                     (Some(expected), Ok(PackedLookup::Found(id))) => assert_eq!(id, expected),
                     (None, Err(())) => {}
