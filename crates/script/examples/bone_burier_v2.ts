@@ -1,3 +1,4 @@
+import { Bank } from '../../api/bank/Bank.js';
 type BankStand = import('../host-js/index.d.ts').BankStand;
 type ItemRow = import('../host-js/index.d.ts').ItemRow;
 type NativeApi = import('../host-js/index.d.ts').NativeApi;
@@ -17,7 +18,7 @@ export const SETTINGS = {
 };
 
 type Phase = 'finding-bank' | 'opening-bank' | 'loading' | 'burying' | 'stopping';
-type Pending = { kind: 'walk' | 'open' | 'load' | 'close' | 'bury'; sent: number; before: number; seq: number };
+type Pending = { kind: 'walk' | 'open' | 'close' | 'bury'; sent: number; before: number; seq: number };
 
 /** Non-walk pending ops; bank-loaded wait uses the same bound. */
 const PENDING_TICK_LIMIT = 12;
@@ -93,21 +94,6 @@ function observePending(api: NativeApi, bone: string, invCount: number): boolean
         phase = 'burying';
         return true;
     }
-    if (work.kind === 'load') {
-        if (invCount > work.before) {
-            pending = null;
-            phase = 'loading';
-            return true;
-        }
-        if (api.snapshot.withdraw_load_result_seq > work.seq) {
-            if (api.snapshot.withdraw_load_result) {
-                pending = null;
-                return true;
-            }
-            fail(api, 'withdraw refused or inventory has no free slot');
-            return true;
-        }
-    }
     if (work.kind === 'open' && api.snapshot.bank_open) {
         pending = null;
         phase = 'opening-bank';
@@ -141,7 +127,7 @@ function observePending(api: NativeApi, bone: string, invCount: number): boolean
     return false;
 }
 
-export function tick(api: NativeApi): void {
+export async function tick(api: NativeApi): Promise<void> {
     const bone = api.settings.str('boneName', 'Bones').trim() || 'Bones';
     if (activeBone && activeBone !== bone) {
         pending = null;
@@ -206,13 +192,10 @@ export function tick(api: NativeApi): void {
             return;
         }
         phase = 'loading';
-        pending = {
-            kind: 'load',
-            sent: api.tick,
-            before: invCount,
-            seq: api.snapshot.withdraw_load_result_seq,
-        };
-        api.request({ op: 'withdraw-load', name: bone, bank_generation: api.snapshot.bank_generation });
+        const loaded = await Bank.withdrawLoad(bone);
+        if (!loaded || count(api.snapshot.inv, bone) <= invCount) {
+            fail(api, 'withdraw refused or inventory has no free slot');
+        }
         return;
     }
 

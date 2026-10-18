@@ -611,12 +611,12 @@ pub(crate) fn script_observe_cached_with_channels(
                         && snap.bank_session_generation() == pending.bank_generation
                 });
                 if !valid_session {
-                    slot.complete_current_withdrawal(false);
+                    slot.complete_withdraw_x(false);
                 } else {
                     match pending.phase {
                         script::slot::PendingWithdrawXPhase::Dialog => {
                             if pending.expired() {
-                                slot.complete_current_withdrawal(false);
+                                slot.complete_withdraw_x(false);
                             } else if snapshot.is_some_and(GameSnapshot::count_dialog_open) {
                                 let sent = snapshot.is_some_and(|snap| {
                                     matches!(
@@ -630,7 +630,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                     slot.set_pending_withdraw_x(Some(pending.waiting_settlement()));
                                     pending_withdraw_x_active = true;
                                 } else {
-                                    slot.complete_current_withdrawal(false);
+                                    slot.complete_withdraw_x(false);
                                 }
                             } else {
                                 pending_withdraw_x_active = true;
@@ -662,50 +662,10 @@ pub(crate) fn script_observe_cached_with_channels(
                                     )
                                 })
                             };
-                            let load_settled = pending.fill.is_some_and(|fill| {
-                                let (used, count) = inv.map_or_else(
-                                    || {
-                                        snapshot.map_or((0, 0), |snap| {
-                                            let inventory = snap.inventory();
-                                            (
-                                                inventory.len(),
-                                                inventory
-                                                    .iter()
-                                                    .filter(|item| item.def.id == fill.bank_item_id)
-                                                    .map(|item| item.count)
-                                                    .sum::<i32>(),
-                                            )
-                                        })
-                                    },
-                                    |rows| {
-                                        (
-                                            rows.len(),
-                                            rows.iter()
-                                                .filter(|(id, _)| *id == fill.bank_item_id)
-                                                .map(|(_, count)| *count)
-                                                .sum::<i32>(),
-                                        )
-                                    },
-                                );
-                                let stock_decreased = snapshot
-                                    .and_then(|snap| {
-                                        snap.bank()
-                                            .iter()
-                                            .find(|item| item.def.id == fill.bank_item_id)
-                                    })
-                                    .is_some_and(|item| item.count < fill.before_stock);
-                                used > fill.before_used
-                                    || count > fill.before_count
-                                    || stock_decreased
-                            });
-                            if load_settled
-                                || (pending.fill.is_none()
-                                    && (current >= pending.target
-                                        || (current > pending.before && full)))
-                            {
-                                slot.complete_current_withdrawal(true);
+                            if current >= pending.target || (current > pending.before && full) {
+                                slot.complete_withdraw_x(true);
                             } else if pending.expired() {
-                                slot.complete_current_withdrawal(false);
+                                slot.complete_withdraw_x(false);
                             } else {
                                 pending_withdraw_x_active = true;
                             }
@@ -716,7 +676,6 @@ pub(crate) fn script_observe_cached_with_channels(
         }
         host_results_dirty |= slot.last_snapshot_fingerprint().is_some_and(|last| {
             last.withdraw_x_result_seq != slot.withdraw_x_result().0
-                || last.withdraw_load_result_seq != slot.withdraw_load_result().0
                 || last.bank_op_result_seq != slot.bank_op_result().0
         });
         // Evidence wakes use the latest observed PLAYER_INFO tick. They poll
@@ -815,7 +774,6 @@ pub(crate) fn script_observe_cached_with_channels(
                     }
                 };
                 let (withdraw_x_result_seq, withdraw_x_result) = slot.withdraw_x_result();
-                let (withdraw_load_result_seq, withdraw_load_result) = slot.withdraw_load_result();
                 let (bank_op_result_seq, bank_op_result) = slot.bank_op_result();
                 // The published failure's shopping list, as the isolate reads
                 // it: the diagnosis' own ids and counts, with the host obj
@@ -852,8 +810,6 @@ pub(crate) fn script_observe_cached_with_channels(
                     teleports_enabled,
                     withdraw_x_result_seq,
                     withdraw_x_result,
-                    withdraw_load_result_seq,
-                    withdraw_load_result,
                     bank_op_result_seq,
                     bank_op_result,
                     canlight,
@@ -1618,7 +1574,6 @@ pub(crate) fn script_observe_cached_with_channels(
                     let mut armed = None;
                     let mut armed_bank_op = None;
                     let mut rejected_withdraw_x = 0usize;
-                    let mut rejected_withdraw_load = 0usize;
                     let mut rejected_bank_op = 0usize;
                     for queued in interact {
                         if queued.req.is_automatic_walk()
@@ -1667,83 +1622,6 @@ pub(crate) fn script_observe_cached_with_channels(
                                     rejected_withdraw_x += 1;
                                 }
                             }
-                            script::shim::InteractReq::WithdrawLoad {
-                                name: item_name,
-                                bank_generation,
-                            } if armed.is_none()
-                                && !pending_withdraw_x_active
-                                && snapshot.bank_component_id() >= 0
-                                && snapshot.bank_loaded()
-                                && !snapshot.count_dialog_open()
-                                && snapshot.bank_session_generation() == bank_generation =>
-                            {
-                                let capacity = snapshot.inventory_size().max(0) as usize;
-                                let used =
-                                    inv.map_or_else(|| snapshot.inventory().len(), <[_]>::len);
-                                let free = capacity.saturating_sub(used);
-                                let mut accepted = false;
-                                if free > 0 {
-                                    let mut ix = api::interact::Interactions::new(snapshot, driver);
-                                    let wanted = item_name.to_lowercase();
-                                    if let Some(item) = snapshot.bank().iter().find(|item| {
-                                        item.count > 0
-                                            && obj_names
-                                                .and_then(|names| names.name(item.def.id))
-                                                .is_some_and(|name| {
-                                                    name.eq_ignore_ascii_case(&wanted)
-                                                })
-                                    }) {
-                                        let bank_item_id = item.def.id;
-                                        let count = item.count.min(free as i32);
-                                        if let Some((op, needs_dialog)) =
-                                            script::bank::ops::fill_click_in(
-                                                &item.actions,
-                                                count,
-                                                item.count,
-                                            )
-                                        {
-                                            let sent = matches!(
-                                                ix.interact(
-                                                    api::interact::OpTarget::Item(item),
-                                                    api::interact::ActionSpec::Operation(op),
-                                                ),
-                                                api::interact::SendResult::Sent { .. }
-                                            );
-                                            if sent {
-                                                let before_count = snapshot
-                                                    .inventory()
-                                                    .iter()
-                                                    .filter(|held| held.def.id == bank_item_id)
-                                                    .map(|held| held.count)
-                                                    .sum();
-                                                let pending =
-                                            script::slot::PendingWithdrawX::waiting_load_dialog(
-                                                bank_item_id,
-                                                count,
-                                                used,
-                                                before_count,
-                                                item.count,
-                                                bank_generation,
-                                            );
-                                                armed = Some(if needs_dialog {
-                                                    pending
-                                                } else {
-                                                    pending.waiting_settlement()
-                                                });
-                                                wrote = true;
-                                                pending_withdraw_x_active = true;
-                                                accepted = true;
-                                            }
-                                        }
-                                    }
-                                }
-                                if !accepted {
-                                    rejected_withdraw_load += 1;
-                                }
-                            }
-                            script::shim::InteractReq::WithdrawLoad { .. } => {
-                                rejected_withdraw_load += 1;
-                            }
                             req => dispatchable.push(req),
                         }
                     }
@@ -1755,15 +1633,11 @@ pub(crate) fn script_observe_cached_with_channels(
                     if (armed.is_some()
                         || armed_bank_op.is_some()
                         || rejected_withdraw_x != 0
-                        || rejected_withdraw_load != 0
                         || rejected_bank_op != 0)
                         && Some(slot.work_epoch()) == slot_work_epoch
                     {
                         for _ in 0..rejected_withdraw_x {
                             slot.complete_withdraw_x(false);
-                        }
-                        for _ in 0..rejected_withdraw_load {
-                            slot.complete_withdraw_load(false);
                         }
                         for _ in 0..rejected_bank_op {
                             slot.complete_bank_op(false);
@@ -1819,12 +1693,6 @@ pub(crate) fn script_observe_cached_with_channels(
                 .iter()
                 .filter(|queued| matches!(&queued.req, script::shim::InteractReq::WithdrawX { .. }))
                 .count();
-            let rejected_load = interact
-                .iter()
-                .filter(|queued| {
-                    matches!(&queued.req, script::shim::InteractReq::WithdrawLoad { .. })
-                })
-                .count();
             let rejected_bank = interact
                 .iter()
                 .filter(|req| {
@@ -1835,7 +1703,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     )
                 })
                 .count();
-            if rejected_x != 0 || rejected_load != 0 || rejected_bank != 0 {
+            if rejected_x != 0 || rejected_bank != 0 {
                 if let Some(slot) = script_slot(scripts, name) {
                     let same_lifetime = observed_slot
                         .as_ref()
@@ -1851,9 +1719,6 @@ pub(crate) fn script_observe_cached_with_channels(
                         for _ in 0..rejected_x {
                             slot.complete_withdraw_x(false);
                         }
-                        for _ in 0..rejected_load {
-                            slot.complete_withdraw_load(false);
-                        }
                         for _ in 0..rejected_bank {
                             slot.complete_bank_op(false);
                         }
@@ -1866,10 +1731,6 @@ pub(crate) fn script_observe_cached_with_channels(
             .iter()
             .filter(|req| matches!(req.req, script::shim::InteractReq::WithdrawX { .. }))
             .count();
-        let rejected_load = interact
-            .iter()
-            .filter(|req| matches!(req.req, script::shim::InteractReq::WithdrawLoad { .. }))
-            .count();
         let rejected_bank = interact
             .iter()
             .filter(|req| {
@@ -1880,7 +1741,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 )
             })
             .count();
-        if rejected_x != 0 || rejected_load != 0 || rejected_bank != 0 {
+        if rejected_x != 0 || rejected_bank != 0 {
             if let Some(slot) = script_slot(scripts, name) {
                 let same_lifetime = observed_slot
                     .as_ref()
@@ -1895,9 +1756,6 @@ pub(crate) fn script_observe_cached_with_channels(
                 if same_lifetime && Some(slot.work_epoch()) == slot_work_epoch {
                     for _ in 0..rejected_x {
                         slot.complete_withdraw_x(false);
-                    }
-                    for _ in 0..rejected_load {
-                        slot.complete_withdraw_load(false);
                     }
                     for _ in 0..rejected_bank {
                         slot.complete_bank_op(false);

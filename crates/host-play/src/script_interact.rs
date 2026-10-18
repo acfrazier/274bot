@@ -808,10 +808,8 @@ where
                     );
                 }
             }
-            // `script_observe` consumes this variant so it can arm the
-            // slot-owned continuation only after the X action was sent.
             // Direct callers cannot safely create host pending state.
-            InteractReq::WithdrawX { .. } | InteractReq::WithdrawLoad { .. } => {}
+            InteractReq::WithdrawX { .. } => {}
             InteractReq::Held {
                 name,
                 action,
