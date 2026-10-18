@@ -35,6 +35,11 @@ impl HeadlessDriver {
             .submit(command, targets, &mut HeadlessSurface::new())
     }
 
+    /// Stage the guardian edit the next `SetGuardian` commits.
+    pub fn stage_guardian(&mut self, edit: crate::session::GuardianEdit) {
+        self.session.stage_guardian(edit);
+    }
+
     /// One headless tick: [`OperatorSession::poll`].
     pub fn poll(&mut self) {
         self.session.poll();

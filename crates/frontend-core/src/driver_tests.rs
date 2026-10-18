@@ -219,3 +219,65 @@ fn a_pending_owner_member_settles_on_a_later_poll() {
         "remove settles once the slot retires"
     );
 }
+
+/// Poll until `request` settles (writes are durable off the UI thread).
+fn settle(d: &mut HeadlessDriver, request: RequestId) {
+    for _ in 0..400 {
+        d.poll();
+        if d.report(request).is_some_and(|report| report.is_settled()) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    panic!("command {request:?} did not settle");
+}
+
+#[test]
+fn guardian_and_raster_rows_write_the_profile_and_settle_from_the_writer() {
+    let mut d = driver("guardian-raster", &["alice"]);
+    d.stage_guardian(crate::session::GuardianEdit::fields(false, "magic", false));
+    let guardian = d
+        .submit(OperatorCommand::SetGuardian, Targets::Profile("alice"))
+        .expect("guardian admitted");
+    settle(&mut d, guardian.request());
+    assert_eq!(terminal(&d, guardian.request(), "alice"), Some(done()));
+    d.stage_guardian(crate::session::GuardianEdit::policy(
+        "River troll",
+        crate::GuardianPolicy::Fight,
+    ));
+    let policy = d
+        .submit(OperatorCommand::SetGuardian, Targets::Profile("alice"))
+        .expect("policy admitted");
+    settle(&mut d, policy.request());
+    let raster = d
+        .submit(
+            OperatorCommand::SetRaster(crate::command::RasterMode::Cpu),
+            Targets::Profile("alice"),
+        )
+        .expect("raster admitted");
+    settle(&mut d, raster.request());
+    let alice = d.session().profile("alice").expect("alice");
+    assert!(!alice.random_events());
+    assert_eq!(
+        alice.random_event_policy("river troll"),
+        crate::GuardianPolicy::Fight
+    );
+    assert_eq!(alice.raster(), crate::command::RasterMode::Cpu);
+}
+
+#[test]
+fn an_unknown_profile_write_is_rejected_with_the_owner_text() {
+    let mut d = driver("guardian-unknown", &["alice"]);
+    d.stage_guardian(crate::session::GuardianEdit::fields(true, "strength", true));
+    let guardian = d
+        .submit(OperatorCommand::SetGuardian, Targets::Profile("ghost"))
+        .expect("admitted");
+    assert!(matches!(
+        terminal(&d, guardian.request(), "ghost"),
+        Some(Settlement::Failed(CommandFailure::Rejected(_)))
+    ));
+    assert_eq!(
+        d.session().command_failure(guardian.request()),
+        Some("random: no profile ghost")
+    );
+}

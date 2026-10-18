@@ -44,12 +44,11 @@ use host_play::walk_map::{
     observed_services, ActionError, ActionKind, Catalogue, MapContext, WalkExclude, WalkSlotStatus,
 };
 use host_play::{
-    background_bots_ack_error, background_bots_acked, clear_background_bots_ack_error,
     live_vault_passphrase, load_navpois, map_ready_catalogue, mint_live_entries, mint_live_names,
-    open_vault, parse_profile_args, peek_map_catalogue, persist_background_bots_ack,
-    player_here_tile, profile_password, run_with_io, run_with_template, MapDemandHandle,
-    MapJobStatus, MapStage, PlayOptions, ProfileOptions, ReadyCatalogue, ServerProfile,
-    SharedClientTemplate, SlotFrameInput, WalkArm, WireCmd,
+    open_vault, parse_profile_args, peek_map_catalogue, player_here_tile, profile_password,
+    run_with_io, run_with_template, MapDemandHandle, MapJobStatus, MapStage, PlayOptions,
+    ProfileOptions, ReadyCatalogue, ServerProfile, SharedClientTemplate, SlotFrameInput, WalkArm,
+    WireCmd,
 };
 use nav::map::identity::Digest;
 use nav::tile::Tile;
@@ -59,11 +58,12 @@ use ratatui::Terminal;
 use vault::{Profile, Vault};
 
 use frontend_core::resources::background_ack_text;
+use frontend_core::UiPreferences;
 use frontend_core::{
-    load_map_bake_choice, persist_map_bake_choice, HeadlessSurface, MapBakeGate, OperatorCommand,
-    OperatorSession, SubmitError, Targets,
+    load_map_bake_choice, persist_map_bake_choice, GuardianEdit, HeadlessSurface, MapBakeGate,
+    OperatorCommand, OperatorSession, SubmitError, Targets,
 };
-use host_play::local_state::{LocalStateService, Preferences, StateRoot};
+use host_play::local_state::{LocalStateService, StateRoot};
 use host_play::map_cache::MapDemand;
 
 use crate::app::{AppAction, ChatData, MapCatalogueStatus, TuiApp};
@@ -502,7 +502,7 @@ pub struct TuiSession {
     /// The process local-state service's shared operator preferences
     /// (`panel-ui.json` through the service): every preference read and
     /// write in this process goes through this clone.
-    preferences: Preferences,
+    preferences: UiPreferences,
     /// Process-wide loadout presets: the form's editor over the process
     /// local-state service (slots read the same file through it).
     loadouts: script::LoadoutsStore,
@@ -558,7 +558,9 @@ impl TuiSession {
             LocalStateService::open_process(StateRoot::new(script::bot_home().join(".274bot")));
         let mut core = OperatorSession::new(_instance);
         core.bind_local_state(Arc::clone(&service));
-        let preferences = service.preferences();
+        let preferences = core
+            .preferences()
+            .expect("the session's local state was bound just now");
         let pause_manual_walk = frontend_core::nav_preference(
             &preferences,
             frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
@@ -566,10 +568,10 @@ impl TuiSession {
         )
         .unwrap_or(true);
         core.set_pause_script_on_manual_walk_abort(pause_manual_walk);
-        core.set_walk_globals_store(preferences.clone());
+        core.set_walk_globals_store(preferences.share());
         // The fleet rows show the map walks this TUI arms.
         core.set_walk_arms(Arc::clone(&travellers));
-        let background_ack = background_bots_acked(&preferences);
+        let background_ack = frontend_core::resources::background_bots_acked(&preferences);
         Self {
             #[cfg(feature = "memory-profile")]
             memory: None,
@@ -613,7 +615,7 @@ impl TuiSession {
             profile_import: frontend_core::rs2b0t_import::ProfileImport::new(),
             profile_import_preview_pending: false,
             script_category_order: Vec::new(),
-            preferences: preferences.clone(),
+            preferences: preferences.share(),
             loadouts: script::LoadoutsStore::over(Arc::new(service.operator_loadouts())),
             script_load_last_dir: None,
             copied_rows: None,
@@ -2447,15 +2449,13 @@ impl TuiSession {
         };
         let changed_policies = self
             .core
-            .vault()
-            .and_then(|vault| vault.get(&name))
+            .profile(&name)
             .map(|profile| {
-                vault::RANDOM_EVENT_POLICY_EVENTS
+                frontend_core::GUARDIAN_EVENTS
                     .iter()
                     .filter_map(|(event, _)| {
                         let policy = app.settings.random_event_policy(event);
-                        (profile.settings.random_event_policy(event) != policy)
-                            .then_some((*event, policy))
+                        (profile.random_event_policy(event) != policy).then_some((*event, policy))
                     })
                     .collect::<Vec<_>>()
             })
@@ -2466,11 +2466,10 @@ impl TuiSession {
         let settings = &app.settings;
         let lowmem_changed = self
             .core
-            .vault()
-            .and_then(|v| v.get(&name))
-            .is_some_and(|p| p.settings.lowmem != settings.lowmem);
+            .profile(&name)
+            .is_some_and(|p| p.lowmem() != settings.lowmem());
         if lowmem_changed {
-            let mode = if settings.lowmem {
+            let mode = if settings.lowmem() {
                 api::lifecycle::MemoryMode::Low
             } else {
                 api::lifecycle::MemoryMode::High
@@ -2486,12 +2485,13 @@ impl TuiSession {
                 }
             }
         }
-        match self.core.set_random_settings(
-            &name,
-            settings.random_events,
-            &settings.lamp_skill,
-            settings.lamp_auto,
-        ) {
+        let fields = GuardianEdit::fields(
+            settings.random_events(),
+            settings.lamp_skill(),
+            settings.lamp_auto(),
+        );
+        self.core.stage_guardian(fields);
+        match self.submit_profile_write(OperatorCommand::SetGuardian, &name) {
             Ok(op) => app
                 .settings_save
                 .submitted(&mut self.core, op, Some(&name), &name),
@@ -2502,7 +2502,9 @@ impl TuiSession {
             }
         }
         for (event, policy) in changed_policies {
-            match self.core.set_random_event_policy(&name, event, policy) {
+            self.core
+                .stage_guardian(GuardianEdit::policy(event, policy));
+            match self.submit_profile_write(OperatorCommand::SetGuardian, &name) {
                 Ok(op) => app
                     .settings_save
                     .submitted(&mut self.core, op, Some(&name), &name),
@@ -2524,7 +2526,7 @@ impl TuiSession {
             survivable_routing_notice_ack: app.survivable_routing_notice_ack,
         };
         let dirty = std::mem::take(&mut app.nav_preferences_dirty);
-        self.core.set_walk_globals_store(self.preferences.clone());
+        self.core.set_walk_globals_store(self.preferences.share());
 
         if !dirty.is_empty() && self.persist_ui {
             match frontend_core::WalkGlobalsView::persist_changed(&self.preferences, before, after)
@@ -2748,8 +2750,8 @@ impl TuiSession {
             if !app.settings_state.open {
                 app.settings = focused
                     .as_deref()
-                    .and_then(|n| self.core.vault().and_then(|v| v.get(n)))
-                    .map(|p| p.settings.clone())
+                    .and_then(|n| self.core.profile(n))
+                    .map(|p| p.settings_draft())
                     .unwrap_or_default();
             }
         }
@@ -2759,9 +2761,8 @@ impl TuiSession {
                 // later focus changes keep this binding and its buffers.
                 app.settings = self
                     .core
-                    .vault()
-                    .and_then(|v| v.get(name))
-                    .map(|p| p.settings.clone())
+                    .profile(name)
+                    .map(|p| p.settings_draft())
                     .unwrap_or_default();
                 app.settings_title = format!("{} — {name}", crate::settings::TITLE);
                 app.settings_profile = Some(name.to_string());
@@ -2975,9 +2976,9 @@ impl TuiSession {
             if let Some(saved) = app
                 .settings_profile
                 .as_deref()
-                .and_then(|name| self.core.vault().and_then(|v| v.get(name)))
+                .and_then(|name| self.core.profile(name))
             {
-                app.settings = saved.settings.clone();
+                app.settings = saved.settings_draft();
             }
         }
         if app.map_bake_dirty {
@@ -3156,14 +3157,22 @@ impl TuiSession {
 
     fn ack_background_bots(&mut self, app: &mut TuiApp) {
         if self.persist_ui {
-            match persist_background_bots_ack(&self.preferences) {
-                Ok(()) => {
+            let failure = self
+                .submit_raw(OperatorCommand::AcknowledgeNotice, Targets::Application)
+                .map(|submitted| {
+                    self.core
+                        .command_failure(submitted.request())
+                        .map(str::to_string)
+                })
+                .unwrap_or_else(|error| Some(error.to_string()));
+            match failure {
+                None => {
                     self.background_bots_acked = true;
                     self.notice_sig = None;
                     app.background_notice = None;
-                    clear_background_bots_ack_error(&mut app.error);
+                    frontend_core::resources::clear_background_bots_ack_error(&mut app.error);
                 }
-                Err(e) => app.error = Some(background_bots_ack_error(&e)),
+                Some(error) => app.error = Some(error),
             }
         } else {
             self.notice_sig = None;
@@ -3176,7 +3185,8 @@ impl TuiSession {
             .ack_checked_at
             .is_none_or(|t| now.duration_since(t) >= Duration::from_secs(1))
         {
-            self.background_bots_acked = background_bots_acked(&self.preferences);
+            self.background_bots_acked =
+                frontend_core::resources::background_bots_acked(&self.preferences);
             self.ack_checked_at = Some(now);
         }
     }
@@ -3354,9 +3364,9 @@ fn prompt_instance_conflict(holder: &host_play::InstanceHolder) -> bool {
 }
 
 /// Run the interactive (or `--live`) TUI: unlock, load + log in, event loop.
-fn new_app(title: impl Into<String>, preferences: &Preferences) -> TuiApp {
+fn new_app(title: impl Into<String>, preferences: &UiPreferences) -> TuiApp {
     let mut app = TuiApp::new(title);
-    app.restore_preferences(preferences.clone());
+    app.restore_preferences(preferences.share());
     app
 }
 
@@ -3520,23 +3530,17 @@ impl TuiSession {
     /// Create a missing profile (fresh game secret, uid one past the
     /// vault's max, from the 274M base).
     fn create_profile(&mut self, username: &str) -> Result<(), String> {
-        let uid = self
-            .core
-            .vault()
-            .map_or(274_000_001, frontend_core::fresh_uid);
-        let profile = Profile {
-            username: username.into(),
-            password: profile_password(username).into(),
-            uid,
-            settings: vault::ProfileSettings::default(),
-        };
         // Startup only (before the terminal loop): waiting on the write
         // here keeps a failed first-run profile a startup error.
-        let op = self
+        let submitted = self
             .core
-            .create_profile(profile, frontend_core::ArmMirror::none(), "profile")?;
+            .create_profile_named(username, &profile_password(username))
+            .map_err(|error| format!("profile: {error}"))?;
+        if let Some(reason) = self.core.command_failure(submitted.request()) {
+            return Err(reason.to_string());
+        }
         self.core.flush_writes();
-        match self.core.failure(op) {
+        match submitted.operation().and_then(|op| self.core.failure(op)) {
             Some(error) => Err(format!("profile: {error}")),
             None => Ok(()),
         }

@@ -2596,7 +2596,9 @@ fn tui_live_mode_does_not_show_or_persist_background_notice() {
     assert!(app.background_notice.is_none());
     let mut app = app;
     session.ack_background_bots(&mut app);
-    assert!(!host_play::background_bots_acked(&session.preferences));
+    assert!(!frontend_core::resources::background_bots_acked(
+        &session.preferences
+    ));
     let _iso = iso;
 }
 
@@ -2606,7 +2608,13 @@ fn tui_notice_uses_shared_ack_file() {
     let mut session = TuiSession::new(dummy_options());
     let app = pump_two_slots(&mut session);
     assert!(app.background_notice.is_some());
-    host_play::persist_background_bots_ack(&session.preferences).unwrap();
+    session
+        .core
+        .submit_detached(
+            frontend_core::OperatorCommand::AcknowledgeNotice,
+            frontend_core::Targets::Application,
+        )
+        .unwrap();
     let mut app = TuiApp::new("tui");
     app.names = vec!["alice".into(), "bob".into()];
     app.focused = Some(0);
@@ -2737,7 +2745,7 @@ fn tui_manual_walk_pause_preference_projects_and_reports_persistence() {
     .unwrap();
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("tui");
-    app.restore_preferences(session.preferences.clone());
+    app.restore_preferences(session.preferences.share());
     assert!(!app.pause_script_on_manual_walk_abort);
 
     app.pause_script_on_manual_walk_abort = true;
@@ -2776,7 +2784,7 @@ fn tui_quester_paths_failed_save_keeps_source_and_error_without_reloading() {
     let iso = IsolatedEnv::enter("tui-quester-paths-save-failure");
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("tui");
-    app.restore_preferences(session.preferences.clone());
+    app.restore_preferences(session.preferences.share());
     // A refused preferences file (larger than the bound) refuses writes:
     // the save fails, the source stays, and no reload starts.
     std::fs::create_dir_all(session.preferences.path().parent().unwrap()).unwrap();
@@ -2841,7 +2849,7 @@ fn tui_restored_enabled_folder_loads_when_game_data_becomes_ready() {
 
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("tui");
-    app.restore_preferences(session.preferences.clone());
+    app.restore_preferences(session.preferences.share());
     assert!(app.quester_paths.enabled());
     let selected = api::selected::FamilyPreparation::run(|_| {
         api::game_data::for_revision(client::io::ClientRevision::R289)
@@ -2951,12 +2959,16 @@ fn tui_failed_ack_persist_then_success_clears_only_that_error() {
         "got {:?}",
         app.error
     );
-    assert!(!host_play::background_bots_acked(&session.preferences));
+    assert!(!frontend_core::resources::background_bots_acked(
+        &session.preferences
+    ));
     std::fs::remove_file(&parent).unwrap();
     session.ack_background_bots(&mut app);
     assert!(app.background_notice.is_none());
     assert!(app.error.is_none(), "got {:?}", app.error);
-    assert!(host_play::background_bots_acked(&session.preferences));
+    assert!(frontend_core::resources::background_bots_acked(
+        &session.preferences
+    ));
     let _iso = iso;
 }
 
@@ -2969,7 +2981,9 @@ fn tui_successful_ack_preserves_unrelated_error() {
     session.ack_background_bots(&mut app);
     assert!(app.background_notice.is_none());
     assert_eq!(app.error.as_deref(), Some("script: no focused profile"));
-    assert!(host_play::background_bots_acked(&session.preferences));
+    assert!(frontend_core::resources::background_bots_acked(
+        &session.preferences
+    ));
     let _iso = iso;
 }
 
@@ -3196,7 +3210,7 @@ fn settings_popup_persists_guardian_fields_and_live_policy() {
     session.core.select("alice");
     session
         .core
-        .set_random_event_policy("alice", "river troll", vault::RandomEventPolicy::Fight)
+        .set_random_event_policy("alice", "river troll", frontend_core::GuardianPolicy::Fight)
         .unwrap();
     session.core.flush_writes();
     assert_eq!(
@@ -3212,12 +3226,10 @@ fn settings_popup_persists_guardian_fields_and_live_policy() {
     session.pump(&mut app);
     // A stale popup draft restores the supported Flee policy and changes the
     // other Guardian fields without replacing unrelated profile settings.
-    app.settings = vault::ProfileSettings {
-        random_events: false,
-        lamp_skill: "Magic".into(),
-        lamp_auto: true,
-        ..vault::ProfileSettings::default()
-    };
+    app.settings = frontend_core::SettingsDraft::default();
+    *app.settings.random_events_mut() = false;
+    *app.settings.lamp_skill_mut() = "Magic".into();
+    *app.settings.lamp_auto_mut() = true;
     app.settings_dirty = true;
 
     session.pump(&mut app);
@@ -3614,7 +3626,7 @@ fn settings_popup_stays_bound_to_its_profile_across_focus_change() {
         crossterm::event::KeyCode::Enter,
         crossterm::event::KeyModifiers::NONE,
     ));
-    assert!(!app.settings.random_events, "the toggle edits the draft");
+    assert!(!app.settings.random_events(), "the toggle edits the draft");
     // Switch focus to bob: the popup stays open on alice's draft, titled
     // with the profile it is bound to.
     focus_member(&mut session, &mut app, "bob");
@@ -3638,7 +3650,7 @@ fn settings_popup_stays_bound_to_its_profile_across_focus_change() {
         );
     }
     assert!(
-        !app.settings.random_events,
+        !app.settings.random_events(),
         "a focus change never rewrites the buffers"
     );
     // Persisting writes alice's row, never bob's.
@@ -3789,7 +3801,7 @@ fn a_late_persist_failure_shows_in_the_popup_it_came_from() {
     let held = gate.lock().unwrap();
     app.on_key(settings_key(crossterm::event::KeyCode::Enter));
     session.pump(&mut app);
-    assert!(!app.settings.random_events, "the popup shows the edit");
+    assert!(!app.settings.random_events(), "the popup shows the edit");
 
     std::fs::set_permissions(&iso.dir, std::fs::Permissions::from_mode(0o500)).unwrap();
     drop(held);
@@ -4476,7 +4488,7 @@ fn settings_memory_row_persists_and_arms_the_handshake() {
     dispatch(&mut session, &mut app, open);
     session.pump(&mut app);
     // Flip the memory row draft; the binary persists it on the next pump.
-    app.settings.lowmem = false;
+    *app.settings.lowmem_mut() = false;
     app.settings_dirty = true;
     session.pump(&mut app);
 

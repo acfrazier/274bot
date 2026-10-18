@@ -408,7 +408,7 @@ pub struct TuiApp {
     /// ([`TuiApp::settings_profile`]); the binary persists
     /// [`TuiApp::settings`] back to the vault when
     /// [`TuiApp::settings_dirty`] flips.
-    pub settings: vault::ProfileSettings,
+    pub settings: frontend_core::SettingsDraft,
     /// Editable settings buffer; durable reads are rendered from `walk_permissions`.
     pub nav: host_play::WalkGlobals,
     /// Current durable projection shared with admission and inherited script rows.
@@ -453,7 +453,7 @@ pub struct TuiApp {
     pub pause_script_on_manual_walk_abort: bool,
     /// The global manual-movement pause preference changed; the session persists it.
     pub pause_script_on_manual_walk_abort_dirty: bool,
-    shared_preferences: Option<host_play::local_state::Preferences>,
+    shared_preferences: Option<frontend_core::UiPreferences>,
     pub loadouts_state: LoadoutsState,
     /// The focused slot's script lifecycle (shape display only).
     pub script_state: RunState,
@@ -558,7 +558,7 @@ impl TuiApp {
             route: None,
             walk_dest: None,
             chat: ChatState::default(),
-            settings: vault::ProfileSettings::default(),
+            settings: frontend_core::SettingsDraft::default(),
             nav: host_play::WalkGlobals::default(),
             walk_permissions: WalkGlobalsView::default(),
             map_route_through_zones: false,
@@ -619,7 +619,7 @@ impl TuiApp {
 
     /// Bind the shared process-service preferences. Walk permissions are
     /// refreshed again for every relevant render and admission.
-    pub fn restore_preferences(&mut self, preferences: host_play::local_state::Preferences) {
+    pub fn restore_preferences(&mut self, preferences: frontend_core::UiPreferences) {
         self.quester_paths_controller.restore(&preferences);
         let enabled = self.quester_paths_controller.settings().enabled();
         let folder = self
@@ -635,7 +635,7 @@ impl TuiApp {
             None,
         )
         .unwrap_or(true);
-        self.shared_preferences = Some(preferences.clone());
+        self.shared_preferences = Some(preferences.share());
         self.refresh_walk_permissions();
         self.map.restore_persisted_wilderness(&preferences);
     }
@@ -665,12 +665,15 @@ impl TuiApp {
         }
     }
 
-    pub(crate) fn shared_preferences(&self) -> Option<&host_play::local_state::Preferences> {
+    pub(crate) fn shared_preferences(&self) -> Option<&frontend_core::UiPreferences> {
         self.shared_preferences.as_ref()
     }
 
     pub(crate) fn toggle_map_wilderness(&mut self) {
-        let preferences = self.shared_preferences.clone();
+        let preferences = self
+            .shared_preferences
+            .as_ref()
+            .map(frontend_core::UiPreferences::share);
         match self.map.toggle_wilderness(preferences.as_ref()) {
             Ok(()) => {
                 if self
@@ -1895,7 +1898,7 @@ impl TuiApp {
             .walk_dest
             .map(|t| format!("{} {} {}", t.x, t.z, t.level))
             .unwrap_or_else(|| "—".into());
-        let mem = frontend_core::MemoryNotice::status_text(self.settings.lowmem, self.memory);
+        let mem = frontend_core::MemoryNotice::status_text(self.settings.lowmem(), self.memory);
         let note = self.memory.filter(|n| n.differs()).map(|n| n.notice_text());
         let pane = StatusPane::new(self.focused_detail(), &walk, &mem)
             .mem_notice(note)

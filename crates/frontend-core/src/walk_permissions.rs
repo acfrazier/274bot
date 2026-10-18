@@ -106,7 +106,7 @@ pub struct WalkGlobalsView {
 impl WalkGlobalsView {
     /// Read the shared preferences once. A missing file is a first-run
     /// default; a refused file or a malformed `nav` denies every grant.
-    pub fn read(preferences: &host_play::local_state::Preferences) -> Self {
+    pub fn read(preferences: &crate::prefs::UiPreferences) -> Self {
         let Ok(document) = preferences.document() else {
             return Self::fail_closed();
         };
@@ -171,7 +171,7 @@ impl WalkGlobalsView {
     /// Persist only globals and notice acknowledgement changed by this edit,
     /// merging them together into the shared preferences.
     pub fn persist_changed(
-        preferences: &host_play::local_state::Preferences,
+        preferences: &crate::prefs::UiPreferences,
         before: Self,
         after: Self,
     ) -> io::Result<()> {
@@ -239,7 +239,8 @@ impl WalkGlobalsView {
 #[cfg(test)]
 mod tests {
     use super::{DangerLevel, WalkGlobalsView};
-    use host_play::local_state::{LocalStateService, Preferences, StateRoot};
+    use crate::prefs::UiPreferences as Preferences;
+    use host_play::local_state::{LocalStateService, StateRoot};
     use host_play::WalkGlobals;
     use nav::zones::ZoneExempt;
     use std::path::PathBuf;
@@ -260,8 +261,9 @@ mod tests {
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             std::fs::create_dir_all(&dir).unwrap();
-            let preferences =
-                LocalStateService::open_process(StateRoot::new(dir.clone())).preferences();
+            let preferences = Preferences::new(
+                LocalStateService::open_process(StateRoot::new(dir.clone())).preferences(),
+            );
             Self {
                 path: preferences.path(),
                 dir,

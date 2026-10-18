@@ -103,7 +103,7 @@ impl NavSettings {
 
     pub fn refresh_walk_globals(
         &mut self,
-        preferences: &host_play::local_state::Preferences,
+        preferences: &frontend_core::UiPreferences,
     ) -> std::io::Result<()> {
         let view = frontend_core::WalkGlobalsView::read(preferences);
         self.allow_teleports = view.globals.allow_teleports;

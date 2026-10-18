@@ -8,7 +8,7 @@
 
 use std::io;
 
-use host_play::local_state::Preferences;
+use frontend_core::UiPreferences as Preferences;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::buffer::Buffer;

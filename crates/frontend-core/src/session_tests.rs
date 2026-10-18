@@ -18,7 +18,7 @@ struct Recorder {
     attached: u32,
     resets: Vec<String>,
     released: Vec<String>,
-    rasters: Vec<vault::RasterMode>,
+    rasters: Vec<crate::command::RasterMode>,
 }
 
 impl SlotSurface for Recorder {
@@ -27,10 +27,10 @@ impl SlotSurface for Recorder {
     fn attach(
         &mut self,
         _name: &str,
-        profile: &mut Profile,
+        profile: &mut crate::SpawnProfile<'_>,
         retained: Option<u32>,
     ) -> SlotAttach<u32> {
-        self.rasters.push(profile.settings.raster);
+        self.rasters.push(profile.raster());
         let io = retained.unwrap_or_else(|| {
             self.attached += 1;
             self.attached
@@ -1295,7 +1295,7 @@ fn random_event_policy_persists_and_mirrors_after_durable_write() {
     s.load("alice", &mut surface);
     let alice = arm(&s, "alice");
     let op = s
-        .set_random_event_policy("alice", "River Troll", vault::RandomEventPolicy::Fight)
+        .set_random_event_policy("alice", "River Troll", crate::GuardianPolicy::Fight)
         .unwrap();
     assert!(
         alice.random_event_policies.lock().unwrap().is_empty(),
@@ -1615,25 +1615,25 @@ fn profile_form_dirty_tracks_edits_against_the_vault_row() {
     );
 
     assert!(
-        !s.profile_form_dirty(Some("alice"), &user, &pass, &settings),
+        !dirty(&s, Some("alice"), &user, &pass, &settings),
         "an editor opened on the row is clean"
     );
     assert!(
-        s.profile_form_dirty(Some("alice"), &user, "typed-but-unsaved", &settings),
+        dirty(&s, Some("alice"), &user, "typed-but-unsaved", &settings),
         "an edited password is unsaved"
     );
     assert!(
-        s.profile_form_dirty(Some("alice"), "bob", &pass, &settings),
+        dirty(&s, Some("alice"), "bob", &pass, &settings),
         "a renamed username is unsaved"
     );
     let mut tweaked = settings.clone();
     tweaked.world = Some(2);
     assert!(
-        s.profile_form_dirty(Some("alice"), &user, &pass, &tweaked),
+        dirty(&s, Some("alice"), &user, &pass, &tweaked),
         "an edited setting is unsaved"
     );
     assert!(
-        s.profile_form_dirty(Some("ghost"), &user, &pass, &settings),
+        dirty(&s, Some("ghost"), &user, &pass, &settings),
         "a target with no row must ask before it is left"
     );
 }
@@ -1644,25 +1644,25 @@ fn profile_form_dirty_treats_a_blank_new_profile_as_clean() {
     let clean = ProfileSettings::default();
 
     assert!(
-        !s.profile_form_dirty(None, "", "", &clean),
+        !dirty(&s, None, "", "", &clean),
         "a blank new-profile form is clean"
     );
     assert!(
-        !s.profile_form_dirty(Some(""), "  ", "", &clean),
+        !dirty(&s, Some(""), "  ", "", &clean),
         "whitespace alone is not a name"
     );
     assert!(
-        s.profile_form_dirty(None, "bob", "", &clean),
+        dirty(&s, None, "bob", "", &clean),
         "a typed name is unsaved"
     );
     assert!(
-        s.profile_form_dirty(None, "", "pw", &clean),
+        dirty(&s, None, "", "pw", &clean),
         "a typed password is unsaved"
     );
     let mut tweaked = clean.clone();
     tweaked.lamp_auto = !clean.lamp_auto;
     assert!(
-        s.profile_form_dirty(None, "", "", &tweaked),
+        dirty(&s, None, "", "", &tweaked),
         "a non-default setting is unsaved"
     );
 }
@@ -1680,7 +1680,8 @@ fn profile_form_dirty_projects_only_what_save_writes() {
     // Whitespace around the username and the clue partner canonicalizes to
     // the stored row: Save would write the same values.
     assert!(
-        !s.profile_form_dirty(
+        !dirty(
+            &s,
             Some("alice"),
             "  alice  ",
             &row.password,
@@ -1715,25 +1716,31 @@ fn profile_form_dirty_projects_only_what_save_writes() {
         s.vault_mut().unwrap().upsert(updated).unwrap();
     }
     assert!(
-        !s.profile_form_dirty(Some("alice"), &row.username, &row.password, &row.settings),
+        !dirty(
+            &s,
+            Some("alice"),
+            &row.username,
+            &row.password,
+            &row.settings
+        ),
         "a concurrent change to a non-owned setting is not dirty"
     );
 
     // Real edits still count.
     assert!(
-        s.profile_form_dirty(Some("alice"), &row.username, "changed", &row.settings),
+        dirty(&s, Some("alice"), &row.username, "changed", &row.settings),
         "a real password edit is dirty"
     );
     let mut world = row.settings.clone();
     world.world = Some(row.settings.world.unwrap_or(1).wrapping_add(1));
     assert!(
-        s.profile_form_dirty(Some("alice"), &row.username, &row.password, &world),
+        dirty(&s, Some("alice"), &row.username, &row.password, &world),
         "a real world edit is dirty"
     );
     let mut clue = row.settings.clone();
     clue.clue_duel_partner = format!("{}!", row.settings.clue_duel_partner);
     assert!(
-        s.profile_form_dirty(Some("alice"), &row.username, &row.password, &clue),
+        dirty(&s, Some("alice"), &row.username, &row.password, &clue),
         "a real clue-partner edit is dirty"
     );
 }
@@ -2644,10 +2651,10 @@ impl SlotSurface for MemoryOverrideSurface {
     fn attach(
         &mut self,
         _name: &str,
-        profile: &mut Profile,
+        profile: &mut crate::SpawnProfile<'_>,
         retained: Option<u32>,
     ) -> SlotAttach<u32> {
-        profile.settings.lowmem = false;
+        profile.set_lowmem(false);
         SlotAttach::new(retained.unwrap_or_default(), None, None)
     }
 
@@ -2748,4 +2755,17 @@ fn host_capacity_transitions_log_once_and_rebuild_the_line_only_on_change() {
             (Level::Info, back.to_string()),
         ]
     );
+}
+
+fn dirty(
+    s: &OperatorSession<u32>,
+    target: Option<&str>,
+    username: &str,
+    password: &str,
+    settings: &ProfileSettings,
+) -> bool {
+    s.profile_form_dirty(
+        target,
+        &crate::ProfileDraft::from_parts(username, password, settings.clone()),
+    )
 }

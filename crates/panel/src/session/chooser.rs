@@ -1,194 +1,65 @@
-//! Chooser credential scratch: picker edit buffers and vault read/write helpers.
+//! Profiles window over the core's profile edit form
+//! ([`frontend_core::ProfileEditor`]): the panel adds its own effects
+//! (the window open, the focus request, the rs2b0t import sharing the editor
+//! pane, MultiBox off) around the form's staging and saves.
 
-use frontend_core::fresh_uid;
-use vault::{Profile, ProfileSettings};
+use frontend_core::{FormLeave, FormOpen, SaveRefused};
 
 use super::Session;
 
-/// What Discard does on a staged Discard / Keep editing prompt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EditLeave {
-    /// Open [`EditSwitch::target`] over the form.
-    Switch,
-    /// Close the form, leaving Profiles open.
-    CloseForm,
-    /// Close Profiles, and the form with it.
-    CloseWindow,
-    /// Remove the profile [`EditSwitch::target`] from the vault; it is the
-    /// one the form edits, so the form closes with it.
-    DeleteTarget,
-    /// Turn MultiBox off, which closes Profiles and the form with it.
-    MultiBoxOff,
-    /// Close the form and open the rs2b0t import in the editor pane.
-    OpenImport,
-}
-
-/// A staged Discard / Keep editing prompt: the operator asked to leave the
-/// form (an explicit switch of it to `target`, `""` for a new profile, a
-/// close, the delete of its profile, or MultiBox off) while it holds unsaved
-/// edits or a save that has not settled. The prompt text is built once, when
-/// the prompt is staged, so drawing it only borrows.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EditSwitch {
-    pub target: String,
-    pub prompt: String,
-    pub leave: EditLeave,
-    /// The prompt was staged because the form's save had not settled (its
-    /// text says the save may fail). It ends when that save settles, since
-    /// the result is then on the form.
-    pub saving: bool,
-}
-
 impl Session {
-    /// Save the credentials fields as a vault profile: the username field
-    /// is the key, the password field the secret, and an existing profile's
-    /// uid/settings are kept. Does not require a focused profile (first-run
-    /// empty vault). A new profile or a rename onto a username another
-    /// profile already has is refused with an error, never an overwrite.
-    /// The write is only queued: the form stays open on its target until the
-    /// write is durable, then follows a renamed or new profile to its saved
-    /// name and shows `Saved <name>.`; the profile is selected (and so
-    /// spawned) only then. A write that fails later leaves the form on its
-    /// target with its draft, so Save retries the same rename or create; its
-    /// error shows in the form and on the banner. Returns whether the write
-    /// was accepted: a refusal shows inline and writes nothing, and a Save
-    /// while this form's previous save is still being written is not
-    /// accepted.
+    /// Save the credentials form as a vault profile through the core form
+    /// ([`frontend_core::ProfileEditor::save`]): the username field is the
+    /// key, the password field the secret, and an existing profile's
+    /// uid/settings are kept. A new profile or a rename onto a taken
+    /// username is refused, never an overwrite. The form keeps its target
+    /// until the write is durable, then follows a renamed or new profile to
+    /// its saved name and shows `Saved <name>.`; the profile is selected
+    /// (and so spawned) only then. Returns whether the write was accepted:
+    /// a refusal shows inline and on the banner and writes nothing, and a
+    /// Save while this form's previous save is unsettled is not accepted.
     pub fn save_credentials(&mut self) -> bool {
-        // The form keeps its target until the write is durable, so a second
-        // Save before then would not follow a rename or create.
-        if self.form_saving() {
-            return false;
-        }
-        self.pending_edit_switch = None;
-        if self.core.vault().is_none() {
-            return self.refuse_credentials("credentials: vault locked");
-        }
-        let username = self.cred_user.trim().to_string();
-        if username.is_empty() {
-            return self.refuse_credentials("credentials: username required");
-        }
-        let rename_from = self
-            .chooser_edit
-            .as_deref()
-            .filter(|old| !old.is_empty() && old.trim() != username);
-        let profile = {
-            let vault = self.core.vault().expect("vault checked");
-            let existing = if let Some(old) = rename_from {
-                vault.get(old).cloned()
-            } else {
-                vault.get(&username).cloned()
-            };
-            Profile {
-                uid: existing
-                    .as_ref()
-                    .map(|p| p.uid)
-                    .unwrap_or_else(|| fresh_uid(vault)),
-                username: username.clone(),
-                password: self.cred_pass.clone(),
-                settings: existing
-                    .map(|p| {
-                        let mut settings = p.settings;
-                        if self.chooser_edit.is_some() {
-                            settings.world = self.cred_settings.world;
-                            settings.clue_duel_partner =
-                                self.cred_settings.clue_duel_partner.trim().to_string();
-                        }
-                        settings
-                    })
-                    .unwrap_or_else(|| self.cred_settings.clone()),
+        match self.profile_editor.save(&mut self.core, &self.scripts) {
+            Ok(()) => {
+                self.error = None;
+                true
             }
-        };
-        // Staged now and written off this thread (a rename as one
-        // transaction); a running slot learns the next-handshake settings
-        // once the write is durable, and its running script the profile's
-        // clue duel partner (frozen reads it live).
-        let live = rename_from
-            .is_none()
-            .then(|| {
-                self.scripts
-                    .profile_save_live(&self.core, &profile.username, &profile.settings)
-            })
-            .flatten();
-        let mirror = frontend_core::ArmMirror::remember(live);
-        let saved = match rename_from {
-            Some(old) => {
-                let old = old.to_string();
-                self.core
-                    .rename_profile(&old, profile, mirror, "credentials")
+            Err(SaveRefused::StillSaving) => false,
+            Err(SaveRefused::Refused) => {
+                // The banner is hidden while Profiles is open, so the form
+                // shows the refusal too.
+                self.error = self
+                    .profile_editor
+                    .save_state()
+                    .notice()
+                    .and_then(|notice| notice.error())
+                    .map(str::to_string);
+                false
             }
-            None if self.chooser_edit.as_deref() == Some("") => {
-                self.core.create_profile(profile, mirror, "credentials")
-            }
-            None => self.core.save_profile(profile, mirror, "credentials"),
-        };
-        let op = match saved {
-            Ok(op) => op,
-            Err(e) => return self.refuse_credentials(e),
-        };
-        self.error = None;
-        // Select (and so spawn) only once the credentials are durable: a
-        // failed write must not leave a worker logging in with them.
-        let source = self.chooser_edit.as_deref().filter(|t| !t.is_empty());
-        self.chooser_save
-            .submitted(&mut self.core, op, source, username);
-        true
+        }
     }
 
-    /// A Save refused before anything was written: on the banner, and
-    /// inline next to Save, since the banner is hidden while Profiles is
-    /// open.
-    fn refuse_credentials(&mut self, reason: impl Into<String>) -> bool {
-        let reason = reason.into();
-        self.chooser_save.refused(reason.clone());
-        self.error = Some(reason);
-        false
-    }
-
-    /// Settle the credentials Saves being written. Once one is durable, the
-    /// form it came from, if still showing, follows the saved name (a
-    /// rename's or a new profile's) and shows `Saved <name>.`, and the
-    /// profile is selected. A write that failed after it was queued shows
-    /// in the form it came from, which keeps its draft and its target, so
-    /// Save retries; it selects nothing. Its error is on the banner too.
-    /// A Discard / Keep editing prompt staged because the form's save had
-    /// not settled ends with it: it would say the save may fail over its
-    /// result, and the leave it asked for is the operator's to ask again.
+    /// Settle the credentials Saves being written: once one is durable, the
+    /// form it came from follows the saved name and the profile is selected
+    /// (`select` builds the arm from the durable auto-login). A failed write
+    /// shows in the form it came from and on the banner; it selects nothing.
     pub(crate) fn settle_profile_save(&mut self) {
-        for settled in self.chooser_save.settle(&mut self.core) {
-            let Some(saved) = settled.into_saved() else {
-                continue;
-            };
-            let same_form = saved.same_form();
-            let name = saved.into_destination();
-            if same_form {
-                self.chooser_edit = Some(name.clone());
-            }
-            // `select` builds the arm from the durable auto-login.
+        for name in self.profile_editor.settle(&mut self.core) {
             self.select(&name);
-        }
-        if self.pending_edit_switch.as_ref().is_some_and(|s| s.saving) && !self.form_saving() {
-            self.pending_edit_switch = None;
         }
     }
 
     /// Empty the credentials-section fields. The vault entry is untouched.
     pub fn clear_credentials(&mut self) {
-        self.cred_user.clear();
-        self.cred_pass.clear();
+        self.profile_editor.clear_credentials();
     }
 
     /// Open the profile picker on `name` (or a blank new row). With unsaved
-    /// changes on another target, or this form's save still being written
-    /// (it can still fail, and the draft is all that is left of it), the
-    /// switch waits: the form stays on its target with its buffers, and the
-    /// pending target is staged for the Discard / Keep editing prompt
-    /// ([`Self::confirm_pending_edit_switch`],
-    /// [`Self::cancel_pending_edit_switch`]). Focus changes never come
-    /// through here, so they can never retarget the form. The form and the
-    /// rs2b0t import share the editor pane: an import whose writes are
-    /// still being saved keeps it (the edit does not open), and any other
-    /// import (its path, or a preview, which has written nothing) closes.
+    /// changes on another target, or this form's save still being written,
+    /// the switch waits behind the Discard / Keep editing prompt. Focus
+    /// changes never come through here. The form and the rs2b0t import
+    /// share the editor pane: an import whose writes are still being saved
+    /// keeps it, and any other import closes.
     pub fn begin_edit_profile(&mut self, name: Option<&str>) {
         if self.import_writing() {
             self.wall.chooser_open = true;
@@ -198,23 +69,10 @@ impl Session {
             self.close_profile_import();
         }
         let target = name.unwrap_or("");
-        if self.chooser_edit.as_deref() == Some(target) {
-            // Same target: keep the buffers — an explicit re-open never
-            // discards what was typed.
-            self.wall.chooser_open = true;
-            return;
+        if self.profile_editor.request_open(&self.core, target) == FormOpen::Staged {
+            self.request_window_focus(super::PanelWindow::Profiles);
         }
-        if self.edit_dirty() || self.form_saving() {
-            let next = if target.is_empty() {
-                "start a new profile".to_string()
-            } else {
-                format!("edit {target}")
-            };
-            self.stage_edit_exit(EditLeave::Switch, target, &next);
-            self.wall.chooser_open = true;
-            return;
-        }
-        self.open_edit_profile(target);
+        self.wall.chooser_open = true;
     }
 
     /// Open the rs2b0t import in the editor pane, in place of the edit
@@ -224,9 +82,9 @@ impl Session {
         if self.profile_import_open {
             return;
         }
-        if self.chooser_edit.is_some() {
+        if self.profile_editor.is_open() {
             if self.edit_dirty() || self.form_saving() {
-                self.stage_edit_exit(EditLeave::OpenImport, "", "import rs2b0t profiles");
+                self.stage_edit_exit(FormLeave::OpenImport, "", "import rs2b0t profiles");
                 return;
             }
             self.cancel_edit_profile();
@@ -246,139 +104,76 @@ impl Session {
     }
 
     /// Stage the Discard / Keep editing prompt for leaving the form to
-    /// `then` (`target` only matters to [`EditLeave::Switch`]).
-    pub(super) fn stage_edit_exit(&mut self, leave: EditLeave, target: &str, then: &str) {
-        let saving = self.chooser_save.saving_name(&self.core);
-        let prompt = match saving {
-            Some(saving) => format!(
-                "Saving {saving} has not finished and may fail; its edits would be lost. Discard them and {then}?"
-            ),
-            None => format!("Discard unsaved edits and {then}?"),
-        };
-        self.pending_edit_switch = Some(EditSwitch {
-            target: target.to_string(),
-            prompt,
-            leave,
-            saving: saving.is_some(),
-        });
+    /// `then`, and bring Profiles to the front.
+    pub(super) fn stage_edit_exit(&mut self, leave: FormLeave, target: &str, then: &str) {
+        self.profile_editor
+            .stage_leave(&self.core, leave, target, then);
         self.request_window_focus(super::PanelWindow::Profiles);
     }
 
-    /// Switch the form to `target` (`""` is the blank new-profile row),
-    /// reloading its buffers. Unconditional: the Discard path and clean
-    /// opens come through here.
-    fn open_edit_profile(&mut self, target: &str) {
-        if target.is_empty() {
-            self.cred_user.clear();
-            self.cred_pass.clear();
-            self.cred_settings = ProfileSettings::default();
-            self.chooser_edit = Some(String::new());
-        } else {
-            if let Some(p) = self.core.vault().and_then(|v| v.get(target)) {
-                self.cred_user = p.username.clone();
-                self.cred_pass = p.password.clone();
-                self.cred_settings = p.settings.clone();
-            }
-            self.chooser_edit = Some(target.to_string());
-        }
-        self.pending_edit_switch = None;
-        self.chooser_save.form_changed();
-        self.chooser_form = self.chooser_form.wrapping_add(1);
-        self.wall.chooser_open = true;
-    }
-
-    /// Discard the draft and leave the form as the prompt asked (open the
-    /// pending target, or close the form or Profiles). No-op when no prompt
-    /// is waiting.
+    /// Discard the draft and leave the form as the prompt asked. No-op when
+    /// no prompt is waiting.
     pub fn confirm_pending_edit_switch(&mut self) {
-        let Some(switch) = self.pending_edit_switch.take() else {
+        let Some(prompt) = self.profile_editor.discard(&self.core) else {
             return;
         };
-        match switch.leave {
-            EditLeave::Switch => self.open_edit_profile(&switch.target),
-            EditLeave::CloseForm => self.cancel_edit_profile(),
-            EditLeave::CloseWindow => {
-                self.wall.chooser_open = false;
-                self.cancel_edit_profile();
+        match prompt.leave() {
+            FormLeave::Switch => self.wall.chooser_open = true,
+            FormLeave::CloseForm => {}
+            FormLeave::CloseWindow => self.wall.chooser_open = false,
+            FormLeave::DeleteTarget => {
+                self.vault_remove(prompt.target());
             }
-            EditLeave::DeleteTarget => {
-                self.cancel_edit_profile();
-                self.vault_remove(&switch.target);
-            }
-            EditLeave::MultiBoxOff => {
-                self.cancel_edit_profile();
-                self.apply_multibox(false);
-            }
-            EditLeave::OpenImport => {
-                self.cancel_edit_profile();
-                self.open_import();
-            }
+            FormLeave::MultiBoxOff => self.apply_multibox(false),
+            FormLeave::OpenImport => self.open_import(),
         }
     }
 
     /// Keep editing: drop the pending prompt, the form untouched.
     pub fn cancel_pending_edit_switch(&mut self) {
-        self.pending_edit_switch = None;
+        self.profile_editor.keep_editing();
     }
 
-    /// The form's Cancel: closes the form. Refused while the form's save is
-    /// still being written: the Discard / Keep editing prompt is staged
-    /// instead. Returns whether the form closed.
+    /// The form's Cancel: closes the form, unless its save is still being
+    /// written (the prompt is staged instead). Returns whether it closed.
     pub fn request_cancel_edit(&mut self) -> bool {
-        if self.form_saving() {
-            self.stage_edit_exit(EditLeave::CloseForm, "", "close the form");
-            return false;
+        let closed = self
+            .profile_editor
+            .request_close(&self.core, FormLeave::CloseForm);
+        if !closed {
+            self.request_window_focus(super::PanelWindow::Profiles);
         }
-        self.cancel_edit_profile();
-        true
+        closed
     }
 
-    /// Close Profiles (its Close button and its ✕), and the form with it.
-    /// Refused while the form's save is still being written: the Discard /
-    /// Keep editing prompt is staged and Profiles stays open. Returns
-    /// whether Profiles closed.
+    /// Close Profiles (its Close button and its ✕), and the form with it,
+    /// unless the form's save is still being written (the prompt is staged
+    /// and Profiles stays open). Returns whether Profiles closed.
     pub fn request_close_profiles(&mut self) -> bool {
-        if self.form_saving() {
-            self.stage_edit_exit(EditLeave::CloseWindow, "", "close Profiles");
+        if !self
+            .profile_editor
+            .request_close(&self.core, FormLeave::CloseWindow)
+        {
+            self.request_window_focus(super::PanelWindow::Profiles);
             self.wall.chooser_open = true;
             return false;
         }
         self.wall.chooser_open = false;
-        self.cancel_edit_profile();
         true
     }
 
-    /// Whether the open edit form holds changes its Save would write (user,
-    /// pass or settings against the vault row; a blank new-profile form is
-    /// clean). False with no form open.
+    /// Whether the open edit form holds changes its Save would write.
     pub fn edit_dirty(&self) -> bool {
-        let Some(target) = self.chooser_edit.as_deref() else {
-            return false;
-        };
-        let target = if target.is_empty() {
-            None
-        } else {
-            Some(target)
-        };
-        self.core.profile_form_dirty(
-            target,
-            &self.cred_user,
-            &self.cred_pass,
-            &self.cred_settings,
-        )
+        self.profile_editor.dirty(&self.core)
     }
 
-    /// A form edit (user/pass/world/clue/toggle): a stale inline refusal or
-    /// save confirmation no longer describes the form, so it goes. The
-    /// vault row is untouched.
+    /// A form edit: a stale inline refusal or save notice goes.
     pub fn note_chooser_edited(&mut self) {
-        self.chooser_save.edited();
+        self.profile_editor.edited();
     }
 
     /// Chooser row pick: focus the profile (loading it onto the wall in
-    /// MultiBox) without disturbing an open edit form — a focus change
-    /// never retargets the form, rewrites its buffers, or closes the
-    /// picker.
+    /// MultiBox) without disturbing an open edit form.
     pub fn pick_profile(&mut self, name: &str) {
         if self.multibox {
             self.load(name);
@@ -388,38 +183,27 @@ impl Session {
     }
 
     /// Close the edit form, whatever it holds. A save it submitted still
-    /// settles (selecting its profile once durable), but a failure of it no
-    /// longer shows in any form: only on the banner. Operator closes ask
-    /// first while the save is unsettled ([`Self::request_cancel_edit`],
-    /// [`Self::request_close_profiles`]).
+    /// settles, but a failure of it shows only on the banner.
     pub fn cancel_edit_profile(&mut self) {
-        self.chooser_edit = None;
-        self.pending_edit_switch = None;
-        self.chooser_save.form_changed();
+        self.profile_editor.close();
     }
 
     /// The chooser's confirmed delete of `name`: the vault row goes, and
     /// the form editing it closes with it. While that form's save has not
-    /// settled the delete waits instead, and the Discard / Keep editing
-    /// prompt is staged: the write can still fail, which puts the profile
-    /// back and would leave the draft nowhere. Returns whether a row was
-    /// removed.
+    /// settled the delete waits behind the prompt instead. Returns whether
+    /// a row was removed.
     pub fn delete_profile(&mut self, name: &str) -> bool {
-        let editing = self.chooser_edit.as_deref() == Some(name);
-        if editing && self.form_saving() {
-            self.stage_edit_exit(EditLeave::DeleteTarget, name, &format!("delete {name}"));
+        if !self.profile_editor.before_delete(&self.core, name) {
+            self.request_window_focus(super::PanelWindow::Profiles);
             self.wall.chooser_open = true;
             return false;
-        }
-        if editing {
-            self.cancel_edit_profile();
         }
         self.vault_remove(name)
     }
 
     /// Whether the open edit form's own save is still being written.
     pub fn form_saving(&self) -> bool {
-        self.chooser_save.saving(&self.core)
+        self.profile_editor.saving(&self.core)
     }
 
     /// Rebuild the rs2b0t import text from its flow: after each step, and

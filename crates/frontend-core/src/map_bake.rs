@@ -83,7 +83,7 @@ impl<'de> serde::Deserialize<'de> for MapBakeChoice {
 
 /// The remembered choice from the shared preferences (read once per
 /// front-end start).
-pub fn load_map_bake_choice(preferences: &host_play::local_state::Preferences) -> MapBakeChoice {
+pub fn load_map_bake_choice(preferences: &crate::prefs::UiPreferences) -> MapBakeChoice {
     preferences
         .value(MAP_BAKE_KEY)
         .and_then(|value| value.as_str().map(MapBakeChoice::parse))
@@ -93,7 +93,7 @@ pub fn load_map_bake_choice(preferences: &host_play::local_state::Preferences) -
 /// Write the remembered choice into the shared preferences, keeping every
 /// other one.
 pub fn persist_map_bake_choice(
-    preferences: &host_play::local_state::Preferences,
+    preferences: &crate::prefs::UiPreferences,
     choice: MapBakeChoice,
 ) -> io::Result<()> {
     preferences.set(MAP_BAKE_KEY, choice.as_str().into())

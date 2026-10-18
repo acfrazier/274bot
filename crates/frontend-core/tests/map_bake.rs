@@ -473,11 +473,8 @@ fn catalogue_only_demand_never_asks_even_when_cold() {
 }
 
 /// The process service's preferences at the isolated home's state root.
-fn preferences(iso: &script::IsolatedEnv) -> host_play::local_state::Preferences {
-    host_play::local_state::LocalStateService::open_process(host_play::local_state::StateRoot::new(
-        iso.home.join(".274bot"),
-    ))
-    .preferences()
+fn preferences(iso: &script::IsolatedEnv) -> frontend_core::UiPreferences {
+    frontend_core::UiPreferences::open_for_test(iso.home.join(".274bot"))
 }
 
 #[test]

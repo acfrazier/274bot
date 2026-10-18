@@ -155,7 +155,7 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
     // The scratch directory is the state root the current readers open: the
     // preferences and the loadouts form go through one process service.
     let service = LocalStateService::open_process(StateRoot::new(scratch.0.clone()));
-    let preferences = service.preferences();
+    let preferences = frontend_core::UiPreferences::of_service_for_test(&service);
     let prefs = load_from(&preferences);
     assert_eq!(prefs.last_focus.as_deref(), Some("fixture-manual"));
     assert!(!prefs.collapsed["fixture-auto"]["script"]);
@@ -181,7 +181,7 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
     assert!(prefs.nav.camera_follow);
     assert!(prefs.rail_preview["fixture-auto"]);
     assert!(!prefs.rail_preview["fixture-manual"]);
-    assert_eq!(prefs.raster, RasterMode::Cpu);
+    assert_eq!(prefs.raster, frontend_core::command::RasterMode::Cpu);
     assert!(!prefs.lowmem);
     assert_eq!(prefs.server_revision, 289);
     assert_eq!(
@@ -220,7 +220,12 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
     let expected_prefs = prefs.clone();
     save_to(&preferences, &prefs);
     let reopened = LocalStateService::open_process(StateRoot::new(scratch.0.clone()));
-    assert_eq!(load_from(&reopened.preferences()), expected_prefs);
+    assert_eq!(
+        load_from(&frontend_core::UiPreferences::of_service_for_test(
+            &reopened
+        )),
+        expected_prefs
+    );
 
     let mut loadouts = LoadoutsStore::over(Arc::new(service.operator_loadouts()));
     assert_eq!(loadouts.load_error(), None);
@@ -299,7 +304,7 @@ fn a_0181_home_opens_walkto_on_shipped_terrain_without_asking_and_keeps_its_file
 
     // The panel's gate starts from the 0.1.8.1 prefs, which never answered.
     let service = LocalStateService::open_process(StateRoot::new(bot.clone()));
-    let prefs = load_from(&service.preferences());
+    let prefs = load_from(&frontend_core::UiPreferences::of_service_for_test(&service));
     assert_eq!(prefs.map_bake, MapBakeChoice::Ask);
     let root = MapCacheRoot::from_home(&home);
     assert!(!root.path().exists(), "0.1.8.1 wrote no map cache");

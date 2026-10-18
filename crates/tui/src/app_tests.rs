@@ -3,10 +3,10 @@ use std::sync::Arc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
+use frontend_core::SettingsDraft;
 use host_play::local_state::{LocalStateService, StateRoot};
 use nav::tile::Tile;
 use script::{RunState, ScriptKind, ScriptSel, ScriptSource};
-use vault::ProfileSettings;
 
 use crate::layout::Screen;
 use crate::overlay::Modal;
@@ -415,10 +415,12 @@ fn wilderness_persistence_errors_are_visible() {
     let blocker = root.join("not-a-directory");
     std::fs::write(&blocker, b"file").unwrap();
     // A service rooted at a file cannot write: the failure surfaces.
-    let blocked = LocalStateService::open_process(StateRoot::new(blocker.clone())).preferences();
+    let blocked = frontend_core::UiPreferences::of_service_for_test(
+        &LocalStateService::open_process(StateRoot::new(blocker.clone())),
+    );
 
     let mut app = TuiApp::new("274bot headless");
-    app.restore_preferences(blocked.clone());
+    app.restore_preferences(blocked.share());
     app.toggle_map_wilderness();
 
     assert!(app.map.layers.wilderness);
@@ -732,11 +734,11 @@ fn routing_scope_note_heads_the_routing_rows_once_at_common_sizes() {
 #[test]
 fn settings_enter_flips_random_events_and_marks_dirty() {
     let mut app = TuiApp::new("274bot headless");
-    app.settings = ProfileSettings::default();
-    assert!(app.settings.random_events);
+    app.settings = SettingsDraft::default();
+    assert!(app.settings.random_events());
     app.settings_state.open = true;
     app.on_key(key(KeyCode::Enter));
-    assert!(!app.settings.random_events, "popup flips random_events");
+    assert!(!app.settings.random_events(), "popup flips random_events");
     assert!(app.settings_dirty, "the binary persists the change");
 }
 
@@ -929,11 +931,12 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
             .as_nanos()
     ));
     std::fs::create_dir_all(&root).unwrap();
-    let preferences =
-        LocalStateService::open_process(StateRoot::new(root.join(".274bot"))).preferences();
+    let preferences = frontend_core::UiPreferences::of_service_for_test(
+        &LocalStateService::open_process(StateRoot::new(root.join(".274bot"))),
+    );
     let loadouts = script::LoadoutsStore::default();
     let mut app = open_map_world();
-    app.restore_preferences(preferences.clone());
+    app.restore_preferences(preferences.share());
     app.script_sel = Some(ScriptSel::Loaded(
         ScriptSource::Catalog,
         "WalkPermissions".into(),

@@ -535,11 +535,7 @@ fn route_through_zones_checkbox_toggles_and_resets_on_each_picker_open() {
 /// A peer frontend sets the durable global danger-zone grant, through a
 /// second service on the session's files; the session sees it once its own
 /// preferences re-read.
-fn peer_sets_danger_zones(
-    peer: &host_play::local_state::Preferences,
-    session: &Session,
-    enabled: bool,
-) {
+fn peer_sets_danger_zones(peer: &frontend_core::UiPreferences, session: &Session, enabled: bool) {
     crate::test_support::patiently(|| {
         frontend_core::nav_preference(
             peer,
