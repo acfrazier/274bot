@@ -7,8 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use frontend_core::scripts::ReloadOutcome;
-use frontend_core::Scripts;
+use frontend_core::scripts::{CardSource, ReloadOutcome, SchemaRef, ScriptChoice};
 use serde_json::{Map, Value};
 use vault::ScriptAssignment;
 
@@ -39,20 +38,18 @@ impl Session {
 
     pub fn restore_script_heading(&mut self, profile: &str) {
         let heading = self.scripts.heading(&self.core, profile);
-        let needs_catalog = heading.as_ref().is_some_and(|sel| {
-            matches!(
-                sel,
-                script::ScriptSel::Loaded(script::ScriptSource::Catalog, _)
-            )
-        });
+        let needs_catalog = heading
+            .as_ref()
+            .is_some_and(|sel| sel.source() == CardSource::Catalog);
         self.script_sel = heading;
         if needs_catalog {
             self.fill_rs2b0t_cards_once();
         }
     }
 
+    #[cfg(test)]
     pub fn profile_assignment(&self, profile: &str) -> Option<ScriptAssignment> {
-        Scripts::assignment(&self.core, profile)
+        frontend_core::Scripts::profile_assignment(&self.core, profile)
     }
 
     pub fn heading_is_pending(&self) -> bool {
@@ -60,7 +57,7 @@ impl Session {
             .is_some_and(|name| self.scripts.heading_is_pending(&self.core, &name))
     }
 
-    pub fn set_pending_browse(&mut self, profile: &str, sel: script::ScriptSel) {
+    pub fn set_pending_browse(&mut self, profile: &str, sel: ScriptChoice) {
         self.scripts.set_pending_browse(profile, sel);
     }
 
@@ -86,10 +83,10 @@ impl Session {
     pub fn merged_profile_bag(
         &mut self,
         profile: &str,
-        source: script::ScriptSource,
+        source: CardSource,
         name: &str,
         path: &Path,
-        schema: &[script::SettingDef],
+        schema: SchemaRef<'_>,
     ) -> Map<String, Value> {
         let bag =
             self.scripts
@@ -103,7 +100,7 @@ impl Session {
     pub fn set_profile_setting(
         &mut self,
         profile: &str,
-        source: script::ScriptSource,
+        source: CardSource,
         name: &str,
         path: &Path,
         id: &str,
@@ -131,7 +128,7 @@ impl Session {
     /// else the heading, else its assignment.
     pub(crate) fn script_start_focused(&mut self, profile: &str) -> Result<(), String> {
         let root = self.start_catalog_root();
-        let heading = self.script_sel.clone();
+        let heading = self.script_sel.as_ref().map(ScriptChoice::duplicate);
         let result =
             self.scripts
                 .start_selected(&mut self.core, profile, heading.as_ref(), root.as_deref());
@@ -217,7 +214,7 @@ impl Session {
         self.scripts.take_reload_outcome()
     }
 
-    fn current_reload_target(&self) -> Option<(script::ScriptSource, String)> {
+    fn current_reload_target(&self) -> Option<(CardSource, String)> {
         let focused = self.focused_name();
         self.scripts
             .reload_target(&self.core, focused.as_deref(), self.script_sel.as_ref())
@@ -253,7 +250,7 @@ impl Session {
     pub(crate) fn begin_refresh_catalog_at(&mut self, root: &Path) {
         let added = self.scripts.begin_refresh_catalog(&mut self.core, root);
         for name in added {
-            self.enqueue_transpile(script::ScriptSource::Catalog, name, false);
+            self.enqueue_transpile(CardSource::Catalog, name, false);
         }
         self.apply_script_notice();
     }
@@ -264,7 +261,7 @@ impl Session {
             self.error = Some("Apply to all: no focused profile".into());
             return;
         };
-        if let Some(script::ScriptSel::Compiled(id)) = self.script_sel {
+        if let Some(id) = self.script_sel.as_ref().and_then(ScriptChoice::compiled_id) {
             if let Err(error) = self
                 .scripts
                 .prepare_compiled_settings_sync(&self.core, &profile, id, None)
@@ -273,15 +270,19 @@ impl Session {
             }
             return;
         }
-        let Some(script::ScriptSel::Loaded(source, lookup)) = self.script_sel.clone() else {
+        let Some((source, lookup)) = self
+            .script_sel
+            .as_ref()
+            .and_then(ScriptChoice::loaded_card)
+            .map(|(source, lookup)| (source, lookup.to_owned()))
+        else {
             self.error = Some("Apply to all: select a script".into());
             return;
         };
         let Some((name, path)) = self
             .scripts
-            .js()
-            .get(source, &lookup)
-            .map(|card| (card.name.clone(), card.path.clone()))
+            .card(source, &lookup)
+            .map(|card| (card.name().to_owned(), card.path().to_path_buf()))
         else {
             self.error = Some(format!("Apply to all: unavailable: {lookup}"));
             return;

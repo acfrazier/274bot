@@ -788,31 +788,34 @@ fn native_wait_and_refusal_override_running_but_not_pause() {
         failure: None,
     };
     assert_eq!(
-        script_status_label(RunState::Running, Some(&status)),
+        script_status_label(RunState::Running, Some(StatusView::new(&status))),
         "waiting"
     );
-    assert_eq!(script_status_reason(&status), Some("quest list from login"));
+    assert_eq!(
+        script_status_reason(StatusView::new(&status)),
+        Some("quest list from login")
+    );
     status.phase = NativePhase::Blocked;
     status.failure = Some(ScriptFailure {
         code: Arc::from("queue-blocked"),
         message: Arc::from("no eligible selected quest; review Script prefs, then Stop/Start"),
     });
     assert_eq!(
-        script_status_label(RunState::Running, Some(&status)),
+        script_status_label(RunState::Running, Some(StatusView::new(&status))),
         "blocked"
     );
-    assert!(script_status_reason(&status)
+    assert!(script_status_reason(StatusView::new(&status))
         .unwrap()
         .contains("Stop/Start"));
     assert_eq!(
-        script_status_label(RunState::Idle, Some(&status)),
+        script_status_label(RunState::Idle, Some(StatusView::new(&status))),
         "stopped (blocked)"
     );
-    assert!(script_status_reason(&status)
+    assert!(script_status_reason(StatusView::new(&status))
         .unwrap()
         .contains("Stop/Start"));
     assert_eq!(
-        script_status_label(RunState::Paused, Some(&status)),
+        script_status_label(RunState::Paused, Some(StatusView::new(&status))),
         "paused"
     );
     assert_eq!(script_status_label(RunState::Running, None), "running");
@@ -961,7 +964,7 @@ fn draft_path_status_is_projected_to_one_short_status_row() {
         failure: None,
     };
     assert_eq!(
-        script_status_rows(&status).collect::<Vec<_>>(),
+        script_status_rows(StatusView::new(&status)).collect::<Vec<_>>(),
         vec![("Path status", "Untested draft Path")]
     );
 }

@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use script::{ScriptKind, ScriptSource};
+use frontend_core::scripts::{paths, CardRuntime, CardSource};
 
 /// Browse uses a non-modal [`dear_imgui_rs::Ui::window`], not a popup modal.
 pub const BROWSE_WINDOW_TITLE: &str = "Scripts";
@@ -141,8 +141,8 @@ pub fn card_rect_activated(hovering: bool, released: bool, dragging: bool) -> bo
 
 /// Status on the card currently at the front of the warmup queue.
 pub fn card_transpile_label(
-    front: Option<(ScriptSource, &str)>,
-    source: ScriptSource,
+    front: Option<(CardSource, &str)>,
+    source: CardSource,
     name: &str,
     done: usize,
     total: usize,
@@ -319,23 +319,23 @@ pub fn move_category(order: &mut Vec<String>, from: &str, onto: &str) {
     order.insert(at, from.to_string());
 }
 
-pub fn kind_badge(kind: ScriptKind) -> &'static str {
+pub fn kind_badge(kind: CardRuntime) -> &'static str {
     match kind {
-        ScriptKind::Compat | ScriptKind::NativeTick => "JS",
-        ScriptKind::Compiled => "Compiled",
+        CardRuntime::Compat | CardRuntime::NativeTick => "JS",
+        CardRuntime::Compiled => "Compiled",
     }
 }
 
-pub fn source_badge(source: ScriptSource) -> &'static str {
+pub fn source_badge(source: CardSource) -> &'static str {
     match source {
-        ScriptSource::Catalog => "Catalog",
-        ScriptSource::File => "File",
-        ScriptSource::Builtin => "Builtin",
+        CardSource::Catalog => "Catalog",
+        CardSource::File => "File",
+        CardSource::Builtin => "Builtin",
     }
 }
 
 /// Kind and source as the card paints them: `[JS] [Catalog]`.
-pub fn card_kind_source(kind: ScriptKind, source: ScriptSource) -> String {
+pub fn card_kind_source(kind: CardRuntime, source: CardSource) -> String {
     format!("[{}] [{}]", kind_badge(kind), source_badge(source))
 }
 
@@ -370,7 +370,7 @@ pub fn needs_rs2b0t_catalog_prompt(rs2b0t_root: Option<&Path>, import_deferred: 
 
 /// True when `root/src/bot/scripts/index.ts` exists.
 pub fn rs2b0t_root_has_index(root: &Path) -> bool {
-    script::registry_index_path(root).is_file()
+    paths::registry_index_path(root).is_file()
 }
 
 /// Default Load browser directory: last dir from prefs, else the process
@@ -380,7 +380,7 @@ pub fn default_load_browse_dir(last: Option<&Path>) -> PathBuf {
         .map(Path::to_path_buf)
         .or_else(|| std::env::current_dir().ok().filter(|p| p.is_dir()))
         .or_else(|| {
-            let home = script::bot_home();
+            let home = paths::bot_home();
             home.exists().then_some(home)
         })
         .unwrap_or_else(|| PathBuf::from("/"))

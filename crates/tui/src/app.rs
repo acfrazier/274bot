@@ -21,6 +21,7 @@ use ratatui::Frame;
 
 use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
 use frontend_core::quester_paths::QuesterPathsView;
+use frontend_core::scripts::{Loadouts, OwnedSchema, PaintFrame, ScriptChoice, ScriptRunState};
 use frontend_core::{FleetCounts, FleetRow, ResourceView, SlotDetail, WalkGlobalsView};
 use frontend_core::{MapBakeChoice, NavPreference};
 use host_play::walk_map::{
@@ -30,7 +31,6 @@ use nav::map::poi::{PoiKind, PoiRecord};
 use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
 use nav::world::NavWorld;
-use script::{RunState, ScriptSel};
 
 use crate::chat::{chat_modal_open, Chat, ChatAction, ChatState, ChatView};
 use crate::commands::{script_command, Command};
@@ -48,7 +48,7 @@ use crate::settings::SettingsState;
 use crate::status::StatusPane;
 
 fn default_catalog_browse_dir() -> std::path::PathBuf {
-    let home = script::bot_home();
+    let home = frontend_core::scripts::paths::bot_home();
     if home.as_os_str() == "." {
         std::path::PathBuf::from("/")
     } else {
@@ -141,7 +141,7 @@ impl WalkSendState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum AppAction {
     /// Quit the app.
     Quit,
@@ -187,7 +187,7 @@ pub enum AppAction {
     /// Start the Browse-selected JS card on the focused slot:
     /// `tui-play` dispatches `Play::script_start_load` with the card's
     /// source and shape.
-    ScriptStart(ScriptSel),
+    ScriptStart(ScriptChoice),
     /// Toggle pause/resume on the focused slot's script (`Play::script_pause`
     /// / [`Play::script_resume`], like the panel's `script_toggle_pause`).
     ScriptPause,
@@ -299,7 +299,7 @@ pub fn wasd_target(here: (i32, i32, i32), code: KeyCode) -> Option<(i32, i32, i3
 
 /// The chat pane's owned data, copied from the focused snapshot each pump
 /// (the ring is capped at 100 lines, so the copy is small).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct ChatData {
     /// The public chat ring, newest first.
     pub lines: Vec<ChatLineView>,
@@ -312,7 +312,7 @@ pub struct ChatData {
     /// The focused slot's script paint frame (shared with the status row,
     /// which shares it with the isolate recorder); the pane shows it
     /// instead of the ring while it is non-empty.
-    pub script_paint: Option<std::sync::Arc<script::shim::ScriptPaint>>,
+    pub script_paint: Option<PaintFrame>,
     /// Operator toggle (`p`): show the game chat even while the script
     /// paints. Preserved across pumps (it is operator state, not a
     /// snapshot view).
@@ -332,7 +332,7 @@ impl ChatData {
             modal_texts: &self.modal_texts,
             options: &self.options,
             has_continue: self.has_continue,
-            script_paint: self.script_paint.as_deref(),
+            script_paint: self.script_paint.as_ref().map(PaintFrame::view),
             show_game_chat: self.show_game_chat,
         }
     }
@@ -456,11 +456,11 @@ pub struct TuiApp {
     shared_preferences: Option<frontend_core::UiPreferences>,
     pub loadouts_state: LoadoutsState,
     /// The focused slot's script lifecycle (shape display only).
-    pub script_state: RunState,
+    pub script_state: ScriptRunState,
     /// Focused member holds a Start-all permit place (Stop still applies).
     pub script_queued: bool,
     /// The focused profile's script heading; Start keys on `(source, name)`.
-    pub script_sel: Option<ScriptSel>,
+    pub script_sel: Option<ScriptChoice>,
     /// The operator picked a card in Browse since the last pump: the
     /// binary records it as the focused profile's pending selection.
     pub browse_changed: bool,
@@ -483,7 +483,7 @@ pub struct TuiApp {
     pub script_load_sel: usize,
     pub script_load_last_dir: Option<std::path::PathBuf>,
     /// Selected card's settings schema (refreshed each pump from the library).
-    pub params_schema: Vec<script::SettingDef>,
+    pub params_schema: OwnedSchema,
     /// Missing metadata or an unsupported saved native schema is not empty.
     pub params_unavailable: Option<&'static str>,
     /// Working bag while the params popup is open.
@@ -581,7 +581,7 @@ impl TuiApp {
             shared_preferences: None,
             map_bake_dirty: false,
             loadouts_state: LoadoutsState::default(),
-            script_state: RunState::Idle,
+            script_state: ScriptRunState::Idle,
             script_queued: false,
             script_sel: None,
             browse_changed: false,
@@ -596,7 +596,7 @@ impl TuiApp {
             script_load_dir: default_load_browse_dir(None),
             script_load_sel: 0,
             script_load_last_dir: None,
-            params_schema: Vec::new(),
+            params_schema: OwnedSchema::default(),
             params_unavailable: None,
             params_bag: serde_json::Map::new(),
             params_state: ParamsState::default(),
@@ -1237,7 +1237,7 @@ impl TuiApp {
     }
 
     /// Route keys to the loadouts popup when it is open.
-    pub fn loadouts_on_key(&mut self, store: &mut script::LoadoutsStore, key: KeyEvent) -> bool {
+    pub fn loadouts_on_key(&mut self, store: &mut Loadouts, key: KeyEvent) -> bool {
         if !self.loadouts_state.open {
             return false;
         }
@@ -1257,7 +1257,7 @@ impl TuiApp {
     pub fn params_on_key(
         &mut self,
         commit: &mut ParamsCommit<'_>,
-        loadouts: &script::LoadoutsStore,
+        loadouts: &Loadouts,
         game_data: Option<&api::game_data::SelectedGameData>,
         key: KeyEvent,
     ) -> AppAction {
@@ -1270,7 +1270,7 @@ impl TuiApp {
         }
         self.refresh_walk_permissions();
         let mut pane = ParamsPane {
-            schema: &self.params_schema,
+            schema: self.params_schema.as_ref(),
             bag: &mut self.params_bag,
             commit,
             loadouts,
@@ -1290,8 +1290,8 @@ impl TuiApp {
     }
 
     /// The selected card whose shared schema the params popup edits.
-    pub fn params_card(&self) -> Option<script::ScriptSel> {
-        self.script_sel.clone()
+    pub fn params_card(&self) -> Option<ScriptChoice> {
+        self.script_sel.as_ref().map(ScriptChoice::duplicate)
     }
 
     /// Open the params popup over `bag`, the focused profile's merged bag
@@ -1299,7 +1299,7 @@ impl TuiApp {
     pub fn open_script_params(&mut self, bag: serde_json::Map<String, serde_json::Value>) {
         if self.params_card().is_none()
             || self.params_unavailable.is_some()
-            || self.params_schema.is_empty()
+            || self.params_schema.as_ref().is_empty()
         {
             return;
         }
@@ -1461,7 +1461,7 @@ impl TuiApp {
     /// Move the Browse selection `step` cards through the grouped list
     /// (wrapping).
     fn move_script_sel(&mut self, step: i32) {
-        let deferred = script::rs2b0t_import_deferred();
+        let deferred = frontend_core::scripts::paths::rs2b0t_import_deferred();
         let lines = browse_lines(&self.script_cards, &self.script_category_order, deferred);
         let card_indices: Vec<usize> = lines
             .iter()
@@ -1476,15 +1476,15 @@ impl TuiApp {
         let pos = self
             .script_sel
             .as_ref()
-            .and_then(|sel| match sel {
-                ScriptSel::Compiled(id) => self
+            .and_then(|sel| match sel.loaded_card() {
+                None => self
                     .script_cards
                     .iter()
-                    .position(|c| card_selection(c) == Some(ScriptSel::Compiled(*id))),
-                ScriptSel::Loaded(source, name) => self
+                    .position(|c| card_selection(c).as_ref() == Some(sel)),
+                Some((source, name)) => self
                     .script_cards
                     .iter()
-                    .position(|c| c.source == *source && c.name == *name),
+                    .position(|c| c.source == source && c.name == name),
             })
             .and_then(|card_idx| card_indices.iter().position(|&i| i == card_idx))
             .unwrap_or(0);
@@ -1568,7 +1568,7 @@ impl TuiApp {
         if self.rs2b0t_catalog_open {
             return self.catalog_click(col, row);
         }
-        let deferred = script::rs2b0t_import_deferred();
+        let deferred = frontend_core::scripts::paths::rs2b0t_import_deferred();
         let pane = ScriptPane::new(
             self.script_state,
             self.script_sel.as_ref(),
@@ -1578,8 +1578,7 @@ impl TuiApp {
             self.script_browse_open,
             self.script_load_open,
             "",
-            !self.params_schema.is_empty(),
-            None,
+            !self.params_schema.as_ref().is_empty(),
         )
         .with_reload_confirm(self.reload_confirm);
         match pane.on_click(self.script_area, col, row) {
@@ -1613,7 +1612,7 @@ impl TuiApp {
                     AppAction::None
                 }
             }
-            Command::ScriptStart => match self.script_sel.clone() {
+            Command::ScriptStart => match self.script_sel.as_ref().map(ScriptChoice::duplicate) {
                 Some(sel) => AppAction::ScriptStart(sel),
                 None => {
                     self.error = Some("script: browse to pick one first".into());
@@ -1678,11 +1677,7 @@ impl TuiApp {
     }
 
     /// Render the loadouts popup overlay (call after [`Self::draw`]).
-    pub fn draw_loadouts_overlay(
-        &mut self,
-        frame: &mut Frame<'_>,
-        store: &mut script::LoadoutsStore,
-    ) {
+    pub fn draw_loadouts_overlay(&mut self, frame: &mut Frame<'_>, store: &mut Loadouts) {
         if !self.loadouts_state.open {
             return;
         }
@@ -1700,7 +1695,7 @@ impl TuiApp {
     pub fn draw_params_overlay(
         &mut self,
         frame: &mut Frame<'_>,
-        loadouts: &script::LoadoutsStore,
+        loadouts: &Loadouts,
         game_data: Option<&api::game_data::SelectedGameData>,
     ) {
         self.refresh_walk_permissions();
@@ -1711,7 +1706,7 @@ impl TuiApp {
         // Rendering never commits.
         let mut read_only = |_: &str, _: serde_json::Value, _: Option<serde_json::Value>| Ok(());
         let pane = ParamsPane {
-            schema: &self.params_schema,
+            schema: self.params_schema.as_ref(),
             bag: &mut self.params_bag,
             commit: &mut read_only,
             loadouts,
@@ -2028,12 +2023,11 @@ impl TuiApp {
             self.script_sel.as_ref(),
             &self.script_cards,
             &self.script_category_order,
-            script::rs2b0t_import_deferred(),
+            frontend_core::scripts::paths::rs2b0t_import_deferred(),
             self.script_browse_open,
             self.script_load_open,
             "",
-            !self.params_schema.is_empty(),
-            None,
+            !self.params_schema.as_ref().is_empty(),
         )
         .with_reload_confirm(self.reload_confirm)
         .with_native_status(

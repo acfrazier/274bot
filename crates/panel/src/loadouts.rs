@@ -7,7 +7,7 @@ use dear_imgui_rs::{Condition, StyleVar, Ui, WindowFlags};
 use crate::session::Session;
 use crate::theme::{scale_px, scale_size, ui_scale};
 use api::loadout::{CarryEntry, Loadout};
-use script::{
+use frontend_core::scripts::{
     copy_equipment_preserving_supplies, unique_loadout_name, worn_slot_label, WORN_SLOT_LAYOUT,
 };
 
@@ -590,15 +590,15 @@ mod tests {
         reload_store_until, save_draft_patiently, save_store_patiently, scratch_service,
         thread_state_root, TestDir,
     };
-    use script::LoadoutsStore;
+    use frontend_core::scripts::Loadouts;
     use std::collections::HashSet;
     use std::path::Path;
     use std::sync::Arc;
 
     /// A form over the loadouts of a service opened on `dir`, a scratch
     /// state root (another such form on the same `dir` is another writer).
-    fn store_in(dir: &Path) -> LoadoutsStore {
-        LoadoutsStore::over(Arc::new(scratch_service(dir).operator_loadouts()))
+    fn store_in(dir: &Path) -> Loadouts {
+        Loadouts::over(Arc::new(scratch_service(dir).operator_loadouts()))
     }
 
     /// A session whose Loadouts form holds `rows`, saved in a scratch root,
@@ -677,7 +677,7 @@ mod tests {
         let fail_dir = TestDir::new("loadouts-fail");
         let service = scratch_service(&fail_dir);
         let file = service.root().loadouts_file();
-        let mut store = LoadoutsStore::over(Arc::new(service.operator_loadouts()));
+        let mut store = Loadouts::over(Arc::new(service.operator_loadouts()));
         store.upsert(Loadout::new("melee").with_carry("Lobster", 8));
         save_store_patiently(&mut store);
         std::fs::remove_file(&file).unwrap();

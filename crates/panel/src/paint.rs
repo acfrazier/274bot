@@ -6,8 +6,7 @@
 //! texture over the applet, using the same native font as measureText.
 
 use dear_imgui_rs::{MouseButton, StyleVar, TextureId, Ui};
-use script::canvas::{self, CanvasOp};
-use script::shim::ScriptPaint;
+use frontend_core::scripts::{map_applet_rect, CanvasCache, CanvasOps, CanvasRaster, PaintView};
 
 use crate::game_view::{FrameGpu, APPLET_H, APPLET_W};
 use crate::theme::{ui_scale, ACCENT, BG_DEEP, PANEL_FONT_SIZE, TEXT, TEXT_DIM};
@@ -162,7 +161,7 @@ pub struct PaintOverlay {
     canvas_dest: Option<[f32; 4]>,
     /// Applet-space dirty rect this frame, if any.
     canvas_dirty: Option<[i32; 4]>,
-    last_ops: Vec<CanvasOp>,
+    last_ops: CanvasCache,
     last_dirty: Option<[i32; 4]>,
     canvas_gpu: Option<CanvasGpu>,
     #[cfg(test)]
@@ -185,7 +184,7 @@ impl PaintOverlay {
             strip_brand_label_rect: None,
             canvas_dest: None,
             canvas_dirty: None,
-            last_ops: Vec::new(),
+            last_ops: CanvasCache::default(),
             last_dirty: None,
             canvas_gpu: None,
             #[cfg(test)]
@@ -228,7 +227,7 @@ impl PaintOverlay {
         &mut self,
         ui: &Ui,
         gpu: Option<&mut dyn FrameGpu>,
-        paint: Option<&ScriptPaint>,
+        paint: Option<PaintView<'_>>,
         min: [f32; 2],
         size: [f32; 2],
     ) -> Option<(PaintFrameHit, u64)> {
@@ -245,17 +244,17 @@ impl PaintOverlay {
         self.canvas_dirty = None;
 
         let structured = paint.filter(|p| {
-            p.title.is_some()
-                || !p.lines.is_empty()
-                || !p.buttons.is_empty()
-                || p.strip.is_some()
-                || p.rail.as_ref().is_some_and(|r| !r.names.is_empty())
-                || p.footer.is_some()
-                || !p.tabs.is_empty()
+            p.title().is_some()
+                || !p.lines().is_empty()
+                || p.buttons().len() != 0
+                || p.strip().is_some()
+                || p.rail().is_some_and(|r| !r.names().is_empty())
+                || p.footer().is_some()
+                || p.tabs().len() != 0
         });
-        let canvas_ops = paint.map(|p| p.canvas.as_slice()).unwrap_or(&[]);
+        let canvas_ops = paint.map(|p| p.canvas()).filter(|ops| !ops.is_empty());
 
-        if structured.is_none() && canvas_ops.is_empty() {
+        if structured.is_none() && canvas_ops.is_none() {
             self.collapsed = false;
             if let Some(gpu) = gpu {
                 self.release_canvas(gpu);
@@ -265,32 +264,23 @@ impl PaintOverlay {
             return None;
         }
 
-        if canvas_ops.is_empty() {
-            if let Some(gpu) = gpu {
-                self.release_canvas(gpu);
-            } else {
-                self.last_ops.clear();
-                self.last_dirty = None;
-            }
-        } else {
-            let ops_unchanged = self.last_ops.as_slice() == canvas_ops;
+        if let Some(canvas_ops) = canvas_ops {
+            let ops_unchanged = self.last_ops.same_as(canvas_ops);
             let dirty = if ops_unchanged {
                 self.last_dirty
             } else {
-                canvas::dirty_bounds(canvas_ops).map(|d| {
-                    let arr = [d.x, d.y, d.w, d.h];
-                    self.last_dirty = Some(arr);
-                    arr
+                canvas_ops.dirty_bounds().inspect(|arr| {
+                    self.last_dirty = Some(*arr);
                 })
             };
             if let Some([dx, dy, dw, dh]) = dirty {
                 self.canvas_dirty = Some([dx, dy, dw, dh]);
-                let dest = canvas::map_applet_rect(min, size, dx, dy, dw, dh);
+                let dest = map_applet_rect(min, size, dx, dy, dw, dh);
                 self.canvas_dest = Some(dest);
                 if let Some(gpu) = gpu {
                     let reuse_tex = ops_unchanged && self.canvas_gpu.is_some();
                     if !reuse_tex {
-                        if let Some(raster) = canvas::rasterize(canvas_ops) {
+                        if let Some(raster) = canvas_ops.rasterize() {
                             #[cfg(test)]
                             {
                                 self.rasterize_calls = self.rasterize_calls.saturating_add(1);
@@ -310,9 +300,16 @@ impl PaintOverlay {
                         );
                     }
                 } else if !ops_unchanged {
-                    self.last_ops = canvas_ops.to_vec();
+                    self.last_ops.store(canvas_ops);
                 }
             } else if let Some(gpu) = gpu {
+                self.release_canvas(gpu);
+            } else {
+                self.last_ops.clear();
+                self.last_dirty = None;
+            }
+        } else {
+            if let Some(gpu) = gpu {
                 self.release_canvas(gpu);
             } else {
                 self.last_ops.clear();
@@ -331,12 +328,12 @@ impl PaintOverlay {
         let font_sz = (PANEL_FONT_SIZE * s).max(1.0);
         let title_h = (TITLE_H_1X * s).max(1.0);
         let tab_row_h = ((TAB_INSET_1X + TAB_H_1X + TAB_TRAIL_1X) * s).max(1.0);
-        let footer_h = if paint.footer.is_some() {
+        let footer_h = if paint.footer().is_some() {
             (FOOTER_LINE_1X * s).max(1.0)
         } else {
             0.0
         };
-        let has_strip = paint.strip.is_some();
+        let has_strip = paint.strip().is_some();
         let header_h = if has_strip { title_h } else { row_h };
         let height = if self.collapsed { header_h } else { h };
         let toggle = [x + w - header_h, y, x + w, y + header_h];
@@ -367,32 +364,28 @@ impl PaintOverlay {
         let glyph = if self.collapsed { "+" } else { "–" };
         let mut chrome_click: Option<(String, String)> = None;
         let mut content_top = y + header_h;
-        if let Some(strip) = &paint.strip {
+        if let Some(strip) = paint.strip() {
             let mid = y + header_h * 0.5;
             let text_y = mid - font_sz * 0.35;
             let box_y = y + 2.0 * s;
             let box_h = (header_h - 4.0 * s).max(1.0);
-            let brand = strip
-                .brand
-                .as_deref()
-                .or(paint.title.as_deref())
-                .unwrap_or("");
+            let brand = strip.brand().or(paint.title()).unwrap_or("");
             let brand_reserve = if brand.is_empty() {
                 header_h
             } else {
                 text_width(ui, font_sz, brand) + pad + header_h
             };
             let tab_widths: Vec<f32> = strip
-                .names
+                .names()
                 .iter()
                 .map(|name| (text_width(ui, font_sz, name) + STRIP_TAB_PAD_1X * s).max(1.0))
                 .collect();
             let seg = strip_segments(w, &tab_widths, brand_reserve, pad);
-            for (name, slot) in strip.names.iter().zip(seg.tabs.iter()) {
+            for (name, slot) in strip.names().iter().zip(seg.tabs.iter()) {
                 let tx = x + slot.x;
                 let tw = slot.w;
                 let hit = [tx, box_y, tx + tw, box_y + box_h];
-                let active = strip.selected == *name;
+                let active = strip.selected() == name.as_str();
                 let hovered = ui.is_mouse_hovering_rect([hit[0], hit[1]], [hit[2], hit[3]]);
                 if active || hovered {
                     dl.add_rect([hit[0], hit[1]], [hit[2], hit[3]], [0.28, 0.28, 0.34, 0.95])
@@ -408,13 +401,13 @@ impl PaintOverlay {
                     0.0,
                     None,
                 );
-                let key = format!("strip:{}", strip.id);
+                let key = format!("strip:{}", strip.id());
                 self.chrome_hits.push((key.clone(), name.clone(), hit));
                 if hovered && ui.is_mouse_clicked(MouseButton::Left) {
                     chrome_click = Some((key, name.clone()));
                 }
             }
-            if let Some(status) = &strip.status {
+            if let Some(status) = strip.status() {
                 if seg.status.w > 0.0 {
                     let slot_x = x + seg.status.x;
                     let clipped = clip_text_to_width(ui, font_sz, status, seg.status.w);
@@ -463,7 +456,7 @@ impl PaintOverlay {
                 None,
             );
         } else {
-            let header = match &paint.title {
+            let header = match paint.title() {
                 Some(t) => format!("{glyph} {t}"),
                 None => glyph.to_string(),
             };
@@ -480,20 +473,20 @@ impl PaintOverlay {
         let mut button_click: Option<String> = None;
         if !self.collapsed {
             if !has_strip {
-                if let Some(title) = &paint.title {
-                    self.lines.push(title.clone());
+                if let Some(title) = paint.title() {
+                    self.lines.push(title.to_owned());
                 }
             }
-            for band in &paint.tabs {
-                if band.names.is_empty() {
+            for band in paint.tabs() {
+                if band.names().is_empty() {
                     continue;
                 }
                 let ty = content_top + TAB_INSET_1X * s;
                 let mut tx = x + 4.0 * s;
-                for name in &band.names {
+                for name in band.names() {
                     let tw = (text_width(ui, font_sz, name) + STRIP_TAB_PAD_1X * s).max(1.0);
                     let hit = [tx, ty, tx + tw, ty + TAB_H_1X * s];
-                    let active = band.selected == *name;
+                    let active = band.selected() == name.as_str();
                     let hovered = ui.is_mouse_hovering_rect([hit[0], hit[1]], [hit[2], hit[3]]);
                     if active || hovered {
                         dl.add_rect([hit[0], hit[1]], [hit[2], hit[3]], [0.28, 0.28, 0.34, 0.95])
@@ -509,7 +502,7 @@ impl PaintOverlay {
                         0.0,
                         None,
                     );
-                    let key = format!("tabs:{}", band.id);
+                    let key = format!("tabs:{}", band.id());
                     self.chrome_hits.push((key.clone(), name.clone(), hit));
                     if hovered && ui.is_mouse_clicked(MouseButton::Left) {
                         chrome_click = Some((key, name.clone()));
@@ -520,18 +513,17 @@ impl PaintOverlay {
             }
             let content_bottom = y + height - footer_h;
             let rail_w = paint
-                .rail
-                .as_ref()
-                .filter(|r| !r.names.is_empty())
+                .rail()
+                .filter(|r| !r.names().is_empty())
                 .map(|_| (RAIL_W_1X * s).max(1.0))
                 .unwrap_or(0.0);
             let body_left = x + pad + rail_w;
             let body_w = (w - pad * 2.0 - rail_w).max(1.0);
-            if let Some(rail) = paint.rail.as_ref() {
-                if !rail.names.is_empty() {
+            if let Some(rail) = paint.rail() {
+                if !rail.names().is_empty() {
                     let rail_body_h = (content_bottom - content_top).max(1.0);
-                    let slot_h = (rail_body_h / rail.names.len() as f32).max(line_step);
-                    for (i, name) in rail.names.iter().enumerate() {
+                    let slot_h = (rail_body_h / rail.names().len() as f32).max(line_step);
+                    for (i, name) in rail.names().iter().enumerate() {
                         let ry = content_top + slot_h * i as f32;
                         let hit = [
                             x + 2.0 * s,
@@ -539,7 +531,7 @@ impl PaintOverlay {
                             x + rail_w - 2.0 * s,
                             (ry + slot_h).min(content_bottom),
                         ];
-                        let active = rail.selected == *name;
+                        let active = rail.selected() == name.as_str();
                         let hovered = ui.is_mouse_hovering_rect([hit[0], hit[1]], [hit[2], hit[3]]);
                         if active || hovered {
                             dl.add_rect(
@@ -564,7 +556,7 @@ impl PaintOverlay {
                             0.0,
                             None,
                         );
-                        let key = format!("rail:{}", rail.id);
+                        let key = format!("rail:{}", rail.id());
                         self.chrome_hits.push((key.clone(), name.clone(), hit));
                         if hovered && ui.is_mouse_clicked(MouseButton::Left) {
                             chrome_click = Some((key, name.clone()));
@@ -573,7 +565,7 @@ impl PaintOverlay {
                 }
             }
             let mut ty = content_top;
-            for row in &paint.lines {
+            for row in paint.lines() {
                 self.lines.push(row.clone());
                 if ty + line_step <= content_bottom {
                     dl.add_text_with_font(font, font_sz, [body_left, ty], TEXT, row, 0.0, None);
@@ -586,24 +578,24 @@ impl PaintOverlay {
                 (fp[0] / scale * s).max(0.0),
                 (fp[1] / scale * s).max(0.0),
             ]));
-            for btn in &paint.buttons {
-                self.button_labels.push(btn.label.clone());
+            for btn in paint.buttons() {
+                self.button_labels.push(btn.label().to_owned());
                 if ty + row_h <= content_bottom {
                     ui.set_cursor_screen_pos([body_left, ty]);
                     let hit = [body_left, ty, body_left + body_w, ty + row_h];
                     self.button_hits.push(hit);
                     let pressed = ui.button_with_size(
-                        format!("{}##paint-{}", btn.label, btn.id),
+                        format!("{}##paint-{}", btn.label(), btn.id()),
                         [body_w, row_h],
                     );
                     let hovered = ui.is_mouse_hovering_rect([hit[0], hit[1]], [hit[2], hit[3]]);
                     if pressed || (hovered && ui.is_mouse_clicked(MouseButton::Left)) {
-                        button_click = Some(btn.id.clone());
+                        button_click = Some(btn.id().to_owned());
                     }
                     ty += row_h;
                 }
             }
-            if let Some(footer) = &paint.footer {
+            if let Some(footer) = paint.footer() {
                 let footer_w = text_width(ui, font_sz, footer);
                 dl.add_text_with_font(
                     font,
@@ -617,31 +609,32 @@ impl PaintOverlay {
             }
         }
         if chrome_click.is_some() {
-            chrome_click.map(|(key, name)| (PaintFrameHit::Select { key, name }, paint.generation))
+            chrome_click
+                .map(|(key, name)| (PaintFrameHit::Select { key, name }, paint.generation()))
         } else {
-            button_click.map(|id| (PaintFrameHit::Button(id), paint.generation))
+            button_click.map(|id| (PaintFrameHit::Button(id), paint.generation()))
         }
     }
 
     fn sync_canvas_texture(
         &mut self,
         gpu: &mut dyn FrameGpu,
-        raster: &canvas::Raster,
-        ops: &[CanvasOp],
+        raster: &CanvasRaster,
+        ops: CanvasOps<'_>,
     ) {
-        let reuse = self.last_ops.as_slice() == ops
+        let reuse = self.last_ops.same_as(ops)
             && self
                 .canvas_gpu
                 .as_ref()
-                .is_some_and(|c| c.w == raster.w && c.h == raster.h);
+                .is_some_and(|c| c.w == raster.width() && c.h == raster.height());
         if reuse {
             return;
         }
-        self.last_ops = ops.to_vec();
+        self.last_ops.store(ops);
         if self
             .canvas_gpu
             .as_ref()
-            .is_some_and(|c| c.w != raster.w || c.h != raster.h)
+            .is_some_and(|c| c.w != raster.width() || c.h != raster.height())
         {
             if let Some(old) = self.canvas_gpu.take() {
                 gpu.unregister_texture(old.tex_id);
@@ -651,8 +644,8 @@ impl PaintOverlay {
             let texture = gpu.device().create_texture(&wgpu::TextureDescriptor {
                 label: Some("274 script canvas"),
                 size: wgpu::Extent3d {
-                    width: raster.w.max(1),
-                    height: raster.h.max(1),
+                    width: raster.width().max(1),
+                    height: raster.height().max(1),
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
@@ -668,8 +661,8 @@ impl PaintOverlay {
                 texture,
                 view,
                 tex_id,
-                w: raster.w.max(1),
-                h: raster.h.max(1),
+                w: raster.width().max(1),
+                h: raster.height().max(1),
             });
         }
         let cached = self.canvas_gpu.as_ref().expect("canvas texture");
@@ -680,15 +673,15 @@ impl PaintOverlay {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &raster.rgba,
+            raster.rgba(),
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(4 * raster.w.max(1)),
-                rows_per_image: Some(raster.h.max(1)),
+                bytes_per_row: Some(4 * raster.width().max(1)),
+                rows_per_image: Some(raster.height().max(1)),
             },
             wgpu::Extent3d {
-                width: raster.w.max(1),
-                height: raster.h.max(1),
+                width: raster.width().max(1),
+                height: raster.height().max(1),
                 depth_or_array_layers: 1,
             },
         );
@@ -713,6 +706,7 @@ mod tests {
 
     use super::{chatbox_rect, paint_uniform_scale, PaintFrameHit, PaintOverlay, CHATBOX, PAD_X};
     use crate::test_support::headless_gpu;
+    use frontend_core::scripts::PaintFrame;
 
     fn paint(title: Option<&str>, lines: &[&str]) -> ScriptPaint {
         ScriptPaint {
@@ -775,7 +769,14 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    overlay.frame(ui, None, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+                    let paint_frame = PaintFrame::from_script(p.clone());
+                    overlay.frame(
+                        ui,
+                        None,
+                        Some(paint_frame.view()),
+                        [10.0, 20.0],
+                        [765.0, 503.0],
+                    );
                 });
         }
         ctx.render();
@@ -826,7 +827,14 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    overlay.frame(ui, None, Some(p), [10.0, 20.0], [765.0, 503.0]);
+                    let paint_frame = PaintFrame::from_script(p.clone());
+                    overlay.frame(
+                        ui,
+                        None,
+                        Some(paint_frame.view()),
+                        [10.0, 20.0],
+                        [765.0, 503.0],
+                    );
                 });
         }
         ctx.render();
@@ -877,7 +885,14 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    let clicked = overlay.frame(ui, None, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+                    let paint_frame = PaintFrame::from_script(p.clone());
+                    let clicked = overlay.frame(
+                        ui,
+                        None,
+                        Some(paint_frame.view()),
+                        [10.0, 20.0],
+                        [765.0, 503.0],
+                    );
                     assert!(clicked.is_none(), "no click this frame");
                 });
         }
@@ -901,7 +916,14 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    let _ = overlay.frame(ui, None, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+                    let paint_frame = PaintFrame::from_script(p.clone());
+                    let _ = overlay.frame(
+                        ui,
+                        None,
+                        Some(paint_frame.view()),
+                        [10.0, 20.0],
+                        [765.0, 503.0],
+                    );
                 });
         }
         ctx.render();
@@ -917,7 +939,14 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    clicked = overlay.frame(ui, None, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+                    let paint_frame = PaintFrame::from_script(p.clone());
+                    clicked = overlay.frame(
+                        ui,
+                        None,
+                        Some(paint_frame.view()),
+                        [10.0, 20.0],
+                        [765.0, 503.0],
+                    );
                 });
         }
         ctx.render();
@@ -962,7 +991,14 @@ mod tests {
         prepare_frame(&mut ctx);
         {
             let ui = ctx.frame();
-            overlay.frame(ui, None, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+            let paint_frame = PaintFrame::from_script(p.clone());
+            overlay.frame(
+                ui,
+                None,
+                Some(paint_frame.view()),
+                [10.0, 20.0],
+                [765.0, 503.0],
+            );
         }
         ctx.render();
         assert_eq!(overlay.canvas_dirty, Some([6, 6, 400, 50]));
@@ -970,7 +1006,14 @@ mod tests {
         prepare_frame(&mut ctx);
         {
             let ui = ctx.frame();
-            overlay.frame(ui, None, Some(&p), [0.0, 0.0], [382.5, 251.5]);
+            let paint_frame = PaintFrame::from_script(p.clone());
+            overlay.frame(
+                ui,
+                None,
+                Some(paint_frame.view()),
+                [0.0, 0.0],
+                [382.5, 251.5],
+            );
         }
         ctx.render();
         let dest = overlay.canvas_dest.expect("scaled dest");
@@ -989,7 +1032,14 @@ mod tests {
         prepare_frame(&mut ctx);
         {
             let ui = ctx.frame();
-            overlay.frame(ui, None, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+            let paint_frame = PaintFrame::from_script(p.clone());
+            overlay.frame(
+                ui,
+                None,
+                Some(paint_frame.view()),
+                [10.0, 20.0],
+                [765.0, 503.0],
+            );
         }
         ctx.render();
         assert!(overlay.lines.is_empty(), "canvas-only has no chatbox lines");
@@ -1007,7 +1057,14 @@ mod tests {
         prepare_frame(&mut ctx);
         {
             let ui = ctx.frame();
-            overlay.frame(ui, None, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+            let paint_frame = PaintFrame::from_script(p.clone());
+            overlay.frame(
+                ui,
+                None,
+                Some(paint_frame.view()),
+                [10.0, 20.0],
+                [765.0, 503.0],
+            );
         }
         ctx.render();
         assert_eq!(
@@ -1098,7 +1155,8 @@ mod tests {
         prepare_frame(ctx);
         {
             let ui = ctx.frame();
-            overlay.frame(ui, Some(gpu), Some(p), min, size);
+            let paint_frame = PaintFrame::from_script(p.clone());
+            overlay.frame(ui, Some(gpu), Some(paint_frame.view()), min, size);
         }
         ctx.render();
     }
@@ -1203,7 +1261,14 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    overlay.frame(ui, None, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+                    let paint_frame = PaintFrame::from_script(p.clone());
+                    overlay.frame(
+                        ui,
+                        None,
+                        Some(paint_frame.view()),
+                        [10.0, 20.0],
+                        [765.0, 503.0],
+                    );
                 });
         }
         ctx.render();
@@ -1226,7 +1291,14 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    overlay.frame(ui, None, Some(&p), [0.0, 0.0], [382.5, 251.5]);
+                    let paint_frame = PaintFrame::from_script(p.clone());
+                    overlay.frame(
+                        ui,
+                        None,
+                        Some(paint_frame.view()),
+                        [0.0, 0.0],
+                        [382.5, 251.5],
+                    );
                 });
         }
         ctx.render();
@@ -1290,7 +1362,8 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    overlay.frame(ui, None, Some(p), min, size);
+                    let paint_frame = PaintFrame::from_script(p.clone());
+                    overlay.frame(ui, None, Some(paint_frame.view()), min, size);
                 });
         }
         ctx.render();
@@ -1353,7 +1426,8 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    overlay.frame(ui, None, Some(&p), [0.0, 0.0], half);
+                    let paint_frame = PaintFrame::from_script(p.clone());
+                    overlay.frame(ui, None, Some(paint_frame.view()), [0.0, 0.0], half);
                 });
         }
         ctx.render();
@@ -1383,7 +1457,8 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    clicked = overlay.frame(ui, None, Some(&p), [0.0, 0.0], half);
+                    let paint_frame = PaintFrame::from_script(p.clone());
+                    clicked = overlay.frame(ui, None, Some(paint_frame.view()), [0.0, 0.0], half);
                 });
         }
         ctx.render();
@@ -1421,7 +1496,8 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    overlay.frame(ui, None, Some(&p), [0.0, 0.0], half);
+                    let paint_frame = PaintFrame::from_script(p.clone());
+                    overlay.frame(ui, None, Some(paint_frame.view()), [0.0, 0.0], half);
                 });
         }
         ctx.render();
@@ -1437,7 +1513,8 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    overlay.frame(ui, None, Some(&p), [0.0, 0.0], half);
+                    let paint_frame = PaintFrame::from_script(p.clone());
+                    overlay.frame(ui, None, Some(paint_frame.view()), [0.0, 0.0], half);
                 });
         }
         ctx.render();

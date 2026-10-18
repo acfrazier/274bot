@@ -6709,6 +6709,22 @@
     {
       "path": "crates/frontend-core/src/prefs.rs",
       "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/scripts/vocab.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/scripts/paint.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/scripts/loadouts.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/scripts/paths.rs",
+      "owner": "T3"
     }
   ]
 }

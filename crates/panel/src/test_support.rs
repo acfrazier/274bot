@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
+use frontend_core::scripts::Loadouts;
 use host_play::local_state::{LocalStateService, StateRoot};
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
@@ -124,11 +125,11 @@ pub(crate) fn set_patiently(
     })
     .unwrap();
 }
-/// A [`script::LoadoutsStore`] save through a scratch service, retried
+/// A [`Loadouts`] save through a scratch service, retried
 /// past load-slow durability (see [`patiently`]). A write of an earlier
 /// attempt that lands late conflicts with its own retry; the save replays
 /// the store's latest on a conflict, so a retry converges.
-pub(crate) fn save_store_patiently(store: &mut script::LoadoutsStore) {
+pub(crate) fn save_store_patiently(store: &mut Loadouts) {
     let start = std::time::Instant::now();
     loop {
         match store.save() {
@@ -175,9 +176,9 @@ pub(crate) fn save_draft_patiently(session: &mut crate::session::Session) -> boo
 /// (the writer is still draining the queued write); the final assert names
 /// the missing effect.
 pub(crate) fn reload_store_until(
-    store: &mut script::LoadoutsStore,
+    store: &mut Loadouts,
     label: &str,
-    mut settled: impl FnMut(&script::LoadoutsStore) -> bool,
+    mut settled: impl FnMut(&Loadouts) -> bool,
 ) {
     let start = std::time::Instant::now();
     while !settled(store) {

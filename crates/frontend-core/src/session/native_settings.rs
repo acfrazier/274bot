@@ -727,7 +727,7 @@ impl<Io> OperatorSession<Io> {
 mod tests {
     use super::*;
     use crate::marked::prepare_apply_settings_marked;
-    use crate::scripts::Scripts;
+    use crate::scripts::{CompiledCardId, ScriptChoice, Scripts};
     use crate::selection::{MarkedSelection, ProfileIdentity};
     use crate::surface::HeadlessSurface;
     use host_play::{InstancePermit, Play, PlayOptions};
@@ -836,7 +836,7 @@ mod tests {
             .set_compiled_overrides(
                 &mut f.core,
                 "alice",
-                id,
+                CompiledCardId::from_script(id),
                 json!({"targetPreference": "Nearest"})
                     .as_object()
                     .unwrap()
@@ -845,7 +845,7 @@ mod tests {
             .unwrap();
         f.core.flush_writes();
         f.scripts
-            .prepare_compiled_settings_sync(&f.core, "alice", id, None)
+            .prepare_compiled_settings_sync(&f.core, "alice", CompiledCardId::from_script(id), None)
             .unwrap();
         f.scripts.apply_settings_sync(&mut f.core).unwrap();
         f
@@ -873,7 +873,10 @@ mod tests {
 
     fn assert_pre_copy_start(f: &mut Fixture) {
         let id = script::CompiledId("Gatherer");
-        let before = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
+        let before = f
+            .scripts
+            .compiled_bag(&f.core, "bob", CompiledCardId::from_script(id))
+            .unwrap();
         assert_ne!(before["targetPreference"], json!("Nearest"));
         f.scripts.start_profile(&mut f.core, "bob", None).unwrap();
         wait_running(f, "bob");
@@ -896,7 +899,13 @@ mod tests {
         f.scripts.start_all(&mut f.core, None);
         let place = f.scripts.start_queue_place("bob").unwrap();
         f.scripts
-            .set_compiled_setting(&mut f.core, "bob", id, "radius", json!(24))
+            .set_compiled_setting(
+                &mut f.core,
+                "bob",
+                CompiledCardId::from_script(id),
+                "radius",
+                json!(24),
+            )
             .unwrap();
         let release = block_preparation(&mut f);
 
@@ -932,7 +941,10 @@ mod tests {
         f.core.flush_writes();
         f.scripts.poll(&mut f.core);
         wait_running(&mut f, "bob");
-        let bag = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
+        let bag = f
+            .scripts
+            .compiled_bag(&f.core, "bob", CompiledCardId::from_script(id))
+            .unwrap();
         assert_eq!(bag["targetPreference"], json!("Nearest"));
         assert_eq!(bag["radius"], json!(24));
         assert_eq!(
@@ -950,7 +962,10 @@ mod tests {
         let mut pending = f.core.preparations.remove(&op).unwrap();
         pending.worker.take().unwrap().join().unwrap().unwrap();
         let id = script::CompiledId("Gatherer");
-        let mut invalid = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
+        let mut invalid = f
+            .scripts
+            .compiled_bag(&f.core, "alice", CompiledCardId::from_script(id))
+            .unwrap();
         invalid.insert("radius".into(), json!("not a radius"));
         pending.worker = Some(
             f.core
@@ -1034,7 +1049,10 @@ mod tests {
     fn locked_vault_releases_its_native_preparation_hold() {
         let mut f = preparing_copy("copy-locked");
         let id = script::CompiledId("Gatherer");
-        let before = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
+        let before = f
+            .scripts
+            .compiled_bag(&f.core, "bob", CompiledCardId::from_script(id))
+            .unwrap();
         let release = block_preparation(&mut f);
         f.core.vault = None;
         f.core.poll();
@@ -1057,7 +1075,10 @@ mod tests {
     fn stalled_copy_writer_releases_hold_and_does_not_push_a_late_commit() {
         let mut f = preparing_copy("copy-writer-timeout");
         let id = script::CompiledId("Gatherer");
-        let before = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
+        let before = f
+            .scripts
+            .compiled_bag(&f.core, "bob", CompiledCardId::from_script(id))
+            .unwrap();
         let gate = f.core.write_gate();
         let held = gate.lock().unwrap();
         f.core.take_preparations(true);
@@ -1102,7 +1123,12 @@ mod tests {
         let mut source_values = Map::new();
         source_values.insert("targetPreference".into(), json!("Nearest"));
         f.scripts
-            .set_compiled_overrides(&mut f.core, "alice", id, source_values)
+            .set_compiled_overrides(
+                &mut f.core,
+                "alice",
+                CompiledCardId::from_script(id),
+                source_values,
+            )
             .unwrap();
         f.core.flush_writes();
 
@@ -1113,7 +1139,7 @@ mod tests {
             &f.core,
             &mut f.scripts,
             "alice",
-            &script::ScriptSel::Compiled(id),
+            &ScriptChoice::from_script(script::ScriptSel::Compiled(id)),
         )
         .unwrap();
         f.scripts.apply_settings_sync(&mut f.core).unwrap();
@@ -1155,7 +1181,10 @@ mod tests {
         );
         assert_eq!(values.get("targetPreference"), Some(&json!("Nearest")));
 
-        let copied_bag = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
+        let copied_bag = f
+            .scripts
+            .compiled_bag(&f.core, "bob", CompiledCardId::from_script(id))
+            .unwrap();
         assert_eq!(copied_bag["targetPreference"], "Nearest");
         f.scripts.start_profile(&mut f.core, "bob", None).unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -1190,7 +1219,13 @@ mod tests {
                 script::compiled_assignment(id)
             ));
             f.scripts
-                .set_compiled_setting(&mut f.core, "alice", id, "radius", json!(24))
+                .set_compiled_setting(
+                    &mut f.core,
+                    "alice",
+                    CompiledCardId::from_script(id),
+                    "radius",
+                    json!(24),
+                )
                 .unwrap();
             f.core.flush_writes();
 
@@ -1203,7 +1238,7 @@ mod tests {
                 &f.core,
                 &mut f.scripts,
                 "alice",
-                &script::ScriptSel::Compiled(id),
+                &ScriptChoice::from_script(script::ScriptSel::Compiled(id)),
             )
             .unwrap();
             f.scripts.apply_settings_sync(&mut f.core).unwrap();
@@ -1238,12 +1273,24 @@ mod tests {
                 // A settings-only replacement must not inherit a stale
                 // assignment intent from the accepted same-card copy.
                 f.scripts
-                    .set_compiled_setting(&mut f.core, "bob", id, "radius", json!(32))
+                    .set_compiled_setting(
+                        &mut f.core,
+                        "bob",
+                        CompiledCardId::from_script(id),
+                        "radius",
+                        json!(32),
+                    )
                     .unwrap();
             }
             f.core.select("alice");
             f.scripts
-                .set_compiled_setting(&mut f.core, "alice", id, "radius", json!(40))
+                .set_compiled_setting(
+                    &mut f.core,
+                    "alice",
+                    CompiledCardId::from_script(id),
+                    "radius",
+                    json!(40),
+                )
                 .unwrap();
             assert_eq!(Scripts::assignment(&f.core, "bob"), Some(thiever.clone()));
             f.core.flush_writes();
@@ -1360,7 +1407,7 @@ mod tests {
         let mut values = Map::new();
         values.insert("targetPreference".into(), json!("Nearest"));
         f.scripts
-            .set_compiled_overrides(&mut f.core, "bob", id, values)
+            .set_compiled_overrides(&mut f.core, "bob", CompiledCardId::from_script(id), values)
             .unwrap();
 
         let concurrent_assignment = vault::ScriptAssignment {

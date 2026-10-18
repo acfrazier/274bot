@@ -1,6 +1,6 @@
 use super::*;
 use crate::test_support::TestDir;
-use frontend_core::scripts::ReloadOutcome;
+use frontend_core::scripts::{CardSource, CompiledCardId, LoadShape, ReloadOutcome, ScriptChoice};
 use std::fs;
 use std::time::{Duration, Instant};
 use vault::{Profile, ProfileSettings, Vault};
@@ -56,9 +56,18 @@ fn wait_state(s: &Session, name: &str, want: script::RunState) {
 }
 
 /// Operator Start of `sel` on `profile` through the shared coordinator.
-fn start_sel(s: &mut Session, profile: &str, sel: script::ScriptSel) -> Result<(), String> {
+fn start_sel(s: &mut Session, profile: &str, sel: ScriptChoice) -> Result<(), String> {
     s.scripts
         .start_selected(&mut s.core, profile, Some(&sel), None)
+}
+
+/// Frontend vocabulary for a loaded [`script::JsCard`]'s source.
+fn card_source(card: &script::JsCard) -> CardSource {
+    match card.source {
+        script::ScriptSource::Catalog => CardSource::Catalog,
+        script::ScriptSource::File => CardSource::File,
+        script::ScriptSource::Builtin => CardSource::Builtin,
+    }
 }
 
 fn run_generations(s: &Session, names: &[&str]) -> Vec<(String, u64)> {
@@ -102,7 +111,7 @@ fn focus_restores_assignment_not_other_profile_pending() {
     let (mut s, _dir) = session_with_profiles(&["alice", "bob"]);
     s.set_pending_browse(
         "alice",
-        script::ScriptSel::Loaded(script::ScriptSource::Catalog, "ChickenKiller".into()),
+        ScriptChoice::loaded(CardSource::Catalog, "ChickenKiller"),
     );
     s.persist_successful_assignment(
         "bob",
@@ -116,18 +125,12 @@ fn focus_restores_assignment_not_other_profile_pending() {
     s.restore_script_heading("alice");
     assert_eq!(
         s.script_sel,
-        Some(script::ScriptSel::Loaded(
-            script::ScriptSource::Catalog,
-            "ChickenKiller".into()
-        ))
+        Some(ScriptChoice::loaded(CardSource::Catalog, "ChickenKiller"))
     );
     s.restore_script_heading("bob");
     assert_eq!(
         s.script_sel,
-        Some(script::ScriptSel::Loaded(
-            script::ScriptSource::Catalog,
-            "Alcher".into()
-        ))
+        Some(ScriptChoice::loaded(CardSource::Catalog, "Alcher"))
     );
     s.set_focus_for_test("bob");
     assert!(!s.heading_is_pending());
@@ -146,7 +149,7 @@ fn two_profiles_keep_isolated_settings_after_legacy_claim() {
     assert_eq!(a.get("bar"), Some(&Value::String("Adamantite".into())));
     s.set_profile_setting(
         "alice",
-        script::ScriptSource::Catalog,
+        CardSource::Catalog,
         "SmithingBot",
         Path::new(""),
         "bar",
@@ -175,10 +178,13 @@ fn missing_file_assignment_is_kept_not_substituted() {
     assert_ne!(asg.display_name, asg.identity);
     s.restore_script_heading("alice");
     match &s.script_sel {
-        Some(script::ScriptSel::Loaded(script::ScriptSource::File, id)) => {
-            assert_eq!(id, "/tmp/missing-bot.ts");
+        Some(sel) => {
+            assert_eq!(
+                sel.loaded_card(),
+                Some((CardSource::File, "/tmp/missing-bot.ts"))
+            );
         }
-        other => panic!("{other:?}"),
+        None => panic!("no heading restored: {:?}", s.script_sel),
     }
 }
 
@@ -297,9 +303,9 @@ fn initial_runtime_load_failure_survives_another_card_start() {
     let bad_source = "export const apiVersion = 2;\nthrow new Error('initial-load-proof');\nexport function tick(api) {}\n";
     let bad_path = write_bot(&dir, "bad.ts", bad_source);
     let bad = s.scripts.js_mut().load(&bad_path).unwrap();
-    s.script_sel = Some(script::ScriptSel::Loaded(
-        bad.source,
-        bad_path.to_string_lossy().into_owned(),
+    s.script_sel = Some(ScriptChoice::loaded(
+        card_source(&bad),
+        &bad_path.to_string_lossy(),
     ));
     s.script_start_selected();
     settle(&mut s);
@@ -350,10 +356,10 @@ fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
     let source = "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('retry-load-proof');\nexport function tick(api) {}";
     let path = write_bot(&dir, "retry.ts", source);
     let card = s.scripts.js_mut().load(&path).unwrap();
-    let sel = script::ScriptSel::Loaded(card.source, path.to_string_lossy().into_owned());
+    let sel = ScriptChoice::loaded(card_source(&card), &path.to_string_lossy());
     // Start returns before V8 setup: the runtime failure settles after
     // it and reaches the operator as the Start error it used to be.
-    start_sel(&mut s, "alice", sel.clone()).expect("Start is accepted before setup");
+    start_sel(&mut s, "alice", sel.duplicate()).expect("Start is accepted before setup");
     settle(&mut s);
     assert!(
         s.error
@@ -379,7 +385,7 @@ fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
         Some(0)
     );
     assert_eq!(
-        start_sel(&mut s, "missing", sel.clone()).unwrap_err(),
+        start_sel(&mut s, "missing", sel.duplicate()).unwrap_err(),
         "no slot: missing"
     );
     assert_eq!(
@@ -396,7 +402,7 @@ fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
     start_sel(
         &mut s,
         "bob",
-        script::ScriptSel::Loaded(other.source, other_path.to_string_lossy().into_owned()),
+        ScriptChoice::loaded(card_source(&other), &other_path.to_string_lossy()),
     )
     .expect("Start is accepted before setup");
     settle(&mut s);
@@ -421,7 +427,7 @@ fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
     // Resolve the changed sibling on explicit Start, without replacing the card
     // or running a throwaway validation isolate that could clear the diagnostic.
     fs::write(&helper, "export const fail = false;").unwrap();
-    start_sel(&mut s, "alice", sel.clone()).unwrap();
+    start_sel(&mut s, "alice", sel.duplicate()).unwrap();
     settle(&mut s);
     assert!(s.scripts.js().load_failure(&card.identity_key()).is_none());
     assert_eq!(
@@ -438,7 +444,7 @@ fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
         start_sel(
             &mut s,
             "alice",
-            script::ScriptSel::Loaded(other.source, other_path.to_string_lossy().into_owned())
+            ScriptChoice::loaded(card_source(&other), &other_path.to_string_lossy())
         )
         .unwrap_err(),
         "script already active: stop it first"
@@ -468,10 +474,10 @@ fn claim_legacy_read_path_writes_vault_once() {
     );
     let _ = s.merged_profile_bag(
         "alice",
-        script::ScriptSource::Catalog,
+        CardSource::Catalog,
         "Alcher",
         Path::new(""),
-        &[],
+        SchemaRef::from_script(&[]),
     );
     let _ = s.profile_overrides("alice", "catalog:Alcher", "Alcher");
     s.core.flush_writes();
@@ -491,11 +497,7 @@ fn external_ts_load_start_stop_persists_assignment_only_on_success() {
     assert_eq!(s.error, None, "{:?}", s.error);
     assert!(s.heading_is_pending());
     assert!(s.profile_assignment("alice").is_none());
-    s.enqueue_transpile(
-        script::ScriptSource::File,
-        path.to_string_lossy().into_owned(),
-        true,
-    );
+    s.enqueue_transpile(CardSource::File, path.to_string_lossy().into_owned(), true);
     s.script_start_selected();
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
@@ -520,11 +522,7 @@ fn load_js_selects_without_auto_start_and_same_path_does_not_duplicate() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "once.ts", BOT_TS);
     s.load_js(&path);
-    s.enqueue_transpile(
-        script::ScriptSource::File,
-        path.to_string_lossy().into_owned(),
-        true,
-    );
+    s.enqueue_transpile(CardSource::File, path.to_string_lossy().into_owned(), true);
     assert_eq!(s.error, None, "{:?}", s.error);
     assert_eq!(
         s.core.play().unwrap().script_state("alice"),
@@ -915,7 +913,7 @@ fn live_settings_reach_running_and_paused() {
     assert_eq!(s.error, None, "{:?}", s.error);
     assert!(s.set_profile_setting(
         "alice",
-        script::ScriptSource::File,
+        CardSource::File,
         "live",
         &path,
         "n",
@@ -935,7 +933,7 @@ fn live_settings_reach_running_and_paused() {
     play.script_pause("alice");
     assert!(s.set_profile_setting(
         "alice",
-        script::ScriptSource::File,
+        CardSource::File,
         "live",
         &path,
         "n",
@@ -1127,7 +1125,8 @@ fn marked_gatherer_start_and_focus_edits_keep_running_thievers_assignment() {
     ]);
     focus_profile(&mut s, "bob");
     let id = script::CompiledId("Gatherer");
-    s.select_script_selection(script::ScriptSel::Compiled(id));
+    let card_id = CompiledCardId::lookup("Gatherer").unwrap();
+    s.select_script_selection(ScriptChoice::compiled(card_id));
     s.fleet_start_selected();
     settle(&mut s);
     s.core.flush_writes();
@@ -1148,19 +1147,16 @@ fn marked_gatherer_start_and_focus_edits_keep_running_thievers_assignment() {
     );
 
     s.scripts
-        .set_compiled_setting(&mut s.core, "bob", id, "radius", serde_json::json!(24))
+        .set_compiled_setting(&mut s.core, "bob", card_id, "radius", serde_json::json!(24))
         .unwrap();
     focus_profile(&mut s, "alice");
     assert_eq!(
         s.script_sel,
-        Some(script::ScriptSel::Loaded(
-            script::ScriptSource::Catalog,
-            "Thiever".into()
-        ))
+        Some(ScriptChoice::loaded(CardSource::Catalog, "Thiever"))
     );
     assert!(s.set_profile_setting(
         "alice",
-        script::ScriptSource::Catalog,
+        CardSource::Catalog,
         "Thiever",
         &root.join("src/bot/scripts/Thiever/Thiever.ts"),
         "target",
@@ -1206,10 +1202,7 @@ fn catalog_refresh_warns_before_stopping_running() {
             unavailable: None,
         },
     );
-    s.script_sel = Some(script::ScriptSel::Loaded(
-        script::ScriptSource::Catalog,
-        "RunBot".into(),
-    ));
+    s.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "RunBot"));
     s.script_start_selected();
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
@@ -1277,11 +1270,8 @@ fn focus_profile(s: &mut Session, name: &str) {
 
 fn start_file_on(s: &mut Session, profile: &str, path: &std::path::Path) {
     focus_profile(s, profile);
-    let sel = script::ScriptSel::Loaded(
-        script::ScriptSource::File,
-        path.to_string_lossy().into_owned(),
-    );
-    s.script_sel = Some(sel.clone());
+    let sel = ScriptChoice::loaded(CardSource::File, &path.to_string_lossy());
+    s.script_sel = Some(sel.duplicate());
     s.set_pending_browse(profile, sel);
     s.script_start_selected();
     settle(s);
@@ -1462,10 +1452,7 @@ fn catalog_confirm_gates_newly_paused() {
             unavailable: None,
         },
     );
-    s.script_sel = Some(script::ScriptSel::Loaded(
-        script::ScriptSource::Catalog,
-        "PauseBot".into(),
-    ));
+    s.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "PauseBot"));
     s.script_start_selected();
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
@@ -1623,10 +1610,7 @@ fn catalog_disk_change_after_warn_does_not_start_stale_prepared() {
             unavailable: None,
         },
     );
-    s.script_sel = Some(script::ScriptSel::Loaded(
-        script::ScriptSource::Catalog,
-        "StaleBot".into(),
-    ));
+    s.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "StaleBot"));
     s.script_start_selected();
     settle(&mut s);
     let old_js = s
@@ -1783,10 +1767,16 @@ fn stop_all_during_a_reload_reap_drops_the_queued_replacement() {
     // Reload shape: the old isolate is reaping and its replacement Start is
     // queued behind the reap (no observe has run in between).
     s.core.stop_script("alice");
+    let shape = match card.shape {
+        script::LoadShape::CompatDefineBot => LoadShape::CompatDefineBot,
+        script::LoadShape::CompatClass => LoadShape::CompatClass,
+        script::LoadShape::NativeTick => LoadShape::NativeTick,
+        script::LoadShape::Reject => LoadShape::Reject,
+    };
     s.core
         .start_script(
             "alice",
-            frontend_core::ScriptStart::load(card.js.clone(), card.shape, None, Vec::new()),
+            frontend_core::ScriptStart::load(card.js.clone(), shape, None, Vec::new()),
             Some(card.identity_key()),
         )
         .unwrap();
@@ -2100,7 +2090,7 @@ fn fleet_assign_and_restart_swaps_the_card_and_follows_the_paced_starts() {
         Some("Assign: select a card in Scripts first")
     );
 
-    s.script_sel = Some(script::ScriptSel::Loaded(new.source, new.identity_id()));
+    s.script_sel = Some(ScriptChoice::loaded(card_source(&new), &new.identity_id()));
     let scope = s.fleet_restart_scope();
     assert_eq!(
         (scope.interrupted(), scope.starting()),
@@ -2148,19 +2138,13 @@ fn catalog_native_stop_skips_target_and_reloads_peer() {
     };
     s.persist_successful_assignment("alice", asg.clone());
     s.persist_successful_assignment("bob", asg);
-    s.script_sel = Some(script::ScriptSel::Loaded(
-        script::ScriptSource::Catalog,
-        "StopBot".into(),
-    ));
+    s.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "StopBot"));
     focus_profile(&mut s, "alice");
     s.script_start_selected();
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
     focus_profile(&mut s, "bob");
-    s.script_sel = Some(script::ScriptSel::Loaded(
-        script::ScriptSource::Catalog,
-        "StopBot".into(),
-    ));
+    s.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "StopBot"));
     s.script_start_selected();
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
@@ -2211,12 +2195,12 @@ fn apply_to_all_reaches_same_card_members_only() {
     // Loading the files left alice browsing the miner; she edits the thiever.
     s.set_pending_browse(
         "alice",
-        script::ScriptSel::Loaded(card.source, card.identity_id()),
+        ScriptChoice::loaded(card_source(&card), &card.identity_id()),
     );
     focus_profile(&mut s, "alice");
     assert!(s.set_profile_setting(
         "alice",
-        card.source,
+        card_source(&card),
         &card.name,
         &card.path,
         "target",
@@ -2271,7 +2255,7 @@ fn a_failed_parameter_save_is_not_pushed_to_the_run() {
     fs::create_dir(&vault_file).unwrap();
     s.set_profile_setting(
         "alice",
-        script::ScriptSource::File,
+        CardSource::File,
         "live",
         &path,
         "n",
@@ -2305,8 +2289,8 @@ fn panel_ready_start_keeps_a_newer_banner() {
         "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('panel-first-load');\nexport function tick(api) {}\n",
     );
     let card = s.scripts.js_mut().load(&path).unwrap();
-    let sel = script::ScriptSel::Loaded(card.source, path.to_string_lossy().into_owned());
-    start_sel(&mut s, "alice", sel.clone()).unwrap();
+    let sel = ScriptChoice::loaded(card_source(&card), &path.to_string_lossy());
+    start_sel(&mut s, "alice", sel.duplicate()).unwrap();
     settle(&mut s);
     fs::write(&helper, "export const fail = false;").unwrap();
 
@@ -2365,7 +2349,10 @@ fn fleet_apply_settings_is_narrowed_to_the_marked_bots() {
         s.persist_successful_assignment(name, card.assignment());
     }
     focus_profile(&mut s, "alice");
-    s.script_sel = Some(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    s.script_sel = Some(ScriptChoice::loaded(
+        card_source(&card),
+        &card.identity_id(),
+    ));
     let bob = s.core.profile_identity("bob").unwrap();
     s.fleet_selection.set(bob, true);
 

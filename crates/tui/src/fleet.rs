@@ -11,12 +11,12 @@ use ratatui::style::{Modifier, Style};
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
+use frontend_core::scripts::ScriptRunState;
 use frontend_core::views::run_state_label;
 use frontend_core::{
     fill_visible_indices, member_row, profile_id_at, state_label, FleetOrder, FleetRow,
     MarkedSelection, ProfileIdentity,
 };
-use script::RunState;
 
 use crate::layout::SizeClass;
 
@@ -351,7 +351,7 @@ impl FleetTable<'_> {
                 cell.extend(std::iter::repeat_n(' ', QUEUE.saturating_sub(queue_len)));
                 cell.push(' ');
                 cell.push_str(run_state_label(
-                    row.map_or(RunState::Idle, |row| row.script()),
+                    row.map_or(ScriptRunState::Idle, |row| row.script()),
                 ));
             }
             if is_cursor && keys {

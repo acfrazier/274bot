@@ -3,10 +3,13 @@ use std::sync::Arc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
+use frontend_core::scripts::{
+    CardRuntime, CardSource, Loadouts, OwnedSchema, PaintFrame, SchemaRef, ScriptChoice,
+    ScriptRunState,
+};
 use frontend_core::SettingsDraft;
 use host_play::local_state::{LocalStateService, StateRoot};
 use nav::tile::Tile;
-use script::{RunState, ScriptKind, ScriptSel, ScriptSource};
 
 use crate::layout::Screen;
 use crate::overlay::Modal;
@@ -51,8 +54,8 @@ fn bone_burier_card() -> BrowseCard {
         description: String::new(),
         category: "Prayer".into(),
         tags: Vec::new(),
-        kind: ScriptKind::Compat,
-        source: ScriptSource::Catalog,
+        kind: CardRuntime::Compat,
+        source: CardSource::Catalog,
         unloadable: None,
     }
 }
@@ -289,12 +292,18 @@ fn script_app() -> TuiApp {
     app
 }
 
-fn params_overlay_text(app: &mut TuiApp, loadouts: &script::LoadoutsStore) -> String {
+fn params_overlay_text(app: &mut TuiApp, loadouts: &Loadouts) -> String {
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
     terminal
         .draw(|frame| app.draw_params_overlay(frame, loadouts, None))
         .unwrap();
     text(&crate::test_support::rows(terminal.backend().buffer()))
+}
+
+fn owned_schema(schema: &[script::SettingDef]) -> OwnedSchema {
+    let mut owned = OwnedSchema::default();
+    owned.copy_from(SchemaRef::from_script(schema));
+    owned
 }
 
 fn thiever_schema() -> Vec<script::SettingDef> {
@@ -344,7 +353,7 @@ fn status_card_shows_a_parked_quester_phase_and_reason_at_common_sizes() {
     let mut app = crate::test_support::fleet_app(&["alice"]);
     app.show_screen(Screen::Overview);
     let mut detail = crate::test_support::ready_detail("alice");
-    detail.row_mut().set_script(RunState::Running);
+    detail.row_mut().set_script(ScriptRunState::Running);
     let status = ScriptStatus {
         run: api::selected::RunKey {
             slot: 1,
@@ -555,7 +564,7 @@ fn chat_tab_answers_options_on_space() {
 #[test]
 fn paint_showing_digit_routes_to_paint_button_not_wire() {
     let mut app = TuiApp::new("274bot headless");
-    app.chat_data.script_paint = Some(std::sync::Arc::new(script::shim::ScriptPaint {
+    app.chat_data.script_paint = Some(PaintFrame::from_script(script::shim::ScriptPaint {
         title: Some("NatureCrafter".into()),
         accent: None,
         lines: vec!["status".into()],
@@ -585,7 +594,7 @@ fn paint_showing_digit_routes_to_paint_button_not_wire() {
 #[test]
 fn nature_crafter_button_is_rendered_and_only_its_row_is_clickable_at_140x40() {
     let mut app = TuiApp::new("274bot headless");
-    app.chat_data.script_paint = Some(std::sync::Arc::new(nature_crafter_paint()));
+    app.chat_data.script_paint = Some(PaintFrame::from_script(nature_crafter_paint()));
     app.show_screen(Screen::Chat);
     let rows = draw(&mut app, 140, 40);
 
@@ -618,7 +627,7 @@ fn nature_crafter_button_is_rendered_and_only_its_row_is_clickable_at_140x40() {
 #[test]
 fn nature_crafter_button_remains_visible_and_clickable_in_a_compact_terminal() {
     let mut app = TuiApp::new("274bot headless");
-    app.chat_data.script_paint = Some(std::sync::Arc::new(nature_crafter_paint()));
+    app.chat_data.script_paint = Some(PaintFrame::from_script(nature_crafter_paint()));
     app.show_screen(Screen::Chat);
     let rows = draw(&mut app, 48, 18);
     let (button_col, button_row) = find(&rows, "[1] Go bank")
@@ -934,24 +943,17 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
     let preferences = frontend_core::UiPreferences::of_service_for_test(
         &LocalStateService::open_process(StateRoot::new(root.join(".274bot"))),
     );
-    let loadouts = script::LoadoutsStore::default();
+    let loadouts = Loadouts::default();
     let mut app = open_map_world();
     app.restore_preferences(preferences.share());
-    app.script_sel = Some(ScriptSel::Loaded(
-        ScriptSource::Catalog,
-        "WalkPermissions".into(),
-    ));
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "WalkPermissions"));
     let mut schema = thiever_schema();
     schema[0].id = "allow_danger_zones".into();
     schema[0].ty = "boolean".into();
     schema[0].label = Some("Danger routing".into());
     schema[0].default = Some("false".into());
-    app.params_schema = schema;
-    app.open_script_params(script::merge_bag(
-        &app.params_schema,
-        &serde_json::Map::new(),
-        None,
-    ));
+    app.params_schema = owned_schema(&schema);
+    app.open_script_params(script::merge_bag(&schema, &serde_json::Map::new(), None));
     app.params_state.open = false;
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
 
@@ -1452,7 +1454,7 @@ fn chat_tab_paints_the_snapshot_ring() {
 #[test]
 fn paused_script_shows_resume_and_click_dispatches_toggle() {
     let mut app = script_app();
-    app.script_state = RunState::Paused;
+    app.script_state = ScriptRunState::Paused;
     let rows = draw(&mut app, 100, 30);
     let all = text(&rows);
     assert!(
@@ -1472,18 +1474,12 @@ fn paused_script_shows_resume_and_click_dispatches_toggle() {
 #[test]
 fn click_start_with_a_selected_card_returns_script_start() {
     let mut app = script_app();
-    app.script_sel = Some(ScriptSel::Loaded(
-        ScriptSource::Catalog,
-        "BoneBurier".into(),
-    ));
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "BoneBurier"));
     let rows = draw(&mut app, 100, 30);
     let (col, row) = find(&rows, "[Start t]").unwrap();
     assert_eq!(
         app.on_click(col + 1, row),
-        AppAction::ScriptStart(ScriptSel::Loaded(
-            ScriptSource::Catalog,
-            "BoneBurier".into(),
-        )),
+        AppAction::ScriptStart(ScriptChoice::loaded(CardSource::Catalog, "BoneBurier")),
         "Start with a selected card starts that card"
     );
 }
@@ -1498,8 +1494,8 @@ fn browse_rows_select_a_card_for_start() {
             description: String::new(),
             category: "Skilling".into(),
             tags: Vec::new(),
-            kind: ScriptKind::Compat,
-            source: ScriptSource::File,
+            kind: CardRuntime::Compat,
+            source: CardSource::File,
             unloadable: None,
         },
     ];
@@ -1517,10 +1513,7 @@ fn browse_rows_select_a_card_for_start() {
     assert_eq!(app.on_click(col, row), AppAction::None);
     assert_eq!(
         app.script_sel,
-        Some(ScriptSel::Loaded(
-            ScriptSource::Catalog,
-            "BoneBurier".into(),
-        )),
+        Some(ScriptChoice::loaded(CardSource::Catalog, "BoneBurier")),
         "clicking the first card row selects it"
     );
     assert_eq!(
@@ -1535,10 +1528,7 @@ fn browse_rows_select_a_card_for_start() {
     );
     assert_eq!(
         app.on_key(ch('t')),
-        AppAction::ScriptStart(ScriptSel::Loaded(
-            ScriptSource::Catalog,
-            "BoneBurier".into(),
-        )),
+        AppAction::ScriptStart(ScriptChoice::loaded(CardSource::Catalog, "BoneBurier")),
         "t starts the card picked in Browse"
     );
 }
@@ -1576,7 +1566,7 @@ fn load_browser_enter_returns_script_load() {
 fn script_params_click_and_space_toggle_persist_bool() {
     let dir = std::env::temp_dir().join(format!("274bot-tui-app-params-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let loadouts = script::LoadoutsStore::default();
+    let loadouts = Loadouts::default();
     let mut commits: Vec<(String, serde_json::Value)> = Vec::new();
     let schema = vec![script::SettingDef {
         id: "buryBones".into(),
@@ -1596,11 +1586,8 @@ fn script_params_click_and_space_toggle_persist_bool() {
         item_option_spec: None,
     }];
     let mut app = script_app();
-    app.script_sel = Some(ScriptSel::Loaded(
-        ScriptSource::Catalog,
-        "ChickenKiller".into(),
-    ));
-    app.params_schema = schema;
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "ChickenKiller"));
+    app.params_schema = owned_schema(&schema);
     let rows = draw(&mut app, 100, 30);
     let (col, row) = find(&rows, "[Params v]").unwrap();
     assert_eq!(
@@ -1608,11 +1595,7 @@ fn script_params_click_and_space_toggle_persist_bool() {
         AppAction::ScriptParams,
         "[Params] opens the popup"
     );
-    app.open_script_params(script::merge_bag(
-        &app.params_schema,
-        &serde_json::Map::new(),
-        None,
-    ));
+    app.open_script_params(script::merge_bag(&schema, &serde_json::Map::new(), None));
     assert!(app.params_state.open);
     let mut commit = |id: &str, value: serde_json::Value, _current: Option<serde_json::Value>| {
         commits.push((id.to_string(), value));
@@ -1654,7 +1637,7 @@ fn script_params_numeric_edit_persists_and_global_keys_stay_consumed() {
             .as_nanos()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    let loadouts = script::LoadoutsStore::default();
+    let loadouts = Loadouts::default();
     let mut commits: Vec<(String, serde_json::Value)> = Vec::new();
     let mut commit = |id: &str, value: serde_json::Value, _current: Option<serde_json::Value>| {
         commits.push((id.to_string(), value));
@@ -1678,13 +1661,9 @@ fn script_params_numeric_edit_persists_and_global_keys_stay_consumed() {
         item_option_spec: None,
     }];
     let mut app = script_app();
-    app.script_sel = Some(ScriptSel::Loaded(ScriptSource::Catalog, "Alcher".into()));
-    app.params_schema = schema;
-    app.open_script_params(script::merge_bag(
-        &app.params_schema,
-        &serde_json::Map::new(),
-        None,
-    ));
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "Alcher"));
+    app.params_schema = owned_schema(&schema);
+    app.open_script_params(script::merge_bag(&schema, &serde_json::Map::new(), None));
     assert!(app.params_state.open);
     assert_eq!(
         app.on_key(ch('q')),
@@ -1731,7 +1710,7 @@ fn script_params_numeric_edit_persists_and_global_keys_stay_consumed() {
 fn chat_tab_shows_script_paint_instead_of_the_game_chat() {
     let mut app = TuiApp::new("274bot headless");
     app.chat_data.lines = vec![line("last game chat line")];
-    app.chat_data.script_paint = Some(std::sync::Arc::new(script::shim::ScriptPaint {
+    app.chat_data.script_paint = Some(PaintFrame::from_script(script::shim::ScriptPaint {
         title: Some("BoneBurier — digging".into()),
         accent: Some("#f3e6a2".into()),
         lines: vec!["Runtime: 1.2m | Buried: 3".into(), "".into()],
@@ -1795,9 +1774,9 @@ fn background_notice_needs_an_explicit_got_it() {
 fn script_commands_are_reachable_at_80x24() {
     let mut app = script_app();
     app.chat_data.lines = (0..8).map(|i| line(&format!("chat {i}"))).collect();
-    app.script_state = RunState::Running;
-    app.script_sel = Some(ScriptSel::Loaded(ScriptSource::File, "thiever".into()));
-    app.params_schema = thiever_schema();
+    app.script_state = ScriptRunState::Running;
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
+    app.params_schema = owned_schema(&thiever_schema());
     let rows = draw(&mut app, 80, 24);
     let (main_x, main_y) =
         find(&rows, "[Browse b] [Start t] [Pause P] [Stop e] [Load f]").expect("main script row");
@@ -1806,12 +1785,12 @@ fn script_commands_are_reachable_at_80x24() {
     let at = |x: u16, row: &str, label: &str| x + row.find(label).unwrap() as u16 + 1;
     let main = "[Browse b] [Start t] [Pause P] [Stop e] [Load f]";
     let bulk = "[Params v] [Reload R] [Start all T] [Stop all E]";
-    let sel = app.script_sel.clone().unwrap();
+    let sel = app.script_sel.as_ref().unwrap().duplicate();
     let clicks = [
         (
             main_y,
             at(main_x, main, "[Start"),
-            AppAction::ScriptStart(sel.clone()),
+            AppAction::ScriptStart(sel.duplicate()),
         ),
         (main_y, at(main_x, main, "[Pause"), AppAction::ScriptPause),
         (main_y, at(main_x, main, "[Stop"), AppAction::ScriptStop),
@@ -1834,7 +1813,7 @@ fn script_commands_are_reachable_at_80x24() {
         assert_eq!(app.on_key(key(KeyCode::Enter)), want, "{label} confirmed");
     }
     let keys = [
-        ('t', AppAction::ScriptStart(sel)),
+        ('t', AppAction::ScriptStart(sel.duplicate())),
         ('P', AppAction::ScriptPause),
         ('e', AppAction::ScriptStop),
         ('v', AppAction::ScriptParams),

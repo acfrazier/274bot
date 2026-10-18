@@ -5,10 +5,10 @@
 //! shortcuts: each table below is routed only while its pane has keyboard
 //! focus, so no letter leaks into another pane or a text field.
 
+use frontend_core::scripts::ScriptRunState;
 use frontend_core::{
     combined_bulk_scope, marked_availability, BulkScope, MarkedAction, MarkedBlock,
 };
-use script::RunState;
 
 use crate::app::{TuiApp, WalkSendMode};
 use crate::layout::Screen;
@@ -309,7 +309,7 @@ impl Command {
             Command::DismissNotice => "Got it (hide notice)",
             Command::ScriptBrowse => "Browse scripts",
             Command::ScriptStart => "Start script",
-            Command::ScriptPause if app.script_state == RunState::Paused => "Resume script",
+            Command::ScriptPause if app.script_state == ScriptRunState::Paused => "Resume script",
             Command::ScriptPause => "Pause script",
             Command::ScriptStop => "Stop script",
             Command::ScriptLoad => "Load script file",
@@ -485,13 +485,16 @@ impl Command {
             }
             Command::ScriptPause => {
                 bot()?;
-                matches!(app.script_state, RunState::Running | RunState::Paused)
-                    .then_some(())
-                    .ok_or("no running script")
+                matches!(
+                    app.script_state,
+                    ScriptRunState::Running | ScriptRunState::Paused
+                )
+                .then_some(())
+                .ok_or("no running script")
             }
             Command::ScriptStop => {
                 bot()?;
-                (app.script_state != RunState::Idle || app.script_queued)
+                (app.script_state != ScriptRunState::Idle || app.script_queued)
                     .then_some(())
                     .ok_or("no script running")
             }
@@ -500,7 +503,7 @@ impl Command {
                     Err("pick a script first")
                 } else if app.params_unavailable.is_some() {
                     Err("the selected script parameters are unavailable")
-                } else if app.params_schema.is_empty() {
+                } else if app.params_schema.as_ref().is_empty() {
                     Err("the selected script has no parameters")
                 } else {
                     Ok(())

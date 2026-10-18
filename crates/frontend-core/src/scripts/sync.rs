@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
+use super::{CardSource, CompiledCardId};
 use super::{LiveDeliveryKind, LiveSettings, Scripts, SettingsWrite};
 use crate::operations::{ActionKind, OperationId, Outcome};
 use crate::session::{ArmMirror, NativeCopyCancellation, OperatorSession};
@@ -915,10 +916,11 @@ impl Scripts {
         &mut self,
         core: &OperatorSession<Io>,
         source: &str,
-        card_source: script::ScriptSource,
+        card_source: CardSource,
         card_name: &str,
         card_path: &Path,
     ) -> &SyncScope {
+        let card_source = card_source.to_script();
         let card = script::card_identity_key(card_source, card_path, card_name);
         self.sync.start_hold = core.play().map(|play| {
             play.hold_script_starts(format!(
@@ -963,9 +965,10 @@ impl Scripts {
         &mut self,
         core: &OperatorSession<Io>,
         source: &str,
-        id: script::CompiledId,
+        id: CompiledCardId,
         field: Option<&str>,
     ) -> Result<&SyncScope, String> {
+        let id = id.to_script();
         self.clear_prepared_settings_sync();
         let descriptor = script::compiled_card(id).ok_or("compiled card unavailable")?;
         let mut excluded_fields: Vec<String> = descriptor
@@ -993,7 +996,7 @@ impl Scripts {
             }
         }
         let card = script::compiled_identity_key(id);
-        let overrides = self.compiled_overrides(core, source, id)?;
+        let overrides = self.compiled_overrides(core, source, CompiledCardId::from_script(id))?;
         let mut targets = Vec::new();
         let mut skipped = Vec::new();
         for member in core.members().iter().filter(|member| *member != source) {
@@ -1140,7 +1143,7 @@ impl Scripts {
                         .iter()
                         .find(|(member, _)| member == &target)
                         .map_or(&[][..], |(_, fields)| fields.as_slice());
-                    match self.compiled_overrides(core, &target, *id) {
+                    match self.compiled_overrides(core, &target, CompiledCardId::from_script(*id)) {
                         Ok(current) => {
                             let values =
                                 bulk_values(&overrides, &current, fields, field.as_deref());

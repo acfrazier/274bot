@@ -3,8 +3,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
-use frontend_core::scripts::resolve_parameter_options;
-use script::LoadoutsStore;
+use frontend_core::scripts::{resolve_parameter_options, Loadouts, SettingView};
 
 struct Counting;
 
@@ -56,8 +55,8 @@ fn quest_options() -> frontend_core::scripts::ParameterOptions {
         .find(|field| field.id == "quests")
         .expect("Quester schema has a quest roster");
     let bag = serde_json::Map::from_iter([("quests".into(), serde_json::json!(["cook"]))]);
-    let loadouts = LoadoutsStore::default();
-    resolve_parameter_options(quests, &bag, &loadouts, None)
+    let loadouts = Loadouts::default();
+    resolve_parameter_options(SettingView::from_script(quests), &bag, &loadouts, None)
 }
 
 fn repeated_lookup_allocations(

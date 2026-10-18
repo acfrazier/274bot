@@ -499,8 +499,8 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow], shown: &[usize]) {
                 match column {
                     FleetColumn::State => cell(ui, |out| row.write_world_login(out)),
                     FleetColumn::Card => cell(ui, |out| {
-                        match Scripts::assignment(&session.core, row.name()) {
-                            Some(assignment) => out.push_str(&assignment.display_name),
+                        match Scripts::assignment_name(&session.core, row.name()) {
+                            Some(name) => out.push_str(name),
                             None => out.push_str(NONE),
                         };
                     }),
@@ -596,6 +596,7 @@ pub fn window(ui: &Ui, session: &mut Session) {
 #[cfg(test)]
 mod tests {
     use super::ActionLabels;
+    use frontend_core::scripts::{CardSource, ScriptChoice};
     use frontend_core::{fill_visible_row_indices, fleet_row_matches, FleetOrder, FleetRow, Phase};
 
     /// The open window survives frames while columns come and go (the table
@@ -717,7 +718,12 @@ mod tests {
         )
         .unwrap();
         let card = session.scripts.js_mut().load(&path).unwrap();
-        session.script_sel = Some(script::ScriptSel::Loaded(card.source, card.identity_id()));
+        let source = match card.source {
+            script::ScriptSource::Catalog => CardSource::Catalog,
+            script::ScriptSource::File => CardSource::File,
+            script::ScriptSource::Builtin => CardSource::Builtin,
+        };
+        session.script_sel = Some(ScriptChoice::loaded(source, &card.identity_id()));
         session.fleet_assign_selected();
         session.core.flush_writes();
         assert!(session.profile_assignment("bob").is_some());

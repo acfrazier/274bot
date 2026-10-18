@@ -1256,6 +1256,174 @@
       "classification": "owning",
       "owner": "T3",
       "reason": "T3.3 operator command seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/vocab.rs|ScriptRunState",
+      "path": "crates/frontend-core/src/scripts/vocab.rs",
+      "symbol": "ScriptRunState",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/vocab.rs|CardSource",
+      "path": "crates/frontend-core/src/scripts/vocab.rs",
+      "symbol": "CardSource",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/vocab.rs|CardRuntime",
+      "path": "crates/frontend-core/src/scripts/vocab.rs",
+      "symbol": "CardRuntime",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/vocab.rs|LoadShape",
+      "path": "crates/frontend-core/src/scripts/vocab.rs",
+      "symbol": "LoadShape",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/vocab.rs|LoadStage",
+      "path": "crates/frontend-core/src/scripts/vocab.rs",
+      "symbol": "LoadStage",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/vocab.rs|CompiledCardId",
+      "path": "crates/frontend-core/src/scripts/vocab.rs",
+      "symbol": "CompiledCardId",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/vocab.rs|ScriptChoice",
+      "path": "crates/frontend-core/src/scripts/vocab.rs",
+      "symbol": "ScriptChoice",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/vocab.rs|SettingView",
+      "path": "crates/frontend-core/src/scripts/vocab.rs",
+      "symbol": "SettingView",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/vocab.rs|SchemaRef",
+      "path": "crates/frontend-core/src/scripts/vocab.rs",
+      "symbol": "SchemaRef",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/vocab.rs|OwnedSchema",
+      "path": "crates/frontend-core/src/scripts/vocab.rs",
+      "symbol": "OwnedSchema",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/vocab.rs|LoadedCard",
+      "path": "crates/frontend-core/src/scripts/vocab.rs",
+      "symbol": "LoadedCard",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/vocab.rs|LoadFailureView",
+      "path": "crates/frontend-core/src/scripts/vocab.rs",
+      "symbol": "LoadFailureView",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/vocab.rs|StatusView",
+      "path": "crates/frontend-core/src/scripts/vocab.rs",
+      "symbol": "StatusView",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/paint.rs|PaintFrame",
+      "path": "crates/frontend-core/src/scripts/paint.rs",
+      "symbol": "PaintFrame",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/paint.rs|PaintView",
+      "path": "crates/frontend-core/src/scripts/paint.rs",
+      "symbol": "PaintView",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/paint.rs|PaintButtonView",
+      "path": "crates/frontend-core/src/scripts/paint.rs",
+      "symbol": "PaintButtonView",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/paint.rs|ChromeBandView",
+      "path": "crates/frontend-core/src/scripts/paint.rs",
+      "symbol": "ChromeBandView",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/paint.rs|CanvasOps",
+      "path": "crates/frontend-core/src/scripts/paint.rs",
+      "symbol": "CanvasOps",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/paint.rs|CanvasRaster",
+      "path": "crates/frontend-core/src/scripts/paint.rs",
+      "symbol": "CanvasRaster",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/paint.rs|CanvasCache",
+      "path": "crates/frontend-core/src/scripts/paint.rs",
+      "symbol": "CanvasCache",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/loadouts.rs|Loadouts",
+      "path": "crates/frontend-core/src/scripts/loadouts.rs",
+      "symbol": "Loadouts",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 script vocabulary seam."
     }
   ],
   "violations": [],

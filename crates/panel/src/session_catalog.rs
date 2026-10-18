@@ -6,6 +6,8 @@
 
 use std::path::{Path, PathBuf};
 
+use frontend_core::scripts::{paths, CardSource, ScriptChoice};
+
 use crate::session::{PanelWindow, Session};
 
 fn default_catalog_browse_dir(last: Option<&Path>) -> PathBuf {
@@ -19,7 +21,7 @@ impl Session {
             None if self.profile_options.is_some() => self
                 .resolve_profile()
                 .map(|selection| selection.catalog_root().map(Path::to_path_buf)),
-            None => script::rs2b0t_root_checked(),
+            None => paths::rs2b0t_root_checked(),
         }
     }
 
@@ -40,11 +42,11 @@ impl Session {
     }
 
     fn rs2b0t_import_file(&self) -> PathBuf {
-        script::default_rs2b0t_import_file()
+        paths::rs2b0t_import_file()
     }
 
     pub(crate) fn rs2b0t_path_file(&self) -> PathBuf {
-        script::default_rs2b0t_path_file()
+        paths::rs2b0t_path_file()
     }
 
     /// Opening Browse: fill from `$RS2B0T`/persisted root, or prompt for a
@@ -65,7 +67,7 @@ impl Session {
             return;
         }
         self.scripts.mark_catalog_filled();
-        if script::rs2b0t_import_deferred_at(&self.rs2b0t_import_file()) {
+        if paths::rs2b0t_import_deferred_at(&self.rs2b0t_import_file()) {
             return;
         }
         self.open_rs2b0t_catalog_picker(true);
@@ -86,7 +88,7 @@ impl Session {
 
     /// Operator chose **Not now** on the first-run catalog prompt.
     pub fn defer_rs2b0t_catalog(&mut self) {
-        let _ = script::set_rs2b0t_import_deferred_at(&self.rs2b0t_import_file());
+        let _ = paths::set_rs2b0t_import_deferred_at(&self.rs2b0t_import_file());
         self.rs2b0t_catalog_open = false;
     }
 
@@ -97,7 +99,7 @@ impl Session {
         if !crate::script_picker::rs2b0t_root_has_index(root) {
             return Err(format!(
                 "no catalog at {}",
-                script::registry_index_path(root).display()
+                paths::registry_index_path(root).display()
             ));
         }
         self.scripts
@@ -106,7 +108,7 @@ impl Session {
     }
 
     /// The card currently at the front of the warmup queue, if any.
-    pub fn transpile_front(&self) -> Option<(script::ScriptSource, &str)> {
+    pub fn transpile_front(&self) -> Option<(CardSource, &str)> {
         self.transpile_queue
             .front()
             .map(|(source, name)| (*source, name.as_str()))
@@ -114,25 +116,25 @@ impl Session {
 
     /// Select a shared Browse card. Compiled cards only update the pending
     /// selection; loaded cards also queue their source for transpile.
-    pub fn select_script_selection(&mut self, sel: script::ScriptSel) {
-        self.script_sel = Some(sel.clone());
+    pub fn select_script_selection(&mut self, sel: ScriptChoice) {
+        self.script_sel = Some(sel.duplicate());
         if let Some(profile) = self.focused_name() {
-            self.set_pending_browse(&profile, sel.clone());
+            self.set_pending_browse(&profile, sel.duplicate());
         }
-        if let script::ScriptSel::Loaded(source, lookup) = sel {
-            self.enqueue_transpile(source, lookup, true);
+        if let Some((source, lookup)) = sel.loaded_card() {
+            self.enqueue_transpile(source, lookup.to_owned(), true);
         }
     }
 
     /// Select a loaded card by its library lookup identity.
-    pub fn select_script_card(&mut self, source: script::ScriptSource, name: impl Into<String>) {
-        self.select_script_selection(script::ScriptSel::Loaded(source, name.into()));
+    pub fn select_script_card(&mut self, source: CardSource, name: impl AsRef<str>) {
+        self.select_script_selection(ScriptChoice::loaded(source, name.as_ref()));
     }
 
     /// Operator opted into warming every unwarmed card. Each card is
     /// prepared through the shared WorkAdmission worker.
     pub fn queue_transpile_all(&mut self) {
-        let need = self.scripts.js().cards_needing_transpile();
+        let need = self.scripts.cards_needing_transpile();
         if need.is_empty() {
             return;
         }
@@ -155,7 +157,7 @@ impl Session {
         };
         match result {
             Ok(_) => {
-                let _ = script::clear_rs2b0t_import_at(&self.rs2b0t_import_file());
+                let _ = paths::clear_rs2b0t_import_at(&self.rs2b0t_import_file());
                 self.ui.script_catalog_last_dir = Some(root);
                 if self.persist_ui {
                     crate::ui_state::save(&self.preferences, &self.ui);
@@ -183,7 +185,7 @@ impl Session {
                 self.transpile_queue.remove(index);
                 match result {
                     Ok(()) => {
-                        if self.scripts.js().load_failures().is_empty() {
+                        if self.scripts.load_failure_count() == 0 {
                             self.error = None;
                         }
                         self.transpile_done = self.transpile_done.saturating_add(1);
@@ -211,14 +213,9 @@ impl Session {
         }
     }
 
-    pub(crate) fn enqueue_transpile(
-        &mut self,
-        source: script::ScriptSource,
-        name: String,
-        to_front: bool,
-    ) {
-        if self.scripts.js().js_is_ready(source, &name)
-            || self.scripts.js().get(source, &name).is_none()
+    pub(crate) fn enqueue_transpile(&mut self, source: CardSource, name: String, to_front: bool) {
+        if self.scripts.card_is_prepared(source, &name)
+            || self.scripts.card(source, &name).is_none()
         {
             return;
         }
@@ -245,14 +242,6 @@ impl Session {
         }
     }
 
-    /// Same-folder `./Foo.js` siblings cached for isolate Start.
-    pub(crate) fn sibling_modules_for_card(
-        &self,
-        card: &script::JsCard,
-    ) -> Result<Vec<(String, String)>, String> {
-        host_play::live_start::card_siblings(self.scripts.js(), card)
-    }
-
     /// Load a local JS/TS file into the library (registers a picker card,
     /// persists `~/.274bot/js-scripts.json`), select it for Start, and
     /// remember the parent directory. Errors set [`Session::error`].
@@ -261,11 +250,11 @@ impl Session {
             self.error = Some(format!("script: not a file: {}", path.display()));
             return;
         }
-        match self.scripts.js_mut().load(path) {
+        match self.scripts.load_file(path) {
             Ok(card) => {
+                let sel = card.choice();
                 self.error = None;
-                let sel = script::ScriptSel::Loaded(card.source, card.identity_id());
-                self.script_sel = Some(sel.clone());
+                self.script_sel = Some(sel.duplicate());
                 if let Some(profile) = self.focused_name() {
                     self.set_pending_browse(&profile, sel);
                 }

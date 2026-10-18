@@ -279,19 +279,21 @@ pub struct ScriptStart(ScriptStartKind);
 impl ScriptStart {
     /// Start a compiled card.
     pub fn compiled(
-        id: script::CompiledId,
+        id: crate::scripts::CompiledCardId,
         bag: serde_json::Map<String, serde_json::Value>,
     ) -> Self {
+        let id = id.to_script();
         Self(ScriptStartKind::Compiled { id, bag })
     }
 
     /// Start a loaded JS/TS card.
     pub fn load(
         js: String,
-        shape: script::LoadShape,
+        shape: crate::scripts::LoadShape,
         bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
     ) -> Self {
+        let shape = shape.to_script();
         Self(ScriptStartKind::Load {
             js,
             shape,
@@ -420,11 +422,12 @@ impl ArmMirror {
     }
 
     pub fn native_settings(
-        id: script::CompiledId,
+        id: crate::scripts::CompiledCardId,
         bag: Arc<serde_json::Map<String, serde_json::Value>>,
         live: Option<LiveSettings>,
         assign: bool,
     ) -> Self {
+        let id = id.to_script();
         Self(ArmMirrorKind::NativeSettings {
             id,
             bag,
@@ -1389,6 +1392,22 @@ impl<Io> OperatorSession<Io> {
             self.play.as_ref().map(|play| play.script_state(name)),
             Some(script::RunState::Starting | script::RunState::Running | script::RunState::Paused)
         )
+    }
+
+    /// `name`'s current script paint frame, from its status row.
+    pub fn script_paint(&self, name: &str) -> Option<crate::scripts::PaintFrame> {
+        self.status(name)
+            .and_then(|status| status.script_paint.clone())
+            .map(crate::scripts::PaintFrame::new)
+    }
+
+    /// `name`'s script lifecycle state; `Idle` without a play or a script.
+    pub fn script_state(&self, name: &str) -> crate::scripts::ScriptRunState {
+        self.play
+            .as_ref()
+            .map_or(crate::scripts::ScriptRunState::Idle, |play| {
+                crate::scripts::ScriptRunState::from_script(play.script_state(name))
+            })
     }
 
     /// Whether `name`'s script is paused (its Pause button reads Resume).

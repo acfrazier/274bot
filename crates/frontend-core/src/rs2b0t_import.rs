@@ -2148,7 +2148,7 @@ impl ProfileImport {
         };
         match read_profile_file(&path) {
             Ok(file) => {
-                self.plan = Some(plan_import(&file, vault, scripts.js(), self.choices));
+                self.plan = Some(plan_import(&file, vault, scripts.library(), self.choices));
                 self.file = Some((path, file));
             }
             Err(error) => self.refuse(error.to_string()),
@@ -2180,7 +2180,7 @@ impl ProfileImport {
 
     fn replan<Io>(&mut self, core: &OperatorSession<Io>, scripts: &Scripts) {
         if let (Some((_, file)), Some(vault)) = (self.file.as_ref(), core.vault()) {
-            self.plan = Some(plan_import(file, vault, scripts.js(), self.choices));
+            self.plan = Some(plan_import(file, vault, scripts.library(), self.choices));
         }
     }
 
@@ -2204,7 +2204,7 @@ impl ProfileImport {
             self.refuse(ImportFailure::VaultLocked.to_string());
             return;
         };
-        let plan = plan_import(&file, vault, scripts.js(), self.choices);
+        let plan = plan_import(&file, vault, scripts.library(), self.choices);
         drop(file);
         match apply_import(core, plan) {
             Ok(run) => self.run = Some((path, run)),

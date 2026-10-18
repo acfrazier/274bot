@@ -11,8 +11,25 @@
 //! Operator-facing text is published as one [`Notice`] the front end shows
 //! on its message line, in call order (the last one wins).
 
+mod loadouts;
 mod native;
+mod paint;
+pub mod paths;
+mod vocab;
+pub use loadouts::{
+    copy_equipment_preserving_supplies, unique_loadout_name, worn_slot_label, Loadouts,
+    WORN_SLOT_LAYOUT,
+};
 pub use native::{NativeCommand, NativeDetail, NativeTarget, SchemaView};
+pub use paint::{
+    map_applet_rect, CanvasCache, CanvasOps, CanvasRaster, ChromeBandView, PaintButtonView,
+    PaintFrame, PaintView,
+};
+pub use vocab::{
+    format_setting_value, CardRuntime, CardSource, CompiledCardId, LoadFailureView, LoadShape,
+    LoadStage, LoadedCard, OwnedSchema, SchemaRef, ScriptChoice, ScriptRunState, SettingView,
+    StatusView,
+};
 
 mod marked;
 mod parameter_edit;
@@ -389,73 +406,90 @@ enum LogTo {
 /// Loaded cards remain borrowed from the library, so a Browse render does not
 /// clone source bytes or the whole card.
 #[derive(Debug, Clone, Copy)]
-pub enum BrowseCard<'a> {
+pub struct BrowseCard<'a>(BrowseCardKind<'a>);
+
+#[derive(Debug, Clone, Copy)]
+enum BrowseCardKind<'a> {
     Compiled(&'static script::native::CompiledCard),
     Loaded(&'a script::JsCard),
 }
 
 impl<'a> BrowseCard<'a> {
     pub fn name(self) -> &'a str {
-        match self {
-            Self::Compiled(card) => card.name,
-            Self::Loaded(card) => card.name.as_str(),
+        match self.0 {
+            BrowseCardKind::Compiled(card) => card.name,
+            BrowseCardKind::Loaded(card) => card.name.as_str(),
         }
     }
 
     pub fn description(self) -> &'a str {
-        match self {
-            Self::Compiled(card) => card.description,
-            Self::Loaded(card) => card.description.as_str(),
+        match self.0 {
+            BrowseCardKind::Compiled(card) => card.description,
+            BrowseCardKind::Loaded(card) => card.description.as_str(),
         }
     }
 
     pub fn category(self) -> &'a str {
-        match self {
-            Self::Compiled(card) => card.category,
-            Self::Loaded(card) => card.category.as_str(),
+        match self.0 {
+            BrowseCardKind::Compiled(card) => card.category,
+            BrowseCardKind::Loaded(card) => card.category.as_str(),
         }
     }
 
     pub fn tags(self) -> Option<&'a [String]> {
-        match self {
-            Self::Compiled(_) => None,
-            Self::Loaded(card) => Some(&card.tags),
+        match self.0 {
+            BrowseCardKind::Compiled(_) => None,
+            BrowseCardKind::Loaded(card) => Some(&card.tags),
         }
     }
 
-    pub fn kind(self) -> script::ScriptKind {
-        match self {
-            Self::Compiled(_) => script::ScriptKind::Compiled,
-            Self::Loaded(card) => card.kind,
+    /// How the card runs.
+    pub fn kind(self) -> CardRuntime {
+        match self.0 {
+            BrowseCardKind::Compiled(_) => CardRuntime::Compiled,
+            BrowseCardKind::Loaded(card) => CardRuntime::from_script(card.kind),
         }
     }
 
-    pub fn source(self) -> script::ScriptSource {
-        match self {
-            Self::Compiled(_) => script::ScriptSource::Builtin,
-            Self::Loaded(card) => card.source,
+    /// Where the card came from.
+    pub fn source(self) -> CardSource {
+        match self.0 {
+            BrowseCardKind::Compiled(_) => CardSource::Builtin,
+            BrowseCardKind::Loaded(card) => CardSource::from_script(card.source),
         }
     }
 
     pub fn unloadable(self) -> Option<&'a str> {
-        match self {
-            Self::Compiled(_) => None,
-            Self::Loaded(card) => card.unloadable.as_deref(),
+        match self.0 {
+            BrowseCardKind::Compiled(_) => None,
+            BrowseCardKind::Loaded(card) => card.unloadable.as_deref(),
         }
     }
 
-    pub fn loaded(self) -> Option<&'a script::JsCard> {
-        match self {
-            Self::Compiled(_) => None,
-            Self::Loaded(card) => Some(card),
+    /// The loaded JS card, if this is one.
+    pub fn loaded(self) -> Option<LoadedCard<'a>> {
+        match self.0 {
+            BrowseCardKind::Compiled(_) => None,
+            BrowseCardKind::Loaded(card) => Some(LoadedCard::new(card)),
         }
     }
 
-    pub fn selection(self) -> script::ScriptSel {
-        match self {
-            Self::Compiled(card) => script::ScriptSel::Compiled(card.id),
-            Self::Loaded(card) => script::ScriptSel::Loaded(card.source, card.identity_id()),
+    /// The compiled card's id, if this is one.
+    pub fn compiled_id(self) -> Option<CompiledCardId> {
+        match self.0 {
+            BrowseCardKind::Compiled(card) => Some(CompiledCardId::from_script(card.id)),
+            BrowseCardKind::Loaded(_) => None,
         }
+    }
+
+    /// The card as a picker choice.
+    pub fn selection(self) -> ScriptChoice {
+        ScriptChoice::from_script(match self.0 {
+            BrowseCardKind::Compiled(card) => script::ScriptSel::Compiled(card.id),
+            BrowseCardKind::Loaded(card) => {
+                script::ScriptSel::Loaded(card.source, card.identity_id())
+            }
+        })
     }
 }
 
@@ -468,7 +502,7 @@ pub struct Scripts {
     /// Scenario/live inject merged last on Start.
     inject: Option<Map<String, Value>>,
     /// Per-profile Browse selection, never treated as a successful Start.
-    pending_browse: HashMap<String, script::ScriptSel>,
+    pending_browse: HashMap<String, ScriptChoice>,
     /// Reused editor keys for the currently displayed profile and card.
     parameter_key_cache: Vec<ParameterEditKey>,
     parameter_key_scope: Option<(Option<String>, script::ScriptSel)>,
@@ -530,24 +564,143 @@ impl Scripts {
         }
     }
 
+    /// The operator's card library and legacy per-card store at their
+    /// default paths. A missing library store is a first run; a refused or
+    /// corrupt one is returned as text for the front end to say out loud
+    /// (nothing is saved over a refused store).
+    pub fn open_default() -> (Self, Option<String>) {
+        let mut js = script::JsLibrary::new(script::default_js_store());
+        let restore_error = js.restore().err();
+        (
+            Self::new(js, script::ScriptSettingsStore::with_default_path()),
+            restore_error,
+        )
+    }
+
+    /// The card library, inside this crate.
+    pub(crate) fn library(&self) -> &script::JsLibrary {
+        &self.js
+    }
+
     /// The card library.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn js(&self) -> &script::JsLibrary {
         &self.js
     }
 
     /// The card library, for load/transpile.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn js_mut(&mut self) -> &mut script::JsLibrary {
         &mut self.js
     }
 
-    /// Replace the card library (tests and session setup).
+    /// Replace the card library (tests).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_js(&mut self, js: script::JsLibrary) {
         self.js = js;
     }
 
+    /// Use a fresh card library stored at `store` with its transpile cache
+    /// under `cache_root` (tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn use_library_at(&mut self, store: PathBuf, cache_root: PathBuf) {
+        self.js = script::JsLibrary::with_cache(store, cache_root);
+    }
+
     /// Replace the legacy global per-card store (tests).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_legacy(&mut self, legacy: script::ScriptSettingsStore) {
         self.legacy = legacy;
+    }
+
+    /// The loaded card `name` (a File card's lookup is its path).
+    pub fn card(&self, source: CardSource, name: &str) -> Option<LoadedCard<'_>> {
+        self.js.get(source.to_script(), name).map(LoadedCard::new)
+    }
+
+    /// Every loaded card, in library order.
+    pub fn cards(&self) -> impl ExactSizeIterator<Item = LoadedCard<'_>> + '_ {
+        self.js.cards().iter().map(LoadedCard::new)
+    }
+
+    /// Whether the library holds any card from `source`.
+    pub fn has_cards_from(&self, source: CardSource) -> bool {
+        let source = source.to_script();
+        self.js.cards().iter().any(|card| card.source == source)
+    }
+
+    /// The recorded load failure for a card identity key.
+    pub fn load_failure(&self, identity_key: &str) -> Option<LoadFailureView<'_>> {
+        self.js.load_failure(identity_key).map(LoadFailureView::new)
+    }
+
+    /// Every recorded load failure.
+    pub fn load_failures(&self) -> impl Iterator<Item = LoadFailureView<'_>> + '_ {
+        self.js
+            .load_failures()
+            .into_iter()
+            .map(LoadFailureView::new)
+    }
+
+    /// How many load failures are recorded.
+    pub fn load_failure_count(&self) -> usize {
+        self.js.load_failures().len()
+    }
+
+    /// The recorded load failures as named, copyable lines.
+    pub fn named_failure_output(&self) -> String {
+        self.js.named_failure_output()
+    }
+
+    /// Loaded cards whose JavaScript is not yet prepared, by lookup.
+    pub fn cards_needing_transpile(&self) -> Vec<(CardSource, String)> {
+        self.js
+            .cards_needing_transpile()
+            .into_iter()
+            .map(|(source, name)| (CardSource::from_script(source), name))
+            .collect()
+    }
+
+    /// Whether a loaded card's JavaScript is prepared.
+    pub fn card_is_prepared(&self, source: CardSource, name: &str) -> bool {
+        self.js.js_is_ready(source.to_script(), name)
+    }
+
+    /// Load a local JS/TS file into the library (registering a picker card
+    /// and persisting the library store). Returns the loaded card.
+    pub fn load_file(&mut self, path: &Path) -> Result<LoadedCard<'_>, String> {
+        let card = self.js.load(path)?;
+        let lookup = card.identity_id();
+        self.js
+            .get(card.source, &lookup)
+            .map(LoadedCard::new)
+            .ok_or_else(|| format!("loaded card {lookup} is missing from the library"))
+    }
+
+    /// Same-folder `./Foo.js` sibling modules a loaded card imports, read
+    /// for an isolate Start.
+    pub fn card_siblings(
+        &self,
+        source: CardSource,
+        lookup: &str,
+    ) -> Result<Vec<(String, String)>, String> {
+        let card = self
+            .js
+            .get(source.to_script(), lookup)
+            .ok_or_else(|| format!("unavailable: {lookup}"))?;
+        host_play::live_start::card_siblings(&self.js, card)
+    }
+
+    /// Write one legacy global per-card override and save the store.
+    pub fn set_legacy_value(
+        &mut self,
+        source: CardSource,
+        name: &str,
+        id: &str,
+        value: Value,
+    ) -> Result<(), String> {
+        self.legacy.set_value(source.to_script(), name, id, value);
+        self.legacy.save()
     }
 
     /// Disjoint library, legacy store and inject bag for live Start.
@@ -567,7 +720,8 @@ impl Scripts {
         &self.legacy
     }
 
-    /// Legacy global per-card overrides, for writes.
+    /// Legacy global per-card overrides, for writes (tests).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn legacy_mut(&mut self) -> &mut script::ScriptSettingsStore {
         &mut self.legacy
     }
@@ -606,7 +760,8 @@ impl Scripts {
         self.sync.dismiss_restart_prompt();
     }
 
-    pub fn restart_required_for(&self, profile: &str, selection: &script::ScriptSel) -> bool {
+    pub fn restart_required_for(&self, profile: &str, selection: &ScriptChoice) -> bool {
+        let selection = selection.as_script();
         self.sync
             .restart_card(profile)
             .is_some_and(|required| required == selection)
@@ -806,31 +961,57 @@ impl Scripts {
     pub fn browse_cards(&self) -> impl Iterator<Item = BrowseCard<'_>> {
         script::compiled_cards()
             .iter()
-            .map(BrowseCard::Compiled)
-            .chain(self.js.cards().iter().map(BrowseCard::Loaded))
+            .map(|card| BrowseCard(BrowseCardKind::Compiled(card)))
+            .chain(
+                self.js
+                    .cards()
+                    .iter()
+                    .map(|card| BrowseCard(BrowseCardKind::Loaded(card))),
+            )
     }
 
     // ---- assignment and Browse selection -------------------------------
 
     /// `profile`'s last successful assignment (as saved, staged edits
     /// included).
-    pub fn assignment<Io>(core: &OperatorSession<Io>, profile: &str) -> Option<ScriptAssignment> {
+    pub(crate) fn assignment<Io>(
+        core: &OperatorSession<Io>,
+        profile: &str,
+    ) -> Option<ScriptAssignment> {
         core.vault()
             .and_then(|v| v.get(profile))
             .and_then(|p| p.settings.script_assignment.clone())
     }
 
-    /// The card a profile's script heading names: its pending Browse
-    /// selection, else its last successful assignment.
-    pub fn heading<Io>(
-        &self,
+    /// The display name of `profile`'s last successful assignment.
+    pub fn assignment_name<'a, Io>(
+        core: &'a OperatorSession<Io>,
+        profile: &str,
+    ) -> Option<&'a str> {
+        core.vault()
+            .and_then(|v| v.get(profile))
+            .and_then(|p| p.settings.script_assignment.as_ref())
+            .map(|a| a.display_name.as_str())
+    }
+
+    /// `profile`'s last successful assignment (tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn profile_assignment<Io>(
         core: &OperatorSession<Io>,
         profile: &str,
-    ) -> Option<script::ScriptSel> {
+    ) -> Option<ScriptAssignment> {
+        Self::assignment(core, profile)
+    }
+
+    /// The card a profile's script heading names: its pending Browse
+    /// selection, else its last successful assignment.
+    pub fn heading<Io>(&self, core: &OperatorSession<Io>, profile: &str) -> Option<ScriptChoice> {
         if let Some(sel) = self.pending_browse.get(profile) {
-            return Some(sel.clone());
+            return Some(sel.duplicate());
         }
-        Self::assignment(core, profile).and_then(|a| sel_from_assignment(&a))
+        Self::assignment(core, profile)
+            .and_then(|a| sel_from_assignment(&a))
+            .map(ScriptChoice::from_script)
     }
 
     /// Whether `profile`'s Browse selection differs from its assignment.
@@ -840,15 +1021,15 @@ impl Scripts {
         };
         match Self::assignment(core, profile) {
             None => true,
-            Some(asg) => sel_from_assignment(&asg).as_ref() != Some(pending),
+            Some(asg) => sel_from_assignment(&asg).as_ref() != Some(pending.as_script()),
         }
     }
 
-    pub fn set_pending_browse(&mut self, profile: &str, sel: script::ScriptSel) {
+    pub fn set_pending_browse(&mut self, profile: &str, sel: ScriptChoice) {
         self.pending_browse.insert(profile.to_string(), sel);
     }
 
-    pub fn pending_browse(&self, profile: &str) -> Option<&script::ScriptSel> {
+    pub fn pending_browse(&self, profile: &str) -> Option<&ScriptChoice> {
         self.pending_browse.get(profile)
     }
 
@@ -1012,11 +1193,13 @@ impl Scripts {
         &mut self,
         core: &mut OperatorSession<Io>,
         profile: &str,
-        source: script::ScriptSource,
+        source: CardSource,
         name: &str,
         path: &Path,
-        schema: &[script::SettingDef],
+        schema: SchemaRef<'_>,
     ) -> Map<String, Value> {
+        let schema = schema.defs();
+        let source = source.to_script();
         let key = script::card_identity_key(source, path, name);
         let overrides = self.profile_overrides(core, profile, &key, name);
         self.run_bag(core, profile, schema, &overrides)
@@ -1114,10 +1297,12 @@ impl Scripts {
     /// The legacy global bag for a card (no profile focused).
     pub fn legacy_bag(
         &self,
-        source: script::ScriptSource,
+        source: CardSource,
         name: &str,
-        schema: &[script::SettingDef],
+        schema: SchemaRef<'_>,
     ) -> Map<String, Value> {
+        let schema = schema.defs();
+        let source = source.to_script();
         self.legacy
             .merged_bag(source, name, schema, self.inject.as_ref())
     }
@@ -1132,12 +1317,13 @@ impl Scripts {
         &mut self,
         core: &mut OperatorSession<Io>,
         profile: &str,
-        source: script::ScriptSource,
+        source: CardSource,
         name: &str,
         path: &Path,
         id: &str,
         value: Value,
     ) -> Result<OperationId, String> {
+        let source = source.to_script();
         let key = script::card_identity_key(source, path, name);
         self.claim_legacy_for(core, profile, &key, name);
         let mut bag = core
@@ -1334,16 +1520,17 @@ impl Scripts {
         &mut self,
         core: &mut OperatorSession<Io>,
         profile: &str,
-        heading: Option<&script::ScriptSel>,
+        heading: Option<&ScriptChoice>,
         catalog_root: Option<&Path>,
     ) -> Result<(), String> {
+        let heading = heading.map(ScriptChoice::as_script);
         if script_active(core, profile) {
             return Err("script already active: stop it first".into());
         }
         let sel = self
             .pending_browse
             .get(profile)
-            .cloned()
+            .map(|sel| sel.as_script().clone())
             .or_else(|| heading.cloned())
             .or_else(|| Self::assignment(core, profile).and_then(|a| sel_from_assignment(&a)))
             .ok_or_else(|| "no assignment".to_string())?;
@@ -1424,9 +1611,13 @@ impl Scripts {
         match sel {
             script::ScriptSel::Compiled(id) => {
                 let bag = self
-                    .compiled_bag(core, profile, *id)
+                    .compiled_bag(core, profile, CompiledCardId::from_script(*id))
                     .map_err(script::StartLoadError::Refused)?;
-                core.start_script(profile, ScriptStart::compiled(*id, bag), None)?;
+                core.start_script(
+                    profile,
+                    ScriptStart::compiled(CompiledCardId::from_script(*id), bag),
+                    None,
+                )?;
                 self.starts.insert(
                     profile.to_string(),
                     PendingStart {
@@ -1948,7 +2139,7 @@ fn arm_flags<Io>(core: &OperatorSession<Io>, name: &str) -> (bool, bool) {
 }
 
 /// The Browse selection a saved assignment names.
-pub fn sel_from_assignment(asg: &ScriptAssignment) -> Option<script::ScriptSel> {
+pub(crate) fn sel_from_assignment(asg: &ScriptAssignment) -> Option<script::ScriptSel> {
     if asg.source_kind == "compiled" {
         return script::compiled_id(&asg.identity).map(script::ScriptSel::Compiled);
     }
@@ -1964,6 +2155,14 @@ pub(crate) fn assignment_has_sel(asg: &ScriptAssignment) -> bool {
         return script::compiled_id(&asg.identity).is_some();
     }
     script::parse_source_kind(&asg.source_kind).is_some()
+}
+
+/// Make `dst` a copy of `src`, reusing `dst`'s buffer and elements.
+pub(crate) fn refill<T: Clone>(dst: &mut Vec<T>, src: &[T]) {
+    dst.truncate(src.len());
+    let kept = dst.len();
+    dst.clone_from_slice(&src[..kept]);
+    dst.extend_from_slice(&src[kept..]);
 }
 
 /// The library lookup for a card: a File card by path, others by name.

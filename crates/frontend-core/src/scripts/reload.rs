@@ -9,6 +9,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use super::{CardSource, ScriptChoice};
 use super::{PendingCard, PendingStart, Scripts, StartKind};
 use crate::session::{OperatorSession, ScriptStart};
 
@@ -141,8 +142,8 @@ impl ReloadWarning {
     }
 
     /// Script source of the candidate.
-    pub fn source(&self) -> script::ScriptSource {
-        self.source
+    pub fn source(&self) -> CardSource {
+        CardSource::from_script(self.source)
     }
 
     /// Library lookup name.
@@ -661,11 +662,8 @@ impl Scripts {
 
     /// Request one card's preparation through WorkAdmission for the panel
     /// warmup queue. Full is retained as one bounded demand.
-    pub fn request_transpile(
-        &mut self,
-        source: script::ScriptSource,
-        lookup: &str,
-    ) -> Result<(), String> {
+    pub fn request_transpile(&mut self, source: CardSource, lookup: &str) -> Result<(), String> {
+        let source = source.to_script();
         self.request_transpile_for(TranspileClient::PanelQueue, source, lookup)
             .map(|_| ())
     }
@@ -675,9 +673,10 @@ impl Scripts {
     /// the loader should retain its request and retry on a later dispatch.
     pub fn request_external_loader_transpile(
         &mut self,
-        source: script::ScriptSource,
+        source: CardSource,
         lookup: &str,
     ) -> Result<bool, String> {
+        let source = source.to_script();
         self.request_transpile_for(TranspileClient::ExternalLoader, source, lookup)
     }
 
@@ -687,9 +686,10 @@ impl Scripts {
 
     pub fn take_external_loader_transpile_result(
         &mut self,
-        source: script::ScriptSource,
+        source: CardSource,
         lookup: &str,
     ) -> Option<Result<(), String>> {
+        let source = source.to_script();
         self.take_transpile_result_for(TranspileClient::ExternalLoader, source, lookup)
     }
 
@@ -774,9 +774,7 @@ impl Scripts {
             })
     }
 
-    pub fn take_transpile_result(
-        &mut self,
-    ) -> Option<(script::ScriptSource, String, Result<(), String>)> {
+    pub fn take_transpile_result(&mut self) -> Option<(CardSource, String, Result<(), String>)> {
         let result = self.async_work.transpile_result.as_ref()?;
         if result.generation != self.async_work.transpile_generation
             || result.client != TranspileClient::PanelQueue
@@ -784,7 +782,11 @@ impl Scripts {
             return None;
         }
         let result = self.async_work.transpile_result.take().unwrap();
-        Some((result.source, result.lookup, result.result))
+        Some((
+            CardSource::from_script(result.source),
+            result.lookup,
+            result.result,
+        ))
     }
 
     fn take_transpile_result_for(
@@ -826,11 +828,8 @@ impl Scripts {
 
     /// Synchronous receipt for non-interactive live setup before its session
     /// begins pumping. Interactive callers use `request_transpile`.
-    pub fn transpile_blocking(
-        &mut self,
-        source: script::ScriptSource,
-        lookup: &str,
-    ) -> Result<(), String> {
+    pub fn transpile_blocking(&mut self, source: CardSource, lookup: &str) -> Result<(), String> {
+        let source = source.to_script();
         loop {
             if self.request_transpile_for(TranspileClient::LiveSetup, source, lookup)? {
                 break;
@@ -1552,10 +1551,10 @@ impl Scripts {
                 let bag = self.merged_profile_bag(
                     core,
                     &profile,
-                    source,
+                    CardSource::from_script(source),
                     &card.name,
                     &card.path,
-                    &card.settings_schema,
+                    super::SchemaRef::new(&card.settings_schema),
                 );
                 let bag = (!bag.is_empty()).then_some(bag);
                 let fingerprint = self
@@ -1614,8 +1613,12 @@ impl Scripts {
                     );
                     return;
                 }
-                let start =
-                    ScriptStart::load(card.js.clone(), card.shape, bag.clone(), siblings.clone());
+                let start = ScriptStart::load(
+                    card.js.clone(),
+                    super::LoadShape::from_script(card.shape),
+                    bag.clone(),
+                    siblings.clone(),
+                );
                 match core.start_script(&profile, start, Some(card.identity_key())) {
                     Ok(_) => {
                         self.starts.insert(
@@ -1824,29 +1827,29 @@ impl Scripts {
         &self,
         core: &OperatorSession<Io>,
         profile: Option<&str>,
-        heading: Option<&script::ScriptSel>,
-    ) -> Option<(script::ScriptSource, String)> {
+        heading: Option<&ScriptChoice>,
+    ) -> Option<(CardSource, String)> {
+        let heading = heading.map(ScriptChoice::as_script);
         let profile = profile?;
         let sel = self
             .pending_browse
             .get(profile)
-            .cloned()
+            .map(|sel| sel.as_script().clone())
             .or_else(|| heading.cloned())
             .or_else(|| {
                 Self::assignment(core, profile).and_then(|a| super::sel_from_assignment(&a))
             })?;
         match sel {
-            script::ScriptSel::Loaded(source, lookup) => Some((source, lookup)),
+            script::ScriptSel::Loaded(source, lookup) => {
+                Some((CardSource::from_script(source), lookup))
+            }
             script::ScriptSel::Compiled(_) => None,
         }
     }
 
     /// Whether the next Reload of `target` confirms a shown warning.
-    pub fn reload_confirmation_pending(
-        &self,
-        target: Option<&(script::ScriptSource, String)>,
-    ) -> bool {
-        target.is_some_and(|(source, lookup)| self.manual_pending_binds(*source, lookup))
+    pub fn reload_confirmation_pending(&self, target: Option<&(CardSource, String)>) -> bool {
+        target.is_some_and(|(source, lookup)| self.manual_pending_binds(source.to_script(), lookup))
     }
 
     fn submit_preparation(&mut self, request: PreparationRequest) {
@@ -2340,7 +2343,7 @@ impl Scripts {
     pub fn begin_reload<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
-        target: Option<(script::ScriptSource, String)>,
+        target: Option<(CardSource, String)>,
     ) {
         if self.reload.preparation.is_some() || self.reload.validation.is_some() {
             return;
@@ -2350,6 +2353,7 @@ impl Scripts {
             self.fail_reload("reload", "no script to reload".into());
             return;
         };
+        let source = source.to_script();
         let confirming = self.manual_pending_binds(source, &lookup);
         let confirmation_fingerprint = if confirming {
             self.reload
@@ -2479,17 +2483,22 @@ impl Scripts {
         let bag = self.merged_profile_bag(
             core,
             profile,
-            card.source,
+            CardSource::from_script(card.source),
             &card.name,
             &card.path,
-            &card.settings_schema,
+            super::SchemaRef::new(&card.settings_schema),
         );
         let bag = (!bag.is_empty()).then_some(bag);
         #[cfg(any(test, feature = "test-support"))]
         if self.fail_reload_start_for.as_deref() == Some(profile) {
             return Err("injected start failure".into());
         }
-        let start = ScriptStart::load(card.js.clone(), card.shape, bag, prepared.siblings.clone());
+        let start = ScriptStart::load(
+            card.js.clone(),
+            super::LoadShape::from_script(card.shape),
+            bag,
+            prepared.siblings.clone(),
+        );
         if let Err(e) = core.start_script(profile, start, Some(card.identity_key())) {
             return self.js.record_start_result(card, Err(e));
         }

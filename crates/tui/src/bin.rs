@@ -58,6 +58,9 @@ use ratatui::Terminal;
 use vault::{Profile, Vault};
 
 use frontend_core::resources::background_ack_text;
+use frontend_core::scripts::{
+    CardSource, CompiledCardId, Loadouts, OwnedSchema, PaintFrame, ScriptChoice,
+};
 use frontend_core::UiPreferences;
 use frontend_core::{
     load_map_bake_choice, persist_map_bake_choice, GuardianEdit, HeadlessSurface, MapBakeGate,
@@ -485,7 +488,7 @@ pub struct TuiSession {
     live_wait_script_stop: Option<&'static str>,
     live_stop_wait_started: Option<Instant>,
     /// The Browse-selected card (catalog Start after seed, or operator Start).
-    script_sel: Option<script::ScriptSel>,
+    script_sel: Option<ScriptChoice>,
     /// Shared script coordination (card library and catalog, assignment,
     /// per-profile parameters, Start/Stop all, reload, Apply to all): the
     /// same owner the panel uses.
@@ -505,7 +508,7 @@ pub struct TuiSession {
     preferences: UiPreferences,
     /// Process-wide loadout presets: the form's editor over the process
     /// local-state service (slots read the same file through it).
-    loadouts: script::LoadoutsStore,
+    loadouts: Loadouts,
     /// Last directory visited in the out-of-tree Load file browser.
     script_load_last_dir: Option<PathBuf>,
     /// Core projection generations the app last copied (fleet rows, the
@@ -544,18 +547,19 @@ impl TuiSession {
     fn with_instance(options: PlayOptions, _instance: host_play::InstancePermit) -> Self {
         #[cfg(test)]
         script::IsolatedEnv::ensure_thread();
-        let mut js = script::JsLibrary::new(script::default_js_store());
         // A missing store is a first run; a refused or corrupt one is said out
         // loud (and nothing is saved over a refused one).
-        if let Err(error) = js.restore() {
+        let (scripts, restore_error) = frontend_core::Scripts::open_default();
+        if let Some(error) = restore_error {
             eprintln!("tui-play: {error}");
         }
         let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::new()));
         // The composition root opens the process local-state service once;
         // every consumer clones these preferences and the loadouts form
         // writes through the same service.
-        let service =
-            LocalStateService::open_process(StateRoot::new(script::bot_home().join(".274bot")));
+        let service = LocalStateService::open_process(StateRoot::new(
+            frontend_core::scripts::paths::bot_home().join(".274bot"),
+        ));
         let mut core = OperatorSession::new(_instance);
         core.bind_local_state(Arc::clone(&service));
         let preferences = core
@@ -606,17 +610,14 @@ impl TuiSession {
             live_wait_script_stop: None,
             live_stop_wait_started: None,
             script_sel: None,
-            scripts: frontend_core::Scripts::new(
-                js,
-                script::ScriptSettingsStore::with_default_path(),
-            ),
+            scripts,
             rs2b0t_catalog_open: false,
             rs2b0t_catalog_dir: Self::default_catalog_browse_dir(),
             profile_import: frontend_core::rs2b0t_import::ProfileImport::new(),
             profile_import_preview_pending: false,
             script_category_order: Vec::new(),
             preferences: preferences.share(),
-            loadouts: script::LoadoutsStore::over(Arc::new(service.operator_loadouts())),
+            loadouts: Loadouts::operator(&service),
             script_load_last_dir: None,
             copied_rows: None,
             copied_view: None,
@@ -674,7 +675,7 @@ impl TuiSession {
     fn catalog_root(&self) -> Option<PathBuf> {
         match self.server_profile.as_ref() {
             Some(profile) => profile.catalog_root().map(Path::to_path_buf),
-            None => script::rs2b0t_root(),
+            None => frontend_core::scripts::paths::rs2b0t_root(),
         }
     }
 
@@ -683,16 +684,20 @@ impl TuiSession {
     /// `None` only when the merged bag is empty.
     fn pending_settings_bag(
         &self,
-        source: script::ScriptSource,
+        source: CardSource,
         name: &str,
-        schema: &[script::SettingDef],
     ) -> Option<serde_json::Map<String, serde_json::Value>> {
+        let none = OwnedSchema::default();
+        let schema = self
+            .scripts
+            .card(source, name)
+            .map_or_else(|| none.as_ref(), |card| card.schema());
         let merged = self.scripts.legacy_bag(source, name, schema);
         (!merged.is_empty()).then_some(merged)
     }
 
     fn default_catalog_browse_dir() -> PathBuf {
-        let home = script::bot_home();
+        let home = frontend_core::scripts::paths::bot_home();
         if home.as_os_str() == "." {
             PathBuf::from("/")
         } else {
@@ -1265,7 +1270,7 @@ impl TuiSession {
             self.fill_rs2b0t_cards_for_live_start()?;
             for member in fleet.members(&names)? {
                 self.scripts
-                    .transpile_blocking(script::ScriptSource::Catalog, member.card)?;
+                    .transpile_blocking(CardSource::Catalog, member.card)?;
             }
             let scripts = &mut self.scripts;
             let (js, legacy, inject) = scripts.live_start_parts();
@@ -1282,27 +1287,19 @@ impl TuiSession {
         } else if let Some(file_name) = start_file {
             let path = script::live_example_path(file_name)
                 .ok_or_else(|| format!("no in-tree example {file_name}"))?;
-            let loaded = self
+            let choice = self
                 .scripts
-                .js_mut()
-                .load(&path)
-                .map_err(|e| format!("load {file_name}: {e}"))?;
-            let identity = loaded.identity_id();
-            let card = self
-                .scripts
-                .js()
+                .load_file(&path)
+                .map_err(|e| format!("load {file_name}: {e}"))?
+                .choice();
+            let identity = choice.label().to_owned();
+            let (js, _, _) = self.scripts.live_start_parts();
+            let card = js
                 .get(script::ScriptSource::File, &identity)
                 .cloned()
                 .ok_or_else(|| format!("file example {file_name} missing after identity load"))?;
-            self.script_sel = Some(script::ScriptSel::Loaded(
-                script::ScriptSource::File,
-                identity.clone(),
-            ));
-            let bag = self.pending_settings_bag(
-                script::ScriptSource::File,
-                &identity,
-                &card.settings_schema,
-            );
+            self.script_sel = Some(choice);
+            let bag = self.pending_settings_bag(CardSource::File, &identity);
             let siblings = self.sibling_modules_for_card(&card)?;
             *self.pending_script.lock().unwrap() = live_card_starts(
                 live_core,
@@ -1314,32 +1311,30 @@ impl TuiSession {
                 &pair_watch,
             )?;
         } else if let Some(card_name) = start_script {
-            if let Some(id) = script::compiled_id(card_name) {
-                self.script_sel = Some(script::ScriptSel::Compiled(id));
+            if let (Some(id), Some(start_id)) = (
+                CompiledCardId::lookup(card_name),
+                script::compiled_id(card_name),
+            ) {
+                self.script_sel = Some(ScriptChoice::compiled(id));
                 let bag = self.scripts.compiled_bag(&self.core, &names[0], id)?;
-                *self.pending_script.lock().unwrap() =
-                    vec![PendingCatalogStart::compiled(names[0].clone(), id, bag)];
+                *self.pending_script.lock().unwrap() = vec![PendingCatalogStart::compiled(
+                    names[0].clone(),
+                    start_id,
+                    bag,
+                )];
             } else {
                 self.fill_rs2b0t_cards_for_live_start()?;
                 self.scripts
-                    .transpile_blocking(script::ScriptSource::Catalog, card_name)?;
-                let card = self
-                    .scripts
-                    .js()
+                    .transpile_blocking(CardSource::Catalog, card_name)?;
+                let (js, _, _) = self.scripts.live_start_parts();
+                let card = js
                     .get(script::ScriptSource::Catalog, card_name)
                     .cloned()
                     .ok_or_else(|| {
                         format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
                     })?;
-                self.script_sel = Some(script::ScriptSel::Loaded(
-                    script::ScriptSource::Catalog,
-                    card_name.to_string(),
-                ));
-                let bag = self.pending_settings_bag(
-                    script::ScriptSource::Catalog,
-                    card_name,
-                    &card.settings_schema,
-                );
+                self.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, card_name));
+                let bag = self.pending_settings_bag(CardSource::Catalog, card_name);
                 let siblings = self.sibling_modules_for_card(&card)?;
                 *self.pending_script.lock().unwrap() = live_card_starts(
                     live_core,
@@ -1377,10 +1372,11 @@ impl TuiSession {
 
     /// The sibling modules a card's isolate resolves at Start.
     fn sibling_modules_for_card(
-        &self,
+        &mut self,
         card: &script::JsCard,
     ) -> Result<Vec<(String, String)>, String> {
-        live_start::card_siblings(self.scripts.js(), card)
+        let (js, _, _) = self.scripts.live_start_parts();
+        live_start::card_siblings(js, card)
     }
 
     fn map_members(&self) -> bool {
@@ -1822,17 +1818,17 @@ impl TuiSession {
                     play.queue_wire(&name, WireCmd::Answer(option as i32))
                 }
                 ChatAction::PaintButton(index) => {
-                    if let Some(paint) = app.chat_data.script_paint.as_ref() {
-                        if let Some(id) = paint.buttons.get(index).map(|b| b.id.clone()) {
-                            play.script_paint_click(&name, &id, paint.generation);
+                    if let Some(paint) = app.chat_data.script_paint.as_ref().map(PaintFrame::view) {
+                        if let Some(id) = paint.buttons().nth(index).map(|b| b.id().to_owned()) {
+                            play.script_paint_click(&name, &id, paint.generation());
                         }
                     }
                 }
                 ChatAction::PaintChrome(index) => {
-                    if let Some(paint) = app.chat_data.script_paint.as_ref() {
+                    if let Some(paint) = app.chat_data.script_paint.as_ref().map(PaintFrame::view) {
                         let rows = super::chat::paint_chrome_rows(paint);
                         if let Some((key, select_name, _)) = rows.get(index) {
-                            play.script_paint_select(&name, key, select_name, paint.generation);
+                            play.script_paint_select(&name, key, select_name, paint.generation());
                         }
                     }
                 }
@@ -1850,7 +1846,7 @@ impl TuiSession {
             return Ok(());
         };
         self.scripts
-            .fill_catalog_blocking(&root, &script::default_rs2b0t_path_file())
+            .fill_catalog_blocking(&root, &frontend_core::scripts::paths::rs2b0t_path_file())
             .map_err(|error| error.to_string())
     }
 
@@ -1880,7 +1876,9 @@ impl TuiSession {
             return;
         }
         self.scripts.mark_catalog_filled();
-        if script::rs2b0t_import_deferred_at(&script::default_rs2b0t_import_file()) {
+        if frontend_core::scripts::paths::rs2b0t_import_deferred_at(
+            &frontend_core::scripts::paths::rs2b0t_import_file(),
+        ) {
             return;
         }
         self.rs2b0t_catalog_open = true;
@@ -1891,7 +1889,9 @@ impl TuiSession {
     }
 
     fn defer_rs2b0t_catalog(&mut self, app: &mut TuiApp) {
-        let _ = script::set_rs2b0t_import_deferred_at(&script::default_rs2b0t_import_file());
+        let _ = frontend_core::scripts::paths::set_rs2b0t_import_deferred_at(
+            &frontend_core::scripts::paths::rs2b0t_import_file(),
+        );
         self.rs2b0t_catalog_open = false;
         app.rs2b0t_catalog_open = false;
     }
@@ -1991,11 +1991,11 @@ impl TuiSession {
         if !rs2b0t_root_has_index(root) {
             return Err(format!(
                 "no catalog at {}",
-                script::registry_index_path(root).display()
+                frontend_core::scripts::paths::registry_index_path(root).display()
             ));
         }
         self.scripts
-            .request_catalog_import(root, &script::default_rs2b0t_path_file())
+            .request_catalog_import(root, &frontend_core::scripts::paths::rs2b0t_path_file())
             .map_err(|error| error.to_string())
     }
 
@@ -2018,12 +2018,12 @@ impl TuiSession {
     /// Operator Start on the focused profile: `sel` becomes its pending
     /// selection and Starts with its own parameters; the assignment is
     /// saved once the Start is Ready (the same core path as the panel).
-    fn script_start(&mut self, app: &mut TuiApp, sel: &script::ScriptSel) {
+    fn script_start(&mut self, app: &mut TuiApp, sel: &ScriptChoice) {
         let Some(name) = app.focused_name() else {
             app.error = Some("script: no focused profile".into());
             return;
         };
-        self.scripts.set_pending_browse(&name, sel.clone());
+        self.scripts.set_pending_browse(&name, sel.duplicate());
         let root = self.start_catalog_root();
         let result = self
             .scripts
@@ -2047,7 +2047,9 @@ impl TuiSession {
         if let Some((_, result)) = self.scripts.take_catalog_import_result() {
             match result {
                 Ok(_) => {
-                    let _ = script::clear_rs2b0t_import_at(&script::default_rs2b0t_import_file());
+                    let _ = frontend_core::scripts::paths::clear_rs2b0t_import_at(
+                        &frontend_core::scripts::paths::rs2b0t_import_file(),
+                    );
                     self.rs2b0t_catalog_open = false;
                     app.rs2b0t_catalog_open = false;
                     app.error = None;
@@ -2136,7 +2138,7 @@ impl TuiSession {
     /// Save the selected script as the assignment of every marked bot; the
     /// one bulk report names each bot that could not take it.
     fn script_assign_marked(&mut self, app: &mut TuiApp) {
-        let Some(card) = app.script_sel.clone() else {
+        let Some(card) = app.script_sel.as_ref().map(ScriptChoice::duplicate) else {
             app.error = Some(frontend_core::ASSIGN_NO_CARD.into());
             return;
         };
@@ -2155,7 +2157,7 @@ impl TuiSession {
     /// Assign the selected script to every marked bot and start it there
     /// through the paced Start permit; the running Start report follows.
     fn script_restart_marked(&mut self, app: &mut TuiApp) {
-        let Some(card) = app.script_sel.clone() else {
+        let Some(card) = app.script_sel.as_ref().map(ScriptChoice::duplicate) else {
             app.error = Some(frontend_core::ASSIGN_RESTART_NO_CARD.into());
             return;
         };
@@ -2174,7 +2176,10 @@ impl TuiSession {
     /// the marked bots (the same core command as the panel's Fleet window)
     /// and ask to confirm the frozen scope; nothing is written before that.
     fn prepare_apply_settings_marked(&mut self, app: &mut TuiApp) {
-        let (Some(source), Some(card)) = (app.focused_name(), app.script_sel.clone()) else {
+        let (Some(source), Some(card)) = (
+            app.focused_name(),
+            app.script_sel.as_ref().map(ScriptChoice::duplicate),
+        ) else {
             app.error = Some("Apply to marked: focus a bot and select a script".into());
             return;
         };
@@ -2243,12 +2248,11 @@ impl TuiSession {
         self.apply_script_notice(app);
     }
 
-    fn loaded_params_card(&self, app: &TuiApp) -> Option<(script::ScriptSource, String, PathBuf)> {
-        let script::ScriptSel::Loaded(source, lookup) = app.params_card()? else {
-            return None;
-        };
-        let card = self.scripts.js().get(source, &lookup)?;
-        Some((source, card.name.clone(), card.path.clone()))
+    fn loaded_params_card(&self, app: &TuiApp) -> Option<(CardSource, String, PathBuf)> {
+        let choice = app.params_card()?;
+        let (source, lookup) = choice.loaded_card()?;
+        let card = self.scripts.card(source, lookup)?;
+        Some((source, card.name().to_owned(), card.path().to_path_buf()))
     }
 
     fn params_bag(
@@ -2256,7 +2260,7 @@ impl TuiSession {
         app: &TuiApp,
         profile: &str,
     ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
-        if let Some(script::ScriptSel::Compiled(id)) = app.params_card() {
+        if let Some(id) = app.params_card().and_then(|choice| choice.compiled_id()) {
             return self
                 .scripts
                 .compiled_edit_bag(&self.core, Some(profile), id);
@@ -2270,7 +2274,7 @@ impl TuiSession {
             source,
             &name,
             &path,
-            &app.params_schema,
+            app.params_schema.as_ref(),
         ))
     }
 
@@ -2319,14 +2323,15 @@ impl TuiSession {
         {
             if let Some(field) = app
                 .params_schema
+                .as_ref()
                 .iter()
-                .filter(|def| script::setting_visible(def.show_if.as_deref(), &app.params_bag))
+                .filter(|def| def.visible(&app.params_bag))
                 .nth(app.params_state.cursor)
             {
                 let edit_key = frontend_core::scripts::ParameterEditKey::new(
                     Some(&profile),
                     &selection,
-                    &field.id,
+                    field.id(),
                 );
                 self.scripts.discard_parameter_text(&edit_key);
             }
@@ -2351,7 +2356,7 @@ impl TuiSession {
         let Some(profile) = app.focused_name() else {
             return;
         };
-        let result = if let Some(script::ScriptSel::Compiled(id)) = app.params_card() {
+        let result = if let Some(id) = app.params_card().and_then(|choice| choice.compiled_id()) {
             self.scripts
                 .prepare_compiled_settings_sync(&self.core, &profile, id, None)
         } else if let Some((source, name, path)) = self.loaded_params_card(app) {
@@ -2412,14 +2417,18 @@ impl TuiSession {
     /// Load a local JS bot file into the library, select it for Start,
     /// and persist the store. Errors land on the strip.
     fn script_load(&mut self, app: &mut TuiApp, path: &Path) {
-        match self.scripts.js_mut().load(path) {
-            Ok(card) => {
-                app.script_sel = Some(script::ScriptSel::Loaded(card.source, card.name));
+        let loaded = self
+            .scripts
+            .load_file(path)
+            .map(|card| ScriptChoice::loaded(card.source(), card.name()));
+        match loaded {
+            Ok(choice) => {
+                app.script_sel = Some(choice);
                 app.browse_changed = true;
-                app.error = if self.scripts.js().load_failures().is_empty() {
+                app.error = if self.scripts.load_failure_count() == 0 {
                     None
                 } else {
-                    Some(self.scripts.js().named_failure_output())
+                    Some(self.scripts.named_failure_output())
                 };
                 if let Some(parent) = path.parent() {
                     self.script_load_last_dir = Some(parent.to_path_buf());
@@ -2427,8 +2436,8 @@ impl TuiSession {
                 }
             }
             Err(e) => {
-                app.error = if self.scripts.js().load_failures().len() > 1 {
-                    Some(self.scripts.js().named_failure_output())
+                app.error = if self.scripts.load_failure_count() > 1 {
+                    Some(self.scripts.named_failure_output())
                 } else {
                     Some(format!("script: {e}"))
                 };
@@ -2725,7 +2734,7 @@ impl TuiSession {
         if std::mem::take(&mut app.browse_changed) {
             if let (Some(name), Some(sel)) = (self.last_focused.as_deref(), app.script_sel.as_ref())
             {
-                self.scripts.set_pending_browse(name, sel.clone());
+                self.scripts.set_pending_browse(name, sel.duplicate());
             }
         }
         // The script heading follows the focused profile: reload when the
@@ -2739,10 +2748,8 @@ impl TuiSession {
                 .as_deref()
                 .and_then(|n| self.scripts.heading(&self.core, n));
             if heading.as_ref().is_some_and(|sel| {
-                matches!(
-                    sel,
-                    script::ScriptSel::Loaded(script::ScriptSource::Catalog, _)
-                )
+                sel.loaded_card()
+                    .is_some_and(|(source, _)| source == CardSource::Catalog)
             }) {
                 self.fill_rs2b0t_cards_once();
             }
@@ -2793,35 +2800,34 @@ impl TuiSession {
         }
         app.script_category_order = self.script_category_order.clone();
         app.params_unavailable = None;
-        match &app.script_sel {
-            Some(script::ScriptSel::Loaded(source, name)) => {
-                if let Some(card) = self.scripts.js().get(*source, name) {
-                    app.params_schema.clone_from(&card.settings_schema);
-                } else {
-                    app.params_schema.clear();
-                    app.params_unavailable = Some("script parameters unavailable");
-                }
-            }
-            Some(script::ScriptSel::Compiled(id)) => {
-                match self
-                    .scripts
-                    .compiled_schema(&self.core, app.focused_name().as_deref(), *id)
-                {
-                    frontend_core::scripts::SchemaView::Ready { fields, .. } => {
-                        if app.params_schema.as_slice() != fields {
-                            app.params_schema.clear();
-                            app.params_schema.extend_from_slice(fields);
-                        }
-                    }
-                    frontend_core::scripts::SchemaView::Unavailable(reason) => {
+        match app.script_sel.as_ref() {
+            Some(sel) => {
+                if let Some((source, name)) = sel.loaded_card() {
+                    if let Some(card) = self.scripts.card(source, name) {
+                        app.params_schema.copy_from(card.schema());
+                    } else {
                         app.params_schema.clear();
-                        app.params_unavailable = Some(reason);
+                        app.params_unavailable = Some("script parameters unavailable");
+                    }
+                } else if let Some(id) = sel.compiled_id() {
+                    match self.scripts.compiled_schema(
+                        &self.core,
+                        app.focused_name().as_deref(),
+                        id,
+                    ) {
+                        frontend_core::scripts::SchemaView::Ready { fields, .. } => {
+                            app.params_schema.copy_from(fields);
+                        }
+                        frontend_core::scripts::SchemaView::Unavailable(reason) => {
+                            app.params_schema.clear();
+                            app.params_unavailable = Some(reason);
+                        }
                     }
                 }
             }
             None => app.params_schema.clear(),
         }
-        if app.params_state.open && app.params_schema.is_empty() {
+        if app.params_state.open && app.params_schema.as_ref().is_empty() {
             app.params_state.open = false;
         }
         app.rs2b0t_catalog_open = self.rs2b0t_catalog_open;
@@ -2922,10 +2928,7 @@ impl TuiSession {
             // The script's paint frame rides the status row (copied from
             // the isolate each observe); the chat pane shows it in place
             // of the game chat while it is non-empty.
-            app.chat_data.script_paint = self
-                .core
-                .status(name)
-                .and_then(|st| st.script_paint.clone());
+            app.chat_data.script_paint = self.core.script_paint(name);
             // Stop drops the isolate (and its paint with it); reset the
             // operator's game-chat toggle when no paint is showing so a
             // fresh Start shows the new paint by default instead of
@@ -2942,8 +2945,8 @@ impl TuiSession {
             if self.walk_clear.swap(false, Ordering::Relaxed) {
                 app.walk_dest = None;
             }
-            if let Some(play) = self.core.play() {
-                app.script_state = play.script_state(name);
+            if self.core.play().is_some() {
+                app.script_state = self.core.script_state(name);
             }
             app.script_queued = self.scripts.start_queue_place(name).is_some();
         } else {
@@ -3721,10 +3724,10 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
             session.rs2b0t_catalog_dir = root.clone();
             app.error = match session.import_rs2b0t_catalog(&root) {
                 Ok(_) => {
-                    if session.scripts.js().load_failures().is_empty() {
+                    if session.scripts.load_failure_count() == 0 {
                         None
                     } else {
-                        Some(session.scripts.js().named_failure_output())
+                        Some(session.scripts.named_failure_output())
                     }
                 }
                 Err(e) => Some(e),

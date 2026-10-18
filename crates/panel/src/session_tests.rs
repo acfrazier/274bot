@@ -24,6 +24,9 @@ use client::config::if_type::{ComponentType, IfType, IfTypeMut};
 use client::dash3d::CollisionFlag;
 use client::io::{Packet, ServerProt};
 use client::render::nav_debug::{CORNER_NE, FACE_N, FACE_S};
+use frontend_core::scripts::{
+    CardSource, CompiledCardId, Loadouts, SchemaRef, ScriptChoice, ScriptRunState,
+};
 use host::{FrameBuf, SlotInput};
 use host_play as map_host;
 use host_play::profile::ProfileEnvironment;
@@ -524,7 +527,7 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
     // does not see it.
     let own_root = template.profile().state_root().to_path_buf();
     assert_ne!(own_root.as_path(), thread_state_root().path());
-    let mut own = script::LoadoutsStore::over(Arc::new(
+    let mut own = Loadouts::over(Arc::new(
         crate::test_support::scratch_service(&own_root).operator_loadouts(),
     ));
     own.upsert(api::loadout::Loadout::new("melee"));
@@ -612,7 +615,7 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
         peer.preferences().value("last_focus"),
         Some(serde_json::json!("alice"))
     );
-    let mut peer_form = script::LoadoutsStore::over(Arc::new(peer.operator_loadouts()));
+    let mut peer_form = Loadouts::over(Arc::new(peer.operator_loadouts()));
     assert!(
         peer_form.load_error().is_none(),
         "the peer's initial loadouts readback must complete"
@@ -654,7 +657,7 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
         ..state
     };
     crate::ui_state::save_to_checked(&session.preferences, &state).unwrap();
-    let mut reread = script::LoadoutsStore::over(Arc::new(peer.operator_loadouts()));
+    let mut reread = Loadouts::over(Arc::new(peer.operator_loadouts()));
     reread.reload().unwrap();
     assert_eq!(reread.names(), ["roundtrip", "peer-row"]);
     assert_eq!(reread.get("roundtrip").unwrap().carry[0].qty, 6);
@@ -2907,11 +2910,10 @@ fn multibox_profile_pick_restores_that_profiles_script_heading() {
     let (mut session, path) = multibox_unlock_fixture();
     session.set_multibox(true);
     assert!(session.unlock_at(&path, "test-passphrase-01"));
-    let thiever = Some(script::ScriptSel::Loaded(
-        script::ScriptSource::Catalog,
-        "Thiever".into(),
+    let thiever = Some(ScriptChoice::loaded(CardSource::Catalog, "Thiever"));
+    let gatherer = Some(ScriptChoice::compiled(
+        CompiledCardId::lookup("Gatherer").unwrap(),
     ));
-    let gatherer = Some(script::ScriptSel::Compiled(script::CompiledId("Gatherer")));
     assert_eq!(session.script_sel, thiever, "unlock shows alice's own card");
     session.pick_profile("bob");
     assert_eq!(session.core.selected(), Some("bob"));
@@ -5262,10 +5264,7 @@ fn live_prepare_bone_burier_starts_the_rs2b0t_card_on_the_driven_slot() {
     }
     assert_eq!(
         s.script_sel,
-        Some(script::ScriptSel::Loaded(
-            script::ScriptSource::Catalog,
-            "BoneBurier".into()
-        )),
+        Some(ScriptChoice::loaded(CardSource::Catalog, "BoneBurier")),
         "prepare sets script_sel to the catalog card"
     );
     let play = s.core.play().expect("play started");
@@ -5319,7 +5318,11 @@ fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
             "{name} must not use the shared stem"
         );
         let bag = s
-            .pending_settings_bag(script::ScriptSource::File, &identity, &card.settings_schema)
+            .pending_settings_bag(
+                CardSource::File,
+                &identity,
+                SchemaRef::from_script(&card.settings_schema),
+            )
             .expect("settings bag");
         assert_eq!(
             bag.get("boneName"),
@@ -5327,9 +5330,9 @@ fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
             "{name} settings attach to the selected File identity"
         );
         let stem_bag = s.pending_settings_bag(
-            script::ScriptSource::File,
+            CardSource::File,
             "bone_burier_v2",
-            &card.settings_schema,
+            SchemaRef::from_script(&card.settings_schema),
         );
         assert_eq!(
             stem_bag.as_ref().and_then(|bag| bag.get("boneName")),
@@ -5353,10 +5356,7 @@ fn live_prepare_keeps_v1_catalog_and_tradebot_stem() {
         .expect("v1");
     assert_eq!(
         s.script_sel,
-        Some(script::ScriptSel::Loaded(
-            script::ScriptSource::Catalog,
-            "BoneBurier".into()
-        ))
+        Some(ScriptChoice::loaded(CardSource::Catalog, "BoneBurier"))
     );
     let mut trade = preparation_only_session();
     trade.scripts.set_js(script::JsLibrary::with_cache(
@@ -5368,10 +5368,7 @@ fn live_prepare_keeps_v1_catalog_and_tradebot_stem() {
         .expect("trade");
     assert_eq!(
         trade.script_sel,
-        Some(script::ScriptSel::Loaded(
-            script::ScriptSource::File,
-            "trade_bot".into()
-        ))
+        Some(ScriptChoice::loaded(CardSource::File, "trade_bot"))
     );
 }
 
@@ -5391,10 +5388,7 @@ fn live_prepare_script_trade_loads_the_file_fixture_and_injects_partner() {
         .expect("prepare");
     assert_eq!(
         s.script_sel,
-        Some(script::ScriptSel::Loaded(
-            script::ScriptSource::File,
-            "trade_bot".into()
-        )),
+        Some(ScriptChoice::loaded(CardSource::File, "trade_bot")),
         "script_trade loads the in-tree TradeBot fixture as File"
     );
     let names: Vec<_> = s
@@ -5546,10 +5540,7 @@ fn live_prepare_script_sets_script_sel_for_catalog_start_script() {
     s.live_prepare_script(scenario).expect("prepare");
     assert_eq!(
         s.script_sel,
-        Some(script::ScriptSel::Loaded(
-            script::ScriptSource::Catalog,
-            "Alcher".into()
-        )),
+        Some(ScriptChoice::loaded(CardSource::Catalog, "Alcher")),
         "live_prepare_script must set script_sel to the catalog card"
     );
 }
@@ -5566,7 +5557,9 @@ fn live_prepare_sherlock_starts_the_compiled_card_without_catalog() {
         .expect("prepare compiled Sherlock without $RS2B0T");
     assert_eq!(
         s.script_sel,
-        Some(script::ScriptSel::Compiled(script::CompiledId("Sherlock"))),
+        Some(ScriptChoice::compiled(
+            CompiledCardId::lookup("Sherlock").unwrap()
+        )),
         "live_prepare must select the compiled registry card"
     );
     let pending = s.pending_script.lock().unwrap();
@@ -8221,28 +8214,28 @@ fn chooser_vault_remove_keeps_wall_member_and_slot() {
 
 #[test]
 fn script_active_matches_rs2b0t() {
-    assert!(script_active(script::RunState::Starting));
-    assert!(script_active(script::RunState::Running));
-    assert!(script_active(script::RunState::Paused));
-    assert!(script_active(script::RunState::Stopping));
-    assert!(!script_active(script::RunState::Idle));
-    assert!(!script_active(script::RunState::Error));
+    assert!(script_active(ScriptRunState::Starting));
+    assert!(script_active(ScriptRunState::Running));
+    assert!(script_active(ScriptRunState::Paused));
+    assert!(script_active(ScriptRunState::Stopping));
+    assert!(!script_active(ScriptRunState::Idle));
+    assert!(!script_active(ScriptRunState::Error));
 }
 
 #[test]
 fn script_pause_resume_stop_enable_rules() {
-    assert!(script_pause_enabled(script::RunState::Starting));
-    assert!(script_pause_enabled(script::RunState::Running));
-    assert!(script_pause_enabled(script::RunState::Paused));
-    assert!(!script_pause_enabled(script::RunState::Idle));
-    assert!(!script_pause_enabled(script::RunState::Stopping));
-    assert!(!script_pause_enabled(script::RunState::Error));
-    assert!(script_stop_enabled(script::RunState::Starting));
-    assert!(script_stop_enabled(script::RunState::Running));
-    assert!(script_stop_enabled(script::RunState::Paused));
-    assert!(!script_stop_enabled(script::RunState::Stopping));
-    assert!(!script_stop_enabled(script::RunState::Idle));
-    assert!(!script_stop_enabled(script::RunState::Error));
+    assert!(script_pause_enabled(ScriptRunState::Starting));
+    assert!(script_pause_enabled(ScriptRunState::Running));
+    assert!(script_pause_enabled(ScriptRunState::Paused));
+    assert!(!script_pause_enabled(ScriptRunState::Idle));
+    assert!(!script_pause_enabled(ScriptRunState::Stopping));
+    assert!(!script_pause_enabled(ScriptRunState::Error));
+    assert!(script_stop_enabled(ScriptRunState::Starting));
+    assert!(script_stop_enabled(ScriptRunState::Running));
+    assert!(script_stop_enabled(ScriptRunState::Paused));
+    assert!(!script_stop_enabled(ScriptRunState::Stopping));
+    assert!(!script_stop_enabled(ScriptRunState::Idle));
+    assert!(!script_stop_enabled(ScriptRunState::Error));
 }
 
 #[test]
@@ -8264,10 +8257,12 @@ fn load_js_registers_card_selects_and_persists_to_the_session_store() {
     s.load_js(&path);
     assert_eq!(s.error, None, "load should succeed: {:?}", s.error);
     match &s.script_sel {
-        Some(script::ScriptSel::Loaded(script::ScriptSource::File, id)) => {
+        Some(choice) => {
+            let (source, id) = choice.loaded_card().expect("loaded file card");
+            assert_eq!(source, CardSource::File);
             assert!(id.ends_with("tickbot.js") || id.contains("tickbot"), "{id}");
         }
-        other => panic!("{other:?}"),
+        None => panic!("no card selected: {:?}", s.script_sel),
     }
     assert_eq!(s.scripts.js().cards().len(), 1);
     assert!(!s.script_load_open, "success closes the load browser");
@@ -8295,13 +8290,13 @@ fn script_start_selected_refuses_without_selection_or_play() {
         "{err}"
     );
     s.error = None;
-    s.script_sel = Some(script::ScriptSel::Compiled(script::CompiledId(
-        "BoneBurier",
-    )));
+    s.script_sel = Some(ScriptChoice::compiled(
+        CompiledCardId::lookup("Gatherer").unwrap(),
+    ));
     s.script_start_selected();
     let err = s.error.clone().expect("no-play banner");
     assert!(err.contains("play"), "{err}");
-    assert_eq!(s.focused_script_state(), script::RunState::Idle);
+    assert_eq!(s.focused_script_state(), ScriptRunState::Idle);
 }
 
 #[test]
@@ -8335,7 +8330,7 @@ fn script_start_selected_refuses_unloadable_import() {
         err.contains("../../event/webwalk/Something.js"),
         "error must name the specifier: {err}"
     );
-    assert_eq!(s.focused_script_state(), script::RunState::Idle);
+    assert_eq!(s.focused_script_state(), ScriptRunState::Idle);
 }
 
 /// M-269: after a bad-import Load the panel retains the full failure for
@@ -8574,13 +8569,10 @@ fn select_script_card_queues_only_that_card_through_worker() {
         .register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
         .expect("catalog");
 
-    s.select_script_card(script::ScriptSource::Catalog, "BoneBurier");
+    s.select_script_card(CardSource::Catalog, "BoneBurier");
     assert_eq!(
         s.script_sel,
-        Some(script::ScriptSel::Loaded(
-            script::ScriptSource::Catalog,
-            "BoneBurier".into()
-        ))
+        Some(ScriptChoice::loaded(CardSource::Catalog, "BoneBurier"))
     );
     assert_eq!(s.transpile_queue.len(), 1);
     assert_eq!(
@@ -8732,7 +8724,7 @@ fn select_script_card_queues_cached_output_through_worker() {
             .as_bytes()
     ));
 
-    s.select_script_card(script::ScriptSource::Catalog, "BoneBurier");
+    s.select_script_card(CardSource::Catalog, "BoneBurier");
     assert_eq!(s.transpile_queue.len(), 1);
     assert!(s
         .scripts

@@ -1,8 +1,7 @@
 //! Script pane (spec `2026-09-01-headless-tui-design.md`): the
 //! Browse/Start/Pause/Stop/Load widgets, the Browse picker over registry
 //! cards (description, category, tags, kind, source), and the Load path
-//! input. The pane is a plain widget over owned view data — it never calls
-//! [`SlotScript`]; clicks map to [`crate::app::AppAction`]s that `tui-play`
+//! input. The pane is a plain widget over owned view data; clicks map to [`crate::app::AppAction`]s that `tui-play`
 //! dispatches onto `Play::script_start_load` / pause / stop.
 
 use ratatui::buffer::Buffer;
@@ -11,8 +10,11 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
+use frontend_core::scripts::{
+    CardRuntime, CardSource, CompiledCardId, LoadStage, LoadedCard, ScriptChoice, ScriptRunState,
+    StatusView,
+};
 use frontend_core::views::{script_status_label, script_status_reason, script_status_rows};
-use script::{JsCard, LoadStage, RunState, ScriptKind, ScriptSel, ScriptSource, SlotScript};
 
 /// The script button labels, left to right (Pause slot is dynamic — see
 /// [`pause_button_label`]).
@@ -77,27 +79,27 @@ fn push_button(row: &mut String, label: &str) {
 }
 
 /// Pause/Resume label for the third button (matches panel `script_section`).
-pub fn pause_button_label(state: RunState) -> &'static str {
-    if state == RunState::Paused {
+pub fn pause_button_label(state: ScriptRunState) -> &'static str {
+    if state == ScriptRunState::Paused {
         "Resume"
     } else {
         "Pause"
     }
 }
 
-pub fn kind_badge(kind: ScriptKind) -> &'static str {
+pub fn kind_badge(kind: CardRuntime) -> &'static str {
     match kind {
-        ScriptKind::Compat => "Compat",
-        ScriptKind::NativeTick => "NativeTick",
-        ScriptKind::Compiled => "Compiled",
+        CardRuntime::Compat => "Compat",
+        CardRuntime::NativeTick => "NativeTick",
+        CardRuntime::Compiled => "Compiled",
     }
 }
 
-pub fn source_badge(source: ScriptSource) -> &'static str {
+pub fn source_badge(source: CardSource) -> &'static str {
     match source {
-        ScriptSource::Catalog => "Catalog",
-        ScriptSource::File => "File",
-        ScriptSource::Builtin => "Builtin",
+        CardSource::Catalog => "Catalog",
+        CardSource::File => "File",
+        CardSource::Builtin => "Builtin",
     }
 }
 
@@ -117,30 +119,31 @@ pub struct BrowseCard {
     pub description: String,
     pub category: String,
     pub tags: Vec<String>,
-    pub kind: ScriptKind,
-    pub source: ScriptSource,
+    pub kind: CardRuntime,
+    pub source: CardSource,
     pub unloadable: Option<String>,
 }
 
-impl From<&JsCard> for BrowseCard {
-    fn from(card: &JsCard) -> Self {
+impl From<LoadedCard<'_>> for BrowseCard {
+    fn from(card: LoadedCard<'_>) -> Self {
         Self {
-            name: card.name.clone(),
-            description: card.description.clone(),
-            category: card.category.clone(),
-            tags: card.tags.clone(),
-            kind: card.kind,
-            source: card.source,
-            unloadable: card.unloadable.clone(),
+            name: card.name().to_owned(),
+            description: card.description().to_owned(),
+            category: card.category().to_owned(),
+            tags: card.tags().to_owned(),
+            kind: card.runtime(),
+            source: card.source(),
+            unloadable: card.unloadable().map(str::to_owned),
         }
     }
 }
+
 /// The selection represented by a Browse card.
-pub fn card_selection(card: &BrowseCard) -> Option<ScriptSel> {
-    if card.kind == ScriptKind::Compiled {
-        script::compiled_id(&card.name).map(ScriptSel::Compiled)
+pub fn card_selection(card: &BrowseCard) -> Option<ScriptChoice> {
+    if card.kind == CardRuntime::Compiled {
+        CompiledCardId::lookup(&card.name).map(ScriptChoice::compiled)
     } else {
-        Some(ScriptSel::Loaded(card.source, card.name.clone()))
+        Some(ScriptChoice::loaded(card.source, &card.name))
     }
 }
 
@@ -323,7 +326,7 @@ pub fn card_index_at_row(
 
 /// True when `root/src/bot/scripts/index.ts` exists.
 pub fn rs2b0t_root_has_index(root: &std::path::Path) -> bool {
-    script::registry_index_path(root).is_file()
+    frontend_core::scripts::paths::registry_index_path(root).is_file()
 }
 
 /// One script-pane click result. The app maps buttons to [`AppAction`]s
@@ -342,12 +345,10 @@ pub enum ScriptClick {
     None,
 }
 
-/// The script pane. `slot` is a read-only handle the TUI never calls —
-/// it exists so a test can prove clicking a button does not mutate a
-/// [`SlotScript`]; the app only emits actions the binary dispatches.
+/// The script pane; the app only emits actions the binary dispatches.
 pub struct ScriptPane<'a> {
-    pub state: RunState,
-    pub sel: Option<&'a ScriptSel>,
+    pub state: ScriptRunState,
+    pub sel: Option<&'a ScriptChoice>,
     pub cards: &'a [BrowseCard],
     pub category_order: &'a [String],
     pub catalog_deferred: bool,
@@ -355,18 +356,17 @@ pub struct ScriptPane<'a> {
     pub load_open: bool,
     pub load_path: &'a str,
     pub params_available: bool,
-    pub slot: Option<&'a SlotScript>,
     /// A reload warning awaits confirmation.
     pub reload_confirm: bool,
-    pub native_status: Option<&'a script::native::ScriptStatus>,
+    pub native_status: Option<StatusView<'a>>,
     pub walk_risk: Option<&'a str>,
 }
 
 impl<'a> ScriptPane<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        state: RunState,
-        sel: Option<&'a ScriptSel>,
+        state: ScriptRunState,
+        sel: Option<&'a ScriptChoice>,
         cards: &'a [BrowseCard],
         category_order: &'a [String],
         catalog_deferred: bool,
@@ -374,7 +374,6 @@ impl<'a> ScriptPane<'a> {
         load_open: bool,
         load_path: &'a str,
         params_available: bool,
-        slot: Option<&'a SlotScript>,
     ) -> Self {
         Self {
             state,
@@ -386,7 +385,6 @@ impl<'a> ScriptPane<'a> {
             load_open,
             load_path,
             params_available,
-            slot,
             reload_confirm: false,
             native_status: None,
             walk_risk: None,
@@ -398,7 +396,7 @@ impl<'a> ScriptPane<'a> {
         self
     }
 
-    pub fn with_native_status(mut self, status: Option<&'a script::native::ScriptStatus>) -> Self {
+    pub fn with_native_status(mut self, status: Option<StatusView<'a>>) -> Self {
         self.native_status = status;
         self
     }
@@ -445,11 +443,9 @@ impl<'a> ScriptPane<'a> {
     }
 
     fn card_selected(&self, card: &BrowseCard) -> bool {
-        matches!(
-            self.sel,
-            Some(ScriptSel::Loaded(source, name))
-                if card.source == *source && card.name == *name
-        )
+        self.sel
+            .and_then(ScriptChoice::loaded_card)
+            .is_some_and(|(source, name)| card.source == source && card.name == name)
     }
 
     /// The click inside the pane. Buttons live on the second inner line;
@@ -526,7 +522,7 @@ impl Widget for ScriptPane<'_> {
         let inner = block.inner(area);
         block.render(area, buf);
         let state = script_status_label(self.state, self.native_status);
-        let sel = self.sel.map(|s| s.label()).unwrap_or_else(|| "—".into());
+        let sel = self.sel.map_or("—", ScriptChoice::label);
         let mut buttons = String::new();
         for label in self.main_buttons() {
             push_button(&mut buttons, label);
@@ -594,7 +590,9 @@ mod tests {
     use ratatui::layout::Rect;
     use ratatui::Terminal;
 
-    use script::{RunState, ScriptKind, ScriptSel, ScriptSource, SlotScript};
+    use frontend_core::scripts::{
+        CardRuntime, CardSource, ScriptChoice, ScriptRunState, StatusView,
+    };
 
     use super::{
         browse_lines, card_category, card_detail_lines, categories_present, resolve_category_order,
@@ -607,8 +605,8 @@ mod tests {
             description: "Steals from mines".into(),
             category: "Skilling".into(),
             tags: vec!["mining".into()],
-            kind: ScriptKind::Compat,
-            source: ScriptSource::File,
+            kind: CardRuntime::Compat,
+            source: CardSource::File,
             unloadable: None,
         }
     }
@@ -631,7 +629,7 @@ mod tests {
     fn the_script_widgets_render() {
         let text = render(
             ScriptPane::new(
-                script::RunState::Idle,
+                ScriptRunState::Idle,
                 None,
                 &[],
                 &[],
@@ -640,7 +638,6 @@ mod tests {
                 false,
                 "",
                 false,
-                None,
             ),
             60,
             4,
@@ -655,11 +652,10 @@ mod tests {
     }
 
     #[test]
-    fn clicking_start_does_not_change_a_dummy_slot_script() {
-        let slot = SlotScript::new();
+    fn clicking_start_maps_to_the_start_button() {
         let area = Rect::new(0, 0, 60, 4);
         let pane = ScriptPane::new(
-            slot.state(),
+            ScriptRunState::Idle,
             None,
             &[],
             &[],
@@ -668,7 +664,6 @@ mod tests {
             false,
             "",
             false,
-            Some(&slot),
         );
         let start = pane.on_click(area, 14, 2);
         assert_eq!(
@@ -676,8 +671,6 @@ mod tests {
             ScriptClick::Button("Start"),
             "Start is clickable (the app maps it to ScriptStart)"
         );
-        assert_eq!(slot.state(), script::RunState::Idle, "state unchanged");
-        assert!(!slot.want_run, "want_run unchanged");
     }
 
     /// The bulk row under the buttons: Reload / Start all / Stop all after
@@ -687,7 +680,7 @@ mod tests {
     fn bulk_row_clicks_follow_the_painted_labels() {
         let pane = |confirm: bool| {
             ScriptPane::new(
-                script::RunState::Running,
+                ScriptRunState::Running,
                 None,
                 &[],
                 &[],
@@ -696,7 +689,6 @@ mod tests {
                 false,
                 "",
                 true,
-                None,
             )
             .with_reload_confirm(confirm)
         };
@@ -743,7 +735,7 @@ mod tests {
     #[test]
     fn click_between_buttons_misses() {
         let pane = ScriptPane::new(
-            script::RunState::Idle,
+            ScriptRunState::Idle,
             None,
             &[],
             &[],
@@ -752,7 +744,6 @@ mod tests {
             false,
             "",
             false,
-            None,
         );
         let area = Rect::new(0, 0, 60, 4);
         assert_eq!(pane.on_click(area, 9, 3), ScriptClick::None);
@@ -763,7 +754,7 @@ mod tests {
         let cards = vec![sample_file_card()];
         let text = render(
             ScriptPane::new(
-                RunState::Idle,
+                ScriptRunState::Idle,
                 None,
                 &cards,
                 &[],
@@ -772,7 +763,6 @@ mod tests {
                 false,
                 "",
                 false,
-                None,
             ),
             80,
             12,
@@ -839,10 +829,10 @@ mod tests {
         ghost.tags = Vec::new();
         ghost.unloadable = Some("../../event/webwalk/Something.js".into());
         let cards = vec![ghost];
-        let sel = ScriptSel::Loaded(ScriptSource::File, "K0DiscScriptGhost".into());
+        let sel = ScriptChoice::loaded(CardSource::File, "K0DiscScriptGhost");
         for (w, h) in [(120, 40), (80, 24), (40, 24)] {
             let pane = ScriptPane::new(
-                RunState::Idle,
+                ScriptRunState::Idle,
                 Some(&sel),
                 &cards,
                 &[],
@@ -851,7 +841,6 @@ mod tests {
                 false,
                 "",
                 false,
-                None,
             );
             let text = render(pane, w, h);
             assert!(
@@ -873,8 +862,8 @@ mod tests {
                 description: String::new(),
                 category: "Combat".into(),
                 tags: Vec::new(),
-                kind: ScriptKind::Compat,
-                source: ScriptSource::Catalog,
+                kind: CardRuntime::Compat,
+                source: CardSource::Catalog,
                 unloadable: None,
             },
             BrowseCard {
@@ -882,8 +871,8 @@ mod tests {
                 description: String::new(),
                 category: "Prayer".into(),
                 tags: Vec::new(),
-                kind: ScriptKind::Compat,
-                source: ScriptSource::Catalog,
+                kind: CardRuntime::Compat,
+                source: CardSource::Catalog,
                 unloadable: None,
             },
         ];
@@ -915,8 +904,8 @@ mod tests {
                 description: String::new(),
                 category: String::new(),
                 tags: Vec::new(),
-                kind: ScriptKind::Compat,
-                source: ScriptSource::File,
+                kind: CardRuntime::Compat,
+                source: CardSource::File,
                 unloadable: None,
             }]),
             vec!["Uncategorized"]
@@ -927,8 +916,8 @@ mod tests {
                 description: String::new(),
                 category: String::new(),
                 tags: Vec::new(),
-                kind: ScriptKind::Compat,
-                source: ScriptSource::File,
+                kind: CardRuntime::Compat,
+                source: CardSource::File,
                 unloadable: None,
             }),
             "Uncategorized"
@@ -943,14 +932,14 @@ mod tests {
                 description: String::new(),
                 category: "Prayer".into(),
                 tags: Vec::new(),
-                kind: ScriptKind::Compat,
-                source: ScriptSource::Catalog,
+                kind: CardRuntime::Compat,
+                source: CardSource::Catalog,
                 unloadable: None,
             },
             sample_file_card(),
         ];
         let pane = ScriptPane::new(
-            RunState::Idle,
+            ScriptRunState::Idle,
             None,
             &cards,
             &[],
@@ -959,7 +948,6 @@ mod tests {
             false,
             "",
             false,
-            None,
         );
         let area = Rect::new(0, 0, 80, 16);
         // Category header occupies the first browse row; card name is next.
@@ -970,11 +958,8 @@ mod tests {
         );
         let text = render(
             ScriptPane::new(
-                RunState::Idle,
-                Some(&ScriptSel::Loaded(
-                    ScriptSource::Catalog,
-                    "BoneBurier".into(),
-                )),
+                ScriptRunState::Idle,
+                Some(&ScriptChoice::loaded(CardSource::Catalog, "BoneBurier")),
                 &cards,
                 &[],
                 false,
@@ -982,7 +967,6 @@ mod tests {
                 false,
                 "",
                 false,
-                None,
             ),
             80,
             16,
@@ -994,7 +978,7 @@ mod tests {
     fn deferred_browse_shows_import_catalog() {
         let text = render(
             ScriptPane::new(
-                RunState::Idle,
+                ScriptRunState::Idle,
                 None,
                 &[],
                 &[],
@@ -1003,7 +987,6 @@ mod tests {
                 false,
                 "",
                 false,
-                None,
             ),
             80,
             8,
@@ -1018,7 +1001,7 @@ mod tests {
     fn paused_state_shows_resume_not_pause() {
         let text = render(
             ScriptPane::new(
-                RunState::Paused,
+                ScriptRunState::Paused,
                 None,
                 &[],
                 &[],
@@ -1027,7 +1010,6 @@ mod tests {
                 false,
                 "",
                 false,
-                None,
             ),
             60,
             4,
@@ -1046,7 +1028,7 @@ mod tests {
     fn running_state_shows_pause_not_resume() {
         let text = render(
             ScriptPane::new(
-                RunState::Running,
+                ScriptRunState::Running,
                 None,
                 &[],
                 &[],
@@ -1055,7 +1037,6 @@ mod tests {
                 false,
                 "",
                 false,
-                None,
             ),
             60,
             4,
@@ -1071,7 +1052,7 @@ mod tests {
     fn clicking_resume_when_paused_returns_resume_button() {
         let area = Rect::new(0, 0, 60, 4);
         let pane = ScriptPane::new(
-            RunState::Paused,
+            ScriptRunState::Paused,
             None,
             &[],
             &[],
@@ -1080,7 +1061,6 @@ mod tests {
             false,
             "",
             false,
-            None,
         );
         assert_eq!(
             pane.on_click(area, 23, 2),
@@ -1108,7 +1088,7 @@ mod tests {
         };
         let text = render(
             ScriptPane::new(
-                RunState::Running,
+                ScriptRunState::Running,
                 None,
                 &[],
                 &[],
@@ -1117,9 +1097,8 @@ mod tests {
                 false,
                 "",
                 false,
-                None,
             )
-            .with_native_status(Some(&status)),
+            .with_native_status(Some(StatusView::from_script(&status))),
             90,
             10,
         );
@@ -1133,7 +1112,7 @@ mod tests {
     fn retained_walk_assessment_has_a_walk_risk_row_without_native_status() {
         let text = render(
             ScriptPane::new(
-                RunState::Idle,
+                ScriptRunState::Idle,
                 None,
                 &[],
                 &[],
@@ -1142,7 +1121,6 @@ mod tests {
                 false,
                 "",
                 false,
-                None,
             )
             .with_walk_risk(Some("Route assessment unknown: Poison")),
             90,
@@ -1195,7 +1173,7 @@ mod tests {
         for (width, height) in [(80, 24), (120, 40)] {
             let text = render(
                 ScriptPane::new(
-                    RunState::Running,
+                    ScriptRunState::Running,
                     None,
                     &[],
                     &[],
@@ -1204,9 +1182,8 @@ mod tests {
                     false,
                     "",
                     false,
-                    None,
                 )
-                .with_native_status(Some(&status)),
+                .with_native_status(Some(StatusView::from_script(&status))),
                 width,
                 height,
             );
@@ -1234,7 +1211,7 @@ mod tests {
         }
         status.fields = std::sync::Arc::from([status.fields[1].clone()]);
         assert!(
-            frontend_core::views::script_status_rows(&status)
+            frontend_core::views::script_status_rows(StatusView::from_script(&status))
                 .next()
                 .is_none(),
             "a bundled-only status retains the existing short rows"
