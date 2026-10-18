@@ -65,7 +65,7 @@ mod headed {
     use std::thread;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-    use client::client::present::WindowTarget;
+    use client::client::present::{PresentTarget, WindowTarget};
     use client::client::{GameShell, APPLET_H, APPLET_W};
     use client::render::backend::FrameOutput;
     use host::{FrameBuf, InputEv, SlotInput};
