@@ -60,7 +60,8 @@ use vault::{Profile, Vault};
 
 use frontend_core::resources::background_ack_text;
 use frontend_core::{
-    load_map_bake_choice, persist_map_bake_choice, HeadlessSurface, MapBakeGate, OperatorSession,
+    load_map_bake_choice, persist_map_bake_choice, HeadlessSurface, MapBakeGate, OperatorCommand,
+    OperatorSession, SubmitError, Targets,
 };
 use host_play::local_state::{LocalStateService, Preferences, StateRoot};
 use host_play::map_cache::MapDemand;
@@ -998,12 +999,13 @@ impl TuiSession {
     /// attaches a `Renderer`); after a DC the slot re-handshakes only when
     /// the profile's `auto_login` is on.
     fn load_and_login(&mut self, name: &str) -> bool {
-        let failure = {
-            let (core, mut surface) = self.core_and_surface();
-            let (load, _) = core.load(name, &mut surface);
-            let login = core.login(name, &mut surface);
-            core.failure(load).or_else(|| core.failure(login))
-        };
+        let failure = self
+            .submit(OperatorCommand::Load, Targets::Profile(name))
+            .err()
+            .or_else(|| {
+                self.submit(OperatorCommand::Login, Targets::Profile(name))
+                    .err()
+            });
         match failure {
             Some(error) => {
                 self.error = Some(error);
@@ -1011,6 +1013,33 @@ impl TuiSession {
             }
             None => true,
         }
+    }
+
+    /// Issue one operator command through the core's command seam (the
+    /// entry point the panel and the headless driver use). `Err` carries a
+    /// refused command or the failure of the operation it opened.
+    fn submit(
+        &mut self,
+        command: OperatorCommand,
+        targets: Targets<'_>,
+    ) -> Result<frontend_core::Submitted, String> {
+        let submitted = self
+            .submit_raw(command, targets)
+            .map_err(|error| error.to_string())?;
+        match submitted.operation().and_then(|op| self.core.failure(op)) {
+            Some(failure) => Err(failure),
+            None => Ok(submitted),
+        }
+    }
+
+    /// [`Self::submit`] without reading the operation's failure.
+    fn submit_raw(
+        &mut self,
+        command: OperatorCommand,
+        targets: Targets<'_>,
+    ) -> Result<frontend_core::Submitted, SubmitError> {
+        let (core, mut surface) = self.core_and_surface();
+        core.submit(command, targets, &mut surface)
     }
 
     /// Split borrow: the core plus the headless surface, whose lifetime
@@ -1036,15 +1065,34 @@ impl TuiSession {
         )
     }
 
+    /// Submit a profile-write row for `name`: its operation, or its owner's
+    /// refusal text (today's `Err` of the core write).
+    fn submit_profile_write(
+        &mut self,
+        command: OperatorCommand,
+        name: &str,
+    ) -> Result<frontend_core::OperationId, String> {
+        let (core, mut surface) = self.core_and_surface();
+        let submitted = core
+            .submit(command, Targets::Profile(name), &mut surface)
+            .map_err(|error| error.to_string())?;
+        if let Some(reason) = core.command_failure(submitted.request()) {
+            return Err(reason.to_string());
+        }
+        submitted
+            .operation()
+            .ok_or_else(|| format!("{name}: no operation"))
+    }
+
     /// Log in the focused member (explicit handshake; recreates a terminal
     /// worker).
     fn login(&mut self, app: &mut TuiApp) {
         let Some(name) = app.focused_name() else {
             return;
         };
-        let (core, mut surface) = self.core_and_surface();
-        let op = core.login(&name, &mut surface);
-        app.error = core.failure(op);
+        app.error = self
+            .submit(OperatorCommand::Login, Targets::Profile(&name))
+            .err();
     }
 
     /// Log out the focused member; the slot stays loaded and latched.
@@ -1053,13 +1101,16 @@ impl TuiSession {
             self.scripts.cancel_queued_as(&name, "logged out");
             self.scripts.publish_start_places(&mut self.core);
             self.apply_script_notice(app);
-            self.core.logout(&name);
+            if let Err(error) = self.submit(OperatorCommand::Logout, Targets::Profile(&name)) {
+                app.error = Some(error);
+            }
         }
     }
 
     /// Log out every member and every other running slot.
     fn logout_all(&mut self) {
-        self.core.logout_all();
+        // Nobody to log out is not an error.
+        let _ = self.submit(OperatorCommand::Logout, Targets::Everyone);
     }
 
     /// Settings-popup `r`: Relog-now for a memory-mode switch. Confirms
@@ -1080,9 +1131,9 @@ impl TuiSession {
         self.scripts.cancel_queued_as(name, "logged out");
         self.scripts.publish_start_places(&mut self.core);
         self.apply_script_notice(app);
-        let (core, mut surface) = self.core_and_surface();
-        let op = core.request_memory_relog(name, &mut surface);
-        app.error = core.failure(op);
+        app.error = self
+            .submit(OperatorCommand::RelogNow, Targets::Profile(name))
+            .err();
     }
 
     /// Remove `name` (frozen when the operator confirmed): clean logout,
@@ -1091,12 +1142,19 @@ impl TuiSession {
         self.scripts.cancel_queued_as(name, "removed");
         self.scripts.publish_start_places(&mut self.core);
         self.apply_script_notice(app);
-        let (core, mut surface) = self.core_and_surface();
-        let removal = core.remove(name, Instant::now(), &mut surface);
-        if let Some(next) = removal.reselected() {
-            app.focused = app.names.iter().position(|n| n == next);
-        } else if removal.selection_cleared() {
-            app.focused = None;
+        let submitted = match self.submit(OperatorCommand::Remove, Targets::Profile(name)) {
+            Ok(submitted) => submitted,
+            Err(error) => {
+                app.error = Some(error);
+                return;
+            }
+        };
+        if let Some(removal) = submitted.removal() {
+            if let Some(next) = removal.reselected() {
+                app.focused = app.names.iter().position(|n| n == next);
+            } else if removal.selection_cleared() {
+                app.focused = None;
+            }
         }
         // The fleet table drops the member on the next pump.
     }
@@ -1106,12 +1164,26 @@ impl TuiSession {
     /// recreated. Returns how many were newly loaded.
     fn load_and_login_all(&mut self) -> usize {
         let last = self.last_focused.clone();
-        let (added, failure) = {
-            let (core, mut surface) = self.core_and_surface();
-            let (load, added) = core.load_all(&mut surface, last.as_deref());
-            let login = core.login_all(&mut surface);
-            (added, core.failure(load).or_else(|| core.failure(login)))
+        self.core.set_focus_hint(last.as_deref());
+        // An empty "all" (nothing left to load, nobody to log in) is not an
+        // error, as before.
+        let mut added = 0;
+        let failure = match self.submit_raw(OperatorCommand::Load, Targets::Everyone) {
+            Ok(load) => {
+                added = load.added();
+                load.operation().and_then(|op| self.core.failure(op))
+            }
+            Err(SubmitError::NoTarget(_)) => None,
+            Err(error) => Some(error.to_string()),
         };
+        let failure =
+            failure.or_else(
+                || match self.submit_raw(OperatorCommand::Login, Targets::Everyone) {
+                    Ok(login) => login.operation().and_then(|op| self.core.failure(op)),
+                    Err(SubmitError::NoTarget(_)) => None,
+                    Err(error) => Some(error.to_string()),
+                },
+            );
         if failure.is_some() {
             self.error = failure;
         }
@@ -1120,7 +1192,9 @@ impl TuiSession {
 
     /// Select `name` (pure bookkeeping: never a spawn or login).
     fn focus(&mut self, name: &str) {
-        self.core.select(name);
+        if let Err(error) = self.submit(OperatorCommand::Select, Targets::Profile(name)) {
+            self.error = Some(error);
+        }
     }
 
     /// `--live script_*` boot: minted ephemeral vault + spawn + runner. With
@@ -2311,7 +2385,14 @@ impl TuiSession {
     /// Pause or resume the focused slot's script (toggle like the panel).
     fn script_toggle_pause(&mut self, app: &mut TuiApp) {
         if let Some(name) = app.focused_name() {
-            self.core.toggle_pause(&name);
+            let row = if self.core.script_paused(&name) {
+                OperatorCommand::ResumeScript
+            } else {
+                OperatorCommand::PauseScript
+            };
+            if let Err(error) = self.submit(row, Targets::Profile(&name)) {
+                app.error = Some(error);
+            }
         }
     }
 
@@ -2320,7 +2401,9 @@ impl TuiSession {
         if let Some(name) = app.focused_name() {
             self.scripts.cancel_queued(&name);
             self.scripts.publish_start_places(&mut self.core);
-            self.core.stop_script(&name);
+            if let Err(error) = self.submit(OperatorCommand::StopScript, Targets::Profile(&name)) {
+                app.error = Some(error);
+            }
         }
     }
 
@@ -2387,7 +2470,12 @@ impl TuiSession {
             .and_then(|v| v.get(&name))
             .is_some_and(|p| p.settings.lowmem != settings.lowmem);
         if lowmem_changed {
-            match self.core.set_memory_mode(&name, settings.lowmem) {
+            let mode = if settings.lowmem {
+                api::lifecycle::MemoryMode::Low
+            } else {
+                api::lifecycle::MemoryMode::High
+            };
+            match self.submit_profile_write(OperatorCommand::SetMemoryMode(mode), &name) {
                 Ok(op) => app
                     .settings_save
                     .submitted(&mut self.core, op, Some(&name), &name),

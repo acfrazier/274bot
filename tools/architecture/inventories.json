@@ -1128,6 +1128,38 @@
       "classification": "owning",
       "owner": "T3",
       "reason": "Opaque catalog fill/import failure kind; Display preserves prior String wording and details stay private behind the newtype like ImportError."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/session/commands.rs|Targets",
+      "path": "crates/frontend-core/src/session/commands.rs",
+      "symbol": "Targets",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 operator command seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/session/commands.rs|SubmitError",
+      "path": "crates/frontend-core/src/session/commands.rs",
+      "symbol": "SubmitError",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 operator command seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/session/commands.rs|Submitted",
+      "path": "crates/frontend-core/src/session/commands.rs",
+      "symbol": "Submitted",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 operator command seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/driver.rs|HeadlessDriver",
+      "path": "crates/frontend-core/src/driver.rs",
+      "symbol": "HeadlessDriver",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 operator command seam."
     }
   ],
   "violations": [],
@@ -1579,7 +1611,7 @@
       "symbol": "nav::producer::route_view",
       "cfg_or_target": "cfg(test)::module:tests",
       "owner": "T5",
-      "reason": "T5.1 risk fixture: the frozen facade has no public constructor for a borrowed route view over a synthetic backend route, so the fixture serves its retained raw routes through the owner-boundary producer under its facade lease (§21 §5.3 combat/risk/tests.rs fixture scope); plan publication under T5.W(route) replaces the route-view producer.",
+      "reason": "T5.1 risk fixture: the frozen facade has no public constructor for a borrowed route view over a synthetic backend route, so the fixture serves its retained raw routes through the owner-boundary producer under its facade lease (\u00a721 \u00a75.3 combat/risk/tests.rs fixture scope); plan publication under T5.W(route) replaces the route-view producer.",
       "removal_endpoint": "T5.1",
       "classification": "exact_test_fixture_oracle_import"
     }

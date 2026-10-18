@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 use api::host_log;
 use api::hostlog::{Category, Level, Source};
 use api::identity::SessionKey;
+use api::lifecycle::Intent;
 use host::{CapacityEval, FrameBuf, SlotInput};
 use host_play::{InstancePermit, Play, SlotArm, SlotStatus, WalkArms};
 use vault::{Profile, ProfileSettings, RandomEventPolicy, Vault, VaultChange};
@@ -536,7 +537,9 @@ impl MemoryNotice {
     }
 }
 
+mod commands;
 mod native_settings;
+pub use commands::{SubmitError, Submitted, Targets};
 pub(crate) use native_settings::NativeCopyCancellation;
 use native_settings::{PendingDelivery, PendingPreparation};
 
@@ -620,6 +623,10 @@ pub struct OperatorSession<Io> {
     capacity_due: Option<Instant>,
     /// Moves whenever [`Self::capacity_notice`] changes.
     capacity_generation: u64,
+    /// Operator commands: the book and their settlement state.
+    commands: commands::CommandDesk,
+    /// Load all's preferred selection when nothing is selected.
+    focus_hint: Option<String>,
 }
 
 /// How often the session evaluates host capacity.
@@ -684,6 +691,8 @@ impl<Io> OperatorSession<Io> {
             capacity_render: RenderPolicyLabel::OnlySelected,
             capacity_due: None,
             capacity_generation: 0,
+            commands: commands::CommandDesk::default(),
+            focus_hint: None,
         }
     }
 
@@ -1236,12 +1245,12 @@ impl<Io> OperatorSession<Io> {
         // owns the applied server-mode observation.
         self.mem_relog.remove(name);
         if let Some(arm) = self.play.as_ref().and_then(|play| play.arm(name)) {
-            arm.arm_explicit_login();
+            self.post(name, &arm, Intent::Login);
             return Ok(());
         }
         let arm = self.arm_for_profile(name);
         if let Some(arm) = arm.as_ref() {
-            arm.arm_explicit_login();
+            self.post(name, arm, Intent::Login);
         }
         self.ensure_slot(name, arm, true, surface)
     }
@@ -1307,10 +1316,10 @@ impl<Io> OperatorSession<Io> {
         self.operations.cancel_pending(ActionKind::Login, name);
         self.operations.cancel_pending(ActionKind::Logout, name);
         if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
-            arm.request_logout();
-        } else if let Some(arm) = self.deferred.get(name).and_then(|d| d.arm.as_ref()) {
+            self.post(name, &arm, Intent::Logout);
+        } else if let Some(arm) = self.deferred.get(name).and_then(|d| d.arm.clone()) {
             // Not spawned yet: it starts on the title, held logged out.
-            arm.hold_logged_out();
+            self.post(name, &arm, Intent::HoldLoggedOut);
         }
         self.operations.set(op, name, Outcome::Pending);
     }
@@ -1358,6 +1367,13 @@ impl<Io> OperatorSession<Io> {
         )
     }
 
+    /// Whether `name`'s script is paused (its Pause button reads Resume).
+    pub fn script_paused(&self, name: &str) -> bool {
+        self.play
+            .as_ref()
+            .is_some_and(|play| play.script_state(name) == script::RunState::Paused)
+    }
+
     /// Queue and persist the memory mode for the next login. Both front ends
     /// use this command; it never mutates the running client or logs out.
     /// [`Self::memory_status`] retains the applied mode through socket reconnects.
@@ -1396,7 +1412,7 @@ impl<Io> OperatorSession<Io> {
         };
         let op = self.operations.open(ActionKind::Logout);
         let previous = arm.session_key();
-        arm.request_relog();
+        self.post(name, &arm, Intent::RelogNow);
         self.mem_relog.insert(name.to_string(), previous);
         self.operations.cancel_pending(ActionKind::Logout, name);
         self.operations.set(op, name, Outcome::Pending);
@@ -1566,6 +1582,7 @@ impl<Io> OperatorSession<Io> {
         self.resources
             .poll(now, self.play.as_ref(), self.selected.as_deref());
         self.refresh_capacity(now);
+        self.settle_commands();
     }
 
     /// Evaluate host capacity once per [`CAPACITY_EVAL_EVERY`]; the notice
