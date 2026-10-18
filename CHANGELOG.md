@@ -129,9 +129,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - Routes share transport details instead of copying them for every hop.
   Plans that fetch banked supplies account for carried and worn requirements
   without reducing the route-search budget.
-- Trips for banked route supplies now plan faster from places such as the
-  Varrock sewers. Bots choose a bank access by the shortest available path,
-  rather than its straight-line distance.
+- Bots that need banked route supplies now walk to the bank access with the
+  shortest walking path they can reach, instead of the nearest access in a
+  straight line. An unreachable access at the nearest bank no longer stops the
+  bank trip.
 - Single-tile walks and radius walks keep their existing danger-zone refusal
   rules, even when a radius search has only one candidate.
 - Route inspection now runs independently, including banked supply planning
@@ -333,10 +334,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 #### Navigation
 
-- Bots that need banked route supplies now choose an access tile they can reach.
-  An unreachable access at the nearest bank no longer prevents the bank trip.
-  If no access is reachable, danger-zone refusals keep their explanation.
-  Route inspection checks each bank access before planning with banked supplies.
+- Planning a bank trip for route supplies is fast again from places such as
+  the Varrock sewers, where it had slowed to several seconds. If no bank access
+  is reachable, danger-zone refusals keep their explanation, and route
+  inspection checks each bank access before planning with banked supplies.
 - Script routes remain visible in the panel game view. After a bank session,
   the final route is checked against the updated inventory and gear.
   Searches waiting for capacity resume when capacity becomes available.
