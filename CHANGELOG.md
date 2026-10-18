@@ -367,6 +367,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   per-edge call overhead and repeated heap-order checks without changing routes,
   search budgets or cooperative cancellation checks.
 - Route searches avoid repeated comparisons when they select the next tile.
+  They skip finished reachability proofs and unnecessary zone-check futures.
   Routes, search budgets and cancellation checks stay unchanged.
 
 #### Maps
