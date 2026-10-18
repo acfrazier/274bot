@@ -708,8 +708,8 @@ impl PackedMinMaxHeap {
         let last = self.entries.pop().expect("nonempty packed heap");
         if !self.entries.is_empty() {
             self.entries[0] = last;
-            table.slot_mut(last.node()).set_open(0);
             if self.min_max {
+                table.slot_mut(last.node()).set_open(0);
                 self.trickle_down_min(0, table);
             } else {
                 self.trickle_down_binary(0, table);
@@ -788,8 +788,12 @@ impl PackedMinMaxHeap {
     }
 
     fn trickle_down_binary(&mut self, mut position: usize, table: &mut PackedSearchTable) {
+        let start = position;
         let entry = self.entries[position];
         let slot = *table.slot(entry.node());
+        // A replacement from the last leaf usually belongs near the bottom.
+        // Promote the smaller child without comparing the replacement at each
+        // level, then find its final position on the return path.
         while position * 2 + 1 < self.entries.len() {
             let left = position * 2 + 1;
             let right = left + 1;
@@ -801,15 +805,27 @@ impl PackedMinMaxHeap {
                 left
             };
             let child_entry = self.entries[child];
-            if !table
-                .compare_candidate(slot.cost(), slot.tile(), slot.balance(), child_entry.node())
-                .is_gt()
-            {
-                break;
-            }
             self.entries[position] = child_entry;
             table.slot_mut(child_entry.node()).set_open(position);
             position = child;
+        }
+        while position > start {
+            let parent = (position - 1) / 2;
+            let parent_entry = self.entries[parent];
+            if !table
+                .compare_candidate(
+                    slot.cost(),
+                    slot.tile(),
+                    slot.balance(),
+                    parent_entry.node(),
+                )
+                .is_lt()
+            {
+                break;
+            }
+            self.entries[position] = parent_entry;
+            table.slot_mut(parent_entry.node()).set_open(position);
+            position = parent;
         }
         self.entries[position] = entry;
         table.slot_mut(entry.node()).set_open(position);
@@ -1860,6 +1876,47 @@ mod packed_search_tests {
                 assert_eq!(heap.pop_min(&mut table), None);
             }
         });
+    }
+
+    #[test]
+    fn packed_binary_pop_preserves_positions_for_interleaved_decreases() {
+        for length in [1, 2, 3, 4, 7, 8, 9, 31, 32, 33, 255, 256, 257] {
+            let mut table = PackedSearchTable::try_new(length).unwrap();
+            let mut heap = PackedMinMaxHeap::try_new(length).unwrap();
+            let mut remaining: Vec<_> = (0..length as u32).collect();
+            let mut parents: Vec<_> = remaining.iter().map(|id| id ^ 7).collect();
+            for &id in &remaining {
+                table.insert(id, tile(id as i32), 0, 0, 0, f64::from(id % 5));
+                heap.push(&mut table, id, parents[id as usize]);
+            }
+            let mut ordinal = 0;
+            while !remaining.is_empty() {
+                let expected = *remaining
+                    .iter()
+                    .min_by(|&&left, &&right| {
+                        let slot = table.slot(left);
+                        table.compare_candidate(slot.cost(), slot.tile(), slot.balance(), right)
+                    })
+                    .unwrap();
+                assert_eq!(
+                    heap.pop_min(&mut table),
+                    Some((expected, parents[expected as usize]))
+                );
+                remaining.retain(|&id| id != expected);
+                table.settle(expected, parents[expected as usize]);
+                for (position, entry) in heap.entries.iter().enumerate() {
+                    assert_eq!(table.slot(entry.node()).heap_position(), position);
+                }
+                if let Some(&id) = remaining.last() {
+                    ordinal += 1;
+                    parents[id as usize] = expected;
+                    table.update(id, 0, 0, -f64::from(ordinal));
+                    heap.decrease_key(&mut table, id, expected);
+                }
+            }
+            assert!(!heap.min_max);
+            assert_eq!(heap.pop_min(&mut table), None);
+        }
     }
 
     #[test]

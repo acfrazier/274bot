@@ -366,6 +366,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   unused search buffers. Synchronous searches avoid extra lookup suspension,
   per-edge call overhead and repeated heap-order checks without changing routes,
   search budgets or cooperative cancellation checks.
+- Route searches avoid repeated comparisons when they select the next tile.
+  Routes, search budgets and cancellation checks stay unchanged.
 
 #### Maps
 
