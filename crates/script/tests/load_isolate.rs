@@ -6588,11 +6588,20 @@ fn nearest_bank_isolate() -> LoadIsolate {
     LoadIsolate::spawn_with_content(
         r#"
 import { nearestBank } from '../../api/bank/BankLocations.js';
-import { nearestUsableBank as moduleNearestUsableBank } from '../../api/bank/BankLocations.js';
+import {
+    nearestUsableBank as moduleNearestUsableBank,
+    approachOf,
+    BANK_LOCATIONS,
+    nearestBanks,
+} from '../../api/bank/BankLocations.js';
 import { nearestUsableBank as publicNearestUsableBank } from '@rs2b0t/api';
 globalThis.pick = origin => nearestBank(origin)?.name ?? null;
+globalThis.nearestPick = nearestBank;
+globalThis.bankCatalog = BANK_LOCATIONS;
+globalThis.rankedBankPick = nearestBanks;
 globalThis.moduleUsablePick = (origin, usable) => moduleNearestUsableBank(origin, usable);
 globalThis.publicUsablePick = (origin, usable) => publicNearestUsableBank(origin, usable);
+globalThis.approachPick = bank => approachOf(bank);
 export default class T extends LoopingBot { loop() {} }
 "#
         .to_string(),
@@ -6669,14 +6678,19 @@ fn isolate_root_nearest_usable_bank_matches_module_and_preserves_predicate_order
                 const origin = { x: 101, z: 100, level: 0 };
                 const publicOrder = [];
                 const moduleOrder = [];
+                const publicPredicateTiles = [];
                 const publicBank = publicUsablePick(origin, bank => {
                     publicOrder.push(bank.name);
+                    publicPredicateTiles.push(bank.tile.toString());
                     return bank.name === 'East';
                 });
                 const moduleBank = moduleUsablePick(origin, bank => {
                     moduleOrder.push(bank.name);
                     return bank.name === 'East';
                 });
+                const nearest = nearestPick(origin);
+                const catalogTile = bankCatalog[0].tile.toString();
+                const rankedTiles = rankedBankPick(origin).map(bank => bank.tile.toString());
                 const sentinel = {};
                 let sameThrownValue = false;
                 try {
@@ -6689,8 +6703,12 @@ fn isolate_root_nearest_usable_bank_matches_module_and_preserves_predicate_order
                     moduleName: moduleBank?.name,
                     publicTile: publicBank?.tile.toString(),
                     moduleTile: moduleBank?.tile.toString(),
+                    nearestTile: nearest?.tile.toString(),
+                    catalogTile,
+                    rankedTiles,
                     publicOrder,
                     moduleOrder,
+                    publicPredicateTiles,
                     sameThrownValue,
                 };
             })()"#,
@@ -6700,11 +6718,63 @@ fn isolate_root_nearest_usable_bank_matches_module_and_preserves_predicate_order
     assert_eq!(result["moduleName"], "East");
     assert_eq!(result["publicTile"], "(120, 100, 0)");
     assert_eq!(result["moduleTile"], "(120, 100, 0)");
+    assert_eq!(result["nearestTile"], "(100, 100, 0)");
+    assert_eq!(result["catalogTile"], "(100, 100, 0)");
+    assert_eq!(
+        result["rankedTiles"],
+        serde_json::json!(["(100, 100, 0)", "(120, 100, 0)"])
+    );
     assert_eq!(result["publicOrder"], serde_json::json!(["West", "East"]));
     assert_eq!(result["moduleOrder"], serde_json::json!(["West", "East"]));
+    assert_eq!(
+        result["publicPredicateTiles"],
+        serde_json::json!(["(100, 100, 0)", "(120, 100, 0)"])
+    );
     assert_eq!(result["sameThrownValue"], true);
     iso.join();
 }
+#[test]
+fn isolate_approach_of_preserves_value_identity_nullish_fallback_and_throws() {
+    let iso = nearest_bank_isolate();
+    post_snapshot_input(&iso, &base_snapshot());
+    let result: serde_json::Value = iso
+        .probe(
+            r#"(() => {
+                const explicit = {};
+                const fallback = {};
+                const explicitIdentity =
+                    approachPick({ approach: explicit, tile: fallback }) === explicit;
+                const nullFallback =
+                    approachPick({ approach: null, tile: fallback }) === fallback;
+                const undefinedFallback =
+                    approachPick({ tile: fallback }) === fallback;
+                const sentinel = {};
+                const throwingBank = {
+                    tile: fallback,
+                    get approach() { throw sentinel; },
+                };
+                let sameThrownValue = false;
+                try {
+                    approachPick(throwingBank);
+                } catch (error) {
+                    sameThrownValue = error === sentinel;
+                }
+                return {
+                    explicitIdentity,
+                    nullFallback,
+                    undefinedFallback,
+                    sameThrownValue,
+                };
+            })()"#,
+        )
+        .unwrap();
+    assert_eq!(result["explicitIdentity"], true);
+    assert_eq!(result["nullFallback"], true);
+    assert_eq!(result["undefinedFallback"], true);
+    assert_eq!(result["sameThrownValue"], true);
+    iso.join();
+}
+
 
 
 /// Post `snap` at ticks `1..=ticks`, run each game tick, and collect every
