@@ -1022,13 +1022,12 @@ impl PackedMinMaxHeap {
     #[inline(always)]
     fn compare_positions(&self, left: usize, right: usize, table: &PackedSearchTable) -> Ordering {
         let left = table.slot(self.entries[left].node());
-        let right = table.slot(self.entries[right].node());
-        left.cost()
-            .total_cmp(&right.cost())
-            .then_with(|| right.tile().x.cmp(&left.tile().x))
-            .then_with(|| right.tile().z.cmp(&left.tile().z))
-            .then_with(|| right.tile().level.cmp(&left.tile().level))
-            .then_with(|| right.balance().cmp(&left.balance()))
+        table.compare_candidate(
+            left.cost(),
+            left.tile(),
+            left.balance(),
+            self.entries[right].node(),
+        )
     }
 
     fn swap(&mut self, left: usize, right: usize, table: &mut PackedSearchTable) {

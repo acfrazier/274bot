@@ -8296,6 +8296,7 @@ async fn search_kernel(
     }
 }
 
+#[inline(always)]
 #[expect(
     clippy::too_many_arguments,
     reason = "the compact relaxation updates the shared table and heap without copying state"
