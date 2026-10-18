@@ -5,7 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use host_play::local_state::Preferences;
+use crate::prefs::UiPreferences;
 
 /// Shared settings label used by panel and TUI.
 pub const LOAD_PATHS_LABEL: &str = "Load quest Paths from folder";
@@ -59,7 +59,7 @@ impl QuesterPathsView {
     }
 
     /// Read the host-wide settings object without touching any Path files.
-    fn read(preferences: &Preferences) -> Self {
+    fn read(preferences: &UiPreferences) -> Self {
         let Some(value) = preferences.value("quester_paths") else {
             return Self::default();
         };
@@ -81,7 +81,7 @@ impl QuesterPathsView {
 
     /// Write only fields changed by this editor through the shared
     /// preferences.
-    fn persist_changed(preferences: &Preferences, before: &Self, after: &Self) -> io::Result<()> {
+    fn persist_changed(preferences: &UiPreferences, before: &Self, after: &Self) -> io::Result<()> {
         let enabled_changed = before.enabled != after.enabled;
         let folder_changed = before.folder != after.folder;
         if !enabled_changed && !folder_changed {
@@ -299,7 +299,7 @@ pub struct QuesterPathsController {
 impl QuesterPathsController {
     /// Restore and apply saved settings. An enabled source is reloaded the
     /// first time selected game data is supplied to [`Self::advance`].
-    pub fn restore(&mut self, preferences: &Preferences) {
+    pub fn restore(&mut self, preferences: &UiPreferences) {
         self.settings = QuesterPathsView::read(preferences);
         self.settings.apply();
         self.reload_when_ready = self.settings.enabled;
@@ -313,7 +313,7 @@ impl QuesterPathsController {
     /// Persist (when requested), apply and reload a changed source.
     pub fn apply_changed(
         &mut self,
-        preferences: &Preferences,
+        preferences: &UiPreferences,
         after: &QuesterPathsView,
         selected: Option<Arc<api::game_data::SelectedGameData>>,
         persist: bool,
@@ -449,8 +449,9 @@ fn compile_error_message(error: &script::quester::compile::CompileError) -> Stri
 #[cfg(test)]
 mod tests {
     use super::{QuesterPathsView, ReloadPaths};
+    use crate::prefs::UiPreferences as Preferences;
     use api::selected::{ClientRevision, FamilyPreparation};
-    use host_play::local_state::{LocalStateService, Preferences, StateRoot};
+    use host_play::local_state::{LocalStateService, StateRoot};
     use script::quester::registry::FolderSource;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -472,8 +473,9 @@ mod tests {
             ));
             std::fs::create_dir_all(&dir).unwrap();
             Self {
-                preferences: LocalStateService::open_process(StateRoot::new(dir.clone()))
-                    .preferences(),
+                preferences: Preferences::new(
+                    LocalStateService::open_process(StateRoot::new(dir.clone())).preferences(),
+                ),
                 dir,
             }
         }

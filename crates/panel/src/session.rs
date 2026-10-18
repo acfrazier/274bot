@@ -28,12 +28,14 @@ use client::render::nav_debug::{
     CORNER_SW, FACE_E, FACE_N, FACE_S, FACE_W,
 };
 use client::sound::output::AudioOut;
+use frontend_core::command::RasterMode;
 use frontend_core::MapBakeChoice;
+use frontend_core::{GuardianEdit, GuardianPolicy, UiPreferences};
 use host::{FrameBuf, InputEv, SlotInput};
 use host_play::audio::{AudioChange, AudioGate};
 use host_play::live_gate::LiveCore;
 use host_play::live_start::{self, PendingCatalogStart, StartArming};
-use host_play::local_state::{LocalStateService, Preferences, StateRoot};
+use host_play::local_state::{LocalStateService, StateRoot};
 use host_play::map_cache::MapDemand;
 use host_play::profile::ProfileEnvironment;
 use host_play::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
@@ -55,7 +57,7 @@ use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
 use nav::world::NavWorld;
 use nav::WorldState;
-use vault::{Profile, ProfileSettings, RandomEventPolicy, Secret, Vault};
+use vault::{Profile, Secret, Vault};
 
 use crate::focus::{draw_for_slot, full_rate_for};
 use crate::nav_settings::{from_scenario, parse_html_color, NavSettings};
@@ -463,7 +465,7 @@ impl SlotSurface for PanelSurface<'_> {
     fn attach(
         &mut self,
         name: &str,
-        profile: &mut Profile,
+        profile: &mut frontend_core::SpawnProfile<'_>,
         retained: Option<SlotIo>,
     ) -> SlotAttach<SlotIo> {
         let SlotIo { input, pixels } = retained.unwrap_or_else(|| SlotIo {
@@ -472,18 +474,18 @@ impl SlotSurface for PanelSurface<'_> {
         });
         // Raster comes from the vault profile (the same source as
         // `bot_client_config`); a focus change never re-roles a live slot.
-        let raster = profile.settings.raster;
+        let raster = profile.raster();
         // The session-only memory choice applies to this disposable spawn
         // profile only; it is never written to the vault.
         if let Some(lowmem) = self.memory_override {
-            profile.settings.lowmem = lowmem;
+            profile.set_lowmem(lowmem);
         }
-        input.set_prefer_cpu(raster == vault::RasterMode::Cpu);
+        input.set_prefer_cpu(raster == RasterMode::Cpu);
         self.focus
             .lock()
             .unwrap()
             .renderer_by
-            .insert(name.to_string(), raster != vault::RasterMode::Off);
+            .insert(name.to_string(), raster != RasterMode::Off);
         SlotAttach::new(
             SlotIo {
                 input: Arc::clone(&input),
@@ -1073,32 +1075,16 @@ pub struct Session {
     /// Display copy of the core's last status poll, with queued walk
     /// destinations applied.
     pub statuses: Vec<SlotStatus>,
-    /// Picker edit scratch (username/password). Empty on the strip. The
-    /// password is zeroed when cleared or dropped.
-    pub cred_user: String,
-    pub cred_pass: Secret,
-    /// Draft auto-login / random / lamp for a new vault row. An existing
-    /// edit writes those through the vault immediately.
-    pub cred_settings: ProfileSettings,
-    /// Profile picker edit: `None` not editing, `Some("")` new profile,
-    /// `Some(name)` editing that vault row.
-    pub chooser_edit: Option<String>,
-    /// Bumped each time the editor opens on a target: the form's widget ids
-    /// include it, so no text field keeps an edit buffer from the previous
-    /// target.
-    pub chooser_form: usize,
-    /// Explicit retarget of an unsaved edit form, awaiting the Discard /
-    /// Keep editing prompt. `None` means no switch is waiting.
-    pub pending_edit_switch: Option<EditSwitch>,
+    /// The Profiles edit form (core-owned): its target (`Some("")` a new
+    /// profile), its staged draft (the password is zeroed when cleared or
+    /// dropped), the Discard / Keep editing prompt and the save feedback.
+    /// An existing profile's auto-login, random and lamp settings write
+    /// through the vault at once; the form's generation keys its widgets.
+    pub profile_editor: frontend_core::ProfileEditor,
     /// One-shot focus request from [`Session::open_window`] (or a staged
     /// Profiles leave prompt, which must come to the front even from a
     /// hidden tab): the named window's next `Begin` takes it once.
     pub window_focus: Option<PanelWindow>,
-    /// The edit form's save feedback (its inline refusal, or `Saved <name>.`
-    /// once the write is durable) and the credentials Save still being
-    /// written: its profile is selected (and spawned) only after the write
-    /// succeeds.
-    pub chooser_save: frontend_core::ProfileFormSave,
     /// Per-username walk arms; the focused slot's arm carries the armed
     /// whole-world route (polled from `start_play` `per_frame` via
     /// [`nav::traveller::Traveller::follow`]).
@@ -1133,7 +1119,7 @@ pub struct Session {
     /// The operator preferences (`panel-ui.json`) through the process
     /// local-state service this session opened: the one handle every reader
     /// and writer of the panel's preferences goes through.
-    pub(crate) preferences: Preferences,
+    pub(crate) preferences: UiPreferences,
     /// Shared Quester Paths settings and reload lifecycle.
     pub(crate) quester_paths: frontend_core::QuesterPathsController,
     pub(crate) quester_paths_folder_edit: String,
@@ -1541,7 +1527,11 @@ impl Session {
         // the Play this session starts adopts it too.
         let local_state =
             LocalStateService::open_process(StateRoot::new(script::bot_home().join(".274bot")));
-        let preferences = local_state.preferences();
+        let mut core = OperatorSession::new(_instance);
+        core.bind_local_state(Arc::clone(&local_state));
+        let preferences = core
+            .preferences()
+            .expect("the session's local state was bound just now");
         let mut ui = crate::ui_state::load(&preferences);
         let walk_permissions = frontend_core::WalkGlobalsView::read(&preferences);
         let mut quester_paths = frontend_core::QuesterPathsController::default();
@@ -1556,10 +1546,8 @@ impl Session {
         let (sidecar_50_pref, focused_50_pref) = (ui.sidecar_50, ui.focused_50);
         let map_bake = frontend_core::MapBakeGate::new(ui.map_bake);
         let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::new()));
-        let mut core = OperatorSession::new(_instance);
-        core.bind_local_state(Arc::clone(&local_state));
         core.set_walk_globals(walk_permissions.globals);
-        core.set_walk_globals_store(preferences.clone());
+        core.set_walk_globals_store(preferences.share());
         core.set_pause_script_on_manual_walk_abort(ui.nav.pause_script_on_manual_walk_abort);
 
         // The fleet rows show the WalkTo walks this panel arms.
@@ -1596,14 +1584,8 @@ impl Session {
             log_window_body_drawn: false,
             pass_scratch: Secret::with_capacity(256),
             statuses: Vec::new(),
-            cred_user: String::new(),
-            cred_pass: Secret::with_capacity(256),
-            cred_settings: ProfileSettings::default(),
-            chooser_edit: None,
-            chooser_form: 0,
-            pending_edit_switch: None,
+            profile_editor: frontend_core::ProfileEditor::new(),
             window_focus: None,
-            chooser_save: frontend_core::ProfileFormSave::default(),
             profile_import_open: false,
             profile_import: frontend_core::rs2b0t_import::ProfileImport::new(),
             profile_import_lines: Vec::new(),
@@ -3570,8 +3552,7 @@ impl Session {
         if failed {
             if let Some(lowmem) = self
                 .focused_name()
-                .and_then(|name| self.core.vault().and_then(|v| v.get(&name)))
-                .map(|profile| profile.settings.lowmem)
+                .and_then(|name| self.core.profile(&name).map(|profile| profile.lowmem()))
             {
                 self.ui.lowmem = lowmem;
             }
@@ -3743,10 +3724,7 @@ impl Session {
     /// skipped, `Some(false)` still in tutorial.
     pub fn focused_tutorial_skipped(&self) -> Option<bool> {
         let name = self.focused_name()?;
-        self.core
-            .vault()
-            .and_then(|v| v.get(&name))
-            .and_then(|p| p.settings.tutorial_skipped)
+        self.core.profile(&name).and_then(|p| p.tutorial_skipped())
     }
 
     /// Persist TutSkip on the focused vault profile (debugprefs).
@@ -3754,21 +3732,14 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return;
         };
-        self.cache_tutorial(&name, true);
+        if let Err(error) = self.submit_profile_write(OperatorCommand::MarkTutorialSkipped, &name) {
+            self.error = Some(error);
+        }
     }
 
+    /// Cache the engine's `getvar tutorial` read on the profile.
     fn cache_tutorial(&mut self, name: &str, skipped: bool) {
-        let Some(mut profile) = self.core.vault().and_then(|v| v.get(name)).cloned() else {
-            return;
-        };
-        if profile.settings.tutorial_skipped == Some(skipped) {
-            return;
-        }
-        profile.settings.tutorial_skipped = Some(skipped);
-        if let Err(e) =
-            self.core
-                .save_profile(profile, frontend_core::ArmMirror::none(), "tutorial")
-        {
+        if let Err(e) = self.core.record_tutorial_state(name, skipped) {
             self.error = Some(e);
         }
     }
@@ -3948,7 +3919,7 @@ impl Session {
     fn maybe_offer_background_ack(&mut self) {
         if !self.persist_ui
             || self.ui.background_bots_ack
-            || host_play::background_bots_acked(&self.preferences)
+            || frontend_core::resources::background_bots_acked(&self.preferences)
         {
             return;
         }
@@ -3961,14 +3932,22 @@ impl Session {
     /// Persist "Got it, don't show again" for the background-bots notice.
     pub fn ack_background_bots(&mut self) {
         if self.persist_ui {
-            match host_play::persist_background_bots_ack(&self.preferences) {
-                Ok(()) => {
+            let failure = self
+                .submit(OperatorCommand::AcknowledgeNotice, Targets::Application)
+                .map(|submitted| {
+                    self.core
+                        .command_failure(submitted.request())
+                        .map(str::to_string)
+                });
+            match failure {
+                Some(None) => {
                     self.background_ack_open = false;
                     self.ui.background_bots_ack = true;
                     crate::ui_state::save(&self.preferences, &self.ui);
-                    host_play::clear_background_bots_ack_error(&mut self.error);
+                    frontend_core::resources::clear_background_bots_ack_error(&mut self.error);
                 }
-                Err(e) => self.error = Some(host_play::background_bots_ack_error(&e)),
+                Some(Some(error)) => self.error = Some(error),
+                None => {}
             }
         } else {
             self.background_ack_open = false;
@@ -4025,9 +4004,9 @@ impl Session {
         // shows what the slot actually runs (display only — no write-back,
         // no re-role). The profile editor's fields stay on the profile
         // being edited: a focus change never rewrites them.
-        if let Some(p) = self.core.vault().and_then(|vault| vault.get(name)) {
-            self.ui.raster = p.settings.raster;
-            self.ui.lowmem = p.settings.lowmem;
+        if let Some(p) = self.core.profile(name) {
+            self.ui.raster = p.raster();
+            self.ui.lowmem = p.lowmem();
         }
     }
 
@@ -4375,10 +4354,9 @@ impl Session {
         lamp_skill: &str,
         lamp_auto: bool,
     ) -> bool {
-        let result = self
-            .core
-            .set_random_settings(name, random_events, lamp_skill, lamp_auto)
-            .map(|_| ());
+        self.core
+            .stage_guardian(GuardianEdit::fields(random_events, lamp_skill, lamp_auto));
+        let result = self.submit_profile_write(OperatorCommand::SetGuardian, name);
         self.apply_result(result)
     }
 
@@ -4386,12 +4364,11 @@ impl Session {
         &mut self,
         name: &str,
         event: &str,
-        policy: RandomEventPolicy,
+        policy: GuardianPolicy,
     ) -> bool {
-        let result = self
-            .core
-            .set_random_event_policy(name, event, policy)
-            .map(|_| ());
+        self.core
+            .stage_guardian(GuardianEdit::policy(event, policy));
+        let result = self.submit_profile_write(OperatorCommand::SetGuardian, name);
         self.apply_result(result)
     }
 
@@ -4404,7 +4381,7 @@ impl Session {
 
     /// Game-pane none/GPU/CPU (General config). Rail members stay GPU
     /// (CPU/none only as fallback via `set_draw` / `prefer_cpu`).
-    pub fn focused_raster(&self) -> vault::RasterMode {
+    pub fn focused_raster(&self) -> RasterMode {
         self.ui.raster
     }
 
@@ -4415,14 +4392,9 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return;
         };
-        if let Some(mut p) = self.core.vault().and_then(|v| v.get(&name)).cloned() {
-            p.settings.raster = self.ui.raster;
-            if let Err(e) =
-                self.core
-                    .save_profile(p, frontend_core::ArmMirror::none(), "render prefs")
-            {
-                self.error = Some(e);
-            }
+        if let Err(e) = self.submit_profile_write(OperatorCommand::SetRaster(self.ui.raster), &name)
+        {
+            self.error = Some(e);
         }
     }
 
@@ -4430,17 +4402,17 @@ impl Session {
     /// only. Gpu↔Cpu flips the slot's `prefer_cpu` latch; the host drops
     /// the `Renderer` and reattaches the right backend on the **same**
     /// client — never a restart. Rail members are not touched.
-    pub fn set_focused_raster(&mut self, raster: vault::RasterMode) -> bool {
+    pub fn set_focused_raster(&mut self, raster: RasterMode) -> bool {
         self.ui.raster = raster;
         self.persist_game_render_prefs();
-        self.set_renderer(raster != vault::RasterMode::Off);
+        self.set_renderer(raster != RasterMode::Off);
         let Some(name) = self.focused_name() else {
             return true;
         };
-        if raster == vault::RasterMode::Off {
+        if raster == RasterMode::Off {
             return true;
         }
-        let want_cpu = raster == vault::RasterMode::Cpu;
+        let want_cpu = raster == RasterMode::Cpu;
         if let Some(slot) = self.core.slot_io(&name) {
             slot.input.set_prefer_cpu(want_cpu);
         }
@@ -4518,7 +4490,7 @@ impl Session {
     /// GPU↔CPU (not Off) reattaches the renderer on the same client,
     /// never a restart or logout.
     pub fn raster_switch_needs_confirm(
-        _next: vault::RasterMode,
+        _next: RasterMode,
         _prefer_cpu: bool,
         _slot_spawned: bool,
     ) -> bool {
@@ -4528,7 +4500,7 @@ impl Session {
     /// Pick a raster. Off is `set_draw`. GPU↔CPU on the Game-pane client
     /// drops + reattaches the renderer (never a logout). Rail members stay
     /// GPU/lowmem.
-    pub fn request_focused_raster(&mut self, raster: vault::RasterMode) {
+    pub fn request_focused_raster(&mut self, raster: RasterMode) {
         if self.focused_raster() == raster {
             return;
         }
@@ -4692,7 +4664,7 @@ impl Session {
     /// Returns whether the toggle was applied.
     pub fn set_multibox(&mut self, on: bool) -> bool {
         if self.multibox && !on && self.form_saving() {
-            self.stage_edit_exit(EditLeave::MultiBoxOff, "", "turn MultiBox off");
+            self.stage_edit_exit(FormLeave::MultiBoxOff, "", "turn MultiBox off");
             self.wall.chooser_open = true;
             return false;
         }
@@ -5209,13 +5181,13 @@ impl Session {
         }
         let mut universe = std::mem::take(&mut self.fleet_universe);
         universe.clear();
-        match self.core.vault() {
-            Some(vault) => universe.extend(
-                vault
+        match self.core.vault_open() {
+            true => universe.extend(
+                self.core
                     .profiles()
-                    .map(|profile| frontend_core::ProfileIdentity::uid(profile.uid)),
+                    .map(|profile| frontend_core::ProfileIdentity::uid(profile.uid())),
             ),
-            None => universe.extend(
+            false => universe.extend(
                 self.core
                     .fleet_view()
                     .rows()
@@ -5745,7 +5717,7 @@ impl Drop for Session {
 
 mod chooser;
 mod windows;
-pub use chooser::{EditLeave, EditSwitch};
+pub use frontend_core::{FormLeave, LeavePrompt};
 pub use windows::PanelWindow;
 
 #[cfg(test)]

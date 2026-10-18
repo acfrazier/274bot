@@ -244,7 +244,7 @@ fn create_private_dir(dir: &Path) -> io::Result<()> {
 
 /// The shared preference: `session_log_file`, off when the file or the key
 /// is absent (every 0.1.8.1 prefs file) or the preferences cannot be read.
-pub fn session_log_setting(preferences: &host_play::local_state::Preferences) -> bool {
+pub fn session_log_setting(preferences: &crate::prefs::UiPreferences) -> bool {
     preferences
         .value(SESSION_LOG_KEY)
         .and_then(|value| value.as_bool())
@@ -254,7 +254,7 @@ pub fn session_log_setting(preferences: &host_play::local_state::Preferences) ->
 /// Store the preference durably, keeping every other one. A preferences
 /// file the service refused is never written: that is an error.
 pub fn persist_session_log_setting(
-    preferences: &host_play::local_state::Preferences,
+    preferences: &crate::prefs::UiPreferences,
     on: bool,
 ) -> io::Result<()> {
     preferences.set(SESSION_LOG_KEY, serde_json::Value::Bool(on))

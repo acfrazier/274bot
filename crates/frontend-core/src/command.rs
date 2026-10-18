@@ -449,12 +449,17 @@ pub enum OperatorCommand {
     SaveLog,
 }
 
-/// A raster mode for one member's game image.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// A raster mode for one member's game image. Saved lowercase, as the
+/// vault saves it (the panel keeps its global choice in its preferences).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
 pub enum RasterMode {
     /// No game image.
     Off,
     /// GPU raster.
+    #[default]
     Gpu,
     /// CPU raster.
     Cpu,

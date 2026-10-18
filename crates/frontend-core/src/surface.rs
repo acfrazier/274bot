@@ -7,6 +7,46 @@ use std::sync::Arc;
 use host::{FrameBuf, SlotInput};
 use vault::Profile;
 
+use crate::command::RasterMode;
+
+/// The disposable profile copy handed to one worker spawn: a surface may
+/// force its raster mode or apply a session-only memory choice. It is
+/// never written back to the vault.
+pub struct SpawnProfile<'a> {
+    profile: &'a mut Profile,
+}
+
+impl<'a> SpawnProfile<'a> {
+    pub(crate) fn new(profile: &'a mut Profile) -> Self {
+        Self { profile }
+    }
+
+    /// The profile's username.
+    pub fn username(&self) -> &str {
+        &self.profile.username
+    }
+
+    /// The spawn's raster mode.
+    pub fn raster(&self) -> RasterMode {
+        RasterMode::from_vault(self.profile.settings.raster)
+    }
+
+    /// Force the spawn's raster mode.
+    pub fn set_raster(&mut self, raster: RasterMode) {
+        self.profile.settings.raster = raster.to_vault();
+    }
+
+    /// The spawn's low-memory handshake.
+    pub fn lowmem(&self) -> bool {
+        self.profile.settings.lowmem
+    }
+
+    /// Apply a session-only memory choice to this spawn.
+    pub fn set_lowmem(&mut self, lowmem: bool) {
+        self.profile.settings.lowmem = lowmem;
+    }
+}
+
 /// Host handles for one worker spawn plus the surface-owned value the core
 /// retains for that slot (and hands back when a terminal lifetime restarts
 /// or a cancelled removal re-adds the member).
@@ -55,7 +95,7 @@ pub trait SlotSurface {
     fn attach(
         &mut self,
         name: &str,
-        profile: &mut Profile,
+        profile: &mut SpawnProfile<'_>,
         retained: Option<Self::Io>,
     ) -> SlotAttach<Self::Io>;
 
@@ -98,10 +138,10 @@ impl<F: FnMut(&str)> SlotSurface for HeadlessSurface<F> {
     fn attach(
         &mut self,
         _name: &str,
-        profile: &mut Profile,
+        profile: &mut SpawnProfile<'_>,
         _retained: Option<()>,
     ) -> SlotAttach<()> {
-        profile.settings.raster = vault::RasterMode::Off;
+        profile.set_raster(RasterMode::Off);
         SlotAttach::new((), None, None)
     }
 

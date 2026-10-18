@@ -4398,20 +4398,35 @@ fn raster_picker(ui: &Ui, session: &mut Session) {
     let cur = session.focused_raster();
     let avail = ui.content_region_avail()[0];
     let cells = scaled_button_cells(ui, avail, 3);
-    if inverted_button(ui, "none", cur == vault::RasterMode::Off, [cells[0].0, 0.0]) {
-        session.request_focused_raster(vault::RasterMode::Off);
+    if inverted_button(
+        ui,
+        "none",
+        cur == frontend_core::command::RasterMode::Off,
+        [cells[0].0, 0.0],
+    ) {
+        session.request_focused_raster(frontend_core::command::RasterMode::Off);
     }
     if cells[1].1 {
         gap_line(ui);
     }
-    if inverted_button(ui, "GPU", cur == vault::RasterMode::Gpu, [cells[1].0, 0.0]) {
-        session.request_focused_raster(vault::RasterMode::Gpu);
+    if inverted_button(
+        ui,
+        "GPU",
+        cur == frontend_core::command::RasterMode::Gpu,
+        [cells[1].0, 0.0],
+    ) {
+        session.request_focused_raster(frontend_core::command::RasterMode::Gpu);
     }
     if cells[2].1 {
         gap_line(ui);
     }
-    if inverted_button(ui, "CPU", cur == vault::RasterMode::Cpu, [cells[2].0, 0.0]) {
-        session.request_focused_raster(vault::RasterMode::Cpu);
+    if inverted_button(
+        ui,
+        "CPU",
+        cur == frontend_core::command::RasterMode::Cpu,
+        [cells[2].0, 0.0],
+    ) {
+        session.request_focused_raster(frontend_core::command::RasterMode::Cpu);
     }
     let mem = if session.focused_lowmem() {
         "lowmem"
@@ -4605,13 +4620,17 @@ fn slot_render_section(ui: &Ui, session: &mut Session) {
 const AUTO_LOGIN_TOOLTIP: &str = "Log in as soon as this bot starts (after unlocking the vault or loading the profile), and log back in after a disconnect. Off: the bot waits at the login screen until you press Log in; a running script still logs in.";
 
 fn slot_capture_section(ui: &Ui, session: &mut Session) {
-    let mut auto_cur = session.cred_settings.auto_login;
+    let mut auto_cur = session.profile_editor.draft().settings().auto_login();
     // Label only: the saved setting stays `ProfileSettings.auto_login`.
     let toggled = ui.checkbox("Log in automatically", &mut auto_cur);
     ui.set_item_tooltip(AUTO_LOGIN_TOOLTIP);
     if toggled {
-        session.cred_settings.auto_login = auto_cur;
-        if let Some(name) = session.chooser_edit.as_deref().filter(|n| !n.is_empty()) {
+        *session
+            .profile_editor
+            .draft_mut()
+            .settings_mut()
+            .auto_login_mut() = auto_cur;
+        if let Some(name) = session.profile_editor.target().filter(|n| !n.is_empty()) {
             let name = name.to_string();
             session.set_auto_login(&name, auto_cur);
         }
@@ -4624,28 +4643,40 @@ fn slot_capture_section(ui: &Ui, session: &mut Session) {
         .and_then(|p| p.public_worlds())
     {
         let preview = session
-            .cred_settings
-            .world
+            .profile_editor
+            .draft()
+            .settings()
+            .world()
             .map_or_else(|| "auto".to_string(), |number| format!("w{number}"));
         ui.text_disabled("world (next slot start)");
         ui.set_next_item_width(-1.0);
         if let Some(_open) = ui.begin_combo("##account-world", &preview) {
             if ui
                 .selectable_config("auto")
-                .selected(session.cred_settings.world.is_none())
+                .selected(session.profile_editor.draft().settings().world().is_none())
                 .build()
             {
-                session.cred_settings.world = None;
+                *session
+                    .profile_editor
+                    .draft_mut()
+                    .settings_mut()
+                    .world_mut() = None;
                 world_changed = true;
             }
             for world in &worlds.worlds {
                 let label = format!("w{}", world.number);
                 if ui
                     .selectable_config(&label)
-                    .selected(session.cred_settings.world == Some(world.number))
+                    .selected(
+                        session.profile_editor.draft().settings().world() == Some(world.number),
+                    )
                     .build()
                 {
-                    session.cred_settings.world = Some(world.number);
+                    *session
+                        .profile_editor
+                        .draft_mut()
+                        .settings_mut()
+                        .world_mut() = Some(world.number);
                     world_changed = true;
                 }
             }
@@ -5424,14 +5455,14 @@ fn on_screen_avail(ui: &Ui, right: f32) -> f32 {
 /// shows over the result it warned about.
 fn edit_switch_popup(ui: &Ui, session: &mut Session) {
     let open = ui.is_popup_open(PROFILE_EDIT_SWITCH_POPUP);
-    if session.pending_edit_switch.is_none() && !open {
+    if session.profile_editor.pending().is_none() && !open {
         return;
     }
     if !open {
         ui.open_popup(PROFILE_EDIT_SWITCH_POPUP);
     }
     ui.popup(PROFILE_EDIT_SWITCH_POPUP, || {
-        let Some(switch) = session.pending_edit_switch.as_ref() else {
+        let Some(switch) = session.profile_editor.pending() else {
             ui.close_current_popup();
             return;
         };
@@ -5440,7 +5471,7 @@ fn edit_switch_popup(ui: &Ui, session: &mut Session) {
             ui.close_current_popup();
             return;
         }
-        popup_text(ui, &switch.prompt);
+        popup_text(ui, switch.prompt());
         ui.spacing();
         let avail = ui.content_region_avail()[0];
         let (w, stack) = scaled_button_row_layout(ui, avail, 2);
@@ -5628,7 +5659,7 @@ fn profiles_footer_height(ui: &Ui, session: &Session) -> f32 {
 /// stacked below it. Returns what the list was asked to do.
 fn profiles_regions(ui: &Ui, session: &mut Session, right: f32, region_h: f32) -> ListPick {
     let w = on_screen_avail(ui, right);
-    if session.chooser_edit.is_none() && !session.profile_import_open {
+    if !session.profile_editor.is_open() && !session.profile_import_open {
         return profile_list(ui, session, right, [w, region_h]);
     }
     let divider = scale_px(ui, PROFILES_DIVIDER);
@@ -5773,7 +5804,7 @@ fn profiles_editor(ui: &Ui, session: &mut Session, size: [f32; 2]) {
             .child_flags(ChildFlags::NAV_FLATTENED)
             .build(ui, || preview = profile_import_body(ui, session));
         profile_import_bar(ui, session, w, preview);
-    } else if session.chooser_edit.is_some() {
+    } else if session.profile_editor.is_open() {
         let bar = profile_form_bar_height(ui, session, w);
         ui.child_window("##profiles-editor")
             .size([w, (h - bar).max(min_h)])
@@ -5786,7 +5817,7 @@ fn profiles_editor(ui: &Ui, session: &mut Session, size: [f32; 2]) {
 /// The edit form's fields, in the editor pane.
 fn profile_form_body(ui: &Ui, session: &mut Session) {
     {
-        let edit = session.chooser_edit.as_deref().unwrap_or("");
+        let edit = session.profile_editor.target().unwrap_or("");
         if edit.is_empty() {
             ui.text_colored(ACCENT, "New profile");
         } else {
@@ -5797,10 +5828,13 @@ fn profile_form_body(ui: &Ui, session: &mut Session) {
     }
     // One id scope per opened target: a text field still active from the
     // previous target cannot write its edit buffer into this one's fields.
-    let _form = ui.push_id(session.chooser_form);
+    let _form = ui.push_id(session.profile_editor.generation());
     ui.text_disabled("user");
     if ui
-        .input_text("##cred-user", &mut session.cred_user)
+        .input_text(
+            "##cred-user",
+            session.profile_editor.draft_mut().username_mut(),
+        )
         .hint("username")
         .build()
     {
@@ -5808,7 +5842,10 @@ fn profile_form_body(ui: &Ui, session: &mut Session) {
     }
     ui.text_disabled("pass");
     if ui
-        .input_text("##cred-pass", &mut session.cred_pass)
+        .input_text(
+            "##cred-pass",
+            session.profile_editor.draft_mut().password_mut(),
+        )
         .password(true)
         .hint("password")
         .build()
@@ -5838,7 +5875,7 @@ fn button_rows(ui: &Ui, width: f32) -> f32 {
 }
 
 fn profile_form_bar_height(ui: &Ui, session: &Session, width: f32) -> f32 {
-    let notice = match session.chooser_save.notice() {
+    let notice = match session.profile_editor.save_state().notice() {
         Some(notice) if notice.is_saved() => wrapped_height(ui, notice.text(), width),
         Some(notice) => notice.error().map_or(0.0, |reason| {
             wrapped_height(ui, reason, width)
@@ -5851,11 +5888,11 @@ fn profile_form_bar_height(ui: &Ui, session: &Session, width: f32) -> f32 {
 
 /// Save's outcome and Save / Cancel, under the form's body.
 fn profile_form_bar(ui: &Ui, session: &mut Session, width: f32) {
-    let _form = ui.push_id(session.chooser_form);
+    let _form = ui.push_id(session.profile_editor.generation());
     // Save's outcome, next to Save: a refusal or a write that failed after
     // it was queued (nothing was written; the banner is hidden while
     // Profiles is open) or, once the write is durable, `Saved <name>.`.
-    match session.chooser_save.notice() {
+    match session.profile_editor.save_state().notice() {
         Some(notice) if notice.is_saved() => ui.text_colored(GREEN, notice.text()),
         Some(notice) => {
             if let Some(reason) = notice.error() {
@@ -6128,7 +6165,11 @@ fn slot_clue_section(ui: &Ui, session: &mut Session) {
     if ui
         .input_text(
             "##clue-duel-partner",
-            &mut session.cred_settings.clue_duel_partner,
+            session
+                .profile_editor
+                .draft_mut()
+                .settings_mut()
+                .clue_duel_partner_mut(),
         )
         .hint("other account name")
         .build()
@@ -6144,17 +6185,23 @@ fn slot_clue_section(ui: &Ui, session: &mut Session) {
 /// Profile choices use the same vault save path as the existing random-event
 /// and lamp controls.
 fn slot_random_section(ui: &Ui, session: &mut Session) {
-    let mut events = session.cred_settings.random_events;
+    let mut events = session.profile_editor.draft().settings().random_events();
     if ui.checkbox("random events", &mut events) {
-        session.cred_settings.random_events = events;
-        if let Some(name) = session.chooser_edit.as_deref().filter(|n| !n.is_empty()) {
+        *session
+            .profile_editor
+            .draft_mut()
+            .settings_mut()
+            .random_events_mut() = events;
+        if let Some(name) = session.profile_editor.target().filter(|n| !n.is_empty()) {
             let name = name.to_string();
-            session.set_random_settings(
-                &name,
-                events,
-                &session.cred_settings.lamp_skill.clone(),
-                session.cred_settings.lamp_auto,
-            );
+            let skill = session
+                .profile_editor
+                .draft()
+                .settings()
+                .lamp_skill()
+                .to_string();
+            let lamp_auto = session.profile_editor.draft().settings().lamp_auto();
+            session.set_random_settings(&name, events, &skill, lamp_auto);
         }
         session.note_chooser_edited();
     }
@@ -6164,13 +6211,21 @@ fn slot_random_section(ui: &Ui, session: &mut Session) {
         "Per-event response: Flee is available; Fight and Ignore are disabled, and saved choices are treated as Flee.",
     );
     if policies_open {
-        for (event, label) in vault::RANDOM_EVENT_POLICY_EVENTS {
+        for (event, label) in frontend_core::GUARDIAN_EVENTS {
             ui.text_disabled(label);
             ui.same_line();
-            let mut policy = session.cred_settings.random_event_policy(event);
+            let mut policy = session
+                .profile_editor
+                .draft()
+                .settings()
+                .random_event_policy(event);
             if random_event_policy_combo(ui, event, &mut policy) {
-                session.cred_settings.set_random_event_policy(event, policy);
-                if let Some(name) = session.chooser_edit.as_deref().filter(|n| !n.is_empty()) {
+                session
+                    .profile_editor
+                    .draft_mut()
+                    .settings_mut()
+                    .set_random_event_policy(event, policy);
+                if let Some(name) = session.profile_editor.target().filter(|n| !n.is_empty()) {
                     let name = name.to_string();
                     session.set_random_event_policy(&name, event, policy);
                 }
@@ -6178,33 +6233,48 @@ fn slot_random_section(ui: &Ui, session: &mut Session) {
             }
         }
     }
-    let mut auto = session.cred_settings.lamp_auto;
+    let mut auto = session.profile_editor.draft().settings().lamp_auto();
     if ui.checkbox("lamp auto", &mut auto) {
-        session.cred_settings.lamp_auto = auto;
-        if let Some(name) = session.chooser_edit.as_deref().filter(|n| !n.is_empty()) {
+        *session
+            .profile_editor
+            .draft_mut()
+            .settings_mut()
+            .lamp_auto_mut() = auto;
+        if let Some(name) = session.profile_editor.target().filter(|n| !n.is_empty()) {
             let name = name.to_string();
-            session.set_random_settings(
-                &name,
-                session.cred_settings.random_events,
-                &session.cred_settings.lamp_skill.clone(),
-                auto,
-            );
+            let events = session.profile_editor.draft().settings().random_events();
+            let skill = session
+                .profile_editor
+                .draft()
+                .settings()
+                .lamp_skill()
+                .to_string();
+            session.set_random_settings(&name, events, &skill, auto);
         }
         session.note_chooser_edited();
     }
     ui.text_wrapped(
         "this profile; claim a lamp reward without a confirmation click (guardian rubs when lamp auto is on).",
     );
-    let mut skill = session.cred_settings.lamp_skill.clone();
+    let mut skill = session
+        .profile_editor
+        .draft()
+        .settings()
+        .lamp_skill()
+        .to_string();
     if lamp_skill_combo(ui, &mut skill) {
-        session.cred_settings.lamp_skill = skill.clone();
-        if let Some(name) = session.chooser_edit.as_deref().filter(|n| !n.is_empty()) {
+        *session
+            .profile_editor
+            .draft_mut()
+            .settings_mut()
+            .lamp_skill_mut() = skill.clone();
+        if let Some(name) = session.profile_editor.target().filter(|n| !n.is_empty()) {
             let name = name.to_string();
             session.set_random_settings(
                 &name,
-                session.cred_settings.random_events,
+                session.profile_editor.draft().settings().random_events(),
                 &skill,
-                session.cred_settings.lamp_auto,
+                session.profile_editor.draft().settings().lamp_auto(),
             );
         }
         session.note_chooser_edited();
@@ -6236,8 +6306,12 @@ fn lamp_skill_combo(ui: &Ui, skill: &mut String) -> bool {
     changed
 }
 
-fn random_event_policy_combo(ui: &Ui, event: &str, policy: &mut vault::RandomEventPolicy) -> bool {
-    use vault::RandomEventPolicy::{Fight, Flee, Ignore};
+fn random_event_policy_combo(
+    ui: &Ui,
+    event: &str,
+    policy: &mut frontend_core::GuardianPolicy,
+) -> bool {
+    use frontend_core::GuardianPolicy::{Fight, Flee, Ignore};
 
     let preview = match *policy {
         Flee => "Flee",

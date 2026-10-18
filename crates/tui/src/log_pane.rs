@@ -12,7 +12,7 @@ use frontend_core::log::{
     default_save_path, global, save_text, Level, LogEntry, LogScope, LogView, SaveTicket, Source,
 };
 use frontend_core::log_file::{apply_session_log, persist_session_log_setting};
-use host_play::local_state::Preferences;
+use frontend_core::UiPreferences as Preferences;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};

@@ -1,6 +1,6 @@
 use std::io;
 
-use host_play::local_state::Preferences;
+use crate::prefs::UiPreferences;
 
 /// A boolean inside the shared `panel-ui.json` `nav` object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,7 +45,7 @@ impl NavPreference {
 /// service's preferences. The read preserves legacy defaults; the write
 /// merges only that key, against the file as the service reads it then.
 pub fn nav_preference(
-    preferences: &Preferences,
+    preferences: &UiPreferences,
     preference: NavPreference,
     update: Option<bool>,
 ) -> io::Result<bool> {
@@ -66,7 +66,7 @@ pub fn nav_preference(
         Ok(enabled)
     } else {
         if preference == NavPreference::SurvivableRouting {
-            return Ok(host_play::WalkGlobals::read(preferences)
+            return Ok(host_play::WalkGlobals::read(preferences.inner())
                 .unwrap_or_else(|_| host_play::WalkGlobals::fail_closed())
                 .survivable_routing);
         }
@@ -80,7 +80,8 @@ pub fn nav_preference(
 #[cfg(test)]
 mod tests {
     use super::{nav_preference, NavPreference};
-    use host_play::local_state::{LocalStateService, Preferences, StateRoot};
+    use crate::prefs::UiPreferences as Preferences;
+    use host_play::local_state::{LocalStateService, StateRoot};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -93,8 +94,9 @@ mod tests {
             std::process::id()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        let preferences =
-            LocalStateService::open_process(StateRoot::new(dir.clone())).preferences();
+        let preferences = Preferences::new(
+            LocalStateService::open_process(StateRoot::new(dir.clone())).preferences(),
+        );
         (dir, preferences)
     }
 
@@ -185,7 +187,9 @@ mod tests {
         let (dir, _) = scratch("blocked-parent");
         let blocked = dir.join("blocked");
         std::fs::write(&blocked, b"not a directory").unwrap();
-        let prefs = LocalStateService::open_process(StateRoot::new(blocked.clone())).preferences();
+        let prefs = Preferences::new(
+            LocalStateService::open_process(StateRoot::new(blocked.clone())).preferences(),
+        );
         nav_preference(
             &prefs,
             NavPreference::PauseScriptOnManualWalkAbort,

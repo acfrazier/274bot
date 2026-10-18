@@ -235,10 +235,118 @@ const CORE: &[(&str, Decision)] = &[
         "profile_form.rs::ProfileFormSave::settle",
         Excluded("adopts the durable writer's results (SaveProfile's Owner terminal)"),
     ),
+    // profile_draft.rs: the staged form draft's edit buffers.
+    ("profile_draft.rs::ProfileDraft::username_mut", Row(C::EditProfileDraft(ProfileDraftField::Username))),
+    ("profile_draft.rs::ProfileDraft::password_mut", Row(C::EditProfileDraft(ProfileDraftField::Password))),
+    ("profile_draft.rs::ProfileDraft::settings_mut", Row(C::EditProfileDraft(ProfileDraftField::Settings))),
+    (
+        "profile_draft.rs::ProfileDraft::clear_credentials",
+        Rows(
+            &[
+                C::EditProfileDraft(ProfileDraftField::Username),
+                C::EditProfileDraft(ProfileDraftField::Password),
+            ],
+            "empties both credential buffers of the draft",
+        ),
+    ),
+    ("profile_draft.rs::SettingsDraft::lowmem_mut", Row(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SettingsDraft::auto_login_mut", Row(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SettingsDraft::world_mut", Row(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SettingsDraft::random_events_mut", Row(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SettingsDraft::lamp_skill_mut", Row(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SettingsDraft::lamp_auto_mut", Row(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SettingsDraft::clue_duel_partner_mut", Row(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SettingsDraft::set_random_event_policy", Row(C::EditProfileDraft(ProfileDraftField::Settings))),
+    // profile_editor.rs: the profile edit form (moved from the panel chooser).
+    ("profile_editor.rs::ProfileEditor::open", Rows(&[C::OpenProfileForm, C::OpenNewProfileForm], FORM_TARGET)),
+    (
+        "profile_editor.rs::ProfileEditor::request_open",
+        Rows(&[C::OpenProfileForm, C::OpenNewProfileForm], FORM_TARGET),
+    ),
+    (
+        "profile_editor.rs::ProfileEditor::stage_leave",
+        Rows(
+            &[
+                C::OpenProfileForm,
+                C::OpenNewProfileForm,
+                C::CloseProfileForm(FormClose::Form),
+                C::CloseProfileForm(FormClose::Window),
+                C::DeleteProfile,
+                C::SetMultiBox(false),
+                C::EditProfileImportPath,
+            ],
+            "stages the Discard / Keep editing decision of the leave the operator asked for",
+        ),
+    ),
+    ("profile_editor.rs::ProfileEditor::discard", Row(C::DiscardProfileEdits)),
+    ("profile_editor.rs::ProfileEditor::keep_editing", Row(C::KeepEditing)),
+    (
+        "profile_editor.rs::ProfileEditor::request_close",
+        Rows(
+            &[C::CloseProfileForm(FormClose::Form), C::CloseProfileForm(FormClose::Window)],
+            "the form's Cancel or the window's Close",
+        ),
+    ),
+    (
+        "profile_editor.rs::ProfileEditor::close",
+        Rows(
+            &[C::CloseProfileForm(FormClose::Form), C::CloseProfileForm(FormClose::Window)],
+            "closes the form whatever it holds",
+        ),
+    ),
+    ("profile_editor.rs::ProfileEditor::before_delete", Row(C::DeleteProfile)),
+    ("profile_editor.rs::ProfileEditor::draft_mut", Row(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_editor.rs::ProfileEditor::edited", Row(C::EditProfileDraft(ProfileDraftField::Settings))),
+    (
+        "profile_editor.rs::ProfileEditor::clear_credentials",
+        Rows(
+            &[
+                C::EditProfileDraft(ProfileDraftField::Username),
+                C::EditProfileDraft(ProfileDraftField::Password),
+            ],
+            "empties both credential buffers of the draft",
+        ),
+    ),
+    (
+        "profile_editor.rs::ProfileEditor::save",
+        Rows(
+            &[C::CreateProfile, C::SaveProfile],
+            "stages the draft and submits CreateProfile (new row) or SaveProfile",
+        ),
+    ),
+    (
+        "profile_editor.rs::ProfileEditor::settle",
+        Excluded("adopts the durable writer's results (SaveProfile's Owner terminal)"),
+    ),
+    // prefs.rs: the preferences document handle.
+    (
+        "prefs.rs::UiPreferences::update",
+        Excluded("a front end's own presentation state (layout, last focus) in its document section; operator preferences go through their rows"),
+    ),
     // profiles.rs
     (
         "profiles.rs::fresh_uid",
         Excluded("derives the next profile UID from the vault; identity calculation only"),
+    ),
+    ("resources.rs::background_bots_acked", Excluded("reads the background-bots acknowledgement; no state change")),
+    ("resources.rs::clear_background_bots_ack_error", Excluded("drops a stale banner line; presentation")),
+    ("session.rs::OperatorSession::open_process_state", Excluded(STARTUP)),
+    (
+        "session.rs::OperatorSession::record_tutorial_state",
+        Rows(
+            &[C::MarkTutorialSkipped],
+            "the operator's TutSkip, or the cache of the engine's getvar read",
+        ),
+    ),
+    ("session/commands.rs::OperatorSession::create_profile_named", Row(C::CreateProfile)),
+    ("session/commands.rs::OperatorSession::stage_guardian", Row(C::SetGuardian)),
+    (
+        "surface.rs::SpawnProfile::set_lowmem",
+        Excluded("a surface adjusts its disposable spawn copy (session-only memory override); never written back"),
+    ),
+    (
+        "surface.rs::SpawnProfile::set_raster",
+        Excluded("a surface adjusts its disposable spawn copy (headless raster off); never written back"),
     ),
     // progress.rs, resources.rs: labels and meters.
     ("progress.rs::span_label", Excluded(FORMAT)),
@@ -643,6 +751,7 @@ const CORE: &[(&str, Decision)] = &[
     ),
     ("driver.rs::HeadlessDriver::submit", Rows(&OperatorCommand::ALL, SEAM_ROWS)),
     ("driver.rs::HeadlessDriver::poll", Excluded(PUMP)),
+    ("driver.rs::HeadlessDriver::stage_guardian", Row(C::SetGuardian)),
     ("session.rs::OperatorSession::login_all", Row(C::Login)),
     ("session.rs::OperatorSession::login_members", Row(C::Login)),
     ("session.rs::OperatorSession::logout", Row(C::Logout)),
@@ -910,10 +1019,6 @@ const SURFACE: &[(&str, Decision)] = &[
         Rows(&[C::OpenProfileForm, C::OpenNewProfileForm], FORM_TARGET),
     ),
     (
-        "panel/session/chooser.rs::Session::open_edit_profile",
-        Rows(&[C::OpenProfileForm, C::OpenNewProfileForm], FORM_TARGET),
-    ),
-    (
         "panel/session/chooser.rs::Session::cancel_edit_profile",
         Row(C::CloseProfileForm(FormClose::Form)),
     ),
@@ -930,6 +1035,21 @@ const SURFACE: &[(&str, Decision)] = &[
         Row(C::DiscardProfileEdits),
     ),
     ("panel/session/chooser.rs::Session::cancel_pending_edit_switch", Row(C::KeepEditing)),
+    (
+        "panel/session/chooser.rs::Session::stage_edit_exit",
+        Rows(
+            &[
+                C::OpenProfileForm,
+                C::OpenNewProfileForm,
+                C::CloseProfileForm(FormClose::Form),
+                C::CloseProfileForm(FormClose::Window),
+                C::DeleteProfile,
+                C::SetMultiBox(false),
+                C::EditProfileImportPath,
+            ],
+            "stages the Discard / Keep editing decision of the leave the operator asked for",
+        ),
+    ),
     (
         "panel/session/chooser.rs::Session::save_credentials",
         Rows(

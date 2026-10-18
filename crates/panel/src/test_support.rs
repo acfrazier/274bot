@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
-use host_play::local_state::{LocalStateService, Preferences, StateRoot};
+use host_play::local_state::{LocalStateService, StateRoot};
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
 
@@ -85,8 +85,10 @@ pub(crate) fn scratch_service(dir: &Path) -> Arc<LocalStateService> {
 /// of them (a peer process, as far as the files go). A `Session` sees a
 /// write of this handle after its own preferences re-read
 /// (`Preferences::reload`).
-pub(crate) fn thread_preferences() -> Preferences {
-    LocalStateService::open_process(thread_state_root()).preferences()
+pub(crate) fn thread_preferences() -> frontend_core::UiPreferences {
+    frontend_core::UiPreferences::of_service_for_test(&LocalStateService::open_process(
+        thread_state_root(),
+    ))
 }
 /// Retry a frontend-backed write while it reports the write queued past
 /// the frontend's bounded durability wait: under machine load a write
@@ -110,7 +112,11 @@ pub(crate) fn patiently(mut attempt: impl FnMut() -> Result<(), String>) -> Resu
 /// A preferences write through a scratch service, retried past load-slow
 /// durability (see [`patiently`]). The update re-reads and re-applies its
 /// change on a conflict, so a retry after a late-landing write converges.
-pub(crate) fn set_patiently(preferences: &Preferences, key: &str, value: serde_json::Value) {
+pub(crate) fn set_patiently(
+    preferences: &frontend_core::UiPreferences,
+    key: &str,
+    value: serde_json::Value,
+) {
     patiently(|| {
         preferences
             .set(key, value.clone())

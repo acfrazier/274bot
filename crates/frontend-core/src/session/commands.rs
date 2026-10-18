@@ -120,6 +120,72 @@ impl Submitted {
     }
 }
 
+/// A profile form's Save, staged for [`OperatorCommand::SaveProfile`] /
+/// [`OperatorCommand::CreateProfile`] (`ProfileEditor::save`).
+pub(crate) struct StagedProfileWrite {
+    profile: vault::Profile,
+    rename_from: Option<String>,
+    creating: bool,
+    mirror: super::ArmMirror,
+    label: &'static str,
+}
+
+impl StagedProfileWrite {
+    pub(crate) fn new(
+        profile: vault::Profile,
+        rename_from: Option<String>,
+        creating: bool,
+        mirror: super::ArmMirror,
+        label: &'static str,
+    ) -> Self {
+        Self {
+            profile,
+            rename_from,
+            creating,
+            mirror,
+            label,
+        }
+    }
+}
+
+/// A guardian edit staged for [`OperatorCommand::SetGuardian`]: the
+/// random-event fields, or one hostile random's response.
+#[derive(Debug, PartialEq, Eq)]
+pub struct GuardianEdit(GuardianEditKind);
+
+#[derive(Debug, PartialEq, Eq)]
+enum GuardianEditKind {
+    Fields {
+        random_events: bool,
+        lamp_skill: String,
+        lamp_auto: bool,
+    },
+    Policy {
+        event: String,
+        policy: crate::profile_draft::GuardianPolicy,
+    },
+}
+
+impl GuardianEdit {
+    /// Incoming random events, the lamp skill and lamp auto-use.
+    pub fn fields(random_events: bool, lamp_skill: &str, lamp_auto: bool) -> Self {
+        Self(GuardianEditKind::Fields {
+            random_events,
+            lamp_skill: lamp_skill.to_string(),
+            lamp_auto,
+        })
+    }
+
+    /// One hostile random's response (`event` a [`crate::GUARDIAN_EVENTS`]
+    /// key).
+    pub fn policy(event: &str, policy: crate::profile_draft::GuardianPolicy) -> Self {
+        Self(GuardianEditKind::Policy {
+            event: event.to_string(),
+            policy,
+        })
+    }
+}
+
 /// A member settled by its operation outcome.
 struct OwnedMember {
     request: RequestId,
@@ -142,11 +208,17 @@ struct Post {
 pub(super) struct CommandDesk {
     book: CommandBook,
     owned: Vec<OwnedMember>,
+    /// Application members settled by an operation (the op's one member).
+    app_owned: Vec<(RequestId, OperatorCommand, OperationId)>,
     /// Arms with a posted, still pending member; drained for events.
     watched: Vec<Arc<SlotArm>>,
     /// Posts recorded while `recording` is set (reused buffer).
     posts: Vec<Post>,
     recording: bool,
+    /// The profile write the next SaveProfile/CreateProfile commits.
+    profile_write: Option<StagedProfileWrite>,
+    /// The guardian edit the next SetGuardian commits.
+    guardian: Option<GuardianEdit>,
     /// Member names of the command being opened (reused buffer).
     names: Vec<String>,
     /// Members of the command being opened (reused buffer).
@@ -170,6 +242,43 @@ impl<Io> OperatorSession<Io> {
             .iter()
             .find(|member| matches!(member.terminal(), Some(Settlement::Failed(_))))
             .and_then(|member| member.detail())
+    }
+
+    /// Stage the profile write the next SaveProfile / CreateProfile
+    /// commits (a profile form's Save).
+    pub(crate) fn stage_profile_write(&mut self, write: StagedProfileWrite) {
+        self.commands.profile_write = Some(write);
+    }
+
+    /// Create the profile `username` with `password`, a fresh uid and
+    /// default settings, through [`OperatorCommand::CreateProfile`] (the
+    /// TUI's first-run `--user` profile).
+    pub fn create_profile_named(
+        &mut self,
+        username: &str,
+        password: &str,
+    ) -> Result<Submitted, SubmitError> {
+        let uid = self.vault.as_ref().map_or(274_000_001, crate::fresh_uid);
+        let profile = vault::Profile {
+            username: username.to_string(),
+            password: password.into(),
+            uid,
+            settings: vault::ProfileSettings::default(),
+        };
+        self.stage_profile_write(StagedProfileWrite::new(
+            profile,
+            None,
+            true,
+            super::ArmMirror::none(),
+            "profile",
+        ));
+        self.submit_detached(OperatorCommand::CreateProfile, Targets::Application)
+    }
+
+    /// Stage the guardian edit the next [`OperatorCommand::SetGuardian`]
+    /// commits.
+    pub fn stage_guardian(&mut self, edit: GuardianEdit) {
+        self.commands.guardian = Some(edit);
     }
 
     /// The name Load all prefers to select when nothing is selected (the
@@ -484,6 +593,107 @@ impl<Io> OperatorSession<Io> {
                     _ => submitted.operation = Some(self.stop_scripts(&names).0),
                 }
             }
+            OperatorCommand::SaveProfile | OperatorCommand::CreateProfile => {
+                let admitted = if command == OperatorCommand::CreateProfile {
+                    application_admitted
+                } else {
+                    !self.admitted_names(request).is_empty()
+                };
+                let staged = self.commands.profile_write.take();
+                match (admitted, staged) {
+                    (true, Some(write)) => {
+                        let result = match write.rename_from.as_deref() {
+                            Some(old) => {
+                                let old = old.to_string();
+                                self.rename_profile(&old, write.profile, write.mirror, write.label)
+                            }
+                            None if write.creating => {
+                                self.create_profile(write.profile, write.mirror, write.label)
+                            }
+                            None => self.save_profile(write.profile, write.mirror, write.label),
+                        };
+                        self.settle_form_write(request, command, result, submitted);
+                    }
+                    (true, None) => self.settle_form_write(
+                        request,
+                        command,
+                        Err("nothing staged to save".to_string()),
+                        submitted,
+                    ),
+                    (false, _) => {}
+                }
+            }
+            OperatorCommand::DeleteProfile => {
+                for name in self.admitted_names(request) {
+                    match self.vault_remove(&name) {
+                        Ok(Some(op)) => {
+                            submitted.operation = Some(op);
+                            self.own_member(request, command, &name, op);
+                        }
+                        Ok(None) => self.settle_name(
+                            request,
+                            &name,
+                            Settlement::Completed(Completion::Skipped(
+                                SkipReason::ProfileUnavailable,
+                            )),
+                            None,
+                        ),
+                        Err(reason) => self.owner_result(request, command, &name, Err(reason)),
+                    }
+                }
+            }
+            OperatorCommand::SetGuardian => {
+                let edit = self.commands.guardian.take();
+                for name in self.admitted_names(request) {
+                    let result = match edit.as_ref().map(|edit| &edit.0) {
+                        Some(GuardianEditKind::Fields {
+                            random_events,
+                            lamp_skill,
+                            lamp_auto,
+                        }) => {
+                            self.set_random_settings(&name, *random_events, lamp_skill, *lamp_auto)
+                        }
+                        Some(GuardianEditKind::Policy { event, policy }) => {
+                            self.set_random_event_policy(&name, event, *policy)
+                        }
+                        None => Err("random: nothing staged".to_string()),
+                    };
+                    submitted.operation = result.as_ref().ok().copied().or(submitted.operation);
+                    self.owner_result(request, command, &name, result);
+                }
+            }
+            OperatorCommand::SetRaster(raster) => {
+                for name in self.admitted_names(request) {
+                    let result = self.set_profile_raster(&name, raster);
+                    self.optional_write(request, command, &name, result, submitted);
+                }
+            }
+            OperatorCommand::MarkTutorialSkipped => {
+                for name in self.admitted_names(request) {
+                    let result = self.record_tutorial_state(&name, true);
+                    self.optional_write(request, command, &name, result, submitted);
+                }
+            }
+            OperatorCommand::AcknowledgeNotice if application_admitted => {
+                // The background-bots notice: "Got it, don't show again".
+                let result = self
+                    .preferences()
+                    .ok_or_else(|| "background bots: no preferences store".to_string())
+                    .and_then(|preferences| {
+                        host_play::persist_background_bots_ack(preferences.inner())
+                            .map_err(|error| host_play::background_bots_ack_error(&error))
+                    });
+                if let Err(reason) = result {
+                    let terminal =
+                        Settlement::Failed(CommandFailure::Failed(FailureKind::WriteFailed));
+                    let _ = self.commands.book.settle(
+                        request,
+                        Subject::Application,
+                        terminal,
+                        Some(&reason),
+                    );
+                }
+            }
             OperatorCommand::SetRenderAll(all) if application_admitted => {
                 self.set_capacity_render(if all {
                     crate::capacity::RenderPolicyLabel::RenderAll
@@ -492,6 +702,62 @@ impl<Io> OperatorSession<Io> {
                 });
             }
             _ => {}
+        }
+    }
+
+    /// Settle a profile-form write: its operation's outcome, or its refusal.
+    fn settle_form_write(
+        &mut self,
+        request: RequestId,
+        command: OperatorCommand,
+        result: Result<OperationId, String>,
+        submitted: &mut Submitted,
+    ) {
+        if command.subject() == SubjectKind::Application {
+            match result {
+                Ok(op) => {
+                    submitted.operation = Some(op);
+                    self.commands.app_owned.push((request, command, op));
+                }
+                Err(reason) => {
+                    let terminal = Settlement::Failed(CommandFailure::Rejected(rejection(&reason)));
+                    let _ = self.commands.book.settle(
+                        request,
+                        Subject::Application,
+                        terminal,
+                        Some(&reason),
+                    );
+                }
+            }
+            return;
+        }
+        submitted.operation = result.as_ref().ok().copied().or(submitted.operation);
+        let names = std::mem::take(&mut self.commands.names);
+        if let Some(name) = names.first() {
+            self.owner_result(request, command, name, result);
+        }
+        self.commands.names = names;
+    }
+
+    /// A write that may have nothing to do (an unknown profile, an
+    /// unchanged value): `Ok(None)` completes the member at once.
+    fn optional_write(
+        &mut self,
+        request: RequestId,
+        command: OperatorCommand,
+        name: &str,
+        result: Result<Option<OperationId>, String>,
+        submitted: &mut Submitted,
+    ) {
+        match result {
+            Ok(Some(op)) => {
+                submitted.operation = Some(op);
+                self.own_member(request, command, name, op);
+            }
+            Ok(None) => {
+                self.settle_name(request, name, Settlement::Completed(Completion::Done), None)
+            }
+            Err(reason) => self.owner_result(request, command, name, Err(reason)),
         }
     }
 
@@ -710,6 +976,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Settle owner-reported members from their operation outcomes.
     fn settle_owned(&mut self) {
+        self.settle_app_owned();
         if self.commands.owned.is_empty() {
             return;
         }
@@ -752,6 +1019,36 @@ impl<Io> OperatorSession<Io> {
         }
     }
 
+    /// Settle application members from their operation's (single) outcome.
+    fn settle_app_owned(&mut self) {
+        let mut index = 0;
+        while index < self.commands.app_owned.len() {
+            let (request, command, op) = self.commands.app_owned[index];
+            let settled = match self.operations.get(op) {
+                None => Some((
+                    Settlement::Cancelled(Cancellation::ScopeInvalidated),
+                    Some("operation report evicted".to_string()),
+                )),
+                Some(report) => report.members().first().and_then(|member| {
+                    terminal_of(command, member.outcome())
+                        .map(|terminal| (terminal, member.outcome().reason().map(str::to_string)))
+                }),
+            };
+            match settled {
+                Some((terminal, detail)) => {
+                    self.commands.app_owned.swap_remove(index);
+                    let _ = self.commands.book.settle(
+                        request,
+                        Subject::Application,
+                        terminal,
+                        detail.as_deref(),
+                    );
+                }
+                None => index += 1,
+            }
+        }
+    }
+
     /// The poll-time half: slot events, owner outcomes and process
     /// conditions. Costs nothing while no command is pending.
     pub(super) fn settle_commands(&mut self) {
@@ -789,7 +1086,7 @@ impl<Io> SlotSurface for Detached<Io> {
     fn attach(
         &mut self,
         _name: &str,
-        _profile: &mut vault::Profile,
+        _profile: &mut crate::surface::SpawnProfile<'_>,
         _retained: Option<Io>,
     ) -> crate::surface::SlotAttach<Io> {
         unreachable!("submit_detached refuses every row that attaches a slot")
@@ -820,6 +1117,13 @@ const fn routed(command: OperatorCommand) -> bool {
             | OperatorCommand::ResumeScript
             | OperatorCommand::StopScript
             | OperatorCommand::SetRenderAll(_)
+            | OperatorCommand::SaveProfile
+            | OperatorCommand::CreateProfile
+            | OperatorCommand::DeleteProfile
+            | OperatorCommand::SetGuardian
+            | OperatorCommand::SetRaster(_)
+            | OperatorCommand::MarkTutorialSkipped
+            | OperatorCommand::AcknowledgeNotice
     )
 }
 

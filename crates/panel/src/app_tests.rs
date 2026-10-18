@@ -1064,7 +1064,9 @@ fn log_follow_bottom_sticks_at_end_and_releases_when_scrolled_up() {
 #[test]
 fn legacy_log_detached_is_ignored_without_losing_other_preferences() {
     let dir = TestDir::new("legacy-log-ui-state");
-    let preferences = crate::test_support::scratch_service(&dir).preferences();
+    let preferences = frontend_core::UiPreferences::of_service_for_test(
+        &crate::test_support::scratch_service(&dir),
+    );
     std::fs::write(
         preferences.path(),
         r#"{"last_focus":"alice","collapsed":{"alice":{"status":false}},"capture":false,"log_detached":true}"#,
@@ -4035,7 +4037,12 @@ fn switching_the_edit_target_resets_a_focused_text_field() {
     ctx.io_mut().add_input_character('X');
     chooser_frame(&mut ctx, &mut session);
     assert!(
-        session.cred_user.contains('X') || session.cred_pass.contains('X'),
+        session.profile_editor.draft().username().contains('X')
+            || session
+                .profile_editor
+                .draft()
+                .password_for_test()
+                .contains('X'),
         "typing reaches a credentials field"
     );
 
@@ -4043,13 +4050,18 @@ fn switching_the_edit_target_resets_a_focused_text_field() {
     session.begin_edit_profile(Some("aindniK"));
     assert_eq!(
         session
-            .pending_edit_switch
-            .as_ref()
-            .map(|switch| switch.target.as_str()),
+            .profile_editor
+            .pending()
+            .map(|switch| switch.target()),
         Some("aindniK")
     );
     assert!(
-        session.cred_user.contains('X') || session.cred_pass.contains('X'),
+        session.profile_editor.draft().username().contains('X')
+            || session
+                .profile_editor
+                .draft()
+                .password_for_test()
+                .contains('X'),
         "the unconfirmed switch rewrites nothing"
     );
     chooser_frame(&mut ctx, &mut session);
@@ -4059,7 +4071,10 @@ fn switching_the_edit_target_resets_a_focused_text_field() {
     chooser_frame(&mut ctx, &mut session);
     chooser_frame(&mut ctx, &mut session);
     assert_eq!(
-        (session.cred_user.as_str(), session.cred_pass.as_str()),
+        (
+            session.profile_editor.draft().username(),
+            session.profile_editor.draft().password_for_test()
+        ),
         ("aindniK", "kpass")
     );
 }
@@ -4591,7 +4606,7 @@ impl ProfilesUi {
             dear_imgui_rs::FramePrepareOptions::new(self.display_size, 1.0 / 60.0)
                 .renderer_has_textures(),
         );
-        let form = self.session.chooser_form;
+        let form = self.session.profile_editor.generation();
         let window_pos = self.window_pos;
         let window_size = self.window_size;
         {
@@ -4630,7 +4645,7 @@ impl ProfilesUi {
             let ui = self.ctx.frame();
             ui.with_bound_context(|| pin_profiles_geometry_at(window_pos, window_size));
             super::chooser_window(ui, &mut self.session, None);
-            let prompt = &self.session.pending_edit_switch.as_ref().unwrap().prompt;
+            let prompt = self.session.profile_editor.pending().unwrap().prompt();
             (
                 ui.with_bound_context(switch_prompt_width),
                 ui.current_font()
@@ -4670,7 +4685,7 @@ impl ProfilesUi {
             dear_imgui_rs::FramePrepareOptions::new(self.display_size, 1.0 / 60.0)
                 .renderer_has_textures(),
         );
-        let form = self.session.chooser_form;
+        let form = self.session.profile_editor.generation();
         let window_pos = self.window_pos;
         let window_size = self.window_size;
         let rects = {
@@ -4851,7 +4866,7 @@ fn a_refused_save_shows_above_save_until_the_form_is_edited() {
         &[("alice", "apass", 42), ("bob", "bpass", 43)],
     );
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_user = "bob".into();
+    *ui.session.profile_editor.draft_mut().username_mut() = "bob".into();
     let unsaved = ui.frame();
 
     let refused = ui.click(At::Form, "Save");
@@ -4891,7 +4906,7 @@ fn saved_shows_only_once_the_write_is_durable() {
     let _guard = crate::test_support::imgui_context_guard();
     let mut ui = ProfilesUi::new("profiles-saved", &[("alice", "apass", 42)]);
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_pass = "newpass".into();
+    *ui.session.profile_editor.draft_mut().password_mut() = "newpass".into();
     let gate = ui.session.core.write_gate();
     let held = gate.lock().unwrap();
 
@@ -4925,7 +4940,7 @@ fn a_save_completing_after_a_switch_shows_nothing_on_the_new_form() {
         &[("alice", "apass", 42), ("bob", "bpass", 43)],
     );
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_pass = "newpass".into();
+    *ui.session.profile_editor.draft_mut().password_mut() = "newpass".into();
     let gate = ui.session.core.write_gate();
     let held = gate.lock().unwrap();
     ui.click(At::Form, "Save");
@@ -4964,7 +4979,7 @@ fn a_save_completing_after_close_shows_nothing_on_a_reopened_form() {
     let _guard = crate::test_support::imgui_context_guard();
     let mut ui = ProfilesUi::new("profiles-close-pending", &[("alice", "apass", 42)]);
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_pass = "newpass".into();
+    *ui.session.profile_editor.draft_mut().password_mut() = "newpass".into();
     let gate = ui.session.core.write_gate();
     let held = gate.lock().unwrap();
     ui.click(At::Form, "Save");
@@ -4977,7 +4992,11 @@ fn a_save_completing_after_close_shows_nothing_on_a_reopened_form() {
     );
     let kept = ui.click(At::SwitchPrompt, "Keep editing");
     assert!(kept.has("Editing alice"), "{}", kept.text);
-    assert_eq!(ui.session.cred_pass, "newpass", "keeping drops nothing");
+    assert_eq!(
+        ui.session.profile_editor.draft().password_for_test(),
+        "newpass",
+        "keeping drops nothing"
+    );
 
     let asked = ui.click(At::Window, "Close");
     assert!(
@@ -5013,7 +5032,7 @@ fn close_needs_no_prompt_once_the_save_settled() {
     let _guard = crate::test_support::imgui_context_guard();
     let mut ui = ProfilesUi::new("profiles-close-settled", &[("alice", "apass", 42)]);
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_pass = "newpass".into();
+    *ui.session.profile_editor.draft_mut().password_mut() = "newpass".into();
     ui.click(At::Form, "Save");
     ui.finish_writes();
     let saved = ui.frame();
@@ -5035,7 +5054,7 @@ fn a_late_write_failure_shows_in_the_form_it_came_from() {
         &[("alice", "apass", 42), ("bob", "bpass", 43)],
     );
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_pass = "newpass".into();
+    *ui.session.profile_editor.draft_mut().password_mut() = "newpass".into();
     let gate = ui.session.core.write_gate();
     let held = gate.lock().unwrap();
     ui.click(At::Form, "Save");
@@ -5056,7 +5075,11 @@ fn a_late_write_failure_shows_in_the_form_it_came_from() {
         shown.text
     );
     assert!(shown.in_colour(super::ERROR) > 0, "in the error colour");
-    assert_eq!(ui.session.cred_pass, "newpass", "the draft is kept");
+    assert_eq!(
+        ui.session.profile_editor.draft().password_for_test(),
+        "newpass",
+        "the draft is kept"
+    );
     assert!(
         ui.banner().contains("credentials:"),
         "and the banner reports it too"
@@ -5096,7 +5119,7 @@ fn a_late_failure_after_discarding_the_form_reaches_only_the_banner() {
         &[("alice", "apass", 42), ("bob", "bpass", 43)],
     );
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_pass = "newpass".into();
+    *ui.session.profile_editor.draft_mut().password_mut() = "newpass".into();
     let gate = ui.session.core.write_gate();
     let held = gate.lock().unwrap();
     ui.click(At::Form, "Save");
@@ -5134,7 +5157,7 @@ fn a_late_failure_after_close_and_reopen_reaches_only_the_banner() {
     let _guard = crate::test_support::imgui_context_guard();
     let mut ui = ProfilesUi::new("profiles-late-reopened", &[("alice", "apass", 42)]);
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_pass = "newpass".into();
+    *ui.session.profile_editor.draft_mut().password_mut() = "newpass".into();
     let gate = ui.session.core.write_gate();
     let held = gate.lock().unwrap();
     ui.click(At::Form, "Save");
@@ -5172,7 +5195,7 @@ fn deleting_the_target_while_its_save_is_pending_keeps_the_draft_on_failure() {
         &[("alice", "apass", 42), ("bob", "bpass", 43)],
     );
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_pass = "newpass".into();
+    *ui.session.profile_editor.draft_mut().password_mut() = "newpass".into();
     let gate = ui.session.core.write_gate();
     let held = gate.lock().unwrap();
     ui.click(At::Form, "Save");
@@ -5191,7 +5214,11 @@ fn deleting_the_target_while_its_save_is_pending_keeps_the_draft_on_failure() {
     let kept = ui.click(At::SwitchPrompt, "Keep editing");
     assert!(kept.has("Editing alice"), "{}", kept.text);
     assert!(!kept.has("[ Discard ]"), "the prompt closed: {}", kept.text);
-    assert_eq!(ui.session.cred_pass, "newpass", "keeping drops nothing");
+    assert_eq!(
+        ui.session.profile_editor.draft().password_for_test(),
+        "newpass",
+        "keeping drops nothing"
+    );
 
     ui.writable(false);
     drop(held);
@@ -5206,7 +5233,11 @@ fn deleting_the_target_while_its_save_is_pending_keeps_the_draft_on_failure() {
         "{}",
         shown.text
     );
-    assert_eq!(ui.session.cred_pass, "newpass", "the draft is still there");
+    assert_eq!(
+        ui.session.profile_editor.draft().password_for_test(),
+        "newpass",
+        "the draft is still there"
+    );
     assert_eq!(
         ui.disk(),
         [row("alice", 42, "apass"), row("bob", 43, "bpass")],
@@ -5236,7 +5267,7 @@ fn discarding_a_pending_save_to_delete_its_profile_reports_only_on_the_banner() 
         &[("alice", "apass", 42), ("bob", "bpass", 43)],
     );
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_pass = "newpass".into();
+    *ui.session.profile_editor.draft_mut().password_mut() = "newpass".into();
     let gate = ui.session.core.write_gate();
     let held = gate.lock().unwrap();
     ui.click(At::Form, "Save");
@@ -5278,7 +5309,7 @@ fn multibox_off_while_a_save_is_pending_asks_and_keeps_the_draft_on_failure() {
     ui.session.set_multibox(true);
     ui.session.wall.chooser_open = true;
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_pass = "newpass".into();
+    *ui.session.profile_editor.draft_mut().password_mut() = "newpass".into();
     let gate = ui.session.core.write_gate();
     let held = gate.lock().unwrap();
     ui.click(At::Form, "Save");
@@ -5304,13 +5335,17 @@ fn multibox_off_while_a_save_is_pending_asks_and_keeps_the_draft_on_failure() {
     ui.writable(true);
     assert!(shown.has("Editing alice"), "{}", shown.text);
     assert!(shown.has("credentials:"), "the reason: {}", shown.text);
-    assert_eq!(ui.session.cred_pass, "newpass", "the draft is kept");
+    assert_eq!(
+        ui.session.profile_editor.draft().password_for_test(),
+        "newpass",
+        "the draft is kept"
+    );
     assert_eq!(ui.disk(), [row("alice", 42, "apass")]);
 
     // Nothing is pending any more: the toggle applies at once.
     assert!(ui.session.set_multibox(false));
     assert!(!ui.session.multibox);
-    assert!(ui.session.chooser_edit.is_none());
+    assert!(!ui.session.profile_editor.is_open());
 }
 
 /// Discard on the MultiBox prompt turns it off, form and all.
@@ -5321,7 +5356,7 @@ fn discarding_a_pending_save_turns_multibox_off() {
     ui.session.set_multibox(true);
     ui.session.wall.chooser_open = true;
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_pass = "newpass".into();
+    *ui.session.profile_editor.draft_mut().password_mut() = "newpass".into();
     let gate = ui.session.core.write_gate();
     let held = gate.lock().unwrap();
     ui.click(At::Form, "Save");
@@ -5330,7 +5365,7 @@ fn discarding_a_pending_save_turns_multibox_off() {
 
     ui.click(At::SwitchPrompt, "Discard");
     assert!(!ui.session.multibox);
-    assert!(ui.session.chooser_edit.is_none());
+    assert!(!ui.session.profile_editor.is_open());
     drop(held);
 }
 
@@ -5348,7 +5383,7 @@ fn an_open_prompt_ends_when_its_save_settles() {
             &[("alice", "apass", 42)],
         );
         ui.click(At::List, "Edit##edit-alice");
-        ui.session.cred_pass = "newpass".into();
+        *ui.session.profile_editor.draft_mut().password_mut() = "newpass".into();
         let gate = ui.session.core.write_gate();
         let held = gate.lock().unwrap();
         ui.click(At::Form, "Save");
@@ -5372,7 +5407,11 @@ fn an_open_prompt_ends_when_its_save_settles() {
         assert!(shown.has("Editing alice"), "{}", shown.text);
         if fails {
             assert!(shown.has("credentials:"), "{}", shown.text);
-            assert_eq!(ui.session.cred_pass, "newpass", "the draft is kept");
+            assert_eq!(
+                ui.session.profile_editor.draft().password_for_test(),
+                "newpass",
+                "the draft is kept"
+            );
         } else {
             assert_eq!(shown.above_save(1), ["Saved alice."], "{}", shown.text);
         }
@@ -5396,11 +5435,11 @@ fn a_refused_second_save_is_not_queued_behind_a_failing_one() {
         &[("alice", "apass", 42), ("bob", "bpass", 43)],
     );
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_user = "carol".into();
+    *ui.session.profile_editor.draft_mut().username_mut() = "carol".into();
     let gate = ui.session.core.write_gate();
     let held = gate.lock().unwrap();
     ui.click(At::Form, "Save");
-    ui.session.cred_user = "dave".into();
+    *ui.session.profile_editor.draft_mut().username_mut() = "dave".into();
     assert!(
         !ui.session.save_credentials(),
         "the second attempt is refused while the first is unsettled"
@@ -5447,7 +5486,7 @@ fn a_failure_of_a_superseding_save_shows_in_the_form_that_superseded() {
         &[("alice", "apass", 42), ("bob", "bpass", 43)],
     );
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_pass = "first".into();
+    *ui.session.profile_editor.draft_mut().password_mut() = "first".into();
     let gate = ui.session.core.write_gate();
     let held = gate.lock().unwrap();
     ui.click(At::Form, "Save");
@@ -5455,7 +5494,7 @@ fn a_failure_of_a_superseding_save_shows_in_the_form_that_superseded() {
     ui.click(At::SwitchPrompt, "Discard");
     // Alice again, from a new form that loads the staged row.
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_pass = "second".into();
+    *ui.session.profile_editor.draft_mut().password_mut() = "second".into();
     ui.click(At::Form, "Save");
 
     ui.writable(false);
@@ -5470,7 +5509,11 @@ fn a_failure_of_a_superseding_save_shows_in_the_form_that_superseded() {
         "{}",
         shown.text
     );
-    assert_eq!(ui.session.cred_pass, "second", "the draft is kept");
+    assert_eq!(
+        ui.session.profile_editor.draft().password_for_test(),
+        "second",
+        "the draft is kept"
+    );
     assert_eq!(
         ui.disk(),
         [row("alice", 42, "apass"), row("bob", 43, "bpass")]
@@ -5489,7 +5532,7 @@ fn a_failed_rename_retries_as_the_same_rename() {
         &[("alice", "apass", 42), ("bob", "bpass", 43)],
     );
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_user = "carol".into();
+    *ui.session.profile_editor.draft_mut().username_mut() = "carol".into();
 
     ui.writable(false);
     ui.click(At::Form, "Save");
@@ -5528,7 +5571,7 @@ fn save_waits_for_the_forms_save_in_flight() {
     let _guard = crate::test_support::imgui_context_guard();
     let mut ui = ProfilesUi::new("profiles-save-once", &[("alice", "apass", 42)]);
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_user = "carol".into();
+    *ui.session.profile_editor.draft_mut().username_mut() = "carol".into();
     let gate = ui.session.core.write_gate();
     let held = gate.lock().unwrap();
     let queued = ui.click(At::Form, "Save");
@@ -5537,7 +5580,7 @@ fn save_waits_for_the_forms_save_in_flight() {
         "the form follows the rename only once it is durable: {}",
         queued.text
     );
-    ui.session.cred_user = "dave".into();
+    *ui.session.profile_editor.draft_mut().username_mut() = "dave".into();
     ui.click(At::Form, "Save");
 
     drop(held);
@@ -5562,7 +5605,7 @@ fn picking_a_row_keeps_profiles_open_on_the_form() {
         &[("alice", "apass", 42), ("bob", "bpass", 43)],
     );
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_pass = "typed".into();
+    *ui.session.profile_editor.draft_mut().password_mut() = "typed".into();
 
     let picked = ui.click(At::List, "bob");
     assert_eq!(ui.session.focused_name().as_deref(), Some("bob"));
@@ -5571,7 +5614,11 @@ fn picking_a_row_keeps_profiles_open_on_the_form() {
         "Profiles stays open on the form: {}",
         picked.text
     );
-    assert_eq!(ui.session.cred_pass, "typed", "the draft is kept");
+    assert_eq!(
+        ui.session.profile_editor.draft().password_for_test(),
+        "typed",
+        "the draft is kept"
+    );
 }
 
 /// Opening another profile over unsaved edits asks first: Keep editing
@@ -5584,7 +5631,7 @@ fn opening_another_profile_over_unsaved_edits_asks_first() {
         &[("alice", "apass", 42), ("bob", "bpass", 43)],
     );
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_pass = "typed".into();
+    *ui.session.profile_editor.draft_mut().password_mut() = "typed".into();
 
     let asked = ui.click(At::List, "Edit##edit-bob");
     assert!(asked.has("Editing alice"), "{}", asked.text);
@@ -5600,12 +5647,20 @@ fn opening_another_profile_over_unsaved_edits_asks_first() {
     let kept = ui.click(At::SwitchPrompt, "Keep editing");
     assert!(kept.has("Editing alice"), "{}", kept.text);
     assert!(!kept.has("[ Discard ]"), "{}", kept.text);
-    assert_eq!(ui.session.cred_pass, "typed", "keeping drops nothing");
+    assert_eq!(
+        ui.session.profile_editor.draft().password_for_test(),
+        "typed",
+        "keeping drops nothing"
+    );
 
     ui.click(At::List, "Edit##edit-bob");
     let discarded = ui.click(At::SwitchPrompt, "Discard");
     assert!(discarded.has("Editing bob"), "{}", discarded.text);
-    assert_eq!(ui.session.cred_pass, "bpass", "bob's own row loads");
+    assert_eq!(
+        ui.session.profile_editor.draft().password_for_test(),
+        "bpass",
+        "bob's own row loads"
+    );
 }
 
 /// A Profiles prompt opened from a control at the display's right edge:
@@ -5658,7 +5713,7 @@ fn the_leave_prompt_keeps_a_stable_width_so_both_buttons_stay_on_screen() {
     let _guard = crate::test_support::imgui_context_guard();
     let mut ui = far_right_profiles("profiles-prompt-width");
     ui.click(At::List, "Edit##edit-alice");
-    ui.session.cred_pass = "typed".into();
+    *ui.session.profile_editor.draft_mut().password_mut() = "typed".into();
     let (edit, _) = ui.item_rect(At::List, "Edit##edit-bob");
     let asked = ui.click_at(rect_center(edit));
     assert!(
@@ -6285,7 +6340,10 @@ fn opening_the_import_over_unsaved_edits_asks_first() {
     ui.type_char('x');
     assert!(ui.session.edit_dirty());
     ui.click(At::Window, "Import from rs2b0t…");
-    assert!(ui.session.pending_edit_switch.is_some(), "the prompt asks");
+    assert!(
+        ui.session.profile_editor.pending().is_some(),
+        "the prompt asks"
+    );
     assert!(!ui.session.profile_import_open);
 
     let kept = ui.click(At::SwitchPrompt, "Keep editing");
@@ -6296,16 +6354,16 @@ fn opening_the_import_over_unsaved_edits_asks_first() {
     ui.click(At::Window, "Import from rs2b0t…");
     let discarded = ui.click(At::SwitchPrompt, "Discard");
     assert!(ui.session.profile_import_open);
-    assert_eq!(ui.session.chooser_edit, None);
+    assert_eq!(ui.session.profile_editor.target(), None);
     assert!(!discarded.has("Editing alice"), "{}", discarded.text);
 
     // A clean form gives the pane to the import at once.
     ui.click(At::Window, "Cancel##rs2b0t-import");
     ui.click(At::List, "Edit##edit-alice");
     ui.click(At::Window, "Import from rs2b0t…");
-    assert!(ui.session.pending_edit_switch.is_none());
+    assert!(ui.session.profile_editor.pending().is_none());
     assert!(ui.session.profile_import_open);
-    assert_eq!(ui.session.chooser_edit, None);
+    assert_eq!(ui.session.profile_editor.target(), None);
 }
 
 /// Edit over an import preview drops the preview, which wrote nothing.
@@ -6345,7 +6403,7 @@ fn an_import_being_saved_keeps_the_editor_pane() {
     ui.click(At::Window, "New profile");
     ui.session.begin_edit_profile(Some("alice"));
     assert!(ui.session.profile_import_open, "the report stays");
-    assert_eq!(ui.session.chooser_edit, None);
+    assert_eq!(ui.session.profile_editor.target(), None);
     drop(hold);
     ui.finish_writes();
     ui.frame();

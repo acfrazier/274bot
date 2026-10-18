@@ -402,7 +402,8 @@ impl ArmMirror {
         })
     }
 
-    pub fn random_event_policy(event: String, policy: RandomEventPolicy) -> Self {
+    pub fn random_event_policy(event: String, policy: crate::GuardianPolicy) -> Self {
+        let policy = policy.to_vault();
         Self(ArmMirrorKind::RandomEventPolicy { event, policy })
     }
 
@@ -539,7 +540,8 @@ impl MemoryNotice {
 
 mod commands;
 mod native_settings;
-pub use commands::{SubmitError, Submitted, Targets};
+pub(crate) use commands::StagedProfileWrite;
+pub use commands::{GuardianEdit, SubmitError, Submitted, Targets};
 pub(crate) use native_settings::NativeCopyCancellation;
 use native_settings::{PendingDelivery, PendingPreparation};
 
@@ -723,6 +725,23 @@ impl<Io> OperatorSession<Io> {
         self.local_state = Some(service);
     }
 
+    /// Open the process local-state service over the operator's state
+    /// root (`<bot home>/.274bot`) and bind it: the composition root's one
+    /// writer of preferences and loadouts.
+    pub fn open_process_state(&mut self) {
+        let root = host_play::local_state::StateRoot::new(script::bot_home().join(".274bot"));
+        self.bind_local_state(host_play::local_state::LocalStateService::open_process(
+            root,
+        ));
+    }
+
+    /// The bound service's preferences document.
+    pub fn preferences(&self) -> Option<crate::prefs::UiPreferences> {
+        self.local_state
+            .as_ref()
+            .map(|service| crate::prefs::UiPreferences::new(service.preferences()))
+    }
+
     /// The process local-state service bound at startup, if any.
     pub fn local_state(&self) -> Option<&Arc<host_play::local_state::LocalStateService>> {
         self.local_state.as_ref()
@@ -750,7 +769,8 @@ impl<Io> OperatorSession<Io> {
 
     /// Interactive frontends share the durable preferences even after
     /// Continue anyway: every admission reads the globals from them.
-    pub fn set_walk_globals_store(&mut self, preferences: host_play::local_state::Preferences) {
+    pub fn set_walk_globals_store(&mut self, preferences: crate::prefs::UiPreferences) {
+        let preferences = preferences.inner().clone();
         if let Some(play) = self.play.as_mut() {
             play.set_walk_globals_store(preferences.clone());
         }
@@ -1004,7 +1024,11 @@ impl<Io> OperatorSession<Io> {
         self.deferred.remove(name);
         surface.lifetime_reset(name);
         let retained = self.slots.remove(name);
-        let attach = surface.attach(name, &mut profile, retained);
+        let attach = surface.attach(
+            name,
+            &mut crate::surface::SpawnProfile::new(&mut profile),
+            retained,
+        );
         let (io, input, mailbox) = attach.into_parts();
         if let Some(arm) = arm.as_ref() {
             // The surface may apply a session-only override to the disposable
@@ -2196,13 +2220,10 @@ impl<Io> OperatorSession<Io> {
     /// instead of silently dropping the draft. The panel's Profiles form
     /// gates its explicit edit-target switch on this; the TUI settings popup
     /// persists each edit as it is made, so it never holds a draft.
-    pub fn profile_form_dirty(
-        &self,
-        target: Option<&str>,
-        username: &str,
-        password: &str,
-        settings: &ProfileSettings,
-    ) -> bool {
+    pub fn profile_form_dirty(&self, target: Option<&str>, draft: &crate::ProfileDraft) -> bool {
+        let username = draft.username();
+        let password = draft.password_secret().as_str();
+        let settings = draft.settings().settings();
         match target.filter(|t| !t.is_empty()) {
             Some(name) => match self.vault.as_ref().and_then(|v| v.get(name)) {
                 Some(row) => {
@@ -2369,7 +2390,7 @@ impl<Io> OperatorSession<Io> {
         &mut self,
         name: &str,
         event: &str,
-        policy: RandomEventPolicy,
+        policy: crate::GuardianPolicy,
     ) -> Result<OperationId, String> {
         let mut profile = self
             .vault
@@ -2379,12 +2400,99 @@ impl<Io> OperatorSession<Io> {
             .cloned()
             .ok_or_else(|| format!("random: no profile {name}"))?;
         let event = event.trim().to_ascii_lowercase();
-        profile.settings.set_random_event_policy(&event, policy);
+        profile
+            .settings
+            .set_random_event_policy(&event, policy.to_vault());
         self.save_profile(
             profile,
             ArmMirror::random_event_policy(event, policy),
             "random",
         )
+    }
+
+    /// The profile a form's Save writes: the draft's credentials over the
+    /// existing row's uid and settings (a form edits only its world and clue
+    /// partner), or a new row with a fresh uid and the draft's settings.
+    /// `None` while the vault is locked.
+    pub(crate) fn compose_profile(
+        &self,
+        rename_from: Option<&str>,
+        username: &str,
+        draft: &crate::ProfileDraft,
+        form_open: bool,
+    ) -> Option<Profile> {
+        let vault = self.vault.as_ref()?;
+        let existing = vault.get(rename_from.unwrap_or(username)).cloned();
+        let staged = draft.settings().settings();
+        Some(Profile {
+            uid: existing
+                .as_ref()
+                .map(|p| p.uid)
+                .unwrap_or_else(|| crate::fresh_uid(vault)),
+            username: username.to_string(),
+            password: draft.password_secret().clone(),
+            settings: existing
+                .map(|p| {
+                    let mut settings = p.settings;
+                    if form_open {
+                        settings.world = staged.world;
+                        settings.clue_duel_partner = staged.clue_duel_partner.trim().to_string();
+                    }
+                    settings
+                })
+                .unwrap_or_else(|| staged.clone()),
+        })
+    }
+
+    /// Persist the cached TutSkip state of `name` (an engine `getvar` read,
+    /// or the operator's TutSkip through
+    /// [`crate::OperatorCommand::MarkTutorialSkipped`]). Unchanged state
+    /// writes nothing.
+    pub fn record_tutorial_state(
+        &mut self,
+        name: &str,
+        skipped: bool,
+    ) -> Result<Option<OperationId>, String> {
+        let Some(mut profile) = self.vault.as_ref().and_then(|v| v.get(name)).cloned() else {
+            return Ok(None);
+        };
+        if profile.settings.tutorial_skipped == Some(skipped) {
+            return Ok(None);
+        }
+        profile.settings.tutorial_skipped = Some(skipped);
+        self.save_profile(profile, ArmMirror::none(), "tutorial")
+            .map(Some)
+    }
+
+    /// Persist `name`'s game-image raster mode.
+    pub(crate) fn set_profile_raster(
+        &mut self,
+        name: &str,
+        raster: crate::command::RasterMode,
+    ) -> Result<Option<OperationId>, String> {
+        let Some(mut profile) = self.vault.as_ref().and_then(|v| v.get(name)).cloned() else {
+            return Ok(None);
+        };
+        profile.settings.raster = raster.to_vault();
+        self.save_profile(profile, ArmMirror::none(), "render prefs")
+            .map(Some)
+    }
+
+    /// Whether a vault is open.
+    pub fn vault_open(&self) -> bool {
+        self.vault.is_some()
+    }
+
+    /// The staged (vault) row of `name`, as the forms show it.
+    pub fn profile(&self, name: &str) -> Option<crate::ProfileView<'_>> {
+        self.vault.as_ref()?.get(name).map(crate::ProfileView::new)
+    }
+
+    /// Every vault profile, in vault order.
+    pub fn profiles(&self) -> impl Iterator<Item = crate::ProfileView<'_>> {
+        self.vault
+            .iter()
+            .flat_map(|vault| vault.profiles().map(crate::ProfileView::new))
     }
 
     /// Whether `name` has no durable row yet: its first save (new or

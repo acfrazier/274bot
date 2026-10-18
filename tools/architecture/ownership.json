@@ -6697,6 +6697,18 @@
     {
       "path": "crates/frontend-core/tests/command_book_alloc.rs",
       "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/profile_draft.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/profile_editor.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/prefs.rs",
+      "owner": "T3"
     }
   ]
 }

@@ -29,7 +29,10 @@ pub mod map_decode;
 pub mod marked;
 pub mod nav_prefs;
 pub mod operations;
+pub mod prefs;
 pub mod process_status;
+pub mod profile_draft;
+pub mod profile_editor;
 pub mod profile_form;
 pub mod profile_saves;
 mod profiles;
@@ -66,6 +69,11 @@ pub use marked::{
 };
 pub use nav_prefs::{nav_preference, NavPreference};
 pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Outcome};
+pub use prefs::UiPreferences;
+pub use profile_draft::{
+    GuardianPolicy, ProfileDraft, ProfileView, SettingsDraft, GUARDIAN_EVENTS,
+};
+pub use profile_editor::{FormLeave, FormOpen, LeavePrompt, ProfileEditor, SaveRefused};
 pub use profile_form::{
     FailedSave, FormNotice, FormSettled, ProfileFormSave, SavedProfile, NOTHING_SAVED,
 };
@@ -82,10 +90,11 @@ pub use selection::{
     MarkedSelection, ProfileIdentity, StopReport, EMPTY_MARKS_HINT,
 };
 pub use session::{
-    pick_focus, ArmMirror, MemoryNotice, OperatorSession, Removal, ScriptStart, Selection,
-    SlotTransition, StartSettled, SubmitError, Submitted, Targets, Transition, SLOT_REMOVE_TIMEOUT,
+    pick_focus, ArmMirror, GuardianEdit, MemoryNotice, OperatorSession, Removal, ScriptStart,
+    Selection, SlotTransition, StartSettled, SubmitError, Submitted, Targets, Transition,
+    SLOT_REMOVE_TIMEOUT,
 };
-pub use surface::{HeadlessSurface, SlotAttach, SlotSurface};
+pub use surface::{HeadlessSurface, SlotAttach, SlotSurface, SpawnProfile};
 pub use views::{FleetCounts, FleetRow, FleetView, Light, OpBrief, Phase, QueuePlace, SlotDetail};
 pub use walk_permissions::{
     DangerLevel, WalkGlobalsView, BANK_FETCH_PERMISSION_SCOPE, DANGER_THIS_WALK_LABEL,

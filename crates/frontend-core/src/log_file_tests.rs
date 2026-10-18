@@ -27,11 +27,8 @@ fn read(path: &Path) -> String {
 }
 
 /// The preferences of a process service opened at the state root `dir`.
-fn preferences(dir: &Path) -> host_play::local_state::Preferences {
-    host_play::local_state::LocalStateService::open_process(host_play::local_state::StateRoot::new(
-        dir.to_path_buf(),
-    ))
-    .preferences()
+fn preferences(dir: &Path) -> crate::prefs::UiPreferences {
+    crate::prefs::UiPreferences::open_for_test(dir.to_path_buf())
 }
 
 #[test]
@@ -80,7 +77,7 @@ fn session_log_writer_waits_for_peer_nav_transaction_and_preserves_its_grant() {
     lock.lock().unwrap();
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
-    let writer_preferences = preferences.clone();
+    let writer_preferences = preferences.share();
     let writer = std::thread::spawn(move || {
         started_tx.send(()).unwrap();
         let result = persist_session_log_setting(&writer_preferences, true);

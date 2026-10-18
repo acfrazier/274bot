@@ -418,7 +418,9 @@ impl TuiApp {
                 self.log.save(focused.as_deref());
             }
             Command::LogSessionFile => {
-                let preferences = self.shared_preferences().cloned();
+                let preferences = self
+                    .shared_preferences()
+                    .map(frontend_core::UiPreferences::share);
                 self.log.toggle_session_file(preferences.as_ref())
             }
             Command::ScriptApplyMarked => return AppAction::ScriptApplyMarkedPrepare,
@@ -460,7 +462,9 @@ impl TuiApp {
 
     fn log_search_key(&mut self, key: KeyEvent) -> Option<AppAction> {
         let focused = self.focused_name();
-        let preferences = self.shared_preferences().cloned();
+        let preferences = self
+            .shared_preferences()
+            .map(frontend_core::UiPreferences::share);
         self.log
             .on_key(key, focused.as_deref(), preferences.as_ref())
             .then_some(AppAction::None)
@@ -566,7 +570,9 @@ impl TuiApp {
             },
             Screen::Logs => {
                 let focused = self.focused_name();
-                let preferences = self.shared_preferences().cloned();
+                let preferences = self
+                    .shared_preferences()
+                    .map(frontend_core::UiPreferences::share);
                 if self
                     .log
                     .on_key(key, focused.as_deref(), preferences.as_ref())
@@ -594,7 +600,9 @@ impl TuiApp {
 
     fn drawer_key(&mut self, key: KeyEvent) -> AppAction {
         let focused = self.focused_name();
-        let preferences = self.shared_preferences().cloned();
+        let preferences = self
+            .shared_preferences()
+            .map(frontend_core::UiPreferences::share);
         if !self
             .log
             .on_key(key, focused.as_deref(), preferences.as_ref())

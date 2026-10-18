@@ -5029,7 +5029,7 @@ fn sidecar_select_does_not_restart_when_game_is_cpu() {
         .unwrap()
         .upsert(profile("bob", "pw", 43))
         .unwrap();
-    s.ui.raster = vault::RasterMode::Cpu;
+    s.ui.raster = frontend_core::command::RasterMode::Cpu;
     s.select("alice");
     s.load("bob");
     let alice_px = std::sync::Arc::as_ptr(&s.core.slot_io("alice").unwrap().pixels);
@@ -6221,7 +6221,7 @@ fn loading_another_profile_while_editing_keeps_the_editor_on_its_profile() {
 
     s.begin_edit_profile(Some("aindniK"));
     s.load("Hans");
-    s.cred_settings.world = Some(2);
+    *s.profile_editor.draft_mut().settings_mut().world_mut() = Some(2);
     let saved = s.save_credentials();
     s.core.flush_writes();
     s.pump_status();
@@ -6248,8 +6248,8 @@ fn renaming_onto_an_existing_username_is_refused_and_writes_nothing() {
     }
 
     s.begin_edit_profile(Some("aindniK"));
-    s.cred_user = "Hans".into();
-    s.cred_pass = "typed".into();
+    *s.profile_editor.draft_mut().username_mut() = "Hans".into();
+    *s.profile_editor.draft_mut().password_mut() = "typed".into();
     let saved = s.save_credentials();
     s.core.flush_writes();
     s.pump_status();
@@ -6264,7 +6264,7 @@ fn renaming_onto_an_existing_username_is_refused_and_writes_nothing() {
         Some("credentials: a profile named Hans already exists")
     );
     assert_eq!(
-        s.chooser_edit.as_deref(),
+        s.profile_editor.target(),
         Some("aindniK"),
         "the form stays open"
     );
@@ -6283,8 +6283,8 @@ fn a_new_profile_with_an_existing_username_is_refused_and_writes_nothing() {
         .unwrap();
 
     s.begin_edit_profile(None);
-    s.cred_user = "Hans".into();
-    s.cred_pass = "typed".into();
+    *s.profile_editor.draft_mut().username_mut() = "Hans".into();
+    *s.profile_editor.draft_mut().password_mut() = "typed".into();
     let saved = s.save_credentials();
     s.core.flush_writes();
     s.pump_status();
@@ -6297,7 +6297,7 @@ fn a_new_profile_with_an_existing_username_is_refused_and_writes_nothing() {
         s.error.as_deref(),
         Some("credentials: a profile named Hans already exists")
     );
-    assert_eq!(s.chooser_edit.as_deref(), Some(""), "the form stays open");
+    assert_eq!(s.profile_editor.target(), Some(""), "the form stays open");
 }
 
 /// Live finding: switching focus (the main-panel profile selector, the
@@ -6318,28 +6318,34 @@ fn focus_changes_keep_the_edit_form_on_its_target() {
     }
 
     s.begin_edit_profile(Some("aindniK"));
-    s.cred_pass = "typed-but-unsaved".into();
+    *s.profile_editor.draft_mut().password_mut() = "typed-but-unsaved".into();
 
     s.select("Hans");
     assert_eq!(
-        s.chooser_edit.as_deref(),
+        s.profile_editor.target(),
         Some("aindniK"),
         "a focus change never retargets the form"
     );
     assert_eq!(
-        (s.cred_user.as_str(), s.cred_pass.as_str()),
+        (
+            s.profile_editor.draft().username(),
+            s.profile_editor.draft().password_for_test()
+        ),
         ("aindniK", "typed-but-unsaved"),
         "a focus change never rewrites the buffers"
     );
 
     s.load("Hans");
     assert_eq!(
-        s.chooser_edit.as_deref(),
+        s.profile_editor.target(),
         Some("aindniK"),
         "a wall load never retargets the form"
     );
     assert_eq!(
-        (s.cred_user.as_str(), s.cred_pass.as_str()),
+        (
+            s.profile_editor.draft().username(),
+            s.profile_editor.draft().password_for_test()
+        ),
         ("aindniK", "typed-but-unsaved")
     );
 }
@@ -6361,17 +6367,20 @@ fn opening_another_profile_with_unsaved_changes_keeps_the_form_until_confirmed()
     }
 
     s.begin_edit_profile(Some("aindniK"));
-    s.cred_pass = "typed-but-unsaved".into();
+    *s.profile_editor.draft_mut().password_mut() = "typed-but-unsaved".into();
 
     // Explicitly opening Hans must not discard the dirty aindniK draft.
     s.begin_edit_profile(Some("Hans"));
     assert_eq!(
-        s.chooser_edit.as_deref(),
+        s.profile_editor.target(),
         Some("aindniK"),
         "the form stays on its target until the switch is confirmed"
     );
     assert_eq!(
-        (s.cred_user.as_str(), s.cred_pass.as_str()),
+        (
+            s.profile_editor.draft().username(),
+            s.profile_editor.draft().password_for_test()
+        ),
         ("aindniK", "typed-but-unsaved"),
         "the unconfirmed switch rewrites nothing"
     );
@@ -6394,16 +6403,23 @@ fn opening_another_profile_without_unsaved_changes_switches_at_once() {
     s.begin_edit_profile(Some("aindniK"));
     assert!(!s.edit_dirty(), "an untouched form is clean");
     s.begin_edit_profile(Some("Hans"));
-    assert_eq!(s.pending_edit_switch, None, "no prompt for a clean form");
-    assert_eq!(s.chooser_edit.as_deref(), Some("Hans"));
     assert_eq!(
-        (s.cred_user.as_str(), s.cred_pass.as_str()),
+        s.profile_editor.pending(),
+        None,
+        "no prompt for a clean form"
+    );
+    assert_eq!(s.profile_editor.target(), Some("Hans"));
+    assert_eq!(
+        (
+            s.profile_editor.draft().username(),
+            s.profile_editor.draft().password_for_test()
+        ),
         ("Hans", "hpass")
     );
 
     // A blank new-profile form is clean too.
     s.begin_edit_profile(None);
-    assert_eq!(s.chooser_edit.as_deref(), Some(""));
+    assert_eq!(s.profile_editor.target(), Some(""));
     assert!(!s.edit_dirty());
 }
 
@@ -6419,8 +6435,8 @@ fn save_credentials_upserts_under_username_key_keeping_uid() {
         .upsert(profile("alice", "oldpass", 42))
         .unwrap();
 
-    s.cred_user = "alice".into();
-    s.cred_pass = "newpass".into();
+    *s.profile_editor.draft_mut().username_mut() = "alice".into();
+    *s.profile_editor.draft_mut().password_mut() = "newpass".into();
     assert!(s.save_credentials());
     s.core.flush_writes();
     s.pump_status();
@@ -6445,7 +6461,11 @@ fn profile_editor_persists_trimmed_global_clue_duel_partner() {
         .unwrap();
 
     session.begin_edit_profile(Some("alice"));
-    session.cred_settings.clue_duel_partner = "  Helper_Account  ".into();
+    *session
+        .profile_editor
+        .draft_mut()
+        .settings_mut()
+        .clue_duel_partner_mut() = "  Helper_Account  ".into();
     assert!(session.save_credentials());
     session.core.flush_writes();
     session.pump_status();
@@ -6493,8 +6513,12 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
     play.attach_arm("alice", Arc::clone(&arm));
     session.core.set_play(Some(play));
     session.begin_edit_profile(Some("alice"));
-    assert_eq!(session.cred_settings.world, None);
-    session.cred_settings.world = Some(2);
+    assert_eq!(session.profile_editor.draft().settings().world(), None);
+    *session
+        .profile_editor
+        .draft_mut()
+        .settings_mut()
+        .world_mut() = Some(2);
     assert!(session.save_credentials());
     session.core.flush_writes();
     assert_eq!(
@@ -6511,8 +6535,12 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
         Some(2),
         "the profile-save path must update a running slot's next handshake"
     );
-    session.cred_settings.world = None;
-    session.cred_pass = "updated".into();
+    *session
+        .profile_editor
+        .draft_mut()
+        .settings_mut()
+        .world_mut() = None;
+    *session.profile_editor.draft_mut().password_mut() = "updated".into();
     // Leave the editor first: the next save is programmatic (no bound form),
     // so it must preserve the world pin rather than project the blank draft.
     session.pump_status();
@@ -6549,8 +6577,8 @@ fn save_credentials_creates_new_profile_when_username_is_new() {
         .upsert(profile("alice", "pw", 42))
         .unwrap();
 
-    s.cred_user = "bob".into();
-    s.cred_pass = "bobpass".into();
+    *s.profile_editor.draft_mut().username_mut() = "bob".into();
+    *s.profile_editor.draft_mut().password_mut() = "bobpass".into();
     assert!(s.save_credentials());
     s.core.flush_writes();
     s.pump_status();
@@ -6573,8 +6601,8 @@ fn save_credentials_rejects_empty_username() {
     let mut s = Session::new();
     s.core
         .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.cred_user = "  ".into();
-    s.cred_pass = "x".into();
+    *s.profile_editor.draft_mut().username_mut() = "  ".into();
+    *s.profile_editor.draft_mut().password_mut() = "x".into();
     assert!(!s.save_credentials());
     assert!(s.error.is_some());
 }
@@ -6586,8 +6614,8 @@ fn save_credentials_without_focus_upserts_spawns_and_selects() {
     s.core
         .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
     assert!(s.focused_name().is_none());
-    s.cred_user = "test".into();
-    s.cred_pass = "test".into();
+    *s.profile_editor.draft_mut().username_mut() = "test".into();
+    *s.profile_editor.draft_mut().password_mut() = "test".into();
     assert!(s.save_credentials());
     s.core.flush_writes();
     s.pump_status();
@@ -6614,8 +6642,8 @@ fn save_credentials_does_not_duplicate_running_slot() {
             pixels: FrameBuf::new(),
         },
     );
-    s.cred_user = "alice".into();
-    s.cred_pass = "newpw".into();
+    *s.profile_editor.draft_mut().username_mut() = "alice".into();
+    *s.profile_editor.draft_mut().password_mut() = "newpw".into();
     assert!(s.save_credentials());
     s.core.flush_writes();
     s.pump_status();
@@ -6636,8 +6664,8 @@ fn save_credentials_rename_editing_profile_replaces_old_key() {
         .unwrap();
 
     s.begin_edit_profile(Some("alice"));
-    s.cred_user = "bob".into();
-    s.cred_pass = "bobpass".into();
+    *s.profile_editor.draft_mut().username_mut() = "bob".into();
+    *s.profile_editor.draft_mut().password_mut() = "bobpass".into();
     assert!(s.save_credentials());
     s.core.flush_writes();
     s.pump_status();
@@ -6668,8 +6696,8 @@ fn first_time_save_spawns_nothing_until_the_write_is_durable() {
     s.core.set_play(Some(empty_play()));
     s.core
         .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.cred_user = "alice".into();
-    s.cred_pass = "pw".into();
+    *s.profile_editor.draft_mut().username_mut() = "alice".into();
+    *s.profile_editor.draft_mut().password_mut() = "pw".into();
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
 
     assert!(s.save_credentials());
@@ -6709,8 +6737,8 @@ fn save_credentials_upsert_error_surfaces_on_session_error() {
     let mut s = Session::new();
     s.core
         .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.cred_user = "alice".into();
-    s.cred_pass = "pw".into();
+    *s.profile_editor.draft_mut().username_mut() = "alice".into();
+    *s.profile_editor.draft_mut().password_mut() = "pw".into();
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
     assert!(s.save_credentials(), "the edit is accepted and queued");
     s.core.flush_writes();
@@ -6741,11 +6769,11 @@ fn clear_credentials_empties_fields_but_keeps_vault() {
         .upsert(profile("alice", "pw", 42))
         .unwrap();
     s.select("alice");
-    s.cred_pass = "edited".into();
+    *s.profile_editor.draft_mut().password_mut() = "edited".into();
 
     s.clear_credentials();
-    assert!(s.cred_user.is_empty());
-    assert!(s.cred_pass.is_empty());
+    assert!(s.profile_editor.draft().username().is_empty());
+    assert!(s.profile_editor.draft().password_for_test().is_empty());
     assert!(
         s.core.vault().unwrap().get("alice").is_some(),
         "clear must not delete the vault profile"
@@ -6766,17 +6794,17 @@ fn begin_edit_profile_loads_fields_and_opens_chooser() {
 
     s.begin_edit_profile(Some("alice"));
     assert!(s.wall.chooser_open);
-    assert_eq!(s.chooser_edit.as_deref(), Some("alice"));
-    assert_eq!(s.cred_user, "alice");
-    assert_eq!(s.cred_pass, "secret");
+    assert_eq!(s.profile_editor.target(), Some("alice"));
+    assert_eq!(s.profile_editor.draft().username(), "alice");
+    assert_eq!(s.profile_editor.draft().password_for_test(), "secret");
 
     s.begin_edit_profile(None);
-    assert_eq!(s.chooser_edit.as_deref(), Some(""));
-    assert!(s.cred_user.is_empty());
-    assert!(s.cred_pass.is_empty());
+    assert_eq!(s.profile_editor.target(), Some(""));
+    assert!(s.profile_editor.draft().username().is_empty());
+    assert!(s.profile_editor.draft().password_for_test().is_empty());
 
     s.cancel_edit_profile();
-    assert!(s.chooser_edit.is_none());
+    assert!(!s.profile_editor.is_open());
     assert!(s.wall.chooser_open, "cancel leaves the picker open");
 }
 
@@ -6794,16 +6822,16 @@ fn begin_edit_profile_loads_guardian_settings() {
     s.core.vault_mut().unwrap().upsert(p).unwrap();
 
     s.begin_edit_profile(Some("alice"));
-    assert!(s.cred_settings.auto_login);
-    assert!(!s.cred_settings.lamp_auto);
-    assert!(!s.cred_settings.random_events);
-    assert_eq!(s.cred_settings.lamp_skill, "magic");
+    assert!(s.profile_editor.draft().settings().auto_login());
+    assert!(!s.profile_editor.draft().settings().lamp_auto());
+    assert!(!s.profile_editor.draft().settings().random_events());
+    assert_eq!(s.profile_editor.draft().settings().lamp_skill(), "magic");
 
     s.begin_edit_profile(None);
-    assert!(!s.cred_settings.auto_login);
-    assert!(s.cred_settings.lamp_auto);
-    assert!(s.cred_settings.random_events);
-    assert_eq!(s.cred_settings.lamp_skill, "strength");
+    assert!(!s.profile_editor.draft().settings().auto_login());
+    assert!(s.profile_editor.draft().settings().lamp_auto());
+    assert!(s.profile_editor.draft().settings().random_events());
+    assert_eq!(s.profile_editor.draft().settings().lamp_skill(), "strength");
 }
 
 #[test]
@@ -6820,7 +6848,7 @@ fn set_multibox_off_cancels_picker_edit() {
     s.begin_edit_profile(Some("alice"));
     s.set_multibox(true);
     s.set_multibox(false);
-    assert!(s.chooser_edit.is_none());
+    assert!(!s.profile_editor.is_open());
     assert!(!s.wall.chooser_open);
 }
 
@@ -6939,7 +6967,11 @@ fn set_random_event_policy_persists_without_spawning() {
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
-    assert!(s.set_random_event_policy("alice", "River Troll", vault::RandomEventPolicy::Ignore));
+    assert!(s.set_random_event_policy(
+        "alice",
+        "River Troll",
+        frontend_core::GuardianPolicy::Ignore
+    ));
     let saved = s.core.vault().unwrap().get("alice").unwrap();
     assert_eq!(
         saved.settings.random_event_policy("river troll"),
@@ -7127,7 +7159,7 @@ fn raster_persists_and_off_keeps_prefer_cpu_until_cpu() {
         .upsert(profile("alice", "pw", 42))
         .unwrap();
     s.select("alice");
-    assert_eq!(s.focused_raster(), vault::RasterMode::Gpu);
+    assert_eq!(s.focused_raster(), frontend_core::command::RasterMode::Gpu);
     assert!(!s.core.slot_io("alice").unwrap().input.prefer_cpu());
     assert!(s.set_focused_lowmem(false));
     s.core.flush_writes();
@@ -7141,8 +7173,8 @@ fn raster_persists_and_off_keeps_prefer_cpu_until_cpu() {
             .lowmem,
         "the memory switch is persisted before an unrelated raster write"
     );
-    assert!(s.set_focused_raster(vault::RasterMode::Off));
-    assert_eq!(s.focused_raster(), vault::RasterMode::Off);
+    assert!(s.set_focused_raster(frontend_core::command::RasterMode::Off));
+    assert_eq!(s.focused_raster(), frontend_core::command::RasterMode::Off);
     assert_eq!(
         s.focus.lock().unwrap().renderer_by.get("alice").copied(),
         Some(false)
@@ -7151,8 +7183,8 @@ fn raster_persists_and_off_keeps_prefer_cpu_until_cpu() {
         !s.core.slot_io("alice").unwrap().input.prefer_cpu(),
         "Off must not flip the GPU/CPU latch"
     );
-    assert!(s.set_focused_raster(vault::RasterMode::Cpu));
-    assert_eq!(s.focused_raster(), vault::RasterMode::Cpu);
+    assert!(s.set_focused_raster(frontend_core::command::RasterMode::Cpu));
+    assert_eq!(s.focused_raster(), frontend_core::command::RasterMode::Cpu);
     assert!(s.core.slot_io("alice").unwrap().input.prefer_cpu());
     assert_eq!(
         s.core
@@ -7178,7 +7210,7 @@ fn raster_persists_and_off_keeps_prefer_cpu_until_cpu() {
 
 #[test]
 fn raster_switch_confirm_only_when_backend_changes_on_spawned_slot() {
-    use vault::RasterMode::*;
+    use frontend_core::command::RasterMode::*;
     // GPU↔CPU on a spawned slot is a drop+reattach (the Client and its
     // socket stay), so no logout/restart confirm is ever required —
     // not even Off↔Gpu/Cpu or a spawned slot.
@@ -7202,14 +7234,14 @@ fn request_raster_cpu_on_spawned_slot_applies_immediately() {
         .upsert(profile("alice", "pw", 42))
         .unwrap();
     s.select("alice");
-    s.request_focused_raster(vault::RasterMode::Cpu);
+    s.request_focused_raster(frontend_core::command::RasterMode::Cpu);
     assert_eq!(
         s.focused_raster(),
-        vault::RasterMode::Cpu,
+        frontend_core::command::RasterMode::Cpu,
         "GPU→CPU applies at once: drop+reattach, never a logout"
     );
-    s.request_focused_raster(vault::RasterMode::Off);
-    assert_eq!(s.focused_raster(), vault::RasterMode::Off);
+    s.request_focused_raster(frontend_core::command::RasterMode::Off);
+    assert_eq!(s.focused_raster(), frontend_core::command::RasterMode::Off);
     assert!(
         s.core.slots().contains_key("alice"),
         "Off must keep the slot"
@@ -7231,9 +7263,9 @@ fn raster_switch_keeps_slot_frame_buf_and_input() {
     let slot = s.core.slot_io("alice").expect("select spawns the slot");
     let buf = Arc::clone(&slot.pixels);
     let inp = Arc::clone(&slot.input);
-    assert!(s.set_focused_raster(vault::RasterMode::Cpu));
+    assert!(s.set_focused_raster(frontend_core::command::RasterMode::Cpu));
     assert!(inp.prefer_cpu(), "GPU→CPU sets the slot's prefer_cpu latch");
-    assert!(s.set_focused_raster(vault::RasterMode::Gpu));
+    assert!(s.set_focused_raster(frontend_core::command::RasterMode::Gpu));
     assert!(!inp.prefer_cpu(), "CPU→GPU clears the prefer_cpu latch");
     let slot = s.core.slot_io("alice").expect("GPU↔CPU must keep the slot");
     assert!(
@@ -8769,7 +8801,9 @@ fn single_mode_select_offers_background_ack_until_persisted() {
     );
     s.ack_background_bots();
     assert!(!s.background_ack_open);
-    assert!(host_play::background_bots_acked(&s.preferences));
+    assert!(frontend_core::resources::background_bots_acked(
+        &s.preferences
+    ));
     s.select("bob");
     assert!(!s.background_ack_open);
 }
@@ -8779,7 +8813,9 @@ fn panel_sees_ack_file_written_outside_session() {
     let (mut s, iso) = two_live_session("bg-ack-shared");
     // Another frontend (a second service on the same files) records the
     // acknowledgement; the session sees it once its preferences re-read.
-    host_play::persist_background_bots_ack(&thread_preferences()).unwrap();
+    thread_preferences()
+        .set("background_bots_ack", serde_json::Value::Bool(true))
+        .unwrap();
     s.preferences.reload().unwrap();
     s.select("alice");
     s.select("bob");
@@ -8850,7 +8886,9 @@ fn live_persist_off_skips_background_ack() {
     s.select("bob");
     assert!(!s.background_ack_open);
     s.ack_background_bots();
-    assert!(!host_play::background_bots_acked(&s.preferences));
+    assert!(!frontend_core::resources::background_bots_acked(
+        &s.preferences
+    ));
 }
 
 #[test]
@@ -8875,12 +8913,16 @@ fn failed_ack_persist_then_success_clears_only_that_error() {
         "got {:?}",
         s.error
     );
-    assert!(!host_play::background_bots_acked(&s.preferences));
+    assert!(!frontend_core::resources::background_bots_acked(
+        &s.preferences
+    ));
     std::fs::remove_file(&parent).unwrap();
     s.ack_background_bots();
     assert!(!s.background_ack_open);
     assert!(s.error.is_none(), "got {:?}", s.error);
-    assert!(host_play::background_bots_acked(&s.preferences));
+    assert!(frontend_core::resources::background_bots_acked(
+        &s.preferences
+    ));
     let _iso = iso;
 }
 
@@ -8893,7 +8935,9 @@ fn successful_ack_preserves_unrelated_error() {
     s.ack_background_bots();
     assert!(!s.background_ack_open);
     assert_eq!(s.error.as_deref(), Some("chooser: vault locked"));
-    assert!(host_play::background_bots_acked(&s.preferences));
+    assert!(frontend_core::resources::background_bots_acked(
+        &s.preferences
+    ));
 }
 
 #[test]
@@ -8984,9 +9028,9 @@ fn a_profile_still_saving_cannot_be_selected_loaded_or_deleted_from_the_chooser(
     s.set_multibox(true);
     let gate = s.core.write_gate();
     let held = gate.lock().unwrap();
-    s.cred_user = "bob".into();
-    s.cred_pass = "pw".into();
-    s.chooser_edit = Some(String::new());
+    s.profile_editor.open(&s.core, "");
+    *s.profile_editor.draft_mut().username_mut() = "bob".into();
+    *s.profile_editor.draft_mut().password_mut() = "pw".into();
     assert!(s.save_credentials());
     // The writer may already hold bob's job, but it cannot commit it yet.
 

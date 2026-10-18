@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use crate::nav_settings::NavSettings;
 
 use frontend_core::log::{Level, Source};
-use host_play::local_state::Preferences;
+use frontend_core::UiPreferences as Preferences;
 use serde_json::{Map, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -27,7 +27,7 @@ pub struct PanelUiState {
     pub rail_preview: HashMap<String, bool>,
     /// Global none/GPU/CPU for every slot (General config).
     #[serde(default)]
-    pub raster: vault::RasterMode,
+    pub raster: frontend_core::command::RasterMode,
     /// Global lowmem for every slot. Default true (headless default).
     #[serde(default = "default_true")]
     pub lowmem: bool,
@@ -140,7 +140,7 @@ impl Default for PanelUiState {
             collapsed: HashMap::new(),
             nav: NavSettings::default(),
             rail_preview: HashMap::new(),
-            raster: vault::RasterMode::Gpu,
+            raster: frontend_core::command::RasterMode::Gpu,
             lowmem: true,
             server_revision: default_server_revision(),
             section_order: Vec::new(),
@@ -331,14 +331,14 @@ thread_local! {
 mod tests {
     use super::{load, load_from, save, save_to, save_to_checked, NavSettings, PanelUiState};
     use crate::test_support::{patiently, scratch_service, set_patiently, TestDir};
-    use host_play::local_state::Preferences;
+    use frontend_core::UiPreferences as Preferences;
     use std::collections::HashMap;
 
     /// A scratch state root and the preferences of a service opened on it:
     /// the service stops before the directory goes.
     fn scratch(label: &str) -> (TestDir, Preferences) {
         let dir = TestDir::new(label);
-        let preferences = scratch_service(&dir).preferences();
+        let preferences = frontend_core::UiPreferences::of_service_for_test(&scratch_service(&dir));
         (dir, preferences)
     }
 
@@ -474,7 +474,7 @@ mod tests {
         let (dir, prefs) = scratch("ui-nav-overlap");
         // The single-key writers are a second service on the same files: a
         // peer frontend's writes, as far as the panel's preferences can tell.
-        let peer = scratch_service(&dir).preferences();
+        let peer = frontend_core::UiPreferences::of_service_for_test(&scratch_service(&dir));
         patiently(|| {
             save_to_checked(
                 &prefs,
@@ -580,7 +580,7 @@ mod tests {
         assert!(!refreshed_nav.survivable_routing_notice_ack);
 
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
-        let panel_prefs = prefs.clone();
+        let panel_prefs = prefs.share();
         let panel_barrier = std::sync::Arc::clone(&barrier);
         let panel = std::thread::spawn(move || {
             for _ in 0..32 {

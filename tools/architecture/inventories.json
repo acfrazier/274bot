@@ -1160,6 +1160,102 @@
       "classification": "owning",
       "owner": "T3",
       "reason": "T3.3 operator command seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/profile_draft.rs|GuardianPolicy",
+      "path": "crates/frontend-core/src/profile_draft.rs",
+      "symbol": "GuardianPolicy",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 operator command seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/profile_draft.rs|SettingsDraft",
+      "path": "crates/frontend-core/src/profile_draft.rs",
+      "symbol": "SettingsDraft",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 operator command seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/profile_draft.rs|ProfileDraft",
+      "path": "crates/frontend-core/src/profile_draft.rs",
+      "symbol": "ProfileDraft",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 operator command seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/profile_draft.rs|ProfileView",
+      "path": "crates/frontend-core/src/profile_draft.rs",
+      "symbol": "ProfileView",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 operator command seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/profile_editor.rs|ProfileEditor",
+      "path": "crates/frontend-core/src/profile_editor.rs",
+      "symbol": "ProfileEditor",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 operator command seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/profile_editor.rs|FormLeave",
+      "path": "crates/frontend-core/src/profile_editor.rs",
+      "symbol": "FormLeave",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 operator command seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/profile_editor.rs|FormOpen",
+      "path": "crates/frontend-core/src/profile_editor.rs",
+      "symbol": "FormOpen",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 operator command seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/profile_editor.rs|LeavePrompt",
+      "path": "crates/frontend-core/src/profile_editor.rs",
+      "symbol": "LeavePrompt",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 operator command seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/profile_editor.rs|SaveRefused",
+      "path": "crates/frontend-core/src/profile_editor.rs",
+      "symbol": "SaveRefused",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 operator command seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/prefs.rs|UiPreferences",
+      "path": "crates/frontend-core/src/prefs.rs",
+      "symbol": "UiPreferences",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 operator command seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/surface.rs|SpawnProfile",
+      "path": "crates/frontend-core/src/surface.rs",
+      "symbol": "SpawnProfile",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 operator command seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/session/commands.rs|GuardianEdit",
+      "path": "crates/frontend-core/src/session/commands.rs",
+      "symbol": "GuardianEdit",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 operator command seam."
     }
   ],
   "violations": [],

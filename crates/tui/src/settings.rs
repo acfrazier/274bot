@@ -20,7 +20,7 @@ use frontend_core::{
     GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, NOTHING_SAVED, QUESTER_HEADING,
     QUEST_PATHS_HEADING, ROUTING_SCOPE_NOTE, SCRIPT_SCOPE_NOTICE,
 };
-use vault::ProfileSettings;
+use frontend_core::{GuardianPolicy, SettingsDraft, GUARDIAN_EVENTS};
 
 /// The popup's title while no profile is bound to it.
 pub const TITLE: &str = "settings";
@@ -69,7 +69,7 @@ impl SettingsState {
 /// The outcome of one settings key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsKey {
-    /// A profile setting value changed — persist [`ProfileSettings`] back.
+    /// A profile setting value changed — persist the [`SettingsDraft`] back.
     Changed,
     /// An unavailable policy was reset to Flee and the reason should be shown.
     ChangedWithNotice(&'static str),
@@ -98,7 +98,7 @@ pub enum SettingsKey {
     Ignored,
 }
 
-/// The settings popup widget over a `ProfileSettings`. `title` names the
+/// The settings popup widget over a [`SettingsDraft`]. `title` names the
 /// bound profile (for example `settings — alice`). `notice` is the bound
 /// profile's save feedback, drawn under the rows: a refusal or a failed
 /// write in red with [`NOTHING_SAVED`], or `Saved <name>.` in green once the
@@ -106,7 +106,7 @@ pub enum SettingsKey {
 /// changes take effect only at the next login, with an explicit `r` offer.
 /// The notices are drawn into the same buffer as the settings rows.
 pub struct SettingsPane<'a> {
-    pub settings: &'a mut ProfileSettings,
+    pub settings: &'a mut SettingsDraft,
     pub nav: &'a mut host_play::WalkGlobals,
     pub map_bake: &'a mut MapBakeChoice,
     pub state: &'a mut SettingsState,
@@ -124,7 +124,7 @@ pub struct SettingsPane<'a> {
 
 impl<'a> SettingsPane<'a> {
     pub fn new(
-        settings: &'a mut ProfileSettings,
+        settings: &'a mut SettingsDraft,
         nav: &'a mut host_play::WalkGlobals,
         map_bake: &'a mut MapBakeChoice,
         state: &'a mut SettingsState,
@@ -313,31 +313,36 @@ impl<'a> SettingsPane<'a> {
         }
     }
     fn activate_event_policy(&mut self) -> SettingsKey {
-        let (event, _) = vault::RANDOM_EVENT_POLICY_EVENTS
-            [self.state.random_event_index % vault::RANDOM_EVENT_POLICY_EVENTS.len()];
-        if self.settings.random_event_policy(event) == vault::RandomEventPolicy::Flee {
+        let (event, _) = GUARDIAN_EVENTS[self.state.random_event_index % GUARDIAN_EVENTS.len()];
+        if self.settings.random_event_policy(event) == GuardianPolicy::Flee {
             return SettingsKey::Refused(EVENT_POLICY_UNAVAILABLE);
         }
         self.settings
-            .set_random_event_policy(event, vault::RandomEventPolicy::Flee);
+            .set_random_event_policy(event, GuardianPolicy::Flee);
         SettingsKey::ChangedWithNotice(EVENT_POLICY_UNAVAILABLE)
     }
 
     fn activate_value(&mut self) {
         match self.state.row {
-            0 => self.settings.random_events = !self.settings.random_events,
+            0 => {
+                let events = self.settings.random_events_mut();
+                *events = !*events;
+            }
             1 => {
                 let next = LAMP_SKILLS
                     .iter()
-                    .position(|s| *s == self.settings.lamp_skill)
+                    .position(|s| *s == self.settings.lamp_skill())
                     .map(|i| (i + 1) % LAMP_SKILLS.len())
                     .unwrap_or(0);
-                self.settings.lamp_skill = LAMP_SKILLS[next].into();
+                *self.settings.lamp_skill_mut() = LAMP_SKILLS[next].into();
             }
-            2 => self.settings.lamp_auto = !self.settings.lamp_auto,
+            2 => {
+                let auto = self.settings.lamp_auto_mut();
+                *auto = !*auto;
+            }
             3 => {
                 self.state.random_event_index =
-                    (self.state.random_event_index + 1) % vault::RANDOM_EVENT_POLICY_EVENTS.len();
+                    (self.state.random_event_index + 1) % GUARDIAN_EVENTS.len();
             }
             5 => self.nav.allow_teleports = !self.nav.allow_teleports,
             6 => self.nav.allow_wilderness = !self.nav.allow_wilderness,
@@ -352,7 +357,10 @@ impl<'a> SettingsPane<'a> {
                 }
             }
             10 => *self.map_bake = self.map_bake.toggled(),
-            11 => self.settings.lowmem = !self.settings.lowmem,
+            11 => {
+                let lowmem = self.settings.lowmem_mut();
+                *lowmem = !*lowmem;
+            }
             _ => {}
         }
     }
@@ -400,12 +408,12 @@ impl Widget for SettingsPane<'_> {
         } else {
             " [Enter edit]"
         };
-        let event_index = self.state.random_event_index % vault::RANDOM_EVENT_POLICY_EVENTS.len();
-        let (event_key, event_label) = vault::RANDOM_EVENT_POLICY_EVENTS[event_index];
+        let event_index = self.state.random_event_index % GUARDIAN_EVENTS.len();
+        let (event_key, event_label) = GUARDIAN_EVENTS[event_index];
         let event_policy = match self.settings.random_event_policy(event_key) {
-            vault::RandomEventPolicy::Flee => "Flee",
-            vault::RandomEventPolicy::Fight => "Fight (not available yet)",
-            vault::RandomEventPolicy::Ignore => "Ignore (not available yet)",
+            GuardianPolicy::Flee => "Flee",
+            GuardianPolicy::Fight => "Fight (not available yet)",
+            GuardianPolicy::Ignore => "Ignore (not available yet)",
         };
         let marker = |row| if selected_row == row { "> " } else { "  " };
 
@@ -413,10 +421,10 @@ impl Widget for SettingsPane<'_> {
             format!(
                 "{}random events: {}",
                 marker(0),
-                self.settings.random_events
+                self.settings.random_events()
             ),
-            format!("{}lamp skill: {}", marker(1), self.settings.lamp_skill),
-            format!("{}lamp auto: {}", marker(2), self.settings.lamp_auto),
+            format!("{}lamp skill: {}", marker(1), self.settings.lamp_skill()),
+            format!("{}lamp auto: {}", marker(2), self.settings.lamp_auto()),
             format!("{}event: {}", marker(3), event_label),
             format!("{}event policy: {event_policy}", marker(4)),
             format!(
@@ -466,7 +474,7 @@ impl Widget for SettingsPane<'_> {
             format!(
                 "{}memory: {}",
                 marker(11),
-                MemoryNotice::status_text(self.settings.lowmem, self.memory)
+                MemoryNotice::status_text(self.settings.lowmem(), self.memory)
             ),
             format!("{}{}: {}", marker(12), LOAD_PATHS_LABEL, paths_enabled),
             format!("{}Paths folder: {}{}", marker(13), path_folder, folder_hint),
@@ -755,8 +763,8 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
+    use frontend_core::{GuardianPolicy, SettingsDraft};
     use frontend_core::{MapBakeChoice, MemoryNotice, NavPreference};
-    use vault::ProfileSettings;
 
     use host_play::WalkGlobals;
 
@@ -781,24 +789,24 @@ mod tests {
     }
 
     /// The spec's settings test: the popup flips `random_events` on a
-    /// mock `ProfileSettings`.
+    /// mock `SettingsDraft`.
     #[test]
     fn popup_flips_random_events_on_the_profile() {
-        let mut settings = ProfileSettings::default();
+        let mut settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
             ..Default::default()
         };
-        assert!(settings.random_events, "default random events on");
+        assert!(settings.random_events(), "default random events on");
         let first = {
             let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
             pane.on_key(key(KeyCode::Enter))
         };
         assert_eq!(first, SettingsKey::Changed, "Enter reports the change");
         assert!(
-            !settings.random_events,
+            !settings.random_events(),
             "Enter on the random-events row flips it off"
         );
         let second = {
@@ -806,12 +814,12 @@ mod tests {
             pane.on_key(key(KeyCode::Enter))
         };
         assert_eq!(second, SettingsKey::Changed);
-        assert!(settings.random_events, "and back on");
+        assert!(settings.random_events(), "and back on");
     }
 
     #[test]
     fn popup_refuses_unavailable_fight_and_ignore_policies_with_reason() {
-        let mut settings = ProfileSettings::default();
+        let mut settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -820,10 +828,7 @@ mod tests {
             ..Default::default()
         };
 
-        for policy in [
-            vault::RandomEventPolicy::Fight,
-            vault::RandomEventPolicy::Ignore,
-        ] {
+        for policy in [GuardianPolicy::Fight, GuardianPolicy::Ignore] {
             settings.set_random_event_policy("river troll", policy);
             let changed = {
                 let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
@@ -835,7 +840,7 @@ mod tests {
             );
             assert_eq!(
                 settings.random_event_policy("river troll"),
-                vault::RandomEventPolicy::Flee,
+                GuardianPolicy::Flee,
                 "the operator can restore the supported policy"
             );
 
@@ -846,7 +851,7 @@ mod tests {
             assert_eq!(refused, SettingsKey::Refused(EVENT_POLICY_UNAVAILABLE));
             assert_eq!(
                 settings.random_event_policy("river troll"),
-                vault::RandomEventPolicy::Flee,
+                GuardianPolicy::Flee,
                 "selecting unavailable Fight or Ignore is refused"
             );
         }
@@ -854,7 +859,7 @@ mod tests {
 
     #[test]
     fn popup_cycles_lamp_skill_and_toggles_lamp_auto() {
-        let mut settings = ProfileSettings::default();
+        let mut settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -867,7 +872,8 @@ mod tests {
             pane.on_key(key(KeyCode::Enter));
         }
         assert_eq!(
-            settings.lamp_skill, LAMP_SKILLS[2],
+            settings.lamp_skill(),
+            LAMP_SKILLS[2],
             "default strength (index 1) cycles to the next skill"
         );
         let flipped = {
@@ -876,12 +882,12 @@ mod tests {
             pane.on_key(key(KeyCode::Char(' ')))
         };
         assert_eq!(flipped, SettingsKey::Changed);
-        assert!(!settings.lamp_auto, "space toggles lamp auto");
+        assert!(!settings.lamp_auto(), "space toggles lamp auto");
     }
 
     #[test]
     fn popup_toggles_bank_fetch_and_requests_single_key_persistence() {
-        let mut settings = ProfileSettings::default();
+        let mut settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -899,7 +905,7 @@ mod tests {
 
     #[test]
     fn each_permission_row_requests_its_global_preference() {
-        let mut settings = ProfileSettings::default();
+        let mut settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         for (row, preference) in [
@@ -928,7 +934,7 @@ mod tests {
 
     #[test]
     fn script_scope_notice_is_dismissible_and_stays_hidden_after_ack() {
-        let mut settings = ProfileSettings::default();
+        let mut settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -965,7 +971,7 @@ mod tests {
 
     #[test]
     fn survivable_routing_notice_uses_an_independent_acknowledgement() {
-        let mut settings = ProfileSettings::default();
+        let mut settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -1006,7 +1012,7 @@ mod tests {
 
     #[test]
     fn held_survivable_setting_and_notice_are_truthful_in_the_popup() {
-        let mut settings = ProfileSettings::default();
+        let mut settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -1040,7 +1046,7 @@ mod tests {
                 .collect()
         };
         for (w, h) in [(120u16, 50u16), (80, 50), (60, 60)] {
-            let mut settings = ProfileSettings::default();
+            let mut settings = SettingsDraft::default();
             let mut nav = WalkGlobals::default();
             let mut bake = MapBakeChoice::Ask;
             let mut state = SettingsState {
@@ -1067,7 +1073,7 @@ mod tests {
 
     #[test]
     fn up_and_down_move_the_row_and_esc_closes() {
-        let mut settings = ProfileSettings::default();
+        let mut settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -1091,7 +1097,7 @@ mod tests {
 
     #[test]
     fn popup_draws_the_rows_while_open_and_nothing_when_closed() {
-        let mut settings = ProfileSettings::default();
+        let mut settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -1128,7 +1134,7 @@ mod tests {
     #[test]
     fn manual_movement_pause_row_is_reachable_persistent_and_visible_at_common_sizes() {
         for (width, height) in [(120, 40), (80, 24)] {
-            let mut settings = ProfileSettings::default();
+            let mut settings = SettingsDraft::default();
             let mut nav = WalkGlobals::default();
             let mut bake = MapBakeChoice::Ask;
             let mut pause = true;
@@ -1164,7 +1170,7 @@ mod tests {
     }
     #[test]
     fn memory_row_toggles_lowmem_and_reports_the_change() {
-        let mut settings = ProfileSettings::default();
+        let mut settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -1177,12 +1183,15 @@ mod tests {
             pane.on_key(key(KeyCode::Enter))
         };
         assert_eq!(outcome, SettingsKey::Changed, "the binary must persist it");
-        assert!(!settings.lowmem, "Enter on the memory row flips to highmem");
+        assert!(
+            !settings.lowmem(),
+            "Enter on the memory row flips to highmem"
+        );
     }
 
     #[test]
     fn r_requests_relog_only_while_the_server_mode_differs_and_none_is_queued() {
-        let mut settings = ProfileSettings::default();
+        let mut settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -1213,15 +1222,13 @@ mod tests {
             SettingsKey::Consumed,
             "a queued relog cannot be restarted"
         );
-        assert!(settings.lowmem, "r never flips the setting itself");
+        assert!(settings.lowmem(), "r never flips the setting itself");
     }
 
     #[test]
     fn popup_shows_the_login_mode_and_relog_hint_while_it_differs() {
-        let mut settings = ProfileSettings {
-            lowmem: false,
-            ..ProfileSettings::default()
-        };
+        let mut settings = SettingsDraft::default();
+        *settings.lowmem_mut() = false;
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -1247,7 +1254,7 @@ mod tests {
 
     #[test]
     fn map_bake_row_flips_the_shared_choice_and_asks_the_binary_to_persist_it() {
-        let mut settings = ProfileSettings::default();
+        let mut settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
