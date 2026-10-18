@@ -317,6 +317,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   and removals invalidate cached IDs.
 - Packed heap comparisons inline their record-key ordering to avoid repeated
   calls during queue maintenance.
+- Packed search tables use more bucket heads to shorten collision scans.
+  Full-budget backing grows by 213,570 bytes within the same job ceiling.
 - One slow disk write no longer leaves script cards, the script catalogue or
   profiles stopped until 274bot restarts.
 - Windows now recovers damaged panel preferences and repairs duplicate loadout
