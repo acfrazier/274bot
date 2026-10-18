@@ -334,8 +334,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 ### Performance
 
 - Each running bot copies its route facts (held and worn items, skills,
-  settings and quest progress) only when it queues a walk, a bank selection
-  or a route inspection. Before, its script watchdog also copied them on
+  settings and quest progress) only when it prepares a walk request, a bank
+  selection or a route inspection. Before, its script watchdog also copied them on
   every frame, about 30 times each game tick. In a measured Gatherer bank
   loop, each bot now allocates about 0.25 MB/s less memory for these facts,
   about half of the earlier amount.
