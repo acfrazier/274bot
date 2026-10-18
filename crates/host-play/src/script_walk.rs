@@ -663,6 +663,9 @@ pub(super) fn recovery_walk_idle(navs: &Arc<Mutex<HashMap<String, NavBot>>>, nam
     !bot.route_work_pending() && !bot.has_route()
 }
 
+/// Apply a watchdog nav action. `state` is the observe frame's gating facts,
+/// borrowed: only `ArmWalk` queues work, so only it copies them into the
+/// queued route request. Every other action copies nothing.
 #[allow(clippy::too_many_arguments)] // watchdog nav action packs driver/snapshot/nav handles
 pub(crate) fn apply_watchdog_nav_action(
     action: script::WatchdogAction,
@@ -671,7 +674,7 @@ pub(crate) fn apply_watchdog_nav_action(
     here: Option<(i32, i32, i32)>,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     world: &Option<Arc<NavWorld>>,
-    state: Option<WorldState>,
+    state: Option<&WorldState>,
     bank: Option<&RwLock<BankMemory>>,
     name: &str,
 ) {
@@ -687,7 +690,7 @@ pub(crate) fn apply_watchdog_nav_action(
                 world: world.clone(),
                 navs: Arc::clone(navs),
                 name: name.to_string(),
-                state,
+                state: state.cloned(),
                 bank: super::slot_bank_memory::planner_rows(bank),
             };
             let armed = arm.queue_route_in_snapshot(
