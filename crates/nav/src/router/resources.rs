@@ -793,7 +793,9 @@ impl PackedMinMaxHeap {
         let slot = *table.slot(entry.node());
         // A replacement from the last leaf usually belongs near the bottom.
         // Promote the smaller child without comparing the replacement at each
-        // level, then find its final position on the return path.
+        // level, then find its final position on the return path. The result
+        // matches the classic sift-down only because every (tile, balance)
+        // key occurs at most once in the heap, so the comparator never ties.
         while position * 2 + 1 < self.entries.len() {
             let left = position * 2 + 1;
             let right = left + 1;
