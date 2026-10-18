@@ -842,6 +842,11 @@ pub struct FindOptions {
     pub allow_teleports: bool,
     pub allow_wilderness: bool,
     pub allow_bank_fetch: bool,
+    /// For bank access goals, break equal path costs by input target order.
+    /// Compare safe arrivals with each destination's own-zone completion.
+    /// Keep transit grants as fallback permissions and the full strict budget
+    /// while a goal remains unproven. Non-first-goal searches ignore this option.
+    pub prefer_target_order: bool,
     pub essence: Option<EssenceSession>,
     /// Named whole-walk zone opt-outs. The route origin may exit its danger
     /// zones and the selected destination may be reached inside its own zones.
@@ -3280,17 +3285,24 @@ fn first_route_order(route: &FirstRouteCandidate) -> (i32, i32, i32) {
     )
 }
 
-fn choose_first_route(
+async fn choose_first_route(
     current: &mut Result<FirstRouteCandidate, RouteError>,
     candidate: Result<FirstRouteCandidate, RouteError>,
+    order: Option<&[WorldTile]>,
 ) {
     match candidate {
         Ok(route) => {
-            if current.as_ref().map_or(true, |old| {
-                route.ticks < old.ticks
-                    || (route.ticks == old.ticks
-                        && first_route_order(&route) > first_route_order(old))
-            }) {
+            let replace = match current.as_ref() {
+                Err(_) => true,
+                Ok(old) if route.ticks == old.ticks => match order {
+                    Some(targets) => {
+                        target_precedes(targets, route.destination, old.destination).await
+                    }
+                    None => first_route_order(&route) > first_route_order(old),
+                },
+                Ok(old) => route.ticks < old.ticks,
+            };
+            if replace {
                 *current = Ok(route);
             }
         }
@@ -3299,6 +3311,19 @@ fn choose_first_route(
         }
         Err(_) => {}
     }
+}
+
+async fn target_precedes(targets: &[WorldTile], candidate: WorldTile, old: WorldTile) -> bool {
+    for &tile in targets {
+        work_unit().await;
+        if tile == old {
+            return false;
+        }
+        if tile == candidate {
+            return true;
+        }
+    }
+    false
 }
 
 fn merge_first_fallback(
@@ -3474,8 +3499,15 @@ async fn first_search_core_compact(
         inventory_can_grow,
         cooperative_storage: true,
     };
-    let first =
-        FirstGoals::new_cooperative(gates, targets, fallback, budget, reachable_budget).await?;
+    let first = FirstGoals::new_cooperative(
+        gates,
+        targets,
+        fallback,
+        budget,
+        reachable_budget,
+        options.prefer_target_order,
+    )
+    .await?;
     let mut goals = Goals::First(Box::new(first));
     let search = search_kernel(
         collision,
@@ -3738,13 +3770,15 @@ async fn first_cursor_search_with_output(
         materialization,
     )
     .await?;
-    if matches!(
-        merged.fallback.as_ref(),
-        Some(FirstFallbackCandidate::Routed(_))
-    ) || !matches!(
-        merged.preferred.as_ref(),
-        Err(RouteError::NoPath | RouteError::BudgetExhausted)
-    ) {
+    if !options.prefer_target_order
+        && (matches!(
+            merged.fallback.as_ref(),
+            Some(FirstFallbackCandidate::Routed(_))
+        ) || !matches!(
+            merged.preferred.as_ref(),
+            Err(RouteError::NoPath | RouteError::BudgetExhausted)
+        ))
+    {
         return Ok(into_first_pass(merged, fallback_only));
     }
 
@@ -3862,7 +3896,12 @@ async fn first_cursor_search_with_output(
                 .checked_add(1)
                 .ok_or(SearchCursorError::ResultNotRepresentable)?;
             merged.capacities.include(pass.capacities);
-            choose_first_route(&mut merged.preferred, pass.preferred);
+            choose_first_route(
+                &mut merged.preferred,
+                pass.preferred,
+                options.prefer_target_order.then_some(targets),
+            )
+            .await;
             if merged.preferred.is_ok() {
                 // The final result suppresses fallback whenever preferred wins.
                 // Release that obsolete trace before the next partition search.
@@ -4233,6 +4272,37 @@ pub fn find_first_with_avoid(
     find_first_with_fallback_avoid(collision, graph, from, targets, &[], opts, state, avoid)
 }
 
+/// First-goal search with explicit unproven and reachable settle caps.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The first-goal route inputs plus the two explicit settle caps."
+)]
+pub(crate) fn find_first_with_avoid_budgets(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+    budget: usize,
+    reachable_budget: usize,
+) -> FirstRouteSearch {
+    first_search(
+        collision,
+        graph,
+        from,
+        targets,
+        &[],
+        opts,
+        state,
+        Relax::Strict,
+        avoid,
+        budget,
+        reachable_budget,
+    )
+}
+
 /// [`find_first_with`] over preferred `targets` with a `fallback` goal set,
 /// sharing one search: the cheapest reachable preferred goal wins even over
 /// a cheaper fallback goal, and the search records the first fallback goal
@@ -4584,12 +4654,14 @@ fn first_search(
         }
     };
     let mut merged = run(targets, fallback, Some(&filter));
-    // Safety outranks target preference: a safe fallback is a valid arrival.
-    if matches!(merged.fallback.as_ref(), Some(FallbackRoute::Routed(_)))
-        || !matches!(
-            merged.route,
-            Err(RouteError::NoPath | RouteError::BudgetExhausted)
-        )
+    // Ordinary first-goal searches prefer safe arrivals. Ordered bank goals
+    // also compare each destination's own-zone completion before transit grants.
+    if !opts.prefer_target_order
+        && (matches!(merged.fallback.as_ref(), Some(FallbackRoute::Routed(_)))
+            || !matches!(
+                merged.route,
+                Err(RouteError::NoPath | RouteError::BudgetExhausted)
+            ))
     {
         return merged;
     }
@@ -4612,7 +4684,18 @@ fn first_search(
             result.capacities.zone_mask_words += filter.mask_words();
             merged.settled += result.settled;
             merged.capacities.include(result.capacities);
-            choose_route(&mut merged.route, result.route);
+            if opts.prefer_target_order
+                && matches!((&merged.route, &result.route), (Ok(old), Ok(new))
+                    if old.ticks == new.ticks)
+            {
+                if let (Ok(old), Ok(new)) = (&merged.route, &result.route) {
+                    if drive_to_completion(target_precedes(targets, new.dest, old.dest)) {
+                        merged.route = result.route;
+                    }
+                }
+            } else {
+                choose_route(&mut merged.route, result.route);
+            }
             if let Some(answer) = result.fallback {
                 merge_fallback(&mut merged.fallback, answer);
             }
@@ -4763,6 +4846,7 @@ fn first_search_core(
         fallback,
         budget,
         reachable_budget,
+        opts.prefer_target_order,
     )) {
         Ok(first) => first,
         Err(_) => {
@@ -7182,6 +7266,8 @@ struct GoalSet<'a> {
     targets: FirstTargets<'a>,
     seeds: &'a [WorldTile],
     found: Option<(WorldTile, TargetCost)>,
+    ordered: bool,
+    found_rank: Option<usize>,
     /// The unproven budget until the proof shows a goal reachable, then the
     /// reachable budget.
     budget: usize,
@@ -7192,11 +7278,17 @@ struct GoalSet<'a> {
 
 impl<'a> GoalSet<'a> {
     /// An empty set is closed from the start.
-    async fn new(targets: &'a [WorldTile], budget: usize) -> Result<Self, SearchCursorError> {
+    async fn new(
+        targets: &'a [WorldTile],
+        budget: usize,
+        ordered: bool,
+    ) -> Result<Self, SearchCursorError> {
         Ok(Self {
             targets: FirstTargets::new_cooperative(targets).await?,
             seeds: targets,
             found: None,
+            ordered,
+            found_rank: None,
             budget,
             proof: ReverseRun::default(),
             closed: targets.is_empty().then_some(RouteError::NoPath),
@@ -7212,11 +7304,34 @@ impl<'a> GoalSet<'a> {
         self.proof.finish();
     }
 
-    /// Records the set's first goal to settle, while it is still searching.
+    /// Record the first settled goal for the ordinary first-goal policy.
     fn accept(&mut self, tile: WorldTile, cost: TargetCost) -> bool {
         if !self.live() || !self.targets.contains(&tile) {
             return false;
         }
+        self.found = Some((tile, cost));
+        self.proof.finish();
+        true
+    }
+
+    /// Resolve input rank only when an ordered search settles a goal.
+    async fn accept_ordered(&mut self, tile: WorldTile, cost: TargetCost) -> bool {
+        let mut rank = 0;
+        for &target in self.seeds {
+            work_unit().await;
+            if target == tile {
+                break;
+            }
+            rank += 1;
+        }
+        if let Some((_, old)) = self.found {
+            if old.ticks < cost.ticks
+                || (old.ticks == cost.ticks && self.found_rank.is_some_and(|old| old <= rank))
+            {
+                return false;
+            }
+        }
+        self.found_rank = Some(rank);
         self.found = Some((tile, cost));
         self.proof.finish();
         true
@@ -7263,14 +7378,16 @@ impl<'a> FirstGoals<'a> {
         fallback: &'a [WorldTile],
         budget: usize,
         reachable_budget: usize,
+        ordered: bool,
     ) -> Result<Self, SearchCursorError> {
-        let mut preferred = GoalSet::new(targets, budget).await?;
+        let budget = if ordered { reachable_budget } else { budget };
+        let mut preferred = GoalSet::new(targets, budget, ordered).await?;
         preferred.prove_to(gates, 0, reachable_budget).await?;
         Ok(Self {
             gates,
             reachable_budget,
             preferred,
-            fallback: GoalSet::new(fallback, budget).await?,
+            fallback: GoalSet::new(fallback, budget, false).await?,
         })
     }
 
@@ -7280,15 +7397,45 @@ impl<'a> FirstGoals<'a> {
         cost: TargetCost,
     ) -> Result<Settle, SearchCursorError> {
         let settled = cost.settled_at;
+        if self.preferred.ordered {
+            if let Some((_, found)) = self.preferred.found {
+                if cost.ticks > found.ticks || settled > self.preferred.budget {
+                    return Ok(Settle::Stop);
+                }
+                if self.preferred.targets.contains(&tile) {
+                    self.preferred.accept_ordered(tile, cost).await;
+                }
+                return Ok(if self.preferred.found_rank == Some(0) {
+                    Settle::Stop
+                } else {
+                    Settle::Continue
+                });
+            }
+        }
         if settled > self.preferred.budget {
             self.preferred.close(RouteError::BudgetExhausted);
             self.decide_fallback(settled - 1, settled).await?;
             return Ok(Settle::Spent);
         }
-        if self.preferred.accept(tile, cost) {
-            return Ok(Settle::Stop);
+        let accepted = if self.preferred.ordered {
+            self.preferred.live()
+                && self.preferred.targets.contains(&tile)
+                && self.preferred.accept_ordered(tile, cost).await
+        } else {
+            self.preferred.accept(tile, cost)
+        };
+        if accepted {
+            return Ok(
+                if self.preferred.ordered && self.preferred.found_rank != Some(0) {
+                    Settle::Continue
+                } else {
+                    Settle::Stop
+                },
+            );
         }
-        self.settle_fallback(tile, cost).await?;
+        if self.fallback.live() && self.fallback.targets.contains(&tile) {
+            self.settle_fallback(tile, cost).await?;
+        }
         self.preferred
             .prove_to(self.gates, settled, self.reachable_budget)
             .await?;
@@ -7309,9 +7456,7 @@ impl<'a> FirstGoals<'a> {
         tile: WorldTile,
         cost: TargetCost,
     ) -> Result<(), SearchCursorError> {
-        if !self.fallback.live() || !self.fallback.targets.contains(&tile) {
-            return Ok(());
-        }
+        debug_assert!(self.fallback.live() && self.fallback.targets.contains(&tile));
         let settled = cost.settled_at;
         if settled > self.fallback.budget {
             self.decide_fallback(settled - 1, settled).await?;
