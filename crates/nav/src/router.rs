@@ -8298,12 +8298,16 @@ async fn search_kernel(
 
 #[inline(always)]
 #[expect(
+    clippy::manual_async_fn,
+    reason = "the explicit block must force-inline its poll body on Rust 1.98.1"
+)]
+#[expect(
     clippy::too_many_arguments,
     reason = "the compact relaxation updates the shared table and heap without copying state"
 )]
-fn relax_packed<B: Budget>(
-    table: &mut PackedSearchTable,
-    heap: &mut PackedMinMaxHeap,
+fn relax_packed<'table, 'heap, 'pending, B: Budget>(
+    table: &'table mut PackedSearchTable,
+    heap: &'heap mut PackedMinMaxHeap,
     maximum_table_capacity: usize,
     key: B::Key,
     cost: f64,
@@ -8311,8 +8315,8 @@ fn relax_packed<B: Budget>(
     action: u8,
     action_index: usize,
     pending_limit: usize,
-    pending_after_limit: &mut bool,
-) -> impl Future<Output = Result<(), SearchStop>> {
+    pending_after_limit: &'pending mut bool,
+) -> impl Future<Output = Result<(), SearchStop>> + use<'table, 'heap, 'pending, B> {
     // The pinned compiler weakens an async-fn attribute to an inline hint.
     // Put the attribute on the poll body to retain forced inlining.
     #[inline(always)]
