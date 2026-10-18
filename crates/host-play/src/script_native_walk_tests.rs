@@ -2640,7 +2640,7 @@ fn review_native_recovery_click_then_nopath_delivers_terminal() {
         Some((0, 0, 0)),
         &rig.navs,
         &rig.world,
-        Some(WorldState::empty()),
+        Some(&WorldState::empty()),
         None,
         "alice",
     );
