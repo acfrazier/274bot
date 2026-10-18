@@ -1,4 +1,5 @@
 use super::SearchCursorError;
+use libc::{mmap, munmap, MAP_ANON, MAP_PRIVATE, PROT_READ, PROT_WRITE};
 use std::ffi::c_void;
 use std::mem::{align_of, size_of};
 use std::ops::{Deref, DerefMut};
@@ -6,9 +7,8 @@ use std::ptr::NonNull;
 use std::slice;
 
 const MAPPED_THRESHOLD: usize = 64 * 1024;
-const ADMISSION_PAGE_SIZE: usize = 16 * 1024;
-
-const _: () = assert!(size_of::<usize>() == 8);
+// This covers the 4, 16 and 64 KiB base pages used by supported Unix hosts.
+const ADMISSION_PAGE_SIZE: usize = 64 * 1024;
 
 mod sealed {
     pub trait Sealed {}
@@ -174,7 +174,7 @@ fn map_anonymous<T: ZeroedElement>(len: usize) -> Result<(NonNull<T>, usize), Se
     #[cfg(test)]
     MMAP_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
 
-    // SAFETY: The Darwin FFI declaration matches 64-bit size_t, int, and off_t. The flags request
+    // SAFETY: libc supplies the host ABI and constants. The flags request
     // a private anonymous read/write mapping, and mapping_length checked a nonzero valid extent.
     let raw = unsafe {
         mmap(
@@ -186,7 +186,7 @@ fn map_anonymous<T: ZeroedElement>(len: usize) -> Result<(NonNull<T>, usize), Se
             0,
         )
     };
-    if raw == (-1isize as *mut c_void) {
+    if raw == libc::MAP_FAILED {
         return Err(SearchCursorError::Allocation);
     }
     let Some(ptr) = NonNull::new(raw.cast::<T>()) else {
@@ -218,8 +218,8 @@ fn unmap_owned<T>(ptr: NonNull<T>, bytes: usize) -> std::os::raw::c_int {
 }
 
 fn system_page_size<T: ZeroedElement>() -> Result<usize, SearchCursorError> {
-    // SAFETY: getpagesize takes no arguments and returns the host page size as a C int.
-    let page_size = unsafe { getpagesize() };
+    // SAFETY: sysconf takes the fixed page-size selector and no pointer.
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
     let page_size = usize::try_from(page_size).map_err(|_| SearchCursorError::Allocation)?;
     if valid_page_size::<T>(page_size) {
         Ok(page_size)
@@ -305,12 +305,12 @@ fn syscall_counts() -> SyscallCounts {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 const TASK_VM_INFO_FLAVOR: std::os::raw::c_int = 22;
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 const TASK_VM_INFO_REV1_COUNT: u32 = 38;
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 pub(super) fn current_phys_footprint() -> u64 {
     let mut info = [0u64; 19];
     let mut count = TASK_VM_INFO_REV1_COUNT;
@@ -330,29 +330,13 @@ pub(super) fn current_phys_footprint() -> u64 {
     info[18]
 }
 
-const PROT_READ: std::os::raw::c_int = 0x1;
-const PROT_WRITE: std::os::raw::c_int = 0x2;
-const MAP_PRIVATE: std::os::raw::c_int = 0x2;
-const MAP_ANON: std::os::raw::c_int = 0x1000;
-
-// SAFETY: These declarations match the 64-bit Darwin System ABI. The caller supplies valid
-// mappings and buffers to mmap, munmap, and task_info, and getpagesize has no arguments.
+#[cfg(all(test, target_os = "macos"))]
+// SAFETY: These declarations match the Darwin task_info ABI. The caller
+// supplies the current task port and a valid REV1 output buffer.
 #[link(name = "System")]
 unsafe extern "C" {
-    fn getpagesize() -> std::os::raw::c_int;
-    fn mmap(
-        address: *mut c_void,
-        length: usize,
-        protection: std::os::raw::c_int,
-        flags: std::os::raw::c_int,
-        descriptor: std::os::raw::c_int,
-        offset: i64,
-    ) -> *mut c_void;
-    fn munmap(address: *mut c_void, length: usize) -> std::os::raw::c_int;
-    #[cfg(test)]
     #[link_name = "mach_task_self_"]
     static MACH_TASK_SELF: u32;
-    #[cfg(test)]
     fn task_info(
         target_task: u32,
         flavor: std::os::raw::c_int,
@@ -432,6 +416,7 @@ mod tests {
         assert_eq!(values[values.len() - 1], [4, 5, 6]);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "run alone on macOS for native phys_footprint measurement"]
     fn mapped_lazy_commit_releases_phys_footprint_after_drop() {
@@ -491,7 +476,7 @@ mod tests {
     fn storage_bound_rounds_only_mapped_payloads() {
         assert_eq!(storage_bound::<PackedSearchSlot>(0), Some(0));
         assert_eq!(storage_bound::<PackedSearchSlot>(2340), Some(65_520));
-        assert_eq!(storage_bound::<PackedSearchSlot>(2341), Some(81_920));
+        assert_eq!(storage_bound::<PackedSearchSlot>(2341), Some(131_072));
         assert_eq!(
             storage_bound::<PackedSearchSlot>(4_000_002),
             Some(112_001_024)

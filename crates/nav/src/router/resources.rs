@@ -6,9 +6,9 @@
 use super::*;
 use std::hash::{Hash, Hasher};
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 use super::zeroed_buffer::ZeroedBuffer as SearchBuffer;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(unix))]
 type SearchBuffer<T> = Vec<T>;
 
 pub(super) const RESOURCE_LIMIT: usize = 64;
@@ -235,9 +235,9 @@ pub(super) struct PackedSearchTable {
 
 impl PackedSearchTable {
     pub(super) fn empty() -> Self {
-        #[cfg(target_os = "macos")]
+        #[cfg(unix)]
         let (slots, links) = (SearchBuffer::empty(), SearchBuffer::empty());
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(unix))]
         let (slots, links) = (Vec::new(), Vec::new());
         Self {
             slots,
@@ -271,12 +271,12 @@ impl PackedSearchTable {
             .map_err(|_| SearchCursorError::Allocation)?;
         std::alloc::Layout::array::<[u8; 3]>(link_count)
             .map_err(|_| SearchCursorError::Allocation)?;
-        #[cfg(target_os = "macos")]
+        #[cfg(unix)]
         let (slots, links) = (
             SearchBuffer::try_new(capacity)?,
             SearchBuffer::try_new(link_count)?,
         );
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(unix))]
         let (slots, links) = (
             vec![PackedSearchSlot::empty(); capacity],
             vec![[0; 3]; link_count],
@@ -350,9 +350,9 @@ impl PackedSearchTable {
         let link_count = buckets
             .checked_add(new_capacity)
             .ok_or(SearchCursorError::Allocation)?;
-        #[cfg(target_os = "macos")]
+        #[cfg(unix)]
         let mut links = SearchBuffer::try_new(link_count)?;
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(unix))]
         let mut links = {
             let mut links = Vec::new();
             links
@@ -374,9 +374,9 @@ impl PackedSearchTable {
         heap.entries
             .try_reserve_exact(new_capacity.saturating_sub(heap.entries.len()))
             .map_err(|_| SearchCursorError::Allocation)?;
-        #[cfg(target_os = "macos")]
+        #[cfg(unix)]
         self.slots.try_grow(new_capacity, self.next_unused)?;
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(unix))]
         {
             self.slots
                 .try_reserve_exact(new_capacity - old_capacity)
@@ -606,12 +606,12 @@ pub(super) fn packed_predecessor_storage_bound(settle_budget: usize) -> Option<u
         return None;
     }
     let links = capacity.checked_add(PackedSearchTable::bucket_count_for(capacity))?;
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     {
         super::zeroed_buffer::storage_bound::<PackedSearchSlot>(capacity)?
             .checked_add(super::zeroed_buffer::storage_bound::<[u8; 3]>(links)?)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(unix))]
     {
         capacity
             .checked_mul(std::mem::size_of::<PackedSearchSlot>())?
@@ -1961,14 +1961,14 @@ mod packed_search_tests {
                     + (capacity + 1) * std::mem::size_of::<[u8; 3]>()
             )
         );
-        #[cfg(target_os = "macos")]
-        let expected_full_backing = 149_009_932;
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(unix)]
+        let expected_full_backing = 149_042_700;
+        #[cfg(not(unix))]
         let expected_full_backing = 149_000_076;
         assert_eq!(
             packed_search_storage_bound(NODE_BUDGET),
             Some(expected_full_backing),
-            "backing includes one bucket per twelve records and macOS mapping page rounding"
+            "backing includes one bucket per twelve records and Unix mapping page rounding"
         );
         assert!(packed_search_storage_bound(usize::MAX).is_none());
     }

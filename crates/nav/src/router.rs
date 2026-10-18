@@ -49,7 +49,7 @@ use crate::world_state::WorldState;
 use crate::zones::{ZoneExempt, ZoneFilter, ZoneFilterOwned, ZoneKey, ZoneTable};
 
 mod resources;
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 mod zeroed_buffer;
 use resources::{
     BacktraceStep, Budget, PackedLookup, PackedMinMaxHeap, PackedSearchSlotExt, PackedSearchTable,

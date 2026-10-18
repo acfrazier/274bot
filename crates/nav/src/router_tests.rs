@@ -68,7 +68,7 @@ fn synchronous_driver_skips_suspension_and_restores_cooperative_mode() {
     assert!(!unit_is_ready());
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 #[test]
 fn cooperative_mapping_failure_returns_typed_allocation_error() {
     let world = Arc::new(crate::world::NavWorld::from_parts(
@@ -110,7 +110,7 @@ fn cooperative_mapping_failure_returns_typed_allocation_error() {
     });
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 #[test]
 fn synchronous_mapping_failure_preserves_budget_exhausted() {
     let collision = bake(4096, 1, &[]);
