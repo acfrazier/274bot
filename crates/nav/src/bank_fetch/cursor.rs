@@ -381,7 +381,9 @@ impl BankFetchCursor {
         &self.targets
     }
 
-    /// Move the goals into the search without copying their allocation.
+    /// Return the targets as a boxed slice. Target collection uses a separate
+    /// buffer beside the sorted access rows, and this conversion may reallocate
+    /// when the target vector has spare capacity.
     pub fn take_access_targets(&mut self) -> Box<[WorldTile]> {
         std::mem::take(&mut self.targets).into_boxed_slice()
     }
