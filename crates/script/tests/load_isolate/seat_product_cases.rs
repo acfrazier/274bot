@@ -79,6 +79,23 @@ fn post_test_tick(
     let _ = iso.probe("true").expect("posted product tick completes");
 }
 
+fn post_test_snapshot_with_native(
+    iso: &LoadIsolate,
+    snapshot: &mut script::isolate_fb::SnapshotInput<'_>,
+    tick: u64,
+    evidence_sequence: u64,
+    native: NativeFactsInput<'_>,
+) {
+    snapshot.tick = tick;
+    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
+        snapshot, native,
+    ));
+    iso.on_snapshot_change_at(tick, 0, evidence_sequence);
+    let _ = iso
+        .probe("true")
+        .expect("posted owner-bound product snapshot completes");
+}
+
 fn seat_reqs(
     batches: &[QueuedSeatBatch],
 ) -> impl Iterator<Item = &script::isolate_fb::SeatInteractDecoded> {
@@ -176,9 +193,8 @@ export function tick(api) {
 
     // These protocol, lineage, and async-context fixtures acknowledge host pages explicitly.
     // Bank execution behavior is covered separately by the BankSlot fixtures.
+    let mut batches = Vec::new();
     let mut bank_open_id = None;
-    let mut bank_live = false;
-    let mut bank_completed = false;
     for tick in 1..=12 {
         if tick >= 4 {
             snapshot.here = Some(TileInput {
@@ -187,25 +203,40 @@ export function tick(api) {
                 level: 0,
             });
         }
-        if let Some(id) = bank_open_id.filter(|_| !bank_live) {
+        post_test_tick(&iso, &mut snapshot, tick);
+        let tick_batches = iso.drain_seat_batches();
+        if bank_open_id.is_none() {
+            if let Some(start) =
+                seat_starts(&tick_batches).find(|start| start.kind == NativeKind::BankPlan)
+            {
+                assert_bank_start_operation(start, "Open");
+                bank_open_id = Some(start.id);
+            }
+        }
+        batches.extend(tick_batches);
+
+        if tick == 3 {
+            // Host protocol pages carry admission and completion at this same
+            // observed tick; snapshot-only pumps keep the walk's tick-4 arrival.
+            let id = bank_open_id.expect("Banking.open starts before tick 3");
             let live = [root_seat_entry(id, NativeKind::BankPlan)];
             let details = [SeatLiveDetails {
                 id,
                 phase: script::native::NativePhase::Waiting,
                 prompt: None,
             }];
-            let seat_page = SeatPageInput::new(&live, &[], &details, 0).unwrap();
-            post_test_tick_with_native(
+            let live_page = SeatPageInput::new(&live, &[], &details, 0).unwrap();
+            post_test_snapshot_with_native(
                 &iso,
                 &mut snapshot,
                 tick,
+                1,
                 NativeFactsInput {
-                    seat_page: Some(seat_page),
+                    seat_page: Some(live_page),
                     ..NativeFactsInput::default()
                 },
             );
-            bank_live = true;
-        } else if let Some(id) = bank_open_id.filter(|_| !bank_completed) {
+
             let terminal = [SeatResult {
                 id,
                 seq: 1,
@@ -220,33 +251,22 @@ export function tick(api) {
                 id,
                 value: &encoded_value,
             }];
-            let seat_page = SeatPageInput::new(&[], &terminal, &[], 0)
+            let terminal_page = SeatPageInput::new(&[], &terminal, &[], 0)
                 .unwrap()
                 .with_result_values(&values)
                 .unwrap();
-            post_test_tick_with_native(
+            post_test_snapshot_with_native(
                 &iso,
                 &mut snapshot,
                 tick,
+                2,
                 NativeFactsInput {
-                    seat_page: Some(seat_page),
+                    seat_page: Some(terminal_page),
                     ..NativeFactsInput::default()
                 },
             );
-            bank_completed = true;
-        } else {
-            post_test_tick(&iso, &mut snapshot, tick);
+            batches.extend(iso.drain_seat_batches());
         }
-        let tick_batches = iso.drain_seat_batches();
-        if bank_open_id.is_none() {
-            if let Some(start) = seat_starts(&tick_batches)
-                .find(|start| start.kind == NativeKind::BankPlan)
-            {
-                assert_bank_start_operation(start, "Open");
-                bank_open_id = Some(start.id);
-            }
-        }
-        batches.extend(tick_batches);
         if iso.probe("globalThis.__rootDone").unwrap() == true {
             break;
         }
@@ -489,6 +509,7 @@ export function tick(api) {
     snapshot.bank_generation = 1;
     // This protocol and async-context fixture acknowledges host pages explicitly.
     // Bank execution behavior is covered separately by the BankSlot fixtures.
+    let mut batches = Vec::new();
     let mut bank_open_id = None;
     let mut bank_live = false;
     let mut next_terminal_seq = 1;
@@ -549,8 +570,8 @@ export function tick(api) {
         }
         let tick_batches = iso.drain_seat_batches();
         if bank_open_id.is_none() {
-            if let Some(start) = seat_starts(&tick_batches)
-                .find(|start| start.kind == NativeKind::BankPlan)
+            if let Some(start) =
+                seat_starts(&tick_batches).find(|start| start.kind == NativeKind::BankPlan)
             {
                 assert_bank_start_operation(start, "Open");
                 bank_open_id = Some(start.id);

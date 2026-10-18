@@ -2,6 +2,11 @@
 //! `SlotScript` bank seat. It posts the script-facing page and supplies a
 //! native `GameSnapshot`; it synthesizes no bank operation or result.
 
+#![allow(
+    dead_code,
+    reason = "shared across integration test binaries; each binary uses a subset, so expect would misfire"
+)]
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -117,11 +122,7 @@ impl BankSlot {
     }
 
     /// Publish a full/delta script page while updating the persistent native view.
-    pub fn post_snapshot(
-        &mut self,
-        input: &SnapshotInput<'_>,
-        native: NativeFactsInput<'_>,
-    ) {
+    pub fn post_snapshot(&mut self, input: &SnapshotInput<'_>, native: NativeFactsInput<'_>) {
         let bytes = self
             .slot
             .encode_snapshot_delta_with_native(input, native, false);
@@ -135,19 +136,20 @@ impl BankSlot {
         input: &SnapshotInput<'_>,
         native: NativeFactsInput<'_>,
     ) {
-        assert!(self.slot.post_snapshot(bytes), "SlotScript rejected snapshot");
+        assert!(
+            self.slot.post_snapshot(bytes),
+            "SlotScript rejected snapshot"
+        );
         self.held = input.hold;
-        let mut snapshot =
-            std::mem::replace(&mut self.native_snapshot, GameSnapshot::new());
-        update_native_snapshot(&mut snapshot, input, native);
+        let mut snapshot = std::mem::replace(&mut self.native_snapshot, GameSnapshot::new());
+        update_native_snapshot(&mut snapshot, input, native, None);
         self.native_snapshot = snapshot;
         self.native_reach = reach_query_view(input.reach);
     }
 
     /// Tick against the persistent native view last posted by `post_snapshot`.
     pub fn tick_posted(&mut self, tick: u64) {
-        let snapshot =
-            std::mem::replace(&mut self.native_snapshot, GameSnapshot::new());
+        let snapshot = std::mem::replace(&mut self.native_snapshot, GameSnapshot::new());
         self.run_game_tick(tick, &snapshot);
         self.native_snapshot = snapshot;
     }
@@ -161,7 +163,9 @@ impl BankSlot {
         snapshot: &GameSnapshot,
     ) {
         self.post_snapshot(input, native);
+        self.use_raw_reach(input, snapshot);
         self.run_game_tick(tick, snapshot);
+        self.pump_snapshot_changes(tick, input, native, snapshot);
     }
 
     /// Build the native view from the posted fixture and retain session identity.
@@ -172,7 +176,10 @@ impl BankSlot {
         native: NativeFactsInput<'_>,
     ) {
         self.post_snapshot(input, native);
-        self.tick_posted(tick);
+        let snapshot = std::mem::replace(&mut self.native_snapshot, GameSnapshot::new());
+        self.run_game_tick(tick, &snapshot);
+        self.pump_snapshot_changes(tick, input, native, &snapshot);
+        self.native_snapshot = snapshot;
     }
     /// Run snapshot-only work with the same native frame context as a game tick.
     pub fn snapshot_change(
@@ -183,11 +190,44 @@ impl BankSlot {
         snapshot: &GameSnapshot,
     ) {
         self.post_snapshot(input, native);
+        self.use_raw_reach(input, snapshot);
         self.run_snapshot_change(tick, snapshot);
+        self.pump_snapshot_changes(tick, input, native, snapshot);
+    }
+
+    fn use_raw_reach(&mut self, input: &SnapshotInput<'_>, snapshot: &GameSnapshot) {
+        if !input.reach.available {
+            let here = snapshot
+                .tile()
+                .map(|(x, z, level)| api::snapshot::WorldTile { x, z, level });
+            self.native_reach = api::query::SceneQuery::new(snapshot.scene(), here)
+                .flood_reach()
+                .map(|flood| api::query::pack_reach_query(snapshot.scene(), Some(&flood)));
+        }
+    }
+
+    /// Carry admission, prompt decisions and terminal pages through ordinary
+    /// host frames without advancing the observed game tick or its budget.
+    fn pump_snapshot_changes(
+        &mut self,
+        tick: u64,
+        input: &SnapshotInput<'_>,
+        native: NativeFactsInput<'_>,
+        snapshot: &GameSnapshot,
+    ) {
+        for _ in 0..8 {
+            let bytes = self
+                .slot
+                .encode_snapshot_delta_with_native(input, native, false);
+            assert!(self.slot.post_snapshot(bytes));
+            self.run_snapshot_change(tick, snapshot);
+        }
     }
 
     fn run_snapshot_change(&mut self, tick: u64, snapshot: &GameSnapshot) {
+        self.slot.seat_guardian_hold(self.held);
         self.slot.sync_compiled_clue(self.held);
+        self.drain_seat_starts();
         let mut driver = NullDriver::default();
         let mut ctx = ScriptCtx {
             driver: &mut driver,
@@ -199,6 +239,7 @@ impl BankSlot {
             snapshot: Some(snapshot),
             obj_names: None,
             compiled: CompiledTick {
+                hold: self.held,
                 reach: self.native_reach.as_ref(),
                 ..CompiledTick::default()
             },
@@ -210,7 +251,9 @@ impl BankSlot {
     }
 
     fn run_game_tick(&mut self, tick: u64, snapshot: &GameSnapshot) {
+        self.slot.seat_guardian_hold(self.held);
         self.slot.sync_compiled_clue(self.held);
+        self.drain_seat_starts();
         let mut driver = NullDriver::default();
         let mut ctx = ScriptCtx {
             driver: &mut driver,
@@ -222,6 +265,7 @@ impl BankSlot {
             snapshot: Some(snapshot),
             obj_names: None,
             compiled: CompiledTick {
+                hold: self.held,
                 reach: self.native_reach.as_ref(),
                 ..CompiledTick::default()
             },
@@ -232,10 +276,17 @@ impl BankSlot {
             .expect("join the completed Load tick");
     }
 
+    fn drain_seat_starts(&mut self) {
+        let (_, legacy, _) = self.slot.drain_host_interacts();
+        assert!(
+            legacy.is_empty(),
+            "bank fixture emitted legacy effects instead of using the native seat"
+        );
+    }
+
     pub fn probe(&self, expression: &str) -> Result<serde_json::Value, String> {
         self.slot.probe(expression)
     }
-
 
     pub fn take_actions(&mut self) -> Vec<HostAction> {
         let mut actions = Vec::new();
@@ -256,16 +307,16 @@ impl BankSlot {
         self.slot.stop();
     }
 }
-fn update_native_snapshot(
+pub(crate) fn update_native_snapshot(
     snapshot: &mut GameSnapshot,
     input: &SnapshotInput<'_>,
     native: NativeFactsInput<'_>,
+    bank_component: Option<i32>,
 ) {
     use api::obj_names::ItemDefView;
     use api::snapshot::{
-        ActorKind, ActorTargetView, ActorView, ItemActionFamily, ItemContainer, ItemView,
-        LocalPlayerView, LocLayer, LocView, NpcView, PlayerView, QuestStatusView, StatView,
-        WorldTile,
+        ActorKind, ActorTargetView, ActorView, ItemActionFamily, ItemContainer, ItemView, LocLayer,
+        LocView, LocalPlayerView, NpcView, PlayerView, QuestStatusView, StatView, WorldTile,
     };
 
     fn tile(x: i32, z: i32, level: i32) -> WorldTile {
@@ -417,9 +468,36 @@ fn update_native_snapshot(
     if input.ingame {
         snapshot.seed_ingame(input.scene_state);
     }
+    snapshot.seed_tick(input.tick as u32);
     if let Some(here) = input.here {
         snapshot.seed_tile(tile(here.x, here.z, here.level));
     }
+    // These input fixtures model an open scene with the posted blocked tiles.
+    // Wall-specific cases can pass their raw native snapshot to `tick`.
+    let scene = if input.reach.available {
+        let cells = usize::try_from(input.reach.width * input.reach.height)
+            .expect("nonnegative fixture scene dimensions");
+        api::snapshot::SceneView {
+            available: true,
+            base_x: input.reach.base_x,
+            base_z: input.reach.base_z,
+            level: input.reach.level,
+            width: input.reach.width,
+            height: input.reach.height,
+            collision_flags: (0..cells)
+                .map(|cell| {
+                    if input.reach.walkable[cell / 32] & (1 << (cell % 32)) != 0 {
+                        0
+                    } else {
+                        i32::MAX
+                    }
+                })
+                .collect(),
+        }
+    } else {
+        api::snapshot::SceneView::default()
+    };
+    snapshot.seed_scene(scene);
     if let Some(player) = local_player(input, native) {
         snapshot.seed_local_player(player);
     }
@@ -432,6 +510,7 @@ fn update_native_snapshot(
             .collect(),
         input.inv_size,
     );
+    snapshot.seed_inventory_packet_generations(Some(input.tick), Some(input.tick));
     snapshot.seed_equipment(
         input
             .equipment
@@ -449,16 +528,18 @@ fn update_native_snapshot(
         .iter()
         .map(|row| item(row, ItemContainer::BankSide))
         .collect();
-    let bank_component = if input.bank_open {
-        input
-            .bank
-            .first()
-            .map(|row| row.component_id)
-            .filter(|component| *component >= 0)
-            .unwrap_or(700)
-    } else {
-        -1
-    };
+    let bank_component = bank_component.unwrap_or_else(|| {
+        if input.bank_open {
+            input
+                .bank
+                .first()
+                .map(|row| row.component_id)
+                .filter(|component| *component >= 0)
+                .unwrap_or(700)
+        } else {
+            -1
+        }
+    });
     let packet_generation = match native.bank_snapshot_generation {
         Some(generation) => u64::try_from(generation).unwrap_or(0),
         None if input.bank_open => snapshot.bank_snapshot_generation().unwrap_or(0),
@@ -467,7 +548,7 @@ fn update_native_snapshot(
     snapshot.seed_bank_observation(
         bank_component,
         packet_generation,
-        input.bank_loaded.then_some(bank_rows),
+        (input.bank_open && input.bank_loaded).then_some(bank_rows),
         side_rows,
     );
     if let Some(side_modal_id) = native.side_modal_id {
