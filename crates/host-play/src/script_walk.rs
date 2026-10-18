@@ -59,8 +59,8 @@ pub(super) fn abort_walk_on_bot_with_end(bot: &mut NavBot, end: script::native::
         bot.bank_pick.reset();
     }
     bot.route_generation = bot.route_generation.wrapping_add(1);
-    bot.route = None;
-    bot.route_worker = None;
+    bot.clear_route();
+    bot.route_ticket = None;
     bot.pending_route = None;
     bot.requested_route = None;
     bot.end_native_walk(end);
@@ -542,9 +542,8 @@ pub(crate) fn take_manual_walk_ownership(
     bot.user_move_intent_seq = bot.user_move_intent_seq.saturating_add(count as u64);
     // Retained request metadata also deduplicates completed walks; it is
     // not evidence of active work. Route-less families keep their own owner.
-    let active_walk = bot.route.is_some()
-        || bot.route_worker.is_some()
-        || bot.pending_route.is_some()
+    let active_walk = bot.has_route()
+        || bot.route_work_pending()
         || bot.bank_fetch.is_some()
         || bot.carried_walk.is_some()
         || bot.native_walk.as_ref().is_some_and(|owner| owner.live());
@@ -661,7 +660,7 @@ pub(super) fn recovery_walk_idle(navs: &Arc<Mutex<HashMap<String, NavBot>>>, nam
     let Some(bot) = all.get(name) else {
         return true;
     };
-    bot.route_worker.is_none() && bot.route.is_none() && bot.pending_route.is_none()
+    !bot.route_work_pending() && !bot.has_route()
 }
 
 #[allow(clippy::too_many_arguments)] // watchdog nav action packs driver/snapshot/nav handles
@@ -719,7 +718,7 @@ fn arrived_in_area(snapshot: &GameSnapshot, here: WorldTile, to: WorldTile, radi
 /// The armed walk's route ended (arrived, or frozen `'blocked'`): clear it
 /// and publish the settled outcome for the armed request.
 fn settle_route_end(bot: &mut NavBot, blocked: bool) {
-    bot.route = None;
+    bot.clear_route();
     if bot.bank_fetch.is_none() {
         if let Some((to, radius, allow_teleports, ..)) = bot.requested_route {
             if bot.walk_request_id != 0
@@ -791,19 +790,19 @@ pub(crate) fn apply_nav_follow_outcome(
                     );
                     bot.note_native_follow_failure(&failure);
                 }
-            } else if let Some(route) = bot.route.as_ref() {
+            } else if let Some(destination) = bot.route_destination() {
                 if bot.armed_outcome_may_publish(bot.walk_request_id) {
                     bot.note_failure(
                         bot.route_generation,
                         bot.walk_request_id,
-                        route.dest,
+                        destination,
                         0,
                         bot.allow_teleports,
                     );
                     bot.note_native_follow_failure(&failure);
                 }
             }
-            bot.route = None;
+            bot.clear_route();
             if walking_stand {
                 bot.bank_fetch = None;
             }
@@ -816,15 +815,14 @@ pub(crate) fn apply_nav_follow_outcome(
 /// first, then poll the armed route through [`Traveller::follow`] one step
 /// against `snapshot`. `here` is the player's world tile when the body
 /// decoded one (else the bot stands still). `world` is the shared, owned
-/// nav-world handle so a stale offscene endpoint can be re-queued on the
-/// existing background route worker without retaining a per-bot world copy.
+/// nav-world handle so a stale offscene endpoint can be re-queued through
+/// the route-work service without retaining a per-bot world copy.
 /// Mirrors the armed route's dest into the status row's `walk_*` fields
 /// (`-1` when idle). A live modeled loc's full-footprint arrival gates both
-/// early settlement and route-end receipts; an estimated endpoint is
-/// refreshed off-pump when the target enters scene. `reach` yields the slot's
+/// early settlement and route-end receipts; the route-work service refreshes
+/// an estimated endpoint when the target enters scene. `reach` yields the slot's
 /// cached reach view for ordinary destinations and is asked only when that
 /// rule needs a probe (`0 < dist <= radius` on the dest's level). `bank` is
-/// the account's bank memory, read only when a refresh re-arms the walk.
 // Shared handles threaded like `script_observe`; the arg count is allowed.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn step_nav_bot<D: Driver>(
@@ -905,7 +903,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
                 // Close. Walk with a stand sub-route armed falls through
                 // to Traveller::follow — never final_route mid-session.
                 if bank_fetch_freezes_follow(bot) {
-                    let queued = bot.route.as_ref().map(|r| r.dest);
+                    let queued = bot.route_destination();
                     drop(all);
                     let mut rows = lock_statuses(statuses);
                     if let Some(s) = rows.iter_mut().find(|s| s.username == name) {
@@ -932,11 +930,11 @@ pub(crate) fn step_nav_bot<D: Driver>(
     let (armed, endpoint, loc_id, estimated_geometry, arrival) = {
         let all = navs.lock().unwrap();
         all.get(name)
-            .filter(|bot| bot.route.is_some() && bot.bank_fetch.is_none())
+            .filter(|bot| bot.has_route() && bot.bank_fetch.is_none())
             .map(|bot| {
                 (
                     bot.requested_route,
-                    bot.route.as_ref().map(|route| route.dest),
+                    bot.route_destination(),
                     bot.route_loc_id,
                     bot.route_loc_geometry,
                     bot.route_arrival,
@@ -991,15 +989,15 @@ pub(crate) fn step_nav_bot<D: Driver>(
         }
         let still_owns_endpoint = bot.route_request_id == bot.walk_request_id
             && bot.requested_route == armed
-            && bot.route.as_ref().map(|route| route.dest) == endpoint
+            && bot.route_destination() == endpoint
             && bot.route_loc_id == loc_id
             && bot.route_arrival == arrival
             && bot.bank_fetch.is_none();
         if !still_owns_endpoint {
             (None, false)
-        } else if bot.route_worker.is_some() || bot.pending_route.is_some() || world.is_none() {
-            // A stale route cannot settle while an existing worker is
-            // calculating, or before a world is available to refresh it.
+        } else if bot.route_work_pending() || world.is_none() {
+            // A stale route cannot settle while route work is pending,
+            // or before a world is available to refresh it.
             (None, true)
         } else {
             let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch, zones) =
@@ -1023,9 +1021,9 @@ pub(crate) fn step_nav_bot<D: Driver>(
                 compat_tile_intent: bot.route_compat_tile_intent,
             };
             // Keep the live owner and request correlation; only the old
-            // endpoint and its Traveller run are replaced by the worker.
+            // endpoint and its Traveller run are replaced by route work.
             bot.traveller.clear();
-            bot.route = None;
+            bot.clear_route();
             (Some(refresh), true)
         }
     } else {
@@ -1064,7 +1062,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
         if bot.native_walk.as_ref().is_some_and(|owner| !owner.live()) {
             abort_walk_on_bot(bot);
         }
-        if bot.route.is_some() {
+        if bot.has_route() {
             // `requested_route == armed`: the arrival above is for this walk.
             if arrived && bot.bank_fetch.is_none() && bot.requested_route == armed {
                 owe_walk_guard_off(bot);
@@ -1072,12 +1070,14 @@ pub(crate) fn step_nav_bot<D: Driver>(
                 bot.traveller.clear();
                 settle_route_end(bot, false);
             } else if !suppress_follow {
-                if let Some(route) = bot.route.clone() {
+                if let Some(route) = bot.route_path_for_follow() {
                     let walking_stand = bot.bank_fetch.as_ref().is_some_and(|p| {
                         matches!(
                             p.steps.front(),
                             Some(BankStep::Walk { x, z, level })
-                                if route.dest.x == *x && route.dest.z == *z && route.dest.level == *level
+                                if route.destination().x == *x
+                                    && route.destination().z == *z
+                                    && route.destination().level == *level
                         )
                     });
                     // A later route may follow while the old off-click is
@@ -1104,7 +1104,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
                             ));
                         }
                     }
-                    let skip_follow = bot.route.is_none()
+                    let skip_follow = !bot.has_route()
                         || bot
                             .walk_guard
                             .as_ref()
@@ -1120,8 +1120,20 @@ pub(crate) fn step_nav_bot<D: Driver>(
                                 quest_evidence: bot.route_quest_evidence.as_ref(),
                                 ..TravelOptions::default()
                             };
-                            bot.traveller
-                                .follow_shared(driver, snapshot, route, &mut options)
+                            match route.plan_for_follow() {
+                                Some(plan) => {
+                                    bot.traveller
+                                        .follow_plan(driver, snapshot, plan, &mut options)
+                                }
+                                None => route.legacy_route().and_then(|route| {
+                                    bot.traveller.follow_shared(
+                                        driver,
+                                        snapshot,
+                                        Arc::clone(route),
+                                        &mut options,
+                                    )
+                                }),
+                            }
                         };
                         let owned_estimated_end = defer_estimated_end
                             && bot.requested_route == armed
@@ -1143,14 +1155,14 @@ pub(crate) fn step_nav_bot<D: Driver>(
                             apply_nav_follow_outcome(bot, follow_outcome, walking_stand);
                         }
                     }
-                    if bot.route.is_none() {
+                    if !bot.has_route() {
                         owe_walk_guard_off(bot);
                         finish_walk_guard(driver, snapshot, bot, Some(name));
                     }
                 }
             }
         }
-        bot.route.as_ref().map(|route| route.dest)
+        bot.route_destination()
     };
     let mut rows = lock_statuses(statuses);
     if let Some(s) = rows.iter_mut().find(|s| s.username == name) {
@@ -1251,11 +1263,13 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
         // it again from where the trip left the player when it no longer
         // starts here. Whatever route results is assessed under the live
         // post-session facts and published, as the armed route was.
-        bot.route = Some(Arc::clone(&pending.final_route));
+        bot.install_route_path(pending.final_route.clone());
         resume_final_route(snapshot, bot, world, here, map_members, &pending);
-        if let (Some(world), Some(route), Some(mut admission)) =
-            (world, bot.route.clone(), bot.admission.as_deref().copied())
-        {
+        if let (Some(world), Some(route), Some(mut admission)) = (
+            world,
+            bot.route_path_for_follow(),
+            bot.admission.as_deref().copied(),
+        ) {
             admission.input = crate::admission::capture(
                 snapshot,
                 map_members,
@@ -1263,7 +1277,9 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
                 bot.walk_guard_off.is_some(),
             );
             *bot.admission.as_deref_mut().expect("active admission") = admission;
-            bot.assessment = Some(crate::admission::assess(&route, world, &admission));
+            bot.assessment = Some(crate::admission::assess_route_path(
+                &route, world, &admission,
+            ));
             bot.admission_pending = true;
             crate::admission::publish(bot, world, snapshot, map_members, None);
         }
@@ -1290,13 +1306,8 @@ fn resume_final_route(
     };
     let from = WorldTile { x, z, level };
     let start = bot
-        .route
-        .as_ref()
-        .and_then(|route| match route.legs.first() {
-            Some(nav::router::Leg::Walk { tiles }) => tiles.first().copied(),
-            Some(nav::router::Leg::Transport { edge }) => Some(edge.at),
-            None => None,
-        });
+        .route_path_for_follow()
+        .and_then(|route| route.first_tile());
     if start == Some(from) {
         return;
     }
@@ -1322,6 +1333,7 @@ fn resume_final_route(
                 )
             });
             bot.route = Some(Arc::new(route));
+            bot.compact_route = None;
         }
         Err(_) => {
             log_walk_arm_bot(|| {
@@ -1330,7 +1342,7 @@ fn resume_final_route(
                     pending.dest
                 )
             });
-            bot.route = None;
+            bot.clear_route();
         }
     }
     bot.map_route_generation = crate::walk_map::next_map_route_generation();
@@ -1361,7 +1373,7 @@ fn abort_bank_fetch(bot: &mut NavBot, why: &str) {
             )
         });
     }
-    bot.route = None;
+    bot.clear_route();
 }
 
 /// The Walk step: arrived on an access tile of the planned bank, or a
@@ -1380,13 +1392,17 @@ fn step_walk(
         // private route. The next poll belongs to the restored post-session
         // route, so drop that run first.
         bot.traveller.clear();
-        if let Some(pending) = bot.bank_fetch.as_ref() {
-            bot.route = Some(pending.final_route.clone());
+        let final_route = bot
+            .bank_fetch
+            .as_ref()
+            .map(|pending| pending.final_route.clone());
+        if let Some(final_route) = final_route {
+            bot.install_route_path(final_route);
         }
         bot.map_route_generation = crate::walk_map::next_map_route_generation();
         return (false, StepEnd::Landed("on-access"));
     }
-    if bot.route.as_ref().is_some_and(|r| r.dest == dest) {
+    if bot.route_destination() == Some(dest) {
         return (false, StepEnd::Waiting);
     }
     let Some(w) = world else {
@@ -1466,6 +1482,7 @@ fn step_walk(
     }
     log_walk_arm_bot(|| format!("bank_fetch Walk armed sub-route dest={reached:?}"));
     bot.route = Some(Arc::new(route));
+    bot.compact_route = None;
     bot.map_route_generation = crate::walk_map::next_map_route_generation();
     bot.admission_pending = bot.assessment.is_some();
     crate::admission::publish(bot, w, snapshot, map_members, None);
@@ -1658,13 +1675,12 @@ fn open_withdraw_x<D: Driver>(driver: &mut D, snapshot: &GameSnapshot, id: i32) 
         SendResult::Sent { .. }
     )
 }
-
 /// Whether a latched BankBudget session must freeze [`Traveller::follow`].
 /// Walk with the access sub-route armed does **not** freeze; Open /
 /// Withdraw / Withdraw-X / Wear / Close do. Mid-session `final_route` is
 /// never followed.
 pub(crate) fn bank_fetch_freezes_follow(bot: &NavBot) -> bool {
-    session_freezes_follow(bot.bank_fetch.as_ref(), bot.route.as_deref())
+    session_freezes_follow_destination(bot.bank_fetch.as_ref(), bot.route_destination())
 }
 
 /// [`bank_fetch_freezes_follow`] over a session and the route armed with
@@ -1673,15 +1689,20 @@ pub(crate) fn session_freezes_follow(
     pending: Option<&PendingBankFetch>,
     route: Option<&Route>,
 ) -> bool {
+    session_freezes_follow_destination(pending, route.map(|route| route.dest))
+}
+
+pub(crate) fn session_freezes_follow_destination(
+    pending: Option<&PendingBankFetch>,
+    route: Option<WorldTile>,
+) -> bool {
     let Some(pending) = pending else {
         return false;
     };
     match pending.steps.front() {
         Some(BankStep::Walk { x, z, level }) => {
-            // Freeze only until the access sub-route is armed; once armed,
-            // follow that route. If route still points at final_route,
-            // stay frozen this tick (Walk arms next pump / this pump).
-            !route.is_some_and(|r| r.dest.x == *x && r.dest.z == *z && r.dest.level == *level)
+            // Freeze until the access sub-route is armed.
+            !route.is_some_and(|route| route.x == *x && route.z == *z && route.level == *level)
         }
         Some(_) => true,
         None => false,

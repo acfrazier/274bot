@@ -1,7 +1,7 @@
 //! Ignored LIVE=1 proof of native Quester Cook's authored-bank ranking from
-//! Ardougne and Catherby. The fixture reuses the production `quester_cook`
-//! scenario's seed/Start path, changes only its pre-Start stand to the tested
-//! origin, and captures real CpuPix3D frames with matching JSON receipts.
+//! Ardougne and Catherby. The fixture seeds the account at Cook stage 1 with
+//! an empty inventory, then starts the production path at the tested origin.
+//! Real CpuPix3D frames and JSON receipts retain the bank-arrival evidence.
 //!
 //! Run against the shared local 289 engine with a throwaway HOME, for example:
 //! `env HOME="$(mktemp -d)" LIVE=1 BOT_LIVE_NAME_PREFIX=bc BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_NAV_PACK=/absolute/path/to/274bot.navpack WORLD_ENGINE_DIR=/absolute/path/to/engine RS2B0T=/absolute/path/to/rs2b0t BOT_CACHE_DIR=/absolute/path/to/cache LIVE_EVIDENCE_DIR=/absolute/path/to/evidence cargo test --locked -p host-play --features live-harness --test bank_choice_live -- --ignored --nocapture --test-threads=1`
@@ -681,6 +681,23 @@ fn make_cook_scenario(
         .iter()
         .position(|step| step.name == "reset quest stage")
         .ok_or("quester_cook scenario has no reset quest stage")?;
+    // Ingredients become active only at cook:1. At cook:0 the authored path
+    // correctly talks to the Cook before it has any reason to visit a bank.
+    scenario.steps[reset_index] = Step {
+        name: "reset quest stage",
+        kind: StepKind::Perform {
+            send: Box::new(|client, _| {
+                interact::cheat(client, "setvar cookquest 1");
+                interact::cheat(client, "getvar cookquest").is_sent()
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Chat {
+                needle: "get cookquest: 1",
+            },
+            budget_ticks: 200,
+        },
+    };
     scenario.steps.insert(
         reset_index,
         Step {
@@ -815,6 +832,43 @@ fn submit_live_capture(
     })
 }
 
+fn bank_choice_terminal_gate(
+    arrival_observed: bool,
+    after_bank_kind: Option<&str>,
+    capture_finished: bool,
+    lifecycle: Option<script::ScriptTerminalState>,
+    deadline_reached: bool,
+) -> Result<bool, &'static str> {
+    let failed = lifecycle == Some(script::ScriptTerminalState::Failed);
+    if matches!(
+        lifecycle,
+        Some(script::ScriptTerminalState::Cancelled | script::ScriptTerminalState::Stopped)
+    ) || (failed && !arrival_observed)
+    {
+        return Err("Cook lifecycle ended unexpectedly");
+    }
+    if let Some(kind) = after_bank_kind {
+        if !matches!(
+            kind,
+            "native blocked outcome after local bank arrival"
+                | "native terminal phase observed after local bank arrival"
+                | "Cook completed after local bank arrival"
+                | "player physically left the selected local bank"
+        ) {
+            return Err("Cook recorded an unaccepted after-bank outcome");
+        }
+    }
+    if arrival_observed && after_bank_kind.is_some() && capture_finished {
+        return Ok(true);
+    }
+    // A permitted Blocked result publishes Failed before its CPU capture
+    // finishes. Retain the existing deadline while that evidence is pending.
+    if deadline_reached && failed {
+        return Err("Cook failed without a finished accepted after-bank capture");
+    }
+    Ok(false)
+}
+
 fn run_origin(
     profile: &Arc<host_play::ServerProfile>,
     template: &Arc<SharedClientTemplate>,
@@ -925,7 +979,7 @@ fn run_origin(
         let run_state = play.script_state(&account);
         let lifecycle = play.script_lifecycle_receipt(&account);
         let script_error = play.script_last_error(&account);
-        let (arrival_at, after_bank, state_error, capture_error, pending_jobs, scenario_status) = {
+        let (arrival_at, terminal_gate, state_error, capture_error, scenario_status) = {
             let mut slot = state.lock().map_err(|_| "bank-choice state poisoned")?;
             if run_state == script::RunState::Running {
                 slot.runner.observe_script_running();
@@ -937,14 +991,26 @@ fn run_origin(
             slot.poll_captures();
             (
                 slot.arrival_at,
-                slot.after_bank_outcome.is_some()
-                    && slot
-                        .capture_paths
-                        .iter()
-                        .any(|(step, _)| step == "03-after-bank"),
+                bank_choice_terminal_gate(
+                    slot.arrival_at.is_some(),
+                    slot.after_bank_outcome
+                        .as_ref()
+                        .and_then(|outcome| outcome.get("kind"))
+                        .and_then(Value::as_str),
+                    slot.pending_jobs.is_empty()
+                        && slot
+                            .capture_paths
+                            .iter()
+                            .any(|(step, _)| step == "03-after-bank"),
+                    lifecycle.as_ref().map(|receipt| receipt.state),
+                    Instant::now()
+                        >= slot
+                            .arrival_at
+                            .map(|arrival| arrival + COOK_ONWARD_DEADLINE)
+                            .unwrap_or(test_started + BANK_ARRIVAL_DEADLINE),
+                ),
                 slot.error.clone(),
                 slot.capture_error.clone(),
-                slot.pending_jobs.len(),
                 slot.runner.status(),
             )
         };
@@ -967,23 +1033,15 @@ fn run_origin(
                 ));
             }
         }
-        if let Some(receipt) = lifecycle.as_ref() {
-            match receipt.state {
-                script::ScriptTerminalState::Failed
-                | script::ScriptTerminalState::Cancelled
-                | script::ScriptTerminalState::Stopped => {
-                    break Err(format!("Cook lifecycle ended unexpectedly: {receipt:?}"));
-                }
-                script::ScriptTerminalState::Completed => {}
-            }
-        }
         if let RunnerStatus::Failed(error) = scenario_status {
             break Err(format!("Cook scenario setup failed: {error}"));
         }
-        // Only PASS once the terminal capture has landed and the queue has
-        // drained; otherwise keep waiting for the flush under the deadline.
-        if after_bank && pending_jobs == 0 {
-            break Ok(());
+        // The gate accepts only the existing outcomes after their capture
+        // lands and the evidence queue drains.
+        match terminal_gate {
+            Ok(true) => break Ok(()),
+            Ok(false) => {}
+            Err(error) => break Err(format!("{error}: {lifecycle:?}")),
         }
         let deadline = arrival_at
             .map(|arrival| arrival + COOK_ONWARD_DEADLINE)
@@ -1030,9 +1088,7 @@ fn run_bank_choice_live() -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Ok(());
     }
-    if std::env::var("BOT_LIVE_NAME_PREFIX").as_deref() != Ok("bc") {
-        return Err(format!("{CELL} requires BOT_LIVE_NAME_PREFIX=bc"));
-    }
+    required("BOT_LIVE_NAME_PREFIX")?;
     if std::env::var("BOT_CPU").as_deref() != Ok("1") {
         return Err(format!("{CELL} requires BOT_CPU=1 for scene2 PNG evidence"));
     }
@@ -1117,12 +1173,83 @@ fn cook_fixture_establishes_origin_after_last_relog_before_start() {
                 .unwrap();
             assert!(last_relog < stand);
             assert_eq!(stand + 1, start);
+            let seed = scenario
+                .steps
+                .iter()
+                .position(|step| step.name == "reset quest stage")
+                .unwrap();
+            assert!(seed < last_relog);
+            assert!(matches!(
+                scenario.steps[seed].wait.arm,
+                Proof::Chat {
+                    needle: "get cookquest: 1"
+                }
+            ));
         }
     }
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=bc, BOT_CPU=1, BOT_NAV_BUILD=skip, explicit WORLD_NAV_PACK/WORLD_ENGINE_DIR/RS2B0T/BOT_CACHE_DIR/LIVE_EVIDENCE_DIR and local 289 engine"]
+fn bank_choice_oracle_waits_for_failed_then_blocked_capture() {
+    let failed = Some(script::ScriptTerminalState::Failed);
+    assert_eq!(
+        bank_choice_terminal_gate(true, None, false, failed, false),
+        Ok(false),
+    );
+    let blocked = Some("native blocked outcome after local bank arrival");
+    assert_eq!(
+        bank_choice_terminal_gate(true, blocked, false, failed, false),
+        Ok(false),
+    );
+    assert_eq!(
+        bank_choice_terminal_gate(true, blocked, true, failed, false),
+        Ok(true),
+    );
+}
+
+#[test]
+fn bank_choice_oracle_rejects_failure_before_arrival() {
+    assert!(bank_choice_terminal_gate(
+        false,
+        None,
+        false,
+        Some(script::ScriptTerminalState::Failed),
+        false,
+    )
+    .is_err());
+}
+
+#[test]
+fn bank_choice_oracle_rejects_failed_without_capture_at_deadline() {
+    for outcome in [
+        None,
+        Some("native blocked outcome after local bank arrival"),
+    ] {
+        assert!(bank_choice_terminal_gate(
+            true,
+            outcome,
+            false,
+            Some(script::ScriptTerminalState::Failed),
+            true,
+        )
+        .is_err());
+    }
+}
+
+#[test]
+fn bank_choice_oracle_rejects_unaccepted_after_bank_outcome() {
+    assert!(bank_choice_terminal_gate(
+        true,
+        Some("route merely queued"),
+        true,
+        Some(script::ScriptTerminalState::Failed),
+        false,
+    )
+    .is_err());
+}
+
+#[test]
+#[ignore = "requires LIVE=1, an owned BOT_LIVE_NAME_PREFIX, BOT_CPU=1, BOT_NAV_BUILD=skip, explicit WORLD_NAV_PACK/WORLD_ENGINE_DIR/RS2B0T/BOT_CACHE_DIR/LIVE_EVIDENCE_DIR and local 289 engine"]
 fn quester_cook_local_bank_choice() {
     run_bank_choice_live().unwrap();
 }

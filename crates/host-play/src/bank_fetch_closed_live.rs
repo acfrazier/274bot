@@ -29,7 +29,7 @@
 //!    after cell 2, the coins row again deleted before Play starts. A Load
 //!    script (`apiVersion = 2`) sends one isolate `walk-near` with
 //!    `allow_bank_fetch` and radius 1 to a solid tile on Musa Point, so the
-//!    host's solid-target goal search (`calculate_solid`) plans from the
+//!    host's production solid-target route search plans from the
 //!    coin-less `Hint` (REVIEW-BANK-SNAPSHOT-S5 H1). The slot's own script
 //!    walk pump runs the one verifying trip (30 coins of the 40 banked) and
 //!    the walk ends beside the target.
@@ -475,8 +475,15 @@ fn script_walk(play: &super::Play, account: &str) -> ScriptWalk {
     let pending = bot.and_then(|bot| bot.bank_fetch.as_ref());
     ScriptWalk {
         steps: pending.map(|pending| pending.steps.iter().cloned().collect()),
-        final_route: pending.map(|pending| leg_lines(&pending.final_route)),
-        routed: bot.is_some_and(|bot| bot.route.is_some() || bot.route_worker.is_some()),
+        final_route: pending.map(|pending| {
+            leg_lines(
+                pending
+                    .final_route
+                    .legacy_route()
+                    .expect("legacy bank plan owns a legacy final route"),
+            )
+        }),
+        routed: bot.is_some_and(|bot| bot.has_route() || bot.route_work_pending()),
         failed: bot.is_some_and(|bot| bot.walk_outcome_failed),
     }
 }

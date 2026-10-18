@@ -346,7 +346,7 @@ unchanged manifest; compression does not change selected-content identities.
 | `pack/zones.rs` | zone table codec | wire geometry and stable identity of exclusion zones |
 | `paint.rs` | nav-paint buffers | no imgui, no client draw |
 | `quest_gates.rs` | quest-stage gates on transport edges | typed gates over selected progress signals |
-| `router.rs` | world-space Dijkstra | total-ticks cost, gated edges |
+| `router.rs` | world-space Dijkstra | exact-coordinate compact storage, shared synchronous/cooperative kernel, total-ticks cost and gated edges |
 | `router/grid.rs` | legacy grid A-star | `find_on_grid` for traveller and harness |
 | `router/resources.rs` | resource labels on walk nodes | change only at paid hops |
 | `tile.rs` | tile coords and distance | x, z, level |
@@ -372,6 +372,22 @@ unchanged manifest; compression does not change selected-content identities.
 | `bin/nav-input-audit.rs` | input audit CLI | offline cache and content audit |
 | `bin/cache-content-id.rs` | `cache-content-id` CLI | read-only identity export |
 | `required-content-274.tsv`, `required-content-289.tsv` | canonical content inventory | build-checked data, not code |
+
+#### Shared bounded routing
+
+The loaded navigation lease supplies separate carry, worn and diagnosis bounds.
+`max_plan_item_rows` is the smaller of the full diagnosis bound and the sum of
+the carry and worn bounds. Bank planners use this effective item bound, not
+the full search budget. Captured bank rows remain a separate dimension.
+Cursor construction does not allocate. Cursor growth uses checked limits and
+fallible reservations.
+
+Route execution separates completed searches into private jobs in the existing
+Route family. A later job charges retained routes, diagnosis and plan storage
+at their exact sizes as input. Each whole job remains within 192 MiB.
+The shared owner-result ledger holds continuation custody between jobs.
+Cancellation and request-generation checks apply across each gap.
+Public Search/Commit phases and Path/NoPath results do not change.
 
 #### Cooperative search storage
 
@@ -419,6 +435,11 @@ comparison for each relaxation. Further hash-chain links and each transport-list
 entry remain separate work units. Search budgets and live clock and cancellation
 reads at each checkpoint remain unchanged.
 
+Bank-pick qualification uses `bank_pick_work_live`, an integration target behind
+`live-harness` and `test-support`. It calls the same native burst and captured
+job replay as the library tests. The integration binary does not reference
+`allocation-counter`, so its zeroed storage uses the product allocator.
+
 #### Native map data boundary
 
 The public `nav::map` modules define the data/spatial contract independently of
@@ -447,11 +468,12 @@ are fixed to 256-pixel interiors with one-pixel gutters, RGBA8 noninterlaced PNG
 `TileReceipt::verify_png` verifies the receipt and IHDR before pixel allocation;
 the PNG decoder still owns full chunk/CRC validation.
 
-Only `PartialEntry` reads `.<key>.partial` checkpoints. Ready readers require a
-canonical complete directory and validated manifest; ordinary image open does
-not hash/decode the pyramid. Resume verifies completed units and their exact
-policy identity. The cache-job owner (`host-play`) owns the prepared-cache
-`Arc`, locks, atomic publication, cancellation and quotas.
+`PartialEntry` provides checked synchronous resume. The admitted host cache job
+decodes checkpoint metadata, then verifies one completed payload per host unit
+before exposing its receipt to the producer cursor. Ready readers require a
+canonical complete directory and validated manifest. Ordinary image open does
+not hash or decode the pyramid. The cache-job owner (`host-play`) owns the
+prepared-cache `Arc`, locks, atomic publication, cancellation and quotas.
 
 Release packages ship the 289 terrain: release packaging bakes the nav
 bundle's pinned client cache through the production map-cache path and ships
@@ -586,16 +608,16 @@ libtest exception.
 | `live_gate.rs` | live proof gate for every scenario watch | which shared witness a run qualifies under (paired proofs refuse without the pair gate), per-poll core-gate verdicts, the PASS hold: Pending core first, then the 45 s clean-stop grace; panel and `tui-play` both call it |
 | `live_start.rs` | live catalog Start transaction | stashed isolate Starts fired on StartScript, witness armed immediately before each actual Start, setup failures fail the armed witness; the fleet launch panel and `tui-play` both stash (`fleet_catalog_starts`, feature `live-harness`) |
 | `script_runtime.rs` | per-slot observe, dispatch, and nav continuation | script wall and walk continuation |
-| `script_observe.rs`, `script_snapshot.rs`, `script_interact.rs`, `script_nav.rs`, `script_walk.rs`, `script_bank.rs`, `script_paint.rs`, `script_channels.rs` | per-slot script pump pieces | observation and snapshot posting, interact dispatch, route worker and walk continuation, WalkGuard, bank selection, paint status, the BroadcastChannel broker |
-| `walk_arm.rs`, `walk_plan.rs`, `walk_permissions.rs` | operator walk arms and permissions | queued follow and bank-fetch steps, session routes, permission composition at admissions |
+| `script_observe.rs`, `script_snapshot.rs`, `script_interact.rs`, `script_nav.rs`, `script_walk.rs`, `script_bank.rs`, `script_paint.rs`, `script_channels.rs` | per-slot script pump pieces | observation and snapshot posting, interact dispatch, cooperative route-inspection publication and walk continuation, WalkGuard, bank selection as a bounded cursor job on shared WorkAdmission using the shared compact search and one immutable `Arc<WorldState>` backing. Its 192 MiB whole-job charge covers captured input, cursor and result. At five seconds, walking requests use the route-only Single fallback after admission. Non-walking requests return the first candidate without a route, including demand still refused with Full. Full admission and owner-ledger pressure retain retry demand. Other admission refusals and oversized requests publish NoCandidate or walking NoPath. The remaining pieces own paint status and the BroadcastChannel broker. |
+| `walk_arm.rs`, `walk_plan.rs`, `walk_permissions.rs` | operator walk arms and permissions | queued follow and bank-fetch steps, session routes, permission composition at admissions. Selected-bank walks use the same compact route adapter for Traveller and borrowed map paint, without expanding legacy route vectors. |
 | `admission.rs` | shared route-admission seam | advisory survivability estimate under Proceed; no net or poison-clear observer claimed |
 | `slot_bank_memory.rs` | slot thread's hand on its account bank memory | one shared handle per account; the slot thread is the only writer, never across file IO |
 | `evidence_writer.rs` | background live-evidence PNG and JSON writer | one thread per cell; the slot thread only hands over pixels and receipts |
-| `route_inspect.rs` | inspect off-pump job | admission, calculation, publication |
+| `route_inspect.rs` | inspect cooperative-work adapter and owner | Captures one shared `WorldState` and `NavLease`. It runs strict search, borrowed `MissingRequirementsView`, bank-fetch planning, stand and post-bank routing, and zone diagnosis within the 192 MiB job charge. It transfers terminal custody to the shared 256 MiB owner ledger before WorkService consumes the result. It keeps one admitted job, one replaceable pending demand, two replay terminals and one held terminal. It uses acknowledgement, eviction and identity/revision-bound cancellation. |
 | `login_readiness.rs` | login-readiness gate | welcome-modal settle before script work |
 | `nav_identity.rs` | bundled nav identities | build-published table plus checked-in rows |
 | `walk_map.rs`, `walk_map/{actions,catalogue,observations,routes}.rs` | shared WalkTo map model | catalogue, selection, guarded Walk/Teleport, live/script/manual routes |
-| `map_cache.rs`, `map_cache/shipped.rs`, `map_cache/fixture.rs` (`test` / `test-support` fixtures), `map_producer.rs` | WalkTo map cache lifecycle | demand, bake/publication, installing release-shipped terrain that matches the bound image identity; the native producer |
+| `map_cache.rs`, `map_cache/shipped.rs`, `map_cache/fixture.rs` (`test` / `test-support` fixtures), `map_producer.rs` | WalkTo map cache lifecycle | one `WorkService` MapBake family with resumable bounded producer cursors; demand, bake/publication, installing release-shipped terrain that matches the bound image identity; no private bake worker |
 | `map_bind.rs` | process-wide map demand | manager at first open (shipped terrain under the install root's `map/`), packaging bake, bounded shared-worker terrain PNG decode (258×258 RGBA8; 512 KiB input plus inline job, Arc refcounts and refcount-alignment padding; `png::Limits` allowance of one additional raw RGBA row, 2 MiB scratch covering the overlapping ≤512 KiB eXIf buffer and metadata copy, ≤128 KiB raster buffer, row scratch and bounded inflater tables; 266,256-byte result; text/ICC metadata is skipped) |
 | `bundled-nav-identities.json`, `known-cache-identities.json` | checked-in identity rows | data, not code |
 | `external_loader.rs` | external loader smoke witness | proof infrastructure, disabled by default |
@@ -610,6 +632,56 @@ libtest exception.
 | `progress.rs` | preparation progress values | small, copy-free |
 | `quest_pair.rs` | Play-owned pair leases | bounded; never takes a slot lock or retains a world |
 | `*_live.rs`, `*_live_probe.rs`, `*_live_tests.rs` | live cells run through `cargo test` | ignored; see [the harness](harness.md) |
+
+Map-cache census retains at most 1,030 root summaries. Completion transfers that
+allocation without a replacement. A new scan releases previous census storage
+first. Mutation generations fence census, publication and bounded pruning. Entry
+caps are 3,490 per artifact root and 3,594,700 across the cache.
+Disk cache hits pass the same admitted preflight before the manager publishes a
+ready lease. Joined demand can add bake consent but cannot revoke it. Host
+progress uses the frozen map-bake phase indices in both directions.
+The generation counter and empty key-lock files coordinate live processes.
+They are not crash-durable artifact metadata and do not need file syncs.
+New artifact directories still synchronize their changed parent entries.
+A refreshed census resumes the exact producer/publication stage and rebases a
+live writer's whole-cache totals. If pruning removed its unpublished partial,
+the job discards the stale receipts before rebuilding. Clean cursor yields do
+not rewrite an unchanged checkpoint.
+A terrain probe that finds no published or matching shipped terrain creates
+no image directory or key-lock file. Later bake consent restarts path
+preparation and the census before mutation. Catalogue preparation writes no
+empty checkpoint. Normal completion writes its single-payload manifest directly.
+The manifest's parent sync also commits the already-synchronized payload rename,
+without first writing a publishing checkpoint that the manifest supersedes.
+Explicit checkpoints, observed cancellation and incomplete work keep their
+checkpoint flush. The payload and checkpoint file data reach disk first.
+One parent sync then commits both renames before the checkpoint is durable.
+Catalogue placement and marker-candidate work groups at most 64 operations
+per admission unit. Each operation checks the live deadline and cancellation.
+Archive reads, land decoding and finalization remain individual units.
+The shared unit allowance and the 10 ms deadline do not change.
+Catalogue derivation retains at most 32,768 tree or quest-location candidates
+in source order, with their original placement and bridge flag. The first
+scan also records each square's candidate end offset. The charge includes
+both fixed storage bounds, without vector growth overlap. The 274 and 289
+content census found 14,844 and 15,059 candidates. The limit rounds twice
+the larger count up to a power of two. Overflow releases that prefix and
+uses the existing second scan. It neither refuses input nor changes output.
+Each 64-tile terrain checkpoint batch synchronizes each changed tile directory
+and each newly created directory's parent once, from children to parents.
+At most 63 completed tiles await a batch checkpoint. Observed cancellation
+and completion flush the remainder.
+Individual PNG data reaches disk first. The checkpoint file is written and
+synchronized next. Its parent sync also commits the new terrain directory.
+The writer retains only fixed directory bitsets between worker invocations.
+Resume keeps valid partial tiles and regenerates missing or damaged payloads.
+Checkpoint rows remain sorted when regenerated tiles fill earlier holes.
+A payload that contradicts its durable checkpoint receipt is removed and its
+parent directory synced before the native cursor can adopt uncheckpointed tiles.
+Verification reuses one format-bounded payload buffer. Its reservation includes
+the decoded-row capacity and the verified rows while both allocations overlap.
+After admitted validation, publication reuses an immutable ready owner still
+retained by a consumer.
 
 ### scenario
 

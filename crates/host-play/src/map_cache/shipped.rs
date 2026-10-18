@@ -23,10 +23,11 @@
 //! consented bake to adopt. Shipped files are only ever read.
 
 use super::{
-    atomic_write, read_bounded, BakeOutput, BakePlan, BakeRequest, BakeWriter, MapCacheError,
-    MapCacheRoot, MapProgress, MapStage,
+    atomic_write, read_bounded, BakePlan, BakeWriter, MapBakeCursor, MapBakeCursorOutput,
+    MapBakeCursorStep, MapCacheError, MapCacheRoot, MapProgressSnapshot, MapStage,
 };
-use nav::map::cache::{BakeStage, UnitKey};
+use api::work::{Checkpoint, MapBakePhase, StepContext};
+use nav::map::cache::{CompletedUnit, UnitKey};
 use nav::map::formats::{
     ImageManifest, ShippedImages, TileReceipt, MAX_JSON_BYTES, MAX_PNG_BYTES,
     MAX_SHIPPED_IMAGES_BYTES,
@@ -38,13 +39,10 @@ use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 /// Name of the shipped description under `map/<revision>/`.
 pub const SHIPPED_IMAGES_NAME: &str = "274bot.mapimages.json";
-/// Install progress is reported once per this many tiles.
-const REPORT_INTERVAL: usize = 32;
 
 /// Terrain shipped under an install resource root's `map` directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,9 +103,11 @@ impl ShippedMapImages {
         identity: ImageIdentity,
     ) -> Result<ShippedImages, MapCacheError> {
         // The shared lease keeps a pruner away while the directory is copied.
+        let mut capacity = root.try_acquire_capacity()?.ok_or(MapCacheError::Busy)?;
         let _ready = root
-            .open_images(identity)?
+            .open_images(identity, &mut capacity)?
             .ok_or(MapCacheError::TerrainNotBaked)?;
+        drop(capacity);
         let source = root.image_dir(identity)?;
         let description = self.description_path(identity.revision);
         let target = self.image_dir(identity)?;
@@ -139,14 +139,6 @@ pub(super) struct ShippedSource {
     rejected: Mutex<BTreeSet<Digest>>,
 }
 
-/// What installing shipped terrain did.
-pub(super) enum Installed {
-    /// A complete partial directory, ready for the atomic publish.
-    Published(PathBuf),
-    /// The shipped terrain is unusable (logged and remembered).
-    Rejected,
-}
-
 impl ShippedSource {
     pub(super) fn new(images: ShippedMapImages) -> Self {
         Self {
@@ -171,7 +163,26 @@ impl ShippedSource {
         }
     }
 
-    fn reject(&self, key: Digest, error: &MapCacheError) {
+    pub(super) fn cursor(
+        &self,
+        identity: ImageIdentity,
+        bundle: ShippedImages,
+        partial_dir: Arc<PathBuf>,
+    ) -> Result<Box<dyn MapBakeCursor>, MapCacheError> {
+        Ok(Box::new(ShippedInstallCursor {
+            source: self.images.image_dir(identity)?,
+            identity,
+            bundle,
+            partial_dir,
+            plan: None,
+            manifest: None,
+            index: 0,
+            buffer: Vec::new(),
+            completed: Vec::new(),
+        }))
+    }
+
+    pub(super) fn reject(&self, key: Digest, error: &MapCacheError) {
         if self.rejected.lock().insert(key) {
             eprintln!(
                 "host-play: shipped map terrain {key} is not used ({error}); \
@@ -179,106 +190,126 @@ impl ShippedSource {
             );
         }
     }
+}
 
-    /// Install `bundle` for `request`'s image identity: verify the shipped
-    /// manifest, then copy, verify and record every tile into the key's
-    /// partial directory (resuming a matching checkpoint), and finish it for
-    /// publication. The caller holds the key's exclusive lock and publishes.
-    pub(super) fn install(
-        &self,
-        bundle: &ShippedImages,
-        root: &MapCacheRoot,
-        request: &BakeRequest,
-        cancel: Arc<AtomicBool>,
-        progress: Arc<dyn Fn(MapProgress) + Send + Sync>,
-        required: BTreeSet<PathBuf>,
-    ) -> Result<Installed, MapCacheError> {
-        let identity = request.descriptor().image_identity();
-        let key = identity.key()?.0;
-        let source = self.images.image_dir(identity)?;
-        let manifest = match read_bounded(&source.join("manifest.json"), MAX_JSON_BYTES)
-            .and_then(|bytes| Ok(bundle.read_manifest(&bytes)?))
-        {
-            Ok(manifest) => manifest,
-            Err(error) => {
-                self.reject(key, &error);
-                return Ok(Installed::Rejected);
+struct ShippedInstallCursor {
+    source: PathBuf,
+    identity: ImageIdentity,
+    bundle: ShippedImages,
+    partial_dir: Arc<PathBuf>,
+    plan: Option<BakePlan>,
+    manifest: Option<ImageManifest>,
+    index: usize,
+    buffer: Vec<u8>,
+    completed: Vec<CompletedUnit>,
+}
+
+impl MapBakeCursor for ShippedInstallCursor {
+    fn plan(&self) -> Option<BakePlan> {
+        self.plan
+    }
+
+    fn step(
+        &mut self,
+        context: &mut StepContext<'_, MapBakePhase>,
+        writer: Option<&mut BakeWriter>,
+    ) -> Result<MapBakeCursorStep, MapCacheError> {
+        if self.manifest.is_none() {
+            match context.checkpoint() {
+                Checkpoint::Continue => {}
+                Checkpoint::Yield => return Ok(MapBakeCursorStep::Yielded),
+                Checkpoint::Cancel(_) => return Ok(MapBakeCursorStep::Cancelled),
             }
-        };
-        let plan = BakePlan {
-            planned_units: bundle.tiles,
-            stage: BakeStage::BaseTerrain,
+            let bytes = match read_bounded(&self.source.join("manifest.json"), MAX_JSON_BYTES) {
+                Ok(bytes) => bytes,
+                Err(error) => return Ok(MapBakeCursorStep::Rejected(error)),
+            };
+            let manifest = match self.bundle.read_manifest(&bytes) {
+                Ok(manifest) if manifest.identity == self.identity => manifest,
+                Ok(_) => return Ok(MapBakeCursorStep::Rejected(MapError::Identity.into())),
+                Err(error) => return Ok(MapBakeCursorStep::Rejected(error.into())),
+            };
+            let plan = BakePlan {
+                planned_units: self.bundle.tiles,
+                stage: nav::map::cache::BakeStage::BaseTerrain,
+            }
+            .checked()?;
+            self.plan = Some(plan);
+            self.manifest = Some(manifest);
+            return Ok(match context.consume_unit() {
+                Checkpoint::Cancel(_) => MapBakeCursorStep::Cancelled,
+                Checkpoint::Continue | Checkpoint::Yield => MapBakeCursorStep::Yielded,
+            });
         }
-        .checked()?;
-        let mut writer = BakeWriter::open(root.clone(), request, plan, cancel, progress, required)?;
-        writer.set_stage(BakeStage::BaseTerrain, "installing shipped terrain")?;
+
+        let manifest = self
+            .manifest
+            .as_ref()
+            .ok_or(MapCacheError::Map(MapError::Invalid(
+                "shipped manifest absent",
+            )))?;
         let tiles = manifest.tiles.as_slice();
-        let mut buffer = Vec::new();
-        for (index, tile) in tiles.iter().enumerate() {
-            match install_tile(&source, tile, &mut writer, &mut buffer) {
-                Ok(()) => {}
-                Err(TileFailure::Shipped(error)) => {
-                    // Keep the tiles verified so far for a consented bake.
-                    writer.persist_checkpoint()?;
-                    self.reject(key, &error);
-                    return Ok(Installed::Rejected);
-                }
-                Err(TileFailure::Cache(error)) => {
-                    let _ = writer.persist_checkpoint();
-                    return Err(error);
-                }
+        let Some(writer) = writer else {
+            return Ok(MapBakeCursorStep::Yielded);
+        };
+        loop {
+            match context.checkpoint() {
+                Checkpoint::Continue => {}
+                Checkpoint::Yield => return Ok(MapBakeCursorStep::Yielded),
+                Checkpoint::Cancel(_) => return Ok(MapBakeCursorStep::Cancelled),
             }
-            let done = index + 1;
-            if done % REPORT_INTERVAL == 0 || done == tiles.len() {
-                writer.report_progress(
-                    MapStage::Publishing,
-                    done as u32,
-                    bundle.tiles,
-                    format!("installing shipped terrain · {done}/{}", bundle.tiles),
-                );
+            let Some(tile) = tiles.get(self.index) else {
+                return Ok(MapBakeCursorStep::Completed(MapBakeCursorOutput::Images(
+                    manifest.clone(),
+                )));
+            };
+            if writer.directory() != self.partial_dir.as_path() {
+                return Err(MapCacheError::Map(MapError::Path));
+            }
+            let unit = UnitKey::Terrain { tile: tile.key };
+            if let Some(receipt) = writer.completed_receipt(unit) {
+                if receipt != tile.payload {
+                    return Ok(MapBakeCursorStep::Rejected(
+                        MapError::Invalid("checkpointed tile differs from shipped tile").into(),
+                    ));
+                }
+            } else {
+                let relative = tile.key.relative_path().map_err(MapCacheError::from)?;
+                if let Err(error) = read_tile(&self.source.join(&relative), tile, &mut self.buffer)
+                {
+                    return Ok(MapBakeCursorStep::Rejected(error));
+                }
+                let receipt = writer.write_image_tile(unit, &self.buffer)?;
+                if receipt != tile.payload {
+                    return Ok(MapBakeCursorStep::Rejected(
+                        MapError::Invalid("installed tile differs from shipped tile").into(),
+                    ));
+                }
+                self.completed.push(CompletedUnit {
+                    key: unit,
+                    payload: receipt,
+                });
+            }
+            self.index += 1;
+            match context.consume_unit() {
+                Checkpoint::Continue => {}
+                Checkpoint::Yield => return Ok(MapBakeCursorStep::Yielded),
+                Checkpoint::Cancel(_) => return Ok(MapBakeCursorStep::Cancelled),
             }
         }
-        Ok(Installed::Published(
-            writer.finish(BakeOutput::Images(manifest))?,
-        ))
     }
-}
 
-enum TileFailure {
-    /// The shipped tile is missing or damaged, or disagrees with the
-    /// checkpoint: the shipped terrain is unusable.
-    Shipped(MapCacheError),
-    /// Writing into the cache failed, or the demand was cancelled.
-    Cache(MapCacheError),
-}
-
-fn install_tile(
-    source: &Path,
-    tile: &TileReceipt,
-    writer: &mut BakeWriter,
-    buffer: &mut Vec<u8>,
-) -> Result<(), TileFailure> {
-    let unit = UnitKey::Terrain { tile: tile.key };
-    if let Some(recorded) = writer.completed_receipt(unit) {
-        // Checkpointed earlier; the writer re-verified its bytes on open.
-        return if recorded == tile.payload {
-            Ok(())
-        } else {
-            Err(TileFailure::Shipped(
-                MapError::Invalid("checkpointed tile differs from the shipped tile").into(),
-            ))
-        };
+    fn progress(&self) -> MapProgressSnapshot {
+        MapProgressSnapshot {
+            stage: MapStage::Publishing,
+            completed: u32::try_from(self.index).unwrap_or(u32::MAX),
+            total: Some(self.bundle.tiles),
+        }
     }
-    let relative = tile
-        .key
-        .relative_path()
-        .map_err(|error| TileFailure::Shipped(error.into()))?;
-    read_tile(&source.join(&relative), tile, buffer).map_err(TileFailure::Shipped)?;
-    atomic_write(&writer.directory().join(&relative), buffer).map_err(TileFailure::Cache)?;
-    writer
-        .record_unit(unit, tile.payload)
-        .map_err(TileFailure::Cache)?;
-    Ok(())
+
+    fn take_completed_units(&mut self) -> Vec<CompletedUnit> {
+        std::mem::take(&mut self.completed)
+    }
 }
 
 /// Read one tile into `buffer` (reused) and check its length, SHA-256 and

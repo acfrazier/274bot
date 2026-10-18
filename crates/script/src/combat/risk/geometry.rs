@@ -1,8 +1,12 @@
-use super::{CrossingGeom, KindRisk, RiskInput, RiskTables, RoutePlan, UnknownWhy, ZoneInterval};
+use super::{
+    drive_synchronously, CrossingGeom, KindRisk, RiskInput, RiskTables, RoutePlan, UnknownWhy,
+    ZoneInterval,
+};
 use api::WorldTile;
 use nav::contract::{
     LegView, RouteView, TransportKind, WildernessView, ZoneClass, ZoneKey, ZoneTableView, ZoneView,
 };
+use std::future::Future;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RoutePoint {
@@ -268,14 +272,19 @@ fn in_envelope(tile: WorldTile, zone: ZoneView<'_>, risk: &KindRisk, input: &Ris
     }
 }
 
-fn interval(
+async fn interval<F, U>(
     path: RoutePath<'_>,
     zone: ZoneView<'_>,
     risks: &RiskTables,
     input: &RiskInput,
     a: u16,
     start: u16,
-) -> Result<ZoneInterval, UnknownWhy> {
+    checkpoint: &mut F,
+) -> Result<ZoneInterval, UnknownWhy>
+where
+    F: FnMut() -> U,
+    U: Future<Output = ()>,
+{
     let kind = zone.kind();
     let risk = risks.zone_kind(kind);
     let mut envelope_first = None;
@@ -284,6 +293,7 @@ fn interval(
     for i in usize::from(start)..path.len() {
         let i = i as u16;
         let tile = path.point(i).ok_or(UnknownWhy::Overflow)?.tile;
+        let mut stop = false;
         if in_envelope(tile, zone, &risk, input) {
             envelope_first.get_or_insert(i);
             envelope_last = Some(i);
@@ -293,6 +303,10 @@ fn interval(
         } else if a == 0 && envelope_first.is_some() {
             // Bound the origin's escape at its first exit. An entering
             // interval keeps the existing conservative exposure envelope.
+            stop = true;
+        }
+        super::checkpoint(checkpoint).await;
+        if stop {
             break;
         }
     }
@@ -332,27 +346,52 @@ pub fn build_plan(
     wilderness: WildernessView<'_>,
     input: &RiskInput,
 ) -> Result<RoutePlan, UnknownWhy> {
+    let mut checkpoint = || std::future::ready(());
+    drive_synchronously(build_plan_cooperative(
+        path,
+        zones,
+        risks,
+        wilderness,
+        input,
+        &mut checkpoint,
+    ))
+}
+
+pub(super) async fn build_plan_cooperative<F, U>(
+    path: RoutePath<'_>,
+    zones: ZoneTableView<'_>,
+    risks: &RiskTables,
+    wilderness: WildernessView<'_>,
+    input: &RiskInput,
+    checkpoint: &mut F,
+) -> Result<RoutePlan, UnknownWhy>
+where
+    F: FnMut() -> U,
+    U: Future<Output = ()>,
+{
     if path.view().pack() != zones.pack() {
         return Err(UnknownWhy::NavIdentity);
     }
     let mut count = 0usize;
-    acquired(path, zones, risks, wilderness, input, |_| {
+    acquired(path, zones, risks, wilderness, input, checkpoint, |_| {
         count += 1;
         Ok(())
-    })?;
+    })
+    .await?;
     if count > usize::from(u16::MAX) {
         return Err(UnknownWhy::Overflow);
     }
     let mut intervals = Vec::with_capacity(count);
-    acquired(path, zones, risks, wilderness, input, |row| {
+    acquired(path, zones, risks, wilderness, input, checkpoint, |row| {
         intervals.push(row);
         Ok(())
-    })?;
-    intervals.sort_unstable_by_key(|row| (row.a, row.b, row_index(row)));
+    })
+    .await?;
+    sort_intervals(&mut intervals, checkpoint).await;
     // Count crossing runs first so conversion to Box never shrinks/reallocates.
-    let crossing_count = crossing_runs(path, &intervals, |_| {})?;
+    let crossing_count = crossing_runs(path, &intervals, checkpoint, |_| {}).await?;
     let mut crossings = Vec::with_capacity(crossing_count);
-    crossing_runs(path, &intervals, |row| crossings.push(row))?;
+    crossing_runs(path, &intervals, checkpoint, |row| crossings.push(row)).await?;
     Ok(RoutePlan {
         complete: true,
         pack: Some(zones.pack()),
@@ -386,14 +425,19 @@ pub(super) fn engaged_at(
 }
 /// An 8-KiB worker-stack bitset replaces a heap scratch allocation. We visit
 /// the table's indexed bucket candidates, never every world zone per tile.
-fn acquired(
+async fn acquired<F, U>(
     path: RoutePath<'_>,
     zones: ZoneTableView<'_>,
     risks: &RiskTables,
     wilderness: WildernessView<'_>,
     input: &RiskInput,
+    checkpoint: &mut F,
     mut visit: impl FnMut(ZoneInterval) -> Result<(), UnknownWhy>,
-) -> Result<(), UnknownWhy> {
+) -> Result<(), UnknownWhy>
+where
+    F: FnMut() -> U,
+    U: Future<Output = ()>,
+{
     let mut seen = [0u64; 1024];
     for i in 0..path.len() {
         let i = i as u16;
@@ -411,7 +455,7 @@ fn acquired(
                 let mut next = i;
                 let mut start = 0;
                 loop {
-                    let row = interval(path, zone, risks, input, next, start)?;
+                    let row = interval(path, zone, risks, input, next, start, checkpoint).await?;
                     visit(row)?;
                     if !row.escaping() {
                         break;
@@ -420,7 +464,9 @@ fn acquired(
                     for candidate in usize::from(row.b) + 1..path.len() {
                         let candidate = candidate as u16;
                         let tile = path.point(candidate).ok_or(UnknownWhy::Overflow)?.tile;
-                        if engaged_at(zone, input, wilderness, tile) {
+                        let engaged = engaged_at(zone, input, wilderness, tile);
+                        super::checkpoint(checkpoint).await;
+                        if engaged {
                             reentry = Some(candidate);
                             break;
                         }
@@ -430,21 +476,28 @@ fn acquired(
                     start = row.b.checked_add(1).ok_or(UnknownWhy::Overflow)?;
                 }
             }
+            super::checkpoint(checkpoint).await;
         }
+        super::checkpoint(checkpoint).await;
     }
     Ok(())
 }
-fn crossing_runs(
+
+async fn crossing_runs<F, U>(
     path: RoutePath<'_>,
     intervals: &[ZoneInterval],
+    checkpoint: &mut F,
     mut emit: impl FnMut(CrossingGeom),
-) -> Result<usize, UnknownWhy> {
+) -> Result<usize, UnknownWhy>
+where
+    F: FnMut() -> U,
+    U: Future<Output = ()>,
+{
     // Retain origin exposure for observation/replay, but never make leaving
     // it an admission crossing. Re-entering after its exit has a later `a`.
     // `ZoneInterval::new` enforces `e <= a`, so every `a = 0` row is escaping
     // and, sorted by `a`, escaping rows are exactly the prefix. (An engaged
     // origin outside its own envelope fails as `Unknown(Overflow)` instead.)
-    debug_assert!(intervals.iter().all(|row| row.escaping() == (row.a == 0)));
     let mut start = intervals.partition_point(|row| row.escaping());
     let mut count = 0usize;
     while start < intervals.len() {
@@ -457,7 +510,9 @@ fn crossing_runs(
         while end < intervals.len() {
             let next = intervals[end];
             let gap = path.point(next.a).ok_or(UnknownWhy::Overflow)?.tick - tail;
-            if gap >= 2 * super::consts::LAG + 3 {
+            let separate = gap >= 2 * super::consts::LAG + 3;
+            super::checkpoint(checkpoint).await;
+            if separate {
                 break;
             }
             last = last.max(next.b);
@@ -492,6 +547,56 @@ fn crossing_runs(
         });
         count += 1;
         start = end;
+        super::checkpoint(checkpoint).await;
     }
     Ok(count)
+}
+
+async fn sort_intervals<F, U>(rows: &mut [ZoneInterval], checkpoint: &mut F)
+where
+    F: FnMut() -> U,
+    U: Future<Output = ()>,
+{
+    async fn sift_down<F, U>(
+        rows: &mut [ZoneInterval],
+        mut root: usize,
+        end: usize,
+        checkpoint: &mut F,
+    ) where
+        F: FnMut() -> U,
+        U: Future<Output = ()>,
+    {
+        while root < end / 2 {
+            let left = root * 2 + 1;
+            let mut largest = left;
+            if left + 1 < end
+                && (
+                    rows[left + 1].a,
+                    rows[left + 1].b,
+                    row_index(&rows[left + 1]),
+                ) > (rows[left].a, rows[left].b, row_index(&rows[left]))
+            {
+                largest = left + 1;
+            }
+            if (rows[root].a, rows[root].b, row_index(&rows[root]))
+                >= (rows[largest].a, rows[largest].b, row_index(&rows[largest]))
+            {
+                super::checkpoint(checkpoint).await;
+                break;
+            }
+            rows.swap(root, largest);
+            root = largest;
+            super::checkpoint(checkpoint).await;
+        }
+    }
+
+    let len = rows.len();
+    for root in (0..len / 2).rev() {
+        sift_down(rows, root, len, checkpoint).await;
+    }
+    for end in (1..len).rev() {
+        rows.swap(0, end);
+        super::checkpoint(checkpoint).await;
+        sift_down(rows, 0, end, checkpoint).await;
+    }
 }

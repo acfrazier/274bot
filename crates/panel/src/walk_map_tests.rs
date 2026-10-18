@@ -9,7 +9,10 @@ use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 use dear_imgui_rs::TextureId;
 use frontend_core::{WalkMapDecodeController, WalkMapDecodeResult};
-use host_play::map_cache::ReadyImages;
+use host_play::map_cache::{
+    fixture::{self, CountingMapProducer},
+    MapDemandManager, MapJobStatus, MapProfileDescriptor, ReadyImages,
+};
 use nav::collision::WorldCollision;
 use nav::map::formats::{ColorFormat, ImageManifest, PayloadReceipt, PlaneBounds, TileReceipt};
 use nav::map::identity::{Digest, ImageIdentity, IMAGE_SCHEMA};
@@ -151,10 +154,24 @@ fn ready_images_with_tiles(
         manifest.encode().expect("manifest"),
     )
     .expect("manifest file");
-    let images = cache
-        .open_images(identity)
+    let descriptor = MapProfileDescriptor::new(
+        identity.revision,
+        identity.content,
+        identity.policy,
+        fixture::fixture_descriptor().catalogue_identity().policy,
+    )
+    .expect("image fixture descriptor");
+    let producer = Arc::new(CountingMapProducer::default());
+    let manager = MapDemandManager::new(cache, producer.clone());
+    let demand = manager
+        .request_images(descriptor.clone())
+        .expect("request the prepared image cache");
+    fixture::wait_for_status(&demand, MapJobStatus::Ready);
+    let images = manager
+        .ready_images(&descriptor)
         .expect("open image cache")
         .expect("ready images");
+    assert_eq!(producer.image_runs(), 0, "reuse the written image fixture");
     for (key, path, len) in files {
         if unreadable.contains(&key) {
             fs::write(&path, vec![0u8; len]).expect("unreadable tile file");

@@ -1,84 +1,10 @@
+use super::harness::{native_pick_action, HeldDriver};
 use super::*;
 use api::named_banks::NamedBank;
 use client::dash3d::CollisionFlag;
 use nav::collision::{pack_walk, WorldCollision};
 use nav::transport::TransportGraph;
-use parking_lot::{Condvar, Mutex as TestMutex};
-use std::cell::RefCell;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-
-thread_local! {
-    static GATE: RefCell<Option<Arc<Gate>>> = const { RefCell::new(None) };
-}
-
-pub(super) fn capture_gate() -> Option<Arc<Gate>> {
-    GATE.with(|gate| gate.borrow().clone())
-}
-
-#[derive(Default)]
-pub(super) struct Gate {
-    phase: TestMutex<u8>,
-    cv: Condvar,
-    searches: AtomicUsize,
-    single_routes: AtomicUsize,
-    pub(super) fail_spawn: AtomicBool,
-}
-impl Gate {
-    pub(super) fn enter(&self) {
-        let mut phase = self.phase.lock();
-        if *phase < 2 {
-            *phase = 1;
-            self.cv.notify_all();
-            while *phase < 2 {
-                self.cv.wait(&mut phase);
-            }
-        }
-    }
-    pub(super) fn finished(&self) {
-        *self.phase.lock() = 3;
-        self.cv.notify_all();
-    }
-    pub(super) fn idle(&self) {
-        *self.phase.lock() = 4;
-        self.cv.notify_all();
-    }
-    pub(super) fn bank_search(&self) {
-        self.searches.fetch_add(1, Ordering::Relaxed);
-    }
-    pub(super) fn single_route(&self) {
-        self.single_routes.fetch_add(1, Ordering::Relaxed);
-    }
-    fn wait(&self, wanted: u8) {
-        let mut phase = self.phase.lock();
-        while *phase < wanted {
-            assert!(
-                !self
-                    .cv
-                    .wait_for(&mut phase, Duration::from_secs(60))
-                    .timed_out(),
-                "worker phase {wanted}"
-            );
-        }
-    }
-    fn release(&self) {
-        *self.phase.lock() = 2;
-        self.cv.notify_all();
-    }
-}
-struct Controlled(Arc<Gate>);
-impl Controlled {
-    fn new() -> Self {
-        let gate = Arc::new(Gate::default());
-        GATE.with(|slot| *slot.borrow_mut() = Some(Arc::clone(&gate)));
-        Self(gate)
-    }
-}
-impl Drop for Controlled {
-    fn drop(&mut self) {
-        GATE.with(|slot| *slot.borrow_mut() = None);
-        self.0.release();
-    }
-}
+use std::sync::atomic::{AtomicU64, Ordering};
 
 fn tile(x: i32, z: i32) -> WorldTile {
     WorldTile { x, z, level: 0 }
@@ -112,638 +38,6 @@ fn navs(banks: Vec<NamedBank>) -> Arc<Mutex<HashMap<String, super::super::NavBot
 }
 fn bank(name: &'static str, x: i32, z: i32) -> NamedBank {
     NamedBank::new(name, tile(x, z))
-}
-
-#[test]
-fn bank_pick_radius_four_skips_worker_but_five_and_other_plane_search() {
-    let world = Some(world(false));
-    let navs = navs(vec![bank("near", 8, 8)]);
-    queue_bank_pick(
-        &navs,
-        "test",
-        &world,
-        None,
-        tile(4, 4),
-        true,
-        1,
-        BankPreferences::default(),
-        None,
-    );
-    {
-        let all = navs.lock().unwrap();
-        let bot = &all["test"];
-        assert_eq!(bot.bank_pick.posted.kind, PickKind::NearShortcut as u8);
-        assert!(bot.bank_pick.worker.is_none());
-        assert!(bot.route.is_none());
-    }
-    for (id, from) in [
-        (2, tile(3, 3)),
-        (
-            3,
-            WorldTile {
-                level: 1,
-                ..tile(8, 8)
-            },
-        ),
-    ] {
-        let gate = Controlled::new();
-        queue_bank_pick(
-            &navs,
-            "test",
-            &world,
-            None,
-            from,
-            true,
-            id,
-            BankPreferences::default(),
-            None,
-        );
-        gate.0.wait(1);
-        {
-            let all = navs.lock().unwrap();
-            assert_eq!(all["test"].bank_pick.last_id, id);
-            assert!(all["test"].bank_pick.current.is_some());
-            assert!(all["test"].route.is_none());
-        }
-        gate.0.release();
-        gate.0.wait(3);
-    }
-}
-
-#[test]
-fn bank_pick_wall_changes_winner_and_all_unreachable_falls_back() {
-    let world = Some(world(true));
-    for (banks, expected, kind) in [
-        (
-            vec![bank("across wall", 7, 1), bank("same side", 0, 14)],
-            1,
-            PickKind::Reachable,
-        ),
-        (
-            vec![bank("across wall", 7, 1), bank("far across wall", 14, 14)],
-            0,
-            PickKind::AirFallback,
-        ),
-    ] {
-        let navs = navs(banks);
-        let gate = Controlled::new();
-        queue_bank_pick(
-            &navs,
-            "test",
-            &world,
-            None,
-            tile(1, 1),
-            true,
-            1,
-            BankPreferences::default(),
-            None,
-        );
-        gate.0.wait(1);
-        gate.0.release();
-        gate.0.wait(3);
-        let all = navs.lock().unwrap();
-        assert_eq!(all["test"].bank_pick.posted.bank_index, expected);
-        assert_eq!(all["test"].bank_pick.posted.kind, kind as u8);
-        assert!(all["test"].route.is_none());
-    }
-}
-
-#[test]
-fn bank_pick_timeout_and_reset_reject_late_completion_without_blocking_pump() {
-    let world = Some(world(false));
-    for reset in [false, true] {
-        let navs = navs(vec![bank("bank", 8, 8)]);
-        let gate = Controlled::new();
-        queue_bank_pick(
-            &navs,
-            "test",
-            &world,
-            None,
-            tile(0, 0),
-            true,
-            1,
-            BankPreferences::default(),
-            None,
-        );
-        gate.0.wait(1);
-        // A live calculation is parked; the slot can still acquire state and
-        // publish a timeout/reset. There is no timing-based concurrency claim.
-        let expected = {
-            let mut all = navs.lock().unwrap();
-            let pick = &mut all.get_mut("test").unwrap().bank_pick;
-            if reset {
-                pick.reset();
-            } else {
-                let deadline = pick.current.as_ref().unwrap().deadline.unwrap();
-                for _ in 0..128 {
-                    pick.poll(deadline - Duration::from_nanos(1));
-                    assert!(pick.current.is_some());
-                    assert_eq!(pick.posted.kind, 0);
-                }
-                pick.poll(deadline);
-                assert_eq!(pick.posted.kind, PickKind::AirFallback as u8);
-                assert_eq!(pick.posted.bank_index, 0);
-            }
-            pick.posted
-        };
-        gate.0.release();
-        gate.0.wait(3);
-        assert_eq!(navs.lock().unwrap()["test"].bank_pick.posted, expected);
-    }
-}
-
-#[test]
-fn bank_pick_same_id_is_idempotent_and_new_near_request_supersedes_worker() {
-    let world = Some(world(false));
-    let navs = navs(vec![bank("bank", 8, 8)]);
-    let gate = Controlled::new();
-    queue_bank_pick(
-        &navs,
-        "test",
-        &world,
-        None,
-        tile(0, 0),
-        true,
-        1,
-        BankPreferences::default(),
-        None,
-    );
-    gate.0.wait(1);
-    let generation = navs.lock().unwrap()["test"].bank_pick.generation;
-    queue_bank_pick(
-        &navs,
-        "test",
-        &world,
-        None,
-        tile(8, 8),
-        true,
-        1,
-        BankPreferences::default(),
-        None,
-    );
-    assert_eq!(
-        navs.lock().unwrap()["test"].bank_pick.generation,
-        generation
-    );
-    queue_bank_pick(
-        &navs,
-        "test",
-        &world,
-        None,
-        tile(8, 8),
-        true,
-        2,
-        BankPreferences::default(),
-        None,
-    );
-    gate.0.release();
-    gate.0.wait(3);
-    let all = navs.lock().unwrap();
-    assert_eq!(all["test"].bank_pick.posted.request_id, 2);
-    assert_eq!(
-        all["test"].bank_pick.posted.kind,
-        PickKind::NearShortcut as u8
-    );
-    assert!(all["test"].route.is_none());
-}
-
-#[test]
-fn bank_pick_gates_precede_the_near_shortcut() {
-    static GATED: api::named_banks::BankDefinition = api::named_banks::BankDefinition {
-        name: "Gated",
-        tile: WorldTile {
-            x: 4,
-            z: 4,
-            level: 0,
-        },
-        approach: None,
-        skill: Some((10, 68)),
-        quest: Some("Lost City"),
-        setting: Some("useZanarisBank"),
-        object: None,
-        open_first: None,
-        npc: None,
-        choose: None,
-    };
-    let world = Some(world(false));
-    for (fishing, quest, opt_in, expected) in [
-        (67, true, true, -1),
-        (68, false, true, -1),
-        (68, true, false, -1),
-        (68, true, true, 0),
-    ] {
-        let mut bank = bank("Gated", 4, 4);
-        bank.definition = Some(&GATED);
-        let navs = navs(vec![bank]);
-        let mut state = WorldState::default();
-        state.stats.insert(10, 99);
-        if quest {
-            state.quests.insert("Lost City".into());
-        }
-        queue_bank_pick(
-            &navs,
-            "test",
-            &world,
-            Some(state),
-            tile(0, 0),
-            true,
-            1,
-            BankPreferences {
-                use_zanaris_bank: opt_in,
-                ..Default::default()
-            },
-            Some(fishing),
-        );
-        let all = navs.lock().unwrap();
-        assert_eq!(all["test"].bank_pick.posted.bank_index, expected);
-        assert!(all["test"].bank_pick.worker.is_none());
-    }
-}
-
-#[test]
-fn bank_pick_ignores_unresolved_geometry_and_keeps_ties_in_catalog_order() {
-    let world = Some(world(false));
-    let surface = world.as_ref().unwrap();
-    let targets = [tile(8, 0), tile(0, 8)];
-    let routes = find_many_with_avoid_bounded(
-        &surface.collision,
-        &surface.graph,
-        tile(0, 0),
-        &targets,
-        FindOptions::default(),
-        &WorldState::empty(),
-        &[],
-        BANK_TARGET_BUDGET,
-    );
-    let a = routes.results()[0].as_ref().unwrap();
-    let b = routes.results()[1].as_ref().unwrap();
-    assert_eq!(a.ticks, b.ticks);
-    assert!(
-        a.settled_at < b.settled_at,
-        "the reversed catalog row below must disagree with heap settlement order"
-    );
-    let mut unknown = bank("unknown access", 5, 5);
-    unknown.routable = false;
-    for (banks, expected, kind) in [
-        (
-            vec![
-                unknown,
-                bank("first reachable", 8, 0),
-                bank("second reachable", 0, 8),
-            ],
-            1,
-            PickKind::Reachable,
-        ),
-        (
-            vec![
-                unknown,
-                bank("second reachable", 0, 8),
-                bank("first reachable", 8, 0),
-            ],
-            1,
-            PickKind::Reachable,
-        ),
-        (vec![unknown], 0, PickKind::AirFallback),
-    ] {
-        let navs = navs(banks);
-        let gate = Controlled::new();
-        queue_bank_pick(
-            &navs,
-            "test",
-            &world,
-            None,
-            tile(0, 0),
-            true,
-            1,
-            BankPreferences::default(),
-            None,
-        );
-        gate.0.wait(1);
-        gate.0.release();
-        gate.0.wait(3);
-        let all = navs.lock().unwrap();
-        assert_eq!(all["test"].bank_pick.posted.bank_index, expected);
-        assert_eq!(all["test"].bank_pick.posted.kind, kind as u8);
-        assert!(all["test"].route.is_none());
-    }
-}
-
-struct HeldDriver;
-impl Driver for HeldDriver {
-    fn set_menu(&mut self, _: i32, _: i32, _: i32, _: i32, _: i32) {
-        panic!("held bank walk sent a menu action");
-    }
-    fn do_action(&mut self, _: i32) -> bool {
-        panic!("held bank walk dispatched an action");
-    }
-    fn try_move(
-        &mut self,
-        _: i32,
-        _: i32,
-        _: i32,
-        _: i32,
-        _: bool,
-        _: i32,
-        _: i32,
-        _: i32,
-        _: i32,
-        _: i32,
-        _: i32,
-    ) -> bool {
-        panic!("held bank walk sent movement");
-    }
-    fn local_route(&self) -> Option<(i32, i32)> {
-        panic!("held follow must not run");
-    }
-    fn build_base(&self) -> (i32, i32) {
-        panic!("held follow must not run");
-    }
-    fn loc_typecode(&self, _: i32, _: i32) -> Option<i32> {
-        panic!("held follow must not run");
-    }
-    fn out(&mut self) -> &mut dyn api::prot::Out {
-        panic!("held bank walk wrote a packet");
-    }
-    fn login(&mut self, _: &str, _: &str, _: bool) -> bool {
-        panic!("held bank walk attempted login");
-    }
-}
-
-#[test]
-fn bank_pick_walk_reuses_the_winning_route_and_hold_keeps_it_without_sends() {
-    let world = Some(world(true));
-    let navs = navs(vec![bank("across wall", 7, 1), bank("same side", 0, 14)]);
-    let gate = Controlled::new();
-    assert!(queue_bank_walk(
-        &navs,
-        "test",
-        &world,
-        None,
-        tile(1, 1),
-        None
-    ));
-    gate.0.wait(1);
-    // Retransmitting the raw verb does not enqueue another ranking flood.
-    assert!(queue_bank_walk(
-        &navs,
-        "test",
-        &world,
-        None,
-        tile(1, 1),
-        None
-    ));
-    gate.0.release();
-    gate.0.wait(4);
-    let expected = find_with(
-        &world.as_ref().unwrap().collision,
-        &world.as_ref().unwrap().graph,
-        tile(1, 1),
-        tile(0, 14),
-        FindOptions::default(),
-        &WorldState::empty(),
-    )
-    .unwrap();
-    {
-        let all = navs.lock().unwrap();
-        let route = all["test"].route.as_ref().expect("winning route armed");
-        assert_eq!((route.dest, route.ticks), (expected.dest, expected.ticks));
-        assert_eq!(gate.0.searches.load(Ordering::Relaxed), 1);
-        assert_eq!(
-            gate.0.single_routes.load(Ordering::Relaxed),
-            0,
-            "reuse the winner rather than flood again"
-        );
-    }
-    super::super::step_nav_bot(
-        &mut HeldDriver,
-        "test",
-        Some((1, 1, 0)),
-        &GameSnapshot::new(),
-        &navs,
-        &Arc::new(Mutex::new(vec![])),
-        world.as_ref(),
-        true,
-        false,
-        None,
-        || panic!("a held slot must not enter the reach/follow path"),
-    );
-    assert_eq!(
-        navs.lock().unwrap()["test"].route.as_ref().unwrap().dest,
-        expected.dest
-    );
-}
-
-#[test]
-fn bank_pick_walk_timeout_discards_the_winner_and_attempts_only_the_air_fallback() {
-    let world = Some(world(true));
-    let navs = navs(vec![bank("across wall", 7, 1), bank("same side", 0, 14)]);
-    let gate = Controlled::new();
-    assert!(queue_bank_walk(
-        &navs,
-        "test",
-        &world,
-        None,
-        tile(1, 1),
-        None
-    ));
-    gate.0.wait(1);
-    {
-        let mut all = navs.lock().unwrap();
-        let pick = &mut all.get_mut("test").unwrap().bank_pick;
-        let deadline = pick.current.as_ref().unwrap().deadline.unwrap();
-        for _ in 0..128 {
-            pick.poll(deadline - Duration::from_nanos(1));
-            assert!(!pick.current.as_ref().unwrap().job.route_only);
-            assert!(
-                pick.pending.is_none(),
-                "the ranking worker is already active"
-            );
-        }
-        pick.poll(deadline);
-        assert!(pick.current.as_ref().unwrap().job.route_only);
-    }
-    gate.0.release();
-    gate.0.wait(4);
-    let all = navs.lock().unwrap();
-    let bot = &all["test"];
-    assert!(
-        bot.route.is_none(),
-        "the late reachable winner must not arm"
-    );
-    assert!(bot.walk_outcome_failed);
-    assert_eq!(
-        (bot.walk_outcome_x, bot.walk_outcome_z),
-        (7, 1),
-        "failure belongs to the air fallback"
-    );
-    assert_eq!(gate.0.searches.load(Ordering::Relaxed), 1);
-    assert_eq!(gate.0.single_routes.load(Ordering::Relaxed), 1);
-}
-
-#[test]
-fn bank_pick_walk_reset_abort_takeover_and_newer_route_lease_reject_late_results() {
-    let world = Some(world(false));
-    for replacement in 0..4 {
-        let navs = navs(vec![bank("bank", 8, 8)]);
-        let gate = Controlled::new();
-        assert!(queue_bank_walk(
-            &navs,
-            "test",
-            &world,
-            None,
-            tile(0, 0),
-            None
-        ));
-        gate.0.wait(1);
-        match replacement {
-            0 => super::super::reset_script_nav(&navs, "test", None),
-            1 => super::super::abort_script_walk(&navs, "test"),
-            2 => {
-                // Publish another walk owner's refusal while the bank worker
-                // is parked: its late success must not replace that outcome.
-                let mut all = navs.lock().unwrap();
-                let bot = all.get_mut("test").unwrap();
-                bot.route_generation = bot.route_generation.wrapping_add(1);
-                bot.walk_request_id = 91;
-                bot.requested_route = Some((
-                    tile(15, 15),
-                    2,
-                    false,
-                    false,
-                    false,
-                    nav::zones::ZoneExempt::NONE,
-                ));
-                bot.note_failure(bot.route_generation, 91, tile(15, 15), 2, false);
-            }
-            _ => {
-                let mut all = navs.lock().unwrap();
-                let bot = all.get_mut("test").unwrap();
-                assert!(bot.script_walk_armed());
-                bot.cancel_for_manual_input();
-                assert!(!bot.script_walk_armed());
-                assert_eq!(bot.manual_takeover_watermark, bot.walk_outcome_seq);
-                assert_eq!(
-                    bot.walk_outcome_request_id, 0,
-                    "a raw bank walk must not fabricate a request-id-zero cancellation receipt"
-                );
-            }
-        }
-        let before = {
-            let all = navs.lock().unwrap();
-            let bot = &all["test"];
-            (
-                bot.requested_route,
-                bot.walk_outcome_seq,
-                bot.walk_outcome_request_id,
-            )
-        };
-        gate.0.release();
-        gate.0.wait(4);
-        let all = navs.lock().unwrap();
-        let bot = &all["test"];
-        assert!(bot.route.is_none());
-        assert_eq!(
-            (
-                bot.requested_route,
-                bot.walk_outcome_seq,
-                bot.walk_outcome_request_id
-            ),
-            before
-        );
-    }
-}
-
-#[test]
-fn bank_pick_latest_pending_selection_preserves_an_armed_walk() {
-    let world = Some(world(false));
-    let navs = navs(vec![bank("bank", 8, 8)]);
-    let route = find_with(
-        &world.as_ref().unwrap().collision,
-        &world.as_ref().unwrap().graph,
-        tile(0, 0),
-        tile(0, 3),
-        FindOptions::default(),
-        &WorldState::empty(),
-    )
-    .unwrap();
-    {
-        let mut all = navs.lock().unwrap();
-        let bot = all.get_mut("test").unwrap();
-        bot.route = Some(Arc::new(route.clone()));
-        bot.requested_route = Some((
-            route.dest,
-            0,
-            false,
-            false,
-            false,
-            nav::zones::ZoneExempt::NONE,
-        ));
-        bot.walk_request_id = 91;
-        bot.route_generation = 12;
-    }
-    let gate = Controlled::new();
-    queue_bank_pick(
-        &navs,
-        "test",
-        &world,
-        None,
-        tile(0, 0),
-        false,
-        1,
-        BankPreferences::default(),
-        None,
-    );
-    gate.0.wait(1);
-    for id in 2..=3 {
-        queue_bank_pick(
-            &navs,
-            "test",
-            &world,
-            None,
-            tile(0, 1),
-            false,
-            id,
-            BankPreferences::default(),
-            None,
-        );
-    }
-    gate.0.release();
-    gate.0.wait(4);
-    let all = navs.lock().unwrap();
-    let bot = &all["test"];
-    assert_eq!(bot.bank_pick.posted.request_id, 3);
-    assert_eq!(bot.bank_pick.posted.kind, PickKind::Reachable as u8);
-    assert_eq!(
-        gate.0.searches.load(Ordering::Relaxed),
-        2,
-        "only active and latest pending selection run"
-    );
-    assert_eq!(bot.route.as_deref(), Some(&route));
-    assert_eq!((bot.route_generation, bot.walk_request_id), (12, 91));
-}
-
-#[test]
-fn bank_pick_near_walk_skips_ranking_and_only_approaches_the_selected_stand() {
-    let world = Some(world(false));
-    let navs = navs(vec![bank("bank", 4, 4)]);
-    let gate = Controlled::new();
-    assert!(queue_bank_walk(
-        &navs,
-        "test",
-        &world,
-        None,
-        tile(0, 0),
-        None
-    ));
-    gate.0.wait(1);
-    gate.0.release();
-    gate.0.wait(4);
-    assert_eq!(gate.0.searches.load(Ordering::Relaxed), 0);
-    assert_eq!(gate.0.single_routes.load(Ordering::Relaxed), 1);
-    assert_eq!(
-        navs.lock().unwrap()["test"].route.as_ref().unwrap().dest,
-        tile(4, 4)
-    );
 }
 
 #[test]
@@ -825,7 +119,7 @@ export async function tick(api) {{
         let navs = navs(banks);
         let mut state = WorldState::empty();
         state.quests.insert("Lost City".into());
-        super::super::dispatch_script_interact_cached(
+        super::super::dispatch_script_interact_cached_scoped(
             &mut HeldDriver,
             &GameSnapshot::new(),
             None,
@@ -835,6 +129,9 @@ export async function tick(api) {{
             Some(state),
             None,
             "test",
+            Some(api::identity::Scope::Slot(
+                api::identity::SlotKey::from_incarnation(1).unwrap(),
+            )),
             iso.drain_interacts(),
             None,
             None,
@@ -851,106 +148,6 @@ export async function tick(api) {{
             "selection must not move"
         );
         iso.join();
-    }
-}
-
-#[test]
-fn bank_pick_stop_invalidates_pending_selection_and_walk_before_worker_publication() {
-    let play = crate::Play::new(&crate::PlayOptions {
-        host: "127.0.0.1".into(),
-        transport: client::Transport::Tcp,
-        port: 43594,
-        cache_dir: concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../target/bank-pick-empty-cache"
-        )
-        .into(),
-        lowmem: true,
-        mainland: false,
-    });
-    for walking in [false, true] {
-        let fixture = navs(vec![bank("bank", 8, 8)]);
-        *play.navs.lock().unwrap() = std::mem::take(&mut *fixture.lock().unwrap());
-        let gate = Controlled::new();
-        if walking {
-            assert!(queue_bank_walk(
-                &play.navs,
-                "test",
-                &Some(world(false)),
-                None,
-                tile(0, 0),
-                None
-            ));
-        } else {
-            queue_bank_pick(
-                &play.navs,
-                "test",
-                &Some(world(false)),
-                None,
-                tile(0, 0),
-                false,
-                1,
-                BankPreferences::default(),
-                None,
-            );
-        }
-        gate.0.wait(1);
-        play.script_stop("test");
-        gate.0.release();
-        gate.0.wait(4);
-        let all = play.navs.lock().unwrap();
-        assert_eq!(all["test"].bank_pick.posted, BankSelectionInput::default());
-        assert!(
-            all["test"].route.is_none(),
-            "Stop must prevent the bank worker from arming movement"
-        );
-    }
-}
-
-#[test]
-fn bank_pick_spawn_failure_settles_selection_or_refuses_walk_without_arming() {
-    for walking in [false, true] {
-        let navs = navs(vec![bank("air fallback", 8, 8)]);
-        let gate = Controlled::new();
-        gate.0.fail_spawn.store(true, Ordering::Relaxed);
-        if walking {
-            assert!(!queue_bank_walk(
-                &navs,
-                "test",
-                &Some(world(false)),
-                None,
-                tile(0, 0),
-                None
-            ));
-        } else {
-            queue_bank_pick(
-                &navs,
-                "test",
-                &Some(world(false)),
-                None,
-                tile(0, 0),
-                false,
-                1,
-                BankPreferences::default(),
-                None,
-            );
-        }
-        let all = navs.lock().unwrap();
-        let bot = &all["test"];
-        if walking {
-            assert!(bot.walk_outcome_failed);
-            assert_eq!((bot.walk_outcome_x, bot.walk_outcome_z), (8, 8));
-        } else {
-            assert_eq!(bot.bank_pick.posted.request_id, 1);
-            assert_eq!(bot.bank_pick.posted.bank_index, 0);
-            assert_eq!(bot.bank_pick.posted.kind, PickKind::AirFallback as u8);
-        }
-        assert!(bot.route.is_none());
-        assert!(
-            bot.bank_pick.worker.is_none()
-                && bot.bank_pick.current.is_none()
-                && bot.bank_pick.pending.is_none()
-        );
     }
 }
 
@@ -1099,737 +296,6 @@ fn native_bank_access_declared_teller_does_not_require_packed_geometry() {
     }
 }
 
-fn native_pick_action(
-    banks: Vec<NamedBank>,
-    from: WorldTile,
-    explicit: Option<&str>,
-) -> (script::SlotScript, script::native::HostAction) {
-    use script::native::{ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow};
-    use script::native_bank::{Select, SelectArgs};
-
-    struct Selecting {
-        args: Option<SelectArgs>,
-        handle: Option<ActionHandle<Select>>,
-    }
-    impl Script for Selecting {
-        fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
-            if let Some(args) = self.args.take() {
-                self.handle = Some(tick.actions.begin::<Select>(args, &mut tick.cx).unwrap());
-            }
-            assert!(tick
-                .actions
-                .poll(self.handle.as_ref().unwrap(), &mut tick.cx)
-                .is_pending());
-            Ok(ScriptFlow::Continue)
-        }
-    }
-    let mut slot = script::SlotScript::new();
-    slot.start_test_script(
-        Box::new(Selecting {
-            args: Some(SelectArgs {
-                facts: Arc::new(NamedBankFacts::from_banks(banks)),
-                from,
-                preferences: BankPreferences::default(),
-                options: script::native::WalkOptions::default(),
-                explicit: explicit.map(Arc::from),
-            }),
-            handle: None,
-        }),
-        None,
-    )
-    .unwrap();
-    let mut snapshot = GameSnapshot::new();
-    snapshot.seed_ingame(2);
-    slot.on_game_tick(&mut script::ScriptCtx {
-        driver: &mut HeldDriver,
-        tick: 1,
-        here: Some((from.x, from.z, from.level)),
-        walk: None,
-        walk_with: None,
-        inv: None,
-        snapshot: Some(&snapshot),
-        obj_names: None,
-        compiled: script::CompiledTick::default(),
-    });
-    let action = slot
-        .take_native_action()
-        .expect("real native Select request");
-    assert!(action.live());
-    (slot, action)
-}
-
-fn native_world(wall: bool, banks: &[NamedBank], graph: TransportGraph) -> Arc<NavWorld> {
-    let mut flags = vec![0; 4 * 48 * 48];
-    if wall {
-        for z in 0..48 {
-            flags[z * 48 + 6] =
-                CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::WALK_BLOCK_FLAGS as u32;
-        }
-    }
-    let (walk, blocked) = pack_walk(&flags);
-    Arc::new(NavWorld::from_parts(
-        WorldCollision {
-            origin: tile(0, 0),
-            width: 48,
-            height: 48,
-            walk,
-            blocked,
-            flags: None,
-        },
-        graph,
-        banks
-            .iter()
-            .map(|bank| nav::pack::BankStand {
-                name: "Bank booth".into(),
-                tile: bank.tile,
-                access: nav::pack::BankAccess::Booth { op: 2 },
-            })
-            .collect(),
-    ))
-}
-
-fn start_native_pick(
-    navs: &Arc<Mutex<HashMap<String, super::super::NavBot>>>,
-    world: Arc<NavWorld>,
-    action: script::native::HostAction,
-    opts: FindOptions,
-    state: WorldState,
-) {
-    let authority = action.authority();
-    let script::native::HostEffect::BankPick(request) = action.effect else {
-        panic!("expected bank pick");
-    };
-    let evidence = EvidenceStamp {
-        run: authority.run(),
-        tick: 1,
-        sequence: 1,
-    };
-    queue_bank(
-        navs,
-        "test",
-        &Some(world),
-        Some(state),
-        request.from,
-        opts,
-        authority.request_id().get(),
-        request.preferences,
-        None,
-        false,
-        Some(NativeBankPickInput {
-            request,
-            authority,
-            evidence,
-        }),
-    );
-}
-
-fn await_native_search(
-    navs: &Arc<Mutex<HashMap<String, super::super::NavBot>>>,
-    gate: &Controlled,
-) {
-    assert!(
-        navs.lock().unwrap()["test"].bank_pick.worker.is_some(),
-        "native selection must search even inside the air-near radius"
-    );
-    gate.0.wait(1);
-}
-
-#[test]
-fn native_bank_pick_keeps_resolved_public_access_over_air_nearer_aisle() {
-    let banks = vec![bank("local", 5, 8), bank("remote", 1, 14)];
-    let mut flags = vec![0; 4 * 16 * 16];
-    // The east tile is standable and adjacent to the booth, but enclosed in
-    // the bankers' aisle. The catalog resolved the reachable public west side.
-    for (x, z) in [(7, 7), (8, 8), (7, 9)] {
-        flags[z * 16 + x] =
-            CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::WALK_BLOCK_FLAGS as u32;
-    }
-    flags[8 * 16 + 6] =
-        CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::W_N as u32 | CollisionFlag::W_S as u32;
-    let (walk, blocked) = pack_walk(&flags);
-    let world = Arc::new(NavWorld::from_parts(
-        WorldCollision {
-            origin: tile(0, 0),
-            width: 16,
-            height: 16,
-            walk,
-            blocked,
-            flags: None,
-        },
-        TransportGraph::default(),
-        vec![
-            nav::pack::BankStand {
-                name: "Bank booth".into(),
-                tile: tile(6, 8),
-                access: nav::pack::BankAccess::Booth { op: 2 },
-            },
-            nav::pack::BankStand {
-                name: "Bank booth".into(),
-                tile: tile(1, 15),
-                access: nav::pack::BankAccess::Booth { op: 2 },
-            },
-        ],
-    ));
-    let (slot, action) = native_pick_action(banks.clone(), tile(10, 2), None);
-    let navs = navs(banks);
-    let gate = Controlled::new();
-    start_native_pick(
-        &navs,
-        world,
-        action,
-        FindOptions::default(),
-        WorldState::empty(),
-    );
-    await_native_search(&navs, &gate);
-    gate.0.release();
-    gate.0.wait(4);
-    let mut all = navs.lock().unwrap();
-    let selected = all
-        .get_mut("test")
-        .unwrap()
-        .bank_pick
-        .take_native_receipt()
-        .unwrap()
-        .1
-        .selected;
-    assert_eq!(selected.kind, NativePickKind::Reachable);
-    assert_eq!(selected.bank_index, 0);
-    assert_eq!(selected.access_tile, tile(5, 8));
-    assert!(selected.access.is_some());
-    assert!(all["test"].route.is_none(), "selection must not move");
-    drop(slot);
-}
-
-#[test]
-fn native_bank_pick_routes_non_catalog_booth_access_instead_of_enclosed_aisle() {
-    // The catalog stand is diagonal to this booth, like Edgeville and Seers.
-    // Neither InLine access tile equals it. Air-nearest picks the sealed east
-    // aisle; selection must instead route to the public west access.
-    let banks = vec![bank("local", 5, 7), bank("remote", 1, 14)];
-    let mut flags = vec![0; 4 * 16 * 16];
-    for (x, z) in [(7, 7), (8, 8), (7, 9)] {
-        flags[z * 16 + x] =
-            CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::WALK_BLOCK_FLAGS as u32;
-    }
-    flags[8 * 16 + 6] =
-        CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::W_N as u32 | CollisionFlag::W_S as u32;
-    let (walk, blocked) = pack_walk(&flags);
-    let stand = nav::pack::BankStand {
-        name: "Bank booth".into(),
-        tile: tile(6, 8),
-        access: nav::pack::BankAccess::Booth { op: 2 },
-    };
-    let world = Arc::new(NavWorld::from_parts(
-        WorldCollision {
-            origin: tile(0, 0),
-            width: 16,
-            height: 16,
-            walk,
-            blocked,
-            flags: None,
-        },
-        TransportGraph::default(),
-        vec![stand.clone()],
-    ));
-    let from = tile(10, 2);
-    let access_tiles: Vec<_> =
-        nav::bank_fetch::bank_access_tiles(&world.collision, &stand).collect();
-    assert!(!access_tiles.contains(&banks[0].tile));
-    assert!(access_tiles.contains(&tile(7, 8)));
-    assert!(find_with(
-        &world.collision,
-        &world.graph,
-        from,
-        tile(7, 8),
-        FindOptions::default(),
-        &WorldState::empty(),
-    )
-    .is_err());
-    // Required and default selection must both keep this reachable local bank.
-    for explicit in [None, Some("local")] {
-        let (slot, action) = native_pick_action(banks.clone(), from, explicit);
-        let navs = navs(banks.clone());
-        let gate = Controlled::new();
-        start_native_pick(
-            &navs,
-            Arc::clone(&world),
-            action,
-            FindOptions::default(),
-            WorldState::empty(),
-        );
-        await_native_search(&navs, &gate);
-        gate.0.release();
-        gate.0.wait(4);
-        let mut all = navs.lock().unwrap();
-        let selected = all
-            .get_mut("test")
-            .unwrap()
-            .bank_pick
-            .take_native_receipt()
-            .unwrap()
-            .1
-            .selected;
-        assert_eq!(selected.kind, NativePickKind::Reachable);
-        assert_eq!(selected.bank_index, 0);
-        assert_eq!(selected.access_tile, tile(5, 8));
-        assert!(selected.access.is_some());
-        assert!(all["test"].route.is_none(), "selection must not move");
-        drop(slot);
-    }
-}
-
-#[test]
-fn native_bank_pick_uses_cheapest_access_even_when_catalog_access_is_reachable() {
-    let banks = vec![bank("local", 5, 8)];
-    let mut flags = vec![0; 4 * 16 * 16];
-    flags[8 * 16 + 6] =
-        CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::W_N as u32 | CollisionFlag::W_S as u32;
-    let (walk, blocked) = pack_walk(&flags);
-    let world = Arc::new(NavWorld::from_parts(
-        WorldCollision {
-            origin: tile(0, 0),
-            width: 16,
-            height: 16,
-            walk,
-            blocked,
-            flags: None,
-        },
-        TransportGraph::default(),
-        vec![nav::pack::BankStand {
-            name: "Bank booth".into(),
-            tile: tile(6, 8),
-            access: nav::pack::BankAccess::Booth { op: 2 },
-        }],
-    ));
-    let from = tile(10, 8);
-    let public = find_with(
-        &world.collision,
-        &world.graph,
-        from,
-        banks[0].tile,
-        FindOptions::default(),
-        &WorldState::empty(),
-    )
-    .unwrap();
-    let nearest = find_with(
-        &world.collision,
-        &world.graph,
-        from,
-        tile(7, 8),
-        FindOptions::default(),
-        &WorldState::empty(),
-    )
-    .unwrap();
-    assert!(nearest.ticks < public.ticks);
-    let (slot, action) = native_pick_action(banks.clone(), from, Some("local"));
-    let navs = navs(banks);
-    let gate = Controlled::new();
-    start_native_pick(
-        &navs,
-        world,
-        action,
-        FindOptions::default(),
-        WorldState::empty(),
-    );
-    await_native_search(&navs, &gate);
-    gate.0.release();
-    gate.0.wait(4);
-    let selected = navs
-        .lock()
-        .unwrap()
-        .get_mut("test")
-        .unwrap()
-        .bank_pick
-        .take_native_receipt()
-        .unwrap()
-        .1
-        .selected;
-    assert_eq!(selected.kind, NativePickKind::Reachable);
-    assert_eq!(selected.bank_index, 0);
-    assert_eq!(selected.access_tile, tile(7, 8));
-    drop(slot);
-}
-
-#[test]
-#[ignore = "requires explicit WORLD_NAV_PACK for the real 289 bank geometry"]
-fn native_bank_pick_edgeville_yews_real_pack() {
-    let pack = std::env::var_os("WORLD_NAV_PACK").expect("explicit real pack path");
-    let world = NavWorld::load_pack(std::path::Path::new(&pack)).unwrap();
-    world
-        .bind_named_bank_facts(
-            &api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
-        )
-        .unwrap();
-    let banks = world.named_bank_facts().unwrap().banks().to_vec();
-    let edgeville = banks
-        .iter()
-        .position(|bank| bank.name == "Edgeville")
-        .unwrap();
-    let from = tile(3080, 3472);
-    let staff = tile(3095, 3490);
-    let state = WorldState::default().with_map_members(true);
-    assert!(find_with(
-        &world.collision,
-        &world.graph,
-        from,
-        staff,
-        FindOptions::default(),
-        &state
-    )
-    .is_err());
-    let (slot, action) = native_pick_action(banks.clone(), from, Some("Edgeville"));
-    let navs = navs(banks);
-    let gate = Controlled::new();
-    let world = Arc::new(world);
-    start_native_pick(
-        &navs,
-        Arc::clone(&world),
-        action,
-        FindOptions::default(),
-        state.clone(),
-    );
-    await_native_search(&navs, &gate);
-    gate.0.release();
-    gate.0.wait(4);
-    let selected = navs
-        .lock()
-        .unwrap()
-        .get_mut("test")
-        .unwrap()
-        .bank_pick
-        .take_native_receipt()
-        .unwrap()
-        .1
-        .selected;
-    assert_eq!(selected.kind, NativePickKind::Reachable);
-    assert_eq!(usize::from(selected.bank_index), edgeville);
-    assert_eq!(selected.access_tile, tile(3094, 3491));
-    assert!(find_with(
-        &world.collision,
-        &world.graph,
-        from,
-        selected.access_tile,
-        FindOptions::default(),
-        &state
-    )
-    .is_ok());
-    assert_eq!(selected.access.unwrap().stand_tile, tile(3095, 3491));
-    assert!(navs.lock().unwrap()["test"].route.is_none());
-    drop(slot);
-}
-
-#[test]
-fn native_bank_pick_routes_air_near_across_wall_and_required_refuses() {
-    let banks = vec![bank("across wall", 8, 1), bank("local", 1, 30)];
-    for (explicit, expected) in [(None, Some(1)), (Some("across wall"), None)] {
-        let (slot, action) = native_pick_action(banks.clone(), tile(4, 1), explicit);
-        let navs = navs(banks.clone());
-        let gate = Controlled::new();
-        start_native_pick(
-            &navs,
-            native_world(true, &banks, TransportGraph::default()),
-            action,
-            FindOptions::default(),
-            WorldState::empty(),
-        );
-        await_native_search(&navs, &gate);
-        gate.0.release();
-        gate.0.wait(4);
-        let mut all = navs.lock().unwrap();
-        let selected = all
-            .get_mut("test")
-            .unwrap()
-            .bank_pick
-            .take_native_receipt()
-            .unwrap()
-            .1
-            .selected;
-        assert_eq!(
-            selected.kind,
-            if expected.is_some() {
-                NativePickKind::Reachable
-            } else {
-                NativePickKind::NoCandidate
-            }
-        );
-        assert_eq!(selected.bank_index, expected.unwrap_or(u16::MAX));
-        assert!(all["test"].route.is_none(), "selection must not move");
-        drop(slot);
-    }
-    // Frozen SelectBank still completes by four-tile air proximity; changing
-    // native picks must not silently alter compatibility behavior.
-    let navs = navs(banks.clone());
-    queue_bank_pick(
-        &navs,
-        "test",
-        &Some(native_world(true, &banks, TransportGraph::default())),
-        None,
-        tile(4, 1),
-        false,
-        1,
-        BankPreferences::default(),
-        None,
-    );
-    let all = navs.lock().unwrap();
-    assert_eq!(all["test"].bank_pick.posted.bank_index, 0);
-    assert_eq!(
-        all["test"].bank_pick.posted.kind,
-        PickKind::NearShortcut as u8
-    );
-    assert!(all["test"].bank_pick.worker.is_none());
-}
-
-#[test]
-fn native_bank_pick_missing_access_is_not_even_a_timeout_candidate() {
-    let banks = vec![bank("unmapped near", 4, 1), bank("local", 40, 40)];
-    for explicit in [None, Some("unmapped near")] {
-        let (slot, action) = native_pick_action(banks.clone(), tile(4, 1), explicit);
-        let navs = navs(banks.clone());
-        let gate = Controlled::new();
-        start_native_pick(
-            &navs,
-            native_world(false, &banks[1..], TransportGraph::default()),
-            action,
-            FindOptions::default(),
-            WorldState::empty(),
-        );
-        if explicit.is_none() {
-            await_native_search(&navs, &gate);
-            let mut all = navs.lock().unwrap();
-            let pick = &mut all.get_mut("test").unwrap().bank_pick;
-            let deadline = pick.current.as_ref().unwrap().deadline.unwrap();
-            pick.poll(deadline);
-            let selected = pick.take_native_receipt().unwrap().1.selected;
-            assert_eq!(selected.bank_index, 1);
-            assert_eq!(selected.kind, NativePickKind::AirFallback);
-            assert!(selected.access.is_some());
-            drop(all);
-            gate.0.release();
-            gate.0.wait(4);
-        } else {
-            let mut all = navs.lock().unwrap();
-            let pick = &mut all.get_mut("test").unwrap().bank_pick;
-            let selected = pick.take_native_receipt().unwrap().1.selected;
-            assert_eq!(selected.kind, NativePickKind::NoCandidate);
-            assert!(pick.worker.is_none());
-        }
-        drop(slot);
-    }
-}
-
-#[test]
-fn native_bank_pick_required_is_exclusive_and_default_uses_cheapest_route() {
-    let banks = vec![bank("local", 9, 4), bank("authored distant", 40, 40)];
-    for (explicit, expected) in [(None, 0), (Some("authored distant"), 1)] {
-        let (slot, action) = native_pick_action(banks.clone(), tile(4, 4), explicit);
-        let navs = navs(banks.clone());
-        let gate = Controlled::new();
-        start_native_pick(
-            &navs,
-            native_world(false, &banks, TransportGraph::default()),
-            action,
-            FindOptions::default(),
-            WorldState::empty(),
-        );
-        await_native_search(&navs, &gate);
-        gate.0.release();
-        gate.0.wait(4);
-        let selected = navs
-            .lock()
-            .unwrap()
-            .get_mut("test")
-            .unwrap()
-            .bank_pick
-            .take_native_receipt()
-            .unwrap()
-            .1
-            .selected;
-        assert_eq!(selected.bank_index, expected);
-        assert_eq!(selected.kind, NativePickKind::Reachable);
-        drop(slot);
-    }
-}
-
-#[test]
-fn native_bank_pick_forbids_granted_falador_teleport_with_runes_held() {
-    use nav::transport::{TransportEdge, TransportKind};
-    let banks = vec![bank("local", 12, 4), bank("Falador teleport bank", 40, 40)];
-    let mut graph = TransportGraph::default();
-    graph.teleports.push(TransportEdge {
-        takeoff: None,
-        worn_all_req: Vec::new(),
-        kind: TransportKind::Teleport,
-        player_delta: None,
-        at: tile(0, 0),
-        to: tile(39, 39),
-        loc_id: 0,
-        option: 0,
-        ticks: 1,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![(6, 37)],
-        item_req: vec![(555, 1), (556, 3), (563, 1)],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None,
-    });
-    let world = native_world(false, &banks, graph);
-    let mut state = WorldState::empty().with_map_members(true);
-    state.stats.insert(6, 60);
-    state.inv.extend([(555, 1), (556, 3), (563, 1)]);
-    let opts = FindOptions {
-        allow_teleports: true,
-        ..FindOptions::default()
-    };
-    let local = native_bank_access(&world, banks[0]).unwrap().0[0];
-    let remote = native_bank_access(&world, banks[1]).unwrap().0[0];
-    let granted = nav::router::find_first_with(
-        &world.collision,
-        &world.graph,
-        tile(4, 4),
-        &[local, remote],
-        opts,
-        &state,
-    )
-    .into_route()
-    .unwrap();
-    assert_eq!(
-        granted.dest, remote,
-        "fixture must favor the granted teleport"
-    );
-    let (slot, action) = native_pick_action(banks.clone(), tile(4, 4), None);
-    let navs = navs(banks);
-    let gate = Controlled::new();
-    navs.lock().unwrap().get_mut("test").unwrap().walk_globals =
-        Some(Arc::new(Mutex::new(crate::WalkGlobals {
-            allow_teleports: true,
-            allow_wilderness: true,
-            allow_danger_zones: true,
-            allow_bank_fetch: true,
-            survivable_routing: false,
-        })));
-    let authority = action.authority();
-    let script::native::HostEffect::BankPick(request) = action.effect else {
-        panic!("expected bank pick");
-    };
-    queue_native_bank_pick(
-        &navs,
-        "test",
-        &Some(world),
-        Some(state),
-        request,
-        authority.clone(),
-        EvidenceStamp {
-            run: authority.run(),
-            tick: 1,
-            sequence: 1,
-        },
-        None,
-    );
-    let composed = navs.lock().unwrap()["test"]
-        .bank_pick
-        .current
-        .as_ref()
-        .unwrap()
-        .job
-        .request
-        .opts;
-    assert!(
-        !composed.allow_teleports,
-        "bank ranking forbids even globally granted teles"
-    );
-    assert!(composed.allow_wilderness);
-    assert!(composed.zones.is_all());
-    assert!(!composed.allow_bank_fetch);
-    await_native_search(&navs, &gate);
-    gate.0.release();
-    gate.0.wait(4);
-    let selected = navs
-        .lock()
-        .unwrap()
-        .get_mut("test")
-        .unwrap()
-        .bank_pick
-        .take_native_receipt()
-        .unwrap()
-        .1
-        .selected;
-    assert_eq!(selected.bank_index, 0);
-    assert_eq!(selected.kind, NativePickKind::Reachable);
-    drop(slot);
-}
-
-#[test]
-fn native_bank_pick_timeout_is_only_candidate_order_not_wall_arrival() {
-    let banks = vec![bank("across wall", 8, 1), bank("local", 1, 30)];
-    let from = tile(4, 1);
-    let world = native_world(true, &banks, TransportGraph::default());
-    let (slot, action) = native_pick_action(banks.clone(), from, None);
-    let navs = navs(banks);
-    let gate = Controlled::new();
-    start_native_pick(
-        &navs,
-        Arc::clone(&world),
-        action,
-        FindOptions::default(),
-        WorldState::empty(),
-    );
-    await_native_search(&navs, &gate);
-    let selected = {
-        let mut all = navs.lock().unwrap();
-        let pick = &mut all.get_mut("test").unwrap().bank_pick;
-        let deadline = pick.current.as_ref().unwrap().deadline.unwrap();
-        for _ in 0..128 {
-            pick.poll(deadline - Duration::from_nanos(1));
-            assert!(pick.current.is_some());
-            assert!(pick.take_native_receipt().is_none());
-        }
-        pick.poll(deadline);
-        let selected = pick.take_native_receipt().unwrap().1.selected;
-        assert!(all["test"].route.is_none(), "a pick never arms movement");
-        selected
-    };
-    assert_eq!(selected.kind, NativePickKind::AirFallback);
-    assert_eq!(
-        selected.bank_index, 0,
-        "timeout keeps the captured air order"
-    );
-    assert!(
-        find_with(
-            &world.collision,
-            &world.graph,
-            from,
-            selected.access_tile,
-            FindOptions::default(),
-            &WorldState::empty(),
-        )
-        .is_err(),
-        "the ordinary subsequent walk must still route through collision"
-    );
-    gate.0.release();
-    gate.0.wait(4);
-    assert!(
-        navs.lock()
-            .unwrap()
-            .get_mut("test")
-            .unwrap()
-            .bank_pick
-            .take_native_receipt()
-            .is_none(),
-        "late reachable-bank result cannot replace the timeout candidate"
-    );
-    drop(slot);
-}
-
-/// Characterization (T2.2): the kernel label layer under every bank
-/// dispatch (`script::bank::ops`). Slots are 1-based, holes keep their
-/// position, matching ignores case and whitespace/`-`/`_` separators,
-/// and the first match wins.
 #[test]
 fn bank_label_slots_are_one_based_first_match_over_holes() {
     let actions: Vec<Option<String>> = vec![
@@ -2028,4 +494,1827 @@ fn teller_pick_keys_on_stand_then_here_then_distance_then_index() {
         .map(|npc| npc.index),
         Some(11)
     );
+}
+
+/// This module pairs fixed-base request construction with each tree's
+/// production calculator for the real-content old/new result capture. It
+/// does not add a private worker.
+#[cfg(test)]
+mod bank_pick_capture {
+    use super::super::{
+        BankPickJob, BankPickRequest, BankPickSpec, BankPickStepGate, BankPickWorkerJob,
+        LegacyPickResult, PickKind, PickResult,
+    };
+    use super::*;
+    use api::identity::{ProcessIncarnation, Settlement, SlotKey};
+    use nav::router::{SearchCursor, SearchPreflight, SearchRequest, SearchRequestShape};
+    use std::fmt::Debug;
+    use std::num::NonZeroU64;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    use super::super::harness::request;
+    fn request_for_banks(
+        world: &Arc<NavWorld>,
+        banks: Vec<NamedBank>,
+        request_id: u64,
+        generation: u64,
+        walking: bool,
+    ) -> Arc<BankPickRequest> {
+        let facts = Arc::new(NamedBankFacts::from_banks(banks));
+        let from = tile(0, 0);
+        let state = WorldState::default();
+        let BankCandidates {
+            order,
+            target_count,
+        } = super::super::bank_candidates(
+            world,
+            &facts,
+            from,
+            &state,
+            BankPreferences::default(),
+            None,
+            None,
+        );
+        super::super::make_bank_pick_request(
+            request_id,
+            nav::producer::lease(world).unwrap(),
+            facts,
+            from,
+            FindOptions::default(),
+            state,
+            order,
+            target_count,
+            (walking && target_count != 0).then_some(generation),
+            None,
+        )
+    }
+
+    fn legacy_result(
+        request: &BankPickRequest,
+        world: &NavWorld,
+        walking: bool,
+    ) -> LegacyPickResult {
+        let first = request.first();
+        let near = request.native.is_none()
+            && first.is_some_and(|index| near_bank(request.from, request.route_target(index)));
+        if first.is_none() || (near && !walking) {
+            LegacyPickResult {
+                index: first,
+                access_tile: None,
+                kind: if near {
+                    PickKind::NearShortcut
+                } else {
+                    PickKind::NoCandidate
+                },
+                route: None,
+            }
+        } else {
+            request.legacy_calculate(world, near)
+        }
+    }
+
+    fn append_tile(out: &mut Vec<u8>, tile: WorldTile) {
+        out.extend_from_slice(&tile.x.to_le_bytes());
+        out.extend_from_slice(&tile.z.to_le_bytes());
+        out.extend_from_slice(&tile.level.to_le_bytes());
+    }
+
+    fn append_blob(out: &mut Vec<u8>, value: &[u8]) {
+        out.extend_from_slice(&(value.len() as u64).to_le_bytes());
+        out.extend_from_slice(value);
+    }
+
+    fn outcome_bytes(
+        label: &str,
+        request: &BankPickRequest,
+        generation: u64,
+        index: Option<usize>,
+        access_tile: Option<WorldTile>,
+        kind: PickKind,
+        route: Option<&dyn Debug>,
+    ) -> Vec<u8> {
+        let mut out = Vec::new();
+        append_blob(&mut out, label.as_bytes());
+        out.extend_from_slice(&generation.to_le_bytes());
+        out.extend_from_slice(&request.request_id.to_le_bytes());
+        out.extend_from_slice(&index.map_or(-1, |index| index as i32).to_le_bytes());
+        out.push(kind as u8);
+        match index {
+            Some(index) => {
+                out.push(1);
+                let bank = request.facts.banks()[index];
+                append_blob(&mut out, bank.name.as_bytes());
+                append_tile(&mut out, bank.tile);
+                append_tile(&mut out, bank.air_tile());
+                out.push(u8::from(bank.routable));
+            }
+            None => out.push(0),
+        }
+        match access_tile {
+            Some(tile) => {
+                out.push(1);
+                append_tile(&mut out, tile);
+            }
+            None => out.push(0),
+        }
+        if let Some(route) = route {
+            out.push(1);
+            append_blob(&mut out, format!("{route:?}").as_bytes());
+        } else {
+            out.push(0);
+        }
+        if request.native.is_some() {
+            let selected = request.selected(index, kind, access_tile);
+            append_blob(&mut out, format!("{selected:?}").as_bytes());
+        } else {
+            append_blob(&mut out, &[]);
+        }
+        out
+    }
+
+    fn service() -> Arc<parking_lot::Mutex<WorkService>> {
+        static NEXT_NONCE: AtomicU64 = AtomicU64::new(1);
+        let nonce = NEXT_NONCE.fetch_add(1, Ordering::Relaxed);
+        let incarnation = ProcessIncarnation::from_start_nonce(
+            NonZeroU64::new(nonce).expect("test service nonce remains nonzero"),
+        );
+        Arc::new(parking_lot::Mutex::new(WorkService::with_clock_for_tests(
+            incarnation,
+            Arc::new(api::work::SystemClock),
+        )))
+    }
+
+    fn wait_for_returned_capacity(
+        service: &Arc<parking_lot::Mutex<WorkService>>,
+        expected_jobs: usize,
+    ) {
+        // Terminal publication precedes the request thread's final charge return.
+        loop {
+            let observed = service.lock().publications().capacity().sequence();
+            if service.lock().capacity().jobs() == expected_jobs {
+                break;
+            }
+            WorkService::wait_for_capacity_change(service, observed);
+        }
+    }
+
+    struct BankPickGateRelease(Option<mpsc::SyncSender<()>>);
+
+    impl BankPickGateRelease {
+        fn release(&mut self) {
+            if let Some(sender) = self.0.take() {
+                let _ = sender.send(());
+            }
+        }
+    }
+
+    impl Drop for BankPickGateRelease {
+        fn drop(&mut self) {
+            self.release();
+        }
+    }
+
+    fn scope() -> Scope {
+        Scope::Slot(SlotKey::from_incarnation(1).unwrap())
+    }
+
+    #[test]
+    fn stored_ticket_reconstructs_exact_revision_and_rejects_wrong_revision() {
+        let service = service();
+        let scope = scope();
+        let world = world(false);
+        let request = request_for_banks(&world, vec![bank("bank", 8, 8)], 1, 1, true);
+        let (input, preflights) = request
+            .work_input(1, false, "test")
+            .expect("test request has a bounded route search");
+        let job = BankPickJob {
+            generation: 1,
+            request,
+            deadline: None,
+        };
+        let work = BankPickWorkerJob::for_job("test", job, input, preflights);
+        let ticket = {
+            let mut service = service.lock();
+            let identity = service.mint_identity(scope, None).unwrap();
+            let conditions = ProcessConditions::new(service.incarnation());
+            service
+                .try_submit::<BankPickSpec, _>(identity, &input, work, &conditions)
+                .unwrap_or_else(|refused| {
+                    let (reason, _) = refused.into_parts();
+                    panic!("ticket test submission refused: {reason:?}")
+                })
+        };
+        WorkService::wait_terminal(&service, &ticket).unwrap();
+
+        let stored = super::super::BankPickTicketRef::from_ticket(ticket);
+        let reconstructed = stored.ticket();
+        assert_eq!(reconstructed.identity(), ticket.identity());
+        assert_eq!(reconstructed.revision(), ticket.revision());
+        assert!(service.lock().borrow_terminal(&reconstructed).is_ok());
+
+        let wrong_revision = WorkTicket::<BankPickSpec>::new(
+            stored.identity,
+            stored.revision.next().expect("test revision can advance"),
+        );
+        assert!(matches!(
+            service.lock().borrow_terminal(&wrong_revision),
+            Err(api::work::LedgerError::StaleIdentity)
+        ));
+    }
+
+    fn cooperative_bytes(
+        service: &Arc<parking_lot::Mutex<WorkService>>,
+        scope: Scope,
+        label: &str,
+        request: Arc<BankPickRequest>,
+        generation: u64,
+        walking: bool,
+    ) -> Vec<u8> {
+        let first = request.first();
+        let near = request.native.is_none()
+            && first.is_some_and(|index| near_bank(request.from, request.route_target(index)));
+        if first.is_none() || (near && !walking) {
+            let kind = if near {
+                PickKind::NearShortcut
+            } else {
+                PickKind::NoCandidate
+            };
+            let result = PickResult::plain(first, None, kind);
+            let bytes = outcome_bytes(
+                label,
+                &request,
+                generation,
+                result.index,
+                result.access_tile,
+                result.kind,
+                None,
+            );
+            let retained = result.owner_result_bytes().unwrap();
+            eprintln!("bank_pick_result_bytes label={label} bytes={retained}");
+            let reservation = nav::producer::OwnerResultLedger::shared()
+                .try_reserve_bytes(retained)
+                .unwrap();
+            drop(reservation.hold(result));
+            return bytes;
+        }
+
+        let route_only = near;
+        let (input, preflights) = request
+            .work_input(generation, route_only, "test")
+            .expect("capture request has a bounded route search");
+        let job = BankPickJob {
+            generation,
+            request: Arc::clone(&request),
+            deadline: None,
+        };
+        let work = BankPickWorkerJob::for_job("test", job, input, preflights);
+        let ticket = {
+            let mut service = service.lock();
+            let identity = service.mint_identity(scope, None).unwrap();
+            let conditions = ProcessConditions::new(service.incarnation());
+            service
+                .try_submit::<BankPickSpec, _>(identity, &input, work, &conditions)
+                .unwrap_or_else(|refused| {
+                    let (reason, _) = refused.into_parts();
+                    panic!("real-content bank-pick capture refused: {reason:?}")
+                })
+        };
+        WorkService::wait_terminal(service, &ticket)
+            .expect("cooperative bank-pick capture returns");
+        let result_bytes = {
+            let service = service.lock();
+            match service.borrow_terminal(&ticket).unwrap() {
+                Some(Settlement::Completed(result)) => result
+                    .owner_result_bytes()
+                    .expect("captured result has a bounded owner charge"),
+                _ => panic!("cooperative capture did not complete"),
+            }
+        };
+        eprintln!("bank_pick_result_bytes label={label} bytes={result_bytes}");
+        let reservation = nav::producer::OwnerResultLedger::shared()
+            .try_reserve_bytes(result_bytes)
+            .expect("captured result fits exact owner custody");
+        let result = match service.lock().consume(&ticket).unwrap() {
+            Settlement::Completed(result) => result,
+            _ => panic!("captured result changed before consume"),
+        };
+        let route_debug = result.route.as_ref().map(|route| route as &dyn Debug);
+        if result.route.is_some() {
+            assert!(
+                result.nav_lease.is_some(),
+                "route result retains its nav lease"
+            );
+        }
+        let bytes = outcome_bytes(
+            label,
+            &request,
+            generation,
+            result.index,
+            result.access_tile,
+            result.kind,
+            route_debug,
+        );
+        let owner = result.into_owner_result(ticket.identity(), ticket.revision(), reservation);
+        if let Some(plan) = owner.value().plan.as_ref() {
+            assert_eq!(plan.lease.identity(), ticket.identity());
+            assert_eq!(plan.lease.revision(), ticket.revision());
+            assert!(plan.lease.view(&request.lease).is_ok());
+        }
+        drop(owner);
+        bytes
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The capture compares the same complete real request against both implementations."
+    )]
+    fn append_case(
+        output: &mut Vec<u8>,
+        service: &Arc<parking_lot::Mutex<WorkService>>,
+        scope: Scope,
+        label: &str,
+        world: &Arc<NavWorld>,
+        request_id: u64,
+        generation: u64,
+        from: WorldTile,
+        state: WorldState,
+        walking: bool,
+        native: Option<NativeBankPickInput>,
+    ) {
+        let request = request(world, request_id, generation, from, state, walking, native);
+        let legacy = legacy_result(&request, world, walking);
+        let legacy_route = legacy.route.as_ref().map(|route| route as &dyn Debug);
+        let old = outcome_bytes(
+            label,
+            &request,
+            generation,
+            legacy.index,
+            legacy.access_tile,
+            legacy.kind,
+            legacy_route,
+        );
+        let new = cooperative_bytes(
+            service,
+            scope,
+            label,
+            Arc::clone(&request),
+            generation,
+            walking,
+        );
+        assert_eq!(old, new, "old/new bank-pick bytes differ for {label}");
+        append_blob(output, &old);
+    }
+
+    #[test]
+    #[ignore = "requires the immutable real 289 navpack and BOT_BANK_PICK_CAPTURE_OUT"]
+    fn captures_real_content_bank_pick_outcomes() {
+        let pack = std::path::Path::new(
+            "/srv/dev/scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+        );
+        let loaded = NavWorld::load_pack(pack).unwrap();
+        loaded
+            .bind_named_bank_facts(
+                &api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+            )
+            .unwrap();
+        let world = Arc::new(loaded);
+        let state = WorldState::default().with_map_members(true);
+        let service = service();
+        let scope = scope();
+        let mut output = Vec::new();
+
+        append_case(
+            &mut output,
+            &service,
+            scope,
+            "compat-select-far",
+            &world,
+            1,
+            1,
+            tile(3080, 3472),
+            state.clone(),
+            false,
+            None,
+        );
+        append_case(
+            &mut output,
+            &service,
+            scope,
+            "compat-select-near",
+            &world,
+            2,
+            2,
+            tile(3093, 3490),
+            state.clone(),
+            false,
+            None,
+        );
+        append_case(
+            &mut output,
+            &service,
+            scope,
+            "compat-walk-near",
+            &world,
+            3,
+            3,
+            tile(3093, 3490),
+            state.clone(),
+            true,
+            None,
+        );
+        append_case(
+            &mut output,
+            &service,
+            scope,
+            "compat-walk-lumbridge",
+            &world,
+            4,
+            4,
+            tile(3222, 3218),
+            state.clone(),
+            true,
+            None,
+        );
+
+        let banks = world.named_bank_facts().unwrap().banks().to_vec();
+        let (slot, action) = native_pick_action(banks.clone(), tile(3080, 3472), Some("Edgeville"));
+        let authority = action.authority();
+        let script::native::HostEffect::BankPick(native_request) = action.effect else {
+            panic!("native capture must use the real BankPick action");
+        };
+        let evidence = EvidenceStamp {
+            run: authority.run(),
+            tick: 1,
+            sequence: 1,
+        };
+        append_case(
+            &mut output,
+            &service,
+            scope,
+            "native-explicit-edgeville",
+            &world,
+            authority.request_id().get(),
+            5,
+            native_request.from,
+            state.clone(),
+            false,
+            Some(NativeBankPickInput {
+                request: native_request,
+                authority,
+                evidence,
+            }),
+        );
+        drop(slot);
+
+        let (slot, action) = native_pick_action(banks, tile(3080, 3472), None);
+        let authority = action.authority();
+        let script::native::HostEffect::BankPick(native_request) = action.effect else {
+            panic!("native auto capture must use the real BankPick action");
+        };
+        let evidence = EvidenceStamp {
+            run: authority.run(),
+            tick: 2,
+            sequence: 1,
+        };
+        append_case(
+            &mut output,
+            &service,
+            scope,
+            "native-auto",
+            &world,
+            authority.request_id().get(),
+            6,
+            native_request.from,
+            state,
+            false,
+            Some(NativeBankPickInput {
+                request: native_request,
+                authority,
+                evidence,
+            }),
+        );
+        drop(slot);
+
+        let path = std::env::var_os("BOT_BANK_PICK_CAPTURE_OUT")
+            .expect("set BOT_BANK_PICK_CAPTURE_OUT to the capture destination");
+        std::fs::write(path, output).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires the immutable real 289 navpack"]
+    fn qualifies_real_content_bank_pick_whole_job_memory() {
+        use api::identity::Deadline;
+        use api::work::{MonotonicClock, SharedCancellation, SliceBudget, SystemClock};
+        use std::num::NonZeroU32;
+
+        let pack = std::path::Path::new(
+            "/srv/dev/scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+        );
+        let loaded = NavWorld::load_pack(pack).unwrap();
+        loaded
+            .bind_named_bank_facts(
+                &api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+            )
+            .unwrap();
+        let world = Arc::new(loaded);
+        let mut charge_bytes = 0;
+        let mut result_bytes = 0;
+        let mut slices = 0;
+        let mut largest_slice = Duration::ZERO;
+        let mut completed = false;
+        let allocations = allocation_counter::measure(|| {
+            let request = request(
+                &world,
+                1,
+                1,
+                tile(3080, 3472),
+                WorldState::default().with_map_members(true),
+                true,
+                None,
+            );
+            let (input, preflights) = request.work_input(1, false, "test").unwrap();
+            charge_bytes = input.charge.total_bytes().unwrap();
+            let mut worker = BankPickWorkerJob::for_job(
+                "test",
+                BankPickJob {
+                    generation: 1,
+                    request,
+                    deadline: None,
+                },
+                input,
+                preflights,
+            );
+            let clock = SystemClock;
+            let cancellation = SharedCancellation::new();
+            for _ in 0..100_000 {
+                let budget = SliceBudget::new(
+                    NonZeroU32::new(64).unwrap(),
+                    Deadline::after(clock.now(), Duration::from_millis(10)),
+                );
+                let mut context = StepContext::new(&clock, budget, &cancellation);
+                let started = Instant::now();
+                let outcome = worker.step(&mut context);
+                largest_slice = largest_slice.max(started.elapsed());
+                slices += 1;
+                match outcome {
+                    StepOutcome::Yielded => {}
+                    StepOutcome::Completed(result) => {
+                        assert!(result.route.is_some(), "real bank route must complete");
+                        result_bytes = result.owner_result_bytes().unwrap();
+                        completed = true;
+                        break;
+                    }
+                    StepOutcome::Failed(never) => match never {},
+                }
+            }
+            assert!(completed, "bank search exceeded the bounded slice count");
+        });
+        eprintln!(
+            "bank_pick_whole_job peak_bytes={} charge_bytes={charge_bytes} \
+             result_bytes={result_bytes} slices={slices} largest_slice_ns={}",
+            allocations.bytes_max,
+            largest_slice.as_nanos(),
+        );
+        assert!(charge_bytes <= BANK_PICK_JOB_BYTES);
+        assert!(
+            allocations.bytes_max <= charge_bytes as u64,
+            "whole-job allocations exceed the admitted charge: {allocations:?}"
+        );
+        assert!(result_bytes <= 64 * 1024 * 1024);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires a captured live Select input, its real navpack, and an output path"]
+    fn measures_captured_native_bank_pick_cpu() {
+        super::super::harness::measures_captured_native_bank_pick_cpu();
+    }
+
+    fn stage_pick(
+        navs: &Arc<Mutex<HashMap<String, crate::NavBot>>>,
+        world: Arc<NavWorld>,
+        request_id: u64,
+        generation: u64,
+        scope: Scope,
+        gate: Option<BankPickStepGate>,
+    ) {
+        let facts = navs
+            .lock()
+            .unwrap()
+            .get("test")
+            .and_then(|bot| bot.bank_pick.facts.clone())
+            .unwrap();
+        let state = WorldState::default();
+        let from = tile(0, 0);
+        let BankCandidates {
+            order,
+            target_count,
+        } = super::super::bank_candidates(
+            &world,
+            &facts,
+            from,
+            &state,
+            BankPreferences::default(),
+            None,
+            None,
+        );
+        let request = super::super::make_bank_pick_request(
+            request_id,
+            nav::producer::lease(&world).unwrap(),
+            facts,
+            from,
+            FindOptions::default(),
+            state,
+            order,
+            target_count,
+            None,
+            None,
+        );
+        let deadline = Some(Instant::now() + BANK_SELECTION_WINDOW);
+        let job = BankPickJob {
+            generation,
+            request: Arc::clone(&request),
+            deadline,
+        };
+        let (input, preflights) = request.work_input(generation, false, "test").unwrap();
+        let worker = match gate {
+            Some(gate) => BankPickWorkerJob::gated(
+                "test",
+                super::super::CooperativeBankPickJob::new(job, input, preflights),
+                gate,
+            ),
+            None => BankPickWorkerJob::for_job("test", job, input, preflights),
+        };
+        let mut all = navs.lock().unwrap();
+        let pick = &mut all.get_mut("test").unwrap().bank_pick;
+        pick.generation = generation;
+        pick.last_id = request_id;
+        pick.current = Some(super::super::ActivePick {
+            job: BankPickJob {
+                generation,
+                request,
+                deadline,
+            },
+            scope,
+            deadline,
+            ticket: None,
+            cancellation: None,
+            pending_job: Some(Box::new(worker)),
+            submitting: false,
+            capacity_sequence: None,
+            owner_result_full: false,
+            last_submission_refusal: None,
+        });
+    }
+
+    #[test]
+    fn bank_preflight_charges_shape_future_and_materializes_targets_in_worker() {
+        let world = world(false);
+        let request = request_for_banks(
+            &world,
+            vec![bank("first", 8, 8), bank("second", 12, 12)],
+            1,
+            1,
+            false,
+        );
+        let expected = request
+            .order
+            .iter()
+            .filter_map(|candidate| {
+                let bank = &request.facts.banks()[candidate.index];
+                bank.routable.then_some(bank.tile)
+            })
+            .collect::<Vec<_>>();
+        let target_count = request.target_count;
+        let mut preflight_result = None;
+        let allocations = allocation_counter::measure(|| {
+            preflight_result = request.work_input(1, false, "test");
+        });
+        assert_eq!(
+            allocations.count_total, 0,
+            "shape-only preflight allocates nothing"
+        );
+        let (input, preflights) =
+            preflight_result.expect("bounded bank request preflights before admission");
+        let primary = preflights
+            .primary
+            .as_ref()
+            .expect("primary preflight exists");
+        assert_eq!(primary.kind, super::super::BankPickSearchKind::Many);
+        assert_eq!(
+            primary.token.input_bytes(),
+            target_count * std::mem::size_of::<WorldTile>()
+        );
+        let reservation = primary.token.reservation();
+        assert_eq!(reservation.zone_filter_bytes, 0);
+        assert_eq!(
+            input.charge.input_bytes(),
+            input.base_input_bytes + primary.token.input_bytes() + reservation.future_layout_bytes
+        );
+        assert!(reservation.peak_bytes >= reservation.result_bytes);
+        assert_eq!(input.charge.scratch_bytes(), reservation.peak_bytes);
+        assert_eq!(input.charge.result_bytes(), 0);
+        assert_eq!(
+            input.charge.total_bytes(),
+            Some(
+                input.base_input_bytes
+                    + primary.token.input_bytes()
+                    + reservation.future_layout_bytes
+                    + reservation.peak_bytes
+            )
+        );
+        assert!(input.charge.total_bytes().unwrap() <= BANK_PICK_JOB_BYTES);
+
+        let job = BankPickJob {
+            generation: 1,
+            request: Arc::clone(&request),
+            deadline: None,
+        };
+        let mut worker = super::super::CooperativeBankPickJob::new(job, input, preflights);
+        assert!(worker.search_request.is_none());
+        assert!(worker.target_buffer.is_none());
+
+        worker
+            .begin_search_materialization(super::super::BankPickSearchKind::Many)
+            .unwrap();
+        assert_eq!(
+            worker.target_buffer.as_ref().unwrap().capacity(),
+            target_count
+        );
+        assert!(worker.search_request.is_none());
+        assert!(
+            worker.retained().bytes() <= worker.input.charge.total_bytes().unwrap(),
+            "the allocated target capacity remains inside its preflight charge"
+        );
+        while worker.build_order < worker.job.request.order.len() {
+            worker
+                .materialize_target_or_row(super::super::BankPickSearchKind::Many)
+                .unwrap();
+        }
+        worker
+            .finish_target_materialization(super::super::BankPickSearchKind::Many)
+            .unwrap();
+        match worker.search_request.take().unwrap() {
+            SearchRequest::Many { targets, .. } => {
+                assert_eq!(targets.as_ref(), expected.as_slice())
+            }
+            _ => panic!("bank candidate targets retain their ordered Many request"),
+        }
+    }
+
+    #[test]
+    fn bank_pick_result_limit_rejects_oversize_without_clipping() {
+        let maximum = nav::producer::OWNER_RESULT_MAX_BYTES;
+        assert!(super::super::bank_pick_result_within_bound(maximum));
+        assert!(!super::super::bank_pick_result_within_bound(maximum + 1));
+    }
+
+    #[test]
+    fn oversized_owner_result_reservation_releases_completed_terminal_charge() {
+        let service = service();
+        let scope = scope();
+        let navs = navs(vec![bank("bank", 8, 8)]);
+        let world = world(false);
+        stage_pick(&navs, Arc::clone(&world), 1, 1, scope, None);
+        assert!(super::super::submit_pending_bank_pick_with_service(
+            &navs, "test", scope, true, &service,
+        ));
+        let ticket = navs.lock().unwrap()["test"]
+            .bank_pick
+            .current
+            .as_ref()
+            .unwrap()
+            .ticket
+            .unwrap()
+            .ticket();
+        WorkService::wait_terminal(&service, &ticket)
+            .expect("bank-pick terminal completes before owner reservation");
+        let (terminal_before, noops_before) = {
+            let service = service.lock();
+            let result = match service.borrow_terminal(&ticket).unwrap() {
+                Some(Settlement::Completed(result)) => result,
+                _ => panic!("bank-pick terminal completed before owner reservation"),
+            };
+            (
+                (result.index, result.access_tile, result.kind),
+                service.cancellation_handle_noops(),
+            )
+        };
+
+        assert!(super::super::reserve_bank_pick_result(
+            &navs,
+            "test",
+            scope,
+            1,
+            1,
+            ticket,
+            nav::producer::OWNER_RESULT_MAX_BYTES + 1,
+            nav::producer::OwnerResultLedger::shared(),
+        )
+        .is_none());
+        assert!(navs.lock().unwrap()["test"].bank_pick.current.is_none());
+        wait_for_returned_capacity(&service, 0);
+        let service = service.lock();
+        assert_eq!(service.capacity(), api::work::WorkCapacity::EMPTY);
+        assert_eq!(service.cancellation_handle_noops(), noops_before + 1);
+        match service
+            .borrow_terminal(&ticket)
+            .expect("abandoning an unconsumed terminal preserves its identity")
+        {
+            Some(Settlement::Completed(result)) => assert_eq!(
+                (result.index, result.access_tile, result.kind),
+                terminal_before,
+                "owner reservation refusal does not rewrite the completed terminal"
+            ),
+            _ => panic!("owner reservation refusal must not rewrite the completed terminal"),
+        }
+    }
+
+    #[test]
+    fn full_owner_ledger_keeps_the_completed_terminal_charged_for_retry() {
+        let service = service();
+        let scope = scope();
+        let navs = navs(vec![bank("bank", 8, 8)]);
+        let world = world(false);
+        stage_pick(&navs, Arc::clone(&world), 1, 1, scope, None);
+        assert!(super::super::submit_pending_bank_pick_with_service(
+            &navs, "test", scope, true, &service,
+        ));
+        let (ticket, job) = {
+            let all = navs.lock().unwrap();
+            let active = all["test"].bank_pick.current.as_ref().unwrap();
+            (active.ticket.unwrap().ticket(), active.job.clone())
+        };
+        WorkService::wait_terminal(&service, &ticket)
+            .expect("bank-pick terminal completes before owner reservation");
+        let bytes = match service.lock().borrow_terminal(&ticket).unwrap() {
+            Some(Settlement::Completed(result)) => result
+                .owner_result_bytes()
+                .expect("completed bank pick has a bounded owner charge"),
+            _ => panic!("bank-pick terminal did not complete"),
+        };
+        assert!(bytes > 0);
+
+        let full_ledger = nav::producer::OwnerResultLedger::with_limits(bytes - 1, bytes);
+        super::super::consume_completed_bank_pick(
+            &navs,
+            "test",
+            scope,
+            job.clone(),
+            ticket,
+            bytes,
+            &service,
+            &full_ledger,
+        );
+        let retained_request = {
+            let all = navs.lock().unwrap();
+            let active = all["test"].bank_pick.current.as_ref().unwrap();
+            assert_eq!(active.ticket.unwrap().ticket(), ticket);
+            assert!(active.owner_result_full);
+            Arc::clone(&active.job.request)
+        };
+        assert!(Arc::ptr_eq(&retained_request, &job.request));
+        assert_eq!(full_ledger.used_bytes(), 0);
+        assert_eq!(service.lock().capacity().jobs(), 1);
+        assert!(matches!(
+            service.lock().borrow_terminal(&ticket),
+            Ok(Some(Settlement::Completed(_)))
+        ));
+
+        let ledger = nav::producer::OwnerResultLedger::with_limits(bytes, bytes);
+        super::super::consume_completed_bank_pick(
+            &navs, "test", scope, job, ticket, bytes, &service, &ledger,
+        );
+        let (posted, retained) = {
+            let all = navs.lock().unwrap();
+            let pick = &all["test"].bank_pick;
+            assert!(pick.current.is_none());
+            let retained = pick
+                .owner_result
+                .as_ref()
+                .unwrap()
+                .value()
+                .owner_result_bytes()
+                .unwrap();
+            (pick.posted, retained)
+        };
+        assert_eq!(posted.request_id, 1);
+        assert_eq!(posted.generation, 1);
+        assert_eq!(posted.bank_index, 0);
+        assert_eq!(posted.kind, PickKind::Reachable as u8);
+        assert_eq!(retained, bytes);
+        assert_eq!(ledger.used_bytes(), bytes);
+        wait_for_returned_capacity(&service, 0);
+        assert_eq!(service.lock().capacity(), api::work::WorkCapacity::EMPTY);
+
+        drop(navs);
+        assert_eq!(ledger.used_bytes(), 0);
+    }
+
+    #[test]
+    fn walking_pick_publishes_a_borrowed_compact_route_and_rejects_a_stale_owner() {
+        for stale in [false, true] {
+            let service = service();
+            let scope = scope();
+            let banks = vec![bank("bank", 8, 8)];
+            let navs = navs(banks.clone());
+            let world = world(false);
+            let request = request_for_banks(&world, banks, 7, 11, true);
+            let (input, preflights) = request.work_input(11, false, "test").unwrap();
+            let job = BankPickJob {
+                generation: 11,
+                request: Arc::clone(&request),
+                deadline: None,
+            };
+            let worker = BankPickWorkerJob::for_job("test", job.clone(), input, preflights);
+            {
+                let mut all = navs.lock().unwrap();
+                let bot = all.get_mut("test").unwrap();
+                bot.route_generation = 11;
+                bot.requested_route = request.first().map(|index| request.route_key(index));
+                bot.bank_pick.generation = 11;
+                bot.bank_pick.last_id = 7;
+                bot.bank_pick.current = Some(super::super::ActivePick {
+                    job: job.clone(),
+                    scope,
+                    deadline: None,
+                    ticket: None,
+                    cancellation: None,
+                    pending_job: Some(Box::new(worker)),
+                    submitting: false,
+                    capacity_sequence: None,
+                    owner_result_full: false,
+                    last_submission_refusal: None,
+                });
+            }
+            assert!(super::super::submit_pending_bank_pick_with_service(
+                &navs, "test", scope, true, &service,
+            ));
+            let ticket = navs.lock().unwrap()["test"]
+                .bank_pick
+                .current
+                .as_ref()
+                .unwrap()
+                .ticket
+                .unwrap()
+                .ticket();
+            WorkService::wait_terminal(&service, &ticket).unwrap();
+            let bytes = match service.lock().borrow_terminal(&ticket).unwrap() {
+                Some(Settlement::Completed(result)) => result.owner_result_bytes().unwrap(),
+                _ => panic!("walking selection did not complete"),
+            };
+            if stale {
+                navs.lock()
+                    .unwrap()
+                    .get_mut("test")
+                    .unwrap()
+                    .route_generation += 1;
+            }
+            let ledger = nav::producer::OwnerResultLedger::with_limits(bytes, bytes);
+            super::super::consume_completed_bank_pick(
+                &navs, "test", scope, job, ticket, bytes, &service, &ledger,
+            );
+            {
+                let all = navs.lock().unwrap();
+                let bot = &all["test"];
+                assert!(
+                    bot.route.is_none(),
+                    "compact publication must not expand a legacy route"
+                );
+                assert_eq!(bot.has_route(), !stale);
+                assert!(bot.bank_pick.current.is_none());
+                if !stale {
+                    let path = bot.route_path_for_follow().unwrap();
+                    let plan = path.plan_for_follow().unwrap();
+                    assert_eq!(plan.identity(), ticket.identity());
+                    assert_eq!(plan.revision(), ticket.revision());
+                    let Some(crate::walk_map::RouteProjectionPath::Compact(view)) =
+                        bot.route_projection()
+                    else {
+                        panic!("the map must borrow the same compact route");
+                    };
+                    assert_eq!(view.destination(), plan.destination());
+                    assert_eq!(bot.route_destination(), Some(plan.destination()));
+                    assert!(view.legs().next().is_some());
+                    assert_eq!(ledger.used_bytes(), bytes);
+                } else {
+                    assert_eq!(ledger.used_bytes(), 0);
+                    assert!(bot.bank_pick.owner_result.is_none());
+                }
+            }
+            wait_for_returned_capacity(&service, 0);
+            assert_eq!(service.lock().capacity(), api::work::WorkCapacity::EMPTY);
+            drop(navs);
+            assert_eq!(ledger.used_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn many_cursor_and_results_are_dropped_before_single_fallback() {
+        let world = world(false);
+        let request = request_for_banks(&world, vec![bank("bank", 8, 8)], 1, 7, true);
+        let (input, preflights) = request
+            .work_input(7, false, "test")
+            .expect("walking request has a bounded Many and Single reservation");
+        let charge = input.charge;
+        let revision = input.revision;
+        let job = BankPickJob {
+            generation: 7,
+            request,
+            deadline: None,
+        };
+        let mut worker = super::super::CooperativeBankPickJob::new(job, input, preflights);
+        worker
+            .begin_search_materialization(super::super::BankPickSearchKind::Many)
+            .unwrap();
+        while worker.build_order < worker.job.request.order.len() {
+            worker
+                .materialize_target_or_row(super::super::BankPickSearchKind::Many)
+                .unwrap();
+        }
+        worker
+            .finish_target_materialization(super::super::BankPickSearchKind::Many)
+            .unwrap();
+        let many_request = worker.search_request.take().unwrap();
+        let many_preflight = worker.current_preflight().unwrap();
+        let shared_state = Arc::clone(&worker.job.request.state);
+        let state_refs = Arc::strong_count(&shared_state);
+        worker.cursor = Some(
+            SearchCursor::new_preflighted(
+                many_request,
+                worker.job.request.lease.clone(),
+                Arc::clone(&shared_state),
+                many_preflight,
+            )
+            .unwrap(),
+        );
+        worker.stage = super::super::BankPickStage::Search;
+        worker.pending_many_results =
+            Some(vec![Err(nav::router::TargetError::NoPath)].into_boxed_slice());
+        assert_eq!(Arc::strong_count(&shared_state), state_refs + 1);
+        assert!(worker.cursor.is_some());
+        assert!(worker.pending_many_results.is_some());
+
+        worker.start_fallback_search();
+
+        assert!(worker.cursor.is_none());
+        assert!(worker.target_buffer.is_none());
+        assert!(worker.pending_many_results.is_none());
+        assert!(worker.pending_route.is_none());
+        assert!(worker.search_preflights.primary.is_none());
+        assert!(worker.search_preflights.fallback.is_some());
+        assert_eq!(Arc::strong_count(&shared_state), state_refs);
+        assert!(matches!(
+            &worker.search_request,
+            Some(SearchRequest::Single { .. })
+        ));
+        assert_eq!(worker.input.charge, charge);
+        assert_eq!(worker.input.revision, revision);
+        assert!(worker.retained().bytes() <= charge.total_bytes().unwrap());
+    }
+
+    #[test]
+    fn preflight_token_mismatch_fails_closed() {
+        let world = world(false);
+        let lease = nav::producer::lease(&world).unwrap();
+        let state = Arc::new(WorldState::default());
+        let preflight = SearchCursor::preflight(
+            SearchRequestShape::Single {
+                options: FindOptions::default(),
+                avoid_capacity: 0,
+                max_settles: 1,
+            },
+            &lease,
+            &state,
+        )
+        .expect("small single request has a representable shape");
+        let request = SearchRequest::Many {
+            from: tile(0, 0),
+            targets: vec![tile(8, 8)].into_boxed_slice(),
+            options: FindOptions::default(),
+            avoid: Box::default(),
+            max_settles: 1,
+            reconstruct_best: false,
+        };
+        assert!(matches!(
+            SearchCursor::new_preflighted(request, lease, state, preflight),
+            Err(nav::router::SearchCursorError::PreflightMismatch)
+        ));
+    }
+
+    #[test]
+    fn cancellation_releases_preflight_tokens_and_partial_targets() {
+        let world = world(false);
+        let request = request_for_banks(&world, vec![bank("bank", 8, 8)], 1, 1, true);
+        let (input, preflights) = request
+            .work_input(1, false, "test")
+            .expect("walking request reserves its single-search fallback");
+        let job = BankPickJob {
+            generation: 1,
+            request,
+            deadline: None,
+        };
+        let mut worker = super::super::CooperativeBankPickJob::new(job, input, preflights);
+        worker
+            .begin_search_materialization(super::super::BankPickSearchKind::Many)
+            .unwrap();
+        worker
+            .materialize_target_or_row(super::super::BankPickSearchKind::Many)
+            .unwrap();
+        assert!(worker.target_buffer.is_some());
+        assert!(worker.search_preflights.fallback.is_some());
+
+        let outcome = worker.checkpoint(Checkpoint::Cancel(Cancellation::ScopeInvalidated));
+        assert!(matches!(outcome, Some(StepOutcome::Yielded)));
+        assert!(worker.target_buffer.is_none());
+        assert!(worker.search_request.is_none());
+        assert!(worker.search_preflights.primary.is_none());
+        assert!(worker.search_preflights.fallback.is_none());
+        assert!(worker.lease.is_none());
+    }
+
+    #[test]
+    fn timeout_fallback_reuses_admission_charge_and_revision() {
+        let world = world(false);
+        let navs = navs(vec![bank("bank", 8, 8)]);
+        let facts = navs
+            .lock()
+            .unwrap()
+            .get("test")
+            .and_then(|bot| bot.bank_pick.facts.clone())
+            .unwrap();
+        let state = WorldState::default();
+        let from = tile(0, 0);
+        let BankCandidates {
+            order,
+            target_count,
+        } = super::super::bank_candidates(
+            &world,
+            &facts,
+            from,
+            &state,
+            BankPreferences::default(),
+            None,
+            None,
+        );
+        let request = super::super::make_bank_pick_request(
+            1,
+            nav::producer::lease(&world).unwrap(),
+            facts,
+            from,
+            FindOptions::default(),
+            state,
+            order,
+            target_count,
+            Some(7),
+            None,
+        );
+        let (input, preflights) = request
+            .work_input(7, false, "test")
+            .expect("bounded bank pick has an admission charge");
+        let revision = input.revision;
+        let charge = input.charge;
+        let phase_total = |preflight: &SearchPreflight| {
+            let reservation = preflight.reservation();
+            input.base_input_bytes
+                + preflight.input_bytes()
+                + reservation.future_layout_bytes
+                + reservation.peak_bytes
+        };
+        let primary_total = phase_total(&preflights.primary.as_ref().unwrap().token);
+        let fallback_total = phase_total(preflights.fallback.as_ref().unwrap());
+        assert_eq!(charge.result_bytes(), 0);
+        assert_eq!(
+            charge.total_bytes(),
+            Some(primary_total.max(fallback_total))
+        );
+        assert!(charge.total_bytes().unwrap() <= BANK_PICK_JOB_BYTES);
+
+        let job = BankPickJob {
+            generation: 7,
+            request,
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+        };
+        let mut worker = super::super::CooperativeBankPickJob::new(job, input, preflights);
+        worker
+            .begin_search_materialization(super::super::BankPickSearchKind::Many)
+            .unwrap();
+        worker
+            .materialize_target_or_row(super::super::BankPickSearchKind::Many)
+            .unwrap();
+        assert_eq!(worker.target_buffer.as_ref().unwrap().len(), 1);
+
+        assert!(worker.timeout_fallback_due(Instant::now()));
+        worker.start_timeout_fallback();
+
+        assert!(worker.fallback_started);
+        assert!(!worker.timeout_fallback_due(Instant::now()));
+        assert_eq!(worker.input.revision, revision);
+        assert_eq!(worker.input.charge, charge);
+        assert!(matches!(
+            &worker.search_request,
+            Some(nav::router::SearchRequest::Single { .. })
+        ));
+        assert!(worker.cursor.is_none());
+        assert!(worker.target_buffer.is_none());
+        assert!(worker.search_preflights.primary.is_none());
+        assert!(worker.search_preflights.fallback.is_some());
+        assert!(worker.pending_many_results.is_none());
+        let fallback_preflight = worker.current_preflight().unwrap();
+        assert!(worker.current_preflight().is_none());
+        let fallback_request = worker.search_request.take().unwrap();
+        worker.cursor = Some(
+            SearchCursor::new_preflighted(
+                fallback_request,
+                worker.job.request.lease.clone(),
+                Arc::clone(&worker.job.request.state),
+                fallback_preflight,
+            )
+            .unwrap(),
+        );
+        let outcome = worker.checkpoint(Checkpoint::Cancel(Cancellation::ScopeInvalidated));
+        assert!(matches!(outcome, Some(StepOutcome::Yielded)));
+        assert!(worker.cursor.is_none());
+        assert!(worker.search_preflights.fallback.is_none());
+    }
+
+    #[test]
+    fn full_refused_nonwalking_pick_publishes_air_fallback_at_deadline() {
+        let service = service();
+        let world = world(false);
+        let generation = 9;
+        let mut admitted = Vec::new();
+        let mut refused = None;
+        for request_id in 1..=65 {
+            let pending = navs(vec![bank("bank", 8, 8)]);
+            stage_pick(
+                &pending,
+                Arc::clone(&world),
+                request_id,
+                generation,
+                scope(),
+                None,
+            );
+            assert!(super::super::submit_pending_bank_pick_with_service(
+                &pending,
+                "test",
+                scope(),
+                true,
+                &service,
+            ));
+            if pending.lock().unwrap()["test"]
+                .bank_pick
+                .current
+                .as_ref()
+                .unwrap()
+                .ticket
+                .is_none()
+            {
+                refused = Some(pending);
+                break;
+            }
+            admitted.push(pending);
+        }
+        let pending = refused.expect("the real WorkService job limit refuses demand with Full");
+        let (request_id, deadline) = {
+            let all = pending.lock().unwrap();
+            let active = all["test"].bank_pick.current.as_ref().unwrap();
+            assert_eq!(
+                active.last_submission_refusal,
+                Some(SubmissionRefusal::Full)
+            );
+            assert!(active.pending_job.is_some());
+            (active.job.request.request_id, active.deadline.unwrap())
+        };
+        let capacity = service.lock().publications().capacity().sequence();
+        let posted =
+            super::super::poll_bank_pick_with_service(&pending, "test", deadline, &service);
+        let retired = pending.lock().unwrap()["test"].bank_pick.current.is_none();
+        assert_eq!(
+            service.lock().publications().capacity().sequence(),
+            capacity
+        );
+        drop(admitted);
+        drop(pending);
+        wait_for_returned_capacity(&service, 0);
+        assert_eq!(WorkService::shutdown(&service), Ok(()));
+        assert_eq!(posted.request_id, request_id);
+        assert_eq!(posted.generation, generation);
+        assert_eq!(posted.bank_index, 0);
+        assert_eq!(posted.kind, PickKind::AirFallback as u8);
+        assert!(retired, "deadline discards the unadmitted retained job");
+    }
+
+    #[test]
+    fn stopping_refusal_posts_no_candidate_without_retry() {
+        let service = service();
+        assert_eq!(WorkService::shutdown(&service), Ok(()));
+        let navs = navs(vec![bank("bank", 8, 8)]);
+        stage_pick(&navs, world(false), 7, 9, scope(), None);
+        assert!(!super::super::submit_pending_bank_pick_with_service(
+            &navs,
+            "test",
+            scope(),
+            true,
+            &service,
+        ));
+        {
+            let all = navs.lock().unwrap();
+            let pick = &all["test"].bank_pick;
+            assert!(pick.current.is_none(), "permanent refusal retires demand");
+            assert!(matches!(
+                pick.pending_inline
+                    .as_ref()
+                    .map(|pending| pending.result.kind),
+                Some(PickKind::NoCandidate)
+            ));
+        }
+        let capacity = service.lock().publications().capacity().sequence();
+        let posted =
+            super::super::poll_bank_pick_with_service(&navs, "test", Instant::now(), &service);
+        assert_eq!(posted.request_id, 7);
+        assert_eq!(posted.generation, 9);
+        assert_eq!(posted.bank_index, -1);
+        assert_eq!(posted.kind, PickKind::NoCandidate as u8);
+        assert!(!super::super::submit_pending_bank_pick_with_service(
+            &navs,
+            "test",
+            scope(),
+            true,
+            &service,
+        ));
+        assert_eq!(
+            service.lock().publications().capacity().sequence(),
+            capacity
+        );
+        assert_eq!(service.lock().capacity(), api::work::WorkCapacity::EMPTY);
+    }
+
+    #[test]
+    fn overcharge_publishes_a_failure_for_selection_and_walking() {
+        for walking in [false, true] {
+            let navs = navs(vec![bank("bank", 8, 8)]);
+            let mut state = WorldState::default();
+            // Reserved captured storage counts even when its map is empty.
+            state
+                .varps
+                .reserve(BANK_PICK_JOB_BYTES / std::mem::size_of::<(i32, i32)>());
+            assert!(!super::super::queue_bank(
+                &navs,
+                "test",
+                scope(),
+                &Some(world(false)),
+                Some(state),
+                tile(0, 0),
+                FindOptions::default(),
+                7,
+                BankPreferences::default(),
+                None,
+                walking,
+                None,
+            ));
+            let all = navs.lock().unwrap();
+            let bot = &all["test"];
+            assert!(bot.bank_pick.current.is_none());
+            assert!(bot.bank_pick.pending_inline.is_none());
+            assert_eq!(
+                bot.bank_pick.owner_result.as_ref().unwrap().value().kind,
+                PickKind::NoCandidate
+            );
+            if walking {
+                assert!(bot.walk_outcome_failed);
+                assert_eq!(bot.walk_outcome_generation, bot.route_generation);
+                assert_eq!(bot.walk_outcome_request_id, 0);
+                assert_eq!((bot.walk_outcome_x, bot.walk_outcome_z), (8, 8));
+                assert!(bot.requested_route.is_none());
+            } else {
+                assert_eq!(bot.bank_pick.posted.request_id, 7);
+                assert_eq!(bot.bank_pick.posted.kind, PickKind::NoCandidate as u8);
+            }
+        }
+    }
+
+    #[test]
+    fn burst_input_equality_uses_captured_query_contents() {
+        let world = world(false);
+        let first = navs(vec![bank("bank", 8, 8)]);
+        let same = navs(vec![bank("bank", 8, 8)]);
+        let different = navs(vec![bank("other", 12, 12)]);
+        stage_pick(&first, Arc::clone(&world), 1, 1, scope(), None);
+        stage_pick(&same, Arc::clone(&world), 2, 2, scope(), None);
+        stage_pick(&different, world, 3, 3, scope(), None);
+        let first = first.lock().unwrap();
+        assert!(first["test"]
+            .bank_pick
+            .query_inputs_match_for_test(&same.lock().unwrap()["test"].bank_pick,));
+        assert!(!first["test"]
+            .bank_pick
+            .query_inputs_match_for_test(&different.lock().unwrap()["test"].bank_pick,));
+    }
+
+    #[test]
+    fn full_demand_waits_for_capacity_change_then_retries_the_same_request() {
+        let service = service();
+        let scope = scope();
+        let world = world(false);
+        let first = navs(vec![bank("bank", 8, 8)]);
+        let second = navs(vec![bank("bank", 8, 8)]);
+        let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(1);
+        let mut release_gate = BankPickGateRelease(Some(release_tx));
+        stage_pick(
+            &first,
+            Arc::clone(&world),
+            1,
+            1,
+            scope,
+            Some(BankPickStepGate {
+                entered: entered_tx,
+                release: release_rx,
+            }),
+        );
+        stage_pick(&second, Arc::clone(&world), 1, 1, scope, None);
+        let submit = |navs: &_, force| {
+            super::super::submit_pending_bank_pick_with_service(
+                navs, "test", scope, force, &service,
+            )
+        };
+        assert!(submit(&first, true));
+        entered_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the real first bank-pick cursor reaches its bounded gate");
+        assert!(submit(&second, true));
+        assert_eq!(service.lock().capacity().jobs(), 2);
+
+        let mut accepted = vec![Arc::clone(&second)];
+        let mut full_demand = None;
+        // The WorkService admits at most 64 retained jobs; these bounded
+        // actual requests reach Full earlier if their preflight charges fill
+        // the byte ledger first.
+        for request_id in 3..=65 {
+            let pending = navs(vec![bank("bank", 8, 8)]);
+            stage_pick(&pending, Arc::clone(&world), request_id, 1, scope, None);
+            let charge = {
+                let all = pending.lock().unwrap();
+                all["test"]
+                    .bank_pick
+                    .current
+                    .as_ref()
+                    .unwrap()
+                    .pending_job
+                    .as_ref()
+                    .unwrap()
+                    .inner
+                    .input
+                    .charge
+                    .total_bytes()
+                    .unwrap()
+            };
+            assert!(charge > 0, "every bank request has a real preflight charge");
+            assert!(charge <= super::super::BANK_PICK_JOB_BYTES);
+            let before = service.lock().capacity();
+            let submission_ok = submit(&pending, true);
+            let after = service.lock().capacity();
+            let (ticket_present, pending_job_present, retained_request) = {
+                let all = pending.lock().unwrap();
+                let active = all["test"].bank_pick.current.as_ref().unwrap();
+                (
+                    active.ticket.is_some(),
+                    active.pending_job.is_some(),
+                    active
+                        .ticket
+                        .is_none()
+                        .then(|| Arc::clone(&active.job.request)),
+                )
+            };
+
+            if ticket_present {
+                assert!(submission_ok, "a valid bank request was accepted");
+                assert!(!pending_job_present);
+                assert_eq!(after.jobs(), before.jobs() + 1);
+                assert!(
+                    after.bytes().saturating_sub(before.bytes()) >= charge,
+                    "the accepted capacity increase includes the actual preflight charge"
+                );
+                accepted.push(pending);
+            } else {
+                assert!(
+                    submission_ok,
+                    "an unticketed retained request is specifically a Full refusal"
+                );
+                assert!(pending_job_present);
+                assert_eq!(after, before, "a refused request does not change capacity");
+                full_demand = Some((pending, retained_request.unwrap(), submission_ok));
+                break;
+            }
+        }
+        let (third, retained_request, full_retained) =
+            full_demand.expect("bounded real bank requests must reach the WorkService Full limit");
+        let observed = service.lock().publications().capacity().sequence();
+        {
+            let all = third.lock().unwrap();
+            let active = all["test"].bank_pick.current.as_ref().unwrap();
+            assert!(active.ticket.is_none());
+            assert!(active.pending_job.is_some());
+            assert_eq!(active.capacity_sequence, Some(observed));
+            assert!(Arc::ptr_eq(&active.job.request, &retained_request));
+            assert!(matches!(
+                all["test"].bank_pick.work_observation_for_test(),
+                Some(super::super::BankPickWorkObservation::Full {
+                    capacity_sequence,
+                    ..
+                }) if capacity_sequence == observed
+            ));
+        }
+        let retried_without_change = submit(&third, false);
+        assert_eq!(
+            service.lock().publications().capacity().sequence(),
+            observed
+        );
+        release_gate.release();
+
+        let first_ticket = first.lock().unwrap()["test"]
+            .bank_pick
+            .current
+            .as_ref()
+            .unwrap()
+            .ticket
+            .unwrap()
+            .ticket();
+        WorkService::wait_terminal(&service, &first_ticket).unwrap();
+        let posted =
+            super::super::poll_bank_pick_with_service(&first, "test", Instant::now(), &service);
+        assert_eq!(posted.kind, PickKind::Reachable as u8);
+        wait_for_returned_capacity(&service, accepted.len());
+        assert_eq!(service.lock().capacity().jobs(), accepted.len());
+        assert_ne!(
+            service.lock().publications().capacity().sequence(),
+            observed
+        );
+
+        let retried_after_change = submit(&third, false);
+        let same_request = {
+            let all = third.lock().unwrap();
+            let active = all["test"].bank_pick.current.as_ref().unwrap();
+            active.ticket.is_some() && Arc::ptr_eq(&active.job.request, &retained_request)
+        };
+        for pending in accepted.iter().chain(std::iter::once(&third)) {
+            let ticket = pending.lock().unwrap()["test"]
+                .bank_pick
+                .current
+                .as_ref()
+                .unwrap()
+                .ticket
+                .unwrap()
+                .ticket();
+            WorkService::wait_terminal(&service, &ticket).unwrap();
+            let posted = super::super::poll_bank_pick_with_service(
+                pending,
+                "test",
+                Instant::now(),
+                &service,
+            );
+            assert_eq!(posted.kind, PickKind::Reachable as u8);
+        }
+        wait_for_returned_capacity(&service, 0);
+        assert_eq!(service.lock().capacity(), api::work::WorkCapacity::EMPTY);
+        assert!(full_retained, "Full retains the actual third owner demand");
+        assert!(!retried_without_change, "unchanged capacity must not retry");
+        assert!(retried_after_change, "released capacity must retry");
+        assert!(same_request, "a retry keeps the original captured request");
+    }
+
+    #[derive(Clone, Copy)]
+    enum PickInvalidation {
+        Reset,
+        RouteReplacement,
+        OwnerDrop,
+    }
+
+    fn invalidation_does_not_wait_for_work_service(invalidation: PickInvalidation) {
+        let service = service();
+        let scope = scope();
+        let navs = navs(vec![bank("bank", 8, 8)]);
+        let world = world(false);
+        let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(1);
+        let mut release_gate = BankPickGateRelease(Some(release_tx));
+        stage_pick(
+            &navs,
+            Arc::clone(&world),
+            1,
+            1,
+            scope,
+            Some(BankPickStepGate {
+                entered: entered_tx,
+                release: release_rx,
+            }),
+        );
+        assert!(super::super::submit_pending_bank_pick_with_service(
+            &navs, "test", scope, true, &service,
+        ));
+        entered_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("real cooperative bank-pick job reaches the bounded gate");
+        let one_job = {
+            let all = navs.lock().unwrap();
+            let active = all["test"].bank_pick.current.as_ref().unwrap();
+            assert!(active.ticket.is_some());
+            service.lock().capacity()
+        };
+        assert_eq!(one_job.jobs(), 1);
+
+        match invalidation {
+            PickInvalidation::Reset => {
+                super::super::super::reset_script_nav(&navs, "test", None);
+                super::super::drain_bank_pick_cancellation(&navs, "test");
+                super::super::drain_bank_pick_retired_owner(&navs, "test");
+            }
+            PickInvalidation::RouteReplacement => {
+                let (replaced_tx, replaced_rx) = mpsc::sync_channel(1);
+                let navs_for_replace = Arc::clone(&navs);
+                let service_guard = service.lock();
+                let replacer = std::thread::spawn(move || {
+                    {
+                        let mut all = navs_for_replace.lock().unwrap();
+                        let bot = all.get_mut("test").unwrap();
+                        bot.bank_pick.reset_for_route_replacement();
+                        bot.route_generation = bot.route_generation.checked_add(1).unwrap();
+                    }
+                    super::super::drain_bank_pick_cancellation(&navs_for_replace, "test");
+                    super::super::drain_bank_pick_retired_owner(&navs_for_replace, "test");
+                    replaced_tx.send(()).unwrap();
+                });
+                let replaced = replaced_rx.recv_timeout(Duration::from_secs(2));
+                drop(service_guard);
+                replacer.join().unwrap();
+                replaced.expect("route replacement invalidates without WorkService");
+            }
+            PickInvalidation::OwnerDrop => {
+                let (dropped_tx, dropped_rx) = mpsc::sync_channel(1);
+                let navs_for_drop = Arc::clone(&navs);
+                let service_guard = service.lock();
+                let dropper = std::thread::spawn(move || {
+                    let removed = navs_for_drop.lock().unwrap().remove("test");
+                    drop(removed);
+                    dropped_tx.send(()).unwrap();
+                });
+                dropped_rx
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("dropping NavBot never waits on the WorkService mutex");
+                drop(service_guard);
+                dropper.join().unwrap();
+                let fresh = super::navs(vec![bank("bank", 8, 8)]);
+                let bot = fresh.lock().unwrap().remove("test").unwrap();
+                navs.lock().unwrap().insert("test".to_owned(), bot);
+            }
+        }
+
+        let still_charged = service.lock().capacity();
+        assert_eq!(
+            still_charged.jobs(),
+            1,
+            "old charge survives owner invalidation"
+        );
+        assert_eq!(still_charged.bytes(), one_job.bytes());
+
+        let next_generation = match invalidation {
+            PickInvalidation::OwnerDrop => 1,
+            PickInvalidation::Reset | PickInvalidation::RouteReplacement => 3,
+        };
+        stage_pick(&navs, Arc::clone(&world), 2, next_generation, scope, None);
+        assert!(super::super::submit_pending_bank_pick_with_service(
+            &navs, "test", scope, true, &service,
+        ));
+        let (new_ticket, two_jobs) = {
+            let all = navs.lock().unwrap();
+            let active = all["test"].bank_pick.current.as_ref().unwrap();
+            (active.ticket.unwrap().ticket(), service.lock().capacity())
+        };
+        assert_eq!(
+            two_jobs.jobs(),
+            2,
+            "replacement fits beside the old live job"
+        );
+        assert_eq!(two_jobs.bytes(), one_job.bytes() * 2);
+        let observed = service.lock().publications().capacity().sequence();
+        release_gate.release();
+        WorkService::wait_for_capacity_change(&service, observed);
+        let after_old_return = service.lock().capacity();
+        assert_eq!(after_old_return.jobs(), 1);
+        assert_eq!(after_old_return.bytes(), one_job.bytes());
+
+        WorkService::wait_terminal(&service, &new_ticket).expect("replacement bank-pick completes");
+        let posted =
+            super::super::poll_bank_pick_with_service(&navs, "test", Instant::now(), &service);
+        assert_eq!(posted.request_id, 2);
+        assert_eq!(posted.kind, PickKind::Reachable as u8);
+        wait_for_returned_capacity(&service, 0);
+        assert_eq!(service.lock().capacity().jobs(), 0);
+        let current = navs.lock().unwrap();
+        assert!(current["test"].bank_pick.current.is_none());
+    }
+
+    #[test]
+    fn route_replacement_releases_completed_terminal_charge_before_generation_change() {
+        let service = service();
+        let scope = scope();
+        let navs = navs(vec![bank("bank", 8, 8)]);
+        let world = world(false);
+        stage_pick(&navs, Arc::clone(&world), 1, 1, scope, None);
+        assert!(super::super::submit_pending_bank_pick_with_service(
+            &navs, "test", scope, true, &service,
+        ));
+        let old_ticket = navs.lock().unwrap()["test"]
+            .bank_pick
+            .current
+            .as_ref()
+            .unwrap()
+            .ticket
+            .unwrap()
+            .ticket();
+        WorkService::wait_terminal(&service, &old_ticket)
+            .expect("old cooperative bank-pick job completes");
+        assert_eq!(service.lock().capacity().jobs(), 1);
+        let (old_result_before, noops_before) = {
+            let service = service.lock();
+            let result = match service.borrow_terminal(&old_ticket).unwrap() {
+                Some(Settlement::Completed(result)) => result,
+                _ => panic!("old cooperative bank-pick job completed"),
+            };
+            (
+                (result.index, result.access_tile, result.kind),
+                service.cancellation_handle_noops(),
+            )
+        };
+
+        let (replaced_tx, replaced_rx) = mpsc::sync_channel(1);
+        let navs_for_replace = Arc::clone(&navs);
+        let service_guard = service.lock();
+        let replacer = std::thread::spawn(move || {
+            {
+                let mut all = navs_for_replace.lock().unwrap();
+                let bot = all.get_mut("test").unwrap();
+                bot.bank_pick.reset_for_route_replacement();
+                bot.route_generation = bot.route_generation.checked_add(1).unwrap();
+            }
+            super::super::drain_bank_pick_cancellation(&navs_for_replace, "test");
+            super::super::drain_bank_pick_retired_owner(&navs_for_replace, "test");
+            replaced_tx.send(()).unwrap();
+        });
+        let replaced = replaced_rx.recv_timeout(Duration::from_secs(2));
+        drop(service_guard);
+        replacer.join().unwrap();
+        replaced.expect("route replacement abandons without WorkService");
+        wait_for_returned_capacity(&service, 0);
+        {
+            let service = service.lock();
+            assert_eq!(service.capacity(), api::work::WorkCapacity::EMPTY);
+            assert_eq!(service.cancellation_handle_noops(), noops_before + 1);
+            match service
+                .borrow_terminal(&old_ticket)
+                .expect("abandoning an unconsumed terminal preserves its identity")
+            {
+                Some(Settlement::Completed(result)) => assert_eq!(
+                    (result.index, result.access_tile, result.kind),
+                    old_result_before,
+                    "route replacement does not rewrite the completed terminal"
+                ),
+                _ => panic!("route replacement must not rewrite the completed terminal"),
+            }
+        }
+
+        stage_pick(&navs, Arc::clone(&world), 2, 3, scope, None);
+        assert!(super::super::submit_pending_bank_pick_with_service(
+            &navs, "test", scope, true, &service,
+        ));
+        let new_ticket = navs.lock().unwrap()["test"]
+            .bank_pick
+            .current
+            .as_ref()
+            .unwrap()
+            .ticket
+            .unwrap()
+            .ticket();
+        assert!(matches!(
+            service.lock().borrow_terminal(&old_ticket),
+            Err(api::work::LedgerError::StaleIdentity)
+        ));
+        WorkService::wait_terminal(&service, &new_ticket)
+            .expect("replacement bank-pick job completes");
+        let posted =
+            super::super::poll_bank_pick_with_service(&navs, "test", Instant::now(), &service);
+        assert_eq!(posted.request_id, 2);
+        assert_eq!(posted.kind, PickKind::Reachable as u8);
+        wait_for_returned_capacity(&service, 0);
+        assert_eq!(service.lock().capacity().jobs(), 0);
+    }
+
+    #[test]
+    fn reset_route_replacement_and_owner_drop_keep_old_charge_until_worker_return() {
+        invalidation_does_not_wait_for_work_service(PickInvalidation::Reset);
+        invalidation_does_not_wait_for_work_service(PickInvalidation::RouteReplacement);
+        invalidation_does_not_wait_for_work_service(PickInvalidation::OwnerDrop);
+    }
 }

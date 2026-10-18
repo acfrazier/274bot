@@ -86,7 +86,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   rather than the game-action dispatcher, including after a kept reconnect.
 - Per-slot diagnostics expose dropped seat actions and late control copies as
   read-only counters. Duplicate acknowledgements count without noisy error logs.
-
 - Reload and catalog refresh prepare source, siblings and settings off the UI
   thread. Their buttons show **Reloading…** or **Refreshing catalog…** through
   preparation and validation, rather than calling both stages validation.
@@ -119,6 +118,30 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   16 MiB of retained documents. Larger folders or documents report a typed
   validation error and leave the last successful registry available.
 
+### Navigation
+
+- Route planning now runs independently for each request, with a 192 MiB
+  memory limit for each search. A request waits when search capacity is full.
+  Replacing or stopping a walk cancels its old search, so a late result
+  cannot replace the new walk. Refused routes no longer appear to wait for
+  search capacity.
+  Searches still check cancellation and time limits throughout their work.
+- Routes share transport details instead of copying them for every hop.
+  Plans that fetch banked supplies account for carried and worn requirements
+  without reducing the route-search budget.
+- Bots that need banked route supplies now walk to the bank access with the
+  shortest walking path they can reach, instead of the nearest access in a
+  straight line. An unreachable access at the nearest bank no longer stops the
+  bank trip.
+- Single-tile walks and radius walks keep their existing danger-zone refusal
+  rules, even when a radius search has only one candidate.
+- Route inspection now runs independently, including banked supply planning
+  and danger-zone explanations. Each inspection keeps its 192 MiB memory limit.
+  Reported transport names and actions remain unchanged.
+  Busy search capacity or result storage delays a valid inspection instead
+  of refusing it. Reset cancels the current inspection and prevents stale
+  output. Recent results remain available until acknowledged or replaced.
+
 ### Random-event guardian
 
 - Disabling random-event handling no longer leaves Gatherer or other scripts
@@ -126,6 +149,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   remain visible, but do not pause scripts while handling is disabled.
 
 ### Gatherer and banking
+
+- Bank selection now runs independently of other searches, with a 192 MiB
+  memory limit for each selection. Busy search capacity or result storage
+  delays a selection instead of losing it.
+  After five seconds, a selection that will walk to the bank switches to a
+  fallback route search. If search capacity is still full, it waits for
+  capacity before that search starts. Its result can therefore take longer
+  than five seconds.
+  A selection that does not walk keeps the first bank without a route after
+  five seconds, even when search capacity is full.
+  An oversized request or a failure to start its search reports a failed
+  selection instead of waiting forever. Following a selected bank route and
+  displaying it on the map share one route, which avoids extra route copies.
 
 - A Gatherer that stalls on its return from the bank now replans once from
   its current position before stopping. It still requires arrival at the
@@ -235,6 +271,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Panel
 
+- Map baking now runs independently of other background work. Existing map
+  caches rebuild once for the updated map preparation.
+  Progress shows both catalogue preparation and terrain baking.
+  Map baking continues if another background worker stops responding.
+- Map preparation no longer locks its output cache while it only reads inputs.
+  Oversized caches recover by removing unused files and rebuilding.
+  An interrupted bake checks saved batches and later tiles, then replaces
+  damaged files before it publishes terrain.
+  Opening the map checks existing terrain before starting another bake.
+- Closing a map releases any unused work reservation.
+  Cache cleanup preserves terrain still in use and removes the least recently
+  used entries first. Release packaging waits for a bake to stop before it
+  removes temporary files.
 - WalkTo terrain tiles decode on a background worker using shared bounded work, rather
   than a separate map-decoding thread.
 - Panning the WalkTo map no longer redraws squares that you just scrolled past.
@@ -281,26 +330,36 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   look up that name again for the next world. Each such world costs one
   more wait for the name lookup. Before, 274bot took only the cache from
   the next world and kept the first world's game server.
-
 ### Fixed during development
 
-- Bots that need banked route supplies now choose an access tile they can reach.
-  An unreachable access at the nearest bank no longer prevents the bank trip.
-  If no access is reachable, danger-zone refusals keep their explanation.
+#### Navigation
 
-- The first launch's game cache download no longer switches off background
-  work on slower connections, and "Preparing cache snapshot" now shows how
-  far the download has got.
-
-- Short route searches no longer allocate the full node-budget table.
-  Cooperative routes reserve the same maximum storage, but initialize only
-  the pages that the search uses. Small first-goal diagnostics also retain
-  demand-driven proof storage.
+- Planning a bank trip for route supplies is fast again from places such as
+  the Varrock sewers, where it had slowed to several seconds. If no bank access
+  is reachable, danger-zone refusals keep their explanation, and route
+  inspection checks each bank access before planning with banked supplies.
+- Script routes remain visible in the panel game view. After a bank session,
+  the final route is checked against the updated inventory and gear.
+  Searches waiting for capacity resume when capacity becomes available.
+  Multi-stage routes continue without an extra frame between search stages.
+  Routes keep the same map paths and transport labels.
+  Route overlays no longer block navigation updates while the panel draws the game view.
+- Valid native walks and route assessments no longer fail before their searches
+  start. Concurrent requests no longer cause false search-start failures.
+- Short route searches use memory only for the parts of the search they visit.
+  Their maximum search allowance remains unchanged.
 - Walking to an area or to within reach of a tile with a radius of 17 tiles or
   more no longer fails before the route search starts. Such walks are planned
   again within the same memory limit as other routes.
-- Cooperative route searches now check each work boundary once instead of
-  repeating the same clock and cancellation check between work units.
+- Route searches avoid duplicate clock and cancellation checks without changing
+  cancellation or time limits.
+- Large route searches no longer slow sharply as their stored search history grows.
+  Their existing search budget and route order stay unchanged.
+- Radius walks keep the requested center as their first goal when it is valid.
+  Missing-supply checks retain space for the route's transports, not the full
+  search budget, so later planning stages do not refuse short routes.
+- A card's first walk now starts correctly. Bank-planned walks keep the selected
+  approach tile and can equip a carried item without requiring a bank visit.
 - Single-target and multi-target route searches no longer copy an unused
   first-goal proof future for every settled node.
 - Synchronous route searches no longer suspend and immediately resume their
@@ -319,15 +378,39 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   avoiding a helper call at each queue comparison.
 - Packed search tables use more bucket heads to shorten collision scans.
   Full-budget backing grows by 213,570 bytes within the same job ceiling.
+
+#### Maps
+
+- Map baking saves progress in batches of 64 tiles. Cancelling or finishing a
+  bake saves the remaining tiles. Terrain and catalogue saves avoid duplicate
+  disk flushes without reducing recovery guarantees.
+- Checking for missing terrain no longer creates cache files.
+  Catalogue preparation avoids empty progress files and redundant disk flushes.
+- A completed catalogue saves its final manifest without first rewriting a
+  progress file. Cancelled and incomplete work still save their progress.
+- Catalogue preparation groups small operations but still checks cancellation
+  and time limits before each placement.
+  It avoids a second world scan when all candidates fit its memory limit.
+  Larger inputs keep the second scan.
+
+#### Startup and saved state
+
+- The first launch's game cache download no longer switches off background
+  work on slower connections, and "Preparing cache snapshot" now shows how
+  far the download has got.
 - One slow disk write no longer leaves script cards, the script catalogue or
   profiles stopped until 274bot restarts.
 - Windows now recovers damaged panel preferences and repairs duplicate loadout
   names after preserving the original file in a flushed copy.
-- Windows now promptly cancels blocked login transport I/O when a login attempt
-  ends.
 - A loadout list that did not load can no longer save. Add, rename, remove
   and Save in the panel and the TUI refuse and show why the list did not
   load. The saved loadouts stay as they were.
+
+#### Login
+
+- Windows now promptly cancels blocked login transport I/O when a login attempt
+  ends.
+
 ### Release engineering
 
 - The architecture check refuses candidate Cargo configuration files without

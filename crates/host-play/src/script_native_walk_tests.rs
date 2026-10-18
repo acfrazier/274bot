@@ -1,5 +1,5 @@
 //! Typed native walks through the real host pump: `script_observe`'s receipt
-//! delivery and native drain, the off-pump route worker and `step_nav_bot`.
+//! delivery and native drain, the route-work service and `step_nav_bot`.
 use super::*;
 use client::dash3d::CollisionFlag;
 use nav::bank_fetch::BankRows;
@@ -145,10 +145,10 @@ fn rig(world: Option<Arc<NavWorld>>, blocked: bool) -> Rig {
         },
         ..Walker::default()
     }));
-    script_slot_or_insert(&scripts, "alice")
-        .lock()
-        .unwrap()
-        .start_test_script(
+    let slot = script_slot_or_insert(&scripts, "alice");
+    {
+        let mut slot = slot.lock().unwrap();
+        slot.start_test_script(
             Box::new(WalkerScript {
                 shared: Arc::clone(&shared),
                 handle: None,
@@ -156,13 +156,20 @@ fn rig(world: Option<Arc<NavWorld>>, blocked: bool) -> Rig {
             None,
         )
         .unwrap();
+    }
+    let work_scope = slot.lock().unwrap().work_scope();
+    let bot = NavBot {
+        work_scope,
+        ..NavBot::default()
+    };
+    let navs = Arc::new(Mutex::new(HashMap::from([("alice".into(), bot)])));
     let mut client = nav_client();
     let mut snapshot = GameSnapshot::new();
     nav_snapshot_at(&mut client, &mut snapshot, 0, 0);
     Rig {
         scripts,
         cheats: Arc::new(Mutex::new(HashMap::new())),
-        navs: Arc::new(Mutex::new(HashMap::new())),
+        navs,
         statuses: Arc::new(Mutex::new(vec![SlotStatus {
             username: "alice".into(),
             ..SlotStatus::default()
@@ -186,6 +193,13 @@ fn native_near_walk_after_compat_tile_walk_uses_arrival_endpoint() {
         z: 0,
         level: 0,
     };
+    let scope = rig.slot().lock().unwrap().work_scope();
+    rig.navs
+        .lock()
+        .unwrap()
+        .entry("alice".into())
+        .or_default()
+        .work_scope = scope;
     let compat_arm = crate::script_runtime::ScriptWalkArm {
         here: Some((0, 0, 0)),
         world: rig.world.clone(),
@@ -206,7 +220,7 @@ fn native_near_walk_after_compat_tile_walk_uses_arrival_endpoint() {
         crate::script_runtime::ScriptRouteExclusions::default(),
     ));
     assert!(
-        wait_until(5_000, || queued(&rig.navs) == Some(target)),
+        rig.wait_for_route(5_000, || queued(&rig.navs) == Some(target)),
         "the compatibility walk first routes to its requested tile"
     );
     assert!(
@@ -223,31 +237,30 @@ fn native_near_walk_after_compat_tile_walk_uses_arrival_endpoint() {
 
     rig.observe(1);
     assert!(
-        wait_until(5_000, || {
+        rig.wait_for_route(5_000, || {
             rig.navs.lock().unwrap().get("alice").is_some_and(|bot| {
                 bot.route_generation != compatibility_generation
                     && bot.route_request_id == bot.walk_request_id
-                    && bot.route_worker.is_none()
+                    && !bot.route_work_pending()
                     && bot.pending_route.is_none()
-                    && bot.route.is_some()
+                    && bot.has_route()
             })
         }),
         "the native route replaces the preceding compatibility route"
     );
     let navs = rig.navs.lock().unwrap();
     let bot = &navs["alice"];
-    let route = bot.route.as_ref().expect("the native walk is routed");
+    let destination = bot.route_destination().expect("the native walk is routed");
     assert!(
         !bot.route_compat_tile_intent,
         "native requests reset the previous compatibility intent"
     );
-    assert_ne!(route.dest, target);
+    assert_ne!(destination, target);
     assert_eq!(
-        route
-            .dest
+        destination
             .x
             .abs_diff(target.x)
-            .max(route.dest.z.abs_diff(target.z)),
+            .max(destination.z.abs_diff(target.z)),
         1,
         "native radius walking still ends on its arrival-side approach tile"
     );
@@ -577,11 +590,13 @@ impl Rig {
             false,
             false,
         );
+        crate::script_runtime::pump_route_work(&self.navs, "alice");
     }
 
     /// Steps from the snapshot's own (network route-head) tile, the same
     /// position authority the host passes in production.
     fn step(&mut self) {
+        crate::script_runtime::pump_route_work(&self.navs, "alice");
         step_nav_bot(
             &mut self.driver,
             "alice",
@@ -595,6 +610,12 @@ impl Rig {
             None,
             no_reach,
         );
+    }
+    fn wait_for_route(&self, ms: u64, mut condition: impl FnMut() -> bool) -> bool {
+        wait_until(ms, || {
+            crate::script_runtime::pump_route_work(&self.navs, "alice");
+            condition()
+        })
     }
 
     fn step_at(&mut self, here: WorldTile) {
@@ -612,8 +633,13 @@ impl Rig {
 
     fn wait_routed(&self) {
         assert!(
-            wait_until(5_000, || queued(&self.navs).is_some()),
-            "the worker armed the native route"
+            self.wait_for_route(5_000, || queued(&self.navs).is_some()),
+            "the route service armed the native route; detail: {:?}",
+            self.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .and_then(|bot| bot.walk_outcome_detail.as_deref())
         );
     }
 
@@ -1281,7 +1307,7 @@ fn check_pending_arrival(previous: Option<i32>) {
     rig.snapshot.seed_tick(3);
     rig.step();
     assert!(
-        rig.navs.lock().unwrap()["alice"].route.is_none(),
+        !rig.navs.lock().unwrap()["alice"].has_route(),
         "T+1 really ends the route before the pending protect is observed"
     );
     assert_eq!(
@@ -1817,9 +1843,8 @@ fn an_unroutable_native_walk_delivers_one_failed_terminal() {
     let mut rig = rig(Some(Arc::new(open_world(3, 1))), false);
     rig.observe(1);
     assert!(
-        wait_until(5_000, || rig.navs.lock().unwrap()["alice"]
-            .route_worker
-            .is_none()),
+        rig.wait_for_route(5_000, || !rig.navs.lock().unwrap()["alice"]
+            .route_work_pending()),
         "the planner completes the unreachable request"
     );
     rig.observe(2);
@@ -1841,16 +1866,15 @@ fn native_walk_failure_receipt_names_missing_route_supplies() {
     let mut rig = rig(Some(Arc::new(world)), false);
     rig.observe(1);
     assert!(
-        wait_until(5_000, || rig.navs.lock().unwrap()["alice"]
-            .route_worker
-            .is_none()),
+        rig.wait_for_route(5_000, || !rig.navs.lock().unwrap()["alice"]
+            .route_work_pending()),
         "the planner completes the fare-gated request"
     );
     rig.observe(2);
 
     let shared = rig.shared.lock();
     let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
-    assert_eq!(receipt.end, WalkEnd::Failed);
+    assert_eq!(receipt.end, WalkEnd::Failed, "{:?}", receipt.detail);
     let detail = receipt
         .detail
         .as_deref()
@@ -1877,9 +1901,10 @@ fn native_walk_gated_on_fishing(fishing: i32) -> (bool, Option<Result<WalkEnd, A
     }]);
     // script_observe(..., state: None, Some(&snapshot), ...) — the Starting-frame arm.
     rig.observe(1);
-    assert!(wait_until(5_000, || rig.navs.lock().unwrap()["alice"]
-        .route_worker
-        .is_none()));
+    assert!(
+        rig.wait_for_route(5_000, || !rig.navs.lock().unwrap()["alice"]
+            .route_work_pending())
+    );
     let routed = queued(&rig.navs).is_some();
     rig.observe(2);
     let end = rig.end();
@@ -2053,7 +2078,7 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
     rig.shared.lock().options.allow_danger_zones = script::native::WalkBit::Forbid;
 
     rig.observe(3);
-    assert!(wait_until(5_000, || {
+    assert!(rig.wait_for_route(5_000, || {
         rig.navs
             .lock()
             .unwrap()
@@ -2115,21 +2140,17 @@ fn native_admission_global_and_walk_danger_permissions_and_forbid() {
             "global fetch stays manual-only at the native admission"
         );
         rig.observe(1);
-        assert!(wait_until(5_000, || {
+        assert!(rig.wait_for_route(5_000, || {
             rig.navs
                 .lock()
                 .unwrap()
                 .get("alice")
-                .is_some_and(|bot| bot.route_worker.is_none())
+                .is_some_and(|bot| !bot.route_work_pending())
         }));
         {
             let all = rig.navs.lock().unwrap();
             let bot = &all["alice"];
-            assert_eq!(
-                bot.route.is_some(),
-                permitted,
-                "global={global}, walk={bit:?}"
-            );
+            assert_eq!(bot.has_route(), permitted, "global={global}, walk={bit:?}");
             assert!(
                 bot.bank_fetch.is_none(),
                 "native walks never use BankBudget"
@@ -2194,7 +2215,7 @@ fn native_protect_alone_does_not_grant_danger_and_invalid_cross_still_refuses() 
         rig.shared.lock().protect = true;
         seed_prayer(&mut rig.snapshot, 43);
         rig.observe(1);
-        assert!(wait_until(5_000, || {
+        assert!(rig.wait_for_route(5_000, || {
             rig.navs
                 .lock()
                 .unwrap()
@@ -2282,16 +2303,16 @@ fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen(
                 cross: vec![],
             }],
         ));
-        assert!(wait_until(5_000, || {
+        assert!(rig.wait_for_route(5_000, || {
             rig.navs
                 .lock()
                 .unwrap()
                 .get("alice")
-                .is_some_and(|bot| bot.route_worker.is_none())
+                .is_some_and(|bot| !bot.route_work_pending())
         }));
         let all = rig.navs.lock().unwrap();
         let bot = &all["alice"];
-        assert_eq!(bot.route.is_some(), compiled);
+        assert_eq!(bot.has_route(), compiled);
         if compiled {
             let request = bot.requested_route.unwrap();
             assert!(request.2 && request.3 && request.5.is_all());
@@ -2711,6 +2732,20 @@ fn manual_cancellation_detail_clears_when_the_next_walk_arms() {
         )
         .expect("the next walk route arms");
     assert!(
+        rig.wait_for_route(5_000, || {
+            rig.navs.lock().unwrap().get("alice").is_some_and(|bot| {
+                bot.route_destination()
+                    == Some(WorldTile {
+                        x: 8,
+                        z: 0,
+                        level: 0,
+                    })
+                    && !bot.route_work_pending()
+            })
+        }),
+        "the new route work did not complete"
+    );
+    assert!(
         !rig.navs.lock().unwrap()["alice"].manual_walk_cancelled_detail,
         "the detail clears on the next route arm"
     );
@@ -2721,7 +2756,7 @@ fn manual_cancellation_detail_clears_when_the_next_walk_arms() {
     );
     completed
         .recv_timeout(std::time::Duration::from_secs(60))
-        .expect("the new route worker completes");
+        .expect("the route work completion signal was not published");
 }
 
 #[test]
@@ -2995,11 +3030,11 @@ fn held_manual_click_still_cancels_and_other_slot_survives() {
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
-    let route = rig.navs.lock().unwrap()["alice"].route.clone();
+    let route = rig.navs.lock().unwrap()["alice"].compact_route.clone();
     rig.navs.lock().unwrap().insert(
         "bob".into(),
         NavBot {
-            route,
+            compact_route: route,
             walk_request_id: 99,
             ..NavBot::default()
         },
@@ -3055,7 +3090,7 @@ fn manual_round3_click_after_arrival_keeps_the_completed_receipt() {
     let before = {
         let navs = rig.navs.lock().unwrap();
         let bot = &navs["alice"];
-        assert!(bot.route.is_none());
+        assert!(!bot.has_route());
         assert!(bot.requested_route.is_some(), "dedupe retains the identity");
         (
             bot.walk_outcome_seq,
@@ -3317,7 +3352,15 @@ fn held_manual_input_cancels_only_its_operator_walk_once() {
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
-    let route = rig.navs.lock().unwrap()["alice"].route.clone();
+    let route = Some(Arc::new(Route {
+        legs: vec![],
+        dest: WorldTile {
+            x: 4,
+            z: 0,
+            level: 0,
+        },
+        ticks: 4.0,
+    }));
     let alice = Arc::new(Mutex::new(crate::WalkArm {
         route: route.clone(),
         route_generation: 17,
@@ -3352,9 +3395,9 @@ fn held_manual_input_cancels_only_its_operator_walk_once() {
         }),
         manual_frame(true),
     ));
-    assert!(alice.lock().unwrap().route.is_none());
+    assert!(alice.lock().unwrap().queued_tile().is_none());
     assert_eq!(alice.lock().unwrap().route_generation, 18);
-    assert!(bob.lock().unwrap().route.is_some());
+    assert!(bob.lock().unwrap().queued_tile().is_some());
     assert_eq!(bob.lock().unwrap().route_generation, 19);
 }
 const WATER_CENTER: WorldTile = WorldTile {
@@ -3450,14 +3493,14 @@ fn water_area_rig(separating_wall: bool, radius: u16) -> Rig {
 
 fn wait_for_native_route_outcome(rig: &Rig) {
     assert!(
-        wait_until(5_000, || {
+        rig.wait_for_route(5_000, || {
             rig.navs
                 .lock()
                 .unwrap()
                 .get("alice")
-                .is_some_and(|bot| bot.walk_outcome_seq != 0 && bot.route_worker.is_none())
+                .is_some_and(|bot| bot.walk_outcome_seq != 0 && !bot.route_work_pending())
         }),
-        "the native route worker published a terminal outcome"
+        "the native route service published a terminal outcome"
     );
 }
 
@@ -3467,11 +3510,9 @@ fn area_walk_routes_to_reachable_shore_and_native_receipt_settles_there() {
     rig.observe(1);
     rig.wait_routed();
 
-    let route = rig.navs.lock().unwrap()["alice"]
-        .route
-        .clone()
+    let goal = rig.navs.lock().unwrap()["alice"]
+        .route_destination()
         .expect("reachable shore route");
-    let goal = route.dest;
     assert_eq!(
         goal, WATER_SHORE,
         "the connected shoreline is the reachable area goal"
@@ -3509,7 +3550,7 @@ fn area_walk_does_not_arrive_on_a_disconnected_candidate() {
 
     assert_eq!(rig.end(), Some(Ok(WalkEnd::Failed)));
     assert!(
-        rig.navs.lock().unwrap()["alice"].route.is_none(),
+        !rig.navs.lock().unwrap()["alice"].has_route(),
         "a standable candidate across a full collision wall is not reachable"
     );
 }
@@ -3562,10 +3603,8 @@ fn reach_walk_keeps_adjacent_solid_target_arrival() {
     rig.wait_routed();
 
     let goal = rig.navs.lock().unwrap()["alice"]
-        .route
-        .as_ref()
-        .expect("reach route to the solid target's approach")
-        .dest;
+        .route_destination()
+        .expect("reach route to the solid target's approach");
     assert_eq!(
         goal.x.abs_diff(target.x).max(goal.z.abs_diff(target.z)),
         1,
@@ -3582,10 +3621,12 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
     rig.observe(1);
     rig.wait_routed();
     assert!(
-        wait_until(5_000, || {
-            rig.navs.lock().unwrap().get("alice").is_some_and(|bot| {
-                bot.route_worker.is_none() && bot.pending_route.is_none() && bot.route.is_some()
-            })
+        rig.wait_for_route(5_000, || {
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| !bot.route_work_pending() && bot.has_route())
         }),
         "the initial area route completed"
     );
@@ -3606,6 +3647,7 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
         let mut bots = rig.navs.lock().unwrap();
         let bot = bots.get_mut("alice").unwrap();
         bot.route = None;
+        bot.compact_route = None;
         bot.traveller.clear();
     }
     let arm = crate::script_runtime::ScriptWalkArm {
@@ -3634,12 +3676,12 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
         false,
     ));
     assert!(
-        wait_until(5_000, || {
+        rig.wait_for_route(5_000, || {
             rig.navs.lock().unwrap().get("alice").is_some_and(|bot| {
                 bot.route_generation != generation
-                    && bot.route_worker.is_none()
+                    && !bot.route_work_pending()
                     && bot.pending_route.is_none()
-                    && bot.route.is_some()
+                    && bot.has_route()
             })
         }),
         "the refreshed area route completed"
@@ -3659,7 +3701,7 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
         assert_eq!(bank_fetch, basis.options.allow_bank_fetch);
         assert_eq!(grants, basis.options.zones);
         (
-            bot.route.as_ref().expect("refreshed route").dest,
+            bot.route_destination().expect("refreshed route"),
             bot.route_arrival,
         )
     };
@@ -3690,7 +3732,7 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
     };
     assert!(!world.collision.standable(centre));
     assert!(world.collision.standable(shore));
-    let mut request = ScriptRouteRequest {
+    let request = |arrival, radius| ScriptRouteRequest {
         admission: crate::admission::Admission {
             enforce: true,
             ..crate::admission::Admission::manual(
@@ -3702,30 +3744,31 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
         },
         generation: 1,
         request_id: 1,
-        world,
+        world: Arc::clone(&world),
         from: shore,
         to: centre,
-        radius: 40,
+        radius,
         loc_id: None,
-        arrival: ArrivalKind::Area,
+        arrival,
         opts: FindOptions::default(),
         state: None,
         bank_origin: api::bank_memory::Origin::Unknown,
         bank: Vec::new(),
-        live_candidates: None,
+        live_geometry: None,
         exclusions: None,
         compat_tile_intent: false,
         completion: Default::default(),
     };
-    let (area, _) = request.calculate();
-    let RouteOutcome::Routed(route) = area else {
-        panic!("Area arrival must accept the real standable Catherby shoreline");
-    };
-    assert_eq!(route.dest, shore);
-    assert!(request.world.collision.standable(route.dest));
-    request.arrival = ArrivalKind::Reach;
-    let (reach, _) = request.calculate();
-    assert!(matches!(reach, RouteOutcome::NoPath));
+    for radius in [40, 104] {
+        let (area, _) = request(ArrivalKind::Area, radius).drive_route_job_for_test();
+        let RouteOutcome::Routed(route) = area else {
+            panic!("Area arrival must accept the real standable Catherby shoreline");
+        };
+        assert_eq!(route.dest, shore);
+        assert!(world.collision.standable(route.dest));
+        let (reach, _) = request(ArrivalKind::Reach, radius).drive_route_job_for_test();
+        assert!(matches!(reach, RouteOutcome::NoPath));
+    }
 }
 
 #[test]
@@ -4160,14 +4203,16 @@ mod s2b_admission_contract {
         observed_loadout(&mut rig.snapshot);
         rig.shared.lock().target = Some(tile(120));
         rig.observe(1);
-        assert!(wait_until(5_000, || rig.navs.lock().unwrap()["alice"]
-            .risk_refusal
-            .is_some()));
+        assert!(
+            rig.wait_for_route(5_000, || rig.navs.lock().unwrap()["alice"]
+                .risk_refusal
+                .is_some())
+        );
         {
             let bots = rig.navs.lock().unwrap();
             let bot = &bots["alice"];
-            assert!(bot.route.is_none() && bot.bank_fetch.is_none());
-            assert!(bot.route_worker.is_none() && bot.pending_route.is_none());
+            assert!(!bot.has_route() && bot.bank_fetch.is_none());
+            assert!(!bot.route_work_pending() && bot.pending_route.is_none());
         }
         rig.step();
         assert!(rig.driver.walked.is_none());
@@ -4200,9 +4245,11 @@ mod s2b_admission_contract {
         rig.snapshot.seed_tick(32);
         rig.shared.lock().rewalk = true;
         rig.observe(32);
-        assert!(wait_until(5_000, || rig.navs.lock().unwrap()["alice"]
-            .walk_outcome_request_id
-            != request));
+        assert!(
+            rig.wait_for_route(5_000, || rig.navs.lock().unwrap()["alice"]
+                .walk_outcome_request_id
+                != request)
+        );
         rig.observe(33);
         let shared = rig.shared.lock();
         let second = shared.result.as_ref().unwrap().as_ref().unwrap();
@@ -4292,7 +4339,7 @@ mod s2b_admission_contract {
                 Some(script::ApiFamily::V1)
             );
             rig.frames(1);
-            assert!(wait_until(5_000, || rig
+            assert!(rig.wait_for_route_work(5_000, || rig
                 .navs
                 .lock()
                 .unwrap()
@@ -4307,7 +4354,7 @@ mod s2b_admission_contract {
                 assert!(
                     !admission.allow.food && !admission.allow.prayer && !admission.allow.escape
                 );
-                assert!(bot.route.is_some() && bot.risk_refusal.is_none());
+                assert!(bot.has_route() && bot.risk_refusal.is_none());
                 assert!(bot.walk_guard.is_none() && bot.slot_escape().is_none());
                 assert_eq!(
                     bot.assessment.as_ref().unwrap().verdict,
@@ -4413,11 +4460,102 @@ mod s2b_admission_contract {
     }
 
     fn await_advice(rig: &mut Rig, shared: &Arc<parking_lot::Mutex<Advice>>) {
-        assert!(wait_until(5_000, || rig.navs.lock().unwrap()["alice"]
-            .assess_result
-            .is_some()));
+        assert!(
+            rig.wait_for_route(5_000, || rig.navs.lock().unwrap()["alice"]
+                .assess_result
+                .is_some())
+        );
         rig.observe(2);
         assert!(shared.lock().receipt.is_some());
+    }
+
+    fn oversized_route_refusal() -> nav::producer::OwnerResultRefusal {
+        let maximum = nav::producer::OWNER_RESULT_MAX_BYTES;
+        let ledger = nav::producer::OwnerResultLedger::with_limits(maximum * 2, maximum);
+        match ledger.try_reserve_bytes(maximum + 1) {
+            Err(error) => error,
+            Ok(_) => panic!("the oversized route result must refuse owner custody"),
+        }
+    }
+
+    fn expected_oversized_route_refusal() -> script::native::WalkRefusal {
+        script::native::WalkRefusal::RouteTooLarge {
+            required_bytes: nav::producer::OWNER_RESULT_MAX_BYTES + 1,
+            maximum_bytes: nav::producer::OWNER_RESULT_MAX_BYTES,
+        }
+    }
+
+    #[test]
+    fn oversized_route_result_publishes_a_typed_walk_refusal_not_no_path() {
+        let mut rig = open_rig(false);
+        rig.observe(1);
+        let (generation, request_id, authority) = {
+            let mut bots = rig.navs.lock().unwrap();
+            let bot = bots.get_mut("alice").unwrap();
+            let authority = bot.native_walk.as_ref().unwrap().clone();
+            // Isolate the owner-result publication boundary from a concurrent
+            // search completion. The actual request and action owner stay live.
+            bot.supersede_route_work();
+            (bot.route_generation, bot.walk_request_id, authority)
+        };
+        crate::script_runtime::publish_route_owner_refusal(
+            &rig.navs,
+            "alice",
+            generation,
+            request_id,
+            crate::script_runtime::RouteDemandKind::Walk {
+                authority: Some(authority),
+            },
+            oversized_route_refusal(),
+        );
+        rig.observe(2);
+        let shared = rig.shared.lock();
+        let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
+        assert_eq!(receipt.end, WalkEnd::Refused);
+        assert_eq!(receipt.refusal, Some(expected_oversized_route_refusal()));
+        assert_eq!(
+            receipt.detail.as_deref(),
+            Some(expected_oversized_route_refusal().to_string().as_str())
+        );
+        assert!(rig.driver.walked.is_none());
+    }
+
+    #[test]
+    fn oversized_route_result_publishes_a_typed_advisory_refusal_not_no_path() {
+        let (mut rig, shared) = advising_rig(1, false);
+        rig.observe(1);
+        assert!(
+            rig.wait_for_route(5_000, || rig.navs.lock().unwrap()["alice"]
+                .assess_result
+                .is_some())
+        );
+        let (authority, evidence, generation) = {
+            let bots = rig.navs.lock().unwrap();
+            let bot = &bots["alice"];
+            let (authority, receipt) = bot.assess_result.as_deref().unwrap();
+            (authority.clone(), receipt.evidence, bot.route_generation)
+        };
+        crate::script_runtime::publish_route_owner_refusal(
+            &rig.navs,
+            "alice",
+            generation,
+            authority.request_id().get(),
+            crate::script_runtime::RouteDemandKind::Advisory {
+                authority,
+                evidence,
+            },
+            oversized_route_refusal(),
+        );
+        rig.observe(2);
+        let shared = shared.lock();
+        let receipt = shared.receipt.as_ref().unwrap();
+        assert_eq!(receipt.refusal, Some(expected_oversized_route_refusal()));
+        assert_eq!(
+            receipt.detail.as_deref(),
+            Some(expected_oversized_route_refusal().to_string().as_str())
+        );
+        assert!(receipt.assessment.is_none());
+        assert!(rig.driver.walked.is_none());
     }
 
     #[test]
@@ -4428,7 +4566,7 @@ mod s2b_admission_contract {
         let bots = rig.navs.lock().unwrap();
         let bot = &bots["alice"];
         assert!(!bot.ordinary_movement_owned(0));
-        assert!(bot.route.is_none() && bot.native_walk.is_none() && bot.walk_guard.is_none());
+        assert!(!bot.has_route() && bot.native_walk.is_none() && bot.walk_guard.is_none());
         assert_eq!(bot.route_generation, 0);
         assert_eq!(bot.walk_request_id, 0);
         let shared = shared.lock();
@@ -4452,7 +4590,7 @@ mod s2b_admission_contract {
             shared.requests[1]
         );
         let bots = rig.navs.lock().unwrap();
-        assert!(bots["alice"].route.is_some());
+        assert!(bots["alice"].has_route());
         assert!(bots["alice"].native_walk.as_ref().unwrap().live());
     }
 
@@ -4460,9 +4598,11 @@ mod s2b_admission_contract {
     fn stopped_advisory_owner_cannot_publish_or_restore_a_receipt() {
         let (mut rig, shared) = advising_rig(1, false);
         rig.observe(1);
-        assert!(wait_until(5_000, || rig.navs.lock().unwrap()["alice"]
-            .assess_result
-            .is_some()));
+        assert!(
+            rig.wait_for_route(5_000, || rig.navs.lock().unwrap()["alice"]
+                .assess_result
+                .is_some())
+        );
         rig.slot().lock().unwrap().stop();
         rig.observe(2);
         assert!(shared.lock().receipt.is_none());
@@ -4516,7 +4656,7 @@ mod s2b_admission_contract {
         await_advice(&mut rig, &shared);
         let bots = rig.navs.lock().unwrap();
         assert_eq!(bots["alice"].slot_escape(), Some(unresolved_escape()));
-        assert!(bots["alice"].native_walk.is_none() && bots["alice"].route.is_none());
+        assert!(bots["alice"].native_walk.is_none() && !bots["alice"].has_route());
         assert_eq!(
             manual.lock().unwrap().admission.as_ref().unwrap().escape,
             Some(unresolved_escape())

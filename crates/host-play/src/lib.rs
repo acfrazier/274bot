@@ -175,10 +175,7 @@ pub use resource_view::{
 pub use rss::{count_tcp_to, current_resident_bytes, parse_lsof_established, sample_process};
 pub use scatter::{scatter_tile_for, tele_args};
 use script_runtime::*;
-use walk_plan::{
-    fetch_stand, fetch_tile, fetchable_facts, route_or_bank_fetch, BankFetchFlight, FlightTarget,
-    RouteOutcome, StandFetch,
-};
+use walk_plan::{BankFetchFlight, FlightTarget, RouteOutcome};
 pub use walk_plan::{PendingBankFetch, StepProgress};
 
 #[cfg(test)]
@@ -598,8 +595,11 @@ mod bank_core_live;
 mod bank_fetch_closed_live;
 #[cfg(test)]
 mod bank_memory_live;
-#[cfg(test)]
-mod bank_npc_live;
+#[cfg(any(test, all(feature = "live-harness", feature = "test-support")))]
+pub mod bank_npc_live;
+
+#[cfg(all(target_os = "linux", feature = "test-support"))]
+pub use script_runtime::measures_captured_native_bank_pick_cpu;
 #[cfg(test)]
 mod gather_bait_live;
 #[cfg(test)]

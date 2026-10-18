@@ -5,12 +5,12 @@
 
 use super::super::fixture::{
     fixture_descriptor, fixture_png, other_cache_descriptor, ship_fixture_terrain,
-    synthetic_client_snapshot, CountingMapProducer,
+    synthetic_client_snapshot, wait_for_status, CountingMapProducer,
 };
 use super::super::{
-    ArtifactKind, BakeOutput, BakePlan, BakeRequest, BakeWriter, MapBakeProducer, MapCacheError,
-    MapCacheRoot, MapDemand, MapDemandHandle, MapDemandManager, MapJobStatus, MapProfileDescriptor,
-    PreparedMapInput,
+    map_bake_test_step_snapshot, ArtifactKind, BakeRequest, MapBakeCursor, MapBakeProducer,
+    MapCacheError, MapCacheRoot, MapDemand, MapDemandHandle, MapDemandManager, MapJobStatus,
+    MapProfileDescriptor, MapStage, PreparedMapInput,
 };
 use super::ShippedMapImages;
 use crate::map_producer::{map_artifact_policies, NativeMapProducer};
@@ -57,36 +57,24 @@ impl CountingNative {
 }
 
 impl MapBakeProducer for CountingNative {
-    fn plan(&self, request: &BakeRequest) -> Result<BakePlan, MapCacheError> {
-        NativeMapProducer::new().plan(request)
+    fn charge(&self, request: &BakeRequest) -> Result<api::work::WorkCharge, MapCacheError> {
+        NativeMapProducer::new().charge(request)
     }
 
-    fn run(
+    fn cursor(
         &self,
         request: &BakeRequest,
-        writer: &mut BakeWriter,
-    ) -> Result<BakeOutput, MapCacheError> {
+        partial_dir: Arc<PathBuf>,
+    ) -> Result<Box<dyn MapBakeCursor>, MapCacheError> {
         if request.artifact() == ArtifactKind::Images {
             self.images.fetch_add(1, Ordering::SeqCst);
         }
-        NativeMapProducer::new().run(request, writer)
+        NativeMapProducer::new().cursor(request, partial_dir)
     }
 }
 
 fn wait_ready(handle: &MapDemandHandle) {
-    let started = Instant::now();
-    loop {
-        match handle.status() {
-            MapJobStatus::Ready => return,
-            MapJobStatus::Queued | MapJobStatus::Running(_) => {}
-            other => panic!("map demand ended {other:?}"),
-        }
-        assert!(
-            started.elapsed() < Duration::from_secs(60),
-            "map demand never settled"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    wait_for_status(handle, MapJobStatus::Ready);
 }
 
 fn has_terrain(handle: &MapDemandHandle) -> bool {
@@ -196,6 +184,35 @@ fn shipped_terrain_is_a_local_bake_and_installs_byte_identically_without_baking(
         local_tree,
         "installed bytes are a local bake's"
     );
+}
+
+#[test]
+fn missing_terrain_probe_leaves_the_cached_catalogue_tree_unchanged() {
+    let scratch = Scratch::new("read-only-probe");
+    let root = MapCacheRoot::from_root(scratch.0.join("home"));
+    let producer = Arc::new(CountingMapProducer::default());
+    let manager = MapDemandManager::new(root.clone(), producer.clone());
+    let descriptor = fixture_descriptor();
+    let catalogue = manager
+        .request(descriptor.clone(), MapDemand::CatalogueOnly)
+        .unwrap();
+    wait_ready(&catalogue);
+    let before = tree(root.path());
+    let probe = manager
+        .request(descriptor.clone(), MapDemand::ReadyImages)
+        .unwrap();
+    wait_ready(&probe);
+    assert!(!has_terrain(&probe));
+    assert_eq!(producer.image_runs(), 0);
+    assert_eq!(
+        tree(root.path()),
+        before,
+        "the probe must not mutate the cache"
+    );
+    assert!(!root
+        .image_dir(descriptor.image_identity())
+        .unwrap()
+        .exists());
 }
 
 #[test]
@@ -462,4 +479,445 @@ fn a_published_user_terrain_is_never_replaced_by_shipped_terrain() {
         "nothing was staged for install"
     );
     assert_eq!(producer.image_runs(), 0);
+}
+/// Catalogue-only real-content capture through the host API.
+/// No shipped terrain is supplied by this fixture, so a `ReadyImages` demand
+/// against the fresh cache root settles catalogue-only without baking terrain.
+/// The result isolates catalogue generation, not shipped-terrain installation.
+fn catalogue_only_capture(
+    capture: &Path,
+    cache_root: &MapCacheRoot,
+    descriptor: &MapProfileDescriptor,
+    revision: u16,
+    cache_id: &str,
+    content_id: &str,
+    navpack_sha256: &str,
+) {
+    let manager = MapDemandManager::new(cache_root.clone(), Arc::new(NativeMapProducer::new()));
+    let metrics_start = map_bake_test_step_snapshot();
+    let request_started = Instant::now();
+    let handle = manager
+        .request(descriptor.clone(), MapDemand::ReadyImages)
+        .unwrap();
+    loop {
+        match handle.status() {
+            MapJobStatus::Ready => break,
+            MapJobStatus::Queued | MapJobStatus::Running(_) => {
+                assert!(
+                    request_started.elapsed() < Duration::from_secs(60 * 60),
+                    "real-content catalogue demand never settled"
+                );
+                handle.wait_for_change(Duration::from_millis(1));
+            }
+            other => panic!("real-content catalogue demand ended {other:?}"),
+        }
+    }
+    let catalogue_request_seconds = request_started.elapsed().as_secs_f64();
+    let metrics_end = map_bake_test_step_snapshot();
+    let ready = handle.ready().unwrap();
+    assert!(
+        ready.images.is_none(),
+        "catalogue-only demand must not publish terrain"
+    );
+    let catalogue_dir = cache_root
+        .catalogue_dir(descriptor.catalogue_identity())
+        .unwrap();
+    let capture_catalogue = capture.join("catalogue");
+    fs::create_dir_all(&capture_catalogue).unwrap();
+    fs::copy(
+        catalogue_dir.join("manifest.json"),
+        capture_catalogue.join("manifest.json"),
+    )
+    .unwrap();
+    fs::copy(
+        catalogue_dir.join("client-pois.json"),
+        capture_catalogue.join("client-pois.json"),
+    )
+    .unwrap();
+    let catalogue_manifest = fs::read(capture_catalogue.join("manifest.json")).unwrap();
+    let catalogue_payload = fs::read(capture_catalogue.join("client-pois.json")).unwrap();
+    let outcome = serde_json::json!({
+        "schema": 1,
+        "status": "ready",
+        "revision": revision,
+        "cache_id": cache_id,
+        "content_id": content_id,
+        "navpack_sha256": navpack_sha256,
+        "demand": "ReadyImages",
+        "images": null,
+        "note": "No shipped terrain is supplied by this fixture; this path isolates catalogue generation, not shipped-terrain installation.",
+        "catalogue": {
+            "identity": descriptor.catalogue_identity(),
+            "manifest_sha256": Digest::of(&catalogue_manifest),
+            "payload_sha256": Digest::of(&catalogue_payload),
+            "payload_bytes": catalogue_payload.len(),
+            "record_count": ready.catalogue.pois().records.as_slice().len(),
+        },
+        "catalogue_request_seconds": catalogue_request_seconds,
+        "cooperative": {
+            "dispatches": metrics_end.dispatches.saturating_sub(metrics_start.dispatches),
+            "units": metrics_end.units.saturating_sub(metrics_start.units),
+            "active_nanos": metrics_end.dispatch_nanos.saturating_sub(metrics_start.dispatch_nanos),
+            "max_dispatch_nanos": metrics_end.max_dispatch_nanos,
+        },
+    });
+    fs::write(
+        capture.join("capture.json"),
+        serde_json::to_vec(&outcome).unwrap(),
+    )
+    .unwrap();
+}
+
+/// Capture one complete real-content demand through the host API. Run once
+/// against each source snapshot with the same canonical cache, navpack, and
+/// output contract; compare the resulting full capture trees byte for byte.
+///
+/// Required: `BOT_NAV_BUILD=skip`, `BOT_MAP_BAKE_JAG_DIR`,
+/// `BOT_MAP_BAKE_SNAPSHOT_DIR`, `BOT_MAP_BAKE_NAVPACK`, and a fresh
+/// `BOT_MAP_BAKE_CAPTURE_DIR`. `BOT_MAP_BAKE_REVISION` defaults to 289.
+#[test]
+#[ignore = "real-content old/new map-bake equivalence capture"]
+fn real_content_map_demand_capture() {
+    assert_eq!(
+        std::env::var("BOT_NAV_BUILD").unwrap_or_default(),
+        "skip",
+        "real-content capture must use the staged navpack, not rebuild it"
+    );
+    let env_path = |name: &str| {
+        PathBuf::from(
+            std::env::var_os(name).unwrap_or_else(|| panic!("set {name} for real-content capture")),
+        )
+    };
+    let jag_dir = env_path("BOT_MAP_BAKE_JAG_DIR");
+    let snapshot_root = env_path("BOT_MAP_BAKE_SNAPSHOT_DIR");
+    let navpack = env_path("BOT_MAP_BAKE_NAVPACK");
+    let capture = env_path("BOT_MAP_BAKE_CAPTURE_DIR");
+    let revision = std::env::var("BOT_MAP_BAKE_REVISION")
+        .ok()
+        .map(|value| value.parse::<u16>().expect("numeric map-bake revision"))
+        .unwrap_or(289);
+    assert!(
+        !capture.exists(),
+        "capture output must be fresh: {}",
+        capture.display()
+    );
+    fs::create_dir_all(&capture).unwrap();
+    let cache_root = MapCacheRoot::from_existing_root(capture.join(".cache"));
+
+    // Bind both identities to the same complete source: offline() verifies
+    // the decoded snapshot's versionlist and computes its content identity;
+    // the navpack sidecar binds that identity to the canonical source cache.
+    let input = PreparedMapInput::offline(revision, &jag_dir, &snapshot_root).unwrap();
+    let cache = nav::manifest::CacheManifest::capture(revision, &jag_dir).unwrap();
+    let nav_manifest_path = nav::manifest::nav_manifest_path(&navpack);
+    let nav_manifest: nav::manifest::NavManifest =
+        serde_json::from_slice(&fs::read(nav_manifest_path).unwrap()).unwrap();
+    let navpack_sha256 = nav::manifest::hash_file(&navpack).unwrap();
+    let content_id = input.content().to_string();
+    nav_manifest
+        .verify_pack(revision, &cache, &navpack_sha256, Some(content_id.as_str()))
+        .unwrap();
+    for (extension, expected) in [
+        ("navflags", nav_manifest.flags_sha256.as_deref()),
+        ("navreach", nav_manifest.reach_sha256.as_deref()),
+        ("navcanlight", nav_manifest.canlight_sha256.as_deref()),
+        ("navpois", nav_manifest.pois_sha256.as_deref()),
+    ] {
+        let sidecar = navpack.with_extension(extension);
+        match expected {
+            Some(expected) => {
+                assert_eq!(
+                    nav::manifest::hash_file(&sidecar).unwrap(),
+                    expected,
+                    "reference navpack sidecar {}",
+                    sidecar.display()
+                );
+            }
+            None => assert!(
+                !sidecar.exists(),
+                "undeclared navpack sidecar exists: {}",
+                sidecar.display()
+            ),
+        }
+    }
+
+    let (image_policy, catalogue_policy) = map_artifact_policies().unwrap();
+    let descriptor =
+        MapProfileDescriptor::new(revision, input.content(), image_policy, catalogue_policy)
+            .unwrap()
+            .with_input(input)
+            .unwrap();
+    if std::env::var("BOT_MAP_BAKE_CATALOGUE_ONLY").as_deref() == Ok("1") {
+        catalogue_only_capture(
+            &capture,
+            &cache_root,
+            &descriptor,
+            revision,
+            &cache.identity(),
+            &content_id,
+            &navpack_sha256,
+        );
+        return;
+    }
+    let work_service =
+        script::work_admission::WorkService::shared().expect("WorkAdmission service");
+    let (capacity_start, progress_drops_start) = {
+        let service = work_service.lock();
+        (service.capacity(), service.dropped_progress_reports())
+    };
+    let bake_metrics_start = map_bake_test_step_snapshot();
+    let manager = MapDemandManager::new(cache_root.clone(), Arc::new(NativeMapProducer::new()));
+    let handle = manager
+        .request(descriptor.clone(), MapDemand::Images)
+        .unwrap();
+    let started = Instant::now();
+    let mut last_status: Option<MapJobStatus> = None;
+    let mut record_status = |status: &MapJobStatus| {
+        if last_status.as_ref() != Some(status) {
+            eprintln!(
+                "map-bake visible status: elapsed_ms={} {status:?}",
+                started.elapsed().as_millis()
+            );
+            last_status = Some(status.clone());
+        }
+        if let MapJobStatus::Running(progress) = status {
+            // Publishing also occurs for the catalogue. Only the image job
+            // has a terrain-unit denominator.
+            let publishing_images = progress.stage == MapStage::Publishing
+                && manager
+                    .inner
+                    .jobs
+                    .lock()
+                    .active
+                    .as_ref()
+                    .is_some_and(|active| active.artifact == ArtifactKind::Images);
+            if matches!(
+                progress.stage,
+                MapStage::BakingPlane | MapStage::BuildingZoomLevels
+            ) || publishing_images
+            {
+                assert!(
+                    progress.total > 0 && !progress.message.contains("0/0"),
+                    "terrain progress must have a nonzero denominator: {progress:?}"
+                );
+            }
+        }
+    };
+    loop {
+        let status = handle.status();
+        record_status(&status);
+        match &status {
+            MapJobStatus::Running(progress) if progress.stage == MapStage::DerivingPois => break,
+            MapJobStatus::Queued | MapJobStatus::Running(_) => {
+                assert!(
+                    started.elapsed() < Duration::from_secs(60 * 60),
+                    "real-content catalogue phase never started"
+                );
+                handle.wait_for_change(Duration::from_millis(100));
+            }
+            MapJobStatus::Ready => panic!("real-content map demand skipped its catalogue phase"),
+            other => panic!("real-content map demand ended before catalogue phase: {other:?}"),
+        }
+    }
+
+    let capacity_during_catalogue = work_service.lock().capacity();
+    assert!(
+        capacity_during_catalogue.jobs() > capacity_start.jobs(),
+        "the real catalogue bake must remain admitted while profile work is submitted"
+    );
+    // Match the production panel's 64/32/32 MiB ProfilePreparation bounds,
+    // and submit through WorkAdmission rather than reserving a test charge.
+    const MIB: usize = 1024 * 1024;
+    let profile_input = script::preparation::PreparationInput::new(
+        u64::from(revision),
+        64 * MIB,
+        32 * MIB,
+        32 * MIB,
+    )
+    .expect("production profile preparation bounds");
+    let profile_charge = profile_input.charge().total_bytes().unwrap();
+    assert_eq!(profile_charge, 128 * MIB);
+    let profile_task = script::preparation::submit(
+        script::preparation::PreparationKind::Profile,
+        api::identity::Scope::Process,
+        profile_input,
+        |_| (),
+    )
+    .expect("128 MiB ProfilePreparation admission during catalogue bake");
+    let capacity_with_profile = work_service.lock().capacity();
+    assert_eq!(
+        capacity_with_profile.jobs(),
+        capacity_during_catalogue.jobs() + 1,
+        "the real ProfilePreparation ticket must coexist with the catalogue ticket"
+    );
+    let profile_reservation = capacity_with_profile
+        .bytes()
+        .checked_sub(capacity_during_catalogue.bytes())
+        .expect("profile admission must not release catalogue capacity");
+    assert!(
+        profile_reservation > profile_charge,
+        "the admitted profile must reserve progress custody in addition to its {profile_charge}-byte charge"
+    );
+    let profile_progress_custody = profile_reservation - profile_charge;
+
+    loop {
+        let status = handle.status();
+        record_status(&status);
+        match status {
+            MapJobStatus::Ready => break,
+            MapJobStatus::Queued | MapJobStatus::Running(_) => {
+                assert!(
+                    started.elapsed() < Duration::from_secs(60 * 60),
+                    "real-content map demand never settled"
+                );
+                handle.wait_for_change(Duration::from_millis(100));
+            }
+            other => panic!("real-content map demand ended {other:?}"),
+        }
+    }
+    let bake_elapsed = started.elapsed();
+    let ready = handle.ready().unwrap();
+    let images = ready
+        .images
+        .as_ref()
+        .expect("full image demand publishes terrain");
+    let catalogue_dir = cache_root
+        .catalogue_dir(descriptor.catalogue_identity())
+        .unwrap();
+    let image_dir = cache_root.image_dir(descriptor.image_identity()).unwrap();
+    let capture_catalogue = capture.join("catalogue");
+    let capture_images = capture.join("images");
+    fs::create_dir_all(&capture_catalogue).unwrap();
+    fs::create_dir_all(&capture_images).unwrap();
+    fs::copy(
+        catalogue_dir.join("manifest.json"),
+        capture_catalogue.join("manifest.json"),
+    )
+    .unwrap();
+    fs::copy(
+        catalogue_dir.join("client-pois.json"),
+        capture_catalogue.join("client-pois.json"),
+    )
+    .unwrap();
+    fs::copy(
+        image_dir.join("manifest.json"),
+        capture_images.join("manifest.json"),
+    )
+    .unwrap();
+
+    let image_manifest_bytes = fs::read(capture_images.join("manifest.json")).unwrap();
+    let image_manifest =
+        ImageManifest::decode(&image_manifest_bytes, descriptor.image_identity()).unwrap();
+    let mut captured_tiles = Vec::new();
+    for tile in image_manifest.tiles.as_slice() {
+        let mut bytes = Vec::new();
+        images
+            .read_tile_into(tile.key, &mut bytes)
+            .unwrap()
+            .expect("manifest-listed native tile");
+        let relative = tile.key.relative_path().unwrap();
+        let destination = capture_images.join("tiles").join(&relative);
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::write(&destination, &bytes).unwrap();
+        captured_tiles.push(serde_json::json!({
+            "key": tile.key,
+            "path": relative,
+            "bytes": tile.payload.bytes,
+            "sha256": tile.payload.sha256,
+        }));
+    }
+    let catalogue_manifest = fs::read(capture_catalogue.join("manifest.json")).unwrap();
+    let catalogue_payload = fs::read(capture_catalogue.join("client-pois.json")).unwrap();
+    let outcome = serde_json::json!({
+        "schema": 1,
+        "status": "ready",
+        "revision": revision,
+        "cache_id": cache.identity(),
+        "content_id": content_id,
+        "navpack_sha256": navpack_sha256,
+        "catalogue": {
+            "identity": descriptor.catalogue_identity(),
+            "manifest_sha256": Digest::of(&catalogue_manifest),
+            "payload_sha256": Digest::of(&catalogue_payload),
+            "payload_bytes": catalogue_payload.len(),
+            "record_count": ready.catalogue.pois().records.as_slice().len(),
+        },
+        "images": {
+            "identity": descriptor.image_identity(),
+            "manifest_sha256": Digest::of(&image_manifest_bytes),
+            "tile_count": image_manifest.tiles.as_slice().len(),
+            "captured_native_tiles": captured_tiles,
+        },
+    });
+    fs::write(
+        capture.join("capture.json"),
+        serde_json::to_vec(&outcome).unwrap(),
+    )
+    .unwrap();
+    profile_task
+        .join()
+        .expect("ProfilePreparation terminal after map bake");
+    let (capacity_settled, progress_reports_dropped) = {
+        let service = work_service.lock();
+        (
+            service.capacity(),
+            service
+                .dropped_progress_reports()
+                .saturating_sub(progress_drops_start),
+        )
+    };
+    assert_eq!(
+        progress_reports_dropped, 0,
+        "real map progress must stay within immutable progress custody"
+    );
+    assert_eq!(
+        capacity_settled, capacity_start,
+        "map and profile terminals must release all WorkService custody"
+    );
+    let released_jobs = capacity_with_profile
+        .jobs()
+        .checked_sub(capacity_settled.jobs())
+        .expect("completed map/profile work cannot increase the job ledger");
+    let released_bytes = capacity_with_profile
+        .bytes()
+        .checked_sub(capacity_settled.bytes())
+        .expect("completed map/profile work cannot increase the byte ledger");
+    assert!(released_jobs >= 2);
+    assert!(released_bytes >= profile_charge + profile_progress_custody);
+
+    let bake_metrics_end = map_bake_test_step_snapshot();
+    let dispatches = bake_metrics_end
+        .dispatches
+        .saturating_sub(bake_metrics_start.dispatches);
+    let units = bake_metrics_end
+        .units
+        .saturating_sub(bake_metrics_start.units);
+    let dispatch_nanos = bake_metrics_end
+        .dispatch_nanos
+        .saturating_sub(bake_metrics_start.dispatch_nanos);
+    eprintln!(
+        "map-bake WorkService capacity: baseline_jobs={} baseline_bytes={} catalogue_jobs={} catalogue_bytes={} profile_jobs={} profile_bytes={} profile_charge_bytes={} profile_progress_custody_bytes={} released_jobs={} released_bytes={} settled_jobs={} settled_bytes={}",
+        capacity_start.jobs(),
+        capacity_start.bytes(),
+        capacity_during_catalogue.jobs(),
+        capacity_during_catalogue.bytes(),
+        capacity_with_profile.jobs(),
+        capacity_with_profile.bytes(),
+        profile_charge,
+        profile_progress_custody,
+        released_jobs,
+        released_bytes,
+        capacity_settled.jobs(),
+        capacity_settled.bytes(),
+    );
+    eprintln!(
+        "map-bake host step metrics: dispatches={} units={} cumulative_dispatch_ms={} max_dispatch_ns_observed={} bake_wall_ms={} outside_job_steps_ms={} progress_reports_dropped={}",
+        dispatches,
+        units,
+        dispatch_nanos / 1_000_000,
+        bake_metrics_end.max_dispatch_nanos,
+        bake_elapsed.as_millis(),
+        bake_elapsed.as_nanos().saturating_sub(u128::from(dispatch_nanos)) / 1_000_000,
+        progress_reports_dropped,
+    );
 }

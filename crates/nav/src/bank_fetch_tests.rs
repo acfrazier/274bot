@@ -12,7 +12,8 @@ use super::{
 use crate::collision::{pack_walk, WorldCollision};
 use crate::pack::{BankAccess, BankStand};
 use crate::router::{
-    find_first_with, find_missing_item_reqs, find_with, FindOptions, MissingReq, RouteError,
+    find_first_with, find_first_with_avoid_budgets, find_missing_item_reqs, find_with,
+    find_with_avoid, FindOptions, MissingReq, RouteError,
 };
 use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 use crate::world_state::WorldState;
@@ -1094,6 +1095,130 @@ fn assert_no_deposit(steps: &[BankStep]) {
 }
 
 #[test]
+fn bank_fetch_chooses_the_path_cheapest_not_air_nearest_reachable_access() {
+    let mut faces = Vec::new();
+    for z in 0..7 {
+        faces.push((0, z, CollisionFlag::W_E as u32));
+        faces.push((1, z, CollisionFlag::W_W as u32));
+    }
+    let collision = bake(10, 10, &faces);
+    let stands = [stand(2, 0), stand(0, 5)];
+    let from = tile(0, 0, 0);
+    let graph = TransportGraph::default();
+    let state = WorldState::empty();
+    let options = FindOptions::default();
+    let nearest = nearest_bank_access(&collision, &stands, from).unwrap();
+    let air_route = find_with(&collision, &graph, from, nearest, options, &state)
+        .expect("the air-nearest access is reachable around the wall");
+    let (fetch, searches) = crate::router::count_kernel_searches(|| {
+        plan_with(
+            &[MissingReq::Carry { id: 995, count: 1 }],
+            &state,
+            &[(995, 1)],
+            &stands,
+            from,
+            &collision,
+            &graph,
+            options,
+            &[],
+        )
+        .unwrap()
+    });
+    assert_eq!(searches, 1);
+    assert_eq!(
+        fetch.steps[0],
+        BankStep::Walk {
+            x: 0,
+            z: 4,
+            level: 0
+        }
+    );
+    let path_route = find_with(&collision, &graph, from, tile(0, 4, 0), options, &state).unwrap();
+    assert_eq!(path_route.ticks, 2.0);
+    assert!(path_route.ticks < air_route.ticks);
+}
+
+#[test]
+fn bank_fetch_uses_first_access_when_goal_set_budget_exhausts() {
+    let collision = open_grid();
+    let stands = [stand(5, 0)];
+    let from = tile(0, 0, 0);
+    let state = WorldState::empty();
+    let graph = TransportGraph::default();
+    let options = FindOptions::default();
+    let targets = bank_access_tiles(&collision, &stands[0]).collect::<Vec<_>>();
+    let first = nearest_bank_access(&collision, &stands, from).expect("access tile");
+
+    assert_eq!(
+        find_first_with_avoid_budgets(
+            &collision,
+            &graph,
+            from,
+            &targets,
+            options,
+            &state,
+            &[],
+            1,
+            1,
+        )
+        .into_route(),
+        Err(RouteError::BudgetExhausted),
+    );
+    find_with_avoid(&collision, &graph, from, first, options, &state, &[])
+        .expect("the first access is reachable under the single-target budget");
+
+    let fetch = super::plan_bank_fetch_with_budgets(
+        &[MissingReq::Carry { id: 995, count: 1 }],
+        &state,
+        &[(995, 1)],
+        &stands,
+        from,
+        &collision,
+        &graph,
+        options,
+        &[],
+        (1, 1),
+    )
+    .expect("the successful single-target probe supplies the plan");
+    assert_eq!(
+        fetch.steps[0],
+        BankStep::Walk {
+            x: first.x,
+            z: first.z,
+            level: first.level,
+        }
+    );
+}
+
+#[test]
+fn equal_path_cost_keeps_the_existing_air_distance_access_order() {
+    let collision = open_grid();
+    let stands = [stand(4, 0), stand(0, 4)];
+    let from = tile(0, 0, 0);
+    let first = nearest_bank_access(&collision, &stands, from).unwrap();
+    let fetch = plan_with(
+        &[MissingReq::Carry { id: 995, count: 1 }],
+        &WorldState::empty(),
+        &[(995, 1)],
+        &stands,
+        from,
+        &collision,
+        &TransportGraph::default(),
+        FindOptions::default(),
+        &[],
+    )
+    .unwrap();
+    assert_eq!(
+        fetch.steps[0],
+        BankStep::Walk {
+            x: first.x,
+            z: first.z,
+            level: first.level
+        }
+    );
+}
+
+#[test]
 fn unreachable_bank_retains_the_first_strict_query_failure() {
     let collision = walled_5x5();
     let stands = [stand(4, 2)];
@@ -1156,29 +1281,39 @@ fn sewer_bank_fetch_rejects_the_unreachable_nearest_access() {
         map_members: true,
         ..WorldState::empty()
     };
-    let fetch = plan_with(
-        &[MissingReq::Carry {
-            id: KNIFE,
-            count: 1,
-        }],
-        &state,
-        &[(KNIFE, 1)],
-        world.banks(),
-        from,
-        &world.collision,
-        &world.graph,
-        FindOptions {
-            allow_wilderness: true,
-            ..FindOptions::default()
-        },
-        &[],
-    )
-    .expect("the north sewer reaches a bank before crossing the knife-gated web");
+    let (fetch, searches) = crate::router::count_kernel_searches(|| {
+        plan_with(
+            &[MissingReq::Carry {
+                id: KNIFE,
+                count: 1,
+            }],
+            &state,
+            &[(KNIFE, 1)],
+            world.banks(),
+            from,
+            &world.collision,
+            &world.graph,
+            FindOptions {
+                allow_wilderness: true,
+                ..FindOptions::default()
+            },
+            &[],
+        )
+    });
+    let fetch = fetch.expect("the north sewer reaches a bank before crossing the knife-gated web");
+    assert_eq!(
+        searches, 1,
+        "all sewer bank accesses share one strict search"
+    );
     let BankStep::Walk { x, z, level } = fetch.steps[0] else {
         panic!("the banked knife requires a bank access route");
     };
     let access = tile(x, z, level);
-    assert_eq!(access, tile(2721, 3493, 0));
+    assert_ne!(
+        Some(access),
+        nearest_bank_access(&world.collision, world.banks(), from),
+        "the unreachable air-nearest access must not hide a reachable bank"
+    );
     find_with(
         &world.collision,
         &world.graph,
