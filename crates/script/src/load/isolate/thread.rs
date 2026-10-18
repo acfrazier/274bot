@@ -531,7 +531,7 @@ fn encode_seat_batch(
         };
         let has_control_work = carry.has_work();
         let starts = carry.starts?;
-        let decisions: [crate::isolate_fb::SeatDecisionRef<'_>; 0] = [];
+        let decisions = &carry.decisions;
         let max_rows = crate::isolate_fb::MAX_SEAT_RESERVED_ROWS
             .saturating_add(crate::isolate_fb::MAX_SEAT_GAMEPLAY_ROWS);
         let mut requests = Vec::with_capacity(
@@ -623,7 +623,7 @@ fn encode_seat_batch(
         let input = crate::isolate_fb::SeatInteractBatchInput {
             consumed_terminal_seq: carry.consumed_terminal_seq,
             starts: &starts,
-            decisions: &decisions,
+            decisions,
             cancels: &carry.cancels,
             mirror_revokes: &carry.mirror_revokes,
             reqs: &requests,
@@ -2255,7 +2255,6 @@ fn tick_loop(
                 // The scene caches belong to the ended connection: the host
                 // posts a keyframe for the next one.
                 crate::observed::on_reset();
-                crate::bank_op::on_reset();
                 super::reach_query::on_reset();
                 if !keep_work {
                     crate::cake_stall::on_reset();
