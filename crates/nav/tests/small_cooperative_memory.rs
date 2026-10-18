@@ -1,5 +1,6 @@
-#![cfg(target_os = "linux")]
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
+#[cfg(target_os = "linux")]
 use std::fs;
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -19,8 +20,9 @@ use nav::world::NavWorld;
 use nav::WorldState;
 
 const MAX_SLICES: usize = 140_000;
-// The system-allocator probe measured a 2,441,216-byte peak delta.
-// Four MiB leaves 1,753,088 bytes (71.8%) for page and allocator variation.
+// The Linux system-allocator probe measured a 2,441,216-byte peak delta.
+// macOS measures phys_footprint, including retained or compressed dirty pages.
+// The same four-MiB ceiling applies across eleven searches in one process.
 const RESIDENT_DELTA_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Copy)]
@@ -36,6 +38,7 @@ struct SearchObservation {
     slices: usize,
 }
 
+#[cfg(target_os = "linux")]
 fn vm_rss_bytes() -> usize {
     let status = fs::read_to_string("/proc/self/status").expect("read process status");
     let kibibytes = status
@@ -47,6 +50,36 @@ fn vm_rss_bytes() -> usize {
     kibibytes
         .checked_mul(1024)
         .expect("VmRSS byte conversion does not overflow")
+}
+
+#[cfg(target_os = "macos")]
+fn vm_rss_bytes() -> usize {
+    #[link(name = "System")]
+    // SAFETY: These declarations use Darwin's task port, integer_t pointer,
+    // and mach_msg_type_number_t pointer ABI.
+    unsafe extern "C" {
+        static mach_task_self_: u32;
+        fn task_info(task: u32, flavor: u32, info: *mut i32, count: *mut u32) -> i32;
+    }
+
+    // TASK_VM_INFO_REV1 is 38 integer_t cells. Its last two cells are the
+    // 64-bit phys_footprint field; all earlier fields occupy 18 u64 words.
+    let mut info = [0_u64; 19];
+    let mut count = 38;
+    // SAFETY: mach_task_self_ names this live process. The output has exactly
+    // count writable integer_t cells, and every returned bit pattern is a
+    // valid u64. No reference to the buffer is used during the call.
+    let result = unsafe {
+        task_info(
+            mach_task_self_,
+            22,
+            info.as_mut_ptr().cast::<i32>(),
+            &mut count,
+        )
+    };
+    assert_eq!(result, 0, "read this process's TASK_VM_INFO");
+    assert_eq!(count, 38, "the complete REV1 footprint field is available");
+    usize::try_from(info[18]).expect("physical footprint fits usize")
 }
 
 fn run_search(
@@ -159,30 +192,38 @@ fn cooperative_searches_keep_resident_memory_bounded() {
         level: 0,
     };
 
-    // Defer the ceiling assertions until both active searches finish.
-    let observations = [
-        run_search(
-            &world,
-            "off-corridor refusal",
-            unreachable,
-            ExpectedResult::NoPath,
-        ),
-        run_search(
-            &world,
-            "reachable target",
-            reachable,
-            ExpectedResult::Destination(reachable),
-        ),
-    ];
+    let baseline_rss_bytes = vm_rss_bytes();
+    let observations: Vec<_> = (0..11)
+        .flat_map(|_| {
+            [
+                run_search(
+                    &world,
+                    "off-corridor refusal",
+                    unreachable,
+                    ExpectedResult::NoPath,
+                ),
+                run_search(
+                    &world,
+                    "reachable target",
+                    reachable,
+                    ExpectedResult::Destination(reachable),
+                ),
+            ]
+        })
+        .collect();
 
-    for observation in &observations {
+    for (iteration, observation) in observations.iter().enumerate() {
         let resident_delta = observation
+            .peak_rss_bytes
+            .saturating_sub(baseline_rss_bytes);
+        let active_delta = observation
             .peak_rss_bytes
             .saturating_sub(observation.baseline_rss_bytes);
         assert!(
             resident_delta <= RESIDENT_DELTA_LIMIT_BYTES,
-            "{} grew resident memory by {resident_delta} bytes over the {}-byte ceiling across {} slices",
+            "{} iteration {} grew committed memory by {resident_delta} bytes over the {}-byte ceiling across {} slices (active delta {active_delta})",
             observation.name,
+            iteration / 2 + 1,
             RESIDENT_DELTA_LIMIT_BYTES,
             observation.slices,
         );

@@ -49,6 +49,8 @@ use crate::world_state::WorldState;
 use crate::zones::{ZoneExempt, ZoneFilter, ZoneFilterOwned, ZoneKey, ZoneTable};
 
 mod resources;
+#[cfg(target_os = "macos")]
+mod zeroed_buffer;
 use resources::{
     BacktraceStep, Budget, PackedLookup, PackedMinMaxHeap, PackedSearchSlotExt, PackedSearchTable,
     Predecessors, ResourceBudget, SearchKey, Unmetered, PACKED_ROOT_ID,
@@ -2667,6 +2669,9 @@ async fn run_single_compact_search(
         progress,
     )
     .await;
+    if search.stop == SearchStop::Allocation {
+        return Err(SearchCursorError::Allocation);
+    }
     let route = match goals {
         Goals::Single {
             cost: Some(cost), ..
@@ -2974,6 +2979,7 @@ async fn many_cursor_pass(
     let error = match search.stop {
         SearchStop::Exhausted => TargetError::NoPath,
         SearchStop::Budget => TargetError::BudgetExhausted,
+        SearchStop::Allocation => return Err(SearchCursorError::Allocation),
         SearchStop::Deadline | SearchStop::Completed => TargetError::NotSettled,
     };
     for result in &mut costs {
@@ -3543,6 +3549,9 @@ async fn first_search_core_compact(
         progress,
     )
     .await;
+    if search.stop == SearchStop::Allocation {
+        return Err(SearchCursorError::Allocation);
+    }
     let Goals::First(first) = goals else {
         unreachable!("a first-goal search keeps its goals");
     };
@@ -4899,9 +4908,13 @@ fn first_search_core(
         false,
         None,
     ));
-    let Goals::First(first) = goals else {
+    let Goals::First(mut first) = goals else {
         unreachable!("a first-goal search keeps its goals");
     };
+    if search.stop == SearchStop::Allocation {
+        first.preferred.closed = Some(RouteError::BudgetExhausted);
+        first.fallback.closed = Some(RouteError::BudgetExhausted);
+    }
     let route_to = |(dest, cost): (WorldTile, TargetCost)| {
         let (legs, ticks) = reconstruct(
             dest,
@@ -5251,7 +5264,7 @@ fn many_search<'a>(
     search.capacities.include(proof_capacity);
     let error = match search.stop {
         SearchStop::Exhausted => TargetError::NoPath,
-        SearchStop::Budget => TargetError::BudgetExhausted,
+        SearchStop::Budget | SearchStop::Allocation => TargetError::BudgetExhausted,
         SearchStop::Deadline | SearchStop::Completed => TargetError::NotSettled,
     };
     for result in &mut costs {
@@ -5485,6 +5498,9 @@ async fn blocking_frontier_cooperative(
         progress,
     )
     .await;
+    if search.stop == SearchStop::Allocation {
+        return Err(SearchCursorError::Allocation);
+    }
     Ok((search.stop == SearchStop::Exhausted, search.settled))
 }
 
@@ -7526,6 +7542,7 @@ enum SearchStop {
     Completed,
     Exhausted,
     Budget,
+    Allocation,
     Deadline,
 }
 
@@ -8060,7 +8077,9 @@ fn run_single_search(
                 ticks,
             })
         }
-        _ if search.stop == SearchStop::Budget => Err(RouteError::BudgetExhausted),
+        _ if matches!(search.stop, SearchStop::Budget | SearchStop::Allocation) => {
+            Err(RouteError::BudgetExhausted)
+        }
         _ => Err(RouteError::NoPath),
     }
 }
@@ -8292,17 +8311,23 @@ async fn relax_packed<B: Budget>(
     action_index: usize,
     pending_limit: usize,
     pending_after_limit: &mut bool,
-) -> Result<(), ()> {
+) -> Result<(), SearchStop> {
     let balance = key.tie();
     if balance > 0x3fff {
-        return Err(());
+        return Err(SearchStop::Budget);
     }
-    let action_index = u32::try_from(action_index).map_err(|_| ())?;
+    let action_index = u32::try_from(action_index).map_err(|_| SearchStop::Budget)?;
     if action_index > 0x00ff_ffff {
-        return Err(());
+        return Err(SearchStop::Budget);
     }
     let lookup = loop {
-        let result = table.locate(key.tile(), balance).await;
+        // Legacy searches do not construct and poll a lookup future per edge.
+        // Cooperative searches retain their collision-by-collision suspension.
+        let result = if SYNCHRONOUS_WORK.get() {
+            table.locate_for_insert(key.tile(), balance)
+        } else {
+            table.locate(key.tile(), balance).await
+        };
         match result {
             Ok(lookup) => break lookup,
             Err(()) if pending_limit == 0 => {
@@ -8310,8 +8335,9 @@ async fn relax_packed<B: Budget>(
                 return Ok(());
             }
             Err(()) => match table.try_grow(heap, maximum_table_capacity) {
-                Some(true) => {}
-                Some(false) | None => return Err(()),
+                Ok(true) => {}
+                Ok(false) => return Err(SearchStop::Budget),
+                Err(_) => return Err(SearchStop::Allocation),
             },
         }
     };
@@ -8330,16 +8356,16 @@ async fn relax_packed<B: Budget>(
                 return Ok(());
             }
             if heap.len() >= pending_limit {
-                let worst = heap.worst_id(table).await.ok_or(())?;
+                let worst = heap.worst_id(table).await.ok_or(SearchStop::Budget)?;
                 if !table
                     .compare_candidate(cost, key.tile(), balance, worst)
                     .is_lt()
                 {
                     return Ok(());
                 }
-                let removed = heap.remove_worst(table).await.ok_or(())?;
+                let removed = heap.remove_worst(table).await.ok_or(SearchStop::Budget)?;
                 table.tombstone(removed).await;
-                id = table.vacant_id().ok_or(())?;
+                id = table.vacant_id().ok_or(SearchStop::Budget)?;
             }
             table.insert(id, key.tile(), balance, action, action_index, cost);
             heap.push(table, id, parent);
@@ -8383,11 +8409,14 @@ async fn search_kernel_budget<B: Budget>(
     } else {
         budget.min(SYNC_FIRST_TABLE_INITIAL_SETTLES)
     };
-    let Some(mut came_from) = PackedSearchTable::try_new(initial_settle_budget) else {
-        return KernelOutcome {
-            stop: SearchStop::Budget,
-            ..KernelOutcome::empty()
-        };
+    let mut came_from = match PackedSearchTable::try_new(initial_settle_budget) {
+        Ok(table) => table,
+        Err(_) => {
+            return KernelOutcome {
+                stop: SearchStop::Allocation,
+                ..KernelOutcome::empty()
+            };
+        }
     };
     let Some(mut heap) = PackedMinMaxHeap::try_new(came_from.capacity()) else {
         return KernelOutcome {
@@ -8450,6 +8479,7 @@ async fn search_kernel_budget<B: Budget>(
     let mut heap_pops = 0usize;
     let expired = || deadline.is_some_and(|end| Instant::now() >= end);
     let mut budget_spent = false;
+    let mut budget_stop = SearchStop::Budget;
     let mut pending_after_limit = false;
     'search: while heap.len() != 0 {
         work_unit().await;
@@ -8577,7 +8607,7 @@ async fn search_kernel_budget<B: Budget>(
                     }
                 }
                 let next = current.at(nb);
-                if relax_packed::<B>(
+                if let Err(stop) = relax_packed::<B>(
                     &mut came_from,
                     &mut heap,
                     maximum_table_capacity,
@@ -8590,9 +8620,9 @@ async fn search_kernel_budget<B: Budget>(
                     &mut pending_after_limit,
                 )
                 .await
-                .is_err()
                 {
                     budget_spent = true;
+                    budget_stop = stop;
                     break 'search;
                 }
             }
@@ -8668,7 +8698,7 @@ async fn search_kernel_budget<B: Budget>(
                                 break 'search;
                             }
                         };
-                        if relax_packed::<B>(
+                        if let Err(stop) = relax_packed::<B>(
                             &mut came_from,
                             &mut heap,
                             maximum_table_capacity,
@@ -8681,9 +8711,9 @@ async fn search_kernel_budget<B: Budget>(
                             &mut pending_after_limit,
                         )
                         .await
-                        .is_err()
                         {
                             budget_spent = true;
+                            budget_stop = stop;
                             break 'search;
                         }
                     }
@@ -8727,7 +8757,7 @@ async fn search_kernel_budget<B: Budget>(
                             continue;
                         }
                     }
-                    if relax_packed::<B>(
+                    if let Err(stop) = relax_packed::<B>(
                         &mut came_from,
                         &mut heap,
                         maximum_table_capacity,
@@ -8740,9 +8770,9 @@ async fn search_kernel_budget<B: Budget>(
                         &mut pending_after_limit,
                     )
                     .await
-                    .is_err()
                     {
                         budget_spent = true;
+                        budget_stop = stop;
                         break 'search;
                     }
                 }
@@ -8799,7 +8829,7 @@ async fn search_kernel_budget<B: Budget>(
                         break 'search;
                     }
                 };
-                if relax_packed::<B>(
+                if let Err(stop) = relax_packed::<B>(
                     &mut came_from,
                     &mut heap,
                     maximum_table_capacity,
@@ -8812,15 +8842,17 @@ async fn search_kernel_budget<B: Budget>(
                     &mut pending_after_limit,
                 )
                 .await
-                .is_err()
                 {
                     budget_spent = true;
+                    budget_stop = stop;
                     break 'search;
                 }
             }
         }
     }
-    let stop = if expired() {
+    let stop = if budget_stop == SearchStop::Allocation {
+        SearchStop::Allocation
+    } else if expired() {
         SearchStop::Deadline
     } else if budget_spent || pending_after_limit {
         SearchStop::Budget

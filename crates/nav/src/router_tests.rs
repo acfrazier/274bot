@@ -68,6 +68,71 @@ fn synchronous_driver_skips_suspension_and_restores_cooperative_mode() {
     assert!(!unit_is_ready());
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn cooperative_mapping_failure_returns_typed_allocation_error() {
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        bake(4096, 1, &[]),
+        TransportGraph::default(),
+        Vec::new(),
+    ));
+    let lease = crate::producer::lease(&world).unwrap();
+    let request = super::SearchRequest::Single {
+        from: tile(0, 0, 0),
+        to: tile(4095, 0, 0),
+        options: FindOptions::default(),
+        avoid: Box::default(),
+        max_settles: 4096,
+    };
+    let mut cursor =
+        super::SearchCursor::new(request, lease, Arc::new(WorldState::empty())).unwrap();
+    let clock = SystemClock;
+    let cancellation = SharedCancellation::new();
+    super::zeroed_buffer::with_mapping_failure(|| {
+        for _ in 0..128 {
+            let budget = SliceBudget::new(
+                NonZeroU32::new(64).unwrap(),
+                Deadline::after(clock.now(), Duration::from_secs(5)),
+            );
+            let mut context = StepContext::<InspectionPhase>::new(&clock, budget, &cancellation);
+            match cursor.advance(&mut context) {
+                super::CursorStep::Failed(error) => {
+                    assert!(matches!(error, super::SearchCursorError::Allocation));
+                    return;
+                }
+                super::CursorStep::Yielded => {}
+                super::CursorStep::Complete(_) | super::CursorStep::Cancelled(_) => {
+                    panic!("a refused mapping must fail the cursor")
+                }
+            }
+        }
+        panic!("a refused mapping must fail within the finite slice limit");
+    });
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn synchronous_mapping_failure_preserves_budget_exhausted() {
+    let collision = bake(4096, 1, &[]);
+    let graph = TransportGraph::default();
+    let state = WorldState::empty();
+    super::zeroed_buffer::with_mapping_failure(|| {
+        assert_eq!(
+            find_with_avoid_bounded(
+                &collision,
+                &graph,
+                tile(0, 0, 0),
+                tile(4095, 0, 0),
+                FindOptions::default(),
+                &state,
+                &[],
+                4096,
+            ),
+            Err(RouteError::BudgetExhausted),
+        );
+    });
+}
+
 #[test]
 fn non_proof_goals_settle_without_a_future() {
     use super::{Goals, Settle, TargetCost};
