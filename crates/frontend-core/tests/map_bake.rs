@@ -15,7 +15,7 @@ use host_play::map_cache::fixture::{
     fixture_descriptor, other_cache_descriptor, ship_fixture_terrain, CountingMapProducer,
 };
 use host_play::map_cache::{
-    MapCacheRoot, MapDemand, MapDemandHandle, MapDemandManager, MapJobStatus, ShippedMapImages,
+    MapCacheRoot, MapDemand, MapDemandHandle, MapDemandManager, MapJobStatus, ShippedMap,
 };
 
 /// Scratch map-cache root, removed on drop.
@@ -49,13 +49,11 @@ fn manager(scratch: &Scratch) -> (MapDemandManager, Arc<CountingMapProducer>) {
 }
 
 /// A manager whose release ships the fixture terrain under `scratch/map`.
-fn shipped_manager(
-    scratch: &Scratch,
-) -> (MapDemandManager, Arc<CountingMapProducer>, ShippedMapImages) {
+fn shipped_manager(scratch: &Scratch) -> (MapDemandManager, Arc<CountingMapProducer>, ShippedMap) {
     let shipped = ship_fixture_terrain(&scratch.0);
     let producer = Arc::new(CountingMapProducer::default());
     (
-        MapDemandManager::with_shipped_images(
+        MapDemandManager::with_shipped_map(
             MapCacheRoot::from_root(scratch.0.join("home")),
             producer.clone(),
             shipped.clone(),
