@@ -61,6 +61,8 @@ const LOG_VIEW: &str =
 const SEAM_ROWS: &str = "the command seam: every row, chosen by its literal argument";
 const STARTUP: &str = "startup wiring of a store path or adapter; no operator decision";
 const ACCESSOR: &str = "accessor exposing an owned model (T3.1 accessor migration), not a decision";
+const PATH_READ: &str = "resolves an operator file location; no state change";
+const LOADOUT_DRAFT: &str = "draft mutation of the loadout form; persist is SaveLoadout";
 const SETTINGS_KIND: &str = "the card kind of the selection decides the row";
 const WRITER: &str = "the durable writer's entry: the caller's mirror and label name the row (credentials → SaveProfile / SetWorld, tutorial → MarkTutorialSkipped, render prefs → SetRaster)";
 
@@ -459,10 +461,55 @@ const CORE: &[(&str, Decision)] = &[
         Excluded("presentation: applies the notice to the front end's banner"),
     ),
     (
-        "scripts/mod.rs::Scripts::assignment",
-        Excluded("reads the profile's assignment"),
+        "scripts/mod.rs::Scripts::assignment_name",
+        Excluded("reads the profile's assignment display name"),
     ),
-    ("scripts/mod.rs::sel_from_assignment", Excluded(FORMAT)),
+    ("scripts/mod.rs::Scripts::load_file", Row(C::LoadScriptFile)),
+    (
+        "scripts/mod.rs::Scripts::set_legacy_value",
+        Row(C::SaveLegacyScriptSettings),
+    ),
+    // scripts/vocab.rs, scripts/paint.rs: script vocabulary and paint views.
+    ("scripts/vocab.rs::format_setting_value", Excluded(FORMAT)),
+    ("scripts/vocab.rs::OwnedSchema::copy_from", Excluded(PROJECTION)),
+    ("scripts/vocab.rs::OwnedSchema::clear", Excluded(PROJECTION)),
+    ("scripts/paint.rs::map_applet_rect", Excluded(FORMAT)),
+    ("scripts/paint.rs::CanvasCache::store", Excluded(PROJECTION)),
+    ("scripts/paint.rs::CanvasCache::clear", Excluded(PROJECTION)),
+    // scripts/paths.rs: operator file locations.
+    ("scripts/paths.rs::bot_home", Excluded(PATH_READ)),
+    ("scripts/paths.rs::bot_file", Excluded(PATH_READ)),
+    ("scripts/paths.rs::rs2b0t_path_file", Excluded(PATH_READ)),
+    ("scripts/paths.rs::rs2b0t_import_file", Excluded(PATH_READ)),
+    ("scripts/paths.rs::rs2b0t_root", Excluded(PATH_READ)),
+    ("scripts/paths.rs::rs2b0t_root_checked", Excluded(PATH_READ)),
+    ("scripts/paths.rs::registry_index_path", Excluded(PATH_READ)),
+    ("scripts/paths.rs::rs2b0t_import_deferred", Excluded(PATH_READ)),
+    ("scripts/paths.rs::rs2b0t_import_deferred_at", Excluded(PATH_READ)),
+    (
+        "scripts/paths.rs::set_rs2b0t_import_deferred_at",
+        Row(C::DeferCatalogImport),
+    ),
+    (
+        "scripts/paths.rs::clear_rs2b0t_import_at",
+        Excluded("clears the deferral marker when a catalogue import settles; the decision was ImportCatalog"),
+    ),
+    // scripts/loadouts.rs: the operator loadout form.
+    ("scripts/loadouts.rs::Loadouts::upsert", Excluded(LOADOUT_DRAFT)),
+    ("scripts/loadouts.rs::Loadouts::replace_at", Excluded(LOADOUT_DRAFT)),
+    ("scripts/loadouts.rs::Loadouts::remove", Excluded(LOADOUT_DRAFT)),
+    ("scripts/loadouts.rs::Loadouts::discard", Excluded(LOADOUT_DRAFT)),
+    (
+        "scripts/loadouts.rs::Loadouts::reload",
+        Excluded("rereads the operator store into the form, dropping unsaved draft edits"),
+    ),
+    (
+        "scripts/loadouts.rs::Loadouts::save",
+        Rows(
+            &[C::SaveLoadout, C::CreateLoadout, C::DuplicateLoadout, C::DeleteLoadout],
+            "the durable write of the loadout form: the draft edit being saved names the row",
+        ),
+    ),
     ("scripts/mod.rs::Scripts::take_notice", Excluded(RESULT)),
     (
         "scripts/mod.rs::Scripts::dismiss_restart_prompt",
@@ -548,10 +595,6 @@ const CORE: &[(&str, Decision)] = &[
     ("scripts/mod.rs::Scripts::start_selected", Row(C::StartScript)),
     ("scripts/mod.rs::Scripts::start_all", Row(C::StartScript)),
     ("scripts/mod.rs::Scripts::stop_all", Row(C::StopScript)),
-    ("scripts/mod.rs::Scripts::set_js", Excluded(STARTUP)),
-    ("scripts/mod.rs::Scripts::set_legacy", Excluded(STARTUP)),
-    ("scripts/mod.rs::Scripts::js_mut", Excluded(ACCESSOR)),
-    ("scripts/mod.rs::Scripts::legacy_mut", Excluded(ACCESSOR)),
     (
         "scripts/mod.rs::Scripts::live_start_parts",
         Excluded(ACCESSOR),

@@ -5,9 +5,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
-use script::{
-    coerce_setting_value, format_setting_value, setting_visible, LoadoutsStore, SettingDef,
-};
+use frontend_core::scripts::{format_setting_value, Loadouts, SchemaRef, SettingView};
 
 /// Mutable params-pane state: form open, cursor, and in-progress edit.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -63,23 +61,20 @@ pub type ParamsCommit<'a> =
 /// The script params popup over a card's settings schema. `bag` is the
 /// view of the focused profile's merged bag; edits go through `commit`.
 pub struct ParamsPane<'a> {
-    pub schema: &'a [SettingDef],
+    pub schema: SchemaRef<'a>,
     pub bag: &'a mut serde_json::Map<String, serde_json::Value>,
     pub commit: &'a mut ParamsCommit<'a>,
-    pub loadouts: &'a LoadoutsStore,
+    pub loadouts: &'a Loadouts,
     pub game_data: Option<&'a api::game_data::SelectedGameData>,
     pub state: &'a mut ParamsState,
 }
 
 impl<'a> ParamsPane<'a> {
-    pub fn visible_rows(&self) -> Vec<&'a SettingDef> {
-        self.schema
-            .iter()
-            .filter(|d| setting_visible(d.show_if.as_deref(), self.bag))
-            .collect()
+    pub fn visible_rows(&self) -> Vec<SettingView<'a>> {
+        self.schema.iter().filter(|d| d.visible(self.bag)).collect()
     }
 
-    fn resolved_options(&self, def: &SettingDef) -> frontend_core::scripts::ParameterOptions {
+    fn resolved_options(&self, def: SettingView<'_>) -> frontend_core::scripts::ParameterOptions {
         frontend_core::scripts::resolve_parameter_options(
             def,
             self.bag,
@@ -90,13 +85,13 @@ impl<'a> ParamsPane<'a> {
 
     fn array_editor_enabled(
         &self,
-        def: &SettingDef,
+        def: SettingView<'_>,
         options: &frontend_core::scripts::ParameterOptions,
     ) -> bool {
-        def.ty == "string[]"
+        def.ty() == "string[]"
             && options.can_edit_array(
                 self.bag
-                    .get(&def.id)
+                    .get(def.id())
                     .and_then(serde_json::Value::as_array)
                     .into_iter()
                     .flatten()
@@ -168,11 +163,7 @@ impl<'a> ParamsPane<'a> {
     }
 
     fn clamp_cursor(&mut self) {
-        let n = self
-            .schema
-            .iter()
-            .filter(|d| setting_visible(d.show_if.as_deref(), self.bag))
-            .count();
+        let n = self.schema.iter().filter(|d| d.visible(self.bag)).count();
         if n == 0 {
             self.state.cursor = 0;
         } else if self.state.cursor >= n {
@@ -180,7 +171,11 @@ impl<'a> ParamsPane<'a> {
         }
     }
 
-    fn on_edit_key(&mut self, code: crossterm::event::KeyCode, rows: &[&SettingDef]) -> ParamsKey {
+    fn on_edit_key(
+        &mut self,
+        code: crossterm::event::KeyCode,
+        rows: &[SettingView<'_>],
+    ) -> ParamsKey {
         if self.state.multi_select || self.state.choice_single {
             return self.on_choice_key(code, rows);
         }
@@ -206,8 +201,8 @@ impl<'a> ParamsPane<'a> {
         }
     }
 
-    fn refresh_text_error(&mut self, rows: &[&SettingDef]) {
-        let Some(def) = rows.get(self.state.cursor) else {
+    fn refresh_text_error(&mut self, rows: &[SettingView<'_>]) {
+        let Some(def) = rows.get(self.state.cursor).copied() else {
             return;
         };
         let options = self.resolved_options(def);
@@ -222,9 +217,9 @@ impl<'a> ParamsPane<'a> {
     fn on_choice_key(
         &mut self,
         code: crossterm::event::KeyCode,
-        rows: &[&SettingDef],
+        rows: &[SettingView<'_>],
     ) -> ParamsKey {
-        let Some(def) = rows.get(self.state.cursor) else {
+        let Some(def) = rows.get(self.state.cursor).copied() else {
             return ParamsKey::None;
         };
         let opts = self.resolved_options(def);
@@ -310,20 +305,20 @@ impl<'a> ParamsPane<'a> {
             .collect()
     }
 
-    fn activate(&mut self, rows: &[&SettingDef], enter: bool) -> ParamsKey {
-        let Some(def) = rows.get(self.state.cursor) else {
+    fn activate(&mut self, rows: &[SettingView<'_>], enter: bool) -> ParamsKey {
+        let Some(def) = rows.get(self.state.cursor).copied() else {
             return ParamsKey::None;
         };
-        if def.ty == "boolean" {
-            if self.state.walk_permissions.permission_enabled(&def.id) == Some(true) {
+        if def.ty() == "boolean" {
+            if self.state.walk_permissions.permission_enabled(def.id()) == Some(true) {
                 return ParamsKey::None;
             }
             let cur = self
                 .bag
-                .get(&def.id)
+                .get(def.id())
                 .and_then(|v| v.as_bool())
-                .unwrap_or_else(|| def.default.as_deref() == Some("true"));
-            return if self.persist(&def.id, serde_json::json!(!cur)) {
+                .unwrap_or_else(|| def.default() == Some("true"));
+            return if self.persist(def.id(), serde_json::json!(!cur)) {
                 ParamsKey::Toggle
             } else {
                 ParamsKey::None
@@ -331,15 +326,15 @@ impl<'a> ParamsPane<'a> {
         }
         let opts = self.resolved_options(def);
         let array_editable = self.array_editor_enabled(def, &opts);
-        if def.options_from.is_some() && opts.is_empty() && !array_editable {
+        if def.options_from().is_some() && opts.is_empty() && !array_editable {
             return ParamsKey::None;
         }
-        if def.ty == "string" && !opts.is_empty() {
+        if def.ty() == "string" && !opts.is_empty() {
             let stored = self
                 .bag
-                .get(&def.id)
+                .get(def.id())
                 .and_then(|v| v.as_str())
-                .or(def.default.as_deref())
+                .or(def.default())
                 .unwrap_or("");
             if enter {
                 self.state.editing = true;
@@ -360,39 +355,36 @@ impl<'a> ParamsPane<'a> {
             let Some(next) = opts.next_selectable(stored) else {
                 return ParamsKey::None;
             };
-            return if self.persist(&def.id, serde_json::json!(next)) {
+            return if self.persist(def.id(), serde_json::json!(next)) {
                 ParamsKey::Toggle
             } else {
                 ParamsKey::None
             };
         }
-        if !enter && def.ty != "string[]" {
+        if !enter && def.ty() != "string[]" {
             return ParamsKey::None;
         }
-        if def.ty == "string[]" && array_editable {
+        if def.ty() == "string[]" && array_editable {
             self.state.editing = true;
             self.state.multi_select = true;
             self.state.choice_single = false;
             self.state.choice_cursor = 0;
             self.state.choice_search.clear();
             self.state.choice_searchable = opts.values().len() > 16;
-            self.state.choice_selected = current_string_list(self.bag.get(&def.id));
+            self.state.choice_selected = current_string_list(self.bag.get(def.id()));
             self.state.scratch.clear();
             self.state.error = None;
             return ParamsKey::Edit;
         }
-        if matches!(
-            def.ty.as_str(),
-            "number" | "string" | "tile" | "list" | "string[]"
-        ) {
+        if matches!(def.ty(), "number" | "string" | "tile" | "list" | "string[]") {
             self.state.editing = true;
             self.state.multi_select = false;
             self.state.choice_single = false;
             self.state.scratch = self
                 .bag
-                .get(&def.id)
+                .get(def.id())
                 .map(format_setting_value)
-                .unwrap_or_else(|| def.default.clone().unwrap_or_default());
+                .unwrap_or_else(|| def.default().unwrap_or_default().to_owned());
             self.state.choice_selected.clear();
             self.state.error = None;
             return ParamsKey::Edit;
@@ -400,8 +392,8 @@ impl<'a> ParamsPane<'a> {
         ParamsKey::None
     }
 
-    fn commit_text(&mut self, rows: &[&SettingDef]) -> ParamsKey {
-        let Some(def) = rows.get(self.state.cursor) else {
+    fn commit_text(&mut self, rows: &[SettingView<'_>]) -> ParamsKey {
+        let Some(def) = rows.get(self.state.cursor).copied() else {
             return ParamsKey::None;
         };
         let options = self.resolved_options(def);
@@ -411,7 +403,7 @@ impl<'a> ParamsPane<'a> {
             options.selectable(),
         ) {
             Ok(value) => {
-                if self.persist(&def.id, value) {
+                if self.persist(def.id(), value) {
                     self.cancel_edit();
                     ParamsKey::Saved
                 } else {
@@ -427,7 +419,7 @@ impl<'a> ParamsPane<'a> {
 
     fn commit_single_choice(
         &mut self,
-        def: &SettingDef,
+        def: SettingView<'_>,
         options: &frontend_core::scripts::ParameterOptions,
     ) -> ParamsKey {
         let visible = self.choice_indices(options);
@@ -438,7 +430,7 @@ impl<'a> ParamsPane<'a> {
             return ParamsKey::None;
         };
         let value = options.value_for(value);
-        if self.persist(&def.id, serde_json::json!(value)) {
+        if self.persist(def.id(), serde_json::json!(value)) {
             self.cancel_edit();
             ParamsKey::Saved
         } else {
@@ -446,10 +438,10 @@ impl<'a> ParamsPane<'a> {
         }
     }
 
-    fn commit_choices(&mut self, def: &SettingDef) -> ParamsKey {
+    fn commit_choices(&mut self, def: SettingView<'_>) -> ParamsKey {
         let raw = serde_json::json!(self.state.choice_selected.clone());
-        let value = coerce_setting_value(&def.ty, &raw);
-        if self.persist(&def.id, value) {
+        let value = def.coerce(&raw);
+        if self.persist(def.id(), value) {
             self.cancel_edit();
             ParamsKey::Saved
         } else {
@@ -537,17 +529,17 @@ fn current_string_list(value: Option<&serde_json::Value>) -> Vec<String> {
 /// unavailable quest and its reason), so the narrow row never clips it.
 fn stored_quest_reason<'a>(
     bag: &'a serde_json::Map<String, serde_json::Value>,
-    def: &SettingDef,
+    def: SettingView<'_>,
     options: &frontend_core::scripts::ParameterOptions,
 ) -> Option<&'a serde_json::Value> {
     if !matches!(
-        def.options_from.as_deref(),
+        def.options_from(),
         Some("released-paths" | "released-path-order")
     ) || options.preserved() == 0
     {
         return None;
     }
-    let stored = bag.get(&def.id)?;
+    let stored = bag.get(def.id())?;
     options
         .preserved_stored_labels(stored)
         .next()
@@ -556,11 +548,11 @@ fn stored_quest_reason<'a>(
 
 fn display_value(
     bag: &serde_json::Map<String, serde_json::Value>,
-    def: &SettingDef,
+    def: SettingView<'_>,
     options: &frontend_core::scripts::ParameterOptions,
 ) -> String {
-    let value = bag.get(&def.id).cloned().or_else(|| {
-        def.default.as_deref().map(|default| {
+    let value = bag.get(def.id()).cloned().or_else(|| {
+        def.default().map(|default| {
             serde_json::from_str(default)
                 .unwrap_or_else(|_| serde_json::Value::String(default.to_owned()))
         })
@@ -615,10 +607,10 @@ impl Widget for ParamsPane<'_> {
         let mut site_reason_detail = false;
         let mut quest_detail = None;
         if self.state.editing && (self.state.multi_select || self.state.choice_single) {
-            if let Some(def) = rows.get(self.state.cursor) {
+            if let Some(def) = rows.get(self.state.cursor).copied() {
                 let opts = self.resolved_options(def);
                 let mut stored_quest = None;
-                if def.options_from.as_deref() == Some("gather:sites") && opts.preserved() > 0 {
+                if def.options_from() == Some("gather:sites") && opts.preserved() > 0 {
                     unavailable_current = Some(display_value(self.bag, def, &opts));
                     site_reason_detail = true;
                 } else if let Some(stored) = stored_quest_reason(self.bag, def, &opts) {
@@ -626,7 +618,7 @@ impl Widget for ParamsPane<'_> {
                     site_reason_detail = false;
                     stored_quest = Some(stored);
                 }
-                let label = def.label.as_deref().unwrap_or(&def.id);
+                let label = def.display_label();
                 lines.push(Line::from(format!("{label} choices")));
                 if self.state.choice_searchable {
                     let query = if self.state.choice_search.is_empty() {
@@ -654,9 +646,9 @@ impl Widget for ParamsPane<'_> {
                     };
                     let stored = self
                         .bag
-                        .get(&def.id)
+                        .get(def.id())
                         .and_then(serde_json::Value::as_str)
-                        .or(def.default.as_deref())
+                        .or(def.default())
                         .unwrap_or("");
                     for (row, index) in indices.into_iter().enumerate() {
                         let Some(opt) = values.get(index) else {
@@ -697,16 +689,16 @@ impl Widget for ParamsPane<'_> {
             }
         } else {
             let mut last_group: Option<&str> = None;
-            for (i, def) in rows.iter().enumerate() {
+            for (i, def) in rows.iter().copied().enumerate() {
                 let group = if self
                     .state
                     .walk_permissions
-                    .permission_enabled(&def.id)
+                    .permission_enabled(def.id())
                     .is_some()
                 {
                     Some("Walk permissions")
                 } else {
-                    def.group.as_deref()
+                    def.group()
                 };
                 if group != last_group {
                     last_group = group;
@@ -722,20 +714,21 @@ impl Widget for ParamsPane<'_> {
                 if i == self.state.cursor {
                     cursor_line = lines.len();
                 }
-                let label = def.label.as_deref().unwrap_or(&def.id);
+                let label = def.display_label();
                 let mark = if i == self.state.cursor { "> " } else { "  " };
                 let value = if self.state.editing && i == self.state.cursor {
                     format!("{}_", self.state.scratch)
-                } else if let Some(global) = self.state.walk_permissions.permission_enabled(&def.id)
+                } else if let Some(global) =
+                    self.state.walk_permissions.permission_enabled(def.id())
                 {
                     if global {
                         "On (inherited globally; script cannot veto)".into()
                     } else {
                         let enabled = self
                             .bag
-                            .get(&def.id)
+                            .get(def.id())
                             .and_then(|value| value.as_bool())
-                            .unwrap_or_else(|| def.default.as_deref() == Some("true"));
+                            .unwrap_or_else(|| def.default() == Some("true"));
                         if enabled {
                             "On (script opt-in)".into()
                         } else {
@@ -744,23 +737,21 @@ impl Widget for ParamsPane<'_> {
                     }
                 } else {
                     let options = self.resolved_options(def);
-                    if def.options_from.is_some()
+                    if def.options_from().is_some()
                         && options.is_empty()
                         && !self.array_editor_enabled(def, &options)
                     {
-                        if def.options_from.as_deref() == Some("loadouts") {
+                        if def.options_from() == Some("loadouts") {
                             "no loadouts available".to_string()
                         } else if options.preserved() > 0 {
                             let current = display_value(self.bag, def, &options);
                             if i == self.state.cursor {
                                 unavailable_current = Some(current);
-                                site_reason_detail =
-                                    def.options_from.as_deref() == Some("gather:sites");
+                                site_reason_detail = def.options_from() == Some("gather:sites");
                                 quest_detail = None;
                                 "options unavailable".to_string()
                             } else {
-                                if !self.state.editing
-                                    && def.options_from.as_deref() == Some("gather:sites")
+                                if !self.state.editing && def.options_from() == Some("gather:sites")
                                 {
                                     unavailable_current = Some(current.clone());
                                     site_reason_detail = true;
@@ -774,7 +765,7 @@ impl Widget for ParamsPane<'_> {
                     } else {
                         let current = display_value(self.bag, def, &options);
                         if !self.state.editing
-                            && def.options_from.as_deref() == Some("gather:sites")
+                            && def.options_from() == Some("gather:sites")
                             && options.preserved() > 0
                         {
                             unavailable_current = Some(current.clone());
@@ -979,7 +970,7 @@ mod tests {
         let dir = temp_dir("bool");
         let path = dir.join("script-settings.json");
         let mut store = ScriptSettingsStore::at(path);
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let schema = bury_schema();
         let mut bag = store.merged_bag(ScriptSource::Catalog, "ChickenKiller", &schema, None);
         assert_eq!(bag.get("buryBones"), Some(&serde_json::json!(true)));
@@ -989,7 +980,7 @@ mod tests {
             ..Default::default()
         };
         let mut pane = ParamsPane {
-            schema: &schema,
+            schema: SchemaRef::from_script(&schema),
             bag: &mut bag,
             commit: &mut store_commit(&mut store, "ChickenKiller"),
             loadouts: &loadouts,
@@ -1004,7 +995,7 @@ mod tests {
     fn global_walk_permission_is_inherited_and_script_additive_when_off() {
         let dir = temp_dir("walk-permissions");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let schema = vec![SettingDef {
             group: Some("Quester".into()),
             ..setting(
@@ -1034,7 +1025,7 @@ mod tests {
         };
         {
             let mut pane = ParamsPane {
-                schema: &schema,
+                schema: SchemaRef::from_script(&schema),
                 bag: &mut bag,
                 commit: &mut store_commit(&mut store, "Quester"),
                 loadouts: &loadouts,
@@ -1054,7 +1045,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 let pane = ParamsPane {
-                    schema: &schema,
+                    schema: SchemaRef::from_script(&schema),
                     bag: &mut bag,
                     commit: &mut read_only,
                     loadouts: &loadouts,
@@ -1093,7 +1084,7 @@ mod tests {
         };
         let outcome = {
             let mut pane = ParamsPane {
-                schema: &schema,
+                schema: SchemaRef::from_script(&schema),
                 bag: &mut bag,
                 commit: &mut store_commit(&mut store, "Quester"),
                 loadouts: &loadouts,
@@ -1109,7 +1100,7 @@ mod tests {
     #[test]
     fn params_pane_space_cycles_loadout_combo_from_store() {
         let dir = temp_dir("loadout");
-        let loadouts = LoadoutsStore::detached(vec![
+        let loadouts = Loadouts::detached(vec![
             api::loadout::Loadout::new("fish"),
             api::loadout::Loadout::new("mine"),
         ]);
@@ -1125,7 +1116,7 @@ mod tests {
             ..Default::default()
         };
         let mut pane = ParamsPane {
-            schema: &schema,
+            schema: SchemaRef::from_script(&schema),
             bag: &mut bag,
             commit: &mut store_commit(&mut store, "Thiever"),
             loadouts: &loadouts,
@@ -1141,7 +1132,7 @@ mod tests {
         let dir = temp_dir("alcher-num");
         let path = dir.join("script-settings.json");
         let mut store = ScriptSettingsStore::at(path.clone());
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let schema = alcher_schema();
         let mut bag = store.merged_bag(ScriptSource::Catalog, "Alcher", &schema, None);
         let mut state = ParamsState {
@@ -1150,7 +1141,7 @@ mod tests {
             ..Default::default()
         };
         let mut pane = ParamsPane {
-            schema: &schema,
+            schema: SchemaRef::from_script(&schema),
             bag: &mut bag,
             commit: &mut store_commit(&mut store, "Alcher"),
             loadouts: &loadouts,
@@ -1185,7 +1176,7 @@ mod tests {
 
     #[test]
     fn text_edits_submit_once_on_commit_and_skip_unchanged_or_invalid_values() {
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let schema = vec![setting("count", "number", Some("1"), Some("Count"), &[])];
         let mut bag = script::merge_bag(&schema, &serde_json::Map::new(), None);
         let attempts = AtomicU64::new(0);
@@ -1198,7 +1189,7 @@ mod tests {
             ..Default::default()
         };
         let mut pane = ParamsPane {
-            schema: &schema,
+            schema: SchemaRef::from_script(&schema),
             bag: &mut bag,
             commit: &mut commit,
             loadouts: &loadouts,
@@ -1231,7 +1222,7 @@ mod tests {
         let dir = temp_dir("alcher-items");
         let path = dir.join("script-settings.json");
         let mut store = ScriptSettingsStore::at(path.clone());
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let schema = alcher_schema();
         let mut bag = store.merged_bag(ScriptSource::Catalog, "Alcher", &schema, None);
         assert!(bag.get("items").is_none());
@@ -1241,7 +1232,7 @@ mod tests {
             ..Default::default()
         };
         let mut pane = ParamsPane {
-            schema: &schema,
+            schema: SchemaRef::from_script(&schema),
             bag: &mut bag,
             commit: &mut store_commit(&mut store, "Alcher"),
             loadouts: &loadouts,
@@ -1270,7 +1261,7 @@ mod tests {
         let dir = temp_dir("choices");
         let path = dir.join("script-settings.json");
         let mut store = ScriptSettingsStore::at(path);
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let schema = vec![setting(
             "items",
             "string[]",
@@ -1285,7 +1276,7 @@ mod tests {
             ..Default::default()
         };
         let mut pane = ParamsPane {
-            schema: &schema,
+            schema: SchemaRef::from_script(&schema),
             bag: &mut bag,
             commit: &mut store_commit(&mut store, "Alcher"),
             loadouts: &loadouts,
@@ -1316,7 +1307,7 @@ mod tests {
         let dir = temp_dir("coerce");
         let path = dir.join("script-settings.json");
         let mut store = ScriptSettingsStore::at(path);
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let schema = vec![
             setting("spot", "tile", Some("3200,3200,0"), Some("Spot"), &[]),
             setting("drops", "list", Some("bones,shells"), Some("Drops"), &[]),
@@ -1329,7 +1320,7 @@ mod tests {
             ..Default::default()
         };
         let mut pane = ParamsPane {
-            schema: &schema,
+            schema: SchemaRef::from_script(&schema),
             bag: &mut bag,
             commit: &mut store_commit(&mut store, "Gatherer"),
             loadouts: &loadouts,
@@ -1373,7 +1364,7 @@ mod tests {
     /// `n`/Esc and nothing else, and a refused commit keeps the old value.
     #[test]
     fn apply_to_all_keys_and_a_refused_commit() {
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let schema = alcher_schema();
         let mut bag = serde_json::Map::new();
         bag.insert("alchs".into(), serde_json::json!(27));
@@ -1386,7 +1377,7 @@ mod tests {
             Err("vault locked".to_string())
         };
         let mut pane = ParamsPane {
-            schema: &schema,
+            schema: SchemaRef::from_script(&schema),
             bag: &mut bag,
             commit: &mut refuse,
             loadouts: &loadouts,
@@ -1414,7 +1405,7 @@ mod tests {
     fn overlay_clears_background_and_keeps_cursor_visible_on_long_schema() {
         let dir = temp_dir("draw");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let schema: Vec<SettingDef> = (0..20)
             .map(|i| {
                 setting(
@@ -1437,7 +1428,7 @@ mod tests {
             .draw(|frame| {
                 frame.render_widget(Paragraph::new("X".repeat(48 * 12)), frame.area());
                 let pane = ParamsPane {
-                    schema: &schema,
+                    schema: SchemaRef::from_script(&schema),
                     bag: &mut bag,
                     commit: &mut store_commit(&mut store, "LongCard"),
                     loadouts: &loadouts,
@@ -1482,7 +1473,7 @@ mod tests {
     fn editing_consumes_letters_instead_of_moving_the_row() {
         let dir = temp_dir("letters");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let schema = vec![setting(
             "customItem",
             "string",
@@ -1497,7 +1488,7 @@ mod tests {
             ..Default::default()
         };
         let mut pane = ParamsPane {
-            schema: &schema,
+            schema: SchemaRef::from_script(&schema),
             bag: &mut bag,
             commit: &mut store_commit(&mut store, "Alcher"),
             loadouts: &loadouts,
@@ -1516,7 +1507,7 @@ mod tests {
     fn item_choices_paint_identity_label_and_persist_key() {
         let dir = temp_dir("item-labels");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         let schema = vec![SettingDef {
             id: "items".into(),
@@ -1550,7 +1541,7 @@ mod tests {
         };
         {
             let mut pane = ParamsPane {
-                schema: &schema,
+                schema: SchemaRef::from_script(&schema),
                 bag: &mut bag,
                 commit: &mut store_commit(&mut store, "Alcher"),
                 loadouts: &loadouts,
@@ -1582,7 +1573,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 let pane = ParamsPane {
-                    schema: &schema,
+                    schema: SchemaRef::from_script(&schema),
                     bag: &mut bag,
                     commit: &mut store_commit(&mut store, "Alcher"),
                     loadouts: &loadouts,
@@ -1617,7 +1608,7 @@ mod tests {
     fn gatherer_dynamic_lists_keep_unknowns_and_allow_radius_edits() {
         let dir = temp_dir("gather-picker");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         let mut resources = setting(
             "woodcuttingResources",
@@ -1643,7 +1634,7 @@ mod tests {
         };
         {
             let mut pane = ParamsPane {
-                schema: &schema,
+                schema: SchemaRef::from_script(&schema),
                 bag: &mut bag,
                 commit: &mut store_commit(&mut store, "Gatherer"),
                 loadouts: &loadouts,
@@ -1673,7 +1664,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 let pane = ParamsPane {
-                    schema: &schema,
+                    schema: SchemaRef::from_script(&schema),
                     bag: &mut bag,
                     commit: &mut store_commit(&mut store, "Gatherer"),
                     loadouts: &loadouts,
@@ -1700,7 +1691,7 @@ mod tests {
     fn multiselect_picker_searches_lists_larger_than_sixteen() {
         let dir = temp_dir("picker-search");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let mut quests = setting("quests", "string[]", None, Some("Quests"), &[]);
         quests.options = (0..18).map(|index| format!("quest-{index:02}")).collect();
         quests.option_labels = (0..18).map(|index| format!("Quest {index:02}")).collect();
@@ -1713,7 +1704,7 @@ mod tests {
         };
         {
             let mut pane = ParamsPane {
-                schema: &schema,
+                schema: SchemaRef::from_script(&schema),
                 bag: &mut bag,
                 commit: &mut store_commit(&mut store, "Quester"),
                 loadouts: &loadouts,
@@ -1730,7 +1721,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 let pane = ParamsPane {
-                    schema: &schema,
+                    schema: SchemaRef::from_script(&schema),
                     bag: &mut bag,
                     commit: &mut store_commit(&mut store, "Quester"),
                     loadouts: &loadouts,
@@ -1765,7 +1756,7 @@ mod tests {
     fn dynamic_picker_without_facts_is_disabled_not_a_text_box() {
         let dir = temp_dir("picker-unavailable");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let mut resources = setting(
             "woodcuttingResources",
             "string[]",
@@ -1783,7 +1774,7 @@ mod tests {
         };
         {
             let mut pane = ParamsPane {
-                schema: &schema,
+                schema: SchemaRef::from_script(&schema),
                 bag: &mut bag,
                 commit: &mut store_commit(&mut store, "Gatherer"),
                 loadouts: &loadouts,
@@ -1797,7 +1788,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 let pane = ParamsPane {
-                    schema: &schema,
+                    schema: SchemaRef::from_script(&schema),
                     bag: &mut bag,
                     commit: &mut store_commit(&mut store, "Gatherer"),
                     loadouts: &loadouts,
@@ -1821,7 +1812,7 @@ mod tests {
     fn scalar_fishing_cycle_skips_refused_groups_and_wraps() {
         let dir = temp_dir("fishing-cycle");
         let store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let mut fishing = setting("fishingMethod", "string", None, Some("Fishing method"), &[]);
         fishing.options_from = Some("gather:fishing".into());
@@ -1860,7 +1851,7 @@ mod tests {
         let mut cycle = Vec::new();
         {
             let mut pane = ParamsPane {
-                schema: &schema,
+                schema: SchemaRef::from_script(&schema),
                 bag: &mut bag,
                 commit: &mut commit,
                 loadouts: &loadouts,
@@ -1898,7 +1889,7 @@ mod tests {
     fn gather_site_picker_filters_and_accepts_explicit_selection() {
         let dir = temp_dir("site-picker");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let schema = script::gatherer::settings::schema();
         let mut bag = store.merged_bag(ScriptSource::Catalog, "Gatherer", schema, None);
@@ -1916,7 +1907,7 @@ mod tests {
             .position(|field| field.id == "site")
             .expect("the Site setting is visible in Site mode");
         let options = frontend_core::scripts::resolve_parameter_options(
-            &schema[site_index],
+            SettingView::from_script(&schema[site_index]),
             &bag,
             &loadouts,
             Some(data.as_ref()),
@@ -1940,7 +1931,7 @@ mod tests {
         };
         {
             let mut pane = ParamsPane {
-                schema,
+                schema: SchemaRef::from_script(schema),
                 bag: &mut bag,
                 commit: &mut store_commit(&mut store, "Gatherer"),
                 loadouts: &loadouts,
@@ -1983,7 +1974,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 let pane = ParamsPane {
-                    schema,
+                    schema: SchemaRef::from_script(schema),
                     bag: &mut bag,
                     commit: &mut store_commit(&mut store, "Gatherer"),
                     loadouts: &loadouts,
@@ -2005,7 +1996,7 @@ mod tests {
 
         {
             let mut pane = ParamsPane {
-                schema,
+                schema: SchemaRef::from_script(schema),
                 bag: &mut bag,
                 commit: &mut store_commit(&mut store, "Gatherer"),
                 loadouts: &loadouts,
@@ -2033,7 +2024,7 @@ mod tests {
     fn invalid_gather_site_remains_disabled_and_explains_why() {
         let dir = temp_dir("site-disabled");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let schema = script::gatherer::settings::schema();
         let mut bag = store.merged_bag(ScriptSource::Catalog, "Gatherer", schema, None);
@@ -2054,7 +2045,7 @@ mod tests {
         };
         {
             let mut pane = ParamsPane {
-                schema,
+                schema: SchemaRef::from_script(schema),
                 bag: &mut bag,
                 commit: &mut store_commit(&mut store, "Gatherer"),
                 loadouts: &loadouts,
@@ -2071,7 +2062,7 @@ mod tests {
             terminal
                 .draw(|frame| {
                     let pane = ParamsPane {
-                        schema,
+                        schema: SchemaRef::from_script(schema),
                         bag: &mut bag,
                         commit: &mut store_commit(&mut store, "Gatherer"),
                         loadouts: &loadouts,
@@ -2105,7 +2096,7 @@ mod tests {
     fn incompatible_saved_site_reason_is_visible_with_choices_at_80_columns() {
         let dir = temp_dir("site-reason-with-choices");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let schema = script::gatherer::settings::schema();
         let willow = data
@@ -2131,7 +2122,7 @@ mod tests {
             .position(|field| field.id == "site")
             .expect("the Site setting is visible in Site mode");
         let options = frontend_core::scripts::resolve_parameter_options(
-            &schema[site_index],
+            SettingView::from_script(&schema[site_index]),
             &bag,
             &loadouts,
             Some(data.as_ref()),
@@ -2153,7 +2144,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 let pane = ParamsPane {
-                    schema,
+                    schema: SchemaRef::from_script(schema),
                     bag: &mut bag,
                     commit: &mut store_commit(&mut store, "Gatherer"),
                     loadouts: &loadouts,
@@ -2180,7 +2171,7 @@ mod tests {
 
         {
             let mut pane = ParamsPane {
-                schema,
+                schema: SchemaRef::from_script(schema),
                 bag: &mut bag,
                 commit: &mut store_commit(&mut store, "Gatherer"),
                 loadouts: &loadouts,
@@ -2193,7 +2184,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 let pane = ParamsPane {
-                    schema,
+                    schema: SchemaRef::from_script(schema),
                     bag: &mut bag,
                     commit: &mut store_commit(&mut store, "Gatherer"),
                     loadouts: &loadouts,
@@ -2222,7 +2213,7 @@ mod tests {
     fn quester_picker_keeps_unknown_path_visible_and_removable() {
         let dir = temp_dir("quest-unknown");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let mut quests = setting("quests", "string[]", None, Some("Quests"), &[]);
         quests.options = vec!["cook".into(), "sheep".into()];
         quests.option_labels = vec!["Cook's Assistant".into(), "Sheep Shearer".into()];
@@ -2237,7 +2228,7 @@ mod tests {
         };
         {
             let mut pane = ParamsPane {
-                schema: &schema,
+                schema: SchemaRef::from_script(&schema),
                 bag: &mut bag,
                 commit: &mut store_commit(&mut store, "Quester"),
                 loadouts: &loadouts,
@@ -2251,7 +2242,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 let pane = ParamsPane {
-                    schema: &schema,
+                    schema: SchemaRef::from_script(&schema),
                     bag: &mut bag,
                     commit: &mut store_commit(&mut store, "Quester"),
                     loadouts: &loadouts,
@@ -2271,14 +2262,14 @@ mod tests {
         assert!(text.contains("Unknown: removed-path"), "{text:?}");
 
         let mut pane = ParamsPane {
-            schema: &schema,
+            schema: SchemaRef::from_script(&schema),
             bag: &mut bag,
             commit: &mut store_commit(&mut store, "Quester"),
             loadouts: &loadouts,
             game_data: None,
             state: &mut state,
         };
-        let options = pane.resolved_options(&schema[0]);
+        let options = pane.resolved_options(SettingView::from_script(&schema[0]));
         pane.state.choice_cursor = options
             .values()
             .iter()
@@ -2294,7 +2285,7 @@ mod tests {
     fn unavailable_quest_is_never_added_by_the_real_picker() {
         let dir = temp_dir("quest-unavailable-add");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let schema = (script::quester::card::CARD.schema)();
         let quests_row = schema
             .iter()
@@ -2308,7 +2299,7 @@ mod tests {
             ..Default::default()
         };
         let mut pane = ParamsPane {
-            schema,
+            schema: SchemaRef::from_script(schema),
             bag: &mut bag,
             commit: &mut store_commit(&mut store, "Quester"),
             loadouts: &loadouts,
@@ -2316,7 +2307,7 @@ mod tests {
             state: &mut state,
         };
         assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
-        let options = pane.resolved_options(&schema[quests_row]);
+        let options = pane.resolved_options(SettingView::from_script(&schema[quests_row]));
         pane.state.choice_cursor = options
             .values()
             .iter()
@@ -2332,7 +2323,7 @@ mod tests {
     fn stored_unavailable_quest_reason_is_not_clipped_at_80_columns() {
         let dir = temp_dir("quest-unavailable-reason");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let schema = (script::quester::card::CARD.schema)();
         let reason = script::quester::card::unavailable_quest("hauntedmine").unwrap();
         let full = format!("Haunted Mine — {reason}")
@@ -2357,7 +2348,7 @@ mod tests {
             terminal
                 .draw(|frame| {
                     let pane = ParamsPane {
-                        schema,
+                        schema: SchemaRef::from_script(schema),
                         bag,
                         commit: &mut store_commit(store, "Quester"),
                         loadouts: &loadouts,
@@ -2383,7 +2374,7 @@ mod tests {
         assert!(rows.contains(&full), "rows view clips the reason: {rows}");
         {
             let mut pane = ParamsPane {
-                schema,
+                schema: SchemaRef::from_script(schema),
                 bag: &mut bag,
                 commit: &mut store_commit(&mut store, "Quester"),
                 loadouts: &loadouts,
@@ -2400,7 +2391,7 @@ mod tests {
     fn empty_loadout_source_shows_a_clear_disabled_state() {
         let dir = temp_dir("empty-loadout-options");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let mut loadout = setting("loadout", "string", None, Some("Loadout"), &[]);
         loadout.options_from = Some("loadouts".into());
         let schema = vec![loadout];
@@ -2412,7 +2403,7 @@ mod tests {
         };
         {
             let mut pane = ParamsPane {
-                schema: &schema,
+                schema: SchemaRef::from_script(&schema),
                 bag: &mut bag,
                 commit: &mut store_commit(&mut store, "Thiever"),
                 loadouts: &loadouts,
@@ -2429,7 +2420,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 let pane = ParamsPane {
-                    schema: &schema,
+                    schema: SchemaRef::from_script(&schema),
                     bag: &mut bag,
                     commit: &mut store_commit(&mut store, "Thiever"),
                     loadouts: &loadouts,
@@ -2468,7 +2459,7 @@ mod tests {
             );
             store.save().unwrap();
 
-            let loadouts = LoadoutsStore::default();
+            let loadouts = Loadouts::default();
             let schema = (script::quester::card::CARD.schema)();
             let row = schema
                 .iter()
@@ -2483,7 +2474,7 @@ mod tests {
 
             {
                 let mut pane = ParamsPane {
-                    schema,
+                    schema: SchemaRef::from_script(schema),
                     bag: &mut bag,
                     commit: &mut store_commit(&mut store, "Quester"),
                     loadouts: &loadouts,
@@ -2498,7 +2489,7 @@ mod tests {
                 assert!(pane.state.multi_select);
                 assert_eq!(pane.state.choice_selected, ["hauntedmine"]);
 
-                let options = pane.resolved_options(&schema[row]);
+                let options = pane.resolved_options(SettingView::from_script(&schema[row]));
                 let visible = pane.choice_indices(&options);
                 pane.state.choice_cursor = visible
                     .iter()
@@ -2529,7 +2520,7 @@ mod tests {
     fn closed_removable_preserved_array_shows_its_value_and_reason() {
         let dir = temp_dir("preserved-priority-closed-row");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let schema = (script::quester::card::CARD.schema)();
         let row = schema
             .iter()
@@ -2549,7 +2540,7 @@ mod tests {
             terminal
                 .draw(|frame| {
                     let pane = ParamsPane {
-                        schema,
+                        schema: SchemaRef::from_script(schema),
                         bag: &mut bag,
                         commit: &mut store_commit(&mut store, "Quester"),
                         loadouts: &loadouts,
@@ -2589,7 +2580,7 @@ mod tests {
     fn restart_badge_is_visible_at_reference_and_compact_sizes() {
         let dir = temp_dir("restart-badge");
         let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
-        let loadouts = LoadoutsStore::default();
+        let loadouts = Loadouts::default();
         let schema = vec![setting(
             "skill",
             "string",
@@ -2608,7 +2599,7 @@ mod tests {
             terminal
                 .draw(|frame| {
                     let pane = ParamsPane {
-                        schema: &schema,
+                        schema: SchemaRef::from_script(&schema),
                         bag: &mut bag,
                         commit: &mut store_commit(&mut store, "Gatherer"),
                         loadouts: &loadouts,

@@ -25,6 +25,7 @@ use crate::theme::{
 use crate::window::RedrawMode;
 use client::io::Packet;
 use dear_imgui_rs::{BackendFlags, ConfigFlags, Id, WindowFlags};
+use frontend_core::scripts::{CardSource, ScriptChoice, ScriptRunState};
 use host_play::profile::ProfileEnvironment;
 use host_play::SharedClientTemplate;
 
@@ -263,7 +264,7 @@ fn a_parked_quester_shows_its_phase_and_reason_on_the_status_card() {
     };
     let mut parked = frontend_core::SlotDetail::default();
     parked.row_mut().set_phase(frontend_core::Phase::Ready);
-    parked.row_mut().set_script(script::RunState::Running);
+    parked.row_mut().set_script(ScriptRunState::Running);
     parked.set_state("ingame scene 2");
     let parked = parked.with_native_status(Some(Arc::new(status)));
     let shown = draw_status_detail(&parked, "—", "lowmem");
@@ -328,10 +329,7 @@ fn profiles_controls_remain_reachable_when_the_dock_runs_past_1024() {
 #[test]
 fn catalog_assignment_without_catalog_has_a_distinct_prefs_hint() {
     let mut session = crate::session::Session::new();
-    session.script_sel = Some(script::ScriptSel::Loaded(
-        script::ScriptSource::Catalog,
-        "Sherlock".into(),
-    ));
+    session.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "Sherlock"));
     assert_eq!(
         super::script_prefs_disabled_hint(&session),
         Some("script catalog unavailable")
@@ -341,10 +339,7 @@ fn catalog_assignment_without_catalog_has_a_distinct_prefs_hint() {
 #[test]
 fn parameters_rail_does_not_call_an_unloaded_catalog_card_parameterless() {
     let mut session = crate::session::Session::new();
-    session.script_sel = Some(script::ScriptSel::Loaded(
-        script::ScriptSource::Catalog,
-        "Sherlock".into(),
-    ));
+    session.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "Sherlock"));
     assert_eq!(
         super::parameters_rail_placeholder(&session),
         Some("(script catalog unavailable)"),

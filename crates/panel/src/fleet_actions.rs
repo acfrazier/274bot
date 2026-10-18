@@ -9,7 +9,11 @@ impl Session {
     /// Save the selected card as the assignment of every marked bot without
     /// starting it, so each bot's settings can be adjusted first.
     pub fn fleet_assign_selected(&mut self) {
-        let Some(card) = self.script_sel.clone() else {
+        let Some(card) = self
+            .script_sel
+            .as_ref()
+            .map(frontend_core::scripts::ScriptChoice::duplicate)
+        else {
             self.fleet_report = Some(frontend_core::ASSIGN_NO_CARD.into());
             return;
         };
@@ -37,7 +41,11 @@ impl Session {
     /// the fleet report follows the running Start report.
     pub fn fleet_assign_restart_selected(&mut self) {
         self.fleet_restart_confirm = false;
-        let Some(card) = self.script_sel.clone() else {
+        let Some(card) = self
+            .script_sel
+            .as_ref()
+            .map(frontend_core::scripts::ScriptChoice::duplicate)
+        else {
             self.fleet_report = Some(frontend_core::ASSIGN_RESTART_NO_CARD.into());
             return;
         };
@@ -75,7 +83,12 @@ impl Session {
     /// applies the frozen scope the Fleet window then shows.
     pub fn fleet_prepare_apply_settings(&mut self) {
         self.error = None;
-        let (Some(source), Some(card)) = (self.focused_name(), self.script_sel.clone()) else {
+        let (Some(source), Some(card)) = (
+            self.focused_name(),
+            self.script_sel
+                .as_ref()
+                .map(frontend_core::scripts::ScriptChoice::duplicate),
+        ) else {
             self.fleet_report = Some("Apply to marked: focus a bot and select a card".into());
             return;
         };

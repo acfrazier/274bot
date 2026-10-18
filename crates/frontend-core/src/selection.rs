@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 use std::fmt::{self, Write as _};
 use std::path::Path;
 
+use crate::scripts::ScriptChoice;
 use crate::scripts::Scripts;
 use crate::session::OperatorSession;
 
@@ -263,9 +264,10 @@ pub fn start_marked<Io>(
     selection: &MarkedSelection,
     core: &mut OperatorSession<Io>,
     scripts: &mut Scripts,
-    card: Option<&script::ScriptSel>,
+    card: Option<&ScriptChoice>,
     catalog_root: Option<&Path>,
 ) {
+    let card = card.map(ScriptChoice::as_script);
     scripts.open_tally("Start selected");
     let profiles = profile_rows(core);
     for identity in selection.iter() {
@@ -310,8 +312,9 @@ pub fn start_marked<Io>(
 pub fn marked_startable<Io>(
     selection: &MarkedSelection,
     core: &OperatorSession<Io>,
-    card: Option<&script::ScriptSel>,
+    card: Option<&ScriptChoice>,
 ) -> bool {
+    let card = card.map(ScriptChoice::as_script);
     if selection.is_empty() {
         return false;
     }

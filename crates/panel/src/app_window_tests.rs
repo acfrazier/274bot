@@ -10,6 +10,7 @@ use dear_imgui_rs::{sys, Condition, Context, FramePrepareOptions, MouseButton, U
 use super::PanelState;
 use crate::session::{PanelWindow, Session};
 use crate::test_support::TestDir;
+use frontend_core::scripts::{CardSource, CompiledCardId, ScriptChoice};
 
 use host_play as map_host;
 
@@ -654,7 +655,9 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
         state.session.pump_status();
         frames(ctx, state, panel, 2)
     };
-    let gatherer = Some(script::ScriptSel::Compiled(script::CompiledId("Gatherer")));
+    let gatherer = Some(ScriptChoice::compiled(
+        CompiledCardId::lookup("Gatherer").unwrap(),
+    ));
     frames(&mut ctx, &mut state, panel, 2);
 
     let press = |label| FrameInput {
@@ -700,9 +703,9 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
 
     step(&mut ctx, &mut state, press("Profiles…"));
     for (pick, heading) in [
-        ("bob", gatherer.clone()),
+        ("bob", gatherer.as_ref().map(ScriptChoice::duplicate)),
         ("alice", None),
-        ("bob", gatherer.clone()),
+        ("bob", gatherer.as_ref().map(ScriptChoice::duplicate)),
     ] {
         step(
             &mut ctx,
@@ -726,10 +729,7 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
         } else {
             assert_eq!(
                 s.script_sel,
-                Some(script::ScriptSel::Loaded(
-                    script::ScriptSource::Catalog,
-                    "Thiever".into()
-                )),
+                Some(ScriptChoice::loaded(CardSource::Catalog, "Thiever")),
                 "alice's own card"
             );
         }

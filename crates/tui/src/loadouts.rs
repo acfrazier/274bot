@@ -7,7 +7,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
 use api::loadout::{CarryEntry, Loadout, WORN_SLOTS};
-use script::{unique_loadout_name, worn_slot_label, LoadoutsStore};
+use frontend_core::scripts::{unique_loadout_name, worn_slot_label, Loadouts};
 
 /// Mutable loadouts-pane state.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -33,7 +33,7 @@ pub enum LoadoutsKey {
 }
 
 pub struct LoadoutsPane<'a> {
-    pub store: &'a mut LoadoutsStore,
+    pub store: &'a mut Loadouts,
     pub state: &'a mut LoadoutsState,
 }
 
@@ -385,8 +385,8 @@ mod tests {
     use ratatui::Terminal;
 
     use api::loadout::{CarryEntry, Loadout};
+    use frontend_core::scripts::Loadouts;
     use host_play::local_state::{LocalStateService, StateRoot};
-    use script::LoadoutsStore;
 
     use super::{
         format_carry, format_worn, parse_carry, parse_worn, LoadoutsKey, LoadoutsPane,
@@ -412,9 +412,9 @@ mod tests {
         LocalStateService::open_process(StateRoot::new(dir.join(".274bot")))
     }
 
-    fn tmp_store() -> LoadoutsStore {
+    fn tmp_store() -> Loadouts {
         let service = scratch_service("store");
-        let mut store = LoadoutsStore::over(Arc::new(service.operator_loadouts()));
+        let mut store = Loadouts::operator(&service);
         store.upsert(Loadout::new("fish").with_carry("net", 1));
         store.save().unwrap();
         store
@@ -472,7 +472,7 @@ mod tests {
     #[test]
     fn apply_scratch_renames_in_place() {
         let service = scratch_service("rename");
-        let mut store = LoadoutsStore::over(Arc::new(service.operator_loadouts()));
+        let mut store = Loadouts::operator(&service);
         store.upsert(Loadout::new("melee"));
 
         let mut state = LoadoutsState {
@@ -501,7 +501,7 @@ mod tests {
     #[test]
     fn renaming_onto_another_loadouts_name_is_refused_and_keeps_both() {
         let service = scratch_service("collide");
-        let mut store = LoadoutsStore::over(Arc::new(service.operator_loadouts()));
+        let mut store = Loadouts::operator(&service);
         store.upsert(Loadout::new("melee").with_carry("Lobster", 8));
         store.upsert(Loadout::new("range"));
         store.save().unwrap();
@@ -524,7 +524,7 @@ mod tests {
         assert_eq!(state.status, "A loadout named \"melee\" already exists.");
         assert_eq!(store.names(), ["melee", "range"]);
         assert!(!store.is_dirty());
-        let reread = LoadoutsStore::over(Arc::new(service.operator_loadouts()));
+        let reread = Loadouts::operator(&service);
         assert_eq!(reread.names(), ["melee", "range"]);
         assert_eq!(
             reread.get("melee").unwrap().carry,

@@ -58,7 +58,10 @@ use crate::theme::{
     DOCKHOST_PADDING, ERROR, GREEN, PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW, TEXT, TEXT_DIM, WARN,
 };
 use frontend_core::resources::{background_ack_text, format_background, format_bots};
-use frontend_core::scripts::BrowseCard;
+use frontend_core::scripts::{
+    format_setting_value, BrowseCard, CardSource, CompiledCardId, PaintFrame, SchemaRef,
+    ScriptChoice, ScriptRunState, SettingView,
+};
 use frontend_core::{FleetRow, Phase, ResourceView};
 
 #[path = "live_harness.rs"]
@@ -1167,30 +1170,29 @@ pub fn parse_live_args(
 /// The selected slot's script paint, as the shared `Arc` (no copy):
 /// `None` when the slot has no status row, `Some(None)` when it paints
 /// nothing.
-fn focused_paint(session: &Session) -> Option<Option<Arc<script::shim::ScriptPaint>>> {
+fn focused_paint(session: &Session) -> Option<Option<PaintFrame>> {
     let name = session.core.selected()?;
-    session
-        .statuses()
-        .iter()
-        .find(|s| s.username == name)
-        .map(|s| s.script_paint.clone())
+    session.core.status(name)?;
+    Some(session.core.script_paint(name))
 }
 
 fn overlay_script_paint(
     ui: &Ui,
     gpu: &mut Gpu,
     state: &mut PanelState,
-    paint: Option<Option<Arc<script::shim::ScriptPaint>>>,
+    paint: Option<Option<PaintFrame>>,
     min: [f32; 2],
     size: [f32; 2],
 ) {
     match paint {
         Some(paint) => {
-            if let Some((hit, generation)) =
-                state
-                    .paint
-                    .frame(ui, Some(gpu), paint.as_deref(), min, size)
-            {
+            if let Some((hit, generation)) = state.paint.frame(
+                ui,
+                Some(gpu),
+                paint.as_ref().map(PaintFrame::view),
+                min,
+                size,
+            ) {
                 match hit {
                     crate::paint::PaintFrameHit::Button(id) => {
                         state.session.script_paint_click(&id, generation);
@@ -2336,24 +2338,23 @@ fn script_section(ui: &Ui, session: &mut Session) {
     }
     let state = session.focused_script_state();
     let active = script_active(state);
-    let paused = state == script::RunState::Paused;
+    let paused = state == ScriptRunState::Paused;
 
     let name = session
         .script_sel
         .as_ref()
-        .map(|sel| match sel {
-            script::ScriptSel::Loaded(source, identity) => session
+        .map(|sel| match sel.loaded_card() {
+            Some((source, identity)) => session
                 .scripts
-                .js()
-                .get(*source, identity)
-                .map(|card| card.name.clone())
+                .card(source, identity)
+                .map(|card| card.name().to_owned())
                 .unwrap_or_else(|| {
                     std::path::Path::new(identity)
                         .file_name()
                         .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| identity.clone())
+                        .unwrap_or_else(|| identity.to_owned())
                 }),
-            script::ScriptSel::Compiled(_) => sel.label(),
+            None => sel.label().to_owned(),
         })
         .unwrap_or_else(|| "(none)".to_string());
     ui.text_colored(ACCENT, name);
@@ -2364,14 +2365,17 @@ fn script_section(ui: &Ui, session: &mut Session) {
         ui.same_line();
         ui.text_disabled("(pending)");
     }
-    if let (Some(script::ScriptSel::Loaded(source, sel_name)), Some((front_src, front_name))) = (
-        session.script_sel.clone(),
-        session.transpile_front().map(|(s, n)| (s, n.to_string())),
+    if let (Some((source, sel_name)), Some(front)) = (
+        session
+            .script_sel
+            .as_ref()
+            .and_then(ScriptChoice::loaded_card),
+        session.transpile_front(),
     ) {
         if let Some(line) = card_transpile_label(
-            Some((front_src, front_name.as_str())),
+            Some(front),
             source,
-            &sel_name,
+            sel_name,
             session.transpile_done,
             session.transpile_total,
         ) {
@@ -2614,12 +2618,13 @@ fn browse_script_card(
     session: &Session,
     card: BrowseCard<'_>,
     w: f32,
-) -> Option<script::ScriptSel> {
+) -> Option<ScriptChoice> {
     let selection = card.selection();
     let selected = session.script_sel.as_ref() == Some(&selection);
-    let id = match card {
-        BrowseCard::Compiled(card) => format!("##scard-compiled-{}", card.id.0),
-        BrowseCard::Loaded(card) => format!("##scard-{}", card.identity_key()),
+    let id = match (card.compiled_id(), card.loaded()) {
+        (Some(id), _) => format!("##scard-compiled-{}", id.as_str()),
+        (None, Some(loaded)) => format!("##scard-{}", loaded.identity_key()),
+        (None, None) => format!("##scard-{}", card.name()),
     };
     let _border = selected.then(|| ui.push_style_color(StyleColor::Border, ACCENT));
     ui.child_window(&id)
@@ -2680,16 +2685,16 @@ fn browse_script_card(
             if let Some(loaded) = card.loaded() {
                 if let Some(line) = card_transpile_label(
                     session.transpile_front(),
-                    loaded.source,
-                    &loaded.name,
+                    loaded.source(),
+                    loaded.name(),
                     session.transpile_done,
                     session.transpile_total,
                 ) {
                     let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
                     ui.text_disabled(line);
                 }
-                if let Some(failure) = session.scripts.js().load_failure(&loaded.identity_key()) {
-                    ui.text_colored(ERROR, format!("failed {}", failure.stage.as_str()));
+                if let Some(failure) = session.scripts.load_failure(&loaded.identity_key()) {
+                    ui.text_colored(ERROR, format!("failed {}", failure.stage().as_str()));
                     if selected {
                         ui.text_wrapped(failure.named_line());
                     }
@@ -2732,11 +2737,7 @@ fn browse_script_card(
     .then_some(selection)
 }
 
-fn browse_card_grid(
-    ui: &Ui,
-    session: &Session,
-    cards: &[&BrowseCard<'_>],
-) -> Option<script::ScriptSel> {
+fn browse_card_grid(ui: &Ui, session: &Session, cards: &[&BrowseCard<'_>]) -> Option<ScriptChoice> {
     let avail = ui.content_region_avail()[0];
     let scale = ui_scale(ui);
     let cols = card_columns(avail / scale, CARD_MIN_W, CARD_GAP);
@@ -2772,7 +2773,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         session.cancel_reload();
     }
     ui.spacing();
-    if script::rs2b0t_import_deferred() {
+    if frontend_core::scripts::paths::rs2b0t_import_deferred() {
         if ui.button_with_size("Import catalog…", [w, 0.0]) {
             session.open_rs2b0t_catalog_picker(false);
         }
@@ -2795,7 +2796,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         ui.spacing();
     }
     let busy = !session.transpile_queue.is_empty();
-    let need = session.scripts.js().cards_needing_transpile().len();
+    let need = session.scripts.cards_needing_transpile().len();
     if need > 0 || busy {
         let w = ui.content_region_avail()[0];
         let _off = busy.then(|| ui.begin_disabled());
@@ -2818,7 +2819,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         }
         ui.spacing();
     }
-    let named_failures = session.scripts.js().named_failure_output();
+    let named_failures = session.scripts.named_failure_output();
     if !named_failures.is_empty() {
         // Collapsed by default: the list is long (dim catalog cards are
         // expected misses) and pushes the script browser off screen.
@@ -2826,7 +2827,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         let open = ui.collapsing_header(
             format!(
                 "{} failed###script-failures",
-                session.scripts.js().load_failures().len()
+                session.scripts.load_failure_count()
             ),
             TreeNodeFlags::NONE,
         );
@@ -2969,7 +2970,7 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
     let side_w = scale_px(ui, 150.0)
         .min(avail[0] * 0.28)
         .max(scale_px(ui, 120.0));
-    let home = script::bot_home();
+    let home = frontend_core::scripts::paths::bot_home();
     ui.child_window("##fd-side")
         .size([
             side_w,
@@ -3440,70 +3441,68 @@ fn parameters_section(ui: &Ui, session: &mut Session) {
         ui.text_disabled(placeholder);
         return;
     }
-    match &session.script_sel {
-        Some(script::ScriptSel::Loaded(source, name)) => {
-            if let Some(card) = session.scripts.js().get(*source, name) {
-                let bag = session.merged_settings_bag(*source, name, &card.settings_schema);
-                for (label, value) in script::parameter_rows(&card.settings_schema, &bag) {
-                    kv_row(ui, &label, &value);
-                }
+    let Some(sel) = &session.script_sel else {
+        return;
+    };
+    if let Some((source, name)) = sel.loaded_card() {
+        if let Some(card) = session.scripts.card(source, name) {
+            let bag = session.merged_settings_bag(source, name, card.schema());
+            for (label, value) in card.schema().parameter_rows(&bag) {
+                kv_row(ui, &label, &value);
             }
         }
-        Some(script::ScriptSel::Compiled(id)) => {
-            if let frontend_core::scripts::SchemaView::Ready { fields, .. } = session
-                .scripts
-                .compiled_schema(&session.core, session.focused_name().as_deref(), *id)
-            {
-                match session.scripts.compiled_edit_bag(
-                    &session.core,
-                    session.focused_name().as_deref(),
-                    *id,
-                ) {
-                    Ok(bag) => {
-                        for (label, value) in script::parameter_rows(fields, &bag) {
-                            kv_row(ui, &label, &value);
-                        }
+    } else if let Some(id) = sel.compiled_id() {
+        if let frontend_core::scripts::SchemaView::Ready { fields, .. } = session
+            .scripts
+            .compiled_schema(&session.core, session.focused_name().as_deref(), id)
+        {
+            match session.scripts.compiled_edit_bag(
+                &session.core,
+                session.focused_name().as_deref(),
+                id,
+            ) {
+                Ok(bag) => {
+                    for (label, value) in fields.parameter_rows(&bag) {
+                        kv_row(ui, &label, &value);
                     }
-                    Err(error) => ui.text_disabled(error),
                 }
+                Err(error) => ui.text_disabled(error),
             }
         }
-        None => {}
     }
 }
 
 /// All parameter controls share the same account-scoped persistence path.
 fn persist_profile_setting(
     session: &mut Session,
-    selection: &script::ScriptSel,
+    selection: &ScriptChoice,
     id: &str,
     value: serde_json::Value,
 ) {
-    match selection {
-        script::ScriptSel::Compiled(card) => {
-            let Some(profile) = session.focused_name() else {
-                session.error = Some("parameters: select a profile first".into());
-                return;
-            };
-            if let Err(error) =
-                session
-                    .scripts
-                    .set_compiled_setting(&mut session.core, &profile, *card, id, value)
-            {
-                session.error = Some(error);
-            }
+    if let Some(card) = selection.compiled_id() {
+        let Some(profile) = session.focused_name() else {
+            session.error = Some("parameters: select a profile first".into());
+            return;
+        };
+        if let Err(error) =
+            session
+                .scripts
+                .set_compiled_setting(&mut session.core, &profile, card, id, value)
+        {
+            session.error = Some(error);
         }
-        script::ScriptSel::Loaded(source, lookup) => {
-            let Some(card) = session.scripts.js().get(*source, lookup).cloned() else {
-                return;
-            };
-            if let Some(profile) = session.focused_name() {
-                session.set_profile_setting(&profile, *source, &card.name, &card.path, id, value);
-            } else {
-                let legacy = session.scripts.legacy_mut();
-                legacy.set_value(*source, &card.name, id, value);
-                let _ = legacy.save();
-            }
+    } else if let Some((source, lookup)) = selection.loaded_card() {
+        let Some((name, path)) = session
+            .scripts
+            .card(source, lookup)
+            .map(|card| (card.name().to_owned(), card.path().to_path_buf()))
+        else {
+            return;
+        };
+        if let Some(profile) = session.focused_name() {
+            session.set_profile_setting(&profile, source, &name, &path, id, value);
+        } else {
+            let _ = session.scripts.set_legacy_value(source, &name, id, value);
         }
     }
 }
@@ -3521,18 +3520,18 @@ fn filtered_parameter_indices<'a>(
 
 fn unavailable_parameter_text(
     label: &str,
-    def: &script::SettingDef,
+    def: SettingView<'_>,
     bag: &serde_json::Map<String, serde_json::Value>,
     options: &frontend_core::scripts::ParameterOptions,
 ) -> String {
-    if def.options_from.as_deref() == Some("loadouts") {
+    if def.options_from() == Some("loadouts") {
         return format!("{label} (no loadouts available)");
     }
-    if def.ty == "string" && options.preserved() > 0 {
+    if def.ty() == "string" && options.preserved() > 0 {
         let current = bag
-            .get(&def.id)
+            .get(def.id())
             .and_then(serde_json::Value::as_str)
-            .or(def.default.as_deref())
+            .or(def.default())
             .unwrap_or("");
         return format!(
             "{label} (options unavailable · {})",
@@ -3543,13 +3542,13 @@ fn unavailable_parameter_text(
 }
 
 fn parameter_array_editor_enabled(
-    def: &script::SettingDef,
+    def: SettingView<'_>,
     bag: &serde_json::Map<String, serde_json::Value>,
     options: &frontend_core::scripts::ParameterOptions,
 ) -> bool {
-    def.ty == "string[]"
+    def.ty() == "string[]"
         && options.can_edit_array(
-            bag.get(&def.id)
+            bag.get(def.id())
                 .and_then(serde_json::Value::as_array)
                 .into_iter()
                 .flatten()
@@ -3560,27 +3559,27 @@ fn parameter_array_editor_enabled(
 fn script_parameter_text_input(
     ui: &Ui,
     session: &mut Session,
-    selection: &script::ScriptSel,
+    selection: &ScriptChoice,
     profile: Option<&str>,
-    def: &script::SettingDef,
+    def: SettingView<'_>,
     options: &[String],
     current: Option<serde_json::Value>,
 ) {
-    let label = def.label.as_deref().unwrap_or(&def.id);
+    let label = def.display_label();
     let initial_text = current
         .as_ref()
-        .map(script::format_setting_value)
-        .or_else(|| def.default.clone())
+        .map(format_setting_value)
+        .or_else(|| def.default().map(str::to_owned))
         .unwrap_or_default();
     let changed = {
         let text = session.scripts.parameter_text_mut_for(
             profile,
             selection,
-            &def.id,
+            def.id(),
             &initial_text,
             current.clone(),
         );
-        ui.input_text(format!("{label}##param-{id}", id = def.id), text)
+        ui.input_text(format!("{label}##param-{id}", id = def.id()), text)
             .build()
     };
     let active = ui.is_item_active();
@@ -3591,12 +3590,12 @@ fn script_parameter_text_input(
     if escape {
         session
             .scripts
-            .discard_parameter_text_for(profile, selection, &def.id);
+            .discard_parameter_text_for(profile, selection, def.id());
     } else if changed || commit {
         let value = session.scripts.validate_parameter_buffer_for(
             profile,
             selection,
-            &def.id,
+            def.id(),
             (&initial_text, current.clone()),
             def,
             options,
@@ -3604,12 +3603,12 @@ fn script_parameter_text_input(
         if commit {
             if let Ok(value) = value {
                 let edit_key =
-                    frontend_core::scripts::ParameterEditKey::new(profile, selection, &def.id);
+                    frontend_core::scripts::ParameterEditKey::new(profile, selection, def.id());
                 let _ = session.scripts.commit_parameter_value(
                     &mut session.core,
                     &edit_key,
                     selection,
-                    &def.id,
+                    def.id(),
                     value,
                     current,
                 );
@@ -3619,7 +3618,7 @@ fn script_parameter_text_input(
     }
     if let Some(error) = session
         .scripts
-        .parameter_text_error_for(profile, selection, &def.id)
+        .parameter_text_error_for(profile, selection, def.id())
     {
         ui.same_line();
         ui.text_colored(ERROR, error);
@@ -3629,7 +3628,7 @@ fn script_parameter_text_input(
 /// Script prefs window: text buffers and commit state are shared with TUI.
 fn script_parameter_editors(ui: &Ui, session: &mut Session) {
     session.refresh_walk_permissions();
-    let Some(selection) = session.script_sel.clone() else {
+    let Some(selection) = session.script_sel.as_ref().map(ScriptChoice::duplicate) else {
         ui.text_wrapped("select a script with a parameter schema");
         return;
     };
@@ -3640,59 +3639,77 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
     {
         ui.text_disabled("Restart required to apply saved settings.");
     }
-    let (schema, mut bag): (std::borrow::Cow<'_, [script::SettingDef]>, _) = match &selection {
-        script::ScriptSel::Loaded(source, name) => {
-            let Some(card) = session.scripts.js().get(*source, name).cloned() else {
-                ui.text_disabled("(parameters unavailable)");
-                return;
-            };
-            let bag = if let Some(profile) = profile.as_deref() {
-                session.merged_profile_bag(
-                    profile,
-                    *source,
-                    &card.name,
-                    &card.path,
-                    &card.settings_schema,
-                )
-            } else {
-                session.merged_settings_bag(*source, name, &card.settings_schema)
-            };
-            (std::borrow::Cow::Owned(card.settings_schema), bag)
+    // The editors below need `session` mutably while they walk the schema,
+    // so the schema is copied into a retained buffer (unchanged schemas copy
+    // nothing) and put back afterwards.
+    let mut schema = std::mem::take(&mut session.script_param_schema);
+    if let Some(bag) =
+        script_parameter_schema(ui, session, &selection, profile.as_deref(), &mut schema)
+    {
+        script_parameter_rows(ui, session, &selection, profile, schema.as_ref(), bag);
+    }
+    session.script_param_schema = schema;
+}
+
+/// Fill `schema` with the selected card's fields and return its bag, or say
+/// why the parameters are unavailable.
+fn script_parameter_schema(
+    ui: &Ui,
+    session: &mut Session,
+    selection: &ScriptChoice,
+    profile: Option<&str>,
+    schema: &mut frontend_core::scripts::OwnedSchema,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    if let Some((source, name)) = selection.loaded_card() {
+        let Some((card_name, path)) = session.scripts.card(source, name).map(|card| {
+            schema.copy_from(card.schema());
+            (card.name().to_owned(), card.path().to_path_buf())
+        }) else {
+            ui.text_disabled("(parameters unavailable)");
+            return None;
+        };
+        return Some(if let Some(profile) = profile {
+            session.merged_profile_bag(profile, source, &card_name, &path, schema.as_ref())
+        } else {
+            session.merged_settings_bag(source, name, schema.as_ref())
+        });
+    }
+    let id = selection.compiled_id()?;
+    match session.scripts.compiled_schema(&session.core, profile, id) {
+        frontend_core::scripts::SchemaView::Ready { fields, .. } => schema.copy_from(fields),
+        frontend_core::scripts::SchemaView::Unavailable(reason) => {
+            ui.text_disabled(reason);
+            return None;
         }
-        script::ScriptSel::Compiled(id) => {
-            let fields =
-                match session
-                    .scripts
-                    .compiled_schema(&session.core, profile.as_deref(), *id)
-                {
-                    frontend_core::scripts::SchemaView::Ready { fields, .. } => fields,
-                    frontend_core::scripts::SchemaView::Unavailable(reason) => {
-                        ui.text_disabled(reason);
-                        return;
-                    }
-                };
-            let bag =
-                match session
-                    .scripts
-                    .compiled_edit_bag(&session.core, profile.as_deref(), *id)
-                {
-                    Ok(bag) => bag,
-                    Err(error) => {
-                        ui.text_disabled(error);
-                        return;
-                    }
-                };
-            (std::borrow::Cow::Borrowed(fields), bag)
+    }
+    match session
+        .scripts
+        .compiled_edit_bag(&session.core, profile, id)
+    {
+        Ok(bag) => Some(bag),
+        Err(error) => {
+            ui.text_disabled(error);
+            None
         }
-    };
+    }
+}
+
+/// The typed editor rows for `schema`.
+fn script_parameter_rows(
+    ui: &Ui,
+    session: &mut Session,
+    selection: &ScriptChoice,
+    profile: Option<String>,
+    schema: SchemaRef<'_>,
+    mut bag: serde_json::Map<String, serde_json::Value>,
+) {
     let filter_field_visible = session
         .script_parameter_filter_id
         .as_ref()
         .is_some_and(|id| {
-            schema.iter().any(|def| {
-                def.id.as_str() == id.as_str()
-                    && script::setting_visible(def.show_if.as_deref(), &bag)
-            })
+            schema
+                .iter()
+                .any(|def| def.id() == id.as_str() && def.visible(&bag))
         });
     if !filter_field_visible {
         session.script_parameter_filter.clear();
@@ -3706,14 +3723,14 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
     let game_data_ref = game_data.as_deref();
     let mut last_group: Option<&str> = None;
     for def in schema.iter() {
-        if !script::setting_visible(def.show_if.as_deref(), &bag) {
+        if !def.visible(&bag) {
             continue;
         }
-        let permission_global = session.walk_permissions.permission_enabled(&def.id);
+        let permission_global = session.walk_permissions.permission_enabled(def.id());
         let group = if permission_global.is_some() {
             Some("Walk permissions")
         } else {
-            def.group.as_deref()
+            def.group()
         };
         if group != last_group {
             last_group = group;
@@ -3722,7 +3739,7 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                 ui.text(group);
             }
         }
-        let label = def.label.as_deref().unwrap_or(&def.id).to_string();
+        let label = def.display_label().to_string();
         let resolved = frontend_core::scripts::resolve_parameter_options(
             def,
             &bag,
@@ -3730,21 +3747,21 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
             game_data_ref,
         );
         let array_editable = parameter_array_editor_enabled(def, &bag, &resolved);
-        if def.options_from.is_some() && resolved.is_empty() && !array_editable {
+        if def.options_from().is_some() && resolved.is_empty() && !array_editable {
             ui.text_disabled(unavailable_parameter_text(&label, def, &bag, &resolved));
-            if session.script_parameter_filter_id.as_deref() == Some(def.id.as_str()) {
+            if session.script_parameter_filter_id.as_deref() == Some(def.id()) {
                 session.script_parameter_filter.clear();
                 session.script_parameter_filter_id = None;
             }
             continue;
         }
-        match def.ty.as_str() {
+        match def.ty() {
             "boolean" => {
                 let global = permission_global;
                 let mut value = bag
-                    .get(&def.id)
+                    .get(def.id())
                     .and_then(|v| v.as_bool())
-                    .unwrap_or_else(|| def.default.as_deref() == Some("true"));
+                    .unwrap_or_else(|| def.default() == Some("true"));
                 if global == Some(true) {
                     ui.text_wrapped(format!(
                         "{label}: On — inherited globally; this script cannot veto the permission."
@@ -3758,11 +3775,11 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     if ui.checkbox(&label, &mut value) {
                         persist_profile_setting(
                             session,
-                            &selection,
-                            &def.id,
+                            selection,
+                            def.id(),
                             serde_json::json!(value),
                         );
-                        bag.insert(def.id.clone(), serde_json::json!(value));
+                        bag.insert(def.id().to_owned(), serde_json::json!(value));
                     }
                 }
             }
@@ -3770,34 +3787,34 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                 script_parameter_text_input(
                     ui,
                     session,
-                    &selection,
+                    selection,
                     profile.as_deref(),
                     def,
                     resolved.selectable(),
-                    bag.get(&def.id).cloned(),
+                    bag.get(def.id()).cloned(),
                 );
             }
             "string" if !resolved.is_empty() => {
                 ui.text(&label);
                 let opts = resolved.selectable();
                 let stored = bag
-                    .get(&def.id)
+                    .get(def.id())
                     .and_then(|v| v.as_str())
-                    .or(def.default.as_deref())
+                    .or(def.default())
                     .unwrap_or("");
                 let current = resolved.value_for(stored);
                 ui.set_next_item_width(-1.0);
                 let combo_opts = ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
                 let preview = resolved.label_for(&current);
                 if let Some(_popup) = ui.begin_combo_with_flags(
-                    format!("##param-{id}", id = def.id),
+                    format!("##param-{id}", id = def.id()),
                     preview,
                     combo_opts,
                 ) {
                     let first_open =
-                        session.script_parameter_filter_id.as_deref() != Some(def.id.as_str());
+                        session.script_parameter_filter_id.as_deref() != Some(def.id());
                     if first_open {
-                        session.script_parameter_filter_id = Some(def.id.clone());
+                        session.script_parameter_filter_id = Some(def.id().to_owned());
                         session.script_parameter_filter.clear();
                         ui.set_keyboard_focus_here();
                     }
@@ -3805,7 +3822,7 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     let searchable = opts.len() > 16;
                     if searchable {
                         ui.set_next_item_width(-1.0);
-                        ui.input_text(format!("##param-filter-{id}", id = def.id), &mut filter)
+                        ui.input_text(format!("##param-filter-{id}", id = def.id()), &mut filter)
                             .hint("Filter options")
                             .build();
                         ui.separator();
@@ -3824,18 +3841,18 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                             let value = resolved.value_for(opt);
                             persist_profile_setting(
                                 session,
-                                &selection,
-                                &def.id,
+                                selection,
+                                def.id(),
                                 serde_json::json!(value),
                             );
-                            bag.insert(def.id.clone(), serde_json::json!(value));
+                            bag.insert(def.id().to_owned(), serde_json::json!(value));
                         }
                     }
                     if searchable && matches == 0 {
                         ui.text_disabled("no matching options");
                     }
                     session.script_parameter_filter = filter;
-                } else if session.script_parameter_filter_id.as_deref() == Some(def.id.as_str()) {
+                } else if session.script_parameter_filter_id.as_deref() == Some(def.id()) {
                     session.script_parameter_filter.clear();
                     session.script_parameter_filter_id = None;
                 }
@@ -3843,7 +3860,7 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
             "string[]" if array_editable => {
                 ui.text(&label);
                 let mut selected: Vec<String> = bag
-                    .get(&def.id)
+                    .get(def.id())
                     .and_then(|value| value.as_array())
                     .map(|items| {
                         items
@@ -3862,33 +3879,32 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     let _off =
                         (!on && !resolved.is_selectable_index(index)).then(|| ui.begin_disabled());
                     let shown = resolved.label_for(opt);
-                    if ui.checkbox(format!("{shown}##param-{id}-{opt}", id = def.id), &mut on) {
+                    if ui.checkbox(format!("{shown}##param-{id}-{opt}", id = def.id()), &mut on) {
                         changed |= resolved.toggle_array_choice(&mut selected, index);
                     }
                 }
                 if changed {
-                    let coerced =
-                        script::coerce_setting_value(&def.ty, &serde_json::json!(selected));
-                    persist_profile_setting(session, &selection, &def.id, coerced.clone());
-                    bag.insert(def.id.clone(), coerced);
+                    let coerced = def.coerce(&serde_json::json!(selected));
+                    persist_profile_setting(session, selection, def.id(), coerced.clone());
+                    bag.insert(def.id().to_owned(), coerced);
                 }
             }
             "string" | "tile" | "list" | "string[]" => {
                 script_parameter_text_input(
                     ui,
                     session,
-                    &selection,
+                    selection,
                     profile.as_deref(),
                     def,
                     resolved.selectable(),
-                    bag.get(&def.id).cloned(),
+                    bag.get(def.id()).cloned(),
                 );
             }
             _ => {
-                ui.text_disabled(format!("{label} (unsupported type {})", def.ty));
+                ui.text_disabled(format!("{label} (unsupported type {})", def.ty()));
             }
         }
-        if let Some(help) = def.help.as_deref() {
+        if let Some(help) = def.help() {
             ui.set_item_tooltip(help);
         }
     }
@@ -3988,10 +4004,9 @@ fn script_prefs_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             } else {
                 ui.text_disabled("parameter editors not available");
             }
-            if matches!(
-                &session.script_sel,
-                Some(script::ScriptSel::Compiled(id)) if *id == script::quester::card::CARD.id
-            ) {
+            if session.script_sel.as_ref().and_then(ScriptChoice::compiled_id)
+                == Some(CompiledCardId::QUESTER)
+            {
                 quest_paths_section(ui, session);
             }
         });
@@ -4063,8 +4078,8 @@ enum MissingCard {
 }
 
 impl MissingCard {
-    fn of(session: &Session, source: script::ScriptSource) -> Self {
-        if source == script::ScriptSource::Catalog && !session.scripts.catalog_filled() {
+    fn of(session: &Session, source: CardSource) -> Self {
+        if source == CardSource::Catalog && !session.scripts.catalog_filled() {
             Self::CatalogUnavailable
         } else {
             Self::CardUnavailable
@@ -4089,52 +4104,55 @@ impl MissingCard {
 /// The parameters rail's placeholder when there are no rows to list, else
 /// `None` (the rail then lists the selected card's merged settings).
 fn parameters_rail_placeholder(session: &Session) -> Option<&'static str> {
-    match &session.script_sel {
-        None => Some("(no script selected)"),
-        Some(script::ScriptSel::Loaded(source, name)) => {
-            match session.scripts.js().get(*source, name) {
-                None => Some(MissingCard::of(session, *source).rail_text()),
-                Some(card) if card.settings_schema.is_empty() => Some("(no parameters)"),
-                Some(_) => None,
-            }
+    let Some(sel) = &session.script_sel else {
+        return Some("(no script selected)");
+    };
+    if let Some((source, name)) = sel.loaded_card() {
+        return match session.scripts.card(source, name) {
+            None => Some(MissingCard::of(session, source).rail_text()),
+            Some(card) if card.schema().is_empty() => Some("(no parameters)"),
+            Some(_) => None,
+        };
+    }
+    let id = sel.compiled_id()?;
+    match session
+        .scripts
+        .compiled_schema(&session.core, session.focused_name().as_deref(), id)
+    {
+        frontend_core::scripts::SchemaView::Unavailable(_) => Some("(parameters unavailable)"),
+        frontend_core::scripts::SchemaView::Ready { fields, .. } if fields.is_empty() => {
+            Some("(no parameters)")
         }
-        Some(script::ScriptSel::Compiled(id)) => match session.scripts.compiled_schema(
-            &session.core,
-            session.focused_name().as_deref(),
-            *id,
-        ) {
-            frontend_core::scripts::SchemaView::Unavailable(_) => Some("(parameters unavailable)"),
-            frontend_core::scripts::SchemaView::Ready { fields: [], .. } => Some("(no parameters)"),
-            frontend_core::scripts::SchemaView::Ready { .. } => None,
-        },
+        frontend_core::scripts::SchemaView::Ready { .. } => None,
     }
 }
 
 /// Tooltip when Script prefs is disabled (empty schema, unavailable card, or no selection).
 fn script_prefs_disabled_hint(session: &Session) -> Option<&'static str> {
-    match &session.script_sel {
-        None => Some("select a script first"),
-        Some(script::ScriptSel::Compiled(id)) => match session.scripts.compiled_schema(
+    let Some(sel) = &session.script_sel else {
+        return Some("select a script first");
+    };
+    if let Some(id) = sel.compiled_id() {
+        return match session.scripts.compiled_schema(
             &session.core,
             session.focused_name().as_deref(),
-            *id,
+            id,
         ) {
             frontend_core::scripts::SchemaView::Unavailable(reason) => Some(reason),
-            frontend_core::scripts::SchemaView::Ready { fields: [], .. } => {
+            frontend_core::scripts::SchemaView::Ready { fields, .. } if fields.is_empty() => {
                 Some("selected script has no parameters")
             }
             frontend_core::scripts::SchemaView::Ready { .. } => None,
-        },
-        Some(script::ScriptSel::Loaded(source, name)) => {
-            let Some(card) = session.scripts.js().get(*source, name) else {
-                return Some(MissingCard::of(session, *source).prefs_hint());
-            };
-            if card.settings_schema.is_empty() {
-                Some("selected script has no parameters")
-            } else {
-                None
-            }
-        }
+        };
+    }
+    let (source, name) = sel.loaded_card()?;
+    let Some(card) = session.scripts.card(source, name) else {
+        return Some(MissingCard::of(session, source).prefs_hint());
+    };
+    if card.schema().is_empty() {
+        Some("selected script has no parameters")
+    } else {
+        None
     }
 }
 
@@ -7111,7 +7129,7 @@ mod parameter_options_tests {
     #[test]
     fn panel_site_filter_uses_selectable_shared_search_results() {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let loadouts = script::LoadoutsStore::default();
+        let loadouts = frontend_core::scripts::Loadouts::default();
         let schema = script::gatherer::settings::schema();
         let site = schema
             .iter()
@@ -7122,7 +7140,7 @@ mod parameter_options_tests {
         bag.insert("woodcuttingResources".into(), serde_json::json!(["normal"]));
         bag.insert("site".into(), serde_json::json!("woodcutting.draynor"));
         let options = frontend_core::scripts::resolve_parameter_options(
-            site,
+            SettingView::from_script(site),
             &bag,
             &loadouts,
             Some(data.as_ref()),
@@ -7148,7 +7166,7 @@ mod parameter_options_tests {
     #[test]
     fn disabled_panel_site_keeps_the_saved_reason_read_only() {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let loadouts = script::LoadoutsStore::default();
+        let loadouts = frontend_core::scripts::Loadouts::default();
         let schema = script::gatherer::settings::schema();
         let site = schema
             .iter()
@@ -7159,14 +7177,15 @@ mod parameter_options_tests {
         bag.insert("miningResources".into(), serde_json::json!(["rune stones"]));
         bag.insert("site".into(), serde_json::json!("mining.varrock_east.se"));
         let options = frontend_core::scripts::resolve_parameter_options(
-            site,
+            SettingView::from_script(site),
             &bag,
             &loadouts,
             Some(data.as_ref()),
         );
 
         assert!(options.is_empty());
-        let disabled = unavailable_parameter_text("Site", site, &bag, &options);
+        let disabled =
+            unavailable_parameter_text("Site", SettingView::from_script(site), &bag, &options);
         assert!(disabled.contains("options unavailable"));
         assert!(disabled.contains("not for the selected resources"));
         assert_eq!(
@@ -7178,7 +7197,7 @@ mod parameter_options_tests {
 
     #[test]
     fn preserved_only_priority_array_is_editable_for_removal() {
-        let loadouts = script::LoadoutsStore::default();
+        let loadouts = frontend_core::scripts::Loadouts::default();
         let schema = (script::quester::card::CARD.schema)();
         let priority = schema
             .iter()
@@ -7187,14 +7206,22 @@ mod parameter_options_tests {
         let mut bag = serde_json::Map::new();
         bag.insert("quests".into(), serde_json::json!(["hauntedmine"]));
         bag.insert("order_override".into(), serde_json::json!(["hauntedmine"]));
-        let options =
-            frontend_core::scripts::resolve_parameter_options(priority, &bag, &loadouts, None);
+        let options = frontend_core::scripts::resolve_parameter_options(
+            SettingView::from_script(priority),
+            &bag,
+            &loadouts,
+            None,
+        );
 
         assert!(
             options.is_empty(),
             "the saved priority has no selectable options"
         );
-        assert!(parameter_array_editor_enabled(priority, &bag, &options));
+        assert!(parameter_array_editor_enabled(
+            SettingView::from_script(priority),
+            &bag,
+            &options
+        ));
         let haunted = options
             .values()
             .iter()
@@ -7208,13 +7235,23 @@ mod parameter_options_tests {
             "the same preserved row cannot be selected again"
         );
 
-        let persisted = script::coerce_setting_value(&priority.ty, &serde_json::json!(selected));
-        bag.insert(priority.id.clone(), persisted.clone());
+        let persisted = script::coerce_setting_value(
+            SettingView::from_script(priority).ty(),
+            &serde_json::json!(selected),
+        );
+        bag.insert(
+            SettingView::from_script(priority).id().to_owned(),
+            persisted.clone(),
+        );
         assert_eq!(persisted, serde_json::json!([]));
-        let options =
-            frontend_core::scripts::resolve_parameter_options(priority, &bag, &loadouts, None);
+        let options = frontend_core::scripts::resolve_parameter_options(
+            SettingView::from_script(priority),
+            &bag,
+            &loadouts,
+            None,
+        );
         assert!(
-            !parameter_array_editor_enabled(priority, &bag, &options),
+            !parameter_array_editor_enabled(SettingView::from_script(priority), &bag, &options),
             "after removal there is no refused stored row to edit"
         );
     }

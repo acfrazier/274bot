@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use crate::bulk::{BulkOutcome, BulkReport, BulkRow};
 use crate::command::OperatorCommand;
+use crate::scripts::{CompiledCardId, ScriptChoice};
 use crate::scripts::{Scripts, SyncScope};
 use crate::selection::{profile_rows, BulkSkip, MarkedSelection, ProfileIdentity};
 use crate::session::{OperatorSession, Targets};
@@ -253,9 +254,10 @@ pub fn assign_marked<Io>(
     selection: &MarkedSelection,
     core: &mut OperatorSession<Io>,
     scripts: &mut Scripts,
-    card: &script::ScriptSel,
+    card: &ScriptChoice,
     catalog_root: Option<&Path>,
 ) -> BulkReport {
+    let card = card.as_script();
     const LABEL: &str = "Assign";
     const DONE: &str = "assigned";
     let Resolved { names, gone } = resolve(selection, core);
@@ -381,7 +383,7 @@ impl RestartScope {
             let state = rows
                 .iter()
                 .find(|row| row.name() == name)
-                .map_or(script::RunState::Idle, |row| row.script());
+                .map_or(script::RunState::Idle, |row| row.script().to_script());
             if active(state) {
                 scope.interrupted.push(name.to_string());
             } else {
@@ -451,9 +453,10 @@ pub fn assign_and_restart_marked<Io>(
     selection: &MarkedSelection,
     core: &mut OperatorSession<Io>,
     scripts: &mut Scripts,
-    card: &script::ScriptSel,
+    card: &ScriptChoice,
     catalog_root: Option<&Path>,
 ) {
+    let card = card.as_script();
     let Resolved { names, gone } = resolve(selection, core);
     assign_and_restart_names(&names, &gone, core, scripts, card, catalog_root);
 }
@@ -745,8 +748,9 @@ pub fn prepare_apply_settings_marked<'a, Io>(
     core: &OperatorSession<Io>,
     scripts: &'a mut Scripts,
     source: &str,
-    card: &script::ScriptSel,
+    card: &ScriptChoice,
 ) -> Result<&'a SyncScope, String> {
+    let card = card.as_script();
     const LABEL: &str = "Apply to marked";
     scripts.clear_prepared_settings_sync();
     if selection.is_empty() {
@@ -754,15 +758,26 @@ pub fn prepare_apply_settings_marked<'a, Io>(
     }
     match card {
         script::ScriptSel::Compiled(id) => {
-            scripts.prepare_compiled_settings_sync(core, source, *id, None)?;
+            scripts.prepare_compiled_settings_sync(
+                core,
+                source,
+                CompiledCardId::from_script(*id),
+                None,
+            )?;
         }
         script::ScriptSel::Loaded(card_source, lookup) => {
             let (name, path) = scripts
-                .js()
+                .library()
                 .get(*card_source, lookup)
                 .map(|card| (card.name.clone(), card.path.clone()))
                 .ok_or_else(|| format!("{LABEL}: unavailable: {lookup}"))?;
-            scripts.prepare_settings_sync(core, source, *card_source, &name, &path);
+            scripts.prepare_settings_sync(
+                core,
+                source,
+                crate::scripts::CardSource::from_script(*card_source),
+                &name,
+                &path,
+            );
         }
     }
     let Resolved { names, gone } = resolve(selection, core);

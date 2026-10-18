@@ -15,6 +15,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
 use api::snapshot::{ChatLineView, ChatOptionView};
+use frontend_core::scripts::{PaintButtonView, PaintView};
 
 /// One chat interaction the operator triggered. `Answer` carries the
 /// 1-based option index, matching `Interactions::answer_choice`.
@@ -55,7 +56,7 @@ pub struct ChatView<'a> {
     pub has_continue: bool,
     /// The focused slot's script paint frame; the pane shows it instead
     /// of the ring while it is non-empty (see [`ChatView::paint_showing`]).
-    pub script_paint: Option<&'a script::shim::ScriptPaint>,
+    pub script_paint: Option<PaintView<'a>>,
     /// Operator toggle: show the game chat even while the script paints
     /// (the `p` key flips it).
     pub show_game_chat: bool,
@@ -75,20 +76,22 @@ impl<'a> ChatView<'a> {
     fn paint_showing(&self) -> bool {
         !self.show_game_chat
             && self.script_paint.is_some_and(|p| {
-                p.title.is_some()
-                    || !p.lines.is_empty()
-                    || !p.buttons.is_empty()
-                    || p.strip.is_some()
-                    || p.rail.as_ref().is_some_and(|r| !r.names.is_empty())
-                    || p.footer.is_some()
-                    || !p.tabs.is_empty()
+                p.title().is_some()
+                    || !p.lines().is_empty()
+                    || p.buttons().len() != 0
+                    || p.strip().is_some()
+                    || p.rail().is_some_and(|r| !r.names().is_empty())
+                    || p.footer().is_some()
+                    || p.tabs().len() != 0
             })
     }
 
-    fn paint_buttons(&self) -> &[script::shim::ScriptPaintButton] {
-        self.script_paint
-            .map(|p| p.buttons.as_slice())
-            .unwrap_or(&[])
+    fn paint_button_count(&self) -> usize {
+        self.script_paint.map_or(0, |p| p.buttons().len())
+    }
+
+    fn paint_buttons(&self) -> impl Iterator<Item = PaintButtonView<'a>> + 'a {
+        self.script_paint.into_iter().flat_map(|p| p.buttons())
     }
 
     /// Preferred outer height for the ordinary app layout. Paint buttons
@@ -103,17 +106,17 @@ impl<'a> ChatView<'a> {
         }
         let paint = self.script_paint.expect("paint_showing requires paint");
         let chrome_rows = paint_chrome_rows(paint).len();
-        if chrome_rows == 0 && self.paint_buttons().is_empty() {
+        if chrome_rows == 0 && self.paint_button_count() == 0 {
             return DEFAULT_HEIGHT;
         }
-        let content_rows = usize::from(paint.title.is_some()) + paint.lines.len();
-        let footer_rows = usize::from(paint.footer.is_some());
+        let content_rows = usize::from(paint.title().is_some()) + paint.lines().len();
+        let footer_rows = usize::from(paint.footer().is_some());
         let rows = 2usize
             .saturating_add(chrome_rows)
             .saturating_add(content_rows)
             .saturating_add(footer_rows)
             .saturating_add(1)
-            .saturating_add(paint.buttons.len());
+            .saturating_add(paint.buttons().len());
         u16::try_from(rows)
             .unwrap_or(u16::MAX)
             .clamp(DEFAULT_HEIGHT, MAX_PAINT_HEIGHT)
@@ -146,35 +149,33 @@ pub(crate) struct PaintLayout {
 /// Compute the paint rows once for both rendering and pointer dispatch.
 /// Buttons are pinned to the bottom of the inner pane; if they cannot all
 /// fit, the visible window always contains the focused button.
-pub(crate) fn paint_chrome_rows(
-    paint: &script::shim::ScriptPaint,
-) -> Vec<(String, String, String)> {
+pub(crate) fn paint_chrome_rows(paint: PaintView<'_>) -> Vec<(String, String, String)> {
     let mut rows = Vec::new();
-    if let Some(strip) = &paint.strip {
-        for name in &strip.names {
-            let marker = if strip.selected == *name { "*" } else { " " };
+    if let Some(strip) = paint.strip() {
+        for name in strip.names() {
+            let marker = if strip.selected() == *name { "*" } else { " " };
             rows.push((
-                format!("strip:{}", strip.id),
+                format!("strip:{}", strip.id()),
                 name.clone(),
                 format!("[{marker}] {name}"),
             ));
         }
     }
-    for band in &paint.tabs {
-        for name in &band.names {
-            let marker = if band.selected == *name { "*" } else { " " };
+    for band in paint.tabs() {
+        for name in band.names() {
+            let marker = if band.selected() == *name { "*" } else { " " };
             rows.push((
-                format!("tabs:{}", band.id),
+                format!("tabs:{}", band.id()),
                 name.clone(),
                 format!("  tab [{marker}] {name}"),
             ));
         }
     }
-    if let Some(rail) = &paint.rail {
-        for name in &rail.names {
-            let marker = if rail.selected == *name { "*" } else { " " };
+    if let Some(rail) = paint.rail() {
+        for name in rail.names() {
+            let marker = if rail.selected() == *name { "*" } else { " " };
             rows.push((
-                format!("rail:{}", rail.id),
+                format!("rail:{}", rail.id()),
                 name.clone(),
                 format!("  rail [{marker}] {name}"),
             ));
@@ -187,12 +188,12 @@ pub(crate) fn paint_layout(view: &ChatView<'_>, state: &ChatState, area: Rect) -
     let inner = Block::default().borders(Borders::ALL).inner(area);
     let paint = view.script_paint.expect("paint_layout requires paint");
     let chrome_source = paint_chrome_rows(paint);
-    let buttons = view.paint_buttons();
-    let footer_rows = u16::from(paint.footer.is_some());
+    let button_count = view.paint_button_count();
+    let footer_rows = u16::from(paint.footer().is_some());
     let mut budget = inner.height.saturating_sub(footer_rows);
     let chrome_take = chrome_source.len().min(usize::from(budget));
     budget = budget.saturating_sub(chrome_take as u16);
-    let visible_count = buttons.len().min(usize::from(budget));
+    let visible_count = button_count.min(usize::from(budget));
     if inner.width == 0 {
         return PaintLayout {
             content: inner,
@@ -229,14 +230,14 @@ pub(crate) fn paint_layout(view: &ChatView<'_>, state: &ChatState, area: Rect) -
     } else {
         None
     };
-    let focus = state.paint_choice.min(buttons.len().saturating_sub(1));
+    let focus = state.paint_choice.min(button_count.saturating_sub(1));
     let first = if visible_count == 0 {
         0
     } else {
         focus
             .saturating_add(1)
             .saturating_sub(visible_count)
-            .min(buttons.len().saturating_sub(visible_count))
+            .min(button_count.saturating_sub(visible_count))
     };
     let buttons_y = inner.y + inner.height - footer_rows - visible_count as u16;
     let content_bottom = if visible_count > 0 {
@@ -250,13 +251,14 @@ pub(crate) fn paint_layout(view: &ChatView<'_>, state: &ChatState, area: Rect) -
     let buttons = if visible_count == 0 {
         Vec::new()
     } else {
-        buttons[first..first + visible_count]
-            .iter()
+        view.paint_buttons()
+            .skip(first)
+            .take(visible_count)
             .enumerate()
             .map(|(visible_index, button)| {
                 let index = first + visible_index;
                 let marker = if index == focus { "> " } else { "  " };
-                let text = format!("{marker}[{}] {}", index + 1, button.label);
+                let text = format!("{marker}[{}] {}", index + 1, button.label());
                 let row = Rect::new(inner.x, buttons_y + visible_index as u16, inner.width, 1);
                 let hit_width = Line::from(text.as_str())
                     .width()
@@ -300,7 +302,7 @@ impl<'a, F: FnMut(ChatAction)> Chat<'a, F> {
         if chat_modal_open(&self.view) {
             return self.on_modal_key(key);
         }
-        if self.view.paint_showing() && !self.view.paint_buttons().is_empty() {
+        if self.view.paint_showing() && self.view.paint_button_count() != 0 {
             return self.on_paint_key(key);
         }
         ChatAction::None
@@ -334,7 +336,7 @@ impl<'a, F: FnMut(ChatAction)> Chat<'a, F> {
     }
 
     fn on_paint_key(&mut self, key: KeyEvent) -> ChatAction {
-        let n = self.view.paint_buttons().len();
+        let n = self.view.paint_button_count();
         if n == 0 {
             return ChatAction::None;
         }
@@ -482,10 +484,10 @@ impl<'a, F: FnMut(ChatAction)> Widget for Chat<'a, F> {
             // shift their hit targets.
             let layout = paint_layout(&self.view, self.state, area);
             let mut lines: Vec<Line> = Vec::new();
-            if let Some(t) = &paint.title {
-                lines.push(Line::from(t.clone()));
+            if let Some(t) = paint.title() {
+                lines.push(Line::from(t.to_owned()));
             }
-            for row in &paint.lines {
+            for row in paint.lines() {
                 lines.push(Line::from(row.clone()));
             }
             for chrome in &layout.chrome {
@@ -495,8 +497,8 @@ impl<'a, F: FnMut(ChatAction)> Widget for Chat<'a, F> {
                 .wrap(Wrap { trim: false })
                 .render(layout.content, buf);
             if let Some(footer_row) = layout.footer {
-                if let Some(footer) = &paint.footer {
-                    Paragraph::new(footer.clone()).render(footer_row, buf);
+                if let Some(footer) = paint.footer() {
+                    Paragraph::new(footer.to_owned()).render(footer_row, buf);
                 }
             }
             for button in layout.buttons {
@@ -532,6 +534,7 @@ mod tests {
     use ratatui::Terminal;
 
     use api::snapshot::{ChatLineView, ChatOptionView};
+    use frontend_core::scripts::PaintFrame;
 
     use super::{chat_modal_open, Chat, ChatAction, ChatState, ChatView};
 
@@ -750,12 +753,13 @@ mod tests {
             canvas: Vec::new(),
             ..Default::default()
         };
+        let paint = PaintFrame::from_script(paint);
         let view = ChatView {
             lines: &lines,
             modal_texts: &[],
             options: &[],
             has_continue: false,
-            script_paint: Some(&paint),
+            script_paint: Some(paint.view()),
             show_game_chat: false,
         };
         let text = render(view, 60, 5);
@@ -772,7 +776,7 @@ mod tests {
             "the ring is replaced: {text:?}"
         );
         let toggled = ChatView {
-            script_paint: Some(&paint),
+            script_paint: Some(paint.view()),
             show_game_chat: true,
             ..view
         };
@@ -801,12 +805,13 @@ mod tests {
     #[test]
     fn paint_digit_and_enter_dispatch_paint_button() {
         let paint = paint_with_button();
+        let paint = PaintFrame::from_script(paint);
         let view = ChatView {
             lines: &[],
             modal_texts: &[],
             options: &[],
             has_continue: false,
-            script_paint: Some(&paint),
+            script_paint: Some(paint.view()),
             show_game_chat: false,
         };
         let text = render(view, 60, 8);
@@ -834,12 +839,13 @@ mod tests {
             .lines
             .extend(["second row".into(), "third row".into()]);
         let texts = vec!["The stranger waits.".into()];
+        let paint = PaintFrame::from_script(paint);
         let view = ChatView {
             lines: &[],
             modal_texts: &texts,
             options: &[],
             has_continue: true,
-            script_paint: Some(&paint),
+            script_paint: Some(paint.view()),
             show_game_chat: false,
         };
         assert_eq!(
@@ -878,12 +884,13 @@ mod tests {
             canvas: Vec::new(),
             ..Default::default()
         };
+        let paint = PaintFrame::from_script(paint);
         let view = ChatView {
             lines: &[],
             modal_texts: &[],
             options: &[],
             has_continue: false,
-            script_paint: Some(&paint),
+            script_paint: Some(paint.view()),
             show_game_chat: false,
         };
         let area = ratatui::layout::Rect::new(0, 0, 24, 7);
@@ -949,12 +956,13 @@ mod tests {
             lines: vec!["Overview".into()],
             ..Default::default()
         };
+        let paint = PaintFrame::from_script(paint);
         let view = ChatView {
             lines: &[],
             modal_texts: &[],
             options: &[],
             has_continue: false,
-            script_paint: Some(&paint),
+            script_paint: Some(paint.view()),
             show_game_chat: false,
         };
         let area = Rect::new(0, 0, 40, 8);
@@ -996,12 +1004,13 @@ mod tests {
     #[test]
     fn paint_layout_footer_row_sits_below_buttons_not_on_body() {
         let paint = typical_jive_paint();
+        let paint = PaintFrame::from_script(paint);
         let view = ChatView {
             lines: &[],
             modal_texts: &[],
             options: &[],
             has_continue: false,
-            script_paint: Some(&paint),
+            script_paint: Some(paint.view()),
             show_game_chat: false,
         };
         let state = ChatState::default();
@@ -1024,12 +1033,13 @@ mod tests {
     #[test]
     fn paint_layout_cramped_height_omits_buttons_without_phantom_hits() {
         let paint = typical_jive_paint();
+        let paint = PaintFrame::from_script(paint);
         let view = ChatView {
             lines: &[],
             modal_texts: &[],
             options: &[],
             has_continue: false,
-            script_paint: Some(&paint),
+            script_paint: Some(paint.view()),
             show_game_chat: false,
         };
         let state = ChatState::default();

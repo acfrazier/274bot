@@ -19,6 +19,7 @@ use nav::world::NavWorld;
 use nav::WorldState;
 
 use crate::session::Session;
+use frontend_core::scripts::{CompiledCardId, ScriptChoice};
 
 const LOCAL_GAME_PORT: u16 = 44_594;
 const LOCAL_ASSET_PORT: u16 = 1_080;
@@ -1520,14 +1521,14 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
         .expect("second live profile")
         .username
         .clone();
-    let id = script::CompiledId("Gatherer");
+    let id = CompiledCardId::lookup("Gatherer").unwrap();
     let target_uid = session.core.vault().unwrap().get(&target).unwrap().uid;
     session
         .fleet_selection
         .set(frontend_core::ProfileIdentity::uid(target_uid), true);
 
     session.select(&source);
-    session.script_sel = Some(script::ScriptSel::Compiled(id));
+    session.script_sel = Some(ScriptChoice::compiled(id));
     session
         .scripts
         .set_compiled_setting(
@@ -1555,7 +1556,7 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     );
 
     session.select(&target);
-    session.script_sel = Some(script::ScriptSel::Compiled(id));
+    session.script_sel = Some(ScriptChoice::compiled(id));
     session.script_start_selected();
     assert!(
         session.error.is_none(),
@@ -1584,7 +1585,7 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     assert_eq!(active_skill(&fishing), "Fishing");
 
     session.select(&source);
-    session.script_sel = Some(script::ScriptSel::Compiled(id));
+    session.script_sel = Some(ScriptChoice::compiled(id));
     session.script_start_selected();
     assert!(
         session.error.is_none(),
@@ -1613,7 +1614,7 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     assert_eq!(active_skill(&source_fishing), "Fishing");
 
     session.select(&source);
-    session.script_sel = Some(script::ScriptSel::Compiled(id));
+    session.script_sel = Some(ScriptChoice::compiled(id));
     session
         .scripts
         .set_compiled_setting(
@@ -1692,7 +1693,7 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     );
     assert!(session
         .scripts
-        .restart_required_for(&target, &script::ScriptSel::Compiled(id)));
+        .restart_required_for(&target, &ScriptChoice::compiled(id)));
 
     session.restart_pending_settings();
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -1716,7 +1717,7 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     };
     assert!(!session
         .scripts
-        .restart_required_for(&target, &script::ScriptSel::Compiled(id)));
+        .restart_required_for(&target, &ScriptChoice::compiled(id)));
     assert_eq!(active_skill(&source_restarted), "Mining");
 
     let proof = serde_json::json!({

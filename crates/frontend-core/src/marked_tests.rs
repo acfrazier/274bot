@@ -13,7 +13,7 @@ use super::{
     marked_availability, prepare_apply_settings_marked, restart_scope, BulkScope, MarkedAction,
     MarkedBlock, RestartScope,
 };
-use crate::scripts::Scripts;
+use crate::scripts::{CardSource, ScriptChoice, ScriptRunState, Scripts};
 use crate::selection::{marked_startable, start_marked, MarkedSelection, ProfileIdentity};
 use crate::session::OperatorSession;
 use crate::surface::HeadlessSurface;
@@ -81,15 +81,16 @@ fn fixture(test: &str, profiles: &[&str], loaded: usize) -> Fixture {
 }
 
 impl Fixture {
-    fn card(&mut self, file: &str) -> (script::JsCard, script::ScriptSel) {
+    fn card(&mut self, file: &str) -> (script::JsCard, ScriptChoice) {
         self.card_src(file, LOOPING)
     }
 
-    fn card_src(&mut self, file: &str, src: &str) -> (script::JsCard, script::ScriptSel) {
+    fn card_src(&mut self, file: &str, src: &str) -> (script::JsCard, ScriptChoice) {
         let path = self.dir.join(file);
         std::fs::write(&path, src).unwrap();
         let card = self.scripts.js_mut().load(&path).unwrap();
-        let sel = script::ScriptSel::Loaded(card.source, card.identity_id());
+        let sel =
+            ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
         (card, sel)
     }
 
@@ -117,8 +118,8 @@ impl Fixture {
         assert!(done(self), "timed out waiting for {what}");
     }
 
-    fn state(&self, name: &str) -> script::RunState {
-        self.core.play().unwrap().script_state(name)
+    fn state(&self, name: &str) -> ScriptRunState {
+        ScriptRunState::from_script(self.core.play().unwrap().script_state(name))
     }
 
     fn start_running(&mut self, name: &str) {
@@ -126,7 +127,7 @@ impl Fixture {
             .start_profile(&mut self.core, name, None)
             .unwrap();
         self.until("start to settle", |f| !f.scripts.starts_pending());
-        self.until("Running", |f| f.state(name) == script::RunState::Running);
+        self.until("Running", |f| f.state(name) == ScriptRunState::Running);
     }
 
     fn generation(&self, name: &str) -> u64 {
@@ -195,7 +196,7 @@ fn assign_saves_the_card_on_idle_marked_bots_and_skips_active_ones() {
     assert_eq!(f.assignment_key("alice"), Some(new.assignment().key()));
     assert_eq!(f.assignment_key("bob"), Some(old.assignment().key()));
     assert_eq!(f.assignment_key("carol"), None, "unmarked bot untouched");
-    assert_eq!(f.state("bob"), script::RunState::Running);
+    assert_eq!(f.state("bob"), ScriptRunState::Running);
     assert_eq!(f.generation("bob"), generation, "bob was not restarted");
     assert_eq!(
         f.core
@@ -216,7 +217,10 @@ fn assign_saves_the_card_on_idle_marked_bots_and_skips_active_ones() {
 #[test]
 fn assign_of_a_missing_card_fails_every_marked_bot_and_saves_nothing() {
     let mut f = fixture("assign-missing", &["alice", "bob"], 2);
-    let gone = script::ScriptSel::Loaded(script::ScriptSource::File, "gone.ts".into());
+    let gone = ScriptChoice::from_script(script::ScriptSel::Loaded(
+        script::ScriptSource::File,
+        "gone.ts".into(),
+    ));
     let report = assign_marked(&marks(&[1, 2]), &mut f.core, &mut f.scripts, &gone, None);
     assert_eq!(report.failed_count(), 2);
     assert_eq!(report.refusal(), Some("missing file: gone.ts"));
@@ -248,7 +252,7 @@ fn assign_and_restart_replaces_running_cards_and_starts_idle_ones() {
     assign_and_restart_marked(&selection, &mut f.core, &mut f.scripts, &new_sel, None);
     f.until("every restart to settle", |f| !f.scripts.starts_pending());
     for name in ["alice", "bob", "carol"] {
-        f.until(name, |f| f.state(name) == script::RunState::Running);
+        f.until(name, |f| f.state(name) == ScriptRunState::Running);
         f.core.flush_writes();
         assert_eq!(
             f.assignment_key(name),
@@ -282,10 +286,10 @@ fn logout_while_a_restart_waits_for_the_stop_cancels_it() {
     assert!(f.scripts.cancel_queued_as("alice", "logged out"));
     assert!(!f.scripts.starts_pending());
     f.until("the stop to finish", |f| {
-        f.state("alice") == script::RunState::Idle
+        f.state("alice") == ScriptRunState::Idle
     });
     f.pump();
-    assert_eq!(f.state("alice"), script::RunState::Idle, "never restarted");
+    assert_eq!(f.state("alice"), ScriptRunState::Idle, "never restarted");
 }
 
 fn push_ready(f: &Fixture, name: &str) {
@@ -401,7 +405,7 @@ fn apply_settings_to_marked_copies_only_to_marked_same_card_members() {
         .set_profile_setting(
             &mut f.core,
             "alice",
-            card.source,
+            CardSource::from_script(card.source),
             &card.name,
             &card.path,
             "target",
@@ -591,7 +595,7 @@ fn a_started_run_reports_progress_and_a_stopped_one_does_not() {
 
     f.core.play().unwrap().script_stop("alice");
     f.until("the stop to finish", |f| {
-        f.state("alice") == script::RunState::Idle
+        f.state("alice") == ScriptRunState::Idle
     });
     assert!(progress(&f).is_none(), "a stopped slot shows no run");
 
@@ -613,7 +617,7 @@ fn apply_to_marked_assigns_unassigned_and_says_so() {
         .set_profile_setting(
             &mut f.core,
             "alice",
-            card.source,
+            CardSource::from_script(card.source),
             &card.name,
             &card.path,
             "target",
@@ -685,7 +689,7 @@ fn operator_apply_assign_start_does_not_start_on_defaults() {
         .set_profile_setting(
             &mut f.core,
             "alice",
-            card.source,
+            CardSource::from_script(card.source),
             &card.name,
             &card.path,
             "target",
@@ -695,8 +699,13 @@ fn operator_apply_assign_start_does_not_start_on_defaults() {
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
 
-    f.scripts
-        .prepare_settings_sync(&f.core, "alice", card.source, &card.name, &card.path);
+    f.scripts.prepare_settings_sync(
+        &f.core,
+        "alice",
+        CardSource::from_script(card.source),
+        &card.name,
+        &card.path,
+    );
     let wall = f.scripts.prepared_settings_sync().unwrap();
     assert!(
         wall.targets.is_empty(),
@@ -737,8 +746,13 @@ fn operator_apply_assign_start_does_not_start_on_defaults() {
         card.identity_key()
     );
 
-    f.scripts
-        .prepare_settings_sync(&f.core, "alice", card.source, &card.name, &card.path);
+    f.scripts.prepare_settings_sync(
+        &f.core,
+        "alice",
+        CardSource::from_script(card.source),
+        &card.name,
+        &card.path,
+    );
     assert_eq!(f.scripts.prepared_settings_sync().unwrap().targets, ["bob"]);
 
     let blocked = f
@@ -760,7 +774,7 @@ fn operator_apply_assign_start_does_not_start_on_defaults() {
     start_marked(&marked, &mut f.core, &mut f.scripts, Some(&sel), None);
     let bulk = f.scripts.last_bulk_report().unwrap();
     assert!(bulk.contains("blocked"), "{bulk}");
-    assert_eq!(f.state("bob"), script::RunState::Idle);
+    assert_eq!(f.state("bob"), ScriptRunState::Idle);
 
     f.scripts.cancel_settings_sync();
     f.scripts
@@ -768,7 +782,7 @@ fn operator_apply_assign_start_does_not_start_on_defaults() {
         .unwrap();
     f.until("starts to settle", |f| !f.scripts.starts_pending());
     f.until("bob running on default", |f| {
-        f.state("bob") == script::RunState::Running
+        f.state("bob") == ScriptRunState::Running
     });
     let guard: serde_json::Map<String, serde_json::Value> =
         std::iter::once(("target".to_string(), serde_json::json!("Guard"))).collect();
@@ -778,11 +792,16 @@ fn operator_apply_assign_start_does_not_start_on_defaults() {
     );
     f.core.play().unwrap().script_stop("bob");
     f.until("bob idle after cancel-start", |f| {
-        f.state("bob") == script::RunState::Idle
+        f.state("bob") == ScriptRunState::Idle
     });
 
-    f.scripts
-        .prepare_settings_sync(&f.core, "alice", card.source, &card.name, &card.path);
+    f.scripts.prepare_settings_sync(
+        &f.core,
+        "alice",
+        CardSource::from_script(card.source),
+        &card.name,
+        &card.path,
+    );
     f.scripts.apply_settings_sync(&mut f.core).unwrap();
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
@@ -790,9 +809,7 @@ fn operator_apply_assign_start_does_not_start_on_defaults() {
         .start_selected(&mut f.core, "bob", None, None)
         .unwrap();
     f.until("starts to settle", |f| !f.scripts.starts_pending());
-    f.until("bob running", |f| {
-        f.state("bob") == script::RunState::Running
-    });
+    f.until("bob running", |f| f.state("bob") == ScriptRunState::Running);
     let knight: serde_json::Map<String, serde_json::Value> = std::iter::once((
         "target".to_string(),
         serde_json::json!("Knight of Ardougne"),
@@ -872,7 +889,7 @@ fn restart_scope_prompt_bounds_each_list_and_counts_the_rest() {
         })
         .collect();
     for row in rows.iter_mut().take(20) {
-        row.set_script(script::RunState::Running);
+        row.set_script(ScriptRunState::Running);
     }
     let scope = RestartScope::from_rows(names.iter().map(String::as_str), &rows);
     assert_eq!(

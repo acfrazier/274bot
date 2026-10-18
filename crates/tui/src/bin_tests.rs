@@ -1,4 +1,5 @@
 use super::*;
+use frontend_core::scripts::{CardSource, CompiledCardId, Loadouts, ScriptChoice};
 use host_play::profile::ProfileEnvironment;
 use host_play::{Play, SlotArm};
 use nav::grid::StepGrid;
@@ -1174,10 +1175,7 @@ fn live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting() {
     assert_ne!(name, "test", "live must not log in `test`");
     assert_eq!(
         session.script_sel,
-        Some(script::ScriptSel::Loaded(
-            script::ScriptSource::Catalog,
-            "BoneBurier".into()
-        )),
+        Some(ScriptChoice::loaded(CardSource::Catalog, "BoneBurier")),
         "prepare sets script_sel to the catalog card"
     );
     assert!(session.core.play().is_some(), "play started");
@@ -1272,18 +1270,12 @@ fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
             .expect("prepare");
         assert_eq!(
             session.script_sel,
-            Some(script::ScriptSel::Loaded(
-                script::ScriptSource::File,
-                identity.clone()
-            )),
+            Some(ScriptChoice::loaded(CardSource::File, &identity)),
             "{name} must select the canonical-path identity"
         );
         assert_ne!(
             session.script_sel,
-            Some(script::ScriptSel::Loaded(
-                script::ScriptSource::File,
-                "bone_burier_v2".into()
-            ))
+            Some(ScriptChoice::loaded(CardSource::File, "bone_burier_v2"))
         );
         let pending = session.pending_script.lock().unwrap().clone();
         let [pending] = pending.as_slice() else {
@@ -1373,7 +1365,9 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
     session.on_script_browse_open(&mut app);
     session.defer_rs2b0t_catalog(&mut app);
     assert!(
-        script::rs2b0t_import_deferred_at(&iso.home.join(".274bot/rs2b0t-import")),
+        frontend_core::scripts::paths::rs2b0t_import_deferred_at(
+            &iso.home.join(".274bot/rs2b0t-import")
+        ),
         "defer flag written"
     );
     assert!(
@@ -1482,7 +1476,7 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     let src = "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('tui-initial-load');\nexport function tick(api) {}";
     std::fs::write(&path, src).unwrap();
     let card = session.scripts.js_mut().load(&path).unwrap();
-    let sel = script::ScriptSel::Loaded(card.source, path.to_string_lossy().into_owned());
+    let sel = ScriptChoice::loaded(CardSource::File, &path.to_string_lossy());
     session.script_start(&mut app, &sel);
     settle_starts(&mut session, &mut app);
     // The failure reaches the operator once setup settles, as the
@@ -1526,7 +1520,7 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     app.focused = Some(1);
     session.script_start(
         &mut app,
-        &script::ScriptSel::Loaded(good.source, good_path.to_string_lossy().into_owned()),
+        &ScriptChoice::loaded(CardSource::File, &good_path.to_string_lossy()),
     );
     settle_starts(&mut session, &mut app);
     assert_eq!(
@@ -1625,7 +1619,7 @@ fn paint_button_action_does_not_queue_a_wire_cmd() {
     let mut app = TuiApp::new("274bot headless");
     app.names = vec!["alice".into()];
     app.focused = Some(0);
-    app.chat_data.script_paint = Some(std::sync::Arc::new(script::shim::ScriptPaint {
+    app.chat_data.script_paint = Some(PaintFrame::from_script(script::shim::ScriptPaint {
         title: Some("NatureCrafter".into()),
         accent: None,
         lines: vec!["status".into()],
@@ -2627,7 +2621,9 @@ fn tui_notice_uses_shared_ack_file() {
 #[test]
 fn tui_settings_map_bake_choice_is_the_panel_prefs_key() {
     let iso = IsolatedEnv::enter("tui-map-bake");
-    let path = script::bot_home().join(".274bot").join("panel-ui.json");
+    let path = frontend_core::scripts::paths::bot_home()
+        .join(".274bot")
+        .join("panel-ui.json");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, r#"{"last_focus":"alice","map_bake":"always"}"#).unwrap();
     let mut session = TuiSession::new(dummy_options());
@@ -2679,13 +2675,15 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_service() {
     assert_eq!(app.loadouts_state.status, "Saved.");
 
     // Another 274bot process on this home: its own service, same files.
-    let root = host_play::local_state::StateRoot::new(script::bot_home().join(".274bot"));
+    let root = host_play::local_state::StateRoot::new(
+        frontend_core::scripts::paths::bot_home().join(".274bot"),
+    );
     let peer = host_play::local_state::LocalStateService::open_process(root.clone());
     assert_eq!(
         peer.preferences().value("map_bake"),
         Some(serde_json::json!("always"))
     );
-    let mut peer_form = script::LoadoutsStore::over(Arc::new(peer.operator_loadouts()));
+    let mut peer_form = Loadouts::over(Arc::new(peer.operator_loadouts()));
     assert_eq!(
         peer_form.get("roundtrip").unwrap().carry,
         vec![api::loadout::CarryEntry::new("Lobster", 5)]
@@ -2719,7 +2717,7 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_service() {
     app.map_bake_dirty = true;
     session.pump(&mut app);
     assert_eq!(app.error, None);
-    let mut reread = script::LoadoutsStore::over(Arc::new(peer.operator_loadouts()));
+    let mut reread = Loadouts::over(Arc::new(peer.operator_loadouts()));
     reread.reload().unwrap();
     assert_eq!(reread.names(), ["roundtrip", "peer-row"]);
     assert_eq!(reread.get("roundtrip").unwrap().carry[0].qty, 6);
@@ -2736,7 +2734,9 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_service() {
 #[test]
 fn tui_manual_walk_pause_preference_projects_and_reports_persistence() {
     let iso = IsolatedEnv::enter("tui-manual-walk-pause");
-    let path = script::bot_home().join(".274bot").join("panel-ui.json");
+    let path = frontend_core::scripts::paths::bot_home()
+        .join(".274bot")
+        .join("panel-ui.json");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(
         &path,
@@ -2833,7 +2833,9 @@ fn tui_restored_enabled_folder_loads_when_game_data_becomes_ready() {
         )
         .unwrap();
     }
-    let prefs_path = script::bot_home().join(".274bot").join("panel-ui.json");
+    let prefs_path = frontend_core::scripts::paths::bot_home()
+        .join(".274bot")
+        .join("panel-ui.json");
     std::fs::create_dir_all(prefs_path.parent().unwrap()).unwrap();
     std::fs::write(
         &prefs_path,
@@ -3386,6 +3388,7 @@ fn restart_required_prompt_is_visible_at_standard_and_compact_sizes() {
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     session.core.play_mut().unwrap().bind_script_test_data(data);
     let id = script::CompiledId("Gatherer");
+    let card_id = CompiledCardId::lookup("Gatherer").unwrap();
     assert!(session.scripts.persist_assignment(
         &mut session.core,
         "alice",
@@ -3397,7 +3400,7 @@ fn restart_required_prompt_is_visible_at_standard_and_compact_sizes() {
         .set_compiled_setting(
             &mut session.core,
             "alice",
-            id,
+            card_id,
             "skill",
             serde_json::json!("Fishing"),
         )
@@ -3420,7 +3423,7 @@ fn restart_required_prompt_is_visible_at_standard_and_compact_sizes() {
         .set_compiled_setting(
             &mut session.core,
             "alice",
-            id,
+            card_id,
             "skill",
             serde_json::json!("Mining"),
         )
@@ -3471,6 +3474,7 @@ fn restart_settings_modal_redraws_when_targets_shrink_under_the_same_op() {
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     session.core.play_mut().unwrap().bind_script_test_data(data);
     let id = script::CompiledId("Gatherer");
+    let card_id = CompiledCardId::lookup("Gatherer").unwrap();
     for name in ["alice", "bob"] {
         assert!(session.scripts.persist_assignment(
             &mut session.core,
@@ -3485,7 +3489,7 @@ fn restart_settings_modal_redraws_when_targets_shrink_under_the_same_op() {
             .set_compiled_setting(
                 &mut session.core,
                 name,
-                id,
+                card_id,
                 "skill",
                 serde_json::json!("Fishing"),
             )
@@ -3514,7 +3518,7 @@ fn restart_settings_modal_redraws_when_targets_shrink_under_the_same_op() {
             .set_compiled_setting(
                 &mut session.core,
                 name,
-                id,
+                card_id,
                 "skill",
                 serde_json::json!("Mining"),
             )
@@ -3976,7 +3980,10 @@ fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
     focus_member(&mut session, &mut app, "alice");
     assert_eq!(
         app.script_sel,
-        frontend_core::scripts::sel_from_assignment(&card.assignment()),
+        Some(ScriptChoice::loaded(
+            CardSource::File,
+            &card.assignment().identity,
+        )),
         "the heading is alice's assignment"
     );
     std::fs::write(&path, format!("{LOOPING_TS}// changed\n")).unwrap();
@@ -4130,7 +4137,7 @@ fn tui_ready_start_keeps_a_newer_error_on_the_strip() {
     )
     .unwrap();
     let card = session.scripts.js_mut().load(&path).unwrap();
-    let sel = script::ScriptSel::Loaded(card.source, card.identity_id());
+    let sel = ScriptChoice::loaded(CardSource::File, &card.identity_id());
     focus_member(&mut session, &mut app, "alice");
     session.script_start(&mut app, &sel);
     settle_starts(&mut session, &mut app);
@@ -4229,7 +4236,7 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
         .set_profile_setting(
             &mut session.core,
             "alice",
-            card.source,
+            CardSource::File,
             &card.name,
             &card.path,
             "target",
@@ -4240,7 +4247,7 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
     session.pump(&mut app);
 
     focus_member(&mut session, &mut app, "alice");
-    app.script_sel = Some(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, &card.identity_id()));
     let command = crate::commands::Command::ScriptApplyMarked;
     assert_eq!(
         command.availability(&app),
@@ -4363,7 +4370,7 @@ fn palette_apply_settings_to_marked_prepare_and_cancel_leave_a_fresh_source_unwr
         .legacy_mut()
         .set_str(card.source, &card.name, "target", "Guard");
     focus_member(&mut session, &mut app, "alice");
-    app.script_sel = Some(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, &card.identity_id()));
     let id = session.core.profile_identity("bob").unwrap();
     app.table.selection.set(id, true);
 
@@ -4672,7 +4679,7 @@ fn fleet_session_filters_marks_shown_and_assigns_marked() {
     let looping = iso.dir.join("looping.ts");
     std::fs::write(&looping, LOOPING_TS).unwrap();
     let card = session.scripts.js_mut().load(&looping).unwrap();
-    app.script_sel = Some(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, &card.identity_id()));
     session.pump(&mut app);
 
     // Filter by a typed term: only bob and bobby stay shown.
@@ -4711,8 +4718,9 @@ fn fleet_session_filters_marks_shown_and_assigns_marked() {
     let run = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
     dispatch(&mut session, &mut app, run);
     session.core.flush_writes();
-    let assigned =
-        |name: &str| frontend_core::Scripts::assignment(&session.core, name).map(|a| a.key());
+    let assigned = |name: &str| {
+        frontend_core::Scripts::profile_assignment(&session.core, name).map(|a| a.key())
+    };
     assert_eq!(assigned("bob"), Some(card.identity_key()));
     assert_eq!(assigned("bobby"), Some(card.identity_key()));
     assert_eq!(assigned("alice"), None, "the filtered-out bot is untouched");

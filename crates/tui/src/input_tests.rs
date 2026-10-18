@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, MouseEventKind};
 
 use api::snapshot::ChatOptionView;
-use script::{ScriptSel, ScriptSource};
+use frontend_core::scripts::{CardRuntime, CardSource, ScriptChoice, ScriptRunState};
 
 use crate::app::{AppAction, TuiApp};
 use crate::commands::Command;
@@ -166,7 +166,7 @@ fn tab_moves_keyboard_focus_between_panes_only() {
 #[test]
 fn pane_letters_act_only_in_their_pane() {
     let mut app = fleet_app(&["alice"]);
-    app.script_sel = Some(ScriptSel::Loaded(ScriptSource::File, "thiever".into()));
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
     for c in ['i', 'u', 'x', 't', 'e', 'w', 'o', 'l', 'p', 'b'] {
         assert_eq!(app.on_key(ch(c)), AppAction::None, "{c} in the fleet pane");
         assert!(app.modal.is_none() && !app.settings_state.open && !app.loadouts_state.open);
@@ -179,7 +179,7 @@ fn pane_letters_act_only_in_their_pane() {
     assert_eq!(app.on_key(ch('i')), AppAction::None, "i is an Overview key");
     assert_eq!(
         app.on_key(ch('t')),
-        AppAction::ScriptStart(ScriptSel::Loaded(ScriptSource::File, "thiever".into()))
+        AppAction::ScriptStart(ScriptChoice::loaded(CardSource::File, "thiever"))
     );
 }
 
@@ -385,7 +385,7 @@ fn marked_start_confirm_names_the_selected_script_it_will_run() {
     app.table
         .selection
         .set(app.profile_id_for_name("alice"), true);
-    app.script_sel = Some(ScriptSel::Loaded(ScriptSource::File, "thiever".into()));
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
     assert_eq!(app.run_command(Command::ScriptStartAll), AppAction::None);
     let all = text(&draw(&mut app, 120, 40));
     let label = app.script_sel.as_ref().unwrap().label();
@@ -440,13 +440,13 @@ fn marked_assign_commands_need_marks_and_a_script_and_name_both() {
             command.availability(&app),
             Err("browse to pick a script first")
         );
-        app.script_sel = Some(ScriptSel::Loaded(ScriptSource::File, "thiever".into()));
+        app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
         assert_eq!(command.availability(&app), Ok(()));
 
         assert_eq!(app.run_command(command), AppAction::None);
         let all = text(&draw(&mut app, 120, 40));
         let label = app.script_sel.as_ref().unwrap().label();
-        assert!(all.contains(&label), "{all}");
+        assert!(all.contains(label), "{all}");
         if command == Command::ScriptRestartMarked {
             assert!(
                 all.contains("Start the card on 1 idle bot: alice"),
@@ -481,7 +481,7 @@ fn apply_settings_to_marked_names_what_is_missing_and_fits_the_palette() {
         command.availability(&app),
         Err("browse to pick a script first")
     );
-    app.script_sel = Some(ScriptSel::Loaded(ScriptSource::File, "thiever".into()));
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
     app.focused = None;
     assert_eq!(
         command.availability(&app),
@@ -666,7 +666,7 @@ fn mouse_capture_toggles_from_the_palette() {
 #[test]
 fn switching_tabs_and_selecting_is_always_safe() {
     let mut app = fleet_app(&["alice", "bob"]);
-    app.script_sel = Some(ScriptSel::Loaded(ScriptSource::File, "thiever".into()));
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
     let mut seen = Vec::new();
     for k in [
         key(KeyCode::Down),
@@ -729,8 +729,8 @@ fn browse_card(name: &str) -> crate::script_shape::BrowseCard {
         description: String::new(),
         category: "Skilling".into(),
         tags: Vec::new(),
-        kind: script::ScriptKind::Compat,
-        source: ScriptSource::File,
+        kind: CardRuntime::Compat,
+        source: CardSource::File,
         unloadable: None,
     }
 }
@@ -799,7 +799,7 @@ fn script_popups_own_every_key_until_closed() {
     ];
     for popup in SCRIPT_POPUPS {
         let mut app = fleet_app(&["alice", "bob"]);
-        app.script_sel = Some(ScriptSel::Loaded(ScriptSource::File, "Alpha".into()));
+        app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "Alpha"));
         app.script_cards = vec![browse_card("Alpha"), browse_card("Bravo")];
         open_popup(&mut app, popup, &dir);
         for k in leaks {
@@ -868,7 +868,10 @@ fn script_popups_swallow_clicks_outside_themselves() {
         let (bob_x, bob_y) = find(&rows, "bob").expect("fleet row");
         let (map_x, map_y) = find(&rows, " Map F4 ").expect("map tab");
 
-        let sel_before = app.script_sel.clone();
+        let sel_before = app
+            .script_sel
+            .as_ref()
+            .map(frontend_core::scripts::ScriptChoice::duplicate);
         let load_before = app.script_load_sel;
         let catalog_before = app.catalog_sel;
         let fleet = app.regions.fleet_rows;
@@ -917,13 +920,13 @@ fn restart_confirm_app(count: usize, running: usize) -> (TuiApp, Vec<String>) {
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut app = fleet_app(&refs);
     for row in app.fleet.iter_mut().take(running) {
-        row.set_script(script::RunState::Running);
+        row.set_script(ScriptRunState::Running);
     }
     for name in &names {
         let id = app.profile_id_for_name(name);
         app.table.selection.set(id, true);
     }
-    app.script_sel = Some(ScriptSel::Loaded(ScriptSource::File, "thiever".into()));
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
     assert_eq!(
         app.run_command(Command::ScriptRestartMarked),
         AppAction::None
@@ -1034,13 +1037,13 @@ fn restart_confirm_at_40_by_20_shows_both_lists_when_a_name_is_wider_than_the_po
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut app = fleet_app(&refs);
     for row in app.fleet.iter_mut().take(3) {
-        row.set_script(script::RunState::Running);
+        row.set_script(ScriptRunState::Running);
     }
     for name in &names {
         let id = app.profile_id_for_name(name);
         app.table.selection.set(id, true);
     }
-    app.script_sel = Some(ScriptSel::Loaded(ScriptSource::File, "thiever".into()));
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
     assert_eq!(
         app.run_command(Command::ScriptRestartMarked),
         AppAction::None
