@@ -14,7 +14,7 @@ use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, SnapshotView, WorldTile};
 use api::work::{
     Checkpoint, CooperativeJob, InputRevision, RetainedState, StepContext, StepOutcome,
-    SubmissionRefusal, WorkAdmission, WorkPhase, WorkTicket,
+    SubmissionRefusal, WorkAdmission, WorkTicket,
 };
 use nav::arrival::ArrivalKind;
 #[cfg(test)]
@@ -203,7 +203,7 @@ impl RouteWorkJob {
 impl CooperativeJob for RouteWorkJob {
     type Output = RouteStageResult;
     type Error = RouteJobError;
-    type Phase = RouteWorkPhase;
+    type Phase = nav::contract::RoutePhase;
 
     fn request_thread(&self) -> Option<api::work::RequestThread<'_>> {
         self.job
@@ -236,25 +236,6 @@ impl CooperativeJob for RouteWorkJob {
         self.job
             .as_ref()
             .map_or_else(|| RetainedState::clean(0), |job| job.retained())
-    }
-}
-
-#[expect(
-    dead_code,
-    reason = "The frozen route row reserves these phase identities without optional progress publication."
-)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RouteWorkPhase {
-    Search,
-    Commit,
-}
-
-impl WorkPhase for RouteWorkPhase {
-    fn index(self) -> u16 {
-        match self {
-            Self::Search => 0,
-            Self::Commit => 1,
-        }
     }
 }
 
@@ -910,7 +891,7 @@ impl api::work::WorkFamilySpec for RouteWorkSpec {
     type Input = RouteSubmission;
     type Output = RouteStageResult;
     type Error = RouteJobError;
-    type Phase = RouteWorkPhase;
+    type Phase = nav::contract::RoutePhase;
 
     fn revision(input: &Self::Input) -> InputRevision {
         input.revision
@@ -2245,7 +2226,7 @@ impl RouteJob {
 impl CooperativeJob for RouteJob {
     type Output = RouteJobOutput;
     type Error = RouteJobError;
-    type Phase = RouteWorkPhase;
+    type Phase = nav::contract::RoutePhase;
 
     fn step(
         &mut self,

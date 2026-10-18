@@ -2973,12 +2973,20 @@ fn sample_bank_pick_burst_owners(
     admission.owner_observations = observations;
 }
 
+/// One reading of the shared work service, taken under one lock.
+struct BankPickBurstServiceSample {
+    capacity_sequence: u64,
+    capacity: api::work::WorkCapacity,
+    worker_available: bool,
+    health: Option<String>,
+}
+
 fn sample_bank_pick_burst_work(
     shared: &Arc<parking_lot::Mutex<WorkService>>,
     admission: &mut BankPickBurstAdmission,
     started: Instant,
     runs: &[(api::selected::RunKey, String)],
-) -> (u64, api::work::WorkCapacity, bool, Option<String>) {
+) -> BankPickBurstServiceSample {
     let service = shared.lock();
     let (capacity_sequence, published_capacity) = service
         .publications()
@@ -3072,12 +3080,12 @@ fn sample_bank_pick_burst_work(
             }
         }
     }
-    (
+    BankPickBurstServiceSample {
         capacity_sequence,
-        published_capacity,
+        capacity: published_capacity,
         worker_available,
         health,
-    )
+    }
 }
 
 fn bank_pick_burst_account_snapshots(
@@ -3094,16 +3102,9 @@ fn bank_pick_burst_account_snapshots(
         .collect()
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "The live witness compares the service snapshot with the same ten active account observations."
-)]
 fn observe_bank_pick_burst_full(
     admission: &mut BankPickBurstAdmission,
-    capacity_sequence: u64,
-    capacity: api::work::WorkCapacity,
-    worker_available: bool,
-    health: Option<&str>,
+    sample: &BankPickBurstServiceSample,
     snapshots: &[(String, BankPickBurstGuest)],
     runs: &[(api::selected::RunKey, String)],
     started: Instant,
@@ -3111,8 +3112,10 @@ fn observe_bank_pick_burst_full(
     if admission.full_witness.is_some() {
         return;
     }
-    if !worker_available
-        || health.is_some()
+    let capacity_sequence = sample.capacity_sequence;
+    let capacity = sample.capacity;
+    if !sample.worker_available
+        || sample.health.is_some()
         || capacity.jobs() != BANK_PICK_BURST_FULL_JOBS
         || capacity.bytes() == 0
     {
@@ -3257,10 +3260,12 @@ mod bank_pick_burst_oracle_tests {
         fn evaluate(&mut self) -> bool {
             observe_bank_pick_burst_full(
                 &mut self.admission,
-                0,
-                self.capacity,
-                true,
-                None,
+                &BankPickBurstServiceSample {
+                    capacity_sequence: 0,
+                    capacity: self.capacity,
+                    worker_available: true,
+                    health: None,
+                },
                 &self.guests,
                 &self.runs,
                 Instant::now(),
@@ -3556,9 +3561,14 @@ pub fn live_ten_guest_shared_bank_pick_full_retry_burst() {
     let mut holders_released_at_ms = None;
     let deadline = started + BANK_PICK_BURST_TIMEOUT;
     loop {
-        let (capacity_sequence, capacity, worker_available, health) =
-            sample_bank_pick_burst_work(&service, &mut admission, started, &run_keys);
-        sample_bank_pick_burst_owners(&play, &mut admission, capacity_sequence, started, &run_keys);
+        let sample = sample_bank_pick_burst_work(&service, &mut admission, started, &run_keys);
+        sample_bank_pick_burst_owners(
+            &play,
+            &mut admission,
+            sample.capacity_sequence,
+            started,
+            &run_keys,
+        );
         let snapshots = bank_pick_burst_account_snapshots(&names, &guest_map);
 
         if !attempted_start {
@@ -3645,16 +3655,7 @@ pub fn live_ten_guest_shared_bank_pick_full_retry_burst() {
 
         let snapshots = bank_pick_burst_account_snapshots(&names, &guest_map);
         if gate_released {
-            observe_bank_pick_burst_full(
-                &mut admission,
-                capacity_sequence,
-                capacity,
-                worker_available,
-                health.as_deref(),
-                &snapshots,
-                &run_keys,
-                started,
-            );
+            observe_bank_pick_burst_full(&mut admission, &sample, &snapshots, &run_keys, started);
             if admission.full_witness.is_some() && !saturation_holders.is_empty() {
                 for holder in saturation_holders.drain(..) {
                     let _prepared = holder
@@ -3668,6 +3669,7 @@ pub fn live_ten_guest_shared_bank_pick_full_retry_burst() {
                 && snapshots
                     .iter()
                     .all(|(_, guest)| guest.trace.outcome.is_some());
+            let capacity = sample.capacity;
             let capacity_empty =
                 capacity.jobs() == 0 && capacity.bytes() == 0 && capacity.handles() == 0;
             if all_terminal && capacity_empty {

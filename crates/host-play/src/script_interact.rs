@@ -178,20 +178,22 @@ pub(crate) fn dispatch_script_interact(
     bank.write().track(snapshot, 0);
     dispatch_script_interact_cached_scoped(
         driver,
-        snapshot,
-        obj_names,
-        here,
-        navs,
-        world,
-        state,
-        Some(&bank),
-        name,
-        Some(api::identity::Scope::Slot(
-            api::identity::SlotKey::from_incarnation(1).expect("test slot is bound"),
-        )),
+        &InteractContext {
+            snapshot,
+            obj_names,
+            here,
+            navs,
+            world,
+            state: &state,
+            bank: Some(&bank),
+            name,
+            compatibility_scope: Some(api::identity::Scope::Slot(
+                api::identity::SlotKey::from_incarnation(1).expect("test slot is bound"),
+            )),
+            cache: &None,
+            obj_names_arc: &None,
+        },
         reqs,
-        None,
-        None,
     )
 }
 
@@ -268,6 +270,53 @@ where
 {
     dispatch_script_interact_cached_scoped(
         driver,
+        &InteractContext {
+            snapshot,
+            obj_names,
+            here,
+            navs,
+            world,
+            state: &state,
+            bank,
+            name,
+            compatibility_scope: None,
+            cache: &cache,
+            obj_names_arc: &obj_names_arc,
+        },
+        reqs,
+    )
+}
+
+/// The slot context of one interaction dispatch pass. An observe pass makes
+/// it once and every dispatch in that pass reads it; the driver stays a
+/// separate argument because the pass also writes through it between
+/// dispatches.
+#[derive(Clone, Copy)]
+pub(crate) struct InteractContext<'a> {
+    pub(crate) snapshot: &'a GameSnapshot,
+    pub(crate) obj_names: Option<&'a api::obj_names::ObjNames>,
+    pub(crate) here: Option<(i32, i32, i32)>,
+    pub(crate) navs: &'a Arc<Mutex<HashMap<String, NavBot>>>,
+    pub(crate) world: &'a Option<Arc<NavWorld>>,
+    pub(crate) state: &'a Option<WorldState>,
+    pub(crate) bank: Option<&'a RwLock<BankMemory>>,
+    pub(crate) name: &'a str,
+    pub(crate) compatibility_scope: Option<api::identity::Scope>,
+    pub(crate) cache: &'a Option<Arc<Cache>>,
+    pub(crate) obj_names_arc: &'a Option<Arc<api::obj_names::ObjNames>>,
+}
+
+pub(crate) fn dispatch_script_interact_cached_scoped<R>(
+    driver: &mut dyn Driver,
+    context: &InteractContext<'_>,
+    reqs: R,
+) -> bool
+where
+    R: AsRef<[script::shim::InteractReq]> + IntoIterator<Item = script::shim::InteractReq>,
+{
+    use api::interact::{ActionSpec, OpTarget, SendResult};
+    use script::shim::InteractReq;
+    let InteractContext {
         snapshot,
         obj_names,
         here,
@@ -276,36 +325,10 @@ where
         state,
         bank,
         name,
-        None,
-        reqs,
+        compatibility_scope,
         cache,
         obj_names_arc,
-    )
-}
-#[expect(
-    clippy::too_many_arguments,
-    reason = "scoped dispatch borrows the driver, snapshot, navigation and cache context"
-)]
-pub(crate) fn dispatch_script_interact_cached_scoped<R>(
-    driver: &mut dyn Driver,
-    snapshot: &GameSnapshot,
-    obj_names: Option<&api::obj_names::ObjNames>,
-    here: Option<(i32, i32, i32)>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
-    world: &Option<Arc<NavWorld>>,
-    state: Option<WorldState>,
-    bank: Option<&RwLock<BankMemory>>,
-    name: &str,
-    compatibility_scope: Option<api::identity::Scope>,
-    reqs: R,
-    cache: Option<Arc<Cache>>,
-    obj_names_arc: Option<Arc<api::obj_names::ObjNames>>,
-) -> bool
-where
-    R: AsRef<[script::shim::InteractReq]> + IntoIterator<Item = script::shim::InteractReq>,
-{
-    use api::interact::{ActionSpec, OpTarget, SendResult};
-    use script::shim::InteractReq;
+    } = *context;
     #[cfg(feature = "memory-profile")]
     memory_diagnostics::requests(name, reqs.as_ref());
     let mut wrote = false;
