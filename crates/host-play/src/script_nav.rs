@@ -276,6 +276,7 @@ struct RoutePreflights {
     single: SearchPreflight,
     post_bank_single: SearchPreflight,
     first: SearchPreflight,
+    bank_access_first: SearchPreflight,
     missing: SearchPreflight,
     missing_route: SearchPreflight,
     blocking: SearchPreflight,
@@ -293,6 +294,12 @@ fn route_search_options(request: &ScriptRouteRequest) -> FindOptions {
     } else {
         request.opts
     }
+}
+
+fn strict_bank_access_options(mut options: FindOptions) -> FindOptions {
+    options.allow_bank_fetch = false;
+    options.prefer_target_order = true;
+    options
 }
 
 fn route_blocker_diagnosis(request: &ScriptRouteRequest) -> BlockerDiagnosis {
@@ -325,6 +332,9 @@ impl RouteSubmission {
             .as_ref()
             .map_or(0, |exclusions| exclusions.avoid.len());
         let options = route_search_options(request);
+        let stand_rows = request.world.banks().len();
+        let bank_access_target_capacity = stand_rows.checked_mul(4).ok_or(RouteJobError::Budget)?;
+        let bank_access_options = strict_bank_access_options(options);
         let diagnosis = route_blocker_diagnosis(request);
         let mut post_bank_options = options;
         post_bank_options.allow_bank_fetch = false;
@@ -357,6 +367,13 @@ impl RouteSubmission {
         })?;
         let post_bank_single = preflight(SearchRequestShape::Single {
             options: post_bank_options,
+            avoid_capacity,
+            max_settles,
+        })?;
+        let bank_access_first = preflight(SearchRequestShape::First {
+            target_capacity: bank_access_target_capacity,
+            fallback_capacity: 0,
+            options: bank_access_options,
             avoid_capacity,
             max_settles,
         })?;
@@ -397,6 +414,7 @@ impl RouteSubmission {
             single,
             post_bank_single,
             first,
+            bank_access_first,
             missing,
             missing_route,
             blocking,
@@ -427,10 +445,11 @@ impl RouteSubmission {
         let planned_rows = bank_rows
             .checked_add(plan_item_rows)
             .ok_or(RouteJobError::Budget)?;
-        let bank_direct_bytes =
-            BankFetchCursor::heap_bound(bank_rows, plan_item_rows).ok_or(RouteJobError::Budget)?;
-        let bank_planned_bytes = BankFetchCursor::heap_bound(planned_rows, plan_item_rows)
+        let bank_direct_bytes = BankFetchCursor::heap_bound(bank_rows, plan_item_rows, stand_rows)
             .ok_or(RouteJobError::Budget)?;
+        let bank_planned_bytes =
+            BankFetchCursor::heap_bound(planned_rows, plan_item_rows, stand_rows)
+                .ok_or(RouteJobError::Budget)?;
         let has_stands = !request.world.banks().is_empty();
         let fetchable_state_bytes =
             FetchableStateCursor::heap_bound(state, planned_rows, has_stands)
@@ -537,6 +556,24 @@ impl RouteSubmission {
                     .ok_or(RouteJobError::Budget)?,
             )?;
         }
+        include_peak(
+            preflights
+                .bank_access_first
+                .input_bytes()
+                .checked_add(preflights.bank_access_first.reservation().peak_bytes)
+                .and_then(|bytes| {
+                    bytes.checked_add(
+                        preflights
+                            .bank_access_first
+                            .reservation()
+                            .future_layout_bytes,
+                    )
+                })
+                .and_then(|bytes| bytes.checked_add(candidate_bytes))
+                .and_then(|bytes| bytes.checked_add(search_working_bytes))
+                .and_then(|bytes| bytes.checked_add(bank_direct_bytes.max(bank_planned_bytes)))
+                .ok_or(RouteJobError::Budget)?,
+        )?;
         include_peak(
             missing_result_bytes
                 .checked_add(planner_bytes)
@@ -1036,7 +1073,6 @@ pub(crate) struct RouteJob {
     bank_undo: Vec<RouteBankUndo>,
     bank_rollback_index: usize,
     bank_access_route: Option<CompactRoute>,
-    bank_access: Option<WorldTile>,
     fetchable_cursor: Option<FetchableStateCursor>,
     fetchable_edges: Option<FetchableEdgeCursor>,
     fetchable_rows: Option<Vec<(i32, i32)>>,
@@ -1169,7 +1205,6 @@ impl RouteJob {
             bank_undo_reserved: false,
             bank_undo: Vec::new(),
             bank_rollback_index: 0,
-            bank_access: None,
             bank_access_route: None,
             fetchable_cursor: None,
             fetchable_edges: None,
@@ -1531,11 +1566,10 @@ impl RouteJob {
         self.search_avoid_started = false;
         let options = route_search_options(&self.request);
         let max_settles = NODE_BUDGET;
-        let single_preflight = match self.search_purpose {
-            RouteSearchPurpose::BankAccess | RouteSearchPurpose::PostBank => {
-                self.preflights.post_bank_single
-            }
-            _ => self.preflights.single,
+        let single_preflight = if self.search_purpose == RouteSearchPurpose::PostBank {
+            self.preflights.post_bank_single
+        } else {
+            self.preflights.single
         };
         let search = match self.search_purpose {
             RouteSearchPurpose::Strict => {
@@ -1624,13 +1658,33 @@ impl RouteJob {
                 )
                 .map_err(|_| RouteJobError::Search)?
             }
-            RouteSearchPurpose::BankAccess | RouteSearchPurpose::PostBank => {
-                let target = if self.search_purpose == RouteSearchPurpose::BankAccess {
-                    self.bank_access
-                } else {
-                    self.selected_target
+            RouteSearchPurpose::BankAccess => {
+                let strict_options = strict_bank_access_options(options);
+                let targets = self
+                    .bank_cursor
+                    .as_mut()
+                    .ok_or(RouteJobError::ResultShape)?
+                    .take_access_targets();
+                if targets.is_empty() {
+                    return Err(RouteJobError::ResultShape);
                 }
-                .ok_or(RouteJobError::ResultShape)?;
+                SearchCursor::new_preflighted(
+                    SearchRequest::First {
+                        from: self.request.from,
+                        targets,
+                        fallback: Box::default(),
+                        options: strict_options,
+                        avoid,
+                        max_settles,
+                    },
+                    self.lease.clone(),
+                    Arc::clone(&self.state),
+                    self.preflights.bank_access_first,
+                )
+                .map_err(|_| RouteJobError::Search)?
+            }
+            RouteSearchPurpose::PostBank => {
+                let target = self.selected_target.ok_or(RouteJobError::ResultShape)?;
                 let mut strict_options = options;
                 strict_options.allow_bank_fetch = false;
                 SearchCursor::new_preflighted(
@@ -1796,8 +1850,16 @@ impl RouteJob {
                     None => self.advance_target_after_bank_failure(),
                 }
             }
-            (RouteSearchPurpose::BankAccess, SearchOutcome::Single { route }) => {
+            (RouteSearchPurpose::BankAccess, SearchOutcome::First { search }) => {
+                let (route, _) = search.into_routes();
                 if let Ok(route) = route {
+                    let cursor = self
+                        .bank_cursor
+                        .as_mut()
+                        .ok_or(RouteJobError::ResultShape)?;
+                    if !cursor.select_access(route.destination()) {
+                        return Err(RouteJobError::ResultShape);
+                    }
                     let plan = self
                         .bank_cursor
                         .take()
@@ -1808,13 +1870,6 @@ impl RouteJob {
                     self.bank_access_route = Some(route);
                     self.bank_plan_apply_step = 0;
                     self.stage = RouteJobStage::ApplyBankPlan;
-                } else if self
-                    .bank_cursor
-                    .as_mut()
-                    .is_some_and(BankFetchCursor::reject_access)
-                {
-                    self.bank_access = None;
-                    self.stage = RouteJobStage::BankPlan;
                 } else {
                     self.advance_target_after_bank_failure();
                 }
@@ -1975,8 +2030,12 @@ impl RouteJob {
             .as_ref()
             .map_or(self.request.bank.len(), Vec::len);
         self.bank_cursor = Some(
-            BankFetchCursor::with_limits(bank_rows, self.plan_item_limit())
-                .ok_or(RouteJobError::Budget)?,
+            BankFetchCursor::with_limits(
+                bank_rows,
+                self.plan_item_limit(),
+                self.request.world.banks().len(),
+            )
+            .ok_or(RouteJobError::Budget)?,
         );
         self.bank_plan_capture_step = 0;
         self.bank_undo_reserved = false;
@@ -1984,7 +2043,6 @@ impl RouteJob {
         self.bank_apply_reserved = false;
         self.bank_undo.clear();
         self.bank_access_route = None;
-        self.bank_access = None;
         self.stage = RouteJobStage::BankPlan;
         Ok(())
     }
@@ -2060,7 +2118,6 @@ impl RouteJob {
         self.bank_undo_reserved = false;
         self.bank_rollback_index = 0;
         self.bank_undo.clear();
-        self.bank_access = None;
         self.bank_access_route = None;
         self.selected_route = None;
         if self.search_mode == RouteSearchMode::InOrder {
@@ -2325,11 +2382,12 @@ impl CooperativeJob for RouteJob {
                         )
                     };
                     if done {
-                        self.bank_access = self
+                        let has_access = self
                             .bank_cursor
                             .as_ref()
-                            .and_then(BankFetchCursor::planned_access);
-                        if self.bank_access.is_some() {
+                            .and_then(BankFetchCursor::planned_access)
+                            .is_some();
+                        if has_access {
                             self.schedule_search(RouteSearchPurpose::BankAccess);
                         } else if let Some(plan) = self
                             .bank_cursor

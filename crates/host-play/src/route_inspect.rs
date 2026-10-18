@@ -19,9 +19,9 @@ use nav::bank_fetch::{BankFetchCursor, BankFetchPlan, BankRows, PlanningRowsCurs
 #[cfg(test)]
 use nav::router::{
     find_missing_item_reqs_with_avoid, find_missing_item_reqs_with_avoid_bounded, find_with_avoid,
-    find_with_avoid_bounded, Leg, Route,
+    find_with_avoid_bounded, Leg, Route, RouteError,
 };
-use nav::router::{AvoidRect, FindOptions, RouteError};
+use nav::router::{AvoidRect, FindOptions};
 use nav::transport::TransportKind;
 use nav::world::NavWorld;
 use nav::world_state::WorldState;
@@ -219,11 +219,20 @@ struct InspectSearchPreflights {
     strict: Option<nav::router::SearchPreflight>,
     missing: Option<nav::router::SearchPreflight>,
     stand: Option<nav::router::SearchPreflight>,
+    stand_fallback: Option<nav::router::SearchPreflight>,
     post: Option<nav::router::SearchPreflight>,
     blockers_with_bank: Option<nav::router::SearchPreflight>,
     blockers_without_bank: Option<nav::router::SearchPreflight>,
     max_plan_item_rows: usize,
     missing_result_bytes: usize,
+}
+
+fn strict_bank_access_options(options: FindOptions) -> FindOptions {
+    FindOptions {
+        allow_bank_fetch: false,
+        prefer_target_order: true,
+        ..options
+    }
 }
 
 impl InspectSubmission {
@@ -233,6 +242,7 @@ impl InspectSubmission {
     ) -> Result<(Self, InspectSearchPreflights), InspectJobError> {
         let graph = &capture.world.graph;
         let avoid_capacity = capture.avoid.len();
+        let stand_rows = capture.world.banks().len();
         let mut bounds = InspectSearchBounds::default();
         let mut preflights = InspectSearchPreflights::default();
 
@@ -261,15 +271,17 @@ impl InspectSubmission {
             bounds.include(&missing, InspectSearchKind::Missing)?;
             preflights.missing = Some(missing);
 
-            let options = FindOptions {
-                allow_bank_fetch: false,
-                ..capture.opts
-            };
-            // BankFetchCursor incrementally ranks every stand and emits at most one Walk;
-            // this one-shot token covers that selected stand route.
+            let options = strict_bank_access_options(capture.opts);
+            let stand_target_capacity = stand_rows
+                .checked_mul(4)
+                .ok_or(InspectJobError::ChargeOverflow)?;
+            // Search every access tile in air-distance order. A single query
+            // below preserves the first candidate's failure for diagnosis.
             let stand = preflight_inspection_search(
                 capture,
-                nav::router::SearchRequestShape::Single {
+                nav::router::SearchRequestShape::First {
+                    target_capacity: stand_target_capacity,
+                    fallback_capacity: 0,
                     options,
                     avoid_capacity,
                     max_settles: stand_budget(capture),
@@ -278,10 +290,23 @@ impl InspectSubmission {
             bounds.include(&stand, InspectSearchKind::Stand)?;
             preflights.stand = Some(stand);
 
-            let post = preflight_inspection_search(
+            let stand_fallback = preflight_inspection_search(
                 capture,
                 nav::router::SearchRequestShape::Single {
                     options,
+                    avoid_capacity,
+                    max_settles: stand_budget(capture),
+                },
+            )?;
+            bounds.include(&stand_fallback, InspectSearchKind::Stand)?;
+            preflights.stand_fallback = Some(stand_fallback);
+            let post = preflight_inspection_search(
+                capture,
+                nav::router::SearchRequestShape::Single {
+                    options: FindOptions {
+                        allow_bank_fetch: false,
+                        ..capture.opts
+                    },
                     avoid_capacity,
                     max_settles: post_budget(capture),
                 },
@@ -383,7 +408,7 @@ impl InspectSubmission {
             capture.bank.len()
         };
         let bank_cursor_bytes = if capture.opts.allow_bank_fetch {
-            BankFetchCursor::heap_bound(bank_rows, plan_item_rows)
+            BankFetchCursor::heap_bound(bank_rows, plan_item_rows, stand_rows)
                 .ok_or(InspectJobError::ChargeOverflow)?
         } else {
             0
@@ -657,17 +682,15 @@ impl InspectBankPlanning {
 
 struct InspectBankAccess {
     cursor: BankFetchCursor,
-    first_failure: Option<(WorldTile, RouteError)>,
 }
 
-#[expect(
-    clippy::large_enum_variant,
-    reason = "The job charges inline bank-cursor custody instead of allocating at each search transition."
-)]
 enum InspectSearchPurpose {
     Strict,
     Missing,
-    Stand {
+    BankAccessFirst {
+        planning: InspectBankAccess,
+    },
+    BankAccessFailure {
         planning: InspectBankAccess,
         access: WorldTile,
     },
@@ -681,6 +704,7 @@ enum InspectSearchPurpose {
 
 enum InspectSearchInput {
     Single,
+    First(Box<[WorldTile]>),
     Missing,
     Blocking(ZoneFilterOwned),
 }
@@ -738,6 +762,14 @@ impl InspectSearchBuilder {
             .targets
             .capacity()
             .checked_mul(std::mem::size_of::<WorldTile>())?;
+        if let InspectSearchInput::First(targets) = &self.input {
+            add_bytes(
+                &mut bytes,
+                targets
+                    .len()
+                    .checked_mul(std::mem::size_of::<WorldTile>())?,
+            )?;
+        }
         add_bytes(
             &mut bytes,
             self.avoid
@@ -802,6 +834,14 @@ impl InspectSearchBuilder {
                 avoid,
                 max_settles,
             },
+            InspectSearchInput::First(targets) => nav::router::SearchRequest::First {
+                from,
+                targets,
+                fallback: Box::default(),
+                options,
+                avoid,
+                max_settles,
+            },
             InspectSearchInput::Missing => nav::router::SearchRequest::MissingItemReqs {
                 from,
                 targets: targets.into_boxed_slice(),
@@ -849,7 +889,6 @@ enum InspectJobPhase {
         cursor: PlanningRowsCursor,
     },
     BankPlan(InspectBankPlanning),
-    BankAccess(InspectBankAccess),
     ApplyBank {
         plan: BankFetchPlan,
     },
@@ -898,7 +937,9 @@ impl InspectJob {
             InspectJobPhase::Start => {}
             InspectJobPhase::BuildSearch { builder } => {
                 add_bytes(&mut bytes, builder.retained_bytes()?)?;
-                if let InspectSearchPurpose::Stand { planning, .. } = &builder.purpose {
+                if let InspectSearchPurpose::BankAccessFirst { planning }
+                | InspectSearchPurpose::BankAccessFailure { planning, .. } = &builder.purpose
+                {
                     add_bytes(&mut bytes, planning.cursor.retained_bytes())?;
                 }
             }
@@ -906,7 +947,9 @@ impl InspectJob {
                 add_bytes(&mut bytes, cursor.input_bytes())?;
                 add_bytes(&mut bytes, cursor.future_layout_bytes())?;
                 add_bytes(&mut bytes, cursor.retained_bytes())?;
-                if let InspectSearchPurpose::Stand { planning, .. } = purpose {
+                if let InspectSearchPurpose::BankAccessFirst { planning }
+                | InspectSearchPurpose::BankAccessFailure { planning, .. } = purpose
+                {
                     add_bytes(&mut bytes, planning.cursor.retained_bytes())?;
                 }
             }
@@ -919,9 +962,6 @@ impl InspectJob {
                     &mut bytes,
                     planning.retained_bytes(self.preflights.missing_result_bytes)?,
                 )?;
-            }
-            InspectJobPhase::BankAccess(planning) => {
-                add_bytes(&mut bytes, planning.cursor.retained_bytes())?;
             }
             InspectJobPhase::ApplyBank { plan } => {
                 add_bytes(&mut bytes, plan.retained_bytes())?;
@@ -1060,27 +1100,104 @@ impl InspectJob {
         };
     }
 
+    fn start_first(
+        &mut self,
+        from: WorldTile,
+        targets: Box<[WorldTile]>,
+        options: FindOptions,
+        max_settles: usize,
+        purpose: InspectSearchPurpose,
+        preflight: nav::router::SearchPreflight,
+    ) -> Result<(), InspectJobError> {
+        let to = targets
+            .first()
+            .copied()
+            .ok_or(InspectJobError::SearchCursor)?;
+        self.phase = InspectJobPhase::BuildSearch {
+            builder: InspectSearchBuilder::new(
+                from,
+                to,
+                options,
+                max_settles,
+                InspectSearchInput::First(targets),
+                None,
+                purpose,
+                preflight,
+            ),
+        };
+        Ok(())
+    }
+
     fn start_bank_access(
+        &mut self,
+        mut planning: InspectBankAccess,
+    ) -> Result<(), InspectJobError> {
+        let (from, options, budget) = {
+            let capture = self.capture_ref();
+            (
+                capture.from,
+                strict_bank_access_options(capture.opts),
+                stand_budget(capture),
+            )
+        };
+        let preflight = self
+            .preflights
+            .stand
+            .take()
+            .ok_or(InspectJobError::SearchCursor)?;
+        let targets = planning.cursor.take_access_targets();
+        self.start_first(
+            from,
+            targets,
+            options,
+            budget,
+            InspectSearchPurpose::BankAccessFirst { planning },
+            preflight,
+        )
+    }
+
+    fn start_bank_access_failure(
         &mut self,
         planning: InspectBankAccess,
         access: WorldTile,
     ) -> Result<(), InspectJobError> {
-        let capture = self.capture_ref();
-        let from = capture.from;
-        let options = FindOptions {
-            allow_bank_fetch: false,
-            ..capture.opts
+        let (from, options, budget) = {
+            let capture = self.capture_ref();
+            (
+                capture.from,
+                strict_bank_access_options(capture.opts),
+                stand_budget(capture),
+            )
         };
-        let budget = stand_budget(capture);
-        let preflight = self.preflights.stand.ok_or(InspectJobError::SearchCursor)?;
+        let preflight = self
+            .preflights
+            .stand_fallback
+            .take()
+            .ok_or(InspectJobError::SearchCursor)?;
         self.start_single(
             from,
             access,
             options,
             budget,
-            InspectSearchPurpose::Stand { planning, access },
+            InspectSearchPurpose::BankAccessFailure { planning, access },
             preflight,
         );
+        Ok(())
+    }
+
+    fn finish_bank_access(
+        &mut self,
+        mut planning: InspectBankAccess,
+        route: nav::router::CompactRoute,
+    ) -> Result<(), InspectJobError> {
+        if !planning.cursor.select_access(route.destination()) {
+            return Err(InspectJobError::SearchCursor);
+        }
+        let plan = planning
+            .cursor
+            .take_plan()
+            .ok_or(InspectJobError::SearchCursor)?;
+        self.phase = InspectJobPhase::ApplyBank { plan };
         Ok(())
     }
 
@@ -1182,9 +1299,13 @@ impl InspectJob {
                 }
             }
             (InspectSearchPurpose::Missing, SearchOutcome::MissingItemReqs(Some(missing))) => {
-                let (hint_bank, bank_rows) = {
+                let (hint_bank, bank_rows, stand_rows) = {
                     let capture = self.capture_ref();
-                    (capture.bank_origin == Origin::Hint, capture.bank.len())
+                    (
+                        capture.bank_origin == Origin::Hint,
+                        capture.bank.len(),
+                        capture.world.banks().len(),
+                    )
                 };
                 let plan_item_rows = self.preflights.max_plan_item_rows;
                 if hint_bank {
@@ -1192,8 +1313,9 @@ impl InspectJob {
                         .ok_or(InspectJobError::ChargeOverflow)?;
                     self.phase = InspectJobPhase::PlanningRows { missing, cursor };
                 } else {
-                    let cursor = BankFetchCursor::with_limits(bank_rows, plan_item_rows)
-                        .ok_or(InspectJobError::ChargeOverflow)?;
+                    let cursor =
+                        BankFetchCursor::with_limits(bank_rows, plan_item_rows, stand_rows)
+                            .ok_or(InspectJobError::ChargeOverflow)?;
                     self.phase = InspectJobPhase::BankPlan(InspectBankPlanning {
                         missing,
                         rows: BankRowsInput::Captured,
@@ -1206,28 +1328,43 @@ impl InspectJob {
                 self.start_blockers(capture.from, capture.to, capture.opts, false)?;
             }
             (
-                InspectSearchPurpose::Stand { mut planning, .. },
-                SearchOutcome::Single { route: Ok(_) },
+                InspectSearchPurpose::BankAccessFirst { planning },
+                SearchOutcome::First { search },
             ) => {
-                let plan = planning
-                    .cursor
-                    .take_plan()
-                    .ok_or(InspectJobError::SearchCursor)?;
-                self.phase = InspectJobPhase::ApplyBank { plan };
+                let (route, _) = search.into_routes();
+                match route {
+                    Ok(route) => self.finish_bank_access(planning, route)?,
+                    Err(_) => {
+                        let access = planning
+                            .cursor
+                            .planned_access()
+                            .ok_or(InspectJobError::SearchCursor)?;
+                        self.start_bank_access_failure(planning, access)?;
+                    }
+                }
             }
             (
-                InspectSearchPurpose::Stand {
-                    mut planning,
-                    access,
-                },
+                InspectSearchPurpose::BankAccessFailure { planning, .. },
+                SearchOutcome::Single { route: Ok(route) },
+            ) => self.finish_bank_access(planning, route)?,
+            (
+                InspectSearchPurpose::BankAccessFailure { access, .. },
                 SearchOutcome::Single { route: Err(error) },
-            ) => {
-                planning.first_failure.get_or_insert((access, error));
-                if !planning.cursor.reject_access() {
-                    return Err(InspectJobError::SearchCursor);
+            ) => match error {
+                RouteError::NoPath => {
+                    let capture = self.capture_ref();
+                    self.start_blockers(
+                        capture.from,
+                        access,
+                        FindOptions {
+                            allow_bank_fetch: false,
+                            ..capture.opts
+                        },
+                        false,
+                    )?;
                 }
-                self.phase = InspectJobPhase::BankAccess(planning);
-            }
+                RouteError::BudgetExhausted => self.set_failure("BudgetExhausted", false),
+            },
             (
                 InspectSearchPurpose::Post { bank_planned },
                 SearchOutcome::Single { route: Ok(route) },
@@ -1437,6 +1574,7 @@ impl CooperativeJob for InspectJob {
                         let Some(cursor) = BankFetchCursor::with_limits(
                             rows.len(),
                             self.preflights.max_plan_item_rows,
+                            self.capture_ref().world.banks().len(),
                         ) else {
                             return StepOutcome::Failed(InspectJobError::ChargeOverflow);
                         };
@@ -1469,21 +1607,18 @@ impl CooperativeJob for InspectJob {
                         )
                     };
                     if complete {
-                        if let Some(access) = planning.cursor.planned_access() {
+                        if planning.cursor.planned_access().is_some() {
                             let InspectBankPlanning {
                                 missing,
                                 rows,
                                 cursor,
                             } = planning;
-                            // Selection owns the item targets now. Release the
-                            // missing diagnosis and hint overlay before search.
+                            // Selection owns item targets. Release the missing
+                            // diagnosis and hint overlay before search.
                             drop(missing);
                             drop(rows);
-                            let planning = InspectBankAccess {
-                                cursor,
-                                first_failure: None,
-                            };
-                            if let Err(error) = self.start_bank_access(planning, access) {
+                            if let Err(error) = self.start_bank_access(InspectBankAccess { cursor })
+                            {
                                 return StepOutcome::Failed(error);
                             }
                         } else if let Some(plan) = planning.cursor.take_plan() {
@@ -1493,54 +1628,6 @@ impl CooperativeJob for InspectJob {
                         }
                     } else {
                         self.phase = InspectJobPhase::BankPlan(planning);
-                    }
-                    if let Some(outcome) = self.after_unit(context) {
-                        return outcome;
-                    }
-                }
-                InspectJobPhase::BankAccess(mut planning) => {
-                    let complete = {
-                        let capture = self.capture_ref();
-                        planning.cursor.advance(
-                            &[] as &[nav::router::MissingReq],
-                            &capture.state,
-                            &[],
-                            capture.world.banks(),
-                            capture.from,
-                            &capture.world.collision,
-                        )
-                    };
-                    if complete {
-                        if let Some(access) = planning.cursor.planned_access() {
-                            if let Err(error) = self.start_bank_access(planning, access) {
-                                return StepOutcome::Failed(error);
-                            }
-                        } else {
-                            let failure = planning.first_failure;
-                            drop(planning);
-                            match failure {
-                                Some((access, RouteError::NoPath)) => {
-                                    let capture = self.capture_ref();
-                                    if let Err(error) = self.start_blockers(
-                                        capture.from,
-                                        access,
-                                        FindOptions {
-                                            allow_bank_fetch: false,
-                                            ..capture.opts
-                                        },
-                                        false,
-                                    ) {
-                                        return StepOutcome::Failed(error);
-                                    }
-                                }
-                                Some((_, RouteError::BudgetExhausted)) => {
-                                    self.set_failure("BudgetExhausted", false);
-                                }
-                                None => self.set_failure("NoPath", false),
-                            }
-                        }
-                    } else {
-                        self.phase = InspectJobPhase::BankAccess(planning);
                     }
                     if let Some(outcome) = self.after_unit(context) {
                         return outcome;
