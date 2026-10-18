@@ -371,8 +371,6 @@ pub struct SnapshotInput<'a> {
     pub hold: bool,
     pub ours: bool,
     pub npcs: &'a [SceneEntityInput<'a>],
-    pub withdraw_load_result_seq: u64,
-    pub withdraw_load_result: bool,
     pub bank_op_result_seq: u64,
     pub bank_op_result: bool,
     pub locs: &'a [SceneEntityInput<'a>],
@@ -509,10 +507,7 @@ impl<'a> SeatPageInput<'a> {
     }
 
     /// Attach optional result bytes and validate the complete page.
-    pub fn with_result_values(
-        mut self,
-        values: &'a [SeatResultValue<'a>],
-    ) -> Result<Self, String> {
+    pub fn with_result_values(mut self, values: &'a [SeatResultValue<'a>]) -> Result<Self, String> {
         self.result_values = values;
         validate_seat_page(&self)?;
         Ok(self)
@@ -678,7 +673,10 @@ fn validate_seat_page(page: &SeatPageInput<'_>) -> Result<(), String> {
                 result_value.id.get()
             ));
         }
-        let mut matching = page.results.iter().filter(|result| result.id == result_value.id);
+        let mut matching = page
+            .results
+            .iter()
+            .filter(|result| result.id == result_value.id);
         let result = matching.next().ok_or_else(|| {
             format!(
                 "seat result value {} has no matching terminal result",
@@ -691,10 +689,7 @@ fn validate_seat_page(page: &SeatPageInput<'_>) -> Result<(), String> {
                 result_value.id.get()
             ));
         }
-        if !matches!(
-            result.outcome,
-            SeatTerminal::Done | SeatTerminal::Failed
-        ) {
+        if !matches!(result.outcome, SeatTerminal::Done | SeatTerminal::Failed) {
             return Err(format!(
                 "seat result value {} requires a Done or Failed outcome",
                 result_value.id.get()
@@ -1335,8 +1330,6 @@ impl<'a> Snapshot<'a> {
         has_count_dialog_open => VT_COUNT_DIALOG_OPEN,
         has_withdraw_x_result_seq => VT_WITHDRAW_X_RESULT_SEQ,
         has_withdraw_x_result => VT_WITHDRAW_X_RESULT,
-        has_withdraw_load_result_seq => VT_WITHDRAW_LOAD_RESULT_SEQ,
-        has_withdraw_load_result => VT_WITHDRAW_LOAD_RESULT,
         has_bank_op_result_seq => VT_BANK_OP_RESULT_SEQ,
         has_bank_op_result => VT_BANK_OP_RESULT,
         has_reach => VT_REACH,
@@ -1835,8 +1828,6 @@ pub struct SnapshotFingerprint {
     pub hold: bool,
     pub ours: bool,
     pub npcs: Vec<SceneEntityFp>,
-    pub withdraw_load_result_seq: u64,
-    pub withdraw_load_result: bool,
     pub bank_op_result_seq: u64,
     pub bank_op_result: bool,
     pub locs: Vec<SceneEntityFp>,
@@ -2075,8 +2066,6 @@ impl SnapshotFingerprint {
             count_dialog_open: input.count_dialog_open,
             withdraw_x_result_seq: input.withdraw_x_result_seq,
             withdraw_x_result: input.withdraw_x_result,
-            withdraw_load_result_seq: input.withdraw_load_result_seq,
-            withdraw_load_result: input.withdraw_load_result,
             bank_op_result_seq: input.bank_op_result_seq,
             bank_op_result: input.bank_op_result,
             hold: input.hold,
@@ -2315,8 +2304,6 @@ pub struct DeltaMask {
     pub count_dialog_open: bool,
     pub withdraw_x_result_seq: bool,
     pub withdraw_x_result: bool,
-    pub withdraw_load_result_seq: bool,
-    pub withdraw_load_result: bool,
     pub bank_op_result_seq: bool,
     pub bank_op_result: bool,
     pub hold: bool,
@@ -2433,8 +2420,6 @@ impl DeltaMask {
             count_dialog_open: true,
             withdraw_x_result_seq: true,
             withdraw_x_result: true,
-            withdraw_load_result_seq: true,
-            withdraw_load_result: true,
             bank_op_result_seq: true,
             bank_op_result: true,
             hold: true,
@@ -2542,9 +2527,6 @@ impl DeltaMask {
             count_dialog_open: next.count_dialog_open != last.count_dialog_open,
             withdraw_x_result_seq: next.withdraw_x_result_seq != last.withdraw_x_result_seq,
             withdraw_x_result: next.withdraw_x_result != last.withdraw_x_result,
-            withdraw_load_result_seq: next.withdraw_load_result_seq
-                != last.withdraw_load_result_seq,
-            withdraw_load_result: next.withdraw_load_result != last.withdraw_load_result,
             bank_op_result_seq: next.bank_op_result_seq != last.bank_op_result_seq,
             bank_op_result: next.bank_op_result != last.bank_op_result,
             // SEC-004: re-post hold every tick so JS cannot clear
@@ -2662,8 +2644,6 @@ impl DeltaMask {
             || self.count_dialog_open
             || self.withdraw_x_result_seq
             || self.withdraw_x_result
-            || self.withdraw_load_result_seq
-            || self.withdraw_load_result
             || self.bank_op_result_seq
             || self.bank_op_result
             || self.ours
@@ -3461,12 +3441,6 @@ fn encode_snapshot_masked_into(
     }
     if mask.withdraw_x_result {
         table.add_withdraw_x_result(input.withdraw_x_result);
-    }
-    if mask.withdraw_load_result_seq {
-        table.add_withdraw_load_result_seq(input.withdraw_load_result_seq);
-    }
-    if mask.withdraw_load_result {
-        table.add_withdraw_load_result(input.withdraw_load_result);
     }
     if mask.bank_op_result_seq {
         table.add_bank_op_result_seq(input.bank_op_result_seq);
@@ -5303,9 +5277,7 @@ fn native_kind_from_wire(kind: SeatKind) -> Result<NativeKind, String> {
     }
 }
 
-fn bank_operation_wire(
-    operation: crate::bank::request::BankSeatOperation,
-) -> BankSeatOperation {
+fn bank_operation_wire(operation: crate::bank::request::BankSeatOperation) -> BankSeatOperation {
     use crate::bank::request::BankSeatOperation as Operation;
     match operation {
         Operation::None => BankSeatOperation::None,
@@ -5390,7 +5362,10 @@ fn bank_npc_access_off<'b>(
 ) -> WIPOffset<BankSeatNpcAccess<'b>> {
     let name = b.create_string(&access.name);
     let op = b.create_string(&access.op);
-    let choose = access.choose.as_deref().map(|choice| b.create_string(choice));
+    let choose = access
+        .choose
+        .as_deref()
+        .map(|choice| b.create_string(choice));
     let mut table = BankSeatNpcAccessBuilder::new(b);
     table.add_name(name);
     table.add_op(op);
@@ -5886,15 +5861,6 @@ fn decode_interact_rows<'a>(
                     .unwrap_or_default(),
             }),
             "walk-nearest-bank" => out.push(crate::shim::InteractReq::WalkNearestBank),
-            "select-bank" => out.push(crate::shim::InteractReq::SelectBank {
-                x: row.x(),
-                z: row.z(),
-                level: row.level(),
-                allow_wilderness: row.allow_wilderness(),
-                use_mage_bank: row.use_mage_bank(),
-                use_zanaris_bank: row.use_zanaris_bank(),
-                request_id: row.request_id(),
-            }),
             "gather-run" => {
                 let request_id = row.request_id();
                 if request_id == 0 {
@@ -6302,12 +6268,6 @@ fn decode_interact_rows<'a>(
             "run-policy" => out.push(crate::shim::InteractReq::RunPolicyOverride {
                 policy: decoded_run_policy(&row)?,
             }),
-            "withdraw-load" => {
-                return Err(
-                    "legacy withdraw-load interact opcode is refused; use the typed bank request"
-                        .into(),
-                )
-            }
             other => return Err(format!("unknown interact op: {other}")),
         }
     }
@@ -6343,60 +6303,59 @@ fn validate_seat_wire_reqs<'a>(
         let op = row
             .op()
             .ok_or_else(|| "interact row has no op".to_string())?;
-        let class = match op {
-            "abort-walk" => {
-                let id = row.request_id();
-                if id == 0 {
-                    return Err("AbortWalk release has no positive handle".into());
+        let class =
+            match op {
+                "abort-walk" => {
+                    let id = row.request_id();
+                    if id == 0 {
+                        return Err("AbortWalk release has no positive handle".into());
+                    }
+                    if walk_ids[..walk_count].contains(&id) {
+                        return Err(format!("duplicate AbortWalk release handle {id}"));
+                    }
+                    if walk_count == MAX_WALK_RELEASES {
+                        return Err(format!(
+                            "AbortWalk release count exceeds cap {MAX_WALK_RELEASES}"
+                        ));
+                    }
+                    walk_ids[walk_count] = id;
+                    walk_count += 1;
+                    reserved += 1;
+                    SeatInteractClass::WalkRelease
                 }
-                if walk_ids[..walk_count].contains(&id) {
-                    return Err(format!("duplicate AbortWalk release handle {id}"));
+                "gather-stop" => {
+                    gather_count += 1;
+                    if gather_count > 1 {
+                        return Err("more than one coalesced GatherStop release".into());
+                    }
+                    reserved += 1;
+                    SeatInteractClass::GatherRelease
                 }
-                if walk_count == MAX_WALK_RELEASES {
-                    return Err(format!(
-                        "AbortWalk release count exceeds cap {MAX_WALK_RELEASES}"
-                    ));
+                "combat-stop" => {
+                    combat_count += 1;
+                    if combat_count > 1 {
+                        return Err("more than one coalesced CombatStop release".into());
+                    }
+                    reserved += 1;
+                    SeatInteractClass::CombatRelease
                 }
-                walk_ids[walk_count] = id;
-                walk_count += 1;
-                reserved += 1;
-                SeatInteractClass::WalkRelease
-            }
-            "gather-stop" => {
-                gather_count += 1;
-                if gather_count > 1 {
-                    return Err("more than one coalesced GatherStop release".into());
+                "run-policy" => {
+                    policy_count += 1;
+                    if policy_count > api::script_contract::MAX_RUN_POLICY {
+                        return Err("run-policy row count exceeds cap".into());
+                    }
+                    reserved += 1;
+                    SeatInteractClass::RunPolicy
                 }
-                reserved += 1;
-                SeatInteractClass::GatherRelease
-            }
-            "combat-stop" => {
-                combat_count += 1;
-                if combat_count > 1 {
-                    return Err("more than one coalesced CombatStop release".into());
-                }
-                reserved += 1;
-                SeatInteractClass::CombatRelease
-            }
-            "run-policy" => {
-                policy_count += 1;
-                if policy_count > api::script_contract::MAX_RUN_POLICY {
-                    return Err("run-policy row count exceeds cap".into());
-                }
-                reserved += 1;
-                SeatInteractClass::RunPolicy
-            }
-            "withdraw-load" => {
-                return Err(
+                "withdraw-load" => return Err(
                     "legacy withdraw-load interact opcode is refused; use the typed bank request"
                         .into(),
-                )
-            }
-            "gather-run" | "combat-fight" | "progress-read" => {
-                return Err("native family starts must use typed seat starts".into())
-            }
-            _ => SeatInteractClass::Gameplay,
-        };
+                ),
+                "gather-run" | "combat-fight" | "progress-read" => {
+                    return Err("native family starts must use typed seat starts".into())
+                }
+                _ => SeatInteractClass::Gameplay,
+            };
         if class == SeatInteractClass::Gameplay {
             gameplay_seen = true;
             gameplay += 1;
@@ -6412,11 +6371,7 @@ fn validate_seat_wire_reqs<'a>(
     Ok((reserved, gameplay))
 }
 
-fn add_bank_wire_text(
-    bytes: &mut usize,
-    strings: &mut usize,
-    value: &str,
-) -> Result<(), String> {
+fn add_bank_wire_text(bytes: &mut usize, strings: &mut usize, value: &str) -> Result<(), String> {
     *bytes = bytes
         .checked_add(value.len())
         .filter(|total| *total <= MAX_START_CHARGE)
@@ -6587,19 +6542,15 @@ fn decode_bank_args(
     kind: NativeKind,
 ) -> Result<crate::bank::request::BankSeatArgs, String> {
     validate_bank_wire_text_bounds(row)?;
-    let mut args = crate::bank::request::BankSeatArgs::new(bank_operation_from_wire(
-        row.operation(),
-    )?);
+    let mut args =
+        crate::bank::request::BankSeatArgs::new(bank_operation_from_wire(row.operation())?);
     args.item_id = row.item_id();
     args.item_name = row.item_name().map(str::to_owned);
     args.menu_op = row.menu_op().map(str::to_owned);
     args.quantity = row.quantity();
     args.lands_as_id = row.lands_as_id();
     args.stand = row.stand().map(decode_bank_tile);
-    args.destination = row
-        .destination()
-        .map(decode_bank_destination)
-        .transpose()?;
+    args.destination = row.destination().map(decode_bank_destination).transpose()?;
     args.object_access = row
         .object_access()
         .map(decode_bank_object_access)
@@ -6842,7 +6793,6 @@ fn interact_off<'b>(
         InteractReq::Walk { .. } => "walk",
         InteractReq::WalkNear { .. } => "walk-near",
         InteractReq::WalkNearestBank => "walk-nearest-bank",
-        InteractReq::SelectBank { .. } => "select-bank",
         InteractReq::GatherRun { .. } => "gather-run",
         InteractReq::GatherStop { .. } => "gather-stop",
         InteractReq::CombatFight { .. } => "combat-fight",
@@ -7150,23 +7100,6 @@ fn interact_off<'b>(
             }
         }
         InteractReq::WalkNearestBank => {}
-        InteractReq::SelectBank {
-            x,
-            z,
-            level,
-            allow_wilderness,
-            use_mage_bank,
-            use_zanaris_bank,
-            request_id,
-        } => {
-            table.add_x(*x);
-            table.add_z(*z);
-            table.add_level(*level);
-            table.add_allow_wilderness(*allow_wilderness);
-            table.add_use_mage_bank(*use_mage_bank);
-            table.add_use_zanaris_bank(*use_zanaris_bank);
-            table.add_request_id(*request_id);
-        }
         InteractReq::AbortWalk { request_id } => {
             table.add_request_id(*request_id);
         }
@@ -7503,8 +7436,6 @@ pub(crate) mod tests {
             count_dialog_open: false,
             withdraw_x_result_seq: 0,
             withdraw_x_result: false,
-            withdraw_load_result_seq: 0,
-            withdraw_load_result: false,
             bank_op_result_seq: 0,
             bank_op_result: false,
             hold: false,
@@ -10575,9 +10506,8 @@ pub(crate) mod tests {
         args.return_to = Some(tile());
         args.deposit_all = true;
         args.common_junk = false;
-        args.hooks_present = BANK_NEAREST_HOOK_DEPOSIT
-            | BANK_NEAREST_HOOK_AFTER_DEPOSIT
-            | BANK_NEAREST_HOOK_LOG;
+        args.hooks_present =
+            BANK_NEAREST_HOOK_DEPOSIT | BANK_NEAREST_HOOK_AFTER_DEPOSIT | BANK_NEAREST_HOOK_LOG;
         payloads.push(args);
 
         let starts = payloads
@@ -10707,31 +10637,33 @@ pub(crate) mod tests {
             .contains("bank start text exceeds"));
 
         let oversized_wire_name = "x".repeat(MAX_START_CHARGE + 1);
-        assert!(decode_seat_interact_batch(&raw_seat_batch_with_bank_item_name(
-            &oversized_wire_name,
-        ))
-        .err()
-        .expect("oversized wire string rejected")
-        .contains("bank start text exceeds"));
+        assert!(
+            decode_seat_interact_batch(&raw_seat_batch_with_bank_item_name(&oversized_wire_name,))
+                .err()
+                .expect("oversized wire string rejected")
+                .contains("bank start text exceeds")
+        );
 
-        assert!(decode_seat_interact_batch(&raw_seat_batch_with_start_kind(
-            SeatKind::BankPlan
-        ))
-        .err()
-        .expect("missing bank payload rejected")
-        .contains("bank start has no typed banking arguments"));
-        assert!(decode_seat_interact_batch(&raw_seat_batch_with_start_kind(
-            SeatKind::BankNearest
-        ))
-        .err()
-        .expect("missing nearest-bank payload rejected")
-        .contains("bank start has no typed banking arguments"));
-        assert!(decode_seat_interact_batch(&raw_seat_batch_with_bank_operation(
-            BankSeatOperation(255),
-        ))
-        .err()
-        .expect("unknown bank operation rejected")
-        .contains("unknown bank seat operation"));
+        assert!(
+            decode_seat_interact_batch(&raw_seat_batch_with_start_kind(SeatKind::BankPlan))
+                .err()
+                .expect("missing bank payload rejected")
+                .contains("bank start has no typed banking arguments")
+        );
+        assert!(
+            decode_seat_interact_batch(&raw_seat_batch_with_start_kind(SeatKind::BankNearest))
+                .err()
+                .expect("missing nearest-bank payload rejected")
+                .contains("bank start has no typed banking arguments")
+        );
+        assert!(
+            decode_seat_interact_batch(
+                &raw_seat_batch_with_bank_operation(BankSeatOperation(255),)
+            )
+            .err()
+            .expect("unknown bank operation rejected")
+            .contains("unknown bank seat operation")
+        );
     }
 
     fn raw_seat_batch_with_start_kind(kind: SeatKind) -> Vec<u8> {
