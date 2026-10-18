@@ -6,6 +6,11 @@
 use super::*;
 use std::hash::{Hash, Hasher};
 
+#[cfg(target_os = "macos")]
+use super::zeroed_buffer::ZeroedBuffer as SearchBuffer;
+#[cfg(not(target_os = "macos"))]
+type SearchBuffer<T> = Vec<T>;
+
 pub(super) const RESOURCE_LIMIT: usize = 64;
 pub(super) const BALANCE_LIMIT: usize = 4096;
 
@@ -215,10 +220,10 @@ pub(super) enum PackedLookup {
 const PACKED_LOOKUP_CACHE_SIZE: usize = 1024;
 
 pub(super) struct PackedSearchTable {
-    slots: Vec<PackedSearchSlot>,
+    slots: SearchBuffer<PackedSearchSlot>,
     // Bucket heads and tagged next links share one allocation. A fingerprint
     // mismatch skips the record read without changing chain order.
-    links: Vec<[u8; 3]>,
+    links: SearchBuffer<[u8; 3]>,
     buckets: usize,
     next_unused: usize,
     free_head: u32,
@@ -230,9 +235,13 @@ pub(super) struct PackedSearchTable {
 
 impl PackedSearchTable {
     pub(super) fn empty() -> Self {
+        #[cfg(target_os = "macos")]
+        let (slots, links) = (SearchBuffer::empty(), SearchBuffer::empty());
+        #[cfg(not(target_os = "macos"))]
+        let (slots, links) = (Vec::new(), Vec::new());
         Self {
-            slots: Vec::new(),
-            links: Vec::new(),
+            slots,
+            links,
             buckets: 0,
             next_unused: 0,
             free_head: PACKED_ROOT_ID,
@@ -241,24 +250,38 @@ impl PackedSearchTable {
         }
     }
 
-    pub(super) fn try_new(settle_budget: usize) -> Option<Self> {
-        Self::try_new_capacity(Self::capacity_for(settle_budget)?)
+    pub(super) fn try_new(settle_budget: usize) -> Result<Self, SearchCursorError> {
+        Self::try_new_capacity(
+            Self::capacity_for(settle_budget).ok_or(SearchCursorError::Allocation)?,
+        )
     }
 
-    pub(super) fn try_new_capacity(capacity: usize) -> Option<Self> {
+    pub(super) fn try_new_capacity(capacity: usize) -> Result<Self, SearchCursorError> {
         if capacity == 0 {
-            return Some(Self::empty());
+            return Ok(Self::empty());
         }
         if capacity > PACKED_ID_MASK as usize {
-            return None;
+            return Err(SearchCursorError::Allocation);
         }
         let buckets = Self::bucket_count_for(capacity);
-        let link_count = buckets.checked_add(capacity)?;
-        std::alloc::Layout::array::<PackedSearchSlot>(capacity).ok()?;
-        std::alloc::Layout::array::<[u8; 3]>(link_count).ok()?;
-        let slots = vec![PackedSearchSlot::empty(); capacity];
-        let links = vec![[0; 3]; link_count];
-        Some(Self {
+        let link_count = buckets
+            .checked_add(capacity)
+            .ok_or(SearchCursorError::Allocation)?;
+        std::alloc::Layout::array::<PackedSearchSlot>(capacity)
+            .map_err(|_| SearchCursorError::Allocation)?;
+        std::alloc::Layout::array::<[u8; 3]>(link_count)
+            .map_err(|_| SearchCursorError::Allocation)?;
+        #[cfg(target_os = "macos")]
+        let (slots, links) = (
+            SearchBuffer::try_new(capacity)?,
+            SearchBuffer::try_new(link_count)?,
+        );
+        #[cfg(not(target_os = "macos"))]
+        let (slots, links) = (
+            vec![PackedSearchSlot::empty(); capacity],
+            vec![[0; 3]; link_count],
+        );
+        Ok(Self {
             slots,
             links,
             buckets,
@@ -307,24 +330,37 @@ impl PackedSearchTable {
         &mut self,
         heap: &mut PackedMinMaxHeap,
         maximum_capacity: usize,
-    ) -> Option<bool> {
+    ) -> Result<bool, SearchCursorError> {
         let old_capacity = self.slots.len();
         if old_capacity >= maximum_capacity {
-            return Some(false);
+            return Ok(false);
         }
         if maximum_capacity > PACKED_ID_MASK as usize {
-            return None;
+            return Err(SearchCursorError::Allocation);
         }
-        let new_capacity = old_capacity.checked_mul(2)?.min(maximum_capacity);
+        let new_capacity = old_capacity
+            .checked_mul(2)
+            .ok_or(SearchCursorError::Allocation)?
+            .min(maximum_capacity);
         if new_capacity <= old_capacity {
-            return Some(false);
+            return Ok(false);
         }
         let buckets = Self::bucket_count_for(new_capacity);
         let link_id_mask = packed_link_id_mask(new_capacity);
-        let link_count = buckets.checked_add(new_capacity)?;
-        let mut links = Vec::new();
-        links.try_reserve_exact(link_count).ok()?;
-        links.resize(link_count, [0; 3]);
+        let link_count = buckets
+            .checked_add(new_capacity)
+            .ok_or(SearchCursorError::Allocation)?;
+        #[cfg(target_os = "macos")]
+        let mut links = SearchBuffer::try_new(link_count)?;
+        #[cfg(not(target_os = "macos"))]
+        let mut links = {
+            let mut links = Vec::new();
+            links
+                .try_reserve_exact(link_count)
+                .map_err(|_| SearchCursorError::Allocation)?;
+            links.resize(link_count, [0; 3]);
+            links
+        };
         for (id, slot) in self.slots[..self.next_unused].iter().enumerate() {
             if matches!(slot.state(), PACKED_OPEN | PACKED_SETTLED) {
                 let hash = packed_hash(slot.tile(), slot.balance());
@@ -335,19 +371,24 @@ impl PackedSearchTable {
                 links[buckets + id] = self.links[self.buckets + id];
             }
         }
-        self.slots
-            .try_reserve_exact(new_capacity - old_capacity)
-            .ok()?;
         heap.entries
             .try_reserve_exact(new_capacity.saturating_sub(heap.entries.len()))
-            .ok()?;
-        self.slots.resize(new_capacity, PackedSearchSlot::empty());
+            .map_err(|_| SearchCursorError::Allocation)?;
+        #[cfg(target_os = "macos")]
+        self.slots.try_grow(new_capacity, self.next_unused)?;
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.slots
+                .try_reserve_exact(new_capacity - old_capacity)
+                .map_err(|_| SearchCursorError::Allocation)?;
+            self.slots.resize(new_capacity, PackedSearchSlot::empty());
+        }
         self.links = links;
         self.buckets = buckets;
         self.link_id_mask = link_id_mask;
         // Record ids never move. Settled and queued parents, including the
         // caller's currently expanding node, remain valid after growth.
-        Some(true)
+        Ok(true)
     }
 
     pub(super) fn slot(&self, id: u32) -> &PackedSearchSlot {
@@ -362,7 +403,8 @@ impl PackedSearchTable {
         self.slots[id as usize].state() == PACKED_SETTLED
     }
 
-    pub(super) async fn locate(
+    #[inline(always)]
+    pub(super) fn locate_for_insert(
         &mut self,
         tile: WorldTile,
         balance: u32,
@@ -371,16 +413,32 @@ impl PackedSearchTable {
             return Err(());
         }
         let hash = packed_hash(tile, balance);
+        if let Some(id) = self
+            .cached_key(hash, tile, balance)
+            .or_else(|| self.locate_hashed(tile, balance, hash))
+        {
+            self.cached_ids[hash as usize & (PACKED_LOOKUP_CACHE_SIZE - 1)] =
+                id | (hash & !PACKED_ID_MASK);
+            return Ok(PackedLookup::Found(id));
+        }
+        self.vacant_id().map(PackedLookup::Vacant).ok_or(())
+    }
+
+    pub(super) async fn locate(
+        &mut self,
+        tile: WorldTile,
+        balance: u32,
+    ) -> Result<PackedLookup, ()> {
+        if SYNCHRONOUS_WORK.get() {
+            return self.locate_for_insert(tile, balance);
+        }
+        if self.buckets == 0 {
+            return Err(());
+        }
+        let hash = packed_hash(tile, balance);
         let cache_index = hash as usize & (PACKED_LOOKUP_CACHE_SIZE - 1);
         if let Some(id) = self.cached_key(hash, tile, balance) {
             return Ok(PackedLookup::Found(id));
-        }
-        if SYNCHRONOUS_WORK.get() {
-            if let Some(id) = self.locate_hashed(tile, balance, hash) {
-                self.cached_ids[cache_index] = id | (hash & !PACKED_ID_MASK);
-                return Ok(PackedLookup::Found(id));
-            }
-            return self.vacant_id().map(PackedLookup::Vacant).ok_or(());
         }
         let bucket = packed_bucket(hash, self.buckets);
         let fingerprint = packed_fingerprint(hash, self.link_id_mask);
@@ -423,6 +481,7 @@ impl PackedSearchTable {
         (slot.tile() == tile && slot.balance() == balance).then_some(id)
     }
 
+    #[inline(always)]
     fn locate_hashed(&self, tile: WorldTile, balance: u32, hash: u32) -> Option<u32> {
         let bucket = packed_bucket(hash, self.buckets);
         let fingerprint = packed_fingerprint(hash, self.link_id_mask);
@@ -547,9 +606,17 @@ pub(super) fn packed_predecessor_storage_bound(settle_budget: usize) -> Option<u
         return None;
     }
     let links = capacity.checked_add(PackedSearchTable::bucket_count_for(capacity))?;
-    capacity
-        .checked_mul(std::mem::size_of::<PackedSearchSlot>())?
-        .checked_add(links.checked_mul(std::mem::size_of::<[u8; 3]>())?)
+    #[cfg(target_os = "macos")]
+    {
+        super::zeroed_buffer::storage_bound::<PackedSearchSlot>(capacity)?
+            .checked_add(super::zeroed_buffer::storage_bound::<[u8; 3]>(links)?)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        capacity
+            .checked_mul(std::mem::size_of::<PackedSearchSlot>())?
+            .checked_add(links.checked_mul(std::mem::size_of::<[u8; 3]>())?)
+    }
 }
 
 pub(super) fn packed_search_storage_bound(settle_budget: usize) -> Option<usize> {
@@ -1440,7 +1507,7 @@ mod packed_search_tests {
         let table = PackedSearchTable::try_new(4).expect("zeroed table");
         assert_eq!(table.links.len(), table.buckets + table.capacity());
         assert!(table.links.iter().all(|link| *link == [0; 3]));
-        for slot in &table.slots {
+        for slot in table.slots.iter() {
             assert_eq!(
                 slot.tile(),
                 WorldTile {
@@ -1748,7 +1815,7 @@ mod packed_search_tests {
                 table.tombstone(id).await;
             }
             let old_current = current;
-            assert_eq!(table.try_grow(&mut heap, 64), Some(true));
+            assert!(table.try_grow(&mut heap, 64).expect("grow packed table"));
             assert_eq!(table.buckets, grown_buckets);
             assert_eq!(current, old_current, "the local expanding id stays valid");
             assert_eq!(table.slot(current).tile(), origin);
@@ -1894,10 +1961,14 @@ mod packed_search_tests {
                     + (capacity + 1) * std::mem::size_of::<[u8; 3]>()
             )
         );
+        #[cfg(target_os = "macos")]
+        let expected_full_backing = 149_009_932;
+        #[cfg(not(target_os = "macos"))]
+        let expected_full_backing = 149_000_076;
         assert_eq!(
             packed_search_storage_bound(NODE_BUDGET),
-            Some(149_000_076),
-            "cooperative backing includes one bucket per twelve records"
+            Some(expected_full_backing),
+            "backing includes one bucket per twelve records and macOS mapping page rounding"
         );
         assert!(packed_search_storage_bound(usize::MAX).is_none());
     }

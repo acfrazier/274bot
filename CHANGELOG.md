@@ -362,6 +362,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   approach tile and can equip a carried item without requiring a bank visit.
 - Route searches are faster, especially for large searches. They return the
   same routes.
+- Repeated route searches on macOS no longer retain and clear large unused
+  search buffers. Synchronous searches avoid an extra lookup suspension without
+  changing routes, search budgets or cooperative cancellation checks.
 
 #### Maps
 
