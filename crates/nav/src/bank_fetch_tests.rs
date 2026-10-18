@@ -12,7 +12,8 @@ use super::{
 use crate::collision::{pack_walk, WorldCollision};
 use crate::pack::{BankAccess, BankStand};
 use crate::router::{
-    find_first_with, find_missing_item_reqs, find_with, FindOptions, MissingReq, RouteError,
+    find_first_with, find_first_with_avoid_budgets, find_missing_item_reqs, find_with,
+    find_with_avoid, FindOptions, MissingReq, RouteError,
 };
 use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 use crate::world_state::WorldState;
@@ -1135,6 +1136,58 @@ fn bank_fetch_chooses_the_path_cheapest_not_air_nearest_reachable_access() {
     let path_route = find_with(&collision, &graph, from, tile(0, 4, 0), options, &state).unwrap();
     assert_eq!(path_route.ticks, 2.0);
     assert!(path_route.ticks < air_route.ticks);
+}
+
+#[test]
+fn bank_fetch_uses_first_access_when_goal_set_budget_exhausts() {
+    let collision = open_grid();
+    let stands = [stand(5, 0)];
+    let from = tile(0, 0, 0);
+    let state = WorldState::empty();
+    let graph = TransportGraph::default();
+    let options = FindOptions::default();
+    let targets = bank_access_tiles(&collision, &stands[0]).collect::<Vec<_>>();
+    let first = nearest_bank_access(&collision, &stands, from).expect("access tile");
+
+    assert_eq!(
+        find_first_with_avoid_budgets(
+            &collision,
+            &graph,
+            from,
+            &targets,
+            options,
+            &state,
+            &[],
+            1,
+            1,
+        )
+        .into_route(),
+        Err(RouteError::BudgetExhausted),
+    );
+    find_with_avoid(&collision, &graph, from, first, options, &state, &[])
+        .expect("the first access is reachable under the single-target budget");
+
+    let fetch = super::plan_bank_fetch_with_budgets(
+        &[MissingReq::Carry { id: 995, count: 1 }],
+        &state,
+        &[(995, 1)],
+        &stands,
+        from,
+        &collision,
+        &graph,
+        options,
+        &[],
+        (1, 1),
+    )
+    .expect("the successful single-target probe supplies the plan");
+    assert_eq!(
+        fetch.steps[0],
+        BankStep::Walk {
+            x: first.x,
+            z: first.z,
+            level: first.level,
+        }
+    );
 }
 
 #[test]

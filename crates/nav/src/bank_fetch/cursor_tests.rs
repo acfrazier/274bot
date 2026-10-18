@@ -446,7 +446,7 @@ fn admission_bounds_reject_unrepresentable_counts_without_clamping() {
 }
 
 #[test]
-fn access_goals_keep_air_order_and_tied_planes_then_transfer_without_copying() {
+fn access_goals_keep_air_order_and_tied_planes_then_transfer_targets() {
     let state = WorldState::default();
     let missing = [MissingReq::Carry { id: 10, count: 1 }];
     let bank = [(10, 1)];

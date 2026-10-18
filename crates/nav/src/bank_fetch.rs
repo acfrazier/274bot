@@ -27,8 +27,8 @@ use crate::collision::WorldCollision;
 use crate::named_banks::{is_access_tile, AccessReach, Footprint};
 use crate::pack::BankStand;
 use crate::router::{
-    find_blocking_zones, find_first_with_avoid, find_with_avoid, AvoidRect, FindOptions,
-    MissingReq, MissingReqView, MissingRequirements, RouteError,
+    find_blocking_zones, find_first_with_avoid_budgets, find_with_avoid, AvoidRect, FindOptions,
+    MissingReq, MissingReqView, MissingRequirements, RouteError, FIRST_TARGET_BUDGET, NODE_BUDGET,
 };
 use crate::transport::TransportGraph;
 use crate::world_state::WorldState;
@@ -284,6 +284,12 @@ pub enum BankFetchError {
         /// Active zone identities witnessed on the unrestricted access route.
         blocked_zones: Vec<ZoneKey>,
     },
+    /// The strict route found an access, but the cursor could not select it.
+    #[error("bank access plan could not select routed tile {access:?}")]
+    AccessSelection {
+        /// The access tile returned by the strict route.
+        access: WorldTile,
+    },
 }
 
 /// Plan a BankBudget session for a strict [`find_with`] `NoPath` whose
@@ -333,6 +339,36 @@ pub fn plan_bank_fetch<M: MissingRequirementsView + ?Sized>(
     options: FindOptions,
     avoid: &[AvoidRect],
 ) -> Result<BankFetch, BankFetchError> {
+    plan_bank_fetch_with_budgets(
+        missing,
+        state,
+        bank,
+        stands,
+        from,
+        collision,
+        graph,
+        options,
+        avoid,
+        (FIRST_TARGET_BUDGET, NODE_BUDGET),
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The bounded search budgets are test controls for the same planning adapter."
+)]
+fn plan_bank_fetch_with_budgets<M: MissingRequirementsView + ?Sized>(
+    missing: &M,
+    state: &WorldState,
+    bank: &[(i32, i32)],
+    stands: &[BankStand],
+    from: WorldTile,
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    options: FindOptions,
+    avoid: &[AvoidRect],
+    goal_budgets: (usize, usize),
+) -> Result<BankFetch, BankFetchError> {
     let mut cursor = BankFetchCursor::new();
     while !cursor.advance(missing, state, bank, stands, from, collision) {}
     let strict = FindOptions {
@@ -341,7 +377,7 @@ pub fn plan_bank_fetch<M: MissingRequirementsView + ?Sized>(
         ..options
     };
     if let Some(first) = cursor.planned_access() {
-        let search = find_first_with_avoid(
+        let search = find_first_with_avoid_budgets(
             collision,
             graph,
             from,
@@ -349,27 +385,30 @@ pub fn plan_bank_fetch<M: MissingRequirementsView + ?Sized>(
             strict,
             state,
             avoid,
-        );
-        match search.into_route() {
-            Ok(route) => {
-                cursor.select_access(route.dest);
-            }
-            Err(_) => {
-                // A goal-set failure need not equal the first candidate's
-                // single-target budget outcome. Preserve that exact error.
-                let error = find_with_avoid(collision, graph, from, first, strict, state, avoid)
-                    .expect_err("the failed goal set contains the first candidate");
-                return Err(BankFetchError::Access {
-                    access: first,
-                    error,
-                    blocked_zones: if error == RouteError::NoPath {
-                        find_blocking_zones(collision, graph, from, first, strict, state, avoid)
-                            .unwrap_or_default()
-                    } else {
-                        Vec::new()
-                    },
-                });
-            }
+            goal_budgets.0,
+            goal_budgets.1,
+        )
+        .into_route();
+        let route = match search {
+            Ok(route) => route,
+            Err(_) => match find_with_avoid(collision, graph, from, first, strict, state, avoid) {
+                Ok(route) => route,
+                Err(error) => {
+                    return Err(BankFetchError::Access {
+                        access: first,
+                        error,
+                        blocked_zones: if error == RouteError::NoPath {
+                            find_blocking_zones(collision, graph, from, first, strict, state, avoid)
+                                .unwrap_or_default()
+                        } else {
+                            Vec::new()
+                        },
+                    });
+                }
+            },
+        };
+        if !cursor.select_access(route.dest) {
+            return Err(BankFetchError::AccessSelection { access: route.dest });
         }
     }
     let mut plan = cursor.take_plan().ok_or(BankFetchError::Unavailable)?;

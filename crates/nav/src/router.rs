@@ -4272,6 +4272,34 @@ pub fn find_first_with_avoid(
     find_first_with_fallback_avoid(collision, graph, from, targets, &[], opts, state, avoid)
 }
 
+/// First-goal search with explicit unproven and reachable settle caps.
+#[allow(clippy::too_many_arguments)] // route inputs and explicit settle caps
+pub(crate) fn find_first_with_avoid_budgets(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+    budget: usize,
+    reachable_budget: usize,
+) -> FirstRouteSearch {
+    first_search(
+        collision,
+        graph,
+        from,
+        targets,
+        &[],
+        opts,
+        state,
+        Relax::Strict,
+        avoid,
+        budget,
+        reachable_budget,
+    )
+}
+
 /// [`find_first_with`] over preferred `targets` with a `fallback` goal set,
 /// sharing one search: the cheapest reachable preferred goal wins even over
 /// a cheaper fallback goal, and the search records the first fallback goal
