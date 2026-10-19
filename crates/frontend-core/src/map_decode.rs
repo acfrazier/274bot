@@ -595,6 +595,17 @@ mod tests {
         Arc::from(encoded)
     }
 
+    /// Hang guard for every wait in this module, never a pass condition and
+    /// never a latency target. Each wait ends on the work service's own
+    /// signal (the published terminal, the controller's result, the capacity
+    /// ledger) or on the gate's condition variable; every admitted decode job
+    /// reaches a terminal, and a failed test releases its gate on drop. The
+    /// decode jobs share one process-wide background worker and one capacity
+    /// ledger with every other test in this binary, so on a loaded host a wait
+    /// queues behind all of them. The guard only stops a deadlocked test and
+    /// is minutes, not the expected duration.
+    const HANG_GUARD: Duration = Duration::from_secs(600);
+
     fn capacity() -> WorkCapacity {
         WorkService::shared()
             .expect("shared work service")
@@ -603,7 +614,7 @@ mod tests {
     }
 
     fn wait_for_capacity_zero() {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + HANG_GUARD;
         loop {
             let current = capacity();
             if current == WorkCapacity::EMPTY {
@@ -618,7 +629,7 @@ mod tests {
     }
 
     fn wait_for_jobs_below(jobs: usize) {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + HANG_GUARD;
         loop {
             let current = capacity();
             if current.jobs() < jobs {
@@ -634,7 +645,7 @@ mod tests {
 
     fn wait_for_terminal(ticket: &WorkTicket<DecodeSpec>) {
         let shared = WorkService::shared().expect("shared work service");
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + HANG_GUARD;
         loop {
             let published = {
                 let service = shared.lock();
@@ -655,7 +666,7 @@ mod tests {
     }
 
     fn wait_for_result(controller: &mut WalkMapDecodeController) -> WalkMapDecodeResult {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + HANG_GUARD;
         loop {
             match controller.poll() {
                 Some(Ok(result)) => return result,
@@ -663,7 +674,7 @@ mod tests {
                 None => {
                     assert!(
                         Instant::now() < deadline,
-                        "shared worker did not return the decode result"
+                        "shared worker did not return the decode result: hang guard expired"
                     );
                     std::thread::yield_now();
                 }
@@ -699,7 +710,7 @@ mod tests {
             state.entered = true;
             self.changed.notify_all();
 
-            let deadline = Instant::now() + Duration::from_secs(2);
+            let deadline = Instant::now() + HANG_GUARD;
             while !state.released {
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 if remaining.is_zero() {
@@ -721,7 +732,7 @@ mod tests {
                 .state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let deadline = Instant::now() + Duration::from_secs(2);
+            let deadline = Instant::now() + HANG_GUARD;
             while !state.entered {
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 assert!(!remaining.is_zero(), "decode worker did not enter the gate");

@@ -5,7 +5,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use host_play::local_state::Preferences;
+use crate::prefs::UiPreferences;
+use host_play::local_state::Update;
 
 /// Shared settings label used by panel and TUI.
 pub const LOAD_PATHS_LABEL: &str = "Load quest Paths from folder";
@@ -59,7 +60,7 @@ impl QuesterPathsView {
     }
 
     /// Read the host-wide settings object without touching any Path files.
-    fn read(preferences: &Preferences) -> Self {
+    fn read(preferences: &UiPreferences) -> Self {
         let Some(value) = preferences.value("quester_paths") else {
             return Self::default();
         };
@@ -80,15 +81,21 @@ impl QuesterPathsView {
     }
 
     /// Write only fields changed by this editor through the shared
-    /// preferences.
-    fn persist_changed(preferences: &Preferences, before: &Self, after: &Self) -> io::Result<()> {
+    /// preferences. A write still queued when the bounded wait ends comes
+    /// back [`Update::Queued`].
+    fn persist_changed(
+        preferences: &UiPreferences,
+        before: &Self,
+        after: &Self,
+    ) -> io::Result<Update> {
         let enabled_changed = before.enabled != after.enabled;
         let folder_changed = before.folder != after.folder;
         if !enabled_changed && !folder_changed {
-            return Ok(());
+            return Ok(Update::Durable);
         }
-
-        preferences.update(|document| {
+        let enabled = after.enabled;
+        let folder = after.folder.to_string_lossy().into_owned();
+        preferences.begin_update(move |document| {
             let settings = document
                 .entry("quester_paths")
                 .or_insert_with(|| serde_json::json!({}));
@@ -99,13 +106,10 @@ impl QuesterPathsView {
                 .as_object_mut()
                 .expect("replacement quester_paths value is an object");
             if enabled_changed {
-                settings.insert("enabled".into(), serde_json::Value::Bool(after.enabled));
+                settings.insert("enabled".into(), serde_json::Value::Bool(enabled));
             }
             if folder_changed {
-                settings.insert(
-                    "folder".into(),
-                    serde_json::Value::String(after.folder.to_string_lossy().into_owned()),
-                );
+                settings.insert("folder".into(), serde_json::Value::String(folder.clone()));
             }
             Ok(())
         })
@@ -294,12 +298,28 @@ pub struct QuesterPathsController {
     reload: ReloadPaths,
     notice: Option<Result<Arc<str>, Arc<str>>>,
     reload_when_ready: bool,
+    /// The `ReloadQuesterPaths` command the running reload answers.
+    reload_request: Option<api::identity::RequestId>,
+    /// That command's outcome, once the reload finished, until the
+    /// session settles it.
+    settled_reload: Option<(api::identity::RequestId, Result<(), String>)>,
+}
+
+/// Why an explicit Reload Paths was not started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ReloadRefused {
+    /// A reload is already running.
+    #[error("a Path reload is already running")]
+    Running,
+    /// No profile's game data is loaded yet.
+    #[error("load a profile before reloading quest Paths")]
+    NoGameData,
 }
 
 impl QuesterPathsController {
     /// Restore and apply saved settings. An enabled source is reloaded the
     /// first time selected game data is supplied to [`Self::advance`].
-    pub fn restore(&mut self, preferences: &Preferences) {
+    pub fn restore(&mut self, preferences: &UiPreferences) {
         self.settings = QuesterPathsView::read(preferences);
         self.settings.apply();
         self.reload_when_ready = self.settings.enabled;
@@ -310,24 +330,29 @@ impl QuesterPathsController {
         &self.settings
     }
 
-    /// Persist (when requested), apply and reload a changed source.
-    pub fn apply_changed(
+    /// Persist (when requested), apply and reload a changed source. The
+    /// settings apply once the write is accepted; a write still queued
+    /// when the bounded wait ends comes back [`Update::Queued`] for the
+    /// command to settle from.
+    pub(crate) fn apply_changed(
         &mut self,
-        preferences: &Preferences,
+        preferences: &UiPreferences,
         after: &QuesterPathsView,
         selected: Option<Arc<api::game_data::SelectedGameData>>,
         persist: bool,
-    ) -> Result<(), String> {
+    ) -> Result<Update, String> {
         if after == &self.settings {
-            return Ok(());
+            return Ok(Update::Durable);
         }
+        let mut write = Update::Durable;
         if persist {
-            if let Err(error) =
-                QuesterPathsView::persist_changed(preferences, &self.settings, after)
-            {
-                let message = format!("Quest Paths settings were not saved: {error}");
-                self.set_notice(Err(Arc::from(message.clone())));
-                return Err(message);
+            match QuesterPathsView::persist_changed(preferences, &self.settings, after) {
+                Ok(update) => write = update,
+                Err(error) => {
+                    let message = format!("Quest Paths settings were not saved: {error}");
+                    self.set_notice(Err(Arc::from(message.clone())));
+                    return Err(message);
+                }
             }
         }
 
@@ -341,27 +366,59 @@ impl QuesterPathsController {
             )));
         }
         self.advance(selected);
-        Ok(())
+        Ok(write)
     }
 
-    /// Handle an explicit Reload Paths action.
-    pub fn request_reload(&mut self, selected: Option<Arc<api::game_data::SelectedGameData>>) {
+    /// Handle an explicit Reload Paths action (`ReloadQuesterPaths`
+    /// `request`): its outcome is kept for [`Self::take_settled_reload`].
+    pub(crate) fn request_reload_for(
+        &mut self,
+        request: api::identity::RequestId,
+        selected: Option<Arc<api::game_data::SelectedGameData>>,
+    ) -> Result<(), ReloadRefused> {
         if self.reload.is_running() {
             self.set_notice(Ok(Arc::from("A Path reload is already running.")));
+            Err(ReloadRefused::Running)
         } else if let Some(selected) = selected {
             self.reload_when_ready = false;
             self.start_reload(selected);
+            if self.reload.is_running() || self.reload.pending.is_some() {
+                self.reload_request = Some(request);
+            } else {
+                let error = self
+                    .notice_text()
+                    .unwrap_or("Path reload refused")
+                    .to_string();
+                self.settled_reload = Some((request, Err(error)));
+            }
+            Ok(())
         } else {
             self.set_notice(Err(Arc::from(
                 "Load a profile before reloading quest Paths.",
             )));
+            Err(ReloadRefused::NoGameData)
         }
+    }
+
+    /// The explicit reload command that finished since the last call, with
+    /// its outcome.
+    pub(crate) fn take_settled_reload(
+        &mut self,
+    ) -> Option<(api::identity::RequestId, Result<(), String>)> {
+        self.settled_reload.take()
     }
 
     /// Start a saved-setting reload as soon as game data is ready and poll
     /// the worker without blocking the caller.
     pub fn advance(&mut self, selected: Option<Arc<api::game_data::SelectedGameData>>) {
         if let Some(result) = self.reload.poll() {
+            let outcome = match &result {
+                Ok(_) => Ok(()),
+                Err(error) => Err(error.clone()),
+            };
+            if let Some(request) = self.reload_request.take() {
+                self.settled_reload = Some((request, outcome));
+            }
             match result {
                 Ok(message) => self.set_notice(Ok(message)),
                 Err(error) => self.set_notice(Err(reload_error(error))),
@@ -381,7 +438,12 @@ impl QuesterPathsController {
                     self.set_notice(Ok(Arc::from("Reloading quest Paths…")));
                 }
                 Ok(()) => {}
-                Err(error) => self.set_notice(Err(reload_error(error))),
+                Err(error) => {
+                    if let Some(request) = self.reload_request.take() {
+                        self.settled_reload = Some((request, Err(error.clone())));
+                    }
+                    self.set_notice(Err(reload_error(error)));
+                }
             }
         }
     }
@@ -404,7 +466,7 @@ impl QuesterPathsController {
         matches!(self.notice, Some(Err(_)))
     }
 
-    pub fn clear_notice(&mut self) {
+    pub(crate) fn clear_notice(&mut self) {
         self.notice = None;
     }
 
@@ -446,11 +508,21 @@ fn compile_error_message(error: &script::quester::compile::CompileError) -> Stri
     )
 }
 
+/// Serializes the crate's tests that set the process-wide quester folder
+/// source (directly, or by restoring a controller from preferences).
+#[cfg(test)]
+pub(crate) fn registry_source_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{QuesterPathsView, ReloadPaths};
+    use crate::prefs::UiPreferences as Preferences;
     use api::selected::{ClientRevision, FamilyPreparation};
-    use host_play::local_state::{LocalStateService, Preferences, StateRoot};
+    use host_play::local_state::{LocalStateService, StateRoot};
     use script::quester::registry::FolderSource;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -472,8 +544,9 @@ mod tests {
             ));
             std::fs::create_dir_all(&dir).unwrap();
             Self {
-                preferences: LocalStateService::open_process(StateRoot::new(dir.clone()))
-                    .preferences(),
+                preferences: Preferences::new(
+                    LocalStateService::open_process(StateRoot::new(dir.clone())).preferences(),
+                ),
                 dir,
             }
         }
@@ -566,7 +639,12 @@ mod tests {
             folder: store.dir().join("checkout").join("quest-paths"),
         };
 
-        QuesterPathsView::persist_changed(store.prefs(), &before, &after).unwrap();
+        crate::prefs::settled_for_test(QuesterPathsView::persist_changed(
+            store.prefs(),
+            &before,
+            &after,
+        ))
+        .unwrap();
 
         let saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
@@ -584,6 +662,7 @@ mod tests {
 
     #[test]
     fn async_reload_retries_temporary_full_and_publishes_edited_folder_files() {
+        let _source = super::registry_source_test_lock();
         let store = TempStore::new();
         let folder = store.dir().join("paths");
         std::fs::create_dir_all(&folder).unwrap();

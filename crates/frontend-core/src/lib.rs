@@ -16,19 +16,31 @@
 //! stay in `host-play`; this crate adds no second world or script runtime
 //! and never copies a `GameSnapshot`.
 
+#[cfg(feature = "memory-profile")]
+pub mod bench;
 pub mod bulk;
 pub mod capacity;
 pub mod command;
+pub mod driver;
 pub mod fleet;
+pub mod frames;
 pub mod group_walk;
+pub mod launch;
+#[cfg(feature = "live-harness")]
+pub mod live;
 pub mod log;
 pub mod log_file;
 pub mod map_bake;
 pub mod map_decode;
 pub mod marked;
+pub mod models;
 pub mod nav_prefs;
 pub mod operations;
+pub mod prefs;
+pub mod process;
 pub mod process_status;
+pub mod profile_draft;
+pub mod profile_editor;
 pub mod profile_form;
 pub mod profile_saves;
 mod profiles;
@@ -39,31 +51,42 @@ pub mod rs2b0t_import;
 pub mod scripts;
 pub mod selection;
 pub mod session;
+pub mod slot_view;
 pub mod surface;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod views;
+pub mod walk_map;
 pub mod walk_permissions;
 
 pub use bulk::{BulkOutcome, BulkReport, BulkRow};
 pub use capacity::{CapacityNotice, CapacityWarning, RenderPolicyLabel};
 pub use command::{CommandBook, CommandReport, FleetOrder, OperatorCommand};
+pub use driver::HeadlessDriver;
 pub use fleet::{
     contains_ci, fill_visible_indices, fill_visible_row_indices, fleet_row_matches, member_row,
-    state_label, Fleet,
+    state_label, Fleet, FleetFilter,
 };
-pub use group_walk::{walk_marked, MarkedWalk, WalkInputs};
+pub use group_walk::{MarkedWalk, WalkInputs};
 pub use map_bake::{
-    load_map_bake_choice, persist_map_bake_choice, MapBakeChoice, MapBakeGate, MapBakePrompt,
-    MAP_BAKE_TITLE, MAP_BAKE_WARNING,
+    load_map_bake_choice, MapBakeChoice, MapBakeGate, MapBakePrompt, MAP_BAKE_TITLE,
+    MAP_BAKE_WARNING,
 };
 pub use map_decode::{WalkMapDecodeController, WalkMapDecodeError, WalkMapDecodeResult};
 pub use marked::{
-    assign_and_restart_marked, assign_marked, bounded_names, combined_bulk_scope, login_marked,
-    logout_marked, marked_availability, prepare_apply_settings_marked, restart_scope,
-    run_marked_command, BulkScope, MarkedAction, MarkedBlock, MarkedCommandReport, RestartScope,
-    ASSIGN_NO_CARD, ASSIGN_RESTART_NO_CARD, PROMPT_NAMES_SHOWN,
+    assign_and_restart_marked, assign_marked, bounded_names, combined_bulk_scope,
+    marked_availability, prepare_apply_settings_marked, restart_scope, run_marked_command,
+    BulkScope, MarkedAction, MarkedBlock, MarkedCommandReport, RestartScope, ASSIGN_NO_CARD,
+    ASSIGN_RESTART_NO_CARD, PROMPT_NAMES_SHOWN,
 };
+pub use models::Models;
 pub use nav_prefs::{nav_preference, NavPreference};
 pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Outcome};
+pub use prefs::UiPreferences;
+pub use profile_draft::{
+    GuardianPolicy, ProfileDraft, ProfileView, SettingsDraft, GUARDIAN_EVENTS,
+};
+pub use profile_editor::{FormLeave, FormOpen, LeavePrompt, ProfileEditor, SaveRefused};
 pub use profile_form::{
     FailedSave, FormNotice, FormSettled, ProfileFormSave, SavedProfile, NOTHING_SAVED,
 };
@@ -76,17 +99,19 @@ pub use quester_paths::{
 pub use resources::{Metric, ResourceView};
 pub use scripts::{Notice, Scripts};
 pub use selection::{
-    marked_startable, profile_id_at, profile_id_for_name, start_marked, stop_marked, BulkSkip,
-    MarkedSelection, ProfileIdentity, StopReport, EMPTY_MARKS_HINT,
+    marked_startable, profile_id_at, profile_id_for_name, stop_marked, BulkSkip, MarkedSelection,
+    ProfileIdentity, StopReport, EMPTY_MARKS_HINT,
 };
 pub use session::{
-    pick_focus, ArmMirror, MemoryNotice, OperatorSession, Removal, ScriptStart, Selection,
-    SlotTransition, StartSettled, Transition, SLOT_REMOVE_TIMEOUT,
+    pick_focus, ArmMirror, DrawPolicy, GameInputEvent, GuardianEdit, MapDesk, MemoryNotice,
+    Notice as OperatorNotice, OperatorSession, Removal, ScriptStart, Selection, SlotTransition,
+    StartSettled, SubmitError, Submitted, Targets, Transition, SLOT_REMOVE_TIMEOUT,
 };
-pub use surface::{HeadlessSurface, SlotAttach, SlotSurface};
+pub use slot_view::{SlotView, StatusBuf};
+pub use surface::{HeadlessSurface, SlotAttach, SlotSurface, SpawnProfile};
 pub use views::{FleetCounts, FleetRow, FleetView, Light, OpBrief, Phase, QueuePlace, SlotDetail};
 pub use walk_permissions::{
-    DangerLevel, WalkGlobalsView, BANK_FETCH_PERMISSION_SCOPE, DANGER_THIS_WALK_LABEL,
+    DangerLevel, WalkGlobals, WalkGlobalsView, BANK_FETCH_PERMISSION_SCOPE, DANGER_THIS_WALK_LABEL,
     GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, ROUTING_SCOPE_NOTE, SCRIPT_SCOPE_NOTICE,
     SURVIVABLE_ROUTING_NOTICE, SURVIVABLE_ROUTING_TOOLTIP,
 };

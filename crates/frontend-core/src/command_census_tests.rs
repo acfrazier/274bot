@@ -47,21 +47,36 @@ enum Decision {
     Rows(&'static [OperatorCommand], &'static str),
     /// Not an operator decision: why.
     Excluded(&'static str),
+    /// Stages an input this row commits (a draft buffer, a staged edit):
+    /// it changes only the staged model, and the surface fn that calls it
+    /// must also submit the row.
+    Staged(OperatorCommand),
+    /// Stages an input that one of these rows commits (a staging input
+    /// shared by several rows): why. The surface fn that calls it must
+    /// also submit one of them.
+    StagedFor(&'static [OperatorCommand], &'static str),
 }
 
-use Decision::{Excluded, Row, Rows};
+use Decision::{Excluded, Row, Rows, Staged, StagedFor};
 use OperatorCommand as C;
 
 const PUMP: &str = "pump: adopts owner results and refreshes projections; no operator decision";
 const RESULT: &str = "result consumption: takes settled owner results for display";
 const PROJECTION: &str = "projection copy into the front end's buffer; presentation";
+const MAP_DRAFT: &str =
+    "map selection/search is a draft; WalkTo/TeleportTo dispatch occurs only on confirmation";
+const GAME_INPUT_STAGING: &str =
+    "stages GameInput events into the core queue only (no dispatch); `ui_frame` submits GameInput once per frame";
 const FORMAT: &str = "pure formatting or parsing; no state";
 const LOG_VIEW: &str =
     "control of the log read projection (scope, filter, follow); not transport, work admission or a durable write";
+const SEAM_ROWS: &str = "the command seam: every row, chosen by its literal argument";
 const STARTUP: &str = "startup wiring of a store path or adapter; no operator decision";
 const ACCESSOR: &str = "accessor exposing an owned model (T3.1 accessor migration), not a decision";
+const PATH_READ: &str = "resolves an operator file location; no state change";
 const SETTINGS_KIND: &str = "the card kind of the selection decides the row";
-const WRITER: &str = "the durable writer's entry: the caller's mirror and label name the row (credentials → SaveProfile / SetWorld, tutorial → MarkTutorialSkipped, render prefs → SetRaster)";
+const RELEASE_BUNDLE: &str =
+    "release packaging of the shipped map bundle; no interactive operator decision";
 
 /// Rows the contract keeps although no current entry point issues them.
 const NORMATIVE_ONLY: &[OperatorCommand] = &[C::SwitchWorld(1)];
@@ -94,7 +109,6 @@ const CORE: &[(&str, Decision)] = &[
         Excluded("pure computation of the shown rows from the staged filter text and order"),
     ),
     // group_walk.rs
-    ("group_walk.rs::walk_marked", Row(C::GroupWalk)),
     (
         "group_walk.rs::none_marked",
         Excluded("the report shown for a group walk with nothing marked; presentation"),
@@ -115,34 +129,20 @@ const CORE: &[(&str, Decision)] = &[
     ("log.rs::default_save_path", Excluded("path derivation; no effect")),
     ("log.rs::global", Excluded(ACCESSOR)),
     ("log.rs::logs_dir", Excluded("path derivation; no effect")),
-    ("log.rs::save_text", Row(C::SaveLog)),
     // log_file.rs
-    ("log_file.rs::apply_session_log", Row(C::SetSessionLog(true))),
-    (
-        "log_file.rs::persist_session_log_setting",
-        Row(C::SetSessionLog(true)),
-    ),
     (
         "log_file.rs::session_log_setting",
         Excluded("reads the persisted setting"),
     ),
     // map_bake.rs
     (
+        "map_bake.rs::bake_shipped_map_bundle",
+        Excluded(RELEASE_BUNDLE),
+    ),
+    (
         "map_bake.rs::load_map_bake_choice",
         Excluded("reads the persisted choice"),
     ),
-    (
-        "map_bake.rs::persist_map_bake_choice",
-        Row(C::SetMapBakeChoice(MapBakeChoice::Ask)),
-    ),
-    (
-        "map_bake.rs::MapBakeGate::set_choice",
-        Row(C::SetMapBakeChoice(MapBakeChoice::Ask)),
-    ),
-    ("map_bake.rs::MapBakeGate::accept", Row(C::BakeMapNow)),
-    ("map_bake.rs::MapBakeGate::decline", Row(C::DeclineMapBake)),
-    ("map_bake.rs::MapBakeGate::open_profile", Row(C::OpenMapDemand)),
-    ("map_bake.rs::MapBakeGate::open", Row(C::OpenMapDemand)),
     (
         "map_bake.rs::MapBakeGate::note_ready_without_terrain",
         Excluded("adopts the ready demand's result (no terrain) into the prompt: owner result"),
@@ -175,8 +175,6 @@ const CORE: &[(&str, Decision)] = &[
     // marked.rs
     ("marked.rs::assign_marked", Row(C::AssignScript)),
     ("marked.rs::assign_and_restart_marked", Row(C::AssignAndRestart)),
-    ("marked.rs::login_marked", Row(C::Login)),
-    ("marked.rs::logout_marked", Row(C::Logout)),
     (
         "marked.rs::prepare_apply_settings_marked",
         Rows(
@@ -205,39 +203,49 @@ const CORE: &[(&str, Decision)] = &[
     ),
     ("marked.rs::bounded_names", Excluded(FORMAT)),
     // nav_prefs.rs
-    (
-        "nav_prefs.rs::nav_preference",
-        Row(C::SetNavPreference(NavPreference::AllowTeleports, true)),
-    ),
     // profile_form.rs: the form-save machine.
+    // profile_draft.rs: the staged form draft's edit buffers.
+    ("profile_draft.rs::ProfileDraft::username_mut", Staged(C::EditProfileDraft(ProfileDraftField::Username))),
+    ("profile_draft.rs::ProfileDraft::password_mut", Staged(C::EditProfileDraft(ProfileDraftField::Password))),
+    ("profile_draft.rs::ProfileDraft::settings_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SettingsDraft::lowmem_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SettingsDraft::auto_login_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SettingsDraft::world_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SettingsDraft::random_events_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SettingsDraft::lamp_skill_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SettingsDraft::lamp_auto_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SettingsDraft::clue_duel_partner_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SettingsDraft::set_random_event_policy", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
+    // profile_editor.rs: the profile edit form (moved from the panel chooser).
+    ("profile_editor.rs::ProfileEditor::draft_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_editor.rs::ProfileEditor::username_mut", Staged(C::EditProfileDraft(ProfileDraftField::Username))),
+    ("profile_editor.rs::ProfileEditor::password_mut", Staged(C::EditProfileDraft(ProfileDraftField::Password))),
     (
-        "profile_form.rs::ProfileFormSave::form_changed",
-        Rows(
-            &[
-                C::OpenProfileForm,
-                C::OpenNewProfileForm,
-                C::CloseProfileForm(FormClose::Form),
-            ],
-            "the chooser retargeted or closed the form: that row's effect on the save notice",
-        ),
-    ),
-    (
-        "profile_form.rs::ProfileFormSave::edited",
-        Row(C::EditProfileDraft(ProfileDraftField::Settings)),
-    ),
-    (
-        "profile_form.rs::ProfileFormSave::refused",
-        Excluded("owner result: the save was refused before anything was written (SaveProfile's Rejected terminal)"),
-    ),
-    ("profile_form.rs::ProfileFormSave::submitted", Row(C::SaveProfile)),
-    (
-        "profile_form.rs::ProfileFormSave::settle",
+        "profile_editor.rs::ProfileEditor::settle",
         Excluded("adopts the durable writer's results (SaveProfile's Owner terminal)"),
+    ),
+    // prefs.rs: the preferences document handle.
+    (
+        "prefs.rs::UiPreferences::update",
+        Excluded("a front end's own presentation state (layout, last focus) in its document section; operator preferences go through their rows"),
     ),
     // profiles.rs
     (
         "profiles.rs::fresh_uid",
         Excluded("derives the next profile UID from the vault; identity calculation only"),
+    ),
+    ("resources.rs::background_bots_acked", Excluded("reads the background-bots acknowledgement; no state change")),
+    ("resources.rs::clear_background_bots_ack_error", Excluded("drops a stale banner line; presentation")),
+    ("session.rs::OperatorSession::open_process_state", Excluded(STARTUP)),
+    ("session/commands.rs::OperatorSession::stage_new_profile", Staged(C::CreateProfile)),
+    ("session/commands.rs::OperatorSession::stage_guardian", Staged(C::SetGuardian)),
+    (
+        "surface.rs::SpawnProfile::set_lowmem",
+        Excluded("a surface adjusts its disposable spawn copy (session-only memory override); never written back"),
+    ),
+    (
+        "surface.rs::SpawnProfile::set_raster",
+        Excluded("a surface adjusts its disposable spawn copy (headless raster off); never written back"),
     ),
     // progress.rs, resources.rs: labels and meters.
     ("progress.rs::span_label", Excluded(FORMAT)),
@@ -266,54 +274,24 @@ const CORE: &[(&str, Decision)] = &[
         Excluded("maps the parsed export and vault into a preview plan; writes nothing"),
     ),
     (
-        "rs2b0t_import.rs::apply_import",
-        Rows(
-            &[C::CreateProfile, C::SaveProfile],
-            "each account's planned status selects CreateProfile for a new profile or SaveProfile for an existing one",
-        ),
-    ),
-    (
-        "rs2b0t_import.rs::delete_export_file",
-        Row(C::DeleteProfileImportExport),
-    ),
-    (
         "rs2b0t_import.rs::ProfileImport::path_mut",
-        Row(C::EditProfileImportPath),
+        Staged(C::EditProfileImportPath),
     ),
     (
-        "rs2b0t_import.rs::ProfileImport::preview",
-        Row(C::PreviewProfileImport),
+        "rs2b0t_import.rs::ProfileImport::prepare_confirmation",
+        Excluded("prepares the confirmed import report before its account writer rows; no profile is written here"),
     ),
     (
-        "rs2b0t_import.rs::ProfileImport::set_policy",
-        Row(C::SetProfileImportPolicy(ConflictPolicy::Skip)),
+        "rs2b0t_import.rs::ProfileImport::stage_create_account",
+        Staged(C::CreateProfile),
     ),
     (
-        "rs2b0t_import.rs::ProfileImport::set_include_unusable",
-        Row(C::SetProfileImportIncludeUnusable(true)),
+        "rs2b0t_import.rs::ProfileImport::stage_save_account",
+        Staged(C::SaveProfile),
     ),
     (
-        "rs2b0t_import.rs::ProfileImport::confirm",
-        Rows(
-            &[C::CreateProfile, C::SaveProfile],
-            "the confirmed import writes each planned account as a create or save according to its status",
-        ),
-    ),
-    (
-        "rs2b0t_import.rs::ProfileImport::back",
-        Row(C::ReturnToProfileImportPath),
-    ),
-    (
-        "rs2b0t_import.rs::ProfileImport::ask_delete",
-        Row(C::SetProfileImportDeletePrompt(true)),
-    ),
-    (
-        "rs2b0t_import.rs::ProfileImport::cancel_delete",
-        Row(C::SetProfileImportDeletePrompt(false)),
-    ),
-    (
-        "rs2b0t_import.rs::ProfileImport::confirm_delete",
-        Row(C::DeleteProfileImportExport),
+        "rs2b0t_import.rs::ProfileImport::cancel_staged_account",
+        Excluded("records an import writer submit that did not dispatch; no profile write"),
     ),
     // quester_paths.rs
     (
@@ -321,20 +299,8 @@ const CORE: &[(&str, Decision)] = &[
         Excluded("startup restore of the persisted settings"),
     ),
     (
-        "quester_paths.rs::QuesterPathsController::apply_changed",
-        Row(C::SetQuesterPaths),
-    ),
-    (
-        "quester_paths.rs::QuesterPathsController::request_reload",
-        Row(C::ReloadQuesterPaths),
-    ),
-    (
         "quester_paths.rs::QuesterPathsController::advance",
         Excluded(PUMP),
-    ),
-    (
-        "quester_paths.rs::QuesterPathsController::clear_notice",
-        Row(C::AcknowledgeNotice),
     ),
     (
         "quester_paths.rs::QuesterPathsView::set_enabled",
@@ -350,37 +316,184 @@ const CORE: &[(&str, Decision)] = &[
         Excluded("presentation: applies the notice to the front end's banner"),
     ),
     (
-        "scripts/mod.rs::Scripts::assignment",
-        Excluded("reads the profile's assignment"),
+        "scripts/mod.rs::Scripts::assignment_name",
+        Excluded("reads the profile's assignment display name"),
     ),
-    ("scripts/mod.rs::sel_from_assignment", Excluded(FORMAT)),
+    ("scripts/mod.rs::Scripts::stage_cancel_queued", Staged(C::CancelQueuedStart)),
+    ("scripts/mod.rs::Scripts::stage_browse_pick", Staged(C::PickBrowseCard)),
+    ("scripts/mod.rs::Scripts::stage_browse_pick_clear", Staged(C::PickBrowseCard)),
+    ("scripts/mod.rs::Scripts::stage_load_file", Staged(C::LoadScriptFile)),
+    ("scripts/mod.rs::Scripts::stage_paint_input", Staged(C::ScriptPaintInput)),
+    (
+        "scripts/mod.rs::Scripts::stage_setting",
+        StagedFor(
+            &[
+                C::SaveScriptSettings(CardKind::Native),
+                C::SaveScriptSettings(CardKind::Script),
+                C::SaveLegacyScriptSettings,
+            ],
+            "the staged profile and card kind choose the settings save row",
+        ),
+    ),
+    (
+        "scripts/mod.rs::Scripts::stage_parameter_validation",
+        StagedFor(
+            &[
+                C::EditParameterText,
+                C::SaveScriptSettings(CardKind::Native),
+                C::SaveScriptSettings(CardKind::Script),
+                C::SaveLegacyScriptSettings,
+            ],
+            "a draft text edit validates; Enter or deactivation commits the validated value",
+        ),
+    ),
+    ("scripts/mod.rs::Scripts::stage_catalog_action", Staged(C::ImportCatalog)),
+    ("scripts/mod.rs::Scripts::stage_defer_catalog", Staged(C::DeferCatalogImport)),
+    (
+        "scripts/mod.rs::Scripts::stage_start_catalog_root",
+        StagedFor(
+            &[
+                C::StartScript,
+                C::AssignScript,
+                C::AssignAndRestart,
+                C::RestartForSettings,
+            ],
+            "the Start, assignment, assignment-and-restart or settings-restart row consumes the staged catalog root",
+        ),
+    ),
+    (
+        "scripts/mod.rs::Scripts::stage_reload_target",
+        StagedFor(&[C::ReloadScripts, C::ConfirmReload], RELOAD_CLICK),
+    ),
+    ("scripts/mod.rs::Scripts::stage_transpile_target", Staged(C::PrepareScriptCard)),
+    (
+        "scripts/mod.rs::Scripts::stage_parameter_discard",
+        Staged(C::DiscardParameterText),
+    ),
+    (
+        "scripts/sync.rs::Scripts::stage_settings_sync_prepare",
+        StagedFor(
+            &[
+                C::ApplySettingsToMarked(CardKind::Native),
+                C::ApplySettingsToMarked(CardKind::Script),
+            ],
+            "the selected card kind chooses the preparation row",
+        ),
+    ),
+    (
+        "scripts/sync.rs::Scripts::stage_settings_sync_apply",
+        StagedFor(
+            &[
+                C::ApplySettingsToMarked(CardKind::Native),
+                C::ApplySettingsToMarked(CardKind::Script),
+            ],
+            "the frozen prepared card kind chooses the apply row",
+        ),
+    ),
+    // scripts/vocab.rs, scripts/paint.rs: script vocabulary and paint views.
+    ("scripts/vocab.rs::format_setting_value", Excluded(FORMAT)),
+    ("scripts/vocab.rs::OwnedSchema::copy_from", Excluded(PROJECTION)),
+    ("scripts/vocab.rs::OwnedSchema::clear", Excluded(PROJECTION)),
+    ("scripts/paint.rs::map_applet_rect", Excluded(FORMAT)),
+    ("scripts/paint.rs::CanvasCache::store", Excluded(PROJECTION)),
+    ("scripts/paint.rs::CanvasCache::clear", Excluded(PROJECTION)),
+    // scripts/paths.rs: operator file locations.
+    ("scripts/paths.rs::bot_home", Excluded(PATH_READ)),
+    ("scripts/paths.rs::bot_file", Excluded(PATH_READ)),
+    ("scripts/paths.rs::rs2b0t_path_file", Excluded(PATH_READ)),
+    ("scripts/paths.rs::rs2b0t_import_file", Excluded(PATH_READ)),
+    ("scripts/paths.rs::rs2b0t_root", Excluded(PATH_READ)),
+    ("scripts/paths.rs::rs2b0t_root_checked", Excluded(PATH_READ)),
+    ("scripts/paths.rs::registry_index_path", Excluded(PATH_READ)),
+    ("scripts/paths.rs::rs2b0t_import_deferred", Excluded(PATH_READ)),
+    ("scripts/paths.rs::rs2b0t_import_deferred_at", Excluded(PATH_READ)),
+    (
+        "scripts/paths.rs::set_rs2b0t_import_deferred_at",
+        Row(C::DeferCatalogImport),
+    ),
+    (
+        "scripts/paths.rs::clear_rs2b0t_import_at",
+        Excluded("clears the deferral marker when a catalogue import settles; the decision was ImportCatalog"),
+    ),
+    // launch.rs: the server-profile binding, instance lock and passphrase.
+    ("launch.rs::ProfileLauncher::configure", Excluded(STARTUP)),
+    ("launch.rs::ProfileLauncher::bind", Excluded(STARTUP)),
+    ("launch.rs::ProfileLauncher::bind_with", Excluded(STARTUP)),
+    ("launch.rs::ProfileLauncher::bump_generation", Excluded(STARTUP)),
+    ("launch.rs::ProfileLauncher::finish_preparation", Excluded(STARTUP)),
+    ("launch.rs::ProfileLauncher::install_validated", Excluded(STARTUP)),
+    ("launch.rs::ProfileLauncher::set_preparing", Excluded(STARTUP)),
+    ("launch.rs::ProfileLauncher::take_launch", Excluded(STARTUP)),
+    ("launch.rs::PlayConfig::set_mainland", Excluded(STARTUP)),
+    (
+        "launch.rs::Passphrase::clear",
+        Excluded("zeroes the typed passphrase buffer; presentation"),
+    ),
+    ("launch.rs::acquire_instance", Excluded(PROCESS)),
+    ("launch.rs::obtain_passphrase", Excluded(STARTUP)),
+    ("launch.rs::warn_legacy_passphrase_env", Excluded(PROCESS)),
+    ("launch.rs::parse_profile_args", Excluded(FORMAT)),
+    ("launch.rs::is_removed_passphrase_flag", Excluded(FORMAT)),
+    ("launch.rs::removed_passphrase_flag_error", Excluded(FORMAT)),
+    ("launch.rs::debug_teleport_authorized", Excluded(FORMAT)),
+    ("launch.rs::default_scatter_tile_for", Excluded(FORMAT)),
+    ("process.rs::debug_enabled", Excluded(PROCESS)),
+    ("process.rs::bootstrap", Excluded(PROCESS)),
+    ("process.rs::raise_fd_limit", Excluded(PROCESS)),
+    ("process.rs::shutdown_background_work", Excluded(PROCESS)),
+    // bench.rs: the opt-in memory benchmark's run and records.
+    ("bench.rs::BenchRun::poll", Excluded(BENCH)),
+    ("bench.rs::mark_startup", Excluded(BENCH)),
+    ("bench.rs::record_adapter", Excluded(BENCH)),
+    ("bench.rs::require_live_benchmark", Excluded(BENCH)),
+    // live/mod.rs: headed harness preparation and proof reporting.
+    ("live/mod.rs::WatchDecision::pass_hold", Excluded(HARNESS)),
+    ("live/mod.rs::RunnerHandle::stage_loaded_card", Excluded(HARNESS)),
+    ("live/mod.rs::Scenario::take_settings_overrides", Excluded(HARNESS)),
+    ("live/mod.rs::Scenario::is_registered", Excluded(HARNESS)),
+    ("live/mod.rs::default_fixture_path", Excluded(HARNESS)),
+    ("live/mod.rs::live_file_fixture", Excluded(HARNESS)),
+    ("live/mod.rs::screen_name", Excluded(HARNESS)),
+    ("live/mod.rs::profile_password", Excluded(HARNESS)),
+    ("live/mod.rs::null_raster_entries", Excluded(HARNESS)),
+    ("live/mod.rs::stress_entries", Excluded(HARNESS)),
+    ("live/mod.rs::panel_live_vault", Excluded(HARNESS)),
+    ("live/mod.rs::budget_s_from_env", Excluded(HARNESS)),
+    ("live/mod.rs::shot_stamp_utc", Excluded(HARNESS)),
+    ("live/mod.rs::create_shot_run_dir", Excluded(HARNESS)),
+    ("live/mod.rs::write_shot", Excluded(HARNESS)),
+    ("live/mod.rs::external_loader_scenario_name", Excluded(HARNESS)),
+    ("live/mod.rs::external_loader_live_name", Excluded(HARNESS)),
+    ("live/mod.rs::external_loader_terminal_shot", Excluded(HARNESS)),
+    ("live/mod.rs::external_loader_prereq_shot", Excluded(HARNESS)),
+    ("live/mod.rs::external_loader_script_name", Excluded(HARNESS)),
+    ("live/mod.rs::external_loader_nothing_changed", Excluded(HARNESS)),
+    ("live/mod.rs::external_loader_frozen_sha256", Excluded(HARNESS)),
+    ("live/mod.rs::external_loader_bones_id", Excluded(HARNESS)),
+    ("live/mod.rs::external_loader_prayer_stat_id", Excluded(HARNESS)),
+    ("live/mod.rs::external_loader_bones_count", Excluded(HARNESS)),
+    ("live/mod.rs::resolve_external_loader_source", Excluded(HARNESS)),
+    ("live/mod.rs::materialize_external_loader_source", Excluded(HARNESS)),
+    ("live/mod.rs::count_tcp_to", Excluded(HARNESS)),
+    ("live/mod.rs::process_rss_kib", Excluded(HARNESS)),
+    ("live/mod.rs::OperatorSession::pump_live_external_loader", Excluded(HARNESS)),
+    ("live/mod.rs::OperatorSession::prepare_live_stress_profiles", Excluded(HARNESS)),
+    ("slot_view.rs::StatusBuf::refresh", Excluded(PROJECTION)),
+    ("surface.rs::map_image_to_applet", Excluded(FORMAT)),
+    ("surface.rs::pump_render", Excluded(PUMP)),
+    // scripts/loadouts.rs: the loadout form's staged inputs; the loadout rows commit them.
+    ("scripts/loadouts.rs::LoadoutForm::stage_selection", Staged(C::SelectLoadout)),
+    (
+        "scripts/loadouts.rs::LoadoutForm::draft_mut",
+        Staged(C::EditLoadoutDraft(LoadoutField::Name)),
+    ),
+    ("scripts/loadouts.rs::LoadoutForm::stage_draft", Staged(C::SaveLoadout)),
     ("scripts/mod.rs::Scripts::take_notice", Excluded(RESULT)),
-    (
-        "scripts/mod.rs::Scripts::dismiss_restart_prompt",
-        Row(C::DeferSettingsRestart),
-    ),
-    (
-        "scripts/mod.rs::Scripts::restart_pending_settings",
-        Row(C::RestartForSettings),
-    ),
     (
         "scripts/mod.rs::Scripts::show_load_failures",
         Excluded("presentation: shows the library's load failures on the banner once a Start is accepted"),
     ),
     ("scripts/mod.rs::Scripts::take_start_failures", Excluded(RESULT)),
-    (
-        "scripts/mod.rs::Scripts::mark_catalog_filled",
-        Excluded("marks the first-run catalogue prompt as handled for this session (Browse open with no root to import); no durable write, the durable defer is DeferCatalogImport"),
-    ),
-    ("scripts/mod.rs::Scripts::fill_catalog_once", Row(C::ImportCatalog)),
-    (
-        "scripts/reload.rs::Scripts::request_catalog_fill",
-        Row(C::ImportCatalog),
-    ),
-    (
-        "scripts/reload.rs::Scripts::request_catalog_import",
-        Row(C::ImportCatalog),
-    ),
     (
         "scripts/reload.rs::Scripts::request_transpile",
         Excluded("bounded background preparation for an already selected card; no operator decision"),
@@ -410,15 +523,6 @@ const CORE: &[(&str, Decision)] = &[
         Excluded("synchronous non-interactive live setup before the session starts"),
     ),
     (
-        "scripts/mod.rs::Scripts::set_pending_browse",
-        Row(C::SelectScriptCard),
-    ),
-    ("scripts/mod.rs::Scripts::persist_assignment", Row(C::AssignScript)),
-    (
-        "scripts/mod.rs::Scripts::mark_assignment_unavailable",
-        Excluded("owner result: a reload that lost a catalogue card marks its assignments unavailable"),
-    ),
-    (
         "scripts/mod.rs::Scripts::profile_overrides",
         Excluded("read of the profile's parameter bag; its first use of a card claims the legacy overrides into the profile (`claim_legacy_for`), a migration write with no operator decision beyond showing the parameters"),
     ),
@@ -427,51 +531,14 @@ const CORE: &[(&str, Decision)] = &[
         Excluded("read of the bag a Start receives; same first-use legacy claim as profile_overrides"),
     ),
     (
-        "scripts/mod.rs::Scripts::set_profile_setting",
-        Row(C::SaveScriptSettings(CardKind::Script)),
-    ),
-    ("scripts/mod.rs::Scripts::cancel_queued", Row(C::CancelQueuedStart)),
-    (
-        "scripts/mod.rs::Scripts::cancel_queued_as",
-        Row(C::CancelQueuedStart),
-    ),
-    ("scripts/mod.rs::Scripts::start_profile", Row(C::StartScript)),
-    ("scripts/mod.rs::Scripts::start_selected", Row(C::StartScript)),
-    ("scripts/mod.rs::Scripts::start_all", Row(C::StartScript)),
-    ("scripts/mod.rs::Scripts::stop_all", Row(C::StopScript)),
-    ("scripts/mod.rs::Scripts::set_js", Excluded(STARTUP)),
-    ("scripts/mod.rs::Scripts::set_legacy", Excluded(STARTUP)),
-    ("scripts/mod.rs::Scripts::js_mut", Excluded(ACCESSOR)),
-    ("scripts/mod.rs::Scripts::legacy_mut", Excluded(ACCESSOR)),
-    (
-        "scripts/mod.rs::Scripts::live_start_parts",
-        Excluded(ACCESSOR),
+        "scripts/mod.rs::Scripts::load_live_example_identity",
+        Excluded(HARNESS),
     ),
     (
         "scripts/mod.rs::Scripts::set_inject",
         Excluded("harness inject bag; no operator decision"),
     ),
     ("scripts/mod.rs::Scripts::poll", Excluded(PUMP)),
-    (
-        "scripts/mod.rs::Scripts::publish_start_places",
-        Excluded("projection publication: queue places into the fleet rows"),
-    ),
-    // scripts/native.rs
-    (
-        "scripts/native.rs::Scripts::set_compiled_setting",
-        Row(C::SaveScriptSettings(CardKind::Native)),
-    ),
-    (
-        "scripts/native.rs::Scripts::set_compiled_overrides",
-        Row(C::SaveScriptSettings(CardKind::Native)),
-    ),
-    (
-        "scripts/native.rs::Scripts::native_command",
-        Rows(
-            &[C::PauseScript, C::ResumeScript, C::StopScript],
-            "the NativeCommand parameter selects the row",
-        ),
-    ),
     // scripts/parameter_edit.rs: the parameter editor.
     (
         "scripts/parameter_edit.rs::parse_parameter_text",
@@ -487,11 +554,11 @@ const CORE: &[(&str, Decision)] = &[
     ),
     (
         "scripts/parameter_edit.rs::Scripts::parameter_text_mut",
-        Row(C::EditParameterText),
+        Staged(C::EditParameterText),
     ),
     (
         "scripts/parameter_edit.rs::Scripts::parameter_text_mut_for",
-        Row(C::EditParameterText),
+        Staged(C::EditParameterText),
     ),
     (
         "scripts/parameter_edit.rs::Scripts::validate_parameter_buffer",
@@ -501,62 +568,9 @@ const CORE: &[(&str, Decision)] = &[
         "scripts/parameter_edit.rs::Scripts::validate_parameter_buffer_for",
         Row(C::EditParameterText),
     ),
-    (
-        "scripts/parameter_edit.rs::Scripts::discard_parameter_text_for",
-        Row(C::DiscardParameterText),
-    ),
-    (
-        "scripts/parameter_edit.rs::Scripts::discard_parameter_text",
-        Row(C::DiscardParameterText),
-    ),
-    (
-        "scripts/parameter_edit.rs::Scripts::commit_parameter_value",
-        Rows(
-            &[
-                C::SaveScriptSettings(CardKind::Script),
-                C::SaveScriptSettings(CardKind::Native),
-            ],
-            SETTINGS_KIND,
-        ),
-    ),
     // scripts/reload.rs
     ("scripts/reload.rs::Scripts::take_reload_outcome", Excluded(RESULT)),
-    ("scripts/reload.rs::Scripts::begin_reload", Row(C::ReloadScripts)),
-    ("scripts/reload.rs::Scripts::cancel_reload", Row(C::CancelReload)),
-    (
-        "scripts/reload.rs::Scripts::begin_refresh_catalog",
-        Row(C::ImportCatalog),
-    ),
-    // scripts/sync.rs: Apply to all.
-    (
-        "scripts/sync.rs::Scripts::prepare_settings_sync",
-        Row(C::ApplySettingsToMarked(CardKind::Script)),
-    ),
-    (
-        "scripts/sync.rs::Scripts::prepare_compiled_settings_sync",
-        Row(C::ApplySettingsToMarked(CardKind::Native)),
-    ),
-    (
-        "scripts/sync.rs::Scripts::cancel_settings_sync",
-        Row(C::CancelSettingsSync),
-    ),
-    (
-        "scripts/sync.rs::Scripts::apply_settings_sync",
-        Rows(
-            &[
-                C::ApplySettingsToMarked(CardKind::Script),
-                C::ApplySettingsToMarked(CardKind::Native),
-            ],
-            "the prepared scope's card kind selects the row",
-        ),
-    ),
     // selection.rs: marks and the marked bulk commands.
-    ("selection.rs::MarkedSelection::toggle", Row(C::SetMark(true))),
-    ("selection.rs::MarkedSelection::set", Row(C::SetMark(true))),
-    ("selection.rs::MarkedSelection::clear", Row(C::ClearMarks)),
-    ("selection.rs::MarkedSelection::mark_all", Row(C::MarkAll)),
-    ("selection.rs::MarkedSelection::remove", Row(C::DeleteProfile)),
-    ("selection.rs::MarkedSelection::rename", Row(C::CreateProfile)),
     (
         "selection.rs::MarkedSelection::retain",
         Excluded("projection maintenance: drops marks of rows no longer shown"),
@@ -565,9 +579,7 @@ const CORE: &[(&str, Decision)] = &[
         "selection.rs::MarkedSelection::retain_sorted",
         Excluded("projection maintenance: drops marks of rows no longer shown"),
     ),
-    ("selection.rs::start_marked", Row(C::StartScript)),
     ("selection.rs::stop_marked", Row(C::StopScript)),
-    ("selection.rs::MarkedSelection::mark_shown", Row(C::MarkAll)),
     (
         "selection.rs::profile_id_at",
         Excluded("pure identity resolution over the caller's projected rows"),
@@ -587,65 +599,58 @@ const CORE: &[(&str, Decision)] = &[
         Excluded("pure choice of the focus after Load all / MultiBox adoption"),
     ),
     ("session.rs::MemoryNotice::status_text", Excluded(FORMAT)),
-    ("session.rs::OperatorSession::start", Row(C::UnlockVault)),
-    (
-        "session.rs::OperatorSession::set_pause_script_on_manual_walk_abort",
-        Row(C::SetNavPreference(
-            NavPreference::PauseScriptOnManualWalkAbort,
-            true,
-        )),
-    ),
-    (
-        "session.rs::OperatorSession::set_walk_globals",
-        Row(C::SetDangerLevel(DangerLevel::Never)),
-    ),
-    (
-        "session.rs::OperatorSession::set_walk_globals_store",
-        Excluded(STARTUP),
-    ),
     (
         "session.rs::OperatorSession::bind_local_state",
         Excluded(STARTUP),
     ),
-    ("session.rs::OperatorSession::play_mut", Excluded(ACCESSOR)),
-    ("session.rs::OperatorSession::close_play", Row(C::Quit)),
     (
         "session.rs::OperatorSession::copy_statuses_into",
         Excluded(PROJECTION),
     ),
-    (
-        "session.rs::OperatorSession::set_capacity_render",
-        Row(C::SetRenderAll(true)),
-    ),
-    (
-        "session.rs::OperatorSession::set_walk_arms",
-        Excluded("wiring: hands the front end's walk arms to the row projection"),
-    ),
     ("session.rs::OperatorSession::take_settled_starts", Excluded(RESULT)),
-    ("session.rs::OperatorSession::select", Row(C::Select)),
-    ("session.rs::OperatorSession::ensure_slot", Row(C::Load)),
-    ("session.rs::OperatorSession::open_slot", Row(C::Load)),
-    ("session.rs::OperatorSession::load", Row(C::Load)),
-    ("session.rs::OperatorSession::load_all", Row(C::Load)),
-    ("session.rs::OperatorSession::login", Row(C::Login)),
-    ("session.rs::OperatorSession::login_all", Row(C::Login)),
-    ("session.rs::OperatorSession::login_members", Row(C::Login)),
-    ("session.rs::OperatorSession::logout", Row(C::Logout)),
-    ("session.rs::OperatorSession::logout_all", Row(C::Logout)),
-    ("session.rs::OperatorSession::logout_members", Row(C::Logout)),
+    // session/map.rs: the map desk stages row inputs and adopts owner results.
+    ("session/map.rs::MapDesk::clear_walk_dest", Excluded(PROJECTION)),
     (
-        "session.rs::OperatorSession::set_memory_mode",
-        Row(C::SetMemoryMode(MemoryMode::Low)),
+        "session/map.rs::MapDesk::note_ready_without_terrain",
+        Excluded("adopts the ready demand's result (no terrain) into the prompt: owner result"),
+    ),
+    ("session/map.rs::MapDesk::stage_walk_to", Staged(C::WalkTo)),
+    ("session/map.rs::MapDesk::stage_group_walk", Staged(C::GroupWalk)),
+    ("session/map.rs::MapDesk::stage_teleport", Staged(C::Teleport)),
+    ("session/map.rs::MapDesk::stage_open_demand", Staged(C::OpenMapDemand)),
+    ("session/map.rs::MapDesk::stage_bake_now", Staged(C::BakeMapNow)),
+    ("session/map.rs::MapDesk::stage_debug_command", Staged(C::DebugCommand)),
+    (
+        "session/map.rs::MapDesk::stage_internal_debug_command",
+        Staged(C::DebugCommand),
     ),
     (
-        "session.rs::OperatorSession::request_memory_relog",
-        Row(C::RelogNow),
+        "session/map.rs::MapDesk::begin_game_input_frame",
+        Staged(C::GameInput),
+    ),
+    ("session/map.rs::MapDesk::stage_game_input", Staged(C::GameInput)),
+    (
+        "session/map.rs::MapDesk::set_input_sender",
+        Excluded("device plumbing: attaches the capture channel; no operator decision"),
     ),
     (
-        "session.rs::OperatorSession::seed_running",
-        Row(C::SetMultiBox(true)),
+        "session/map.rs::OperatorSession::poll_map_demand",
+        Excluded(PUMP),
     ),
-    ("session.rs::OperatorSession::remove", Row(C::Remove)),
+    // session/commands.rs: the command seam (T3.3). The row is the literal
+    // argument; surface calls are checked through their row names.
+    ("session/commands.rs::OperatorSession::submit", Rows(&OperatorCommand::ALL, SEAM_ROWS)),
+    ("session/commands.rs::OperatorSession::submit_at", Rows(&OperatorCommand::ALL, SEAM_ROWS)),
+    (
+        "session/commands.rs::OperatorSession::submit_detached",
+        Rows(&OperatorCommand::ALL, SEAM_ROWS),
+    ),
+    (
+        "session/commands.rs::OperatorSession::set_focus_hint",
+        Staged(C::Load),
+    ),
+    ("driver.rs::HeadlessDriver::submit", Rows(&OperatorCommand::ALL, SEAM_ROWS)),
+    ("driver.rs::HeadlessDriver::poll", Excluded(PUMP)),
     ("session.rs::OperatorSession::poll", Excluded(PUMP)),
     ("session.rs::OperatorSession::poll_at", Excluded(PUMP)),
     ("session.rs::OperatorSession::poll_host", Excluded(PUMP)),
@@ -654,51 +659,49 @@ const CORE: &[(&str, Decision)] = &[
         Excluded("projection publication: queue places into the fleet rows"),
     ),
     ("session.rs::OperatorSession::advance_removals", Excluded(PUMP)),
-    ("session.rs::OperatorSession::start_script", Row(C::StartScript)),
-    (
-        "session.rs::OperatorSession::toggle_pause",
-        Rows(
-            &[C::PauseScript, C::ResumeScript],
-            "the run's state selects the row",
-        ),
-    ),
-    ("session.rs::OperatorSession::stop_script", Row(C::StopScript)),
-    ("session.rs::OperatorSession::stop_scripts", Row(C::StopScript)),
-    (
-        "session.rs::OperatorSession::save_profile",
-        Rows(
-            &[
-                C::SaveProfile,
-                C::SetWorld(WorldChoice::Automatic),
-                C::MarkTutorialSkipped,
-                C::SetRaster(RasterMode::Gpu),
-            ],
-            WRITER,
-        ),
-    ),
-    ("session.rs::OperatorSession::create_profile", Row(C::CreateProfile)),
-    ("session.rs::OperatorSession::rename_profile", Row(C::CreateProfile)),
-    ("session.rs::OperatorSession::vault_remove", Row(C::DeleteProfile)),
-    (
-        "session.rs::OperatorSession::set_auto_login",
-        Row(C::SetAutoLogin(true)),
-    ),
-    (
-        "session.rs::OperatorSession::set_random_settings",
-        Row(C::SetGuardian),
-    ),
-    (
-        "session.rs::OperatorSession::set_random_event_policy",
-        Row(C::SetGuardian),
-    ),
     ("session.rs::OperatorSession::take_write_failures", Excluded(RESULT)),
-    ("session.rs::OperatorSession::track_save", Row(C::SaveProfile)),
     ("session.rs::OperatorSession::take_settled_saves", Excluded(RESULT)),
     ("session.rs::OperatorSession::take_settings_writes", Excluded(RESULT)),
     (
         "session.rs::OperatorSession::flush_writes",
         Excluded("startup/harness boundary: blocks until the queued writes settle"),
     ),
+    // T3.3 r3: staged inputs and startup/pump entries of the parent's rows.
+    ("profile_form.rs::ProfileFormSave::settle", Excluded("adopts the durable writer's results (SaveProfile's Owner terminal)")),
+    ("scripts/mod.rs::Scripts::take_catalog_import_update", Excluded(RESULT)),
+    ("session/commands.rs::Submitted::take_bulk", Excluded(RESULT)),
+    ("session/commands.rs::Submitted::take_marked", Excluded(RESULT)),
+    ("session/prefs.rs::DrawPolicy::key", Excluded(FORMAT)),
+    ("nav_prefs.rs::nav_preference", Excluded("reads the stored preference; SetNavPreference writes it")),
+    ("session/commands.rs::OperatorSession::stage_select_opens_slot", Staged(C::Select)),
+    ("session/fleet.rs::OperatorSession::stage_mark_all", Staged(C::MarkAll)),
+    ("session/prefs.rs::OperatorSession::stage_notice", Staged(C::AcknowledgeNotice)),
+    ("session/prefs.rs::OperatorSession::stage_log_save", Staged(C::SaveLog)),
+    ("session/prefs.rs::OperatorSession::stage_quester_paths", Staged(C::SetQuesterPaths)),
+    ("session/prefs.rs::OperatorSession::stage_quester_reload", Staged(C::ReloadQuesterPaths)),
+    ("session/prefs.rs::OperatorSession::advance_quester_paths", Excluded(PUMP)),
+    ("session/prefs.rs::OperatorSession::adopt_operator_preferences", Excluded(STARTUP)),
+    ("session/prefs.rs::OperatorSession::refresh_walk_globals", Excluded(PUMP)),
+    ("session/prefs.rs::OperatorSession::declare_headless_render", Excluded(STARTUP)),
+    (
+        "session/prefs.rs::DrawPolicy::set_persist",
+        Excluded("a live harness run's draw setup is never written; configuration, not a decision"),
+    ),
+    ("session/vault_rows.rs::OperatorSession::stage_vault_unlock", Staged(C::UnlockVault)),
+    ("session/vault_rows.rs::OperatorSession::stage_vault_create", Staged(C::CreateVault)),
+    ("session/vault_rows.rs::OperatorSession::stage_vault_reset", Staged(C::ResetVault)),
+    (
+        "session.rs::OperatorSession::adopt_tutorial_reading",
+        Excluded("adopts the engine's getvar reading of TutSkip: an owner result; the operator's TutSkip is MarkTutorialSkipped"),
+    ),
+    ("log_file.rs::restore_session_log", Excluded(STARTUP)),
+    ("log_file.rs::session_log_path", Excluded(ACCESSOR)),
+    ("fleet.rs::FleetFilter::staged_mut", Staged(C::SetFleetFilter)),
+    ("driver.rs::HeadlessDriver::unlock", Rows(&[C::UnlockVault, C::CreateVault], "stages the vault and the play launch, then submits UnlockVault or, for a new file, CreateVault")),
+    ("driver.rs::HeadlessDriver::session_mut", Excluded(ACCESSOR)),
+    ("driver.rs::HeadlessDriver::models_mut", Excluded(ACCESSOR)),
+    ("driver.rs::DriverModels::fleet_filter_mut", Excluded(ACCESSOR)),
+    ("driver.rs::DriverModels::map_mut", Excluded(ACCESSOR)),
     // views.rs
     ("views.rs::QueuePlace::write_wait", Excluded(PROJECTION)),
     ("views.rs::FleetRow::write_world_login", Excluded(PROJECTION)),
@@ -711,17 +714,29 @@ const CORE: &[(&str, Decision)] = &[
     ("views.rs::script_status_label", Excluded(FORMAT)),
     ("views.rs::script_status_reason", Excluded(FORMAT)),
     ("views.rs::script_status_rows", Excluded(FORMAT)),
+    // walk_map.rs: staged selection/view state and read-only projections.
+    ("walk_map.rs::WalkMap::bind", Excluded(PROJECTION)),
+    ("walk_map.rs::WalkMap::clear_selection", Excluded(MAP_DRAFT)),
+    ("walk_map.rs::WalkMap::close", Excluded(MAP_DRAFT)),
+    ("walk_map.rs::WalkMap::parse_coordinates", Excluded(FORMAT)),
+    ("walk_map.rs::WalkMap::recenter", Excluded(PROJECTION)),
+    ("walk_map.rs::WalkMap::select_poi", Excluded(MAP_DRAFT)),
+    ("walk_map.rs::WalkMap::select_tile", Excluded(MAP_DRAFT)),
+    ("walk_map.rs::WalkMap::set_center", Excluded(PROJECTION)),
+    ("walk_map.rs::WalkMap::set_layers", Excluded(PROJECTION)),
+    ("walk_map.rs::WalkMap::set_plane", Excluded(PROJECTION)),
+    ("walk_map.rs::WalkMap::set_scale", Excluded(PROJECTION)),
+    ("walk_map.rs::WalkSearch::clear", Excluded(MAP_DRAFT)),
+    ("walk_map.rs::WalkSearch::update", Excluded(MAP_DRAFT)),
+    ("walk_map.rs::default_walk_nav_flags_path", Excluded(PATH_READ)),
+    ("walk_map.rs::display_walk_name_into", Excluded(FORMAT)),
+    ("walk_map.rs::observed_walk_services", Excluded(PROJECTION)),
+    ("walk_map.rs::peek_walk_catalogue", Excluded(ACCESSOR)),
+    ("walk_map.rs::reap_walk_map_demand", Excluded(PUMP)),
+    ("walk_map.rs::select_walk_route_source", Excluded(PROJECTION)),
+    ("walk_map.rs::validate_walk_search", Excluded(FORMAT)),
+    ("walk_map.rs::walk_teleport_authorized", Excluded(FORMAT)),
     // walk_permissions.rs
-    (
-        "walk_permissions.rs::WalkGlobalsView::persist_changed",
-        Rows(
-            &[
-                C::SetNavPreference(NavPreference::AllowTeleports, true),
-                C::SetDangerLevel(DangerLevel::Never),
-            ],
-            "which walk global changed selects the row",
-        ),
-    ),
     ("walk_permissions.rs::danger_routing_held", Excluded(FORMAT)),
     ("walk_permissions.rs::danger_routing_label", Excluded(FORMAT)),
     ("walk_permissions.rs::manual_walk_may_follow", Excluded(FORMAT)),
@@ -751,7 +766,6 @@ const SURFACE: &[(&str, Decision)] = &[
     ),
     ("panel/headed_record.rs::HeadedRecord::finish", Excluded(HARNESS)),
     ("panel/session.rs::Session::live_prepare_stress", Excluded(HARNESS)),
-    ("panel/session.rs::temp_live_vault_from", Excluded(HARNESS)),
     ("panel/session.rs::Session::with_instance", Excluded(STARTUP)),
     (
         "panel/session.rs::Session::pump_status",
@@ -767,8 +781,17 @@ const SURFACE: &[(&str, Decision)] = &[
     ),
     ("panel/session.rs::Session::reset_vault", Row(C::ResetVault)),
     // --- panel: fleet view ---
-    ("panel/fleet.rs::window", Row(C::SetFleetFilter)),
-    ("panel/fleet.rs::sort_combo", Row(C::SetFleetSort(FleetOrder::Name))),
+    (
+        "panel/fleet.rs::apply_settings_row",
+        Rows(
+            &[
+                C::ApplySettingsToMarked(CardKind::Script),
+                C::ApplySettingsToMarked(CardKind::Native),
+                C::CancelSettingsSync,
+            ],
+            "prepares the marked scope, then applies or cancels the frozen settings copy",
+        ),
+    ),
     // --- panel: session compositions ---
     (
         "panel/session.rs::Session::logout",
@@ -791,11 +814,6 @@ const SURFACE: &[(&str, Decision)] = &[
         Rows(&[C::PauseScript, C::ResumeScript], RUN_STATE),
     ),
     ("panel/session.rs::Session::cache_tutorial", Row(C::MarkTutorialSkipped)),
-    (
-        "panel/session.rs::Session::persist_game_render_prefs",
-        Row(C::SetRaster(RasterMode::Gpu)),
-    ),
-    ("panel/session.rs::Session::set_renderer", Row(C::SetDraw(DrawSwitch::GameRenderer, true))),
     ("panel/session.rs::Session::set_capture", Row(C::SetDraw(DrawSwitch::CaptureInput, true))),
     ("panel/session.rs::Session::set_sidecar_50", Row(C::SetDraw(DrawSwitch::SidecarFullRate, true))),
     (
@@ -803,25 +821,26 @@ const SURFACE: &[(&str, Decision)] = &[
         Row(C::SetDraw(DrawSwitch::LiveFullRate, true)),
     ),
     ("panel/app.rs::only_render_selected_clicked", Row(C::SetRenderAll(true))),
-    ("panel/session.rs::Session::ack_background_bots", Row(C::AcknowledgeNotice)),
-    ("panel/input_capture.rs::KeyboardOwner::capture_keys", Row(C::GameInput)),
-    ("panel/session.rs::Session::send_debug_command", Row(C::DebugCommand)),
-    (
-        "panel/session.rs::Session::send_debug_command_marked_snapshot",
-        Row(C::DebugCommand),
-    ),
-    ("panel/session.rs::Session::script_paint_click", Row(C::ScriptPaintInput)),
-    ("panel/session.rs::Session::script_paint_select", Row(C::ScriptPaintInput)),
     // --- panel: map ---
-    ("panel/session.rs::Session::confirm_picker_walk", Row(C::WalkTo)),
-    ("panel/session.rs::Session::confirm_picker_teleport", Row(C::Teleport)),
-    ("panel/session.rs::Session::sync_walk_map", Row(C::OpenMapDemand)),
-    ("panel/session.rs::Session::release_walk_map", Row(C::ReleaseMapDemand)),
+    (
+        "panel/input_capture.rs::KeyboardOwner::process_ownership",
+        Excluded(GAME_INPUT_STAGING),
+    ),
+    (
+        "panel/input_capture.rs::KeyboardOwner::capture_keys",
+        Excluded(GAME_INPUT_STAGING),
+    ),
+    ("panel/input_capture.rs::maybe_send_click", Excluded(GAME_INPUT_STAGING)),
+    ("panel/input_capture.rs::stream_capture", Excluded(GAME_INPUT_STAGING)),
+    (
+        "panel/session.rs::Session::maybe_drain_getvar_dialogue",
+        Excluded(GAME_INPUT_STAGING),
+    ),
     (
         "panel/session.rs::Session::accept_map_bake",
         Rows(
-            &[C::BakeMapNow, C::OpenMapDemand, C::SetMapBakeChoice(MapBakeChoice::Always)],
-            "Bake now: consent, then the reopened images demand that starts the bake; Always bake persists the choice first",
+            &[C::SetMapBakeChoice(MapBakeChoice::Always), C::BakeMapNow],
+            "Always bake persists the choice first; both choices submit BakeMapNow, which opens the image demand",
         ),
     ),
     // --- panel: scripts ---
@@ -844,8 +863,9 @@ const SURFACE: &[(&str, Decision)] = &[
                 C::DiscardParameterText,
                 C::SaveScriptSettings(CardKind::Script),
                 C::SaveScriptSettings(CardKind::Native),
+                C::SaveLegacyScriptSettings,
             ],
-            "the parameter text field: edits the staged text, discards on Escape, commits on Enter",
+            "the parameter text field: edits the staged text, discards on Escape, commits on Enter (the legacy overrides without a focused profile)",
         ),
     ),
     (
@@ -855,11 +875,20 @@ const SURFACE: &[(&str, Decision)] = &[
             "the shared Browse pick; with a focused profile also its pending choice; a loaded card also queues its preparation",
         ),
     ),
-    ("panel/session_catalog.rs::Session::enqueue_transpile", Row(C::PrepareScriptCard)),
-    ("panel/session_catalog.rs::Session::queue_transpile_all", Row(C::TranspileAll)),
-    ("panel/session_catalog.rs::Session::load_js", Row(C::LoadScriptFile)),
-    ("panel/session_catalog.rs::Session::defer_rs2b0t_catalog", Row(C::DeferCatalogImport)),
-    ("panel/session_catalog.rs::Session::import_rs2b0t_catalog", Row(C::ImportCatalog)),
+    (
+        "panel/session_catalog.rs::Session::load_js",
+        Rows(
+            &[C::LoadScriptFile, C::SelectScriptCard],
+            "Load registers the file card, then selects it for the focused profile",
+        ),
+    ),
+    (
+        "panel/profile_script.rs::Session::fleet_start_selected",
+        Rows(
+            &[C::PickBrowseCard, C::StartScript],
+            "picks the selected card before starting it across marked profiles",
+        ),
+    ),
     (
         "panel/profile_script.rs::Session::begin_script_reload_clicked",
         Rows(&[C::ReloadScripts, C::ConfirmReload], RELOAD_CLICK),
@@ -880,41 +909,62 @@ const SURFACE: &[(&str, Decision)] = &[
         "panel/app.rs::profile_import_bar",
         Rows(
             &[
+                C::ImportCatalog,
                 C::PreviewProfileImport,
                 C::CreateProfile,
                 C::SaveProfile,
                 C::ReturnToProfileImportPath,
+                C::SetProfileImportDeletePrompt(true),
                 C::DeleteProfileImportExport,
             ],
-            "Preview reads and maps; Import creates or saves each planned profile; Back drops the preview; confirmed deletion removes the export",
+            "Preview first fills the catalogue when it has not been, then reads and maps; Import creates or saves each planned profile; Back drops the preview; confirmed deletion removes the export",
         ),
     ),
     // --- panel: profile form and chooser ---
     (
+        "panel/app.rs::profile_form_body",
+        Rows(
+            &[
+                C::EditProfileDraft(ProfileDraftField::Username),
+                C::EditProfileDraft(ProfileDraftField::Password),
+            ],
+            "the profile form text fields stage username and password edits",
+        ),
+    ),
+    (
+        "panel/app.rs::slot_capture_section",
+        Rows(
+            &[
+                C::SetAutoLogin(true),
+                C::EditProfileDraft(ProfileDraftField::Settings),
+            ],
+            "the capture controls stage auto-login and the selected capture settings",
+        ),
+    ),
+    (
+        "panel/app.rs::slot_random_section",
+        Rows(
+            &[
+                C::SetGuardian,
+                C::EditProfileDraft(ProfileDraftField::Settings),
+            ],
+            "the random-event controls stage guardian and policy edits",
+        ),
+    ),
+    (
+        "panel/session/chooser.rs::Session::clear_credentials",
+        Rows(
+            &[
+                C::EditProfileDraft(ProfileDraftField::Username),
+                C::EditProfileDraft(ProfileDraftField::Password),
+            ],
+            "clears the two credential draft inputs",
+        ),
+    ),
+    (
         "panel/session/chooser.rs::Session::begin_edit_profile",
         Rows(&[C::OpenProfileForm, C::OpenNewProfileForm], FORM_TARGET),
     ),
-    (
-        "panel/session/chooser.rs::Session::open_edit_profile",
-        Rows(&[C::OpenProfileForm, C::OpenNewProfileForm], FORM_TARGET),
-    ),
-    (
-        "panel/session/chooser.rs::Session::cancel_edit_profile",
-        Row(C::CloseProfileForm(FormClose::Form)),
-    ),
-    (
-        "panel/session/chooser.rs::Session::request_cancel_edit",
-        Row(C::CloseProfileForm(FormClose::Form)),
-    ),
-    (
-        "panel/session/chooser.rs::Session::request_close_profiles",
-        Row(C::CloseProfileForm(FormClose::Window)),
-    ),
-    (
-        "panel/session/chooser.rs::Session::confirm_pending_edit_switch",
-        Row(C::DiscardProfileEdits),
-    ),
-    ("panel/session/chooser.rs::Session::cancel_pending_edit_switch", Row(C::KeepEditing)),
     (
         "panel/session/chooser.rs::Session::save_credentials",
         Rows(
@@ -922,16 +972,6 @@ const SURFACE: &[(&str, Decision)] = &[
             "a new row creates the profile; an existing one saves the form, its world mirrored",
         ),
     ),
-    // --- panel: loadouts (the shared loadout set lives in `script` today) ---
-    ("panel/loadouts.rs::sync_draft", Row(C::SelectLoadout)),
-    ("panel/loadouts.rs::save_draft", Row(C::SaveLoadout)),
-    ("panel/loadouts.rs::add_loadout", Row(C::CreateLoadout)),
-    ("panel/loadouts.rs::duplicate_loadout", Row(C::DuplicateLoadout)),
-    ("panel/loadouts.rs::delete_loadout", Row(C::DeleteLoadout)),
-    ("panel/loadouts.rs::copy_equipment", Row(C::CopyEquipmentToLoadout)),
-    ("panel/loadouts.rs::assign_slot", Row(C::EditLoadoutDraft(LoadoutField::Equipment))),
-    ("panel/loadouts.rs::window", Row(C::EditLoadoutDraft(LoadoutField::Name))),
-    ("panel/loadouts.rs::draw_supplies", Row(C::EditLoadoutDraft(LoadoutField::Supplies))),
     // --- tui: process entry, harnesses ---
     ("tui/bin.rs::parse_args", Excluded(PROCESS)),
     ("tui/bin.rs::usage", Excluded(PROCESS)),
@@ -939,7 +979,6 @@ const SURFACE: &[(&str, Decision)] = &[
         "tui/bin.rs::exit_after_work_shutdown",
         Excluded("final process exit after WorkAdmission shutdown; no operator decision"),
     ),
-    ("tui/bin.rs::temp_live_vault", Excluded(HARNESS)),
     (
         "tui/bin.rs::map_bundle",
         Excluded("`--map-bundle` packaging flag: bakes the shipped map bundle; not an operator command"),
@@ -952,8 +991,8 @@ const SURFACE: &[(&str, Decision)] = &[
                 C::CancelSettingsSync,
                 C::RestartForSettings,
                 C::DeferSettingsRestart,
-                C::Quit,
                 C::ReleaseMapDemand,
+                C::EditProfileDraft(ProfileDraftField::Settings),
             ],
             "the AppAction router: these rows are inlined; every other action calls a TuiSession handler registered on its own",
         ),
@@ -962,36 +1001,73 @@ const SURFACE: &[(&str, Decision)] = &[
         "tui/input.rs::TuiApp::run_command",
         Rows(
             &[
-                C::ClearMarks,
-                C::MarkAll,
-                C::Quit,
                 C::OpenProfileForm,
                 C::OpenNewProfileForm,
                 C::CloseProfileForm(FormClose::Form),
             ],
-            "the palette/command router: clears or stages marks and modals inline (the form notice follows the modal), and returns the AppAction the dispatcher routes",
+            "the palette/command router: opens modals inline (the form notice follows the modal), and returns the AppAction the dispatcher routes",
         ),
     ),
-    (
-        "tui/input.rs::TuiApp::settings_key",
-        Rows(
-            &[C::EditProfileDraft(ProfileDraftField::Settings), C::AcknowledgeNotice],
-            "the settings popup keys: stage a changed row for persist_settings and clear the quester notice",
-        ),
-    ),
-    ("tui/input.rs::TuiApp::fleet_filter_key", Row(C::SetFleetFilter)),
     (
         "tui/bin.rs::TuiSession::pump",
         Rows(
             &[
+                C::PickBrowseCard,
                 C::SelectScriptCard,
-                C::Select,
-                C::SetRenderAll(true),
                 C::OpenProfileForm,
                 C::OpenNewProfileForm,
                 C::CloseProfileForm(FormClose::Form),
             ],
-            "the frame pump: adopts the Browse pick as the focused profile's pending choice; focus, the render label and the form notice follow the app state; the exits are the `--memory` harness's",
+            "the frame pump: adopts the Browse pick as the shared pick and as the focused profile's pending choice and the form notice follows the app state; the exits are the `--memory` harness's",
+        ),
+    ),
+    // --- tui: vault and preferences ---
+    (
+        "panel/fleet_actions.rs::Session::fleet_assign_selected",
+        Rows(
+            &[C::PickBrowseCard, C::AssignScript],
+            "Assign: the card picked in Scripts becomes the shared pick, then the marked bots take it",
+        ),
+    ),
+    (
+        "panel/fleet_actions.rs::Session::fleet_assign_restart_selected",
+        Rows(
+            &[C::PickBrowseCard, C::AssignAndRestart],
+            "Assign & restart: the card picked in Scripts becomes the shared pick, then the marked bots take and restart it",
+        ),
+    ),
+    (
+        "panel/app.rs::commit_nav_settings",
+        Rows(
+            &[
+                C::SetNavPreference(NavPreference::AllowTeleports, true),
+                C::SetDangerLevel(DangerLevel::Never),
+            ],
+            "the Nav config window: one command per changed navigation preference, and the danger level",
+        ),
+    ),
+    (
+        "panel/session.rs::Session::start_play",
+        Rows(
+            &[C::UnlockVault, C::CreateVault],
+            "the vault pass: unlock the existing vault file, or create the vault on a first run (no file yet)",
+        ),
+    ),
+    (
+        "tui/bin.rs::TuiSession::unlock_at",
+        Rows(
+            &[C::UnlockVault, C::CreateVault],
+            "the vault pass: unlock the existing vault file, or create the vault on a first run (no file yet)",
+        ),
+    ),
+    (
+        "tui/bin.rs::TuiSession::persist_walk_globals",
+        Rows(
+            &[
+                C::SetNavPreference(NavPreference::AllowTeleports, true),
+                C::SetDangerLevel(DangerLevel::Never),
+            ],
+            "which walk permission the operator changed selects the row: a grant or an acknowledgement is a navigation preference, the danger routing level its own row",
         ),
     ),
     // --- tui: session compositions ---
@@ -1026,27 +1102,41 @@ const SURFACE: &[(&str, Decision)] = &[
     (
         "tui/bin.rs::TuiSession::script_start",
         Rows(
-            &[C::SelectScriptCard, C::StartScript],
-            "Start: records the Browse choice as the profile's pending selection, then starts",
+            &[C::PickBrowseCard, C::SelectScriptCard, C::StartScript],
+            "Start picks the Browse card, records it as the profile's pending choice, then starts",
+        ),
+    ),
+    (
+        "tui/bin.rs::TuiSession::script_start_all",
+        Rows(
+            &[C::PickBrowseCard, C::StartScript],
+            "marked Start picks the Browse card before starting marks; Start all starts everyone",
+        ),
+    ),
+    (
+        "tui/bin.rs::TuiSession::script_assign_marked",
+        Rows(
+            &[C::PickBrowseCard, C::AssignScript],
+            "picks the selected card before assigning it to marks",
+        ),
+    ),
+    (
+        "tui/bin.rs::TuiSession::script_restart_marked",
+        Rows(
+            &[C::PickBrowseCard, C::AssignAndRestart],
+            "picks the selected card before assigning and starting marked profiles",
         ),
     ),
     (
         "tui/bin.rs::TuiSession::persist_settings",
         Rows(
-            &[C::SetMemoryMode(MemoryMode::Low), C::SetGuardian, C::SaveProfile],
+            &[C::SetMemoryMode(MemoryMode::Low), C::SetGuardian],
             "the settings popup's profile rows: guardian fields and memory mode, written through the profile row",
         ),
     ),
     (
         "tui/bin.rs::TuiSession::script_reload",
         Rows(&[C::ReloadScripts, C::ConfirmReload], RELOAD_CLICK),
-    ),
-    ("tui/bin.rs::TuiSession::script_load", Row(C::LoadScriptFile)),
-    ("tui/bin.rs::TuiSession::defer_rs2b0t_catalog", Row(C::DeferCatalogImport)),
-    ("tui/bin.rs::TuiSession::import_rs2b0t_catalog", Row(C::ImportCatalog)),
-    (
-        "panel/session_catalog.rs::Session::settle_catalog_import",
-        Excluded("settles a completed catalog import and clears its deferred prompt marker; the Import Catalog decision was made when the import was requested"),
     ),
     (
         "tui/bin.rs::TuiSession::profile_import",
@@ -1080,19 +1170,7 @@ const SURFACE: &[(&str, Decision)] = &[
     ),
     ("tui/app.rs::TuiApp::move_script_sel", Row(C::PickBrowseCard)),
     ("tui/app.rs::TuiApp::script_click", Row(C::PickBrowseCard)),
-    (
-        "tui/bin.rs::TuiSession::poll_scripts",
-        Rows(
-            &[C::ImportCatalog, C::PreviewProfileImport],
-            "polls the requested catalog import, clears its deferred prompt marker on success, and previews the profile import when catalog preparation completes",
-        ),
-    ),
     // --- tui: map, input ---
-    ("tui/bin.rs::TuiSession::open_map_catalogue", Row(C::OpenMapDemand)),
-    ("tui/bin.rs::TuiSession::release_map_catalogue", Row(C::ReleaseMapDemand)),
-    ("tui/bin.rs::TuiSession::arm_walk_on", Row(C::WalkTo)),
-    ("tui/bin.rs::TuiSession::map_teleport", Row(C::Teleport)),
-    ("tui/bin.rs::TuiSession::wasd_walk", Row(C::GameInput)),
     (
         "tui/bin.rs::TuiSession::chat_send",
         Rows(
@@ -1100,21 +1178,18 @@ const SURFACE: &[(&str, Decision)] = &[
             "a paint answer (1-9, Enter) or a dialogue Continue/Answer",
         ),
     ),
-    ("tui/bin.rs::TuiSession::ack_background_bots", Row(C::AcknowledgeNotice)),
     // --- tui: loadouts ---
-    ("tui/loadouts.rs::LoadoutsPane::commit_scratch", Row(C::SaveLoadout)),
     (
-        "tui/loadouts.rs::LoadoutsPane::on_key",
+        "tui/bin.rs::TuiSession::loadouts_key",
         Rows(
             &[
                 C::SelectLoadout,
-                C::EditLoadoutDraft(LoadoutField::Unassigned),
                 C::SaveLoadout,
                 C::CreateLoadout,
                 C::DuplicateLoadout,
                 C::DeleteLoadout,
             ],
-            "the loadouts popup: row 0 selects, rows 1-4 edit the scratch text and commit on Enter, rows 5-8 create, duplicate, delete and save",
+            "the loadouts popup: row 0 selects the next loadout, Enter on a text row or [save] stages the text as the draft and saves it, the buttons create, duplicate and delete",
         ),
     ),
 ];
@@ -1122,6 +1197,8 @@ const SURFACE: &[(&str, Decision)] = &[
 const PROCESS: &str =
     "process entry, argument errors or start-up failure exits; not an operator command";
 const HARNESS: &str = "`--live`/headed harness preparation and records; not an operator command";
+const BENCH: &str =
+    "opt-in memory benchmark (`memory-profile`) run and records; not an operator command";
 const DROP_QUEUED: &str = "drops the member's queued Start first, then issues the row";
 const RUN_STATE: &str = "the run's state selects the row";
 const RELOAD_CLICK: &str = "the first click begins the reload; while a warning awaits confirmation the same click confirms it";
@@ -1141,6 +1218,25 @@ fn workspace_root() -> std::path::PathBuf {
         .to_path_buf()
 }
 
+/// The command seam's dispatcher entries: their row is the literal
+/// `OperatorCommand::Row` argument (`SurfaceFn::row_calls`).
+const SEAM: &[&str] = &[
+    "session/commands.rs::OperatorSession::submit",
+    "session/commands.rs::OperatorSession::submit_at",
+    "session/commands.rs::OperatorSession::submit_detached",
+];
+
+/// The headless driver's forwarding entry into the seam.
+const DRIVER_SUBMIT: &str = "driver.rs::HeadlessDriver::submit";
+
+/// The row of [`OperatorCommand::ALL`] whose variant is `name`.
+fn row_named(name: &str) -> Option<OperatorCommand> {
+    OperatorCommand::ALL.into_iter().find(|row| {
+        let debug = format!("{row:?}");
+        debug.split('(').next() == Some(name)
+    })
+}
+
 fn same_row(a: OperatorCommand, b: OperatorCommand) -> bool {
     std::mem::discriminant(&a) == std::mem::discriminant(&b)
 }
@@ -1151,6 +1247,8 @@ fn rows_of(decision: Decision) -> Vec<OperatorCommand> {
         Row(row) => vec![row],
         Rows(rows, _) => rows.to_vec(),
         Excluded(_) => Vec::new(),
+        Staged(row) => vec![row],
+        StagedFor(rows, _) => rows.to_vec(),
     }
 }
 
@@ -1230,8 +1328,11 @@ fn every_row_is_reached_by_an_entry_point() {
     let core: BTreeMap<&str, Decision> = CORE.iter().copied().collect();
     let surface: BTreeMap<&str, Decision> = SURFACE.iter().copied().collect();
     let mut reached: Vec<OperatorCommand> = Vec::new();
+    // The dispatchers name every row; a row counts as reached through a
+    // literal argument at a call site instead.
     for decision in CORE
         .iter()
+        .filter(|(key, _)| !SEAM.contains(key) && *key != DRIVER_SUBMIT)
         .map(|(_, d)| *d)
         .chain(SURFACE.iter().map(|(_, d)| *d))
     {
@@ -1251,7 +1352,15 @@ fn every_row_is_reached_by_an_entry_point() {
         if surface.contains_key(surface_key(item).as_str()) {
             continue;
         }
+        reached.extend(
+            item.row_calls
+                .iter()
+                .filter_map(|(name, _)| row_named(name)),
+        );
         for call in &item.core_calls {
+            if SEAM.contains(&call.key.as_str()) {
+                continue;
+            }
             if let Some(decision) = core.get(call.key.as_str()) {
                 reached.extend(rows_of(*decision));
             }
@@ -1300,8 +1409,22 @@ fn every_surface_handler_is_one_rows_or_registered() {
         // Per core call, the rows it can issue (a dispatching entry point
         // lists several); excluded entry points issue none.
         let mut calls: Vec<(u32, &str, Vec<OperatorCommand>)> = Vec::new();
+        // A call of the command seam issues the literal row it names; the
+        // dispatcher entry itself names no row.
+        for (name, line) in &item.row_calls {
+            match row_named(name) {
+                Some(row) => calls.push((*line, "OperatorCommand", vec![row])),
+                None => problems.push(format!("{key}:{line} names unknown row {name}")),
+            }
+        }
         for call in &item.core_calls {
+            if SEAM.contains(&call.key.as_str()) {
+                continue;
+            }
             match core.get(call.key.as_str()) {
+                // A staged input is not a decision; the bypass test checks
+                // that the same fn submits the row it stages for.
+                Some(Staged(_) | StagedFor(..)) => {}
                 Some(decision) => {
                     let rows = rows_of(*decision);
                     if !rows.is_empty() {
@@ -1340,6 +1463,12 @@ fn every_surface_handler_is_one_rows_or_registered() {
                 }
             }
             Some(Excluded(_)) => {}
+            Some(Staged(row)) => problems.push(format!(
+                "{key}: Staged({row:?}) is a core decision; a surface fn is a handler, a composition or an exclusion"
+            )),
+            Some(StagedFor(rows, _)) => problems.push(format!(
+                "{key}: StagedFor({rows:?}) is a core decision; a surface fn is a handler, a composition or an exclusion"
+            )),
             None => {
                 // Unregistered: every call must name exactly one row (a
                 // parameter value is not a different row), all the same
@@ -1377,6 +1506,127 @@ fn every_surface_handler_is_one_rows_or_registered() {
     assert!(problems.is_empty(), "\n{}", problems.join("\n"));
 }
 
+/// The surface register shrinks with the seam: a function registered as
+/// one row's handler that would pass unregistered (every call names that
+/// one row through the seam, no probe) is not listed.
+#[test]
+fn the_surface_register_lists_only_functions_that_need_it() {
+    let census = census();
+    let core: BTreeMap<&str, Decision> = CORE.iter().copied().collect();
+    let mut redundant = Vec::new();
+    for item in &census.surface {
+        let key = surface_key(item);
+        let Some((_, Row(registered))) = SURFACE.iter().find(|(k, _)| *k == key) else {
+            continue;
+        };
+        if !item.probes.is_empty() {
+            continue;
+        }
+        let mut rows: Vec<OperatorCommand> = item
+            .row_calls
+            .iter()
+            .filter_map(|(name, _)| row_named(name))
+            .collect();
+        let mut plain = true;
+        for call in &item.core_calls {
+            if SEAM.contains(&call.key.as_str()) {
+                continue;
+            }
+            match core.get(call.key.as_str()) {
+                Some(Staged(_) | StagedFor(..) | Excluded(_)) | None => {}
+                Some(decision) => {
+                    let alternatives = rows_of(*decision);
+                    if alternatives.len() != 1 {
+                        plain = false;
+                    }
+                    rows.extend(alternatives);
+                }
+            }
+        }
+        if plain && !rows.is_empty() && rows.iter().all(|row| same_row(*row, *registered)) {
+            redundant.push(format!(
+                "{key}: a plain {registered:?} handler needs no entry"
+            ));
+        }
+    }
+    assert!(redundant.is_empty(), "\n{}", redundant.join("\n"));
+}
+
+/// The seam is complete: no panel/TUI function reaches a row through
+/// anything but the command seam. A call of a core entry that names a row
+/// (other than the seam itself and the staging inputs a row commits) and
+/// an effect probe (a store `.save()`, a vault or file write, a map demand)
+/// are bypasses; only process, harness and startup exclusions may hold
+/// them.
+#[test]
+fn no_surface_mutation_bypasses_the_seam() {
+    let census = census();
+    let core: BTreeMap<&str, Decision> = CORE.iter().copied().collect();
+    let surface: BTreeMap<&str, Decision> = SURFACE.iter().copied().collect();
+    let mut bypasses = Vec::new();
+    for item in &census.surface {
+        let key = surface_key(item);
+        if matches!(surface.get(key.as_str()), Some(Excluded(_))) {
+            continue;
+        }
+        for call in &item.core_calls {
+            if SEAM.contains(&call.key.as_str()) {
+                continue;
+            }
+            match core.get(call.key.as_str()) {
+                Some(Staged(row)) => {
+                    let submits = item
+                        .row_calls
+                        .iter()
+                        .filter_map(|(name, _)| row_named(name))
+                        .any(|submitted| same_row(submitted, *row));
+                    if !submits {
+                        bypasses.push(format!(
+                            "{}:{} {key} stages {} for {row:?} but does not submit it",
+                            item.file, call.line, call.key
+                        ));
+                    }
+                }
+                Some(StagedFor(rows, _)) => {
+                    let submits = item
+                        .row_calls
+                        .iter()
+                        .filter_map(|(name, _)| row_named(name))
+                        .any(|submitted| rows.iter().any(|row| same_row(submitted, *row)));
+                    let row = rows;
+                    if !submits {
+                        bypasses.push(format!(
+                            "{}:{} {key} stages {} for {row:?} but does not submit it",
+                            item.file, call.line, call.key
+                        ));
+                    }
+                }
+                Some(decision) => {
+                    let rows = rows_of(*decision);
+                    if !rows.is_empty() {
+                        bypasses.push(format!(
+                            "{}:{} {key} calls {} {rows:?}",
+                            item.file, call.line, call.key
+                        ));
+                    }
+                }
+                None => {}
+            }
+        }
+        for (probe, line) in &item.probes {
+            bypasses.push(format!("{}:{line} {key} hits probe {probe:?}", item.file));
+        }
+    }
+    for line in &bypasses {
+        println!("BYPASS\t{line}");
+    }
+    assert!(
+        bypasses.is_empty(),
+        "{} surface mutations bypass the command seam",
+        bypasses.len()
+    );
+}
+
 /// The census as a table, for the report: `cargo test -p frontend-core
 /// --lib -- command::census --nocapture`.
 #[test]
@@ -1405,6 +1655,7 @@ fn print_the_census_table() {
     }
     let mut excluded_core: Vec<String> = Vec::new();
     let mut dispatchers: Vec<String> = Vec::new();
+    let mut staged_for: Vec<String> = Vec::new();
     let mut by_class: Vec<String> = Vec::new();
     for entry in &census.core {
         if !in_universe(entry) {
@@ -1423,6 +1674,9 @@ fn print_the_census_table() {
                 }
                 Some(Rows(rows, why)) => {
                     dispatchers.push(format!("{}: {rows:?}: {why}", entry.key));
+                }
+                Some(StagedFor(rows, why)) => {
+                    staged_for.push(format!("{}: {rows:?}: {why}", entry.key));
                 }
                 _ => {}
             }
@@ -1469,6 +1723,9 @@ fn print_the_census_table() {
     }
     for line in &dispatchers {
         println!("DISPATCH\t{line}");
+    }
+    for line in &staged_for {
+        println!("STAGED-FOR\t{line}");
     }
     for line in &excluded_core {
         println!("EXCLUDED-CORE\t{line}");

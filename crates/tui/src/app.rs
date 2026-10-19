@@ -21,16 +21,18 @@ use ratatui::Frame;
 
 use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
 use frontend_core::quester_paths::QuesterPathsView;
+use frontend_core::scripts::{
+    LoadoutForm, Loadouts, OwnedSchema, PaintFrame, ScriptChoice, ScriptRunState,
+};
+use frontend_core::walk_map::{
+    display_walk_name_into, WalkCatalogue, WalkMap, WalkObservedService, WalkSearch, WalkSlotStatus,
+};
 use frontend_core::{FleetCounts, FleetRow, ResourceView, SlotDetail, WalkGlobalsView};
 use frontend_core::{MapBakeChoice, NavPreference};
-use host_play::walk_map::{
-    Catalogue, DisplayName, MapModel, ObservedService, Search, WalkSlotStatus,
-};
 use nav::map::poi::{PoiKind, PoiRecord};
 use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
 use nav::world::NavWorld;
-use script::{RunState, ScriptSel};
 
 use crate::chat::{chat_modal_open, Chat, ChatAction, ChatState, ChatView};
 use crate::commands::{script_command, Command};
@@ -44,11 +46,11 @@ use crate::script_shape::{
     browse_lines, card_selection, rs2b0t_root_has_index, BrowseCard, BrowseLine, ScriptClick,
     ScriptPane,
 };
-use crate::settings::SettingsState;
+use crate::settings::{SettingsEdit, SettingsState};
 use crate::status::StatusPane;
 
 fn default_catalog_browse_dir() -> std::path::PathBuf {
-    let home = script::bot_home();
+    let home = frontend_core::scripts::paths::bot_home();
     if home.as_os_str() == "." {
         std::path::PathBuf::from("/")
     } else {
@@ -141,7 +143,7 @@ impl WalkSendState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum AppAction {
     /// Quit the app.
     Quit,
@@ -157,14 +159,32 @@ pub enum AppAction {
     ArmWalk(Tile),
     /// Group Walk-confirm: consume one destination plan for checked bots.
     MapWalkGroup,
-    /// WASD one-tile walk: queue a `host_play::WireCmd::Walk`.
+    /// WASD one-tile walk: a direct one-step move on the focused slot.
     WalkTile(Tile),
     /// Local debug teleport is intentionally a separate named action. The
     /// binary/host must authorize it; the TUI never treats a pin as proof.
     MapTeleport(Tile),
     /// Reload the shared Quester Path registry without starting a Path.
     ReloadPaths,
-    /// Chat modal advance: queue `WireCmd::Continue` / `Answer`.
+    /// Dismiss the Quester Paths status line (`AcknowledgeNotice`).
+    DismissPathsNotice,
+    /// Mark or unmark `name`'s fleet row (`SetMark`): the row selection and
+    /// the Walk-send group checklist.
+    SetMark(String, bool),
+    /// Mark these members' fleet rows (`MarkAll`): every shown row, or the
+    /// eligible Walk-send rows.
+    MarkAll(Vec<frontend_core::ProfileIdentity>),
+    /// Clear every row mark (`ClearMarks`).
+    ClearMarks,
+    /// Edit the fleet filter text and commit it (`SetFleetFilter`).
+    FleetFilter(crate::fleet::FilterEdit),
+    /// Save the rows the log view shows (`SaveLog`).
+    SaveLog,
+    /// Turn the session log file on or off (`SetSessionLog`).
+    SetSessionLog(bool),
+    /// Save the map's special-areas overlay choice (`SetNavPreference`).
+    MapWilderness(bool),
+    /// Chat modal advance: Continue / Answer on the focused slot.
     Chat(ChatAction),
     /// MultiBox: load every vault profile and log every member in (after
     /// the scope confirmation).
@@ -187,7 +207,7 @@ pub enum AppAction {
     /// Start the Browse-selected JS card on the focused slot:
     /// `tui-play` dispatches `Play::script_start_load` with the card's
     /// source and shape.
-    ScriptStart(ScriptSel),
+    ScriptStart(ScriptChoice),
     /// Toggle pause/resume on the focused slot's script (`Play::script_pause`
     /// / [`Play::script_resume`], like the panel's `script_toggle_pause`).
     ScriptPause,
@@ -236,11 +256,13 @@ pub enum AppAction {
     ScriptLoad(std::path::PathBuf),
     /// Persist the background-bots notice ("Got it, don't show again").
     AckBackground,
+    /// Commit a changed TUI settings draft to the shared form-save model.
+    SettingsDraftEdited(SettingsEdit),
     /// One step of the rs2b0t profile import; the binary owns the flow.
     ProfileImport(crate::profile_import::ImportAction),
     /// A key for the parameters popup: the binary owns the commit path.
     ParamsKey(KeyEvent),
-    /// A key for the loadouts popup: the binary owns the store.
+    /// A key for the loadouts popup: the binary owns the form.
     LoadoutsKey(KeyEvent),
     /// Turn terminal mouse capture on or off (off lets the terminal
     /// select and copy text).
@@ -299,7 +321,7 @@ pub fn wasd_target(here: (i32, i32, i32), code: KeyCode) -> Option<(i32, i32, i3
 
 /// The chat pane's owned data, copied from the focused snapshot each pump
 /// (the ring is capped at 100 lines, so the copy is small).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct ChatData {
     /// The public chat ring, newest first.
     pub lines: Vec<ChatLineView>,
@@ -312,7 +334,7 @@ pub struct ChatData {
     /// The focused slot's script paint frame (shared with the status row,
     /// which shares it with the isolate recorder); the pane shows it
     /// instead of the ring while it is non-empty.
-    pub script_paint: Option<std::sync::Arc<script::shim::ScriptPaint>>,
+    pub script_paint: Option<PaintFrame>,
     /// Operator toggle (`p`): show the game chat even while the script
     /// paints. Preserved across pumps (it is operator state, not a
     /// snapshot view).
@@ -332,7 +354,7 @@ impl ChatData {
             modal_texts: &self.modal_texts,
             options: &self.options,
             has_continue: self.has_continue,
-            script_paint: self.script_paint.as_deref(),
+            script_paint: self.script_paint.as_ref().map(PaintFrame::view),
             show_game_chat: self.show_game_chat,
         }
     }
@@ -376,7 +398,7 @@ pub struct TuiApp {
     pub map: MapView,
     /// Shared host selection/action model. The TUI owns only this one
     /// application view, never a model per bot.
-    pub map_model: MapModel,
+    pub map_model: WalkMap,
     pub map_active: bool,
     /// Search editor and bounded result indices into `map_pois`.
     pub map_search_open: bool,
@@ -386,13 +408,13 @@ pub struct TuiApp {
     /// The shared compact catalogue projection. It is application-owned,
     /// never copied into each bot slot.
     pub map_pois: Vec<PoiRecord>,
-    pub map_host_catalogue: Option<Arc<Catalogue>>,
-    map_search_index: Search,
+    pub map_catalogue: Option<Arc<WalkCatalogue>>,
+    map_search_index: WalkSearch,
     pub map_poi_sel: Option<usize>,
     pub map_catalogue_status: MapCatalogueStatus,
     pub map_coverage: String,
     /// Focused-bot observed NPC services while the map is open.
-    pub map_observed: Vec<ObservedService>,
+    pub map_observed: Vec<WalkObservedService>,
     /// Fleet Walk send: Focused vs Group checklist.
     pub walk_send: WalkSendState,
     /// The focused slot's observed world tile.
@@ -408,9 +430,9 @@ pub struct TuiApp {
     /// ([`TuiApp::settings_profile`]); the binary persists
     /// [`TuiApp::settings`] back to the vault when
     /// [`TuiApp::settings_dirty`] flips.
-    pub settings: vault::ProfileSettings,
+    pub settings: frontend_core::SettingsDraft,
     /// Editable settings buffer; durable reads are rendered from `walk_permissions`.
-    pub nav: host_play::WalkGlobals,
+    pub nav: frontend_core::WalkGlobals,
     /// Current durable projection shared with admission and inherited script rows.
     pub walk_permissions: WalkGlobalsView,
     /// Per-Map-open danger permission; never persisted.
@@ -453,14 +475,14 @@ pub struct TuiApp {
     pub pause_script_on_manual_walk_abort: bool,
     /// The global manual-movement pause preference changed; the session persists it.
     pub pause_script_on_manual_walk_abort_dirty: bool,
-    shared_preferences: Option<host_play::local_state::Preferences>,
+    shared_preferences: Option<frontend_core::UiPreferences>,
     pub loadouts_state: LoadoutsState,
     /// The focused slot's script lifecycle (shape display only).
-    pub script_state: RunState,
+    pub script_state: ScriptRunState,
     /// Focused member holds a Start-all permit place (Stop still applies).
     pub script_queued: bool,
     /// The focused profile's script heading; Start keys on `(source, name)`.
-    pub script_sel: Option<ScriptSel>,
+    pub script_sel: Option<ScriptChoice>,
     /// The operator picked a card in Browse since the last pump: the
     /// binary records it as the focused profile's pending selection.
     pub browse_changed: bool,
@@ -483,7 +505,7 @@ pub struct TuiApp {
     pub script_load_sel: usize,
     pub script_load_last_dir: Option<std::path::PathBuf>,
     /// Selected card's settings schema (refreshed each pump from the library).
-    pub params_schema: Vec<script::SettingDef>,
+    pub params_schema: OwnedSchema,
     /// Missing metadata or an unsupported saved native schema is not empty.
     pub params_unavailable: Option<&'static str>,
     /// Working bag while the params popup is open.
@@ -540,7 +562,7 @@ impl TuiApp {
             world: None,
             map_reach: None,
             map: MapView::new(),
-            map_model: MapModel::default(),
+            map_model: WalkMap::new(),
             map_active: false,
             here: None,
             map_search_open: false,
@@ -548,8 +570,8 @@ impl TuiApp {
             map_search_results: Vec::new(),
             map_search_sel: 0,
             map_pois: Vec::new(),
-            map_host_catalogue: None,
-            map_search_index: Search::default(),
+            map_catalogue: None,
+            map_search_index: WalkSearch::default(),
             map_poi_sel: None,
             map_catalogue_status: MapCatalogueStatus::Inactive,
             map_coverage: "coverage: unavailable until Map is opened".into(),
@@ -558,8 +580,8 @@ impl TuiApp {
             route: None,
             walk_dest: None,
             chat: ChatState::default(),
-            settings: vault::ProfileSettings::default(),
-            nav: host_play::WalkGlobals::default(),
+            settings: frontend_core::SettingsDraft::default(),
+            nav: frontend_core::WalkGlobals::default(),
             walk_permissions: WalkGlobalsView::default(),
             map_route_through_zones: false,
             script_scope_notice_ack: false,
@@ -581,7 +603,7 @@ impl TuiApp {
             shared_preferences: None,
             map_bake_dirty: false,
             loadouts_state: LoadoutsState::default(),
-            script_state: RunState::Idle,
+            script_state: ScriptRunState::Idle,
             script_queued: false,
             script_sel: None,
             browse_changed: false,
@@ -596,7 +618,7 @@ impl TuiApp {
             script_load_dir: default_load_browse_dir(None),
             script_load_sel: 0,
             script_load_last_dir: None,
-            params_schema: Vec::new(),
+            params_schema: OwnedSchema::default(),
             params_unavailable: None,
             params_bag: serde_json::Map::new(),
             params_state: ParamsState::default(),
@@ -619,7 +641,7 @@ impl TuiApp {
 
     /// Bind the shared process-service preferences. Walk permissions are
     /// refreshed again for every relevant render and admission.
-    pub fn restore_preferences(&mut self, preferences: host_play::local_state::Preferences) {
+    pub fn restore_preferences(&mut self, preferences: frontend_core::UiPreferences) {
         self.quester_paths_controller.restore(&preferences);
         let enabled = self.quester_paths_controller.settings().enabled();
         let folder = self
@@ -632,10 +654,9 @@ impl TuiApp {
         self.pause_script_on_manual_walk_abort = frontend_core::nav_preference(
             &preferences,
             frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
-            None,
         )
         .unwrap_or(true);
-        self.shared_preferences = Some(preferences.clone());
+        self.shared_preferences = Some(preferences.share());
         self.refresh_walk_permissions();
         self.map.restore_persisted_wilderness(&preferences);
     }
@@ -646,17 +667,24 @@ impl TuiApp {
     /// per pump: the service re-reads the file at most once per second).
     pub(crate) fn refresh_walk_permissions(&mut self) {
         let view = self.shared_preferences.as_ref().map_or(
-            WalkGlobalsView {
-                globals: self.nav,
-                script_scope_notice_ack: self.script_scope_notice_ack,
-                survivable_routing_notice_ack: self.survivable_routing_notice_ack,
-            },
+            WalkGlobalsView::new(
+                self.nav,
+                self.script_scope_notice_ack,
+                self.survivable_routing_notice_ack,
+            ),
             WalkGlobalsView::read,
         );
+        self.adopt_walk_permissions(view);
+    }
+
+    /// Adopt `view`, the durable walk permissions the core just read, into
+    /// every TUI view of them (the edit buffer, the acknowledgements, the
+    /// one-shot zone grant and an open parameters popup).
+    pub(crate) fn adopt_walk_permissions(&mut self, view: WalkGlobalsView) {
         self.walk_permissions = view;
-        self.nav = view.globals;
-        self.script_scope_notice_ack = view.script_scope_notice_ack;
-        self.survivable_routing_notice_ack = view.survivable_routing_notice_ack;
+        self.nav = view.globals();
+        self.script_scope_notice_ack = view.script_scope_notice_ack();
+        self.survivable_routing_notice_ack = view.survivable_routing_notice_ack();
         if !view.danger_this_walk(true) {
             self.map_route_through_zones = false;
         }
@@ -665,27 +693,17 @@ impl TuiApp {
         }
     }
 
-    pub(crate) fn shared_preferences(&self) -> Option<&host_play::local_state::Preferences> {
+    pub(crate) fn shared_preferences(&self) -> Option<&frontend_core::UiPreferences> {
         self.shared_preferences.as_ref()
     }
 
-    pub(crate) fn toggle_map_wilderness(&mut self) {
-        let preferences = self.shared_preferences.clone();
-        match self.map.toggle_wilderness(preferences.as_ref()) {
-            Ok(()) => {
-                if self
-                    .error
-                    .as_deref()
-                    .is_some_and(|error| error.starts_with("map wilderness:"))
-                {
-                    self.error = None;
-                }
-            }
-            Err(error) => {
-                self.error = Some(format!("map wilderness: {error}"));
-            }
-        }
+    /// Flip the map's special-areas overlay. Saving the choice (shared with
+    /// the panel) is the `SetNavPreference` the returned action submits.
+    pub(crate) fn toggle_map_wilderness(&mut self) -> AppAction {
+        self.map.layers.wilderness = !self.map.layers.wilderness;
+        AppAction::MapWilderness(self.map.layers.wilderness)
     }
+
     /// The header title (profile, server and revision).
     pub fn title(&self) -> &str {
         &self.title
@@ -792,7 +810,7 @@ impl TuiApp {
     }
 
     fn update_map_search(&mut self) {
-        if let Some(catalogue) = self.map_host_catalogue.clone() {
+        if let Some(catalogue) = self.map_catalogue.clone() {
             if self.map_search.is_empty() {
                 self.map_search_index.clear();
                 self.map_search_results.clear();
@@ -830,7 +848,7 @@ impl TuiApp {
                 _ => "·",
             }
         }
-        if let Some(catalogue) = &self.map_host_catalogue {
+        if let Some(catalogue) = &self.map_catalogue {
             let entry = catalogue.entry(index)?;
             let anchor = entry.anchor();
             return Some(format!(
@@ -843,10 +861,12 @@ impl TuiApp {
             ));
         }
         let poi = self.map_pois.get(index)?;
+        let mut name = String::with_capacity(poi.name.as_str().len());
+        display_walk_name_into(poi.name.as_str(), &mut name);
         Some(format!(
             "{} {} ({},{},{})",
             kind_glyph(poi.kind),
-            DisplayName::new(poi.name.as_str()),
+            name,
             poi.display.x as i32,
             poi.display.z as i32,
             poi.effective_plane
@@ -858,7 +878,7 @@ impl TuiApp {
             .here
             .map(|h| (h.x, h.z))
             .unwrap_or(crate::map::DEFAULT_CENTRE);
-        if let Some(catalogue) = self.map_host_catalogue.clone() {
+        if let Some(catalogue) = self.map_catalogue.clone() {
             if self.map_model.select_poi(&catalogue, index).is_ok() {
                 if let Some(entry) = catalogue.entry(index) {
                     let anchor = entry.anchor();
@@ -953,7 +973,7 @@ impl TuiApp {
                 }
                 return AppAction::MapWalkGroup;
             }
-            return AppAction::ArmWalk(pending.requested);
+            return AppAction::ArmWalk(pending.requested());
         }
         self.select_view_centre();
         AppAction::None
@@ -1009,7 +1029,7 @@ impl TuiApp {
                 level: h.level,
             });
         self.map_model.recenter(observed);
-        self.map.plane = self.map_model.plane;
+        self.map.plane = self.map_model.plane();
     }
 
     /// Group-walk rows: every member with its host eligibility. The fleet's
@@ -1040,12 +1060,14 @@ impl TuiApp {
     }
 
     /// Focused ↔ Group. Entering Group with no eligible row selected
-    /// selects every eligible member (shown as `[x]` in the fleet).
-    pub(crate) fn toggle_walk_send_mode(&mut self) {
+    /// selects every eligible member (shown as `[x]` in the fleet): the
+    /// returned `MarkAll` marks them.
+    pub(crate) fn toggle_walk_send_mode(&mut self) -> AppAction {
         self.walk_send.mode = match self.walk_send.mode {
             WalkSendMode::Focused => WalkSendMode::Group,
             WalkSendMode::Group => WalkSendMode::Focused,
         };
+        let mut action = AppAction::None;
         if self.walk_send.mode == WalkSendMode::Group && self.walk_send.checked_count() == 0 {
             let eligible_ids = self
                 .walk_send
@@ -1059,17 +1081,21 @@ impl TuiApp {
                     row.checked = true;
                 }
             }
-            self.table.selection.mark_all(eligible_ids);
+            if !eligible_ids.is_empty() {
+                action = AppAction::MarkAll(eligible_ids);
+            }
         }
         self.walk_send.sync_walk_label();
+        action
     }
 
-    /// Space on the map: select / unselect the selected bot for the group.
-    pub(crate) fn toggle_walk_send_focused(&mut self) {
+    /// Space on the map: select / unselect the selected bot for the group:
+    /// the returned `SetMark` marks or unmarks it.
+    pub(crate) fn toggle_walk_send_focused(&mut self) -> AppAction {
         let Some(focused) = self.focused_name() else {
-            return;
+            return AppAction::None;
         };
-        let identity = self.profile_id_for_name(&focused);
+        let mut action = AppAction::None;
         if let Some(row) = self
             .walk_send
             .rows
@@ -1078,19 +1104,20 @@ impl TuiApp {
         {
             if row.status.is_eligible() {
                 row.checked = !row.checked;
-                self.table.selection.set(identity, row.checked);
+                action = AppAction::SetMark(focused, row.checked);
             }
         }
         self.walk_send.sync_walk_label();
+        action
     }
 
     fn observed_marks(&self) -> Vec<ObservedMark> {
         self.map_observed
             .iter()
             .map(|obs| ObservedMark {
-                x: obs.tile.x,
-                z: obs.tile.z,
-                level: obs.tile.level,
+                x: obs.tile().x,
+                z: obs.tile().z,
+                level: obs.tile().level,
             })
             .collect()
     }
@@ -1117,7 +1144,7 @@ impl TuiApp {
         self.map_model.close();
         self.map_poi_sel = None;
         self.map_pois.clear();
-        self.map_host_catalogue = None;
+        self.map_catalogue = None;
         self.map_search_index.clear();
         self.map_observed.clear();
         self.walk_send = WalkSendState::default();
@@ -1142,8 +1169,8 @@ impl TuiApp {
         self.update_map_search();
     }
 
-    /// Retain E's catalogue owner. Search/draw borrow it; no POI payload copy.
-    pub fn bind_host_catalogue(&mut self, catalogue: Arc<Catalogue>) {
+    /// Retain the frontend-owned catalogue; draw and search borrow it.
+    pub fn bind_walk_catalogue(&mut self, catalogue: Arc<WalkCatalogue>) {
         let messages: Vec<_> = catalogue.coverage_messages().collect();
         let coverage = if messages.is_empty() {
             format!(
@@ -1154,12 +1181,11 @@ impl TuiApp {
         } else {
             format!("coverage: {}", messages.join("; "))
         };
-        if let Some(ctx) = self.map_model.context() {
-            let mut next = ctx;
-            next.overlay = Some(catalogue.key());
-            self.map_model.bind(next);
+        if let Some(context) = self.map_model.context() {
+            self.map_model
+                .bind(context.with_overlay(Some(catalogue.key())));
         }
-        self.map_host_catalogue = Some(catalogue);
+        self.map_catalogue = Some(catalogue);
         self.map_pois.clear();
         self.map_coverage = coverage;
         self.map_catalogue_status = MapCatalogueStatus::Ready;
@@ -1170,7 +1196,7 @@ impl TuiApp {
         self.map_catalogue_status = MapCatalogueStatus::Unavailable;
         self.map_coverage = reason.into();
         self.map_pois.clear();
-        self.map_host_catalogue = None;
+        self.map_catalogue = None;
         self.map_search_index.clear();
         self.map_search_results.clear();
     }
@@ -1186,7 +1212,7 @@ impl TuiApp {
             KeyCode::Char('d') => self.map.layers.dots = !self.map.layers.dots,
             KeyCode::Char('c') => self.map.layers.collision = !self.map.layers.collision,
             KeyCode::Char('r') => self.map.layers.reach = !self.map.layers.reach,
-            KeyCode::Char(' ') => self.toggle_walk_send_focused(),
+            KeyCode::Char(' ') => return self.toggle_walk_send_focused(),
             KeyCode::Char('z') => {
                 self.refresh_walk_permissions();
                 if self.walk_permissions.danger_this_walk(true) {
@@ -1233,28 +1259,12 @@ impl TuiApp {
         self.map.pan.1 += rows * step;
     }
 
-    /// Route keys to the loadouts popup when it is open.
-    pub fn loadouts_on_key(&mut self, store: &mut script::LoadoutsStore, key: KeyEvent) -> bool {
-        if !self.loadouts_state.open {
-            return false;
-        }
-        let mut pane = LoadoutsPane {
-            store,
-            state: &mut self.loadouts_state,
-        };
-        if pane.state.name_scratch.is_empty() && !pane.store.loadouts().is_empty() {
-            pane.sync_scratch_from_selection();
-        }
-        let _ = pane.on_key(key);
-        true
-    }
-
     /// Route keys to the params popup when it is open. Edits go through
     /// `commit`; Apply-to-all keys come back as actions.
     pub fn params_on_key(
         &mut self,
         commit: &mut ParamsCommit<'_>,
-        loadouts: &script::LoadoutsStore,
+        loadouts: &Loadouts,
         game_data: Option<&api::game_data::SelectedGameData>,
         key: KeyEvent,
     ) -> AppAction {
@@ -1267,7 +1277,7 @@ impl TuiApp {
         }
         self.refresh_walk_permissions();
         let mut pane = ParamsPane {
-            schema: &self.params_schema,
+            schema: self.params_schema.as_ref(),
             bag: &mut self.params_bag,
             commit,
             loadouts,
@@ -1287,8 +1297,8 @@ impl TuiApp {
     }
 
     /// The selected card whose shared schema the params popup edits.
-    pub fn params_card(&self) -> Option<script::ScriptSel> {
-        self.script_sel.clone()
+    pub fn params_card(&self) -> Option<ScriptChoice> {
+        self.script_sel.as_ref().map(ScriptChoice::duplicate)
     }
 
     /// Open the params popup over `bag`, the focused profile's merged bag
@@ -1296,7 +1306,7 @@ impl TuiApp {
     pub fn open_script_params(&mut self, bag: serde_json::Map<String, serde_json::Value>) {
         if self.params_card().is_none()
             || self.params_unavailable.is_some()
-            || self.params_schema.is_empty()
+            || self.params_schema.as_ref().is_empty()
         {
             return;
         }
@@ -1458,7 +1468,7 @@ impl TuiApp {
     /// Move the Browse selection `step` cards through the grouped list
     /// (wrapping).
     fn move_script_sel(&mut self, step: i32) {
-        let deferred = script::rs2b0t_import_deferred();
+        let deferred = frontend_core::scripts::paths::rs2b0t_import_deferred();
         let lines = browse_lines(&self.script_cards, &self.script_category_order, deferred);
         let card_indices: Vec<usize> = lines
             .iter()
@@ -1473,15 +1483,15 @@ impl TuiApp {
         let pos = self
             .script_sel
             .as_ref()
-            .and_then(|sel| match sel {
-                ScriptSel::Compiled(id) => self
+            .and_then(|sel| match sel.loaded_card() {
+                None => self
                     .script_cards
                     .iter()
-                    .position(|c| card_selection(c) == Some(ScriptSel::Compiled(*id))),
-                ScriptSel::Loaded(source, name) => self
+                    .position(|c| card_selection(c).as_ref() == Some(sel)),
+                Some((source, name)) => self
                     .script_cards
                     .iter()
-                    .position(|c| c.source == *source && c.name == *name),
+                    .position(|c| c.source == source && c.name == name),
             })
             .and_then(|card_idx| card_indices.iter().position(|&i| i == card_idx))
             .unwrap_or(0);
@@ -1565,7 +1575,7 @@ impl TuiApp {
         if self.rs2b0t_catalog_open {
             return self.catalog_click(col, row);
         }
-        let deferred = script::rs2b0t_import_deferred();
+        let deferred = frontend_core::scripts::paths::rs2b0t_import_deferred();
         let pane = ScriptPane::new(
             self.script_state,
             self.script_sel.as_ref(),
@@ -1575,8 +1585,7 @@ impl TuiApp {
             self.script_browse_open,
             self.script_load_open,
             "",
-            !self.params_schema.is_empty(),
-            None,
+            !self.params_schema.as_ref().is_empty(),
         )
         .with_reload_confirm(self.reload_confirm);
         match pane.on_click(self.script_area, col, row) {
@@ -1610,7 +1619,7 @@ impl TuiApp {
                     AppAction::None
                 }
             }
-            Command::ScriptStart => match self.script_sel.clone() {
+            Command::ScriptStart => match self.script_sel.as_ref().map(ScriptChoice::duplicate) {
                 Some(sel) => AppAction::ScriptStart(sel),
                 None => {
                     self.error = Some("script: browse to pick one first".into());
@@ -1675,29 +1684,27 @@ impl TuiApp {
     }
 
     /// Render the loadouts popup overlay (call after [`Self::draw`]).
-    pub fn draw_loadouts_overlay(
-        &mut self,
-        frame: &mut Frame<'_>,
-        store: &mut script::LoadoutsStore,
-    ) {
+    pub fn draw_loadouts_overlay(&mut self, frame: &mut Frame<'_>, form: &LoadoutForm) {
         if !self.loadouts_state.open {
             return;
         }
-        let mut pane = LoadoutsPane {
-            store,
-            state: &mut self.loadouts_state,
-        };
-        if pane.state.name_scratch.is_empty() && !pane.store.loadouts().is_empty() {
-            pane.sync_scratch_from_selection();
+        if self.loadouts_state.name_scratch.is_empty() && !form.loadouts().is_empty() {
+            self.loadouts_state.fill(form);
         }
-        frame.render_widget(pane, frame.area());
+        frame.render_widget(
+            LoadoutsPane {
+                form,
+                state: &self.loadouts_state,
+            },
+            frame.area(),
+        );
     }
 
     /// Render the params popup overlay (call after [`Self::draw`]).
     pub fn draw_params_overlay(
         &mut self,
         frame: &mut Frame<'_>,
-        loadouts: &script::LoadoutsStore,
+        loadouts: &Loadouts,
         game_data: Option<&api::game_data::SelectedGameData>,
     ) {
         self.refresh_walk_permissions();
@@ -1708,7 +1715,7 @@ impl TuiApp {
         // Rendering never commits.
         let mut read_only = |_: &str, _: serde_json::Value, _: Option<serde_json::Value>| Ok(());
         let pane = ParamsPane {
-            schema: &self.params_schema,
+            schema: self.params_schema.as_ref(),
             bag: &mut self.params_bag,
             commit: &mut read_only,
             loadouts,
@@ -1747,7 +1754,7 @@ impl TuiApp {
         self.draw_map_buttons(frame.buffer_mut(), button_area);
 
         let observed = self.observed_marks();
-        let catalogue = self.map_host_catalogue.clone();
+        let catalogue = self.map_catalogue.clone();
         let poi_count = catalogue
             .as_ref()
             .map(|c| c.entries().len())
@@ -1783,13 +1790,12 @@ impl TuiApp {
                     .iter()
                     .map(|row| {
                         let mark = if row.checked { "*" } else { " " };
-                        match row.status {
-                            WalkSlotStatus::Eligible(_) => {
-                                format!("{mark}{}", row.name())
-                            }
-                            WalkSlotStatus::Excluded(reason) => {
-                                format!("{mark}{} ({reason})", row.name())
-                            }
+                        if row.status.is_eligible() {
+                            format!("{mark}{}", row.name())
+                        } else if let Some(reason) = row.status.exclusion() {
+                            format!("{mark}{} ({})", row.name(), reason.as_str())
+                        } else {
+                            format!("{mark}{}", row.name())
                         }
                     })
                     .collect::<Vec<_>>()
@@ -1873,7 +1879,10 @@ impl TuiApp {
                 .map(|obs| {
                     format!(
                         "N {:?} ({},{},{})",
-                        obs.kind, obs.tile.x, obs.tile.z, obs.tile.level
+                        obs.kind(),
+                        obs.tile().x,
+                        obs.tile().z,
+                        obs.tile().level
                     )
                 })
                 .collect::<Vec<_>>()
@@ -1895,7 +1904,7 @@ impl TuiApp {
             .walk_dest
             .map(|t| format!("{} {} {}", t.x, t.z, t.level))
             .unwrap_or_else(|| "—".into());
-        let mem = frontend_core::MemoryNotice::status_text(self.settings.lowmem, self.memory);
+        let mem = frontend_core::MemoryNotice::status_text(self.settings.lowmem(), self.memory);
         let note = self.memory.filter(|n| n.differs()).map(|n| n.notice_text());
         let pane = StatusPane::new(self.focused_detail(), &walk, &mem)
             .mem_notice(note)
@@ -2025,12 +2034,11 @@ impl TuiApp {
             self.script_sel.as_ref(),
             &self.script_cards,
             &self.script_category_order,
-            script::rs2b0t_import_deferred(),
+            frontend_core::scripts::paths::rs2b0t_import_deferred(),
             self.script_browse_open,
             self.script_load_open,
             "",
-            !self.params_schema.is_empty(),
-            None,
+            !self.params_schema.as_ref().is_empty(),
         )
         .with_reload_confirm(self.reload_confirm)
         .with_native_status(

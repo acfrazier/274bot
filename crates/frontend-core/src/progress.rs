@@ -1,6 +1,6 @@
 //! Wording of the Fleet window's run-progress columns, shared by both front
 //! ends: runtime, time since the last progress, and levels gained. The data
-//! is [`script::ScriptProgress`], read from the host per visible row.
+//! is a [`RunProgress`], read from the core per visible row.
 
 use std::fmt::Write as _;
 use std::time::Duration;
@@ -19,32 +19,43 @@ pub fn span_label(span: Duration) -> String {
     }
 }
 
+/// One bot's run progress: runtime, the watchdog's gameplay clock, and the
+/// levels gained per skill.
+#[derive(Debug)]
+pub struct RunProgress(script::ScriptProgress);
+
+impl RunProgress {
+    pub(crate) fn new(progress: script::ScriptProgress) -> Self {
+        Self(progress)
+    }
+}
+
 /// `—` for a bot with no armed run or a frozen clock.
 pub const NONE: &str = "\u{2014}";
 
 /// Runtime cell: time since the run's Start.
-pub fn runtime_label(progress: Option<&script::ScriptProgress>) -> String {
-    progress.map_or_else(|| NONE.to_string(), |p| span_label(p.running_for))
+pub fn runtime_label(progress: Option<&RunProgress>) -> String {
+    progress.map_or_else(|| NONE.to_string(), |p| span_label(p.0.running_for))
 }
 
 /// Time-since-progress cell: the watchdog's gameplay clock. Absent while
 /// paused, out of game, or when nothing runs.
-pub fn idle_label(progress: Option<&script::ScriptProgress>) -> String {
+pub fn idle_label(progress: Option<&RunProgress>) -> String {
     progress
-        .and_then(|p| p.idle_for)
+        .and_then(|p| p.0.idle_for)
         .map_or_else(|| NONE.to_string(), span_label)
 }
 
 /// Levels-gained cell: the total, `+3`.
-pub fn levels_label(progress: Option<&script::ScriptProgress>) -> String {
-    progress.map_or_else(|| NONE.to_string(), |p| format!("+{}", p.levels_gained()))
+pub fn levels_label(progress: Option<&RunProgress>) -> String {
+    progress.map_or_else(|| NONE.to_string(), |p| format!("+{}", p.0.levels_gained()))
 }
 
 /// The per-skill breakdown behind [`levels_label`], `mining +2, fishing +1`
 /// (empty when nothing was gained).
-pub fn levels_detail(progress: &script::ScriptProgress) -> String {
+pub fn levels_detail(progress: &RunProgress) -> String {
     let mut text = String::new();
-    for (slot, gained) in progress.gained.iter().enumerate() {
+    for (slot, gained) in progress.0.gained.iter().enumerate() {
         if *gained == 0 {
             continue;
         }
@@ -60,16 +71,16 @@ pub fn levels_detail(progress: &script::ScriptProgress) -> String {
 mod tests {
     use super::*;
 
-    fn progress(gained: &[(usize, u8)], idle: Option<u64>) -> script::ScriptProgress {
+    fn progress(gained: &[(usize, u8)], idle: Option<u64>) -> RunProgress {
         let mut all = [0u8; script::SKILL_SLOTS];
         for (slot, n) in gained {
             all[*slot] = *n;
         }
-        script::ScriptProgress {
+        RunProgress::new(script::ScriptProgress {
             running_for: Duration::from_secs(3 * 3600 + 5 * 60 + 9),
             idle_for: idle.map(Duration::from_secs),
             gained: all,
-        }
+        })
     }
 
     #[test]
@@ -96,11 +107,11 @@ mod tests {
         assert_eq!(idle_label(None), NONE, "unarmed: no clock");
         assert_eq!(levels_label(None), NONE, "unarmed: no gains");
         // An armed-but-zero run must not look absent.
-        let zero = script::ScriptProgress {
+        let zero = RunProgress::new(script::ScriptProgress {
             running_for: Duration::from_secs(0),
             idle_for: Some(Duration::from_secs(0)),
             gained: [0u8; script::SKILL_SLOTS],
-        };
+        });
         assert_eq!(runtime_label(Some(&zero)), "0s");
         assert_eq!(idle_label(Some(&zero)), "0s");
         assert_eq!(levels_label(Some(&zero)), "+0");

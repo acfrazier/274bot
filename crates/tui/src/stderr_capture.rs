@@ -49,7 +49,7 @@ pub fn capture() {
         return;
     }
     let _ = io::stderr().flush();
-    let path = script::bot_file("tui-stderr.log");
+    let path = frontend_core::scripts::paths::bot_file("tui-stderr.log");
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
