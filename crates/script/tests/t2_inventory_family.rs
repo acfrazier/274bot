@@ -222,6 +222,7 @@ globalThis.__packRules = () => {
 };
 globalThis.__invItemClass = InvItem;
 globalThis.__inventoryObject = Inventory;
+globalThis.__equipmentObject = Equipment;
 globalThis.__inventoryRootIdentity = {
     InvItem: Root.InvItem === InvItem,
     Inventory: Root.Inventory === Inventory,
@@ -443,7 +444,7 @@ fn inventory_equipment_and_snapshot_exports_use_their_intended_views() {
             "containsCalls": ["first"],
             "isFull": false,
             "free": 42,
-            "order": ["size", "used", "size", "used", "max"]
+            "order": ["size", "size", "used", "size", "size", "used", "max"]
         })
     );
 
@@ -511,12 +512,12 @@ fn use_on_preserves_item_identity_and_each_supported_target_kind() {
     assert_eq!(requests.len(), 6);
     assert!(matches!(
         &requests[0],
-        InteractReq::Held { name, action, .. } if name == "Apple" && action == "Eat"
+        InteractReq::Held { name, action, .. } if name == "Mutated after construction" && action == "Eat"
     ));
     assert_eq!(
         as_use_on(&requests[1]),
         Some((
-            "Apple",
+            "Mutated after construction",
             "inv",
             Some("Apple"),
             0,
@@ -532,7 +533,7 @@ fn use_on_preserves_item_identity_and_each_supported_target_kind() {
     assert_eq!(
         as_use_on(&requests[2]),
         Some((
-            "Apple",
+            "Mutated after construction",
             "npc",
             Some("Goblin"),
             1,
@@ -548,7 +549,7 @@ fn use_on_preserves_item_identity_and_each_supported_target_kind() {
     assert_eq!(
         as_use_on(&requests[3]),
         Some((
-            "Apple",
+            "Mutated after construction",
             "loc",
             Some("Door"),
             3,
@@ -564,7 +565,7 @@ fn use_on_preserves_item_identity_and_each_supported_target_kind() {
     assert_eq!(
         as_use_on(&requests[4]),
         Some((
-            "Apple",
+            "Mutated after construction",
             "obj",
             Some("Coins"),
             5,
@@ -580,7 +581,7 @@ fn use_on_preserves_item_identity_and_each_supported_target_kind() {
     assert_eq!(
         as_use_on(&requests[5]),
         Some((
-            "Apple",
+            "Mutated after construction",
             "player",
             Some("Rival"),
             7,
@@ -960,5 +961,132 @@ fn inventory_root_identity_and_module_only_helpers_follow_bank_page_transitions(
         iso.probe("__inventoryRootRead()").unwrap(),
         json!({"names": ["Apple"], "capacity": 19, "inventoryCount": 3})
     );
+    iso.join();
+}
+
+#[test]
+fn implemented_readers_preserve_posted_v8_rows_getters_and_sparse_arrays() {
+    let iso = spawn();
+    let result = iso.probe(r#"(() => {
+        const Inventory = globalThis.__inventoryObject;
+        const Equipment = globalThis.__equipmentObject;
+        const host = globalThis.__rs2b0t_host;
+        const snapshotDescriptor = Object.getOwnPropertyDescriptor(host, 'snapshot');
+        const sizeDescriptor = Object.getOwnPropertyDescriptor(host, 'invSize');
+        const usedDescriptor = Object.getOwnPropertyDescriptor(Inventory, 'used');
+        const maxDescriptor = Object.getOwnPropertyDescriptor(Math, 'max');
+        const countEvents = [];
+        let countReads = 0;
+        const counted = {
+            get name() { countEvents.push('name'); return 'Apple'; },
+            get count() { countEvents.push('count'); return ++countReads === 1 ? 1 : '7'; },
+        };
+        const countSnapshot = {
+            get inv() { countEvents.push('inv'); return [null, , counted]; },
+        };
+        try {
+            Object.defineProperty(host, 'snapshot', {
+                configurable: true,
+                get() { countEvents.push('snapshot'); return countSnapshot; },
+            });
+            const count = Inventory.count('apple');
+            const retained = { name: 'Apple', count: 1, id: 10, slot: 2, ops: ['Eat'] };
+            const sparse = new Array(3);
+            sparse[2] = retained;
+            let equipmentCountReads = 0;
+            let equipmentIdReads = 0;
+            const equipmentRow = {
+                name: 'Sword',
+                get count() { return ++equipmentCountReads === 1 ? 1 : 'two'; },
+                get id() { return ++equipmentIdReads === 1 ? 2 : null; },
+            };
+            const current = { inv: sparse, equipment: [null, , equipmentRow] };
+            Object.defineProperty(host, 'snapshot', { configurable: true, value: current, writable: true });
+            const items = Inventory.items();
+            retained.name = 'Pear';
+            retained.ops = ['Caller action'];
+            const copiedName = items[0].name;
+            const freshName = Inventory.first('pear').name;
+            const retainedAction = items[0].actions()[0];
+            const equipment = Equipment.items();
+            const capacityEvents = [];
+            let capacityReads = 0;
+            delete host.invSize;
+            Object.defineProperty(current, 'inv_size', {
+                get() { capacityEvents.push('size.' + ++capacityReads); return capacityReads === 1 ? 3 : 4; },
+            });
+            Object.defineProperty(host, 'snapshot', {
+                configurable: true,
+                get() { capacityEvents.push('snapshot'); return current; },
+            });
+            Object.defineProperty(Math, 'max', {
+                configurable: true,
+                get() {
+                    capacityEvents.push('max.get');
+                    return function(...args) {
+                        capacityEvents.push('max.call');
+                        return maxDescriptor.value.apply(this, args);
+                    };
+                },
+            });
+            Object.defineProperty(Inventory, 'used', {
+                configurable: true,
+                get() {
+                    capacityEvents.push('used.get');
+                    return function() { capacityEvents.push('used.call'); return 1; };
+                },
+            });
+            const free = Inventory.free();
+            const sentinel = {};
+            Object.defineProperty(host, 'snapshot', {
+                configurable: true, get() { throw sentinel; },
+            });
+            let snapshotErrorIdentity = false;
+            try { Inventory.items(); }
+            catch (error) { snapshotErrorIdentity = error === sentinel; }
+            return {
+                count, countEvents, itemCount: items.length, copiedName, freshName,
+                retainedAction, equipment, equipmentCountReads, equipmentIdReads,
+                free, capacityEvents, snapshotErrorIdentity,
+            };
+        } finally {
+            if (snapshotDescriptor) Object.defineProperty(host, 'snapshot', snapshotDescriptor);
+            else delete host.snapshot;
+            if (sizeDescriptor) Object.defineProperty(host, 'invSize', sizeDescriptor);
+            else delete host.invSize;
+            Object.defineProperty(Inventory, 'used', usedDescriptor);
+            Object.defineProperty(Math, 'max', maxDescriptor);
+        }
+    })()"#).unwrap();
+    assert_eq!(result["count"], "07");
+    assert_eq!(
+        result["countEvents"],
+        json!(["snapshot", "inv", "name", "name", "count", "count"])
+    );
+    assert_eq!(result["itemCount"], 1);
+    assert_eq!(result["copiedName"], "Apple");
+    assert_eq!(result["freshName"], "Pear");
+    assert_eq!(result["retainedAction"], "Caller action");
+    assert_eq!(
+        result["equipment"],
+        json!([{"name": "Sword", "count": "two", "id": null}])
+    );
+    assert_eq!(result["equipmentCountReads"], 2);
+    assert_eq!(result["equipmentIdReads"], 2);
+    assert_eq!(result["free"], 3);
+    assert_eq!(
+        result["capacityEvents"],
+        json!([
+            "snapshot",
+            "size.1",
+            "snapshot",
+            "size.2",
+            "max.get",
+            "used.get",
+            "used.call",
+            "max.call"
+        ])
+    );
+    assert_eq!(result["snapshotErrorIdentity"], true);
     iso.join();
 }

@@ -1,8 +1,8 @@
 //! Native V8 adapters for posted inventory, equipment, and pack rules.
 //!
-//! The callbacks read the retained native observation. They do not accept or
-//! retain a JavaScript copy of any posted page. Interaction requests remain
-//! ordinary entries in the existing isolate-to-host queue.
+//! Existing readers operate on the current V8 snapshot with ordinary property
+//! semantics. Newly completed backpack helpers use native observation validity.
+//! Neither path retains rows or changes the existing interaction queue.
 
 use super::callback_v8 as cb;
 use crate::bank::ops::side_observation;
@@ -51,7 +51,7 @@ fn inventory<'s>(
         7 => inventory_is_full(scope, args.get(1), args.get(2)),
         8 => inventory_free(scope, args.get(1), args.get(2)),
         9 => inventory_interact(scope, args.get(1), args.get(2)),
-        10 => inventory_use_on(scope, args.get(1), args.get(2), args.get(3), args.get(4)),
+        10 => inventory_use_on(scope, args.get(1), args.get(2), args.get(3)),
         11 => equipment_items(scope),
         12 => equipment_contains(scope, args.get(1)),
         13 => equipment_equip(scope, args.get(1), args.get(2), args.get(3)),
@@ -235,23 +235,6 @@ fn callback_without_data<'s>(
     callback_function(scope, callback, data, length, label)
 }
 
-fn create_property<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    object: v8::Local<'s, v8::Object>,
-    key: &str,
-    value: v8::Local<'s, v8::Value>,
-) -> cb::JsResult<'s, ()> {
-    let key = cb::string(scope, key);
-    if cb::catching(scope, |s| object.create_data_property(s, key.cast(), value))? {
-        Ok(())
-    } else {
-        Err(cb::type_error(
-            scope,
-            "inventory row materialization failed",
-        ))
-    }
-}
-
 fn create_index<'s>(
     scope: &mut v8::HandleScope<'s>,
     array: v8::Local<'s, v8::Array>,
@@ -270,41 +253,6 @@ fn create_index<'s>(
             "inventory array materialization failed",
         ))
     }
-}
-
-fn item_row_object<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    row: &ItemRow,
-) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
-    let object = v8::Object::new(scope);
-    let name = match row.name.as_deref() {
-        Some(name) => cb::string(scope, name).into(),
-        None => v8::null(scope).into(),
-    };
-    create_property(scope, object, "name", name)?;
-    let count = cb::num(scope, f64::from(row.count));
-    create_property(scope, object, "count", count)?;
-    let id = cb::num(scope, f64::from(row.id));
-    create_property(scope, object, "id", id)?;
-    let ops = v8::Array::new(scope, row.ops.len() as i32);
-    for (index, op) in row.ops.iter().enumerate() {
-        let op = cb::string(scope, op.as_ref());
-        create_index(scope, ops, index as u32, op.into())?;
-    }
-    create_property(scope, object, "ops", ops.into())?;
-    let noted = v8::Boolean::new(scope, row.noted).into();
-    create_property(scope, object, "noted", noted)?;
-    let cert = cb::num(scope, f64::from(row.cert));
-    create_property(scope, object, "cert", cert)?;
-    if let Some(component_id) = row.component_id {
-        let component_id = cb::num(scope, f64::from(component_id));
-        create_property(scope, object, "component_id", component_id)?;
-    }
-    if let Some(slot) = row.slot {
-        let slot = cb::num(scope, f64::from(slot));
-        create_property(scope, object, "slot", slot)?;
-    }
-    Ok(object.into())
 }
 
 fn backpack_snapshot_array<'s>(
@@ -350,18 +298,6 @@ fn backpack_snapshot_array<'s>(
     Ok(array.into())
 }
 
-fn rows_array<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    rows: &[ItemRow],
-) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
-    let array = v8::Array::new(scope, rows.len() as i32);
-    for (index, row) in rows.iter().enumerate() {
-        let item = item_row_object(scope, row)?;
-        create_index(scope, array, index as u32, item)?;
-    }
-    Ok(array.into())
-}
-
 fn backpack_rows<'s>(
     scope: &mut v8::HandleScope<'s>,
 ) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
@@ -387,30 +323,47 @@ fn backpack_rows<'s>(
     })
 }
 
+fn posted_snapshot<'s>(
+    scope: &mut v8::HandleScope<'s>,
+) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
+    let global = scope.get_current_context().global(scope);
+    let host = cb::get(scope, global.into(), "__rs2b0t_host")?;
+    let host = if cb::truthy(scope, host) {
+        host
+    } else {
+        v8::Object::new(scope).into()
+    };
+    let snapshot = cb::get(scope, host, "snapshot")?;
+    Ok(if cb::truthy(scope, snapshot) {
+        snapshot
+    } else {
+        v8::Object::new(scope).into()
+    })
+}
+
+fn posted_rows<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    field: &str,
+) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
+    let snapshot = posted_snapshot(scope)?;
+    let rows = cb::get(scope, snapshot, field)?;
+    Ok(if cb::truthy(scope, rows) {
+        rows
+    } else {
+        v8::Array::new(scope, 0).into()
+    })
+}
+
 fn inventory_rows<'s>(
     scope: &mut v8::HandleScope<'s>,
 ) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
-    observed::with(|scene| {
-        let rows = scene
-            .since_login()
-            .inv()
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        rows_array(scope, rows)
-    })
+    posted_rows(scope, "inv")
 }
 
 fn equipment_rows<'s>(
     scope: &mut v8::HandleScope<'s>,
 ) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
-    observed::with(|scene| {
-        let rows = scene
-            .since_login()
-            .equipment()
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        rows_array(scope, rows)
-    })
+    posted_rows(scope, "equipment")
 }
 
 fn backpack_capacity<'s>(
@@ -437,15 +390,16 @@ fn inventory_capacity<'s>(
 ) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
     let host_size = cb::get(scope, host, "invSize")?;
     if host_size.is_number() {
-        return Ok(host_size);
+        return cb::get(scope, host, "invSize");
     }
-    observed::with(|scene| {
-        let view = scene.since_login();
-        Ok(cb::num(
-            scope,
-            f64::from(view.inv_size().unwrap_or_default()),
-        ))
-    })
+    let snapshot = posted_snapshot(scope)?;
+    let size = cb::get(scope, snapshot, "inv_size")?;
+    if size.is_number() {
+        let snapshot = posted_snapshot(scope)?;
+        cb::get(scope, snapshot, "inv_size")
+    } else {
+        Ok(cb::num(scope, 0.0))
+    }
 }
 
 fn array_filter<'s>(
@@ -540,6 +494,7 @@ fn inventory_name_matches<'s>(
         if !name.is_string() {
             return Ok(v8::Boolean::new(scope, false).into());
         }
+        let name = cb::get(scope, row, "name")?;
         let lowered = cb::call_method(scope, name, "toLowerCase", &[], "toLowerCase")?;
         Ok(v8::Boolean::new(scope, lowered.strict_equals(args.data())).into())
     })();
@@ -578,7 +533,7 @@ fn inventory_count_by_id<'s>(
 ) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
     let rows = inventory_rows(scope)?;
     let length = cb::get(scope, rows, "length")?;
-    if cb::number(scope, length)? == 0.0 {
+    if length.strict_equals(cb::num(scope, 0.0)) {
         return Ok(cb::num(scope, 0.0));
     }
     let has_id = callback_without_data(
@@ -615,7 +570,12 @@ fn inventory_has_nonzero_id<'s>(
             return Ok(row);
         }
         let id = cb::get(scope, row, "id")?;
-        let nonzero = id.is_number() && id.number_value(scope) != Some(0.0);
+        let nonzero = if id.is_number() {
+            let id = cb::get(scope, row, "id")?;
+            !id.strict_equals(cb::num(scope, 0.0))
+        } else {
+            false
+        };
         Ok(v8::Boolean::new(scope, nonzero).into())
     })();
     cb::finish(scope, rv, result);
@@ -655,7 +615,7 @@ fn add_item_count<'s>(
     let result = (|| {
         let count = cb::get(scope, args.get(1), "count")?;
         let addend = if count.is_number() {
-            count
+            cb::get(scope, args.get(1), "count")?
         } else {
             cb::num(scope, 0.0)
         };
@@ -708,10 +668,10 @@ fn inventory_used_method<'s>(
 
 fn inventory_interact<'s>(
     scope: &mut v8::HandleScope<'s>,
-    row: v8::Local<'s, v8::Value>,
+    item: v8::Local<'s, v8::Value>,
     action: v8::Local<'s, v8::Value>,
 ) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
-    let name = cb::get(scope, row, "name")?;
+    let name = cb::get(scope, item, "name")?;
     let action = global_string(scope, action)?;
     let op = cb::string(scope, "held");
     cb::object(
@@ -772,7 +732,6 @@ fn optional_property<'s>(
 fn inventory_use_on<'s>(
     scope: &mut v8::HandleScope<'s>,
     source: v8::Local<'s, v8::Value>,
-    source_row: v8::Local<'s, v8::Value>,
     target: v8::Local<'s, v8::Value>,
     identity_key: v8::Local<'s, v8::Value>,
 ) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
@@ -784,10 +743,11 @@ fn inventory_use_on<'s>(
         let first_snap = cb::get(scope, target, "snap")?;
         if !cb::truthy(scope, first_snap) {
             let target_identity = symbol_property(scope, target, identity_key)?;
-            let name = cb::get(scope, source_row, "name")?;
+            let name = cb::get(scope, source, "name")?;
             let target_name = cb::get(scope, target, "name")?;
             let source_identity = symbol_property(scope, source, identity_key)?;
             let source_id = optional_identity_field(scope, source_identity, "id")?;
+            let source_identity = symbol_property(scope, source, identity_key)?;
             let source_slot = optional_identity_field(scope, source_identity, "slot")?;
             let target_id = optional_identity_field(scope, target_identity, "id")?;
             let target_slot = optional_identity_field(scope, target_identity, "slot")?;
@@ -842,7 +802,7 @@ fn inventory_use_on<'s>(
         return Err(cb::not_impl(scope, "Inventory.useOn"));
     };
 
-    let source_name = cb::get(scope, source_row, "name")?;
+    let source_name = cb::get(scope, source, "name")?;
     let target_name_value = cb::get(scope, target, "name")?;
     let target_name = if target_name_value.is_null_or_undefined() {
         let snap = cb::get(scope, target, "snap")?;
@@ -853,6 +813,7 @@ fn inventory_use_on<'s>(
     };
     let source_identity = symbol_property(scope, source, identity_key)?;
     let source_id = optional_identity_field(scope, source_identity, "id")?;
+    let source_identity = symbol_property(scope, source, identity_key)?;
     let source_slot = optional_identity_field(scope, source_identity, "slot")?;
     let zero = cb::num(scope, 0.0);
     let snap_x = cb::get(scope, target, "snap")?;
@@ -916,13 +877,13 @@ fn equipment_item<'s>(
         let name = cb::get(scope, row, "name")?;
         let count = cb::get(scope, row, "count")?;
         let count = if count.is_number() {
-            count
+            cb::get(scope, row, "count")?
         } else {
             cb::num(scope, 1.0)
         };
         let id = cb::get(scope, row, "id")?;
         let id = if id.is_number() {
-            id
+            cb::get(scope, row, "id")?
         } else {
             cb::num(scope, 0.0)
         };
@@ -939,33 +900,13 @@ fn equipment_contains<'s>(
     let rows = equipment_rows(scope)?;
     let predicate = callback_function(
         scope,
-        equipment_name_matches,
+        inventory_name_matches,
         wanted,
         1,
         "Equipment.contains some",
     )?;
     let some = cb::get(scope, rows, "some")?;
     cb::call(scope, some, rows, &[predicate], "some")
-}
-
-fn equipment_name_matches<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    args: v8::FunctionCallbackArguments<'s>,
-    rv: v8::ReturnValue,
-) {
-    let result = (|| {
-        let row = args.get(0);
-        if !cb::truthy(scope, row) {
-            return Ok(row);
-        }
-        let name = cb::get(scope, row, "name")?;
-        if !name.is_string() {
-            return Ok(v8::Boolean::new(scope, false).into());
-        }
-        let lowered = cb::call_method(scope, name, "toLowerCase", &[], "toLowerCase")?;
-        Ok(v8::Boolean::new(scope, lowered.strict_equals(args.data())).into())
-    })();
-    cb::finish(scope, rv, result);
 }
 
 fn equipment_equip<'s>(
@@ -1142,6 +1083,10 @@ mod allocation_tests {
     use rustyscript::{Runtime, RuntimeOptions};
 
     const INVENTORY_SETUP: &str = r#"
+const postedRow = { name: 'Apple', count: 2, id: 10, slot: 0, noted: false, cert: -1, ops: ['Eat'] };
+globalThis.__rs2b0t_host = {
+    invSize: 28, snapshot: { inv: [postedRow], inv_size: 28, equipment: [postedRow] },
+};
 const identity = Symbol('inventoryIdentity');
 const sourceRow = Symbol('inventoryRow');
 globalThis.__InventoryTestItem = class {
