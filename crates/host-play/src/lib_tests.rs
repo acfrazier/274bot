@@ -9075,6 +9075,160 @@ export default class T extends LoopingBot {
         .stop();
 }
 
+/// An attached R289 bank client whose side grid 701 holds two same-name
+/// rows, Trout (333) and noted Trout (334), in the given order of
+/// `(id, count)`, with the main bank posted.
+fn same_name_side_rows_client(rows: [(i32, i32); 2]) -> (Client, GameSnapshot) {
+    use client::config::ObjType;
+    use client::io::ServerProt289;
+    let mut c = bank_client_289();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    c.stream =
+        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    std::mem::forget(listener);
+    {
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        cache.objs.resize(335, ObjType::default());
+        for id in [333, 334] {
+            cache.objs[id].id = id as i32;
+            cache.objs[id].name = "Trout".into();
+        }
+        cache.objs[334].certlink = 333;
+        cache.objs[334].certtemplate = 799;
+    }
+    let mut side = vec![2, 189, 0, 2];
+    for (id, count) in rows {
+        let wire = id + 1;
+        side.extend([(wire >> 8) as u8, wire as u8, count as u8]);
+    }
+    dispatch_289(&mut c, ServerProt289::UPDATE_INV_FULL, side);
+    dispatch_289(&mut c, ServerProt289::IF_OPENMAIN_SIDE, vec![2, 88, 2, 188]);
+    dispatch_289(
+        &mut c,
+        ServerProt289::UPDATE_INV_FULL,
+        vec![2, 89, 0, 1, 0, 2, 5],
+    );
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert!(snap.bank_loaded(), "the main bank posted its stock");
+    let side: Vec<(i32, i32)> = snap
+        .bank_side()
+        .iter()
+        .map(|item| (item.def.id, item.slot))
+        .collect();
+    assert_eq!(
+        side,
+        vec![(rows[0].0, 0), (rows[1].0, 1)],
+        "two same-name side rows"
+    );
+    (c, snap)
+}
+
+/// A deposit that names the selected row's id sends Deposit-All for that
+/// exact row in either row order, through both the observed bank-op path
+/// the hunt bank kernel uses and the direct interact path; an id no side
+/// row has is refused, never answered with the other same-name row.
+#[test]
+fn deposit_with_an_item_id_takes_exactly_that_same_name_side_row() {
+    use client::io::ClientProt289;
+    for rows in [[(333, 2), (334, 9)], [(334, 9), (333, 2)]] {
+        for (want, slot) in rows
+            .iter()
+            .enumerate()
+            .map(|(slot, (id, _))| (*id, slot as i32))
+        {
+            let req = script::shim::InteractReq::Deposit {
+                name: "Trout".into(),
+                id: Some(want),
+            };
+            let (mut c, snap) = same_name_side_rows_client(rows);
+            let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+            let checkpoint = api::interact::Driver::packet_checkpoint(&c).unwrap();
+            let before = c.out.pos;
+            let pending = super::script_runtime::dispatch_observed_bank_op_for_test(
+                &mut c,
+                &snap,
+                Some(&names),
+                &req,
+            )
+            .expect("the observed path sends the selected row");
+            assert_eq!(
+                pending.item_id, want,
+                "{rows:?}: the pending op is the selected id"
+            );
+            t23_bank_assert_button_packet(
+                &c,
+                before,
+                checkpoint,
+                ClientProt289::INV_BUTTON3.id as u8,
+                want,
+                slot,
+                701,
+            );
+
+            let (mut c, snap) = same_name_side_rows_client(rows);
+            let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+            let (navs, world) = empty_nav();
+            let checkpoint = api::interact::Driver::packet_checkpoint(&c).unwrap();
+            let before = c.out.pos;
+            assert!(dispatch_script_interact(
+                &mut c,
+                &snap,
+                Some(&names),
+                Some((3205, 3205, 0)),
+                &navs,
+                &world,
+                None,
+                "alice",
+                vec![req],
+            ));
+            t23_bank_assert_button_packet(
+                &c,
+                before,
+                checkpoint,
+                ClientProt289::INV_BUTTON3.id as u8,
+                want,
+                slot,
+                701,
+            );
+        }
+        let absent = script::shim::InteractReq::Deposit {
+            name: "Trout".into(),
+            id: Some(335),
+        };
+        let (mut c, snap) = same_name_side_rows_client(rows);
+        let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+        let before = c.out.pos;
+        assert!(
+            super::script_runtime::dispatch_observed_bank_op_for_test(
+                &mut c,
+                &snap,
+                Some(&names),
+                &absent,
+            )
+            .is_none(),
+            "{rows:?}: an id no side row has is refused"
+        );
+        let (navs, world) = empty_nav();
+        assert!(!dispatch_script_interact(
+            &mut c,
+            &snap,
+            Some(&names),
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![absent],
+        ));
+        assert_eq!(
+            c.out.pos, before,
+            "{rows:?}: a refused deposit sends nothing"
+        );
+    }
+}
+
 /// Task 7 — the shim's interact requests dispatch through the slot
 /// Driver: the booth Use-quickly op at the loc tile, the bank-side
 /// Deposit-All for a matching name, the bank withdraw op, and close.
@@ -9120,6 +9274,7 @@ fn dispatch_script_interact_sends_open_deposit_withdraw() {
             "deposit",
             script::shim::InteractReq::Deposit {
                 name: "Bones".into(),
+                id: None,
             },
         ),
         (
@@ -9168,7 +9323,8 @@ fn dispatch_script_interact_sends_open_deposit_withdraw() {
         "alice",
         vec![
             script::shim::InteractReq::Deposit {
-                name: "Lobster".into()
+                name: "Lobster".into(),
+                id: None,
             },
             script::shim::InteractReq::Withdraw {
                 name: "Lobster".into(),
@@ -9228,6 +9384,7 @@ fn shared_deposit_all_sends_one_packet_for_a_full_nonstackable_load() {
         "alice",
         vec![script::shim::InteractReq::Deposit {
             name: "bOnEs".into(),
+            id: None,
         }],
     ));
     let mut packets = Vec::new();

@@ -2,8 +2,9 @@
 
 #[path = "quest_journal/native.rs"]
 mod native;
+pub(crate) use native::ROOT_289;
 #[cfg(feature = "load")]
-pub(crate) use native::{title_matches, ROOT_289, TITLE_289};
+pub(crate) use native::{title_matches, TITLE_289};
 pub use native::{JournalMachine, JournalRequest};
 
 #[cfg(test)]
