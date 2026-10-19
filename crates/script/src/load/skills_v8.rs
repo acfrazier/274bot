@@ -65,9 +65,9 @@ fn stat<'s>(
 ) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
     // `mustStat` runs `stats().findIndex(...)` and then calls `stats()` again
     // for the row. Keep the second snapshot read, even when it differs.
-    let stats = stats(scope)?;
+    let rows = stats(scope)?;
     let unused_wanted = v8::undefined(scope).into();
-    let position = find_index(scope, stats, name, unused_wanted, true)?;
+    let position = find_index(scope, rows, name, unused_wanted, true)?;
     let missing = cb::num(scope, -1.0);
     if position.strict_equals(missing) {
         return Err(cb::not_impl(scope, operation));
@@ -92,31 +92,17 @@ fn hp_fraction<'s>(
     skills: v8::Local<'s, v8::Value>,
 ) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
     let hitpoints = cb::string(scope, "hitpoints");
-    let base = cb::call_method(
-        scope,
-        skills,
-        "level",
-        &[hitpoints],
-        "Skills.level",
-    )?;
+    let base = cb::call_method(scope, skills, "level", &[hitpoints], "Skills.level")?;
     let zero = cb::num(scope, 0.0);
     if cb::le(scope, base, zero)? {
         return Err(cb::not_impl(scope, "Skills.hpFraction"));
     }
 
-    let effective = cb::call_method(
-        scope,
-        skills,
-        "effective",
-        &[hitpoints],
-        "Skills.effective",
-    )?;
+    let effective = cb::call_method(scope, skills, "effective", &[hitpoints], "Skills.effective")?;
     cb::div(scope, effective, base)
 }
 
-fn stats<'s>(
-    scope: &mut v8::HandleScope<'s>,
-) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
+fn stats<'s>(scope: &mut v8::HandleScope<'s>) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
     // Mirror `_kernel.js`: host() || {}, then snapshot || {}, then stats || [].
     let global = scope.get_current_context().global(scope);
     let host = cb::get(scope, global.into(), "__rs2b0t_host")?;
@@ -206,13 +192,7 @@ fn skill_row_matches<'s>(
             return Ok(false);
         }
         let row_name = cb::get(scope, row, "name")?;
-        let lowered = cb::call_method(
-            scope,
-            row_name,
-            "toLowerCase",
-            &[],
-            "row.name.toLowerCase",
-        )?;
+        let lowered = cb::call_method(scope, row_name, "toLowerCase", &[], "row.name.toLowerCase")?;
 
         let data = args.data();
         let stringify_per_row = cb::get(scope, data, "stringifyPerRow")?;
@@ -229,4 +209,160 @@ fn skill_row_matches<'s>(
         Err(error) => Err(error),
     };
     cb::finish(scope, rv, result);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustyscript::RuntimeOptions;
+
+    const SKILLS_SETUP: &str = r#"
+globalThis.__rs2b0t_host = { snapshot: { stats: [
+    { name: 'attack', xp: 123, base: 50, effective: 60 },
+    { name: 'hitpoints', xp: 456, base: 10, effective: 8 },
+] } };
+const skills = {
+    level: name => __rs2b0t_skills(2, name),
+    effective: name => __rs2b0t_skills(3, name),
+};
+globalThis.checkSkills = () =>
+    __rs2b0t_skills(0, 'ATTACK') === 0 &&
+    __rs2b0t_skills(1, 'attack') === 123 &&
+    __rs2b0t_skills(2, 'attack') === 50 &&
+    __rs2b0t_skills(3, 'attack') === 60 &&
+    __rs2b0t_skills(4, skills) === 0.8;
+"#;
+
+    fn scope_cache_control<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        args: v8::FunctionCallbackArguments<'s>,
+        mut rv: v8::ReturnValue,
+    ) {
+        let first = &mut v8::TryCatch::new(scope);
+        let second = &mut v8::TryCatch::new(first);
+        let third = &mut v8::TryCatch::new(second);
+        let fourth = &mut v8::TryCatch::new(third);
+        let fifth = &mut v8::TryCatch::new(fourth);
+        if args.get(0).is_true() {
+            let sixth = &mut v8::TryCatch::new(fifth);
+            rv.set(v8::Boolean::new(sixth, true).into());
+        } else {
+            rv.set(v8::Boolean::new(fifth, true).into());
+        }
+    }
+
+    #[test]
+    fn cold_native_bridge_charge_is_a_reusable_per_depth_scope_cache() {
+        crate::load::platform::bootstrap_test_v8_platform();
+        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+        cb::install_ops(&mut runtime).unwrap();
+        install(&mut runtime).unwrap();
+        runtime.eval::<()>(SKILLS_SETUP).unwrap();
+        cb::install(&mut runtime, "__scope_cache_control", scope_cache_control).unwrap();
+        runtime
+            .eval::<()>(
+                r#"
+globalThis.checkPureJs = () => true;
+globalThis.checkFiveScopes = () => __scope_cache_control(false);
+globalThis.checkSixScopes = () => __scope_cache_control(true);
+"#,
+            )
+            .unwrap();
+        let context = runtime.deno_runtime().main_context();
+        let mut scope = runtime.deno_runtime().handle_scope();
+        let global = context.open(&mut scope).global(&mut scope);
+        let key = cb::string(&mut scope, "checkPureJs");
+        let pure_js =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let key = cb::string(&mut scope, "checkFiveScopes");
+        let five_scopes =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let key = cb::string(&mut scope, "checkSixScopes");
+        let six_scopes =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let key = cb::string(&mut scope, "checkSkills");
+        let skills =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let receiver = v8::undefined(&mut scope).into();
+        let pure = allocation_counter::measure(|| {
+            assert!(pure_js.call(&mut scope, receiver, &[]).unwrap().is_true());
+        });
+        let cold = allocation_counter::measure(|| {
+            assert!(five_scopes
+                .call(&mut scope, receiver, &[])
+                .unwrap()
+                .is_true());
+        });
+        let skills_after_control = allocation_counter::measure(|| {
+            assert!(skills.call(&mut scope, receiver, &[]).unwrap().is_true());
+        });
+        let extra_depth = allocation_counter::measure(|| {
+            assert!(six_scopes
+                .call(&mut scope, receiver, &[])
+                .unwrap()
+                .is_true());
+        });
+        let warm = allocation_counter::measure(|| {
+            for _ in 0..1_000 {
+                assert!(six_scopes
+                    .call(&mut scope, receiver, &[])
+                    .unwrap()
+                    .is_true());
+                assert!(skills.call(&mut scope, receiver, &[]).unwrap().is_true());
+            }
+        });
+        println!(
+            "Native scope-cache control pure={pure:?}; five scopes={cold:?}; \
+             skills after control={skills_after_control:?}; \
+             extra scope={extra_depth:?}; warm1000={warm:?}"
+        );
+        assert_eq!(pure, allocation_counter::AllocationInfo::default());
+        assert_eq!(cold.count_total, 3);
+        assert_eq!(cold.bytes_total, 3 * extra_depth.bytes_total);
+        assert_eq!(
+            skills_after_control,
+            allocation_counter::AllocationInfo::default()
+        );
+        assert_eq!(extra_depth.count_total, 1);
+        assert_eq!(extra_depth.count_current, 1);
+        assert_eq!(extra_depth.bytes_current, extra_depth.bytes_total as i64);
+        assert_eq!(warm, allocation_counter::AllocationInfo::default());
+    }
+
+    #[test]
+    fn skills_callbacks_bound_cold_bridge_cache_and_keep_zero_warm_rust_heap() {
+        crate::load::platform::bootstrap_test_v8_platform();
+        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+        cb::install_ops(&mut runtime).unwrap();
+        install(&mut runtime).unwrap();
+        runtime.eval::<()>(SKILLS_SETUP).unwrap();
+        let context = runtime.deno_runtime().main_context();
+        let mut scope = runtime.deno_runtime().handle_scope();
+        let global = context.open(&mut scope).global(&mut scope);
+        let key = cb::string(&mut scope, "checkSkills");
+        let function =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let receiver = v8::undefined(&mut scope).into();
+        let cold = allocation_counter::measure(|| {
+            assert!(function.call(&mut scope, receiver, &[]).unwrap().is_true());
+        });
+        let warm = allocation_counter::measure(|| {
+            for _ in 0..1_000 {
+                assert!(function.call(&mut scope, receiver, &[]).unwrap().is_true());
+            }
+        });
+        println!("Skills five-method native callbacks cold={cold:?}; warm1000={warm:?}");
+        // rusty_v8 137.2.1 caches one boxed ScopeData per maximum native-scope
+        // depth until isolate disposal. The independent control above incurs
+        // the same three 112-byte cache cells before any Skills call, after
+        // which Skills adds none. Keep that cold bridge charge inside the
+        // measurement, rather than hiding it in an unmeasured warm-up.
+        assert!(cold.count_total <= 3, "cold native bridge allocations");
+        assert!(cold.count_current <= 3, "cold retained bridge allocations");
+        assert!(cold.count_max <= 3, "cold peak bridge allocations");
+        assert!(cold.bytes_total <= 336, "cold native bridge bytes");
+        assert!(cold.bytes_current <= 336, "cold retained bridge bytes");
+        assert!(cold.bytes_max <= 336, "cold peak bridge bytes");
+        assert_eq!(warm, allocation_counter::AllocationInfo::default());
+    }
 }
