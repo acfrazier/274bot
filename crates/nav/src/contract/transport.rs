@@ -163,6 +163,16 @@ impl<'a> TransportView<'a> {
         self.edge().map_or(&[], |edge| &edge.worn_all_req)
     }
 
+    /// Obj ids that must be absent from an observed held inventory.
+    pub fn forbidden_held(self) -> &'a [i32] {
+        self.edge().map_or(&[], |edge| &edge.forbidden_held)
+    }
+
+    /// Obj ids that must be absent from observed equipment.
+    pub fn forbidden_worn(self) -> &'a [i32] {
+        self.edge().map_or(&[], |edge| &edge.forbidden_worn)
+    }
+
     /// WORLD membership required.
     pub fn members_required(self) -> bool {
         self.edge().is_some_and(|edge| edge.members_req)

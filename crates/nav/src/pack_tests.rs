@@ -92,7 +92,7 @@ fn pack_walk_roundtrips_step_ok_vs_u32_flags() {
 }
 
 #[test]
-fn v16_pack_has_no_resident_flags() {
+fn v17_pack_has_no_resident_flags() {
     let flags = vec![0u32; 4 * 2 * 2];
     let (walk, blocked) = pack_walk(&flags);
     let collision = WorldCollision {
@@ -115,7 +115,7 @@ fn v16_pack_has_no_resident_flags() {
 }
 
 #[test]
-fn v16_decode_rejects_older_versions() {
+fn v17_decode_rejects_older_versions() {
     let flags = vec![0u32; 4 * 2 * 2];
     let (walk, blocked) = pack_walk(&flags);
     let collision = WorldCollision {
@@ -131,6 +131,8 @@ fn v16_decode_rejects_older_versions() {
         flags: None,
     };
     let mut bytes = encode(&collision, &TransportGraph::default(), &[]).unwrap();
+    bytes[4] = 16;
+    assert!(matches!(decode(&bytes), Err(PackError::BadVersion(16))));
     bytes[4] = 15;
     assert!(matches!(decode(&bytes), Err(PackError::BadVersion(15))));
     bytes[4] = 7;
@@ -684,206 +686,182 @@ fn roundtrip_collision_and_transport_graph() {
         flags: None,
     };
     let mut graph = TransportGraph::default();
-    let door = TransportEdge {
-        takeoff: None,
-        worn_all_req: Vec::new(),
-        kind: TransportKind::Door,
-        player_delta: None,
-        at: WorldTile {
-            x: 3201,
-            z: 3200,
-            level: 0,
-        },
-        to: WorldTile {
-            x: 3203,
-            z: 3200,
-            level: 0,
-        },
-        loc_id: 1530,
-        option: 1,
-        ticks: 1,
-        dir: Some(DoorDir::N),
-        open_loc_id: Some(1531),
-        skill_req: vec![],
-        item_req: vec![],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![772], // dramen_staff on the Zanaris shed door
-        members_req: true,
-        wildy_cap: None,
-        quest_gates: None,
-    };
-    let ladder = TransportEdge {
-        takeoff: None,
-        worn_all_req: Vec::new(),
-        kind: TransportKind::Stairs,
-        player_delta: None,
-        at: WorldTile {
-            x: 3200,
-            z: 3200,
-            level: 0,
-        },
-        to: WorldTile {
-            x: 3201,
-            z: 3201,
-            level: 1,
-        },
-        loc_id: 1747,
-        option: 1,
-        ticks: 3,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![(16, 5)],
-        item_req: vec![(995, 10)],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec!["Restless Ghost".into()],
-        varp_req: vec![(4, 1)],
-        worn_req: vec![],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None,
-    };
+    let door = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
+    player_delta: None,
+    at: WorldTile {
+        x: 3201,
+        z: 3200,
+        level: 0,
+    },
+    to: WorldTile {
+        x: 3203,
+        z: 3200,
+        level: 0,
+    },
+    loc_id: 1530,
+    option: 1,
+    ticks: 1,
+    dir: Some(DoorDir::N),
+    open_loc_id: Some(1531),
+    skill_req: vec![],
+    item_req: vec![],
+    consumed_req: vec![],
+    item_returns: vec![],
+    quest_req: vec![],
+    varp_req: vec![],
+    worn_req: vec![772], // dramen_staff on the Zanaris shed door
+    members_req: true,
+    wildy_cap: None,
+    quest_gates: None, };
+    let ladder = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Stairs,
+    player_delta: None,
+    at: WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    },
+    to: WorldTile {
+        x: 3201,
+        z: 3201,
+        level: 1,
+    },
+    loc_id: 1747,
+    option: 1,
+    ticks: 3,
+    dir: None,
+    open_loc_id: None,
+    skill_req: vec![(16, 5)],
+    item_req: vec![(995, 10)],
+    consumed_req: vec![],
+    item_returns: vec![],
+    quest_req: vec!["Restless Ghost".into()],
+    varp_req: vec![(4, 1)],
+    worn_req: vec![],
+    members_req: false,
+    wildy_cap: None,
+    quest_gates: None, };
     let di = graph.edges.len();
     graph.edges.push(door);
     let li = graph.edges.len();
     graph.edges.push(ladder);
-    let glider = TransportEdge {
-        takeoff: None,
-        worn_all_req: Vec::new(),
-        kind: TransportKind::Glider,
-        player_delta: None,
-        at: WorldTile {
-            x: 2465,
-            z: 3501,
-            level: 3,
-        },
-        to: WorldTile {
-            x: 2850,
-            z: 3497,
-            level: 0,
-        },
-        loc_id: 170,
-        option: 1,
-        ticks: 4,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![],
-        item_req: vec![],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![(150, 160)],
-        worn_req: vec![],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None,
-    };
+    let glider = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Glider,
+    player_delta: None,
+    at: WorldTile {
+        x: 2465,
+        z: 3501,
+        level: 3,
+    },
+    to: WorldTile {
+        x: 2850,
+        z: 3497,
+        level: 0,
+    },
+    loc_id: 170,
+    option: 1,
+    ticks: 4,
+    dir: None,
+    open_loc_id: None,
+    skill_req: vec![],
+    item_req: vec![],
+    consumed_req: vec![],
+    item_returns: vec![],
+    quest_req: vec![],
+    varp_req: vec![(150, 160)],
+    worn_req: vec![],
+    members_req: false,
+    wildy_cap: None,
+    quest_gates: None, };
     let gi = graph.edges.len();
     graph.edges.push(glider);
     // A spirit-tree edge (kind 7) and the reserved NPC kind (8) ride
     // the same wire byte without a version bump.
-    let spirit = TransportEdge {
-        takeoff: None,
-        worn_all_req: Vec::new(),
-        kind: TransportKind::SpiritTree,
-        player_delta: None,
-        at: WorldTile {
-            x: 2460,
-            z: 3445,
-            level: 0,
-        },
-        to: WorldTile {
-            x: 2542,
-            z: 3169,
-            level: 0,
-        },
-        loc_id: 1293,
-        option: 1,
-        ticks: 1,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![],
-        item_req: vec![],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![(150, 160)],
-        worn_req: vec![],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None,
-    };
+    let spirit = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::SpiritTree,
+    player_delta: None,
+    at: WorldTile {
+        x: 2460,
+        z: 3445,
+        level: 0,
+    },
+    to: WorldTile {
+        x: 2542,
+        z: 3169,
+        level: 0,
+    },
+    loc_id: 1293,
+    option: 1,
+    ticks: 1,
+    dir: None,
+    open_loc_id: None,
+    skill_req: vec![],
+    item_req: vec![],
+    consumed_req: vec![],
+    item_returns: vec![],
+    quest_req: vec![],
+    varp_req: vec![(150, 160)],
+    worn_req: vec![],
+    members_req: false,
+    wildy_cap: None,
+    quest_gates: None, };
     let si = graph.edges.len();
     graph.edges.push(spirit);
-    let npc = TransportEdge {
-        takeoff: None,
-        worn_all_req: Vec::new(),
-        kind: TransportKind::Npc,
-        player_delta: None,
-        at: WorldTile {
-            x: 2500,
-            z: 3500,
-            level: 0,
-        },
-        to: WorldTile {
-            x: 2600,
-            z: 3400,
-            level: 0,
-        },
-        loc_id: 1,
-        option: 1,
-        ticks: 2,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![],
-        item_req: vec![],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None,
-    };
+    let npc = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Npc,
+    player_delta: None,
+    at: WorldTile {
+        x: 2500,
+        z: 3500,
+        level: 0,
+    },
+    to: WorldTile {
+        x: 2600,
+        z: 3400,
+        level: 0,
+    },
+    loc_id: 1,
+    option: 1,
+    ticks: 2,
+    dir: None,
+    open_loc_id: None,
+    skill_req: vec![],
+    item_req: vec![],
+    consumed_req: vec![],
+    item_returns: vec![],
+    quest_req: vec![],
+    varp_req: vec![],
+    worn_req: vec![],
+    members_req: false,
+    wildy_cap: None,
+    quest_gates: None, };
     let ni = graph.edges.len();
     graph.edges.push(npc);
     // The any-tile teleport layer (Varrock spell): stored as a kind-4
     // edge in the same array, split back out on decode.
-    graph.teleports.push(TransportEdge {
-        takeoff: None,
-        worn_all_req: Vec::new(),
-        kind: TransportKind::Teleport,
-        player_delta: None,
-        at: WorldTile {
-            x: 0,
-            z: 0,
-            level: 0,
-        },
-        to: WorldTile {
-            x: 3213,
-            z: 3424,
-            level: 0,
-        },
-        loc_id: 0,
-        option: 0,
-        ticks: 3,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![(6, 25)],
-        item_req: vec![],
-        consumed_req: vec![(554, 1), (556, 3), (563, 1)],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None,
-    });
+    graph.teleports.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Teleport,
+    player_delta: None,
+    at: WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    },
+    to: WorldTile {
+        x: 3213,
+        z: 3424,
+        level: 0,
+    },
+    loc_id: 0,
+    option: 0,
+    ticks: 3,
+    dir: None,
+    open_loc_id: None,
+    skill_req: vec![(6, 25)],
+    item_req: vec![],
+    consumed_req: vec![(554, 1), (556, 3), (563, 1)],
+    item_returns: vec![],
+    quest_req: vec![],
+    varp_req: vec![],
+    worn_req: vec![],
+    members_req: false,
+    wildy_cap: None,
+    quest_gates: None, });
     graph.at.entry(graph.edges[di].at).or_default().push(di);
     graph.at.entry(graph.edges[li].at).or_default().push(li);
     graph.at.entry(graph.edges[gi].at).or_default().push(gi);
@@ -969,7 +947,7 @@ fn roundtrip_collision_and_transport_graph() {
 }
 
 #[test]
-fn v16_roundtrips_consumed_returned_and_worn_all_requirements() {
+fn v17_roundtrips_positive_and_exclusion_requirements() {
     let collision = tiny_collision();
     let mut edge = gated_door(None);
     edge.kind = TransportKind::Teleport;
@@ -977,12 +955,16 @@ fn v16_roundtrips_consumed_returned_and_worn_all_requirements() {
     edge.consumed_req = vec![(995, 5)];
     edge.item_returns = vec![(386, 1)];
     edge.worn_all_req = vec![1277, 1321];
+    edge.forbidden_held = vec![1842];
+    edge.forbidden_worn = vec![1101, 1139];
     let mut graph = TransportGraph::default();
     graph.teleports.push(edge.clone());
 
     let bytes = encode(&collision, &graph, &[]).unwrap();
     let (_, decoded, _) = decode(&bytes).unwrap();
     assert_eq!(decoded.teleports[0].worn_all_req, vec![1277, 1321]);
+    assert_eq!(decoded.teleports[0].forbidden_held, vec![1842]);
+    assert_eq!(decoded.teleports[0].forbidden_worn, vec![1101, 1139]);
     assert_eq!(decoded.teleports, vec![edge]);
 }
 
@@ -1366,37 +1348,33 @@ fn v8_roundtrips_worn_req() {
         blocked,
         flags: None,
     };
-    let door = TransportEdge {
-        takeoff: None,
-        worn_all_req: Vec::new(),
-        kind: TransportKind::Door,
-        player_delta: None,
-        at: WorldTile {
-            x: 3201,
-            z: 3200,
-            level: 0,
-        },
-        to: WorldTile {
-            x: 3203,
-            z: 3200,
-            level: 0,
-        },
-        loc_id: 2406,
-        option: 1,
-        ticks: 1,
-        dir: Some(DoorDir::N),
-        open_loc_id: Some(1532),
-        skill_req: vec![],
-        item_req: vec![],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec!["Lost City".into()],
-        varp_req: vec![],
-        worn_req: vec![772],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None,
-    };
+    let door = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
+    player_delta: None,
+    at: WorldTile {
+        x: 3201,
+        z: 3200,
+        level: 0,
+    },
+    to: WorldTile {
+        x: 3203,
+        z: 3200,
+        level: 0,
+    },
+    loc_id: 2406,
+    option: 1,
+    ticks: 1,
+    dir: Some(DoorDir::N),
+    open_loc_id: Some(1532),
+    skill_req: vec![],
+    item_req: vec![],
+    consumed_req: vec![],
+    item_returns: vec![],
+    quest_req: vec!["Lost City".into()],
+    varp_req: vec![],
+    worn_req: vec![772],
+    members_req: false,
+    wildy_cap: None,
+    quest_gates: None, };
     let mut graph = TransportGraph::default();
     graph.edges.push(door.clone());
     graph.at.entry(door.at).or_default().push(0);
@@ -1427,37 +1405,33 @@ fn v9_roundtrips_members_req_true_and_false() {
         blocked,
         flags: None,
     };
-    let edge = |members_req| TransportEdge {
-        takeoff: None,
-        worn_all_req: Vec::new(),
-        kind: TransportKind::Door,
-        player_delta: None,
-        at: WorldTile {
-            x: 1,
-            z: 0,
-            level: 0,
-        },
-        to: WorldTile {
-            x: 2,
-            z: 0,
-            level: 0,
-        },
-        loc_id: 1596,
-        option: 1,
-        ticks: 1,
-        dir: Some(DoorDir::E),
-        open_loc_id: Some(1560),
-        skill_req: vec![],
-        item_req: vec![],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![],
-        members_req,
-        wildy_cap: None,
-        quest_gates: None,
-    };
+    let edge = |members_req| TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
+    player_delta: None,
+    at: WorldTile {
+        x: 1,
+        z: 0,
+        level: 0,
+    },
+    to: WorldTile {
+        x: 2,
+        z: 0,
+        level: 0,
+    },
+    loc_id: 1596,
+    option: 1,
+    ticks: 1,
+    dir: Some(DoorDir::E),
+    open_loc_id: Some(1560),
+    skill_req: vec![],
+    item_req: vec![],
+    consumed_req: vec![],
+    item_returns: vec![],
+    quest_req: vec![],
+    varp_req: vec![],
+    worn_req: vec![],
+    members_req,
+    wildy_cap: None,
+    quest_gates: None, };
     for members_req in [true, false] {
         let mut graph = TransportGraph::default();
         graph.edges.push(edge(members_req));
@@ -1525,37 +1499,33 @@ fn v9_decode_rejects_invalid_members_req_flag() {
         blocked,
         flags: None,
     };
-    let door = TransportEdge {
-        takeoff: None,
-        worn_all_req: Vec::new(),
-        kind: TransportKind::Door,
-        player_delta: None,
-        at: WorldTile {
-            x: 1,
-            z: 0,
-            level: 0,
-        },
-        to: WorldTile {
-            x: 2,
-            z: 0,
-            level: 0,
-        },
-        loc_id: 1596,
-        option: 1,
-        ticks: 1,
-        dir: Some(DoorDir::E),
-        open_loc_id: Some(1560),
-        skill_req: vec![],
-        item_req: vec![],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None,
-    };
+    let door = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
+    player_delta: None,
+    at: WorldTile {
+        x: 1,
+        z: 0,
+        level: 0,
+    },
+    to: WorldTile {
+        x: 2,
+        z: 0,
+        level: 0,
+    },
+    loc_id: 1596,
+    option: 1,
+    ticks: 1,
+    dir: Some(DoorDir::E),
+    open_loc_id: Some(1560),
+    skill_req: vec![],
+    item_req: vec![],
+    consumed_req: vec![],
+    item_returns: vec![],
+    quest_req: vec![],
+    varp_req: vec![],
+    worn_req: vec![],
+    members_req: false,
+    wildy_cap: None,
+    quest_gates: None, };
     let mut graph = TransportGraph::default();
     graph.edges.push(door);
     let mut bytes = encode(&collision, &graph, &[]).unwrap();
@@ -2234,37 +2204,33 @@ fn v10_roundtrips_wilderness_rules_and_wildy_cap() {
         },
         ..TransportGraph::default()
     };
-    graph.teleports.push(TransportEdge {
-        takeoff: None,
-        worn_all_req: Vec::new(),
-        kind: TransportKind::Teleport,
-        player_delta: None,
-        at: WorldTile {
-            x: 0,
-            z: 0,
-            level: 0,
-        },
-        to: WorldTile {
-            x: 3213,
-            z: 3424,
-            level: 0,
-        },
-        loc_id: 0,
-        option: 0,
-        ticks: 3,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![(6, 25)],
-        item_req: vec![],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![],
-        members_req: false,
-        wildy_cap: Some(20),
-        quest_gates: None,
-    });
+    graph.teleports.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Teleport,
+    player_delta: None,
+    at: WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    },
+    to: WorldTile {
+        x: 3213,
+        z: 3424,
+        level: 0,
+    },
+    loc_id: 0,
+    option: 0,
+    ticks: 3,
+    dir: None,
+    open_loc_id: None,
+    skill_req: vec![(6, 25)],
+    item_req: vec![],
+    consumed_req: vec![],
+    item_returns: vec![],
+    quest_req: vec![],
+    varp_req: vec![],
+    worn_req: vec![],
+    members_req: false,
+    wildy_cap: Some(20),
+    quest_gates: None, });
     let bytes = encode(&collision, &graph, &[]).unwrap();
     assert_eq!(bytes[4], VERSION);
     let (_, g, _) = decode(&bytes).unwrap();
@@ -2335,37 +2301,33 @@ fn tiny_collision() -> WorldCollision {
 
 /// One door crossing carrying `quest_gates`.
 fn gated_door(quest_gates: Option<QuestGates>) -> TransportEdge {
-    TransportEdge {
-        takeoff: None,
-        worn_all_req: Vec::new(),
-        kind: TransportKind::Door,
-        player_delta: None,
-        at: WorldTile {
-            x: 1,
-            z: 0,
-            level: 0,
-        },
-        to: WorldTile {
-            x: 2,
-            z: 0,
-            level: 0,
-        },
-        loc_id: 2621,
-        option: 1,
-        ticks: 1,
-        dir: Some(DoorDir::E),
-        open_loc_id: None,
-        skill_req: vec![],
-        item_req: vec![],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates,
-    }
+    TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
+    player_delta: None,
+    at: WorldTile {
+        x: 1,
+        z: 0,
+        level: 0,
+    },
+    to: WorldTile {
+        x: 2,
+        z: 0,
+        level: 0,
+    },
+    loc_id: 2621,
+    option: 1,
+    ticks: 1,
+    dir: Some(DoorDir::E),
+    open_loc_id: None,
+    skill_req: vec![],
+    item_req: vec![],
+    consumed_req: vec![],
+    item_returns: vec![],
+    quest_req: vec![],
+    varp_req: vec![],
+    worn_req: vec![],
+    members_req: false,
+    wildy_cap: None,
+    quest_gates, }
 }
 
 #[test]

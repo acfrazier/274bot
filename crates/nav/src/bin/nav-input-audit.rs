@@ -185,6 +185,8 @@ fn run() -> Result<(), String> {
                 "varp_req": edge.varp_req,
                 "worn_req": edge.worn_req,
                 "worn_all_req": edge.worn_all_req,
+                "forbidden_held": edge.forbidden_held,
+                "forbidden_worn": edge.forbidden_worn,
             })
         })
         .collect();

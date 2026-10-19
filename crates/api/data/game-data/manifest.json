@@ -22,6 +22,12 @@
           "bytes": 1349736,
           "sha256": "9d46e240e98db31a65baf2e59d984693cfbd7002a6b253c2a9518a59200d8346"
         },
+        "quests": {
+          "path": "274/quests.json",
+          "schema": 1,
+          "bytes": 633940,
+          "sha256": "e390fbd06f5cec49257374b952daeffd4b287a169c0b711ee7e6420508491d55"
+        },
         "debug": {
           "path": "274/debug.json",
           "schema": 1,
@@ -8416,6 +8422,12 @@
           "schema": 3,
           "bytes": 1411973,
           "sha256": "b5c378c82ddf3c54614a0893a5b3e3522811a18d119daa9d3e77fe66a2b6e62c"
+        },
+        "quests": {
+          "path": "289/quests.json",
+          "schema": 1,
+          "bytes": 678977,
+          "sha256": "d589a7d7770521a72dc502245d41613214259ec92ac0968a13b93311ddb9b59a"
         },
         "debug": {
           "path": "289/debug.json",

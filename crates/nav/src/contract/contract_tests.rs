@@ -75,29 +75,25 @@ fn lease_from(collision: WorldCollision) -> NavLease {
 }
 
 fn door_edge(at: WorldTile, to: WorldTile) -> TransportEdge {
-    TransportEdge {
-        kind: TransportKind::Door,
-        at,
-        to,
-        takeoff: None,
-        player_delta: None,
-        loc_id: 1,
-        option: 1,
-        ticks: 2,
-        dir: Some(DoorDir::N),
-        open_loc_id: None,
-        skill_req: vec![(16, 10)],
-        item_req: vec![(995, 10)],
-        consumed_req: vec![(995, 5)],
-        item_returns: vec![(995, 1)],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![772],
-        worn_all_req: vec![1, 2],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None,
-    }
+    TransportEdge { kind: TransportKind::Door,
+    at,
+    to,
+    takeoff: None,
+    player_delta: None,
+    loc_id: 1,
+    option: 1,
+    ticks: 2,
+    dir: Some(DoorDir::N),
+    open_loc_id: None,
+    skill_req: vec![(16, 10)],
+    item_req: vec![(995, 10)],
+    consumed_req: vec![(995, 5)],
+    item_returns: vec![(995, 1)],
+    quest_req: vec![],
+    varp_req: vec![],
+    worn_req: vec![772], worn_all_req: vec![1, 2], forbidden_held: Vec::new(), forbidden_worn: Vec::new(), members_req: false,
+    wildy_cap: None,
+    quest_gates: None, }
 }
 
 /// The host's packed collision surface for arrival probes, written from
@@ -1238,6 +1234,8 @@ fn check_route_view_against_router(
                 assert_eq!(hop.returned(), edge.item_returns.as_slice());
                 assert_eq!(hop.worn_any(), edge.worn_req.as_slice());
                 assert_eq!(hop.worn_all(), edge.worn_all_req.as_slice());
+                assert_eq!(hop.forbidden_held(), edge.forbidden_held.as_slice());
+                assert_eq!(hop.forbidden_worn(), edge.forbidden_worn.as_slice());
                 assert_eq!(hop.skill_requirements(), edge.skill_req.as_slice());
                 assert_eq!(hop.members_required(), edge.members_req);
                 assert_eq!(hop.wilderness_cap(), edge.wildy_cap);

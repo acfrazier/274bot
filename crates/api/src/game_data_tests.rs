@@ -91,10 +91,8 @@ fn family_preparation_runs_off_the_callers_thread() {
     let caller = std::thread::current().id();
     let prepared = crate::selected::FamilyPreparation::run(|worker| {
         let data = for_revision(ClientRevision::R289).unwrap();
-        assert!(matches!(
-            data.prepare_quests(worker),
-            Err(FactError::FamilyUnavailable(_))
-        ));
+        assert!(!data.prepare_quests(worker).unwrap().is_empty());
+        assert!(data.quest_family_identity().is_some());
         (std::thread::current().id(), data.selected_pin().unwrap())
     })
     .unwrap()

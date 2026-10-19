@@ -247,6 +247,7 @@ pub struct QuestEvidence {
     provider: Arc<dyn EvidenceProvider>,
     family: QuestFamilyId,
     required_after: EvidenceStamp,
+    owned_provider_bytes: usize,
 }
 
 impl QuestEvidence {
@@ -259,7 +260,19 @@ impl QuestEvidence {
             provider,
             family,
             required_after,
+            owned_provider_bytes: 0,
         }
+    }
+
+    /// A provider allocated by this request, rather than retained by another
+    /// owner. The byte bound includes its Arc backing and all owned buffers.
+    pub fn with_owned_provider_bytes(mut self, bytes: usize) -> Self {
+        self.owned_provider_bytes = bytes;
+        self
+    }
+
+    pub fn owned_provider_bytes(&self) -> usize {
+        self.owned_provider_bytes
     }
 
     /// The quest family the provider was prepared from.

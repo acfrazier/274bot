@@ -181,8 +181,8 @@ impl WorldState {
     ///
     /// Includes the Arc strong/weak counters, this value's inline storage,
     /// each owned hash-table allocation, and completed-quest string buffers.
-    /// `quest_evidence`'s provider is an independently shared allocation and
-    /// is charged by the owner that retains that provider.
+    /// A request-owned quest provider is charged here; providers retained by
+    /// another owner carry a zero local byte bound.
     pub fn try_shared_retained_bytes(&self) -> Option<usize> {
         let (arc_layout, _) = Layout::new::<[AtomicUsize; 2]>()
             .extend(Layout::new::<WorldState>())
@@ -217,9 +217,14 @@ impl WorldState {
         ] {
             bytes = bytes.checked_add(table_bytes?)?;
         }
-        self.quests
+        let bytes = self.quests
             .iter()
-            .try_fold(bytes, |total, quest| total.checked_add(quest.capacity()))
+            .try_fold(bytes, |total, quest| total.checked_add(quest.capacity()))?;
+        bytes.checked_add(
+            self.quest_evidence
+                .as_ref()
+                .map_or(0, QuestEvidence::owned_provider_bytes),
+        )
     }
 
     /// Bound the existing and prospective capacity of the bank-mutated
