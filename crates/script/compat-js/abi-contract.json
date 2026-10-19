@@ -25442,6 +25442,7 @@
   "active_families": [
     "bank",
     "cooking",
+    "cow",
     "skills",
     "world-primitives"
   ],
