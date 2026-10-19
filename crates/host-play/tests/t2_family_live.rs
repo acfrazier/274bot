@@ -25,7 +25,7 @@ struct GatherSeed {
     tile: SeedTile,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum GatherSkill {
     Woodcutting,
@@ -43,7 +43,7 @@ impl GatherSkill {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct SeedTile {
     x: i32,
@@ -439,6 +439,7 @@ fn local_family_reads_real_content() {
                 "source": path,
                 "config": seed,
                 "observed_preparation": prep.lock().unwrap().evidence.clone(),
+                "script_logs": logs,
             }),
         );
     }

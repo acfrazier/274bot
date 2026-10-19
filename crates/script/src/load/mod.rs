@@ -78,6 +78,8 @@ mod recovery_hints_v8;
 #[cfg(feature = "load")]
 mod run_policy_v8;
 #[cfg(feature = "load")]
+mod rune_routes_v8;
+#[cfg(feature = "load")]
 mod runtime_bridge;
 #[cfg(feature = "load")]
 mod scene_v8;
