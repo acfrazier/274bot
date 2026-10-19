@@ -971,7 +971,8 @@ fn register_cancel_socket(
     let callback_shared = Arc::downgrade(&shared);
     cancel.register_cancel_callback(move || {
         if let Some(shared) = callback_shared.upgrade() {
-            if let Some(socket) = lock_cancel_socket(&shared).take() {
+            let socket = lock_cancel_socket(&shared).take();
+            if let Some(socket) = socket {
                 let _ = socket.shutdown(Shutdown::Both);
             }
         }

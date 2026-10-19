@@ -695,7 +695,7 @@ fn write_optional_i128(output: &mut String, value: Option<i128>) {
 
 fn write_snapshot(
     output: &mut String,
-    snapshot: PhaseSnapshot,
+    snapshot: &PhaseSnapshot,
     driver_thread: u64,
     fixture_thread: u64,
     event_count: usize,
@@ -729,7 +729,7 @@ fn write_snapshot(
 fn make_receipt(
     baseline_current: usize,
     baseline_rss: Option<u64>,
-    snapshots: [PhaseSnapshot; 6],
+    snapshots: &[PhaseSnapshot; 6],
     driver_thread: u64,
     fixture_thread: u64,
 ) -> String {
@@ -766,7 +766,7 @@ fn make_receipt(
     write_optional_u64(&mut output, baseline_rss);
     output.push_str("},\n  \"phase_samples\": [\n");
 
-    for (index, snapshot) in snapshots.into_iter().enumerate() {
+    for (index, snapshot) in snapshots.iter().enumerate() {
         output.push_str("    ");
         write_snapshot(
             &mut output,
@@ -985,7 +985,7 @@ fn one_local_wss_connection_emits_scoped_allocator_receipt() {
     let receipt = make_receipt(
         baseline_current,
         baseline_rss,
-        [setup, connected, idle, read_write, shutdown, retired],
+        &[setup, connected, idle, read_write, shutdown, retired],
         driver_thread,
         fixture_thread_id,
     );

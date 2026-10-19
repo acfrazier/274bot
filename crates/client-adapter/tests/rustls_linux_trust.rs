@@ -45,7 +45,7 @@ fn temp_home() -> PathBuf {
 
 fn invoke(case: &str) {
     let home = temp_home();
-    let output = Command::new(env::current_exe().unwrap())
+    let output = Command::new(env::current_exe().expect("test executable path"))
         .args(["--exact", CHILD, "--nocapture"])
         .env("RUSTLS_TRUST_CASE", case)
         .env("HOME", &home)
@@ -229,11 +229,11 @@ impl Attempt {
         roots: Vec<CertificateDer<'static>>,
         host: &str,
     ) -> Option<Self> {
-        let poll = Poll::new().unwrap();
-        let waker = Arc::new(Waker::new(poll.registry(), WAKER).unwrap());
+        let poll = Poll::new().expect("create trust test poll");
+        let waker = Arc::new(Waker::new(poll.registry(), WAKER).expect("create trust test waker"));
         let park = Arc::new(Park::new());
         let source = CancelSource::new(Arc::clone(&park));
-        let token = source.child().unwrap();
+        let token = source.child().expect("reserve trust test attempt");
         let binding = BindingId {
             incarnation: 1,
             connection: 1,
@@ -245,9 +245,12 @@ impl Attempt {
             Arc::new(ReactorHealth::new(Instant::now())),
             roots,
         )
-        .unwrap();
+        .expect("start trust test TLS worker");
         lane.config()?;
-        let seq = lane.cell().next_transfer_seq().unwrap();
+        let seq = lane
+            .cell()
+            .next_transfer_seq()
+            .expect("allocate trust test transfer sequence");
         let key = HandoffKey {
             identity: HandoffIdentity {
                 generation: token.generation(),
@@ -257,24 +260,26 @@ impl Attempt {
         };
         let proof = Arc::new(QueueReleaseProof::new(binding, seq));
         let retirement = Arc::new(AttemptRetire::new(token.generation()));
-        let socket = TcpStream::connect(address).unwrap();
-        socket.set_nodelay(true).unwrap();
-        socket.set_nonblocking(true).unwrap();
+        let socket = TcpStream::connect(address).expect("connect trust test socket");
+        socket.set_nodelay(true).expect("disable test socket Nagle");
+        socket
+            .set_nonblocking(true)
+            .expect("configure nonblocking test socket");
         let mut socket = mio::net::TcpStream::from_std(socket);
         poll.registry()
             .register(&mut socket, SOCKET, Interest::READABLE)
-            .unwrap();
+            .expect("register trust test socket");
         let resource = GameTlsResource::new(socket, host.to_owned(), None);
         lane.cell()
             .submit(
                 key,
                 proof,
-                token.clone(),
+                token,
                 retirement,
                 Instant::now() + TIMEOUT,
                 resource,
             )
-            .unwrap();
+            .expect("submit trust test handoff");
         Some(Self {
             poll,
             events: Events::with_capacity(8),
@@ -286,12 +291,16 @@ impl Attempt {
         let deadline = Instant::now() + TIMEOUT;
         loop {
             if self.lane.cell().phase() == HandoffPhase::Returned {
-                return self.lane.cell().take_return(self.key).unwrap();
+                return self
+                    .lane
+                    .cell()
+                    .take_return(self.key)
+                    .expect("receive trust test handoff");
             }
             assert!(Instant::now() < deadline, "diagnostic=worker-timeout");
             self.poll
                 .poll(&mut self.events, Some(Duration::from_millis(25)))
-                .unwrap();
+                .expect("poll trust test handoff");
             for event in &self.events {
                 if event.token() == SOCKET && event.is_readable() {
                     self.lane
@@ -309,11 +318,11 @@ impl Drop for Attempt {
 }
 
 fn make_ca(name: &str) -> (Certificate, KeyPair, CertificateDer<'static>) {
-    let key = KeyPair::generate().unwrap();
-    let mut params = CertificateParams::new(vec![name.into()]).unwrap();
+    let key = KeyPair::generate().expect("generate trust test CA key");
+    let mut params = CertificateParams::new(vec![name.into()]).expect("create trust test CA");
     params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-    let cert = params.self_signed(&key).unwrap();
+    let cert = params.self_signed(&key).expect("sign trust test CA");
     let der = cert.der().clone();
     (cert, key, der)
 }
@@ -321,11 +330,14 @@ fn issue_server(
     ca: &Certificate,
     ca_key: &KeyPair,
 ) -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
-    let key = KeyPair::generate().unwrap();
-    let mut params = CertificateParams::new(vec!["localhost".into()]).unwrap();
+    let key = KeyPair::generate().expect("generate trust test server key");
+    let mut params =
+        CertificateParams::new(vec!["localhost".into()]).expect("create trust test server cert");
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
-    let cert = params.signed_by(&key, ca, ca_key).unwrap();
+    let cert = params
+        .signed_by(&key, ca, ca_key)
+        .expect("sign trust test server cert");
     (
         cert.der().clone(),
         PrivateKeyDer::Pkcs8(key.serialize_der().into()),
@@ -339,9 +351,9 @@ fn server_config(
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let config = ServerConfig::builder_with_provider(provider)
         .with_protocol_versions(&[version])
-        .unwrap()
+        .expect("configure trust test TLS version")
         .with_no_client_auth()
         .with_single_cert(vec![cert], key)
-        .unwrap();
+        .expect("configure trust test server identity");
     Arc::new(config)
 }

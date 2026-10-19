@@ -821,13 +821,21 @@ mod capacity_tests {
         assert_eq!(second.poll(Instant::now()), GameTlsWait::Ready);
         assert_eq!(third.poll(Instant::now()), GameTlsWait::Waiting);
         assert!(matches!(
-            second.poll(deadline - Duration::from_secs(4)),
+            second.poll(
+                deadline
+                    .checked_sub(Duration::from_secs(4))
+                    .expect("test deadline exceeds four seconds"),
+            ),
             GameTlsWait::InsufficientRemainingTime { .. },
         ));
         second.release_for_insufficient_time();
         assert_eq!(third.poll(Instant::now()), GameTlsWait::Ready);
         assert!(matches!(
-            second.poll(deadline - Duration::from_secs(3)),
+            second.poll(
+                deadline
+                    .checked_sub(Duration::from_secs(3))
+                    .expect("test deadline exceeds three seconds"),
+            ),
             GameTlsWait::InsufficientRemainingTime { .. },
         ));
         assert_eq!(second.poll(deadline), GameTlsWait::Deadline);

@@ -16,6 +16,12 @@ use std::io;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+fn one_second_ago() -> Instant {
+    Instant::now()
+        .checked_sub(Duration::from_secs(1))
+        .expect("monotonic clock has advanced one second")
+}
+
 struct HeldReactor {
     shared: Arc<SharedConnection>,
     binding: BindingId,
@@ -135,7 +141,7 @@ fn starved_reactor_over_64_flushes_retains_encoded_bytes_and_session() {
     // The reactor does not consume anything for 76 consecutive Client passes.
     // Each pass emits a real NO_TIMEOUT action through the output gate.
     for pass in 0..RECORD_SLOTS + 12 {
-        client.last_outbound = Instant::now() - Duration::from_secs(1);
+        client.last_outbound = one_second_ago();
         client.game_loop();
         assert!(client.ingame, "queue capacity must not end pass {pass}");
         assert!(client.take_session_exit_reason().is_none());
@@ -155,7 +161,7 @@ fn starved_reactor_over_64_flushes_retains_encoded_bytes_and_session() {
     let mut received = Vec::new();
     drain(&shared, &mut received);
     assert_eq!(&received, &expected[..RECORD_SLOTS + 1]);
-    client.last_outbound = Instant::now() - Duration::from_secs(1);
+    client.last_outbound = one_second_ago();
     client.game_loop();
     assert!(client.ingame);
     assert_eq!(client.out.pos, 0);
@@ -170,12 +176,12 @@ fn full_byte_ring_retains_the_encoded_action_until_drain() {
     let (mut client, shared, binding) = held_client();
     let prefix = [0x5a; 4999];
     shared.publish_record(binding, &prefix).unwrap();
-    client.last_outbound = Instant::now() - Duration::from_secs(1);
+    client.last_outbound = one_second_ago();
     client.game_loop();
     assert!(client.ingame);
     assert_eq!(client.out.pos, 0);
     assert_eq!(shared.outbound.len(), 5000);
-    client.last_outbound = Instant::now() - Duration::from_secs(1);
+    client.last_outbound = one_second_ago();
     client.game_loop();
     assert!(client.ingame);
     assert_eq!(client.out.pos, 1);
@@ -184,7 +190,7 @@ fn full_byte_ring_retains_the_encoded_action_until_drain() {
     drain(&shared, &mut received);
     assert_eq!(&received[..4999], &prefix);
     assert_eq!(received[4999], 181);
-    client.last_outbound = Instant::now() - Duration::from_secs(1);
+    client.last_outbound = one_second_ago();
     client.game_loop();
     drain(&shared, &mut received);
     assert_eq!(&received[4999..], &[181, 181, 181]);
@@ -195,7 +201,7 @@ fn full_byte_ring_retains_the_encoded_action_until_drain() {
 fn exhausted_packet_extent_still_ends_the_session() {
     let (mut client, _, _) = held_client();
     client.out.pos = 5000;
-    client.last_outbound = Instant::now() - Duration::from_secs(1);
+    client.last_outbound = one_second_ago();
     client.game_loop();
     assert!(!client.ingame);
     assert!(matches!(

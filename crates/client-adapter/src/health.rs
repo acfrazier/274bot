@@ -124,7 +124,11 @@ mod tests {
         health.progress(base);
         assert_eq!(health.maintain(base), None);
         assert_eq!(
-            health.maintain(base + REACTOR_STALL_LIMIT - Duration::from_nanos(1)),
+            health.maintain(
+                (base + REACTOR_STALL_LIMIT)
+                    .checked_sub(Duration::from_nanos(1))
+                    .expect("stall test window exceeds one nanosecond"),
+            ),
             None
         );
         assert_eq!(

@@ -51,10 +51,6 @@ pub struct ConnectionHandle {
 }
 
 impl ConnectionHandle {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "A connection binding retains distinct queue, health, and cancellation owners"
-    )]
     pub fn new(
         shared: Arc<SharedConnection>,
         bus: Arc<CommandBus>,

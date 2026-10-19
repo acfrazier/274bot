@@ -545,12 +545,12 @@ impl Drop for TransportService {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Release);
         let _ = self.bus.wake();
-        if let Some(worker) = self
+        let worker = self
             .worker
             .lock()
             .expect("reactor worker mutex is not poisoned")
-            .take()
-        {
+            .take();
+        if let Some(worker) = worker {
             let _ = worker.join();
         }
     }
@@ -650,10 +650,6 @@ impl Endpoint {
         }
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Rebind needs explicit identity, token, retirement, and deadline"
-    )]
     fn rebind(
         &mut self,
         expected: BindingId,
@@ -1397,13 +1393,15 @@ impl Reactor {
                 .clone();
             live.endpoint
                 .close(self.poll.registry(), lane.as_deref(), reason);
-        } else if let Some(registration) = self
-            .registry
-            .lock()
-            .expect("connection registry mutex is not poisoned")
-            .get(id)
-        {
-            registration.shared.publish_closed();
+        } else {
+            let registration = self
+                .registry
+                .lock()
+                .expect("connection registry mutex is not poisoned")
+                .get(id);
+            if let Some(registration) = registration {
+                registration.shared.publish_closed();
+            }
         }
         let registration = self
             .registry
@@ -1576,7 +1574,7 @@ impl Reactor {
             None
         };
         if let Some(reason) = failure {
-            let pending = live.rebind.take().unwrap();
+            let pending = live.rebind.take().expect("rebind command retained");
             pending.retire.ack();
             live.registration
                 .shared
@@ -1591,7 +1589,7 @@ impl Reactor {
             Ok(RebindBoundary::Pending) => TurnOutcome::Local,
             Ok(RebindBoundary::WaitWritable) => TurnOutcome::Wait,
             Ok(RebindBoundary::Clean) => {
-                let pending = live.rebind.take().unwrap();
+                let pending = live.rebind.take().expect("rebind command retained");
                 let reply = match live.endpoint.rebind(
                     pending.expected,
                     pending.next,

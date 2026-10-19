@@ -218,7 +218,8 @@ impl ResolveTicket {
         if let Some(inner) = self.resolver.upgrade() {
             maintain_inner(&inner);
         }
-        match mutex_lock(&self.cell.state).terminal {
+        let terminal = mutex_lock(&self.cell.state).terminal;
+        match terminal {
             TicketTerminal::Pending => ResolvePoll::Pending,
             TicketTerminal::Complete(Ok(addresses)) => ResolvePoll::Ready(Ok(addresses)),
             TicketTerminal::Complete(Err(error)) => ResolvePoll::Ready(Err(error)),
@@ -679,7 +680,8 @@ impl Drop for Resolver {
             state.shutdown = true;
         }
         self.inner.changed.notify_all();
-        if let Some(handle) = mutex_lock(&self.worker).take() {
+        let worker = mutex_lock(&self.worker).take();
+        if let Some(handle) = worker {
             if handle.is_finished() {
                 let _ = handle.join();
             }
@@ -848,6 +850,10 @@ struct TicketCellState {
 }
 
 impl TicketCell {
+    #[expect(
+        clippy::large_types_passed_by_value,
+        reason = "Owned ticket terminal moves into its cell without boxing or cloning"
+    )]
     fn new(ledger: Arc<AtomicUsize>, charge: usize, terminal: TicketTerminal) -> Self {
         Self {
             state: Mutex::new(TicketCellState {
@@ -1059,6 +1065,10 @@ fn sweep_waiterless_queued(inner: &ResolverInner, state: &mut ResolverState) {
     }
 }
 
+#[expect(
+    clippy::large_types_passed_by_value,
+    reason = "Each detached waiter receives its owned terminal without boxing or cloning"
+)]
 fn detach_waiter_locked(
     state: &mut ResolverState,
     waiter_index: usize,
@@ -1288,6 +1298,10 @@ fn policy_threshold(policy: ResolverHealthPolicy) -> Duration {
     }
 }
 
+#[expect(
+    clippy::large_types_passed_by_value,
+    reason = "Worker transfers its owned request and result into the cache without allocation"
+)]
 fn finish_work(
     inner: &ResolverInner,
     work: Work,
@@ -1409,6 +1423,10 @@ fn cache_lookup(
     Some(cached.outcome)
 }
 
+#[expect(
+    clippy::large_types_passed_by_value,
+    reason = "The owned resolver result moves into its bounded cache slot"
+)]
 fn cache_insert(
     state: &mut ResolverState,
     key: ResolveKey,
@@ -1802,7 +1820,11 @@ mod tests {
         assert_eq!(one.backend_timing(), Some((clock.now(), clock.now())));
         drop(one);
         assert_eq!(backend.calls.load(AtomicOrdering::SeqCst), 1);
-        clock.advance(CACHE_TTL - Duration::from_nanos(1));
+        clock.advance(
+            CACHE_TTL
+                .checked_sub(Duration::from_nanos(1))
+                .expect("cache TTL exceeds one nanosecond"),
+        );
         let hit = ticket(&resolver, 1, 1, "cache-one", &tx).unwrap();
         assert!(matches!(hit.poll(), ResolvePoll::Ready(Ok(_))));
         assert_eq!(hit.backend_timing(), None, "cache hit invoked no backend");

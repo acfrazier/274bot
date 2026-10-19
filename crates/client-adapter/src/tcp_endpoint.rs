@@ -551,9 +551,12 @@ mod tests {
         let (mut endpoint, _server, poll, shared, _source, retire) = connected(deadline);
         let id = endpoint.binding();
         let old = endpoint.cancel.as_ref().unwrap().clone();
+        let just_before_deadline = deadline
+            .checked_sub(Duration::from_nanos(1))
+            .expect("test deadline is in the future");
         assert_eq!(
-            endpoint.seal(id, deadline - Duration::from_nanos(1)),
-            Ok(deadline - Duration::from_nanos(1))
+            endpoint.seal(id, just_before_deadline),
+            Ok(just_before_deadline)
         );
         old.cancel();
         assert!(matches!(

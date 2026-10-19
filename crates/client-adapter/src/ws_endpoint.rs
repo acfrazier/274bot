@@ -2304,7 +2304,7 @@ mod tests {
             WorkStop::SocketWouldBlock
         );
 
-        let drained = fixture.start_drain_binaries(record.clone(), published_binary_count);
+        let drained = fixture.start_drain_binaries(record, published_binary_count);
         let mut pong_flushed = false;
         for _ in 0..128 {
             fixture.on_event(false, true);

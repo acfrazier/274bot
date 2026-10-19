@@ -153,6 +153,7 @@ impl<const N: usize> Ring<N> {
         // producer's mutable free span is disjoint. Release tail preceded
         // the Acquire above and head is not released until send returns.
         let ptr = self.bytes.get().cast::<u8>();
+        // SAFETY: The acquired tail commits this span and the producer cannot mutate it until head advances.
         let sent = send(unsafe { std::slice::from_raw_parts(ptr.add(start), len) })?;
         assert!(sent <= len, "socket reported more bytes than borrowed");
         self.head
@@ -178,6 +179,7 @@ impl<const N: usize> Ring<N> {
         // consumer's immutable committed span is disjoint. It stays private
         // until Release tail after recv returns.
         let ptr = self.bytes.get().cast::<u8>();
+        // SAFETY: This free span is disjoint from committed bytes and remains private until tail advances.
         let read = recv(unsafe { std::slice::from_raw_parts_mut(ptr.add(start), len) })?;
         assert!(read <= len, "socket reported more bytes than borrowed");
         self.tail
