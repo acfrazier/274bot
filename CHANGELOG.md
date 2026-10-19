@@ -12,6 +12,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- Cooking location options and name lookups now run in Rust over the existing
+  bank-bound catalog. Curated surfaces, unlock callbacks and returned object
+  identities keep their existing behavior.
 - The runecrafting compatibility catalog is materialized directly from the Rust
   route roster. Its names, order, default rune and real Tile values are unchanged;
   the unused posted content-page copy has been removed.
