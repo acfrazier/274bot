@@ -53,7 +53,7 @@ test('the generated ABI contract and family graph are complete', () => {
 
 test('module-only families have explicit non-nav predecessor rows without activation credit', () => {
     assert.equal(predecessors.families.length, 41);
-    assert.equal(predecessors.families.filter(row => row.activation_state === 'not-activated').length, 33);
+    assert.equal(predecessors.families.filter(row => row.activation_state === 'not-activated').length, 32);
     for (const [familyId, modules] of [
         ['magic', ['api/magic/Autocast.js']],
         ['prayer', ['api/prayer/Prayer.js']],
@@ -120,9 +120,9 @@ test('typed module classification rejects duplicate and incorrect family rows', 
     assert.throws(() => validateArtifacts(incorrect, predecessors, navFamilies), /Typed module family classification disagrees/);
 });
 
-test('only complete bank, cooking, cow, gathering, inventory, runecrafting, skills and world-primitives families are activated', () => {
+test('only complete bank, chatbox, cooking, cow, gathering, inventory, runecrafting, skills and world-primitives families are activated', () => {
     assert.equal(contract.activation_state, 'partially-activated');
-    assert.deepEqual(contract.active_families, ['bank', 'cooking', 'cow', 'gathering', 'inventory', 'runecrafting', 'skills', 'world-primitives']);
+    assert.deepEqual(contract.active_families, ['bank', 'chatbox', 'cooking', 'cow', 'gathering', 'inventory', 'runecrafting', 'skills', 'world-primitives']);
     for (const family of predecessors.families) {
         assert.equal(
             family.activation_state,
@@ -468,7 +468,7 @@ test('types follow the family their ABI describes', () => {
 });
 
 test('refusal debt is unique and names each missing notImplValue export', () => {
-    assert.equal(contract.not_impl_debt.length, 202);
+    assert.equal(contract.not_impl_debt.length, 198);
     const selectors = contract.not_impl_debt.map(row => row.selector);
     assert.equal(new Set(selectors).size, selectors.length);
     for (const selector of [
