@@ -211,6 +211,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   the Shantay Pass to Varrock. The walk now sends the click again once the
   bot has stood on the same tile for five game ticks, even while its
   on-screen character is still catching up.
+- Fixed: routes no longer go through a door from a tile beside it that a wall
+  cuts off from the door. Such a route made the bot walk a long way round,
+  and the walk could give up before the bot got there (for example at the
+  Varrock house door on the way to Aubury during Rune Mysteries). Walks now
+  go to the door's own side before they open it.
 
 ### Random-event guardian
 
