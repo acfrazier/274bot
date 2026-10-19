@@ -411,7 +411,9 @@ function checkPaintDeclarations(index, scratch) {
 import { Paint } from '*paint/Paint.js';
 import { Input } from '*input/Input.js';
 import type { PaintState } from '*paint/paintLogic.js';
-import { GameMessages } from '*api/chatbox/gameMessages.js';
+import { CANT_REACH, GameMessages, WRONG_SIDE } from '*api/chatbox/gameMessages.js';
+import * as ChatboxModule from '*api/chatbox/gameMessages.js';
+import * as ChatboxRoot from '@rs2b0t/api';
 import {
     DEFAULT_BOOTH_NAME, DEFAULT_BOOTH_OP, MAP_SQUARE, sameMapSquare,
     locationOptions, boothFields, resolveGatheringLocation,
@@ -493,10 +495,39 @@ state.isHovered({ x: 0, y: 0, w: 1, h: 1 });
 state.get('key', '');
 state.set('key', 'value');
 state.reset();
-GameMessages.record('line');
-GameMessages.firstSince(0, /line/);
-GameMessages.recent();
-GameMessages.reset();
+const chatRecord: void = GameMessages.record('line');
+const chatMark: number = GameMessages.mark();
+const chatSince: Array<{ seq: number; text: string }> = GameMessages.since(chatMark);
+const chatSaw: boolean = GameMessages.sawSince(chatMark, /line/);
+const chatFirst: { seq: number; text: string } | undefined = GameMessages.firstSince(chatMark, /line/);
+const chatRecent: Array<{ seq: number; text: string }> = GameMessages.recent();
+const chatLimited: Array<{ seq: number; text: string }> = GameMessages.recent(64);
+const chatReset: void = GameMessages.reset();
+const chatCantReach: RegExp = CANT_REACH;
+const chatWrongSide: RegExp = WRONG_SIDE;
+type AssertChatModule<T extends true> = T;
+type ChatModuleKeys = 'CANT_REACH' | 'WRONG_SIDE' | 'GameMessages';
+type _chatModuleExact = AssertChatModule<
+    Exclude<keyof typeof ChatboxModule, ChatModuleKeys> extends never
+        ? Exclude<ChatModuleKeys, keyof typeof ChatboxModule> extends never ? true : false
+        : false
+>;
+// @ts-expect-error Chatbox is module-only in the frozen root surface.
+ChatboxRoot.GameMessages;
+// @ts-expect-error Chatbox patterns are module-only in the frozen root surface.
+ChatboxRoot.CANT_REACH;
+// @ts-expect-error Chatbox patterns are module-only in the frozen root surface.
+ChatboxRoot.WRONG_SIDE;
+// @ts-expect-error A message sequence is a number, not any.
+const wrongChatSeq: string = GameMessages.recent()[0].seq;
+// @ts-expect-error GameMessages.since requires its upstream mark.
+GameMessages.since();
+// @ts-expect-error GameMessages.sawSince requires a RegExp.
+GameMessages.sawSince(0, 'line');
+// @ts-expect-error GameMessages.firstSince requires a RegExp.
+GameMessages.firstSince(0, 'line');
+// @ts-expect-error GameMessages.recent takes an optional numeric limit.
+GameMessages.recent('3');
 // @ts-expect-error GameMessages.record requires its upstream text argument.
 GameMessages.record();
 // @ts-expect-error GameMessages.firstSince requires its upstream mark and pattern.

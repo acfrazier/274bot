@@ -3395,6 +3395,10 @@
       "owner": "T4"
     },
     {
+      "path": "crates/script/src/load/chatbox_v8.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/load/clue_facts_v8.rs",
       "owner": "T2"
     },
@@ -3448,6 +3452,10 @@
     },
     {
       "path": "crates/script/src/load/hunt_v8.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/load/inventory_v8.rs",
       "owner": "T2"
     },
     {
@@ -5091,6 +5099,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/tests/t2_chatbox_family.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/tests/t2_cooking_family.rs",
       "owner": "T2"
     },
@@ -5108,6 +5120,10 @@
     },
     {
       "path": "crates/script/tests/t2_gathering_family.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_inventory_family.rs",
       "owner": "T2"
     },
     {

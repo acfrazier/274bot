@@ -12,6 +12,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- Compat v1 game-message recording and all readers now use one per-context
+  Rust history, bounded to 64 records. Only posted type 0 chat lines enter it.
+  `mark`, `since`, `sawSince` and `firstSince` read it. `since` returns original
+  message objects oldest first. Session resets clear history without replaying
+  omitted pages. Posted rows lack packet provenance, so local type 0 notices
+  remain indistinguishable from server game messages.
+  See [Game messages](docs/api/script.md#game-messages-compat-v1).
 - Gathering scripts can use the declared location options, booth defaults,
   map-square checks and location resolver. A shared Rust preset core serves
   compiled callers and compatibility adapters without a second resource catalog.
@@ -27,6 +34,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - Skills lookups and HP fraction calculations now run in Rust over the
   already-posted stats rows. Compatibility names, row ordering, missing-skill
   errors and boosted levels keep their existing behavior.
+- Inventory, Equipment and the seven pack-rule helpers now run through the
+  native inventory family. The backpack helpers select bank-side rows and
+  capacity 28 only while the bank is open. Otherwise, they use posted inventory
+  rows and capacity. Both helpers refuse an unposted bank-open page instead of
+  treating it as a closed pack. Known-empty views stay empty. Existing Inventory
+  and Equipment readers keep fresh posted rows, caller-visible getters and
+  item-handle identity. Both backpack helpers
+  remain on the public Inventory module only.
 - World Tile copying, translation, equality, text conversion and posted-coordinate
   validation now run in Rust. Area sampling returns a real Tile in the same native
   call. Existing geometry bounds, plane rules and caller-visible values stay the
