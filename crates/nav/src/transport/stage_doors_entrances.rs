@@ -520,26 +520,41 @@ fn weaker_than(weaker: &Needs, stronger: &Needs) -> bool {
         && (!weaker.members || stronger.members)
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "all inputs are immutable content and one placement"
-)]
-fn trajectory<'a>(
+#[derive(Clone, Copy)]
+struct TrajectoryInputs<'a> {
     src: &'a Sources,
     facts: &'a Facts,
     positions: &'a HashMap<i32, Vec<Placement>>,
     proofs: &'a HashSet<String>,
     supported: &'a HashSet<String>,
     selectors: &'a HashMap<String, Vec<Tool>>,
-    handler: &Block,
+    handler: &'a Block,
     id: i32,
-    placement: &Placement,
+    placement: &'a Placement,
     stand: WorldTile,
     absent: &'a [i32],
     npc: &'a [Expr],
     above: &'a [String],
     complete: bool,
-) -> Option<Trajectory> {
+}
+
+fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
+    let TrajectoryInputs {
+        src,
+        facts,
+        positions,
+        proofs,
+        supported,
+        selectors,
+        handler,
+        id,
+        placement,
+        stand,
+        absent,
+        npc,
+        above,
+        complete,
+    } = input;
     let at = WorldTile {
         x: placement.x,
         z: placement.z,
@@ -612,24 +627,24 @@ fn trajectory<'a>(
     normalize(&mut result.needs).then_some(result)
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "shares the immutable transport bake inputs"
-)]
-pub(super) fn edges(
-    src: &Sources,
-    positions: &HashMap<i32, Vec<Placement>>,
-    defs: &LocDefs,
-    graph: &mut TransportGraph,
-    collision: &WorldCollision,
-    skipped: &mut HashMap<&'static str, usize>,
-    observable: &ObservableGates,
-    audit: &mut VarpGateAudit,
-    facts: &Facts,
-    proofs: &HashSet<String>,
-    supported: &HashSet<String>,
-    selectors: &HashMap<String, Vec<Tool>>,
-) {
+pub(super) fn edges(input: EntranceInputs<'_>) {
+    let EntranceInputs {
+        args:
+            EntranceArgs {
+                src,
+                positions,
+                defs,
+                graph,
+                collision,
+                skipped,
+                observable,
+                audit,
+            },
+        facts,
+        proofs,
+        supported,
+        selectors,
+    } = input;
     let first_new_edge = graph.edges.len();
     let covered: HashSet<_> = graph
         .edges
@@ -783,16 +798,29 @@ pub(super) fn edges(
                                 (mask & (1usize << index) != 0).then_some(id)
                             })
                             .collect();
-                        let complete = trajectory(
-                            src, facts, positions, proofs, supported, selectors, handler, id,
-                            placement, stand, &absent, &reads.npc, &above, true,
-                        );
+                        let trajectory_inputs = TrajectoryInputs {
+                            src,
+                            facts,
+                            positions,
+                            proofs,
+                            supported,
+                            selectors,
+                            handler,
+                            id,
+                            placement,
+                            stand,
+                            absent: &absent,
+                            npc: &reads.npc,
+                            above: &above,
+                            complete: true,
+                        };
+                        let complete = trajectory(trajectory_inputs);
                         let incomplete = (reads.quests.len() == 1)
                             .then(|| {
-                                trajectory(
-                                    src, facts, positions, proofs, supported, selectors, handler,
-                                    id, placement, stand, &absent, &reads.npc, &above, false,
-                                )
+                                trajectory(TrajectoryInputs {
+                                    complete: false,
+                                    ..trajectory_inputs
+                                })
                             })
                             .flatten();
                         let incomplete = incomplete.filter(|candidate| {

@@ -140,7 +140,7 @@ ENGINE_PRISTINE = ROOT / "engine-pristine"
 ENGINE_RUN = ROOT / "engine-run"
 CATALOG = ROOT / "rs2b0t"
 NAV_SNAPSHOT = ROOT / "nav-snapshot"
-NAV_FIXTURE = ROOT / "fixtures" / "bake-r2-a.navpack"
+NAV_FIXTURE = ROOT / "fixtures" / "274bot-289-v17.navpack"
 CATALOG_RS = Path("crates/scenario/src/catalog.rs")
 RECEIPT_START = re.compile(r'\{"scenario":"')
 ANSI = re.compile(r"\x1b(\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(\x07|\x1b\\)|[()][0-9A-Za-z]|[=>78DEHMc])")

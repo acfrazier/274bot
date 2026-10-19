@@ -1560,9 +1560,16 @@ pub(super) fn stage_door_edges(
     bump(skipped, SKIP_STAGE_DOOR_PROC_DRIFT, drifted);
     if !OPEN_PROCS.iter().any(|p| supported.contains(p.name)) {
         bump(skipped, SKIP_STAGE_DOOR_PROCS, 1);
-        motion_facts.entrances(
-            &src, positions, loc_defs, graph, collision, skipped, observable, audit,
-        );
+        motion_facts.entrances(forced::EntranceArgs {
+            src: &src,
+            positions,
+            defs: loc_defs,
+            graph,
+            collision,
+            skipped,
+            observable,
+            audit,
+        });
         return;
     }
     let facts = loc_config_facts(content_root, ids);
@@ -1738,9 +1745,16 @@ pub(super) fn stage_door_edges(
     keys::key_use_edges(
         &src, positions, graph, collision, skipped, observable, audit,
     );
-    motion_facts.entrances(
-        &src, positions, loc_defs, graph, collision, skipped, observable, audit,
-    );
+    motion_facts.entrances(forced::EntranceArgs {
+        src: &src,
+        positions,
+        defs: loc_defs,
+        graph,
+        collision,
+        skipped,
+        observable,
+        audit,
+    });
 }
 
 /// Loc names with an `[oploc…]` block in `ladders+stairs/scripts/

@@ -294,7 +294,7 @@ inventory tab to become available.
 ```sh
 ENGINE_DIR=<engine-dir> BOT_LIVE_NAME_PREFIX=ge BOT_CPU=1 BOT_NAV_BUILD=skip \
   isohome target/release/tui-play --profile local-289 \
-  --nav-pack <bake-r2-a.navpack> --nav-flags <bake-r2-a.navflags> \
+  --nav-pack <274bot-289-v17.navpack> --nav-flags <274bot-289-v17.navflags> \
   --catalog <rs2b0t> --live script_guardian_skill_river_troll
 ```
 

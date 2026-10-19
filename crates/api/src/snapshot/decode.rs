@@ -424,7 +424,11 @@ impl GameSnapshot {
         if !self.equipment_gate.moved(client, self.inv_session_current) {
             return false;
         }
-        let posted = tab_inv_component(client, 4)
+        let equipment_component = tab_inv_component(client, 4);
+        self.equipment_packet_generation = equipment_component
+            .and_then(|id| client.inventory_packet_state(id))
+            .map(|state| state.generation);
+        let posted = equipment_component
             .and_then(|id| client.if_(id as usize))
             .is_some_and(|com| match (&com.link_obj_type, &com.link_obj_number) {
                 (Some(ids), Some(counts)) => !ids.is_empty() && ids.len() == counts.len(),

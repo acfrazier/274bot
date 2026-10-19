@@ -908,6 +908,24 @@ impl Motion<'_> {
         }
     }
 }
+pub(super) struct EntranceArgs<'a> {
+    pub(super) src: &'a Sources,
+    pub(super) positions: &'a HashMap<i32, Vec<Placement>>,
+    pub(super) defs: &'a LocDefs,
+    pub(super) graph: &'a mut TransportGraph,
+    pub(super) collision: &'a WorldCollision,
+    pub(super) skipped: &'a mut HashMap<&'static str, usize>,
+    pub(super) observable: &'a ObservableGates,
+    pub(super) audit: &'a mut VarpGateAudit,
+}
+
+struct EntranceInputs<'a> {
+    args: EntranceArgs<'a>,
+    facts: &'a Facts,
+    proofs: &'a HashSet<String>,
+    supported: &'a HashSet<String>,
+    selectors: &'a HashMap<String, Vec<Tool>>,
+}
 
 pub(super) struct MotionFacts {
     facts: Facts,
@@ -917,35 +935,14 @@ pub(super) struct MotionFacts {
 }
 
 impl MotionFacts {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "shares the stage-door bake inputs"
-    )]
-    pub(super) fn entrances(
-        &self,
-        src: &Sources,
-        positions: &HashMap<i32, Vec<Placement>>,
-        defs: &LocDefs,
-        graph: &mut TransportGraph,
-        collision: &WorldCollision,
-        skipped: &mut HashMap<&'static str, usize>,
-        observable: &ObservableGates,
-        audit: &mut VarpGateAudit,
-    ) {
-        entrances::edges(
-            src,
-            positions,
-            defs,
-            graph,
-            collision,
-            skipped,
-            observable,
-            audit,
-            &self.facts,
-            &self.proofs,
-            &self.supported,
-            &self.selectors,
-        );
+    pub(super) fn entrances(&self, args: EntranceArgs<'_>) {
+        entrances::edges(EntranceInputs {
+            args,
+            facts: &self.facts,
+            proofs: &self.proofs,
+            supported: &self.supported,
+            selectors: &self.selectors,
+        });
     }
 }
 

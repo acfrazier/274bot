@@ -601,6 +601,8 @@ pub mod bank_npc_live;
 
 #[cfg(all(target_os = "linux", feature = "test-support"))]
 pub use script_runtime::measures_captured_native_bank_pick_cpu;
+#[cfg(feature = "test-support")]
+pub use script_runtime::resolve_script_cross_zones_for_live_test;
 #[cfg(test)]
 mod gather_bait_live;
 #[cfg(test)]

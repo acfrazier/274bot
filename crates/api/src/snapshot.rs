@@ -143,8 +143,11 @@ pub struct GameSnapshot {
     /// gate so a movement rebuilds only that family.
     inventory: Vec<ItemView>,
     equipment: Vec<ItemView>,
-    /// Worn component slot data has been posted, including an observed empty set.
+    /// Worn component slot data was received from the server.
     equipment_available: bool,
+    /// Latest received equipment packet revision.
+    #[serde(skip)]
+    equipment_packet_generation: Option<u64>,
     bank: Vec<ItemView>,
     bank_side: Vec<ItemView>,
     /// Latest received inventory packet revision for the inv-tab component.
@@ -322,6 +325,7 @@ impl Default for GameSnapshot {
             inventory: Vec::new(),
             equipment: Vec::new(),
             equipment_available: false,
+            equipment_packet_generation: None,
             bank: Vec::new(),
             bank_side: Vec::new(),
             inventory_packet_generation: None,
@@ -446,6 +450,10 @@ impl GameSnapshot {
     pub fn seed_inventory_packet_generations(&mut self, main: Option<u64>, side: Option<u64>) {
         self.inventory_packet_generation = main;
         self.bank_side_packet_generation = side;
+    }
+    /// Offline fixture observation of the equipment packet revision.
+    pub fn seed_equipment_packet_generation(&mut self, generation: Option<u64>) {
+        self.equipment_packet_generation = generation;
     }
 
     /// Offline fixture observation of a trade page; production uses decoded widgets.
@@ -977,6 +985,11 @@ impl GameSnapshot {
     /// an observed empty worn set is posted, a pre-login frame is not.
     pub fn equipment_posted(&self) -> bool {
         self.equipment_available
+    }
+
+    /// Latest received packet generation for the equipment component, if any.
+    pub fn equipment_packet_generation(&self) -> Option<u64> {
+        self.equipment_packet_generation
     }
 
     /// Bank item views from the last bank rebuild (the open main modal's

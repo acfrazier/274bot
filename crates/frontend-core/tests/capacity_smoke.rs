@@ -11,7 +11,7 @@
 //! ```sh
 //! isohome cargo test -p frontend-core --test capacity_smoke --no-run
 //! isohome env LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=cw BOT_NAV_BUILD=skip \
-//!   WORLD_NAV_PACK=/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack \
+//!   WORLD_NAV_PACK=/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack \
 //!   WORLD_ENGINE_DIR=/Users/acfrazier/experiments/lostcity-289/engine \
 //!   CAPACITY_SMOKE_CPUS=31 CAPACITY_SMOKE_HOGS=64 CAPACITY_SMOKE_HOG_NICE=-11 \
 //!   CAPACITY_SMOKE_BOTS=20 \
