@@ -1738,7 +1738,7 @@ those approach endpoints directly.
 
 ## Game messages (compat v1)
 
-Incoming host chat lines and public `record(text)` calls enter one history.
+Posted type 0 host chat lines and public `record(text)` calls enter one history.
 The history retains at most 64 original `{ seq, text }` objects per script context.
 Its sequence increases for each record, including repeated text, even after older records leave the history.
 
@@ -1752,7 +1752,11 @@ object. Pattern matching resets `lastIndex` before each test.
 limit of eight. `reset()` clears history and resets its sequence to zero.
 It does not replay previously ingested host lines. Session resets also clear
 the host-ingestion cursor. Omitted chat pages do not add duplicate records.
-These methods match the frozen rs2b0t history contract.
+Host ingestion excludes nonzero message types. The posted rows do not identify
+their source packet, so ingestion cannot distinguish local type 0 notices
+(such as examine text) from `MESSAGE_GAME` lines. Frozen rs2b0t records only
+type 0 lines received through `MESSAGE_GAME`. This is a remaining ingestion
+limit, not a full match of the frozen host's recording gate.
 
 ## Bank item ops (compat v1)
 

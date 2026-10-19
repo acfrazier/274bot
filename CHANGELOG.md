@@ -13,10 +13,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 ### Scripts
 
 - Compat v1 game-message recording and all readers now use one per-context
-  Rust history, bounded to 64 records. Host chat lines enter that history.
+  Rust history, bounded to 64 records. Only posted type 0 chat lines enter it.
   `mark`, `since`, `sawSince` and `firstSince` read it. `since` returns original
-  message objects oldest first, matching frozen rs2b0t. Session resets clear
-  history without replaying omitted pages. See [Game messages](docs/api/script.md#game-messages-compat-v1).
+  message objects oldest first. Session resets clear history without replaying
+  omitted pages. Posted rows lack packet provenance, so local type 0 notices
+  remain indistinguishable from server game messages.
+  See [Game messages](docs/api/script.md#game-messages-compat-v1).
 - Gathering scripts can use the declared location options, booth defaults,
   map-square checks and location resolver. A shared Rust preset core serves
   compiled callers and compatibility adapters without a second resource catalog.

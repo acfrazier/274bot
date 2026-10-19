@@ -153,6 +153,107 @@ fn all_readers_share_original_history_rows_in_recording_order() {
 }
 
 #[test]
+fn only_type_zero_host_lines_enter_history_and_ignored_rows_advance_the_cursor() {
+    let iso = spawn();
+    let mixed = [
+        row(14, "game after"),
+        ChatLineInput {
+            type_: 2,
+            username: Some("player"),
+            ..row(13, "someone says hello")
+        },
+        row(12, "game before"),
+    ];
+    let mut input = lines(&mixed);
+    tick(&iso, &input);
+    assert_eq!(
+        value(
+            &iso,
+            r#"({
+                mark: __gameMessages.mark(),
+                rows: __gameMessages.since(0).map(row => [row.seq, row.text]),
+                afterFirst: __gameMessages.since(1).map(row => row.text),
+                sawPublic: __gameMessages.sawSince(0, /someone says hello/),
+                firstPublicAbsent: __gameMessages.firstSince(0, /someone says hello/) === undefined,
+                firstGame: __gameMessages.firstSince(0, /game/).text,
+                recent: __gameMessages.recent().map(row => row.text),
+            })"#,
+        ),
+        json!({
+            "mark": 2,
+            "rows": [[1, "game before"], [2, "game after"]],
+            "afterFirst": ["game after"],
+            "sawPublic": false,
+            "firstPublicAbsent": true,
+            "firstGame": "game before",
+            "recent": ["game after", "game before"],
+        })
+    );
+
+    let ignored = [ChatLineInput {
+        type_: 2,
+        ..row(15, "ignored newest")
+    }];
+    input.chat_lines = &ignored;
+    input.tick = 2;
+    tick(&iso, &input);
+    assert_eq!(value(&iso, "__gameMessages.mark()"), json!(2));
+    assert_eq!(value(&iso, "__gameMessages.since(2)"), json!([]));
+    let same_sequence = [row(15, "changed type must not replay")];
+    input.chat_lines = &same_sequence;
+    input.tick = 3;
+    tick(&iso, &input);
+    assert_eq!(value(&iso, "__gameMessages.mark()"), json!(2));
+    assert_eq!(value(&iso, "__gameMessages.since(2)"), json!([]));
+
+    iso.probe("__gameMessages.reset(), true").unwrap();
+    input.chat_lines = &mixed;
+    input.tick = 4;
+    tick(&iso, &input);
+    assert_eq!(value(&iso, "__gameMessages.mark()"), json!(0));
+    assert_eq!(value(&iso, "__gameMessages.since(0)"), json!([]));
+    iso.reset_session_work(None);
+    let _ = iso.probe("true").unwrap();
+    input.tick = 5;
+    tick(&iso, &input);
+    assert_eq!(
+        value(
+            &iso,
+            "__gameMessages.since(0).map(row => [row.seq, row.text])"
+        ),
+        json!([[1, "game before"], [2, "game after"]])
+    );
+    iso.join();
+}
+
+#[test]
+fn cavern_slice_last_two_keeps_the_two_game_lines() {
+    // Preserve review-r2/cavern-slice-probe.rs and frozen upass/cavern.ts:187.
+    let iso = spawn();
+    let rows = [
+        ChatLineInput {
+            type_: 2,
+            username: Some("player"),
+            ..row(14, "someone says hello")
+        },
+        row(13, "the witch is talking to her cat"),
+        row(12, "you knock at the door"),
+    ];
+    tick(&iso, &lines(&rows));
+    let said = value(
+        &iso,
+        r#"__gameMessages.since(0).map(m => m.text)
+            .filter(t => !t.startsWith('get ')).slice(-2).join(' ')"#,
+    );
+    assert_eq!(
+        said,
+        json!("you knock at the door the witch is talking to her cat"),
+        "frozen slice(-2) keeps the two game lines and drops the public chat line"
+    );
+    iso.join();
+}
+
+#[test]
 fn foreign_history_methods_getters_coercion_and_thrown_values_are_preserved() {
     let iso = spawn();
     let initial = [row(1, "initial")];
