@@ -180,6 +180,12 @@ export function familyBytes(upstream: FamilyInputs, draft: FamilyDraft, name = '
     if (!Number.isInteger(draft.schema) || draft.schema < 1 || draft.schema > 65535) throw new Error(`${name}: invalid extractor schema`);
     return `${JSON.stringify({ schema: draft.schema, ...upstream, facts: draft.payload }, null, 2)}\n`;
 }
+/** Quests extractor schema, shared by the normal generator, the selected pipeline provider, and verification. Bump only with the Rust decoder. */
+export const QUESTS_SCHEMA = 1;
+/** The real quests family: the existing identity extract, unchanged, in the shared family envelope. No stage fields. */
+export function extractQuestsFamily(content: string, revision: number): FamilyDraft {
+    return { schema: QUESTS_SCHEMA, payload: extractQuestIdentityFacts(content, revision) };
+}
 export type SelectedFamilies = { quests: FamilyArtifact; gathering: FamilyArtifact };
 export type BakedNavigation = {
     nav: string; flags: string; quest_facts_sha256: string; quest_extractor_schema: number;
@@ -3041,6 +3047,12 @@ async function generate(spec: Revision) {
         throw new Error(`${spec.revision}: quest coverage mismatch`);
     }
     if (spec.revision !== 274 && questIdentity.coverage.length !== 0) throw new Error(`${spec.revision}: quest coverage must be empty`);
+    const quests: FamilyDraft = { schema: QUESTS_SCHEMA, payload: questIdentity };
+    if (JSON.stringify(selectedInputHashes(spec)) !== JSON.stringify(gatheringInputs.inputs)) throw new Error(`${spec.revision}: selected inputs changed during quests extraction`);
+    const questsFile = path.join(path.dirname(spec.output), String(spec.revision), 'quests.json');
+    fs.mkdirSync(path.dirname(questsFile), { recursive: true });
+    fs.writeFileSync(questsFile, familyBytes(gatheringInputs, quests, 'quests'));
+    const questsArtifact = { path: path.relative(path.dirname(spec.output), questsFile), schema: quests.schema, ...sha256(questsFile) };
     const trails = extractTrailFacts(spec.content, objModule.default.configs);
     assertTrailPins(trails, spec.revision);
     const talkKey = extractTalkKeyFacts(spec.content, objModule.default.configs);
@@ -3089,7 +3101,7 @@ async function generate(spec: Revision) {
     fs.writeFileSync(debugFile, debugArtifactBytes(debugArtifact));
     const debugDescriptor = { path: path.relative(path.dirname(spec.output), debugFile), schema: DEBUG_SCHEMA_VERSION, ...sha256(debugFile) };
     const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes);
-    return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, families: { gathering: gatheringArtifact, debug: debugDescriptor }, gathering: gathering.summary, gather_sites: gatherSiteResult.report,
+    return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, families: { gathering: gatheringArtifact, quests: questsArtifact, debug: debugDescriptor }, gathering: gathering.summary, gather_sites: gatherSiteResult.report,
         equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel,
         special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length },
         trails: { rows: trails.rows.length, clues: trails.rows.filter((row) => row.role === 'clue').length, caskets: trails.rows.filter((row) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: trails.rows.filter((row) => row.access !== undefined).length },

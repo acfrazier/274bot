@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -10,7 +11,7 @@ import { parseDbRows, parseSections } from './extractors/gathering-content.ts';
 import { extractQuestIdentityFacts } from './extractors/quests.ts';
 import { extractQuestStartFacts } from './extractors/quest-starts.ts';
 import type { TrioGiverFacts, TalkKeyFacts } from './generate.ts';
-import { categoryName, familyBytes, familyInputs, generateSelected, revisions, requestedRevisions, type SelectedBuild } from './generate.ts';
+import { QUESTS_SCHEMA, categoryName, extractQuestsFamily, familyBytes, familyInputs, generateSelected, revisions, requestedRevisions, type SelectedBuild } from './generate.ts';
 import { sha256, sourceFile } from './extractors/common.ts';
 import { extractCombatStyleFacts, parseCombatScripts } from './extractors/combat.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
@@ -1673,6 +1674,44 @@ assertQuestRows(withExtras);
 assert.deepEqual(withExtras.coverage, []);
 assert.equal(withExtras.rows.some((row) => row.id === 'routequest' && row.display === 'In Search of the Myreque'), true);
 assert.equal(withExtras.rows.some((row) => row.id === 'misc' || row.id === 'troll_love' || row.id === 'mm'), false);
+// ---- quests family publication: schema, identity-only deterministic payload, actual descriptor ----
+{
+    assert.equal(QUESTS_SCHEMA, 1, 'quests family schema is pinned');
+    const draft = extractQuestsFamily(questRoot, 289);
+    assert.equal(draft.schema, QUESTS_SCHEMA);
+    assert.deepEqual(draft.payload, quest289, 'the family payload is the existing identity extract, unchanged');
+    const payload = JSON.parse(JSON.stringify(draft.payload)) as { rows: { id: string }[]; coverage: unknown[] };
+    assert.deepEqual(Object.keys(payload).sort(), ['coverage', 'rows'], 'identity rows plus coverage only: no stage fields');
+    const rowKeys = ['id', 'component', 'display', 'varp', 'varp_id', 'complete', 'quest_points', 'unknown_sides', 'requirements', 'members', 'kind', 'journal_title', 'journal_script'];
+    for (const row of payload.rows) assert.deepEqual(Object.keys(row).sort(), [...rowKeys].sort(), `quest row ${row.id} carries no stage fields`);
+    const upstream = { revision: 289, engine_commit: 'engine', content_commit: 'content', cache_id: 'cache', content_id: 'content', inputs: [] };
+    const first = familyBytes(upstream, draft, 'quests');
+    const envelope = JSON.parse(first);
+    assert.deepEqual(Object.keys(envelope), ['schema', 'revision', 'engine_commit', 'content_commit', 'cache_id', 'content_id', 'inputs', 'facts']);
+    assert.equal(envelope.schema, QUESTS_SCHEMA);
+    assert.deepEqual(envelope.facts, quest289);
+    // Deterministic: two independent fixture writes serialize to identical bytes.
+    const otherRoot = questFixture();
+    try {
+        assert.equal(familyBytes(upstream, extractQuestsFamily(otherRoot, 289), 'quests'), first, 'no clocks, no host paths in the payload');
+    } finally {
+        fs.rmSync(otherRoot, { recursive: true, force: true });
+    }
+    // Actual artifact descriptor: computed from the written bytes, never hand-written.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'quests-family-'));
+    try {
+        const file = path.join(dir, 'quests.json');
+        fs.writeFileSync(file, first);
+        const descriptor = { path: '289/quests.json', schema: draft.schema, ...sha256(file) };
+        assert.equal(descriptor.bytes, Buffer.byteLength(first));
+        assert.equal(descriptor.sha256, crypto.createHash('sha256').update(first).digest('hex'), 'the descriptor digests the exact family bytes');
+        fs.appendFileSync(file, ' ');
+        assert.notEqual(sha256(file).sha256, descriptor.sha256, 'any tampered byte moves the digest');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+    assert.throws(() => familyBytes(upstream, { schema: 0, payload: {} }, 'quests'), /invalid extractor schema/);
+}
 
 const pinQuest274 = extractQuestIdentityFacts(pinContentRoot(274), 274);
 const pinQuest289 = extractQuestIdentityFacts(pinContentRoot(289), 289);
