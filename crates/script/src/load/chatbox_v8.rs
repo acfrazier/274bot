@@ -136,8 +136,13 @@ pub(crate) fn ingest_posted(runtime: &mut Runtime) -> Result<(), String> {
         if cursor.is_some_and(|seen| host_seq <= seen) {
             continue;
         }
-        let text = cb::get(&mut scope, row, "text").map_err(host_throw_error)?;
-        append_record(&mut scope, &state, text).map_err(host_throw_error)?;
+        // Frozen BotHost.ts:81-84 records MESSAGE_GAME lines only when type === 0.
+        // The posted ChatLine carries its numeric type, but not packet provenance.
+        let kind = cb::get(&mut scope, row, "type").map_err(host_throw_error)?;
+        if kind.is_int32() && kind.int32_value(&mut scope) == Some(0) {
+            let text = cb::get(&mut scope, row, "text").map_err(host_throw_error)?;
+            append_record(&mut scope, &state, text).map_err(host_throw_error)?;
+        }
         cursor = Some(host_seq);
         state.history.borrow_mut().host_cursor = cursor;
     }
@@ -496,8 +501,8 @@ mod tests {
 
     const COMPLETE_BATCH: &str = r#"
         globalThis.__rs2b0t_host = { snapshot: { chat_lines: [
-            { seq: 9, text: 'page newest' },
-            { seq: 3, text: 'page oldest' },
+            { seq: 9, text: 'page newest', type: 0 },
+            { seq: 3, text: 'page oldest', type: 0 },
         ] } };
         globalThis.__gameMessages = (...args) => __rs2b0t_game_messages(...args);
         globalThis.__completeChatboxBatch = () => {
@@ -647,7 +652,7 @@ mod tests {
         runtime
             .eval::<()>(
                 "globalThis.__rs2b0t_host.snapshot.chat_lines = [\
-                 { seq: 12, text: 'newest' }, { seq: 11, text: 'oldest' }];",
+                 { seq: 12, text: 'newest', type: 0 }, { seq: 11, text: 'oldest', type: 0 }];",
             )
             .unwrap();
         ingest_posted(&mut runtime).unwrap();
