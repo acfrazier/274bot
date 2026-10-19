@@ -52,7 +52,7 @@ test('the generated ABI contract and family graph are complete', () => {
 
 test('module-only families have explicit non-nav predecessor rows without activation credit', () => {
     assert.equal(predecessors.families.length, 41);
-    assert.equal(predecessors.families.filter(row => row.activation_state === 'not-activated').length, 34);
+    assert.equal(predecessors.families.filter(row => row.activation_state === 'not-activated').length, 33);
     for (const [familyId, modules] of [
         ['magic', ['api/magic/Autocast.js']],
         ['prayer', ['api/prayer/Prayer.js']],
@@ -267,7 +267,7 @@ test('types follow the family their ABI describes', () => {
 });
 
 test('refusal debt is unique and names each missing notImplValue export', () => {
-    assert.equal(contract.not_impl_debt.length, 204);
+    assert.equal(contract.not_impl_debt.length, 200);
     const selectors = contract.not_impl_debt.map(row => row.selector);
     assert.equal(new Set(selectors).size, selectors.length);
     for (const selector of [
