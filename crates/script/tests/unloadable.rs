@@ -231,19 +231,14 @@ export default class EssMiner extends LoopingBot { loop() { ToolAcquire; } }
 }
 
 #[test]
-fn reach_loc_op_fails_closed_through_proxy() {
+fn reach_loc_op_is_a_real_member_not_the_proxy_miss() {
     use script::{LoadIsolate, LoadShape};
 
     let src = r#"
 import { Reach } from '../../api/walking/Reach.js';
 export default class T extends LoopingBot {
     loop() {
-        try {
-            Reach.locOp({});
-            globalThis.__probe = 'unexpected success';
-        } catch (error) {
-            globalThis.__probe = String(error);
-        }
+        globalThis.__probe = typeof Reach.locOp;
     }
 }
 "#;
@@ -252,7 +247,7 @@ export default class T extends LoopingBot {
     isolate.on_game_tick(1);
     assert_eq!(
         isolate.probe("__probe").expect("Reach.locOp probe"),
-        "Error: not impl: Reach.locOp"
+        "function"
     );
     isolate.join();
 }
