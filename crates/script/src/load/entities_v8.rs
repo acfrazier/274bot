@@ -1623,29 +1623,28 @@ fn ground_item_interact<'s>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustyscript::RuntimeOptions;
+    use rustyscript::{Module, RuntimeOptions};
 
     const QUERY_SETUP: &str = r#"
-const call = (opcode, ...args) => __rs2b0t_entities_v8(opcode, ...args);
-const rows = [
-    { name: 'Goblin', x: 3201, z: 3201, level: 0, distance: 1, actions: ['Attack'] },
-];
-class EntityQuery {
-    constructor() {
-        this.supplySnaps = () => rows;
-        this.wrap = (row) => row;
-        this.snapFilters = [];
-        this.entityFilters = [];
-    }
-    forEachMatch(seen) {
-        return call(13, this, seen);
-    }
-    count() {
-        return call(18, this);
-    }
-}
-const query = new EntityQuery();
-globalThis.checkQuery = () => query.count() === 1;
+import EntityQuery, { matchesEntityName } from '/rs2b0t/bot/api/query/EntityQuery.js';
+const row = {
+    name: 'Goblin', x: 3201, z: 3201, level: 0, distance: 1, actions: ['Attack'],
+};
+const rows = [row];
+const entity = { snap: row, distance() { return row.distance; } };
+globalThis.checkQuery = () => {
+    const query = EntityQuery.fromSnapshots(() => rows, () => entity)
+        .name('Goblin').action('Attack').within(2)
+        .withinOf({ x: 3200, z: 3200, level: 0 }, 2)
+        .inside({ minX: 3200, maxX: 3202, minZ: 3200, maxZ: 3202 })
+        .where(value => value === entity);
+    let seen = 0;
+    query.forEachMatch(value => { seen += value === entity; return false; });
+    return matchesEntityName(' Goblin ', 'goblin') &&
+        query.results()[0] === entity && query.nearest() === entity &&
+        query.first() === entity && query.exists() && query.count() === 1 &&
+        query.nearestPreferLocal(2) === entity && seen === 1;
+};
 globalThis.checkPureJs = () => true;
 "#;
 
@@ -1653,8 +1652,14 @@ globalThis.checkPureJs = () => true;
         crate::load::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         cb::install_ops(&mut runtime).unwrap();
+        super::super::distance::install(&mut runtime).unwrap();
         install(&mut runtime).unwrap();
-        runtime.eval::<()>(QUERY_SETUP).unwrap();
+        let query = Module::new(
+            "/rs2b0t/bot/api/query/EntityQuery.js",
+            include_str!("../shim/query.js"),
+        );
+        let entry = Module::new("/entity_query_allocation_setup.js", QUERY_SETUP);
+        runtime.load_modules(&entry, vec![&query]).unwrap();
         runtime
     }
 
