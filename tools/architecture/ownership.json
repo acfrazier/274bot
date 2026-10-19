@@ -3555,6 +3555,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/load/skills_v8.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/load/snapshot.rs",
       "owner": "T1"
     },
@@ -5072,6 +5076,10 @@
     },
     {
       "path": "crates/script/tests/t2_gathering_family.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_skills_family.rs",
       "owner": "T2"
     },
     {
