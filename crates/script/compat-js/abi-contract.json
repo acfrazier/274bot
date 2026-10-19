@@ -13394,7 +13394,7 @@
       "id": "scene-npc-wrapper",
       "module": "api/model/Npc.js",
       "selector": "Npc",
-      "reason": "Npc stores any supplied row without validation, reads flat row fields, returns health unchanged, constructs Tile values, and synchronously queues interactions; model/Npc is a runtime re-export of that class (crates/script/src/shim/npcs.js:5-8,26-28,42-50,77-105; crates/script/src/shim/model_npc.js:1).",
+      "reason": "Npc stores any supplied row without validation, reads flat row fields through native adapters, returns health unchanged, constructs Tile values, and synchronously queues interactions; model/Npc reexports that class (crates/script/src/shim/npcs.js:5-77; crates/script/src/shim/model_npc.js:1).",
       "runtime": "crates/script/src/shim/npcs.js:5",
       "declaration": "export declare class Npc<S extends Partial<NpcSnapshot> = NpcSnapshot> implements Interactable, Locatable { readonly snap: S; constructor(/** @internal */ snap: S); get name(): string | null; get id(): NpcRowField<S, 'id'>; get level(): number; get index(): NpcRowField<S, 'index'>; get size(): number; get inCombat(): boolean; get health(): NpcRowField<S, 'health'>; targetsAnotherPlayer(): boolean; targetsMe(): boolean; networkOrigin(): Tile; tile(): Tile; networkTile(): Tile; distance(): number; actions(): string[]; valid(): boolean; interact(action: string): boolean; }",
       "family_id": "entities",
@@ -13434,7 +13434,7 @@
       "id": "scene-player-wrapper",
       "module": "api/model/Player.js",
       "selector": "Player",
-      "reason": "Player stores the posted flat row, returns Tile from its flat coordinates, and has a synchronous boolean interact method absent from the frozen model; model/Player reexports this class (crates/script/src/shim/players.js:5-8,38-58; crates/script/src/shim/model_player.js:1).",
+      "reason": "Player stores the posted flat row, returns Tile from its flat coordinates, and has a synchronous boolean interact method absent from the frozen model; model/Player reexports this class (crates/script/src/shim/players.js:5-49; crates/script/src/shim/model_player.js:1).",
       "runtime": "crates/script/src/shim/players.js:5",
       "declaration": "export declare class Player<S extends Partial<PlayerSnapshot> = PlayerSnapshot> implements Locatable { readonly snap: S; constructor(/** @internal */ snap: S); get name(): string | null; get index(): PlayerRowField<S, 'index'>; get inCombat(): boolean; get combatLevel(): number; targetsMe(): boolean; tile(): Tile; distance(): number; actions(): string[]; interact(action: string): boolean; }",
       "family_id": "entities",
@@ -13444,7 +13444,7 @@
       "id": "scene-grounditems-module",
       "module": "api/grounditems/GroundItems.js",
       "selector": "$module",
-      "reason": "The shim directly exports both GroundItem and GroundItems, while the frozen module reexports GroundItem from an unsupported model module; replace this module to declare the real wrapper, posted row, defaulted count and synchronous boolean interaction together (crates/script/src/shim/grounditems.js:5-55; crates/host-play/src/script_snapshot.rs:696-719; crates/script/src/load/snapshot.rs:1424-1504).",
+      "reason": "The shim directly exports both GroundItem and GroundItems, while the frozen module reexports GroundItem from an unsupported model module; replace this module to declare the real wrapper, posted row, defaulted count and synchronous boolean interaction together (crates/script/src/shim/grounditems.js:5-46; crates/host-play/src/script_snapshot.rs:696-719; crates/script/src/load/snapshot.rs:1424-1504).",
       "runtime": "crates/script/src/shim/grounditems.js:5",
       "declaration": "import type { GroundItemSnapshot } from '../../adapter/ClientAdapter.js'; import Tile from '../../geometry/Tile.js'; import EntityQuery from '../query/Query.js'; type GroundItemRowField<S extends object, K extends keyof GroundItemSnapshot> = K extends keyof S ? S[K] : GroundItemSnapshot[K] | undefined; export declare class GroundItem<S extends Partial<GroundItemSnapshot> & { count?: number } = GroundItemSnapshot> { readonly snap: S; constructor(/** @internal */ snap: S); get name(): string | null; get id(): GroundItemRowField<S, 'id'>; get count(): number; tile(): Tile; distance(): number; actions(): string[]; interact(action: string): boolean; } export declare const GroundItems: { query(): EntityQuery<GroundItem>; };",
       "family_id": "entities",
@@ -13475,8 +13475,8 @@
       "id": "scene-query-class",
       "module": "api/query/Query.js",
       "selector": "EntityQuery",
-      "reason": "The runtime exposes a public supply/wrap constructor, stores the two inputs and filter arrays, and adds forEachMatch; fromSnapshots retains each supplied row S and wrapped entity E without broad-type erasure (crates/script/src/shim/query.js:11-20,55-65).",
-      "runtime": "crates/script/src/shim/query.js:11",
+      "reason": "The runtime exposes a public supply/wrap constructor, stores the two inputs and filter arrays, and adds forEachMatch; fromSnapshots retains each supplied row S and wrapped entity E without broad-type erasure (crates/script/src/shim/query.js:7-17,39-41).",
+      "runtime": "crates/script/src/shim/query.js:7",
       "declaration": "export default class EntityQuery<E extends QueryableEntity> { supplySnaps: () => readonly EntitySnapView[]; wrap: (s: EntitySnapView) => E; snapFilters: ((s: EntitySnapView & { ops: readonly (string | null)[]; tile: WorldTile }) => boolean)[]; entityFilters: ((e: E) => boolean)[]; constructor(supplySnaps: () => readonly EntitySnapView[], wrap: (s: EntitySnapView) => E); /** @internal Snapshot-first query: common filters run before `wrap`. `S` exposes the raw posted name/actions/x/z/level/distance row. */ static fromSnapshots<S extends EntitySnapView, E extends QueryableEntity>(supply: () => readonly S[], wrap: (s: S) => E): EntityQuery<E>; name(...names: string[]): this; action(action: string): this; within(dist: number): this; /** Chebyshev disk around any tile; planar distance does not require an origin level. */ withinOf(origin: { x: number; z: number; level?: number }, dist: number): this; inside(area: { minX: number; maxX: number; minZ: number; maxZ: number }): this; /** Entity-level predicate (runs after wrap). */ where(pred: (e: E) => boolean): this; results(): E[]; nearest(): E | null; /** Nearest to the player among results. */ nearestPreferLocal(preferRadius: number): E | null; first(): E | null; exists(): boolean; count(): number; /** Every match in supply order; `seen` true stops the walk. */ forEachMatch(seen: (e: E) => boolean): void; }",
       "family_id": "entities",
       "nav_consuming": false
@@ -13486,8 +13486,8 @@
       "module": "api/players/Players.js",
       "selector": "Players.all",
       "add": true,
-      "reason": "Players.all maps each posted flat player row to the exported Player wrapper; it is runtime-only in the frozen query facade (crates/script/src/shim/players.js:68-70).",
-      "runtime": "crates/script/src/shim/players.js:68",
+      "reason": "Players.all wraps the original rows paired with the decoded native player page using the exported Player class; it is runtime-only in the frozen query facade (crates/script/src/shim/players.js:55-57).",
+      "runtime": "crates/script/src/shim/players.js:55",
       "declaration": "all(): Player[];",
       "family_id": "entities",
       "nav_consuming": false
@@ -13711,28 +13711,6 @@
       "async": false,
       "family_id": "hunt",
       "nav_consuming": true
-    },
-    {
-      "id": "not-impl:query:inside",
-      "module": "api/query/Query.js",
-      "selector": "EntityQuery.inside",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl; the native query never inspects an area or produces a successful result.",
-      "runtime": "crates/script/src/shim/query.js:108",
-      "async": false,
-      "family_id": "entities",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:query:nearestPreferLocal",
-      "module": "api/query/Query.js",
-      "selector": "EntityQuery.nearestPreferLocal",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl; the native query never inspects a preference radius or produces a successful result.",
-      "runtime": "crates/script/src/shim/query.js:112",
-      "async": false,
-      "family_id": "entities",
-      "nav_consuming": false
     },
     {
       "id": "not-impl:api/combat/hunting/combat.js:Fight.hasChaseTarget",
@@ -14326,54 +14304,6 @@
       "runtime": "crates/script/src/shim/paintLogic.js:84",
       "async": false,
       "family_id": "paint",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.record",
-      "module": "api/chatbox/gameMessages.js",
-      "selector": "GameMessages.record",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: mutable game-message recording remains unavailable.",
-      "runtime": "crates/script/src/shim/game_messages.js:17",
-      "preserveParameters": true,
-      "async": false,
-      "family_id": "chatbox",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.firstSince",
-      "module": "api/chatbox/gameMessages.js",
-      "selector": "GameMessages.firstSince",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: message matching after a mark remains unavailable.",
-      "runtime": "crates/script/src/shim/game_messages.js:37",
-      "preserveParameters": true,
-      "async": false,
-      "family_id": "chatbox",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.recent",
-      "module": "api/chatbox/gameMessages.js",
-      "selector": "GameMessages.recent",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: a mutable recent-message ring remains unavailable.",
-      "runtime": "crates/script/src/shim/game_messages.js:41",
-      "preserveParameters": true,
-      "async": false,
-      "family_id": "chatbox",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.reset",
-      "module": "api/chatbox/gameMessages.js",
-      "selector": "GameMessages.reset",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: mutable game-message reset remains unavailable.",
-      "runtime": "crates/script/src/shim/game_messages.js:45",
-      "preserveParameters": true,
-      "async": false,
-      "family_id": "chatbox",
       "nav_consuming": false
     },
     {
@@ -23657,26 +23587,6 @@
       "overlay_id": "not-impl:hunting:withdrawTo"
     },
     {
-      "family_id": "entities",
-      "member": "inside",
-      "selector": "EntityQuery.inside",
-      "module": "api/query/Query.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/query.js:108",
-      "reason": "Unconditional not-impl; the native query never inspects an area or produces a successful result.",
-      "overlay_id": "not-impl:query:inside"
-    },
-    {
-      "family_id": "entities",
-      "member": "nearestPreferLocal",
-      "selector": "EntityQuery.nearestPreferLocal",
-      "module": "api/query/Query.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/query.js:112",
-      "reason": "Unconditional not-impl; the native query never inspects a preference radius or produces a successful result.",
-      "overlay_id": "not-impl:query:nearestPreferLocal"
-    },
-    {
       "family_id": "hunt",
       "member": "hasChaseTarget",
       "selector": "Fight.hasChaseTarget",
@@ -24215,46 +24125,6 @@
       "source": "crates/script/src/shim/paintLogic.js:84",
       "reason": "Unconditional not-impl: paint statistic layout remains unavailable.",
       "overlay_id": "not-impl:paint/paintLogic.js:statColumns"
-    },
-    {
-      "family_id": "chatbox",
-      "member": "record",
-      "selector": "GameMessages.record",
-      "module": "api/chatbox/gameMessages.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/game_messages.js:17",
-      "reason": "Unconditional not-impl: mutable game-message recording remains unavailable.",
-      "overlay_id": "not-impl:api/chatbox/gameMessages.js:GameMessages.record"
-    },
-    {
-      "family_id": "chatbox",
-      "member": "firstSince",
-      "selector": "GameMessages.firstSince",
-      "module": "api/chatbox/gameMessages.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/game_messages.js:37",
-      "reason": "Unconditional not-impl: message matching after a mark remains unavailable.",
-      "overlay_id": "not-impl:api/chatbox/gameMessages.js:GameMessages.firstSince"
-    },
-    {
-      "family_id": "chatbox",
-      "member": "recent",
-      "selector": "GameMessages.recent",
-      "module": "api/chatbox/gameMessages.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/game_messages.js:41",
-      "reason": "Unconditional not-impl: a mutable recent-message ring remains unavailable.",
-      "overlay_id": "not-impl:api/chatbox/gameMessages.js:GameMessages.recent"
-    },
-    {
-      "family_id": "chatbox",
-      "member": "reset",
-      "selector": "GameMessages.reset",
-      "module": "api/chatbox/gameMessages.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/game_messages.js:45",
-      "reason": "Unconditional not-impl: mutable game-message reset remains unavailable.",
-      "overlay_id": "not-impl:api/chatbox/gameMessages.js:GameMessages.reset"
     },
     {
       "family_id": "paint",
@@ -25382,8 +25252,10 @@
   ],
   "active_families": [
     "bank",
+    "chatbox",
     "cooking",
     "cow",
+    "entities",
     "gathering",
     "inventory",
     "runecrafting",
@@ -25449,7 +25321,7 @@
       "type_aliases": 0,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 4
+      "not_impl_debt": 0
     },
     {
       "family_id": "client-adapter",
@@ -25557,7 +25429,7 @@
       "type_aliases": 0,
       "name_aliases": 1,
       "callbacks": 0,
-      "not_impl_debt": 2
+      "not_impl_debt": 0
     },
     {
       "family_id": "events",
