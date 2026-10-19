@@ -20,6 +20,7 @@ use client_adapter::handoff::{
 use client_adapter::health::ReactorHealth;
 use client_adapter::park::Park;
 use client_adapter::shared::SharedConnection;
+use client_adapter::tcp::TcpStop;
 use client_adapter::tls_handshake::{
     build_test_client_config_with_roots, GameTlsLane, GameTlsResource,
 };
@@ -40,17 +41,19 @@ use tungstenite::handshake::derive_accept_key;
 
 const SOCKET_TOKEN: Token = Token(1);
 const WAKER_TOKEN: Token = Token(0);
+const PROBE_TOKEN: Token = Token(2);
 const IO_TIMEOUT: Duration = Duration::from_secs(4);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(8);
 const POLL_SLICE: Duration = Duration::from_millis(25);
 const MAX_TLS_RECORD: usize = 18_432;
-
+const BACKPRESSURE_GAME_RECORD: [u8; 2_048] = [0x5a; 2_048];
+const MAX_BACKPRESSURE_RECORDS: usize = 8_192;
 const TLS12_SUITE: CipherSuite = CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256;
 const TLS13_SUITE: CipherSuite = CipherSuite::TLS13_AES_128_GCM_SHA256;
 const HELLO_REQUEST: [u8; 4] = [0x00, 0x00, 0x00, 0x00];
 const KEY_UPDATE_REQUESTED: [u8; 5] = [0x18, 0x00, 0x00, 0x01, 0x01];
+const KEY_UPDATE_NOT_REQUESTED: [u8; 5] = [0x18, 0x00, 0x00, 0x01, 0x00];
 const TLS_CLOSE_NOTIFY: [u8; 2] = [0x01, 0x00];
-
 struct ServerIdentity {
     certificate: CertificateDer<'static>,
     key: PrivateKeyDer<'static>,
@@ -212,7 +215,10 @@ impl ControlServer {
             .unwrap_or_else(|error| panic!("server failed to emit TLS record: {error}"));
     }
 
-    fn read_client_record(&self, timeout: Duration) -> Option<ObservedRecord> {
+    fn begin_read_client_record(
+        &self,
+        timeout: Duration,
+    ) -> Receiver<Result<Option<ObservedRecord>, String>> {
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
         self.commands
             .send(ServerCommand::ReadClientRecord {
@@ -221,6 +227,10 @@ impl ControlServer {
             })
             .expect("send client-record inspection command");
         reply_rx
+    }
+
+    fn read_client_record(&self, timeout: Duration) -> Option<ObservedRecord> {
+        self.begin_read_client_record(timeout)
             .recv_timeout(IO_TIMEOUT)
             .expect("server completed client-record inspection")
             .unwrap_or_else(|error| panic!("server could not inspect client TLS record: {error}"))
@@ -517,6 +527,9 @@ fn read_http_head(reader: &mut impl Read) -> io::Result<Vec<u8>> {
 struct LaneAttempt {
     poll: Poll,
     events: Events,
+    probe_poll: Poll,
+    probe_events: Events,
+    probe_socket: mio::net::TcpStream,
     lane: Arc<GameTlsLane>,
     key: HandoffKey,
     token: client_adapter::cancel::CancelToken,
@@ -567,6 +580,12 @@ impl LaneAttempt {
         socket
             .set_nonblocking(true)
             .expect("make handshake socket nonblocking");
+        let probe_poll = Poll::new().expect("create socket readiness probe poller");
+        let mut probe_socket = mio::net::TcpStream::from_std(
+            socket
+                .try_clone()
+                .expect("clone local socket for independent readiness probing"),
+        );
         let mut socket = mio::net::TcpStream::from_std(socket);
         poll.registry()
             .register(&mut socket, SOCKET_TOKEN, Interest::READABLE)
@@ -586,6 +605,9 @@ impl LaneAttempt {
         Self {
             poll,
             events: Events::with_capacity(16),
+            probe_poll,
+            probe_events: Events::with_capacity(4),
+            probe_socket,
             lane,
             key,
             token,
@@ -593,6 +615,22 @@ impl LaneAttempt {
             shared,
             retirement,
         }
+    }
+
+    fn register_write_probe(&mut self) {
+        self.probe_poll
+            .registry()
+            .register(&mut self.probe_socket, PROBE_TOKEN, Interest::WRITABLE)
+            .expect("register the real socket's duplicate for writable probing");
+    }
+
+    fn socket_is_writable(&mut self) -> io::Result<bool> {
+        self.probe_poll
+            .poll(&mut self.probe_events, Some(Duration::ZERO))?;
+        Ok(self
+            .probe_events
+            .iter()
+            .any(|event| event.token() == PROBE_TOKEN && event.is_writable()))
     }
 
     fn wait_for_return(&mut self) -> Accepted<GameTlsResource> {
@@ -983,20 +1021,267 @@ fn g2_m2_authenticated_tls_close_notify_is_distinct_from_excessive_request() {
 }
 
 #[test]
-fn g2_m3_authenticated_requested_key_update_emits_reply_without_another_read() {
+fn g2_m3_authenticated_requested_key_update_waits_for_real_writable_recovery() {
+    let pki = TestPki::new();
+    let client_config = pki.client_config();
+    let server = ControlServer::spawn(configure_tls13(pki.identity.duplicate()));
+    let sibling_server = ControlServer::spawn(configure_tls13(pki.identity.duplicate()));
+    let (mut attempt, mut endpoint, handshake) = connect_wss(&server, Arc::clone(&client_config));
+    assert_negotiated(&handshake, ProtocolVersion::TLSv1_3, TLS13_SUITE);
+    let (mut sibling_attempt, mut sibling_endpoint, sibling_handshake) =
+        connect_wss(&sibling_server, client_config);
+    assert_negotiated(&sibling_handshake, ProtocolVersion::TLSv1_3, TLS13_SUITE);
+
+    let initial_game = b"before-requested-key-update";
+    server.send_record(
+        ContentType::ApplicationData,
+        &server_binary_frame(initial_game),
+    );
+    take_game_payload(&mut attempt, &mut endpoint, initial_game);
+    let bytes_in_before = attempt.shared.bytes_in();
+
+    // Fill the real loopback TCP send queue with complete WSS game writes
+    // while the peer's application does not read. Stop at the first point
+    // where a duplicate descriptor reports that no socket write can proceed.
+    attempt.register_write_probe();
+    let mut buffered_game_records = 0usize;
+    while attempt
+        .socket_is_writable()
+        .expect("probe the real client socket's writable readiness")
+    {
+        assert!(
+            buffered_game_records < MAX_BACKPRESSURE_RECORDS,
+            "loopback send queue did not reach socket backpressure"
+        );
+        attempt
+            .shared
+            .publish_record(attempt.binding, &BACKPRESSURE_GAME_RECORD)
+            .expect("publish one bounded game record before the socket fills");
+        endpoint.kick_output();
+        let mut turn = endpoint.drive().expect("drive one real WSS game write");
+        endpoint
+            .apply_interest(attempt.poll.registry())
+            .expect("apply WSS interest after game write");
+        for _ in 0..8 {
+            if turn.stop != TcpStop::LocalWork {
+                break;
+            }
+            turn = endpoint
+                .drive()
+                .expect("drain local work after one game write");
+            endpoint
+                .apply_interest(attempt.poll.registry())
+                .expect("apply WSS interest after local game work");
+        }
+        assert_eq!(turn.stop, TcpStop::Quiescent);
+        assert_eq!(turn.read_bytes, 0);
+        assert!(attempt.shared.outbound.is_empty());
+        buffered_game_records += 1;
+    }
+    assert!(buffered_game_records > 0);
+    assert!(
+        !attempt
+            .socket_is_writable()
+            .expect("confirm the client socket remains backpressured")
+    );
+    // Force one more real WSS/TLS write while the duplicate descriptor says
+    // the OS socket is not writable and the server is not draining its queue.
+    attempt
+        .shared
+        .publish_record(attempt.binding, &BACKPRESSURE_GAME_RECORD)
+        .expect("publish one final game record at socket backpressure");
+    endpoint.kick_output();
+    let blocked_turn = endpoint
+        .drive()
+        .expect("attempt a real encrypted game write at backpressure");
+    endpoint
+        .apply_interest(attempt.poll.registry())
+        .expect("apply WSS interest after blocked game write");
+    assert_eq!(blocked_turn.stop, TcpStop::Quiescent);
+    assert_eq!(blocked_turn.read_bytes, 0);
+    assert_eq!(blocked_turn.written_bytes, BACKPRESSURE_GAME_RECORD.len());
+    assert!(!blocked_turn.write_ready);
+    assert!(attempt.shared.outbound.is_empty());
+    assert!(
+        !attempt
+            .socket_is_writable()
+            .expect("confirm the game write did not restore socket writability")
+    );
+    let bytes_out_before = attempt.shared.bytes_out();
+
+    // Rustls processes the authenticated request while the socket cannot
+    // accept a response. No peer input, endpoint read, or new game write is
+    // performed while the server drains older outbound records.
+    server.send_record(ContentType::Handshake, &KEY_UPDATE_REQUESTED);
+    let turn = next_readable_turn(&mut attempt, &mut endpoint)
+        .expect("process the authenticated requested KeyUpdate");
+    assert_eq!(turn.read_bytes, 0);
+    assert!(endpoint.is_connected());
+    assert_eq!(attempt.shared.bytes_out(), bytes_out_before);
+    assert_eq!(attempt.shared.bytes_in(), bytes_in_before);
+    assert!(attempt.shared.inbound.is_empty());
+    assert!(
+        !attempt
+            .socket_is_writable()
+            .expect("the request reply remains blocked before peer reads")
+    );
+
+    // B progresses independently while A waits for the socket to become
+    // writable again.
+    let sibling_game = b"sibling-progresses-during-key-update";
+    sibling_server.send_record(
+        ContentType::ApplicationData,
+        &server_binary_frame(sibling_game),
+    );
+    take_game_payload(
+        &mut sibling_attempt,
+        &mut sibling_endpoint,
+        sibling_game,
+    );
+
+    let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
+    let mut observed_game_records = 0usize;
+    let mut writable_events = 0usize;
+    let mut response = None;
+    while response.is_none() {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(
+            !remaining.is_zero(),
+            "timed out waiting for writable KeyUpdate reply"
+        );
+        let pending_read = server.begin_read_client_record(remaining.min(IO_TIMEOUT));
+        let mut read_one_record = false;
+        while !read_one_record && response.is_none() {
+            match pending_read.try_recv() {
+                Ok(Ok(Some(record))) => {
+                    if record.content_type == ContentType::Handshake {
+                        response = Some(record);
+                    } else {
+                        assert_eq!(
+                            record.content_type,
+                            ContentType::ApplicationData,
+                            "only prior game records precede the KeyUpdate reply"
+                        );
+                        observed_game_records += 1;
+                    }
+                    read_one_record = true;
+                }
+                Ok(Ok(None)) => {
+                    panic!("server timed out before receiving the KeyUpdate reply")
+                }
+                Ok(Err(error)) => panic!("server could not decrypt client output: {error}"),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    panic!("server read task ended before the KeyUpdate reply")
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    attempt
+                        .poll
+                        .poll(&mut attempt.events, Some(POLL_SLICE))
+                        .expect("poll for the real client writable event");
+                    for event in &attempt.events {
+                        if event.token() == WAKER_TOKEN {
+                            continue;
+                        }
+                        assert_eq!(event.token(), SOCKET_TOKEN);
+                        assert!(
+                            event.is_writable(),
+                            "backpressure recovery is writable-only"
+                        );
+                        assert!(
+                            !event.is_readable(),
+                            "no further peer input is delivered during recovery"
+                        );
+                        assert!(matches!(
+                            endpoint.on_event(false, true, Instant::now()),
+                            WssStep::Ready
+                        ));
+                        let turn = endpoint
+                            .drive()
+                            .expect("flush queued TLS control output on writable readiness");
+                        endpoint
+                            .apply_interest(attempt.poll.registry())
+                            .expect("apply WSS interest after writable recovery");
+                        assert_eq!(turn.read_bytes, 0);
+                        assert_eq!(attempt.shared.bytes_out(), bytes_out_before);
+                        assert_eq!(attempt.shared.bytes_in(), bytes_in_before);
+                        writable_events += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(observed_game_records > 0);
+    assert!(writable_events > 0, "reply follows writable-only recovery");
+    let response = response.expect("authenticated KeyUpdate reply was observed");
+    assert_eq!(response.outer_type, ContentType::ApplicationData);
+    assert_eq!(response.content_type, ContentType::Handshake);
+    assert_eq!(
+        response.payload.as_slice(),
+        &[0x18, 0x00, 0x00, 0x01, 0x00][..]
+    );
+    assert_eq!(attempt.shared.bytes_out(), bytes_out_before);
+    assert_eq!(attempt.shared.bytes_in(), bytes_in_before);
+    assert!(
+        server
+            .read_client_record(Duration::from_millis(250))
+            .is_none(),
+        "exactly one KeyUpdate reply is emitted"
+    );
+
+    endpoint.close(attempt.poll.registry());
+    sibling_endpoint.close(sibling_attempt.poll.registry());
+    server.stop();
+    sibling_server.stop();
+}
+
+#[test]
+fn g2_m3_authenticated_idle_requested_key_update_emits_exact_reply() {
     let pki = TestPki::new();
     let client_config = pki.client_config();
     let server = ControlServer::spawn(configure_tls13(pki.identity));
     let (mut attempt, mut endpoint, handshake) = connect_wss(&server, client_config);
     assert_negotiated(&handshake, ProtocolVersion::TLSv1_3, TLS13_SUITE);
+
+    let initial_game = b"before-idle-requested-key-update";
+    server.send_record(
+        ContentType::ApplicationData,
+        &server_binary_frame(initial_game),
+    );
+    take_game_payload(&mut attempt, &mut endpoint, initial_game);
+    let bytes_in_before = attempt.shared.bytes_in();
     let bytes_out_before = attempt.shared.bytes_out();
 
-    server.send_record(ContentType::Handshake, &KEY_UPDATE_REQUESTED);
-    next_readable_turn(&mut attempt, &mut endpoint)
-        .expect("process authenticated requested KeyUpdate in one endpoint turn");
+    // Drain the returned game message's local continuation until the real
+    // socket reaches WouldBlock, leaving the established WSS endpoint idle.
+    let mut turn = endpoint.drive().expect("drain local WSS work to idle");
+    endpoint
+        .apply_interest(attempt.poll.registry())
+        .expect("apply WSS interest after idle drain");
+    for _ in 0..8 {
+        if turn.stop != TcpStop::LocalWork {
+            break;
+        }
+        turn = endpoint
+            .drive()
+            .expect("finish local WSS idle drain");
+        endpoint
+            .apply_interest(attempt.poll.registry())
+            .expect("apply WSS interest after idle continuation");
+    }
+    assert_eq!(turn.stop, TcpStop::Quiescent);
+    assert_eq!(turn.read_bytes, 0);
+    assert!(attempt.shared.inbound.is_empty());
 
-    // No second endpoint read/event or WebSocket write occurs before this peer
-    // read. The reply itself is decrypted with the server's extracted RX key.
+    server.send_record(ContentType::Handshake, &KEY_UPDATE_REQUESTED);
+    let turn = next_readable_turn(&mut attempt, &mut endpoint)
+        .expect("process requested KeyUpdate on idle WSS");
+    assert_eq!(turn.read_bytes, 0);
+    assert!(endpoint.is_connected());
+    assert_eq!(attempt.shared.bytes_in(), bytes_in_before);
+    assert_eq!(attempt.shared.bytes_out(), bytes_out_before);
+    assert!(attempt.shared.inbound.is_empty());
+
     let response = server
         .read_client_record(IO_TIMEOUT)
         .expect("rustls emits the requested KeyUpdate reply");
@@ -1007,13 +1292,76 @@ fn g2_m3_authenticated_requested_key_update_emits_reply_without_another_read() {
         &[0x18, 0x00, 0x00, 0x01, 0x00][..]
     );
     assert_eq!(attempt.shared.bytes_out(), bytes_out_before);
-    assert_eq!(attempt.shared.bytes_in(), 0);
-    assert!(attempt.shared.inbound.is_empty());
     assert!(
         server
             .read_client_record(Duration::from_millis(250))
             .is_none(),
-        "no application/game payload follows the KeyUpdate reply"
+        "no duplicate reply or WebSocket game output follows"
+    );
+
+    endpoint.close(attempt.poll.registry());
+    server.stop();
+}
+
+#[test]
+fn g2_m3_authenticated_unrequested_key_update_emits_no_reply() {
+    let pki = TestPki::new();
+    let client_config = pki.client_config();
+    let server = ControlServer::spawn(configure_tls13(pki.identity));
+    let (mut attempt, mut endpoint, handshake) = connect_wss(&server, client_config);
+    assert_negotiated(&handshake, ProtocolVersion::TLSv1_3, TLS13_SUITE);
+
+    let initial_game = b"before-unrequested-key-update";
+    server.send_record(
+        ContentType::ApplicationData,
+        &server_binary_frame(initial_game),
+    );
+    take_game_payload(&mut attempt, &mut endpoint, initial_game);
+    let bytes_in_before = attempt.shared.bytes_in();
+    let bytes_out_before = attempt.shared.bytes_out();
+
+    server.send_record(ContentType::Handshake, &KEY_UPDATE_NOT_REQUESTED);
+    let turn = next_readable_turn(&mut attempt, &mut endpoint)
+        .expect("process authenticated update_not_requested");
+    assert_eq!(turn.read_bytes, 0);
+    assert_eq!(attempt.shared.bytes_in(), bytes_in_before);
+    assert_eq!(attempt.shared.bytes_out(), bytes_out_before);
+    assert!(
+        server
+            .read_client_record(Duration::from_millis(250))
+            .is_none(),
+        "update_not_requested does not invent a KeyUpdate reply"
+    );
+
+    endpoint.close(attempt.poll.registry());
+    server.stop();
+}
+
+#[test]
+fn g2_m3_authenticated_queued_application_record_survives_key_update() {
+    let pki = TestPki::new();
+    let client_config = pki.client_config();
+    let server = ControlServer::spawn(configure_tls13(pki.identity));
+    let (mut attempt, mut endpoint, handshake) = connect_wss(&server, client_config);
+    assert_negotiated(&handshake, ProtocolVersion::TLSv1_3, TLS13_SUITE);
+
+    let queued_game = b"application-record-before-key-update";
+    server.send_record(
+        ContentType::ApplicationData,
+        &server_binary_frame(queued_game),
+    );
+    server.send_record(ContentType::Handshake, &KEY_UPDATE_NOT_REQUESTED);
+    let turn = next_readable_turn(&mut attempt, &mut endpoint)
+        .expect("process queued application data and authenticated KeyUpdate");
+    assert_eq!(turn.read_bytes, queued_game.len());
+    take_game_payload(&mut attempt, &mut endpoint, queued_game);
+    assert_eq!(attempt.shared.bytes_in(), queued_game.len() as u64);
+    assert_eq!(attempt.shared.bytes_out(), 0);
+    assert!(
+        server
+            .read_client_record(Duration::from_millis(250))
+            .is_none(),
+        "queued application data is preserved without an invented reply"
     );
 
     endpoint.close(attempt.poll.registry());
