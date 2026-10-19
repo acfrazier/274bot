@@ -123,9 +123,15 @@ fn starved_reactor_over_64_flushes_retains_encoded_bytes_and_session() {
     let (mut client, shared, _) = held_client();
     client.out.random = Some(Isaac::new(&[1, 2, 3, 4]));
     let mut expected_cipher = client.out.random.as_ref().unwrap().clone();
-    let expected: Vec<u8> = (0..RECORD_SLOTS + 13)
-        .map(|_| 181_i32.wrapping_add(expected_cipher.next_int()) as u8)
-        .collect();
+    let mut expected = Vec::with_capacity(RECORD_SLOTS + 14);
+    for pass in 0..RECORD_SLOTS + 13 {
+        if pass == 62 {
+            // R289 emits its cyclelogic7 anticheat opcode before this pass's
+            // NO_TIMEOUT, so the 63rd published record is two bytes long.
+            expected.push(232_i32.wrapping_add(expected_cipher.next_int()) as u8);
+        }
+        expected.push(181_i32.wrapping_add(expected_cipher.next_int()) as u8);
+    }
     // The reactor does not consume anything for 76 consecutive Client passes.
     // Each pass emits a real NO_TIMEOUT action through the output gate.
     for pass in 0..RECORD_SLOTS + 12 {
@@ -136,7 +142,7 @@ fn starved_reactor_over_64_flushes_retains_encoded_bytes_and_session() {
     }
     assert_eq!(shared.records.len(), RECORD_SLOTS);
     assert_eq!(client.out.pos, 12, "the rejected suffix remains encoded");
-    assert_eq!(shared.bytes_out(), RECORD_SLOTS as u64);
+    assert_eq!(shared.bytes_out(), (RECORD_SLOTS + 1) as u64);
     let retained_cipher = client.out.random.as_ref().unwrap().clone().next_int();
     client.last_outbound = Instant::now();
     client.game_loop();
@@ -148,7 +154,7 @@ fn starved_reactor_over_64_flushes_retains_encoded_bytes_and_session() {
     );
     let mut received = Vec::new();
     drain(&shared, &mut received);
-    assert_eq!(&received, &expected[..RECORD_SLOTS]);
+    assert_eq!(&received, &expected[..RECORD_SLOTS + 1]);
     client.last_outbound = Instant::now() - Duration::from_secs(1);
     client.game_loop();
     assert!(client.ingame);

@@ -82,7 +82,8 @@ fn dirty_drop_notice_and_explicit_login_preserve_mode_until_clean_logout() {
                 }
             }
         },
-    );
+    )
+    .expect("Play starts for memory notice test");
     match prev_nav_pack {
         Some(value) => std::env::set_var("NAV_PACK", value),
         None => std::env::remove_var("NAV_PACK"),

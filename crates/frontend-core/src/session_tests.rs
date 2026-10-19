@@ -61,6 +61,7 @@ fn empty_play() -> Play {
         |_| (None, None),
         |_, _, _| {},
     )
+    .expect("construct session-test Play")
 }
 
 #[test]
@@ -436,7 +437,8 @@ fn member_still_stopping(
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("construct Play for still-stopping member test");
     let mut s = OperatorSession::new(InstancePermit::SkipLock);
     s.set_bypass_asset_startup(true);
     s.start(vault_with(test, &[("b", 2, false)]), play);

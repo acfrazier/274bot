@@ -793,7 +793,8 @@ fn run_cell() -> Result<(), String> {
                 state.frame(client, hold);
             }
         },
-    )?;
+    )
+    .map_err(|error| error.to_string())?;
     {
         let mut state = state.lock().unwrap();
         state.start_handle = Some(play.script_start_handle());

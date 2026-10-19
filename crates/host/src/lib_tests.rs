@@ -69,6 +69,8 @@ fn wait_stream_available(stream: &mut client::io::ClientStream, minimum: i32) {
         }
         std::thread::sleep(Duration::from_millis(10).min(deadline - now));
     }
+}
+
 /// The render envelope a spawned slot gets: a fresh `SlotKey` and its
 /// output mailbox. A drawing slot attaches its head to the process render
 /// service through it; one key per envelope, as Play mints one per worker.

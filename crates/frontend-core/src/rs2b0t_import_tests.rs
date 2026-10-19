@@ -163,6 +163,7 @@ fn empty_play() -> Play {
         |_| (None, None),
         |_, _, _| {},
     )
+    .expect("construct import-test Play")
 }
 
 fn session(vault: Vault) -> OperatorSession<u32> {

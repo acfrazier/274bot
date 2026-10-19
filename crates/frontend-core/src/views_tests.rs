@@ -28,6 +28,7 @@ fn empty_play() -> Play {
         |_| (None, None),
         |_, _, _| {},
     )
+    .expect("construct views-test Play")
 }
 
 /// Members loaded from a fresh vault (arms attached, no worker threads).

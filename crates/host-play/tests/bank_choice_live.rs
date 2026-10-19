@@ -942,7 +942,8 @@ fn run_origin(
                 }
             }
         },
-    )?;
+    )
+    .map_err(|error| error.to_string())?;
     {
         let mut slot = state.lock().map_err(|_| "bank-choice state poisoned")?;
         slot.runner.set_obj_names(play.obj_names());
@@ -1492,7 +1493,8 @@ fn run_quester_recovery_live() -> Result<(), String> {
                 }
             }
         },
-    )?;
+    )
+    .map_err(|error| error.to_string())?;
     runner.lock().unwrap().set_obj_names(play.obj_names());
     *start_handle.lock().unwrap() = Some(play.script_start_handle());
     play.try_spawn_slot(mint_profile(&account, &password, 1)?, None, None, None)

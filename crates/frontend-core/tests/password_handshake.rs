@@ -86,7 +86,8 @@ fn a_parked_worker_logs_in_with_the_password_saved_after_it_spawned() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("construct Play for password-handshake test");
     let dir = std::env::temp_dir().join(format!(
         "274bot-frontend-core-password-{}",
         std::process::id()

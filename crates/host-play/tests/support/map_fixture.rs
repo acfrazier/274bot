@@ -9,7 +9,7 @@ use nav::world::NavWorld;
 
 use super::map_host;
 use map_host::profile::{CacheManifest, NavManifest, ProfileEnvironment};
-use map_host::{Play, ProfileOptions, SharedClientTemplate, SlotArm, SlotStatus};
+use map_host::{Play, PlayComposition, ProfileOptions, SharedClientTemplate, SlotArm, SlotStatus};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -18,13 +18,13 @@ static NEXT: AtomicU64 = AtomicU64::new(0);
 pub struct MapFixture {
     pub root: PathBuf,
     pub template: Arc<SharedClientTemplate>,
-    _network_driver: client_adapter::service::MaintenanceDriver,
+    _network_driver: PlayComposition,
 }
 
 impl MapFixture {
     pub fn new(world: &NavWorld, profile: &str) -> Self {
-        let network_driver = client_adapter::service::NetworkService::start_composition()
-            .expect("map fixture starts its network composition");
+        let network_driver = PlayComposition::start()
+            .expect("map fixture starts its Play-owned network composition");
         let root = std::env::temp_dir().join(format!(
             "274bot-map-actions-{}-{}",
             std::process::id(),

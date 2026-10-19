@@ -64,7 +64,8 @@ fn live_draw_area_and_capture_walk() {
                 per_frame_mouse.store(true, Ordering::Relaxed);
             }
         },
-    );
+    )
+    .expect("Play starts for panel view test");
 
     wait_ingame(&play, 1, Duration::from_secs(90), "panel_view");
 

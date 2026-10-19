@@ -16,7 +16,8 @@ fn login_one() {
     if !live() {
         return;
     }
-    let play = run(&options(), profiles(&[("test", "test")]));
+    let play =
+        run(&options(), profiles(&[("test", "test")])).expect("Play starts for one-slot login");
     // 90 s: nominal login+scene 2 is ~35 s; the extra headroom covers one
     // engine "account in use" (code 5) retry after a previous run's session.
     wait_ingame(&play, 1, Duration::from_secs(90), "login_one");

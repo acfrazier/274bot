@@ -28,6 +28,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - Host-issued count-dialog, close-modal and door-step packets now reserve the
   entire frame before consuming the outbound cipher; a full buffer refuses
   instead of sending a partial request.
+- A hosted in-game session retains already encoded output while its bounded
+  transport ring or record queue is full, then sends it once in order after
+  space returns. A committed record is not retried when only the reactor wake
+  fails.
+- Transport stall detection distinguishes a checker pause from a reactor
+  stall: a checker sample gap beyond the stall limit restarts observation,
+  while a reactor with no progress during continuous checks remains lost.
 
 ### Toolchain
 

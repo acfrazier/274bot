@@ -760,6 +760,7 @@ mod tests {
             |_| (None, None),
             |_, _, _| {},
         )
+        .expect("construct native-settings Play")
     }
 
     fn native_fixture(test: &str) -> Fixture {

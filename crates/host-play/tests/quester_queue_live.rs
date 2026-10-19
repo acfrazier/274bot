@@ -444,7 +444,8 @@ fn run_quester_queue() -> Result<(), String> {
                 frame_state.lock().unwrap().frame(client, hold.hold);
             }
         },
-    )?;
+    )
+    .map_err(|error| error.to_string())?;
     {
         let mut slot = state.lock().map_err(|_| "Quester live state poisoned")?;
         slot.runner.set_obj_names(play.obj_names());

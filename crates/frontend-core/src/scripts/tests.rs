@@ -49,6 +49,7 @@ fn empty_play() -> Play {
         |_| (None, None),
         |_, _, _| {},
     )
+    .expect("construct script-test Play")
 }
 
 /// Members loaded (arms attached, no worker threads) from a fresh vault.

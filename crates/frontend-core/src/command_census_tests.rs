@@ -589,6 +589,14 @@ const CORE: &[(&str, Decision)] = &[
     ("session.rs::MemoryNotice::status_text", Excluded(FORMAT)),
     ("session.rs::OperatorSession::start", Row(C::UnlockVault)),
     (
+        "session.rs::OperatorSession::start_network_composition",
+        Excluded(STARTUP),
+    ),
+    (
+        "session.rs::OperatorSession::adopt_network_composition",
+        Excluded(STARTUP),
+    ),
+    (
         "session.rs::OperatorSession::set_pause_script_on_manual_walk_abort",
         Row(C::SetNavPreference(
             NavPreference::PauseScriptOnManualWalkAbort,

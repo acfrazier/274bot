@@ -802,7 +802,11 @@ impl AdapterGameStream {
             Some(PrimaryReply::ConnectFailed {
                 binding: failed,
                 kind,
-            }) if failed == binding => Err(io::Error::new(kind, "game connect failed")),
+                errno,
+            }) if failed == binding => Err(match errno {
+                Some(errno) => io::Error::from_raw_os_error(errno),
+                None => io::Error::new(kind, "game connect failed"),
+            }),
             Some(PrimaryReply::Rejected {
                 binding: rejected,
                 reason,

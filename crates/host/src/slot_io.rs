@@ -11,6 +11,7 @@ use client_adapter::park::{Park, ParkOutcome};
 use client::client::{present::pack_rgb, GameShell, APPLET_H, APPLET_W};
 use client::render::backend::FrameOutput;
 
+use crate::render::{HeadIdentity, RenderRefusal};
 
 /// Policy state attached by the producer to the actual journal-fixture paint.
 #[cfg(feature = "journal-paint-proof")]

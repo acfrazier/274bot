@@ -21,7 +21,8 @@ fn login_two() {
     let play = run(
         &options(),
         profiles(&[("test", "test"), ("test2", "test2")]),
-    );
+    )
+    .expect("Play starts for two-slot login");
     wait_ingame(&play, 2, Duration::from_secs(150), "login_two");
 
     let starts = login_starts(&play.statuses());

@@ -25,6 +25,7 @@ fn empty_play() -> Play {
         |_| (None, None),
         |_, _, _| {},
     )
+    .expect("construct resources-test Play")
 }
 
 /// Keep polling at `at` (so no new sample is due) until the probe thread's

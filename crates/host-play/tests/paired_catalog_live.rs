@@ -1134,7 +1134,8 @@ fn run_cell(case: PairCase) -> Result<(), String> {
                 }
             }
         },
-    )?;
+    )
+    .map_err(|error| error.to_string())?;
     {
         let handle = play.script_start_handle();
         let mut pair = state.lock().unwrap();

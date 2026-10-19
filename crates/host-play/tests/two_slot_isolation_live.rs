@@ -565,7 +565,8 @@ fn run_cell() -> Result<(), String> {
                 pair.1.frame(client, hold);
             }
         },
-    )?;
+    )
+    .map_err(|error| error.to_string())?;
     {
         let handle = play.script_start_handle();
         let mut pair = state.lock().unwrap();

@@ -29495,7 +29495,8 @@ mod read_journal_tests {
             vec![],
             |_| (None, None),
             |_, _, _| {},
-        );
+        )
+        .expect("Play starts for journal test");
         let slot = script_slot_or_insert(&play.scripts, "alice");
         slot.lock()
             .unwrap()

@@ -6262,7 +6262,8 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 }
             }
         },
-    )?;
+    )
+    .map_err(|error| error.to_string())?;
     if let Ok(mut handle) = start_handle.lock() {
         *handle = Some(play.script_start_handle());
     }
@@ -7671,7 +7672,8 @@ fn run_quester_sheep_shared_core() -> Result<(), String> {
                 frame_state.lock().unwrap().frame(client, hold.hold);
             }
         },
-    )?;
+    )
+    .map_err(|error| error.to_string())?;
     {
         let mut slot = state.lock().map_err(|_| "Quester live state poisoned")?;
         slot.runner.set_obj_names(play.obj_names());

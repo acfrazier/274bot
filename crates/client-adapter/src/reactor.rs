@@ -711,7 +711,7 @@ enum ConnectProgress {
     Connected,
     Local,
     Wait,
-    Failed(io::ErrorKind),
+    Failed(io::ErrorKind, Option<i32>),
 }
 
 struct Reactor {
@@ -770,17 +770,19 @@ impl Reactor {
             Endpoint::Tcp(endpoint) => match endpoint.begin_step(registry, now) {
                 TcpStep::Retry => ConnectProgress::Local,
                 TcpStep::Connecting => ConnectProgress::Wait,
-                TcpStep::Failed(error) => ConnectProgress::Failed(error.kind()),
+                TcpStep::Failed(error) => {
+                    ConnectProgress::Failed(error.kind(), error.raw_os_error())
+                }
                 TcpStep::Ready if live.tls.is_none() => ConnectProgress::Connected,
                 TcpStep::Ready => {
                     let Some(lane) = lane else {
-                        return ConnectProgress::Failed(io::ErrorKind::NotConnected);
+                        return ConnectProgress::Failed(io::ErrorKind::NotConnected, None);
                     };
                     if lane.config().is_none() {
-                        return ConnectProgress::Failed(io::ErrorKind::InvalidData);
+                        return ConnectProgress::Failed(io::ErrorKind::InvalidData, None);
                     }
                     if !lane.cell().can_admit() {
-                        return ConnectProgress::Failed(io::ErrorKind::WouldBlock);
+                        return ConnectProgress::Failed(io::ErrorKind::WouldBlock, None);
                     }
                     let flight = live.tls.as_mut().expect("WSS has a TLS flight");
                     if flight
@@ -788,7 +790,7 @@ impl Reactor {
                         .as_ref()
                         .is_none_or(|ticket| !ticket.reserved())
                     {
-                        return ConnectProgress::Failed(io::ErrorKind::ConnectionAborted);
+                        return ConnectProgress::Failed(io::ErrorKind::ConnectionAborted, None);
                     }
                     let key = HandoffKey {
                         identity: HandoffIdentity {
@@ -827,18 +829,18 @@ impl Reactor {
                             drop(resource);
                             retire.ack();
                             drop(flight.ticket.take());
-                            ConnectProgress::Failed(io::ErrorKind::WouldBlock)
+                            ConnectProgress::Failed(io::ErrorKind::WouldBlock, None)
                         }
                     }
                 }
             },
             Endpoint::InitialTls(key) => {
                 let Some(lane) = lane else {
-                    return ConnectProgress::Failed(io::ErrorKind::NotConnected);
+                    return ConnectProgress::Failed(io::ErrorKind::NotConnected, None);
                 };
                 match lane.cell().take_return(*key) {
                     Err(TakeReturnError::NotReturned) => ConnectProgress::Wait,
-                    Err(_) => ConnectProgress::Failed(io::ErrorKind::ConnectionAborted),
+                    Err(_) => ConnectProgress::Failed(io::ErrorKind::ConnectionAborted, None),
                     Ok(accepted) => {
                         let key = accepted.key;
                         match accepted.outcome {
@@ -853,7 +855,7 @@ impl Reactor {
                                     }
                                     _ => io::ErrorKind::ConnectionAborted,
                                 };
-                                ConnectProgress::Failed(kind)
+                                ConnectProgress::Failed(kind, None)
                             }
                             WorkerOutcome::Success(mut resource) => {
                                 let Some(connection) = resource.connection.take() else {
@@ -861,7 +863,10 @@ impl Reactor {
                                     drop(resource);
                                     accepted.retirement.ack();
                                     let _ = lane.cell().finish_accept(key);
-                                    return ConnectProgress::Failed(io::ErrorKind::InvalidData);
+                                    return ConnectProgress::Failed(
+                                        io::ErrorKind::InvalidData,
+                                        None,
+                                    );
                                 };
                                 live.registration.restore_charge(resource.charge.take());
                                 let flight = live.tls.as_ref().expect("returned TLS flight");
@@ -887,6 +892,7 @@ impl Reactor {
                                         if interest.is_err() || finished.is_err() {
                                             ConnectProgress::Failed(
                                                 io::ErrorKind::ConnectionAborted,
+                                                None,
                                             )
                                         } else {
                                             ConnectProgress::Local
@@ -894,7 +900,7 @@ impl Reactor {
                                     }
                                     Err(error) => {
                                         let _ = lane.cell().finish_accept(key);
-                                        ConnectProgress::Failed(error.kind())
+                                        ConnectProgress::Failed(error.kind(), error.raw_os_error())
                                     }
                                 }
                             }
@@ -905,13 +911,15 @@ impl Reactor {
             Endpoint::Wss(endpoint) => {
                 let step = endpoint.begin_step(now);
                 if let Err(error) = endpoint.apply_interest(registry) {
-                    return ConnectProgress::Failed(error.kind());
+                    return ConnectProgress::Failed(error.kind(), error.raw_os_error());
                 }
                 match step {
                     WssStep::Ready => ConnectProgress::Connected,
                     WssStep::Progress => ConnectProgress::Local,
                     WssStep::Wait => ConnectProgress::Wait,
-                    WssStep::Failed(error) => ConnectProgress::Failed(error.kind()),
+                    WssStep::Failed(error) => {
+                        ConnectProgress::Failed(error.kind(), error.raw_os_error())
+                    }
                 }
             }
         }
@@ -1037,13 +1045,16 @@ impl Reactor {
                                 Arc::clone(&live.registration.shared),
                                 live.endpoint.binding(),
                                 error.kind(),
+                                error.raw_os_error(),
                             )
                         });
                         self.close(id, None);
-                        if let Some((shared, binding, kind)) = failure {
-                            shared
-                                .control
-                                .publish_primary(PrimaryReply::ConnectFailed { binding, kind });
+                        if let Some((shared, binding, kind, errno)) = failure {
+                            shared.control.publish_primary(PrimaryReply::ConnectFailed {
+                                binding,
+                                kind,
+                                errno,
+                            });
                         }
                     }
                 }
@@ -1205,6 +1216,7 @@ impl Reactor {
                             .publish_primary(PrimaryReply::ConnectFailed {
                                 binding,
                                 kind: error.kind(),
+                                errno: error.raw_os_error(),
                             });
                         let _ = self
                             .registry
@@ -1439,9 +1451,11 @@ impl Reactor {
                     });
                 self.close(id, None);
                 if let Some((shared, binding, kind)) = failure {
-                    shared
-                        .control
-                        .publish_primary(PrimaryReply::ConnectFailed { binding, kind });
+                    shared.control.publish_primary(PrimaryReply::ConnectFailed {
+                        binding,
+                        kind,
+                        errno: None,
+                    });
                 }
             } else {
                 if live
@@ -1494,11 +1508,12 @@ impl Reactor {
                     }
                     ConnectProgress::Local => TurnOutcome::Local,
                     ConnectProgress::Wait => TurnOutcome::Wait,
-                    ConnectProgress::Failed(kind) => {
+                    ConnectProgress::Failed(kind, errno) => {
                         failed_connect = Some((
                             Arc::clone(&live.registration.shared),
                             live.endpoint.binding(),
                             kind,
+                            errno,
                         ));
                         TurnOutcome::Close
                     }
@@ -1537,10 +1552,12 @@ impl Reactor {
                 TurnOutcome::Wait => {}
                 TurnOutcome::Close => {
                     self.close(id, None);
-                    if let Some((shared, binding, kind)) = failed_connect {
-                        shared
-                            .control
-                            .publish_primary(PrimaryReply::ConnectFailed { binding, kind });
+                    if let Some((shared, binding, kind, errno)) = failed_connect {
+                        shared.control.publish_primary(PrimaryReply::ConnectFailed {
+                            binding,
+                            kind,
+                            errno,
+                        });
                     }
                 }
             }
@@ -1950,6 +1967,7 @@ mod tests {
             Some(PrimaryReply::ConnectFailed {
                 binding,
                 kind: io::ErrorKind::ConnectionAborted,
+                errno: None,
             })
         );
         assert!(shared.is_closed());

@@ -1558,7 +1558,8 @@ fn run_cells(
                 }
             }
         },
-    )?;
+    )
+    .map_err(|error| error.to_string())?;
 
     let start_handle = play.script_start_handle();
     {

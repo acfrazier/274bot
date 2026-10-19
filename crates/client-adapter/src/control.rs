@@ -79,10 +79,12 @@ pub enum PrimaryReply {
     Connected {
         binding: BindingId,
     },
-    /// The original OS failure kind remains available to the login Connect stage.
+    /// The original OS failure kind and number remain available to the login
+    /// Connect stage; synthetic failures have no OS error number.
     ConnectFailed {
         binding: BindingId,
         kind: io::ErrorKind,
+        errno: Option<i32>,
     },
     Sealed {
         binding: BindingId,

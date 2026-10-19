@@ -43,6 +43,7 @@ fn empty_play() -> Play {
         |_| (None, None),
         |_, _, _| {},
     )
+    .expect("construct marked-test Play")
 }
 
 /// `profiles` (uids 1..) are in the vault; the first `loaded` are members.

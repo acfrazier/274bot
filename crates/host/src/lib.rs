@@ -27,7 +27,6 @@ use auto_run::{auto_run_ready, auto_run_tick, resolve_run_policy, RunPolicy};
 use client::client::{Client, ClientConfig};
 use client::config::{Cache, IfType, IfTypeMut};
 use client::render::backend::{BackendKind, FrameOutput};
-use client::render::Renderer;
 use client_adapter::park::ParkOutcome;
 use render::RenderError;
 use render_head::Head;
