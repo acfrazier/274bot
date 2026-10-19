@@ -268,6 +268,6 @@ impl SaveBook {
 /// A profile write the durable writer refused before anything was
 /// written (the vault is locked, the profile is still saving): the
 /// writer's reason.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
 pub struct ProfileWriteRefused(pub(crate) String);

@@ -557,11 +557,15 @@ fn clicks_select_rows_and_right_click_opens_a_menu() {
     assert_eq!(app.on_click(x, y), AppAction::Focus("bob".into()));
     assert_eq!(app.key_focus, Pane::Fleet);
     let (_, carol_y) = find(&rows, "carol").unwrap();
+    let mut seam = Seam::new();
+    let mark = app.on_click(2, carol_y);
     assert_eq!(
-        app.on_click(2, carol_y),
-        AppAction::None,
+        mark,
+        AppAction::SetMark("carol".into(), true),
         "the checkbox column"
     );
+    seam.apply(&mut app, mark);
+
     assert!(app
         .table
         .selection

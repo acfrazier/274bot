@@ -6865,6 +6865,38 @@
     {
       "path": "crates/frontend-core/src/test_support/tui.rs",
       "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/models.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/session/fleet.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/session/form.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/session/loadouts.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/session/loadouts_tests.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/session/prefs.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/session/scripts.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/session/vault_rows.rs",
+      "owner": "T3"
     }
   ]
 }

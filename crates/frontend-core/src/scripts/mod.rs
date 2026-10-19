@@ -17,7 +17,7 @@ mod paint;
 pub mod paths;
 mod vocab;
 pub(crate) use loadouts::Refused;
-pub use loadouts::{LoadoutForm, Loadouts, LoadoutsError, WornSlot};
+pub use loadouts::{LoadoutForm, Loadouts, LoadoutsError, LoadoutsErrorKind, WornSlot};
 pub use native::{NativeDetail, SchemaView};
 pub use paint::{
     map_applet_rect, CanvasCache, CanvasOps, CanvasRaster, ChromeBandView, PaintButtonView,
@@ -57,7 +57,9 @@ use vault::ScriptAssignment;
 
 use crate::command::{CommandFailure, Completion, FailureKind, Subject};
 use crate::operations::OperationId;
-use crate::session::{ArmMirror, OperatorSession, ScriptStart, StartSettled};
+use crate::session::{
+    ArmMirror, OperatorSession, ScriptAssignmentWrite, ScriptStart, StartSettled,
+};
 use crate::QueuePlace;
 
 pub use reload::{CatalogError, PendingReload, PendingReloadKind, ReloadOutcome, ReloadWarning};
@@ -370,25 +372,51 @@ pub(crate) enum StartKind {
     RestartSettings,
 }
 
-/// A Start rejected before or while admitting its script.
+/// A Start rejected before or while admitting its script: the kind and the
+/// sentence the front end shows.
 #[derive(Debug, thiserror::Error)]
-pub enum ScriptStartError {
-    #[error("{0}")]
-    Refused(String),
-    #[error("{0}")]
-    Waiting(String),
+#[error("{message}")]
+pub struct ScriptStartError {
+    kind: ScriptStartErrorKind,
+    message: String,
+}
+
+/// The kind of a [`ScriptStartError`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScriptStartErrorKind {
+    /// The Start was refused (no assignment, already active, missing card).
+    Refused,
+    /// The Start waits on another decision (uncommitted settings, a
+    /// blocked sync).
+    Waiting,
     /// The script runtime could not load the card.
-    #[error("{0}")]
-    RuntimeLoad(String),
+    RuntimeLoad,
+}
+
+impl ScriptStartError {
+    fn refused(message: impl Into<String>) -> Self {
+        Self {
+            kind: ScriptStartErrorKind::Refused,
+            message: message.into(),
+        }
+    }
+
+    /// The kind of rejection.
+    pub fn kind(&self) -> ScriptStartErrorKind {
+        self.kind
+    }
 }
 
 impl From<script::StartLoadError> for ScriptStartError {
     fn from(error: script::StartLoadError) -> Self {
-        match error {
-            script::StartLoadError::Refused(reason) => Self::Refused(reason),
-            script::StartLoadError::Waiting(reason) => Self::Waiting(reason),
-            script::StartLoadError::RuntimeLoad(reason) => Self::RuntimeLoad(reason),
-        }
+        let (kind, message) = match error {
+            script::StartLoadError::Refused(reason) => (ScriptStartErrorKind::Refused, reason),
+            script::StartLoadError::Waiting(reason) => (ScriptStartErrorKind::Waiting, reason),
+            script::StartLoadError::RuntimeLoad(reason) => {
+                (ScriptStartErrorKind::RuntimeLoad, reason)
+            }
+        };
+        Self { kind, message }
     }
 }
 
@@ -516,8 +544,14 @@ impl<'a> BrowseCard<'a> {
     }
 }
 
+/// A click on a script's paint: a button, or a choice in one of its
+/// select rows, for the paint `generation` it was drawn from. A front end
+/// stages it for `ScriptPaintInput`.
 #[derive(Debug)]
-pub enum PaintInput {
+pub struct PaintInput(pub(crate) PaintAction);
+
+#[derive(Debug)]
+pub(crate) enum PaintAction {
     Click {
         id: String,
         generation: u64,
@@ -527,6 +561,22 @@ pub enum PaintInput {
         name: String,
         generation: u64,
     },
+}
+
+impl PaintInput {
+    /// A click on the paint button `id`.
+    pub fn click(id: String, generation: u64) -> Self {
+        Self(PaintAction::Click { id, generation })
+    }
+
+    /// The choice `name` in the paint select row `key`.
+    pub fn select(key: String, name: String, generation: u64) -> Self {
+        Self(PaintAction::Select {
+            key,
+            name,
+            generation,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -616,14 +666,16 @@ struct PendingCatalogAssignmentCommand {
     restart: bool,
 }
 
+/// One Assign or Assign & restart member: the row's request and subject,
+/// the bot, its card and the catalogue root the card resolves against.
 #[derive(Debug)]
-struct PendingAssignmentWrite {
-    request: api::identity::RequestId,
-    subject: Subject,
-    profile: String,
-    selection: ScriptChoice,
-    catalog_root: Option<PathBuf>,
-    restart: bool,
+pub(crate) struct PendingAssignmentWrite {
+    pub(crate) request: api::identity::RequestId,
+    pub(crate) subject: Subject,
+    pub(crate) profile: String,
+    pub(crate) selection: ScriptChoice,
+    pub(crate) catalog_root: Option<PathBuf>,
+    pub(crate) restart: bool,
 }
 
 #[derive(Debug)]
@@ -848,7 +900,6 @@ impl Scripts {
         &mut self,
         key: ParameterEditKey,
         selection: &ScriptChoice,
-        field: &str,
         baseline_text: &str,
         baseline_value: Option<Value>,
         definition: SettingView<'_>,
@@ -857,7 +908,7 @@ impl Scripts {
         self.staged_parameter_validation = Some(StagedParameterValidation {
             key,
             selection: selection.duplicate(),
-            field: field.to_owned(),
+            field: definition.id().to_owned(),
             baseline_text: baseline_text.to_owned(),
             baseline_value,
             definition: definition.def().clone(),
@@ -994,13 +1045,21 @@ impl Scripts {
     pub(crate) fn dispatch_assignment_command<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
-        request: api::identity::RequestId,
-        subject: Subject,
-        profile: String,
-        selection: ScriptChoice,
-        catalog_root: Option<PathBuf>,
-        restart: bool,
+        command: PendingAssignmentWrite,
     ) -> AssignmentCommandResult {
+        let PendingAssignmentWrite {
+            request,
+            subject,
+            profile,
+            selection,
+            catalog_root,
+            restart,
+        } = command;
+        if restart {
+            self.open_tally("Assign & restart");
+            self.tally_record(&profile, Outcome::Queued, LogTo::None);
+            self.publish_bulk();
+        }
         if !restart && script_active(core, &profile) {
             return AssignmentCommandResult::Skipped(crate::command::SkipReason::ScriptActive);
         }
@@ -1018,19 +1077,31 @@ impl Scripts {
                 );
                 return AssignmentCommandResult::Later;
             }
-            Err(reason) => return AssignmentCommandResult::Rejected(reason),
+            Err(reason) => {
+                if restart {
+                    self.fail_assignment_restart(&profile, &reason);
+                }
+                return AssignmentCommandResult::Rejected(reason);
+            }
         };
         self.clear_pending_browse(&profile);
-        match self.queue_assignment(
-            core,
-            &profile,
-            assignment,
-            if restart {
-                "Assign & restart"
-            } else {
-                "Assign"
-            },
-        ) {
+        let log_action = if restart {
+            "Assign & restart"
+        } else {
+            "Assign"
+        };
+        let write = if restart {
+            self.queue_assignment_with_mirror(
+                core,
+                &profile,
+                assignment,
+                log_action,
+                ArmMirror::script_assignment(),
+            )
+        } else {
+            self.queue_assignment(core, &profile, assignment, log_action)
+        };
+        match write {
             Ok(Some(op)) if restart => {
                 self.pending_assignment_writes.entry(op).or_default().push(
                     PendingAssignmentWrite {
@@ -1060,7 +1131,12 @@ impl Scripts {
                 AssignmentCommandResult::Later
             }
             Ok(None) => AssignmentCommandResult::Done,
-            Err(reason) => AssignmentCommandResult::Rejected(reason),
+            Err(reason) => {
+                if restart {
+                    self.fail_assignment_restart(&profile, &reason);
+                }
+                AssignmentCommandResult::Rejected(reason)
+            }
         }
     }
 
@@ -1552,10 +1628,6 @@ impl Scripts {
         self.catalog_filled
     }
 
-    pub(crate) fn mark_catalog_filled(&mut self) {
-        self.catalog_filled = true;
-    }
-
     #[cfg(test)]
     /// Queue the catalog's first source-only scan once per root. The shared
     /// WorkAdmission worker performs all registry and source-file reads.
@@ -1696,10 +1768,21 @@ impl Scripts {
         assignment: ScriptAssignment,
         log_action: &'static str,
     ) -> Result<Option<OperationId>, String> {
+        self.queue_assignment_with_mirror(core, profile, assignment, log_action, ArmMirror::none())
+    }
+
+    fn queue_assignment_with_mirror<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        profile: &str,
+        assignment: ScriptAssignment,
+        log_action: &'static str,
+        mirror: ArmMirror,
+    ) -> Result<Option<OperationId>, String> {
         if Self::assignment(core, profile).as_ref() == Some(&assignment) {
             return Ok(None);
         }
-        self.upsert_profile_settings(core, profile, ArmMirror::none(), log_action, |settings| {
+        self.upsert_profile_settings(core, profile, mirror, log_action, |settings| {
             settings.script_assignment = Some(assignment);
         })
         .map(Some)
@@ -2134,7 +2217,7 @@ impl Scripts {
         }
         let sel = Self::assignment(core, profile)
             .and_then(|a| sel_from_assignment(&a))
-            .ok_or_else(|| ScriptStartError::Refused("no assignment".to_string()))?;
+            .ok_or_else(|| ScriptStartError::refused("no assignment"))?;
         self.start_sel(core, profile, &sel, catalog_root, StartKind::Start, false)
             .map_err(ScriptStartError::from)
     }
@@ -2152,8 +2235,8 @@ impl Scripts {
     ) -> Result<Option<OperationId>, ScriptStartError> {
         let heading = heading.map(ScriptChoice::as_script);
         if script_active(core, profile) {
-            return Err(ScriptStartError::Refused(
-                "script already active: stop it first".into(),
+            return Err(ScriptStartError::refused(
+                "script already active: stop it first",
             ));
         }
         let sel = self
@@ -2168,7 +2251,7 @@ impl Scripts {
             })
             .or_else(|| heading.cloned())
             .or_else(|| Self::assignment(core, profile).and_then(|a| sel_from_assignment(&a)))
-            .ok_or_else(|| ScriptStartError::Refused("no assignment".into()))?;
+            .ok_or_else(|| ScriptStartError::refused("no assignment"))?;
         self.start_sel(core, profile, &sel, catalog_root, StartKind::Start, false)
             .map_err(ScriptStartError::from)
     }
@@ -2386,7 +2469,6 @@ impl Scripts {
         self.stop_all_with_receipt(core).0
     }
 
-    #[cfg(test)]
     pub(crate) fn stop_all_with_receipt<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
@@ -2417,11 +2499,13 @@ impl Scripts {
             self.publish_bulk();
         }
         self.publish_start_places(core);
-        if core.play().is_none() {
-            return (0, None);
-        }
-        let names = slot_names(core);
-        let (operation, stopped) = core.stop_scripts(&names);
+        let (stopped, operation) = if core.play().is_none() {
+            (0, None)
+        } else {
+            let names = slot_names(core);
+            let (operation, stopped) = core.stop_scripts(&names);
+            (stopped, Some(operation))
+        };
         self.reload.invalidate();
         let report = format!("Stop all: stopped {stopped}");
         if self.last_bulk_report.as_deref() != Some(report.as_str()) {
@@ -2430,7 +2514,7 @@ impl Scripts {
                 self.clear_notice();
             }
         }
-        (stopped, Some(operation))
+        (stopped, operation)
     }
 
     /// The running Start all / marked-Start report, or the last Stop all
@@ -2524,12 +2608,20 @@ impl Scripts {
         self.retain_catalog_fill_result();
         let pending = std::mem::take(&mut self.pending_catalog_assignment_commands);
         for command in pending {
-            if let Some(Err(reason)) = self.catalog_fill_update.as_ref() {
+            let catalog_failure = self
+                .catalog_fill_update
+                .as_ref()
+                .and_then(|result| result.as_ref().err())
+                .cloned();
+            if let Some(reason) = catalog_failure {
+                if command.restart {
+                    self.fail_assignment_restart(&command.profile, &reason);
+                }
                 core.settle_later(
                     command.request,
                     command.subject,
                     Settlement::Failed(CommandFailure::Failed(FailureKind::JobFailed)),
-                    Some(reason),
+                    Some(&reason),
                 );
                 continue;
             }
@@ -2545,6 +2637,9 @@ impl Scripts {
                     continue;
                 }
                 Err(reason) => {
+                    if command.restart {
+                        self.fail_assignment_restart(&command.profile, &reason);
+                    }
                     core.settle_later(
                         command.request,
                         command.subject,
@@ -2557,15 +2652,17 @@ impl Scripts {
                 }
             };
             self.clear_pending_browse(&command.profile);
-            match self.queue_assignment(
+            let log_action = if command.restart {
+                "Assign & restart"
+            } else {
+                "Assign"
+            };
+            match self.queue_assignment_with_mirror(
                 core,
                 &command.profile,
                 assignment,
-                if command.restart {
-                    "Assign & restart"
-                } else {
-                    "Assign"
-                },
+                log_action,
+                ArmMirror::script_assignment(),
             ) {
                 Ok(Some(op)) => self.pending_assignment_writes.entry(op).or_default().push(
                     PendingAssignmentWrite {
@@ -2594,14 +2691,19 @@ impl Scripts {
                     Settlement::Completed(Completion::Done),
                     None,
                 ),
-                Err(reason) => core.settle_later(
-                    command.request,
-                    command.subject,
-                    Settlement::Failed(CommandFailure::Rejected(
-                        crate::command::Rejection::VaultRefused,
-                    )),
-                    Some(&reason),
-                ),
+                Err(reason) => {
+                    if command.restart {
+                        self.fail_assignment_restart(&command.profile, &reason);
+                    }
+                    core.settle_later(
+                        command.request,
+                        command.subject,
+                        Settlement::Failed(CommandFailure::Rejected(
+                            crate::command::Rejection::VaultRefused,
+                        )),
+                        Some(&reason),
+                    );
+                }
             }
         }
     }
@@ -2609,18 +2711,33 @@ impl Scripts {
     fn settle_assignment_write<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
-        write: &SettingsWrite,
+        write: ScriptAssignmentWrite,
     ) {
-        let Some(commands) = self.pending_assignment_writes.remove(&write.op) else {
+        let Some(commands) = self.pending_assignment_writes.remove(&write.op()) else {
             return;
         };
+        let failure = if write.result().is_failed() {
+            Some(
+                write
+                    .result()
+                    .error()
+                    .unwrap_or("profile assignment write failed"),
+            )
+        } else if write.result().is_superseded() {
+            Some("profile assignment was superseded")
+        } else {
+            None
+        };
         for command in commands {
-            if write.result.is_failed() {
+            if let Some(reason) = failure {
+                if command.restart {
+                    self.fail_assignment_restart(&command.profile, reason);
+                }
                 core.settle_later(
                     command.request,
                     command.subject,
                     Settlement::Failed(CommandFailure::Failed(FailureKind::WriteFailed)),
-                    write.result.error(),
+                    Some(reason),
                 );
             } else if command.restart {
                 self.start_assigned_command(core, command);
@@ -2633,6 +2750,11 @@ impl Scripts {
                 );
             }
         }
+    }
+
+    fn fail_assignment_restart(&mut self, profile: &str, reason: &str) {
+        self.tally_record(profile, Outcome::Failed(reason.to_owned()), LogTo::None);
+        self.publish_bulk();
     }
 
     fn start_assigned_command<Io>(
@@ -2660,18 +2782,30 @@ impl Scripts {
                 self.register_start_command(command.profile, command.request, command.subject);
                 self.admit_starts(core, command.catalog_root.as_deref());
             }
-            Err(reason) => core.settle_later(
-                command.request,
-                command.subject,
-                Settlement::Failed(CommandFailure::Failed(FailureKind::StartFailed)),
-                Some(&reason),
-            ),
+            Err(reason) => {
+                self.fail_assignment_restart(&command.profile, &reason);
+                core.settle_later(
+                    command.request,
+                    command.subject,
+                    Settlement::Failed(CommandFailure::Failed(FailureKind::StartFailed)),
+                    Some(&reason),
+                );
+            }
         }
     }
 
     fn settle_pending_application_commands<Io>(&mut self, core: &mut OperatorSession<Io>) {
         self.retain_catalog_fill_result();
-        if let Some((root, result)) = self.take_catalog_import_result() {
+        // Only an ImportCatalog row collects the import receipt; a request
+        // made without one keeps it for its caller.
+        let import_pending = self
+            .pending_application_commands
+            .iter()
+            .any(|pending| pending.wait == PendingApplicationWait::CatalogImport);
+        if let Some((root, result)) = import_pending
+            .then(|| self.take_catalog_import_result())
+            .flatten()
+        {
             let result = result.map_err(|error| error.to_string());
             self.catalog_import_command_result = Some(result.clone());
             self.catalog_import_update = Some((root, result));
@@ -2737,17 +2871,10 @@ impl Scripts {
                     Settlement::Cancelled(api::identity::Cancellation::Operator),
                     None,
                 );
-            } else if command.wait == PendingApplicationWait::CatalogFill
-                && !self.catalog_work_pending()
-            {
-                core.settle_later(
-                    command.request,
-                    Subject::Application,
-                    Settlement::Completed(Completion::Done),
-                    None,
-                );
-            } else if command.wait == PendingApplicationWait::CatalogImport
-                && !self.catalog_work_pending()
+            } else if matches!(
+                command.wait,
+                PendingApplicationWait::CatalogFill | PendingApplicationWait::CatalogImport
+            ) && !self.catalog_work_pending()
             {
                 core.settle_later(
                     command.request,
@@ -2797,8 +2924,10 @@ impl Scripts {
         self.settle_starts(core);
         self.settle_start_command_failures(core);
         self.settle_pending_application_commands(core);
+        while let Some(write) = core.take_script_assignment_write() {
+            self.settle_assignment_write(core, write);
+        }
         for write in core.take_settings_writes() {
-            self.settle_assignment_write(core, &write);
             let is_sync_write = self.sync.tracks_write(write.op);
             if write.result.delivery() == Some(&LiveDelivery::RestartRequired) {
                 let card = self.settings_cards.remove(&write.op).or_else(|| {
@@ -2853,15 +2982,15 @@ impl Scripts {
             }
             if pending.kind == StartKind::RestartSettings {
                 match command_outcome.as_ref() {
-                    Some(script::StartOutcome::Failed(reason)) => {
-                        if self.restart_settings_failure.is_none() {
-                            self.restart_settings_failure = Some(reason.clone());
-                        }
+                    Some(script::StartOutcome::Failed(reason))
+                        if self.restart_settings_failure.is_none() =>
+                    {
+                        self.restart_settings_failure = Some(reason.clone());
                     }
-                    Some(script::StartOutcome::Rejected(reason)) => {
-                        if self.restart_settings_failure.is_none() {
-                            self.restart_settings_failure = Some(reason.to_string());
-                        }
+                    Some(script::StartOutcome::Rejected(reason))
+                        if self.restart_settings_failure.is_none() =>
+                    {
+                        self.restart_settings_failure = Some(reason.to_string());
                     }
                     _ => {}
                 }

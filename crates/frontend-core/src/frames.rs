@@ -27,6 +27,13 @@ pub trait FrameHook: Send + Sync + 'static {
     fn frame(&self, client: &mut dyn Any, slot: &str, frame: &FrameContext<'_>);
 }
 
+/// The per-frame client work of a surface that does none (headless).
+pub(crate) struct NoClientWork;
+
+impl FrameHook for NoClientWork {
+    fn frame(&self, _client: &mut dyn Any, _slot: &str, _frame: &FrameContext<'_>) {}
+}
+
 /// What the core observed this frame, for the front end's hook.
 pub struct FrameContext<'a> {
     slot: &'a str,
@@ -507,17 +514,16 @@ where
 
 /// Run the production slot-frame closure once with a caller-owned client.
 /// This test-support entry keeps front ends from needing access to
-/// `FrameContext` or the private slot-frame implementation.
+/// `FrameContext` or the private slot-frame implementation. The last
+/// argument is the client's operations: player tile, publication, walk step
+/// and tick, as the production front ends pass them.
 #[cfg(any(test, feature = "test-support"))]
 pub fn run_frame_for_test<C, G, H, P, T, S>(
     client: &mut C,
     name: &str,
     hook: Arc<dyn FrameHook>,
     input: SlotFrameInput,
-    here: H,
-    publish: P,
-    step: S,
-    tick: T,
+    (here, publish, step, tick): (H, P, S, T),
 ) where
     C: Any,
     G: Default + Send + 'static,

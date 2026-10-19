@@ -84,26 +84,29 @@ impl WornSlot {
 /// Why the loadout store could not be reloaded or saved: the store's own
 /// sentence, which the editors show after "Save failed: ", under the kind of
 /// refusal it was.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum LoadoutsError {
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{sentence}")]
+pub struct LoadoutsError {
+    kind: LoadoutsErrorKind,
+    sentence: String,
+}
+
+/// The kind of a [`LoadoutsError`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadoutsErrorKind {
     /// The rows have nowhere to load from or save to (a list that only
     /// feeds a setting's options, a test).
-    #[error("{0}")]
-    NotBound(String),
+    NotBound,
     /// The store could not be read.
-    #[error("{0}")]
-    Load(String),
+    Load,
     /// The last load failed and still stands, so a save would write over
     /// rows the form never saw: nothing was saved.
-    #[error("{0}")]
-    NotLoaded(String),
+    NotLoaded,
     /// Another writer changed the store after the rows loaded: the rest of
     /// the save was not written.
-    #[error("{0}")]
-    Conflict(String),
+    Conflict,
     /// The store failed or refused the write, or did not settle it in time.
-    #[error("{0}")]
-    Write(String),
+    Write,
 }
 
 /// What `script::LoadoutsStore` says when it refuses, which it reports as
@@ -114,27 +117,37 @@ const STORE_NOT_LOADED: &str = "the loadouts did not load (";
 const STORE_CONFLICT: &str = "; the loadouts changed since this list was loaded";
 
 impl LoadoutsError {
+    fn new(kind: LoadoutsErrorKind, sentence: String) -> Self {
+        Self { kind, sentence }
+    }
+
+    /// The kind of refusal.
+    pub fn kind(&self) -> LoadoutsErrorKind {
+        self.kind
+    }
+
     /// The refusal of a reload (which only the test fixtures make).
     #[cfg(any(test, feature = "test-support"))]
     fn of_reload(sentence: String) -> Self {
         if sentence == STORE_NOT_BOUND {
-            Self::NotBound(sentence)
+            Self::new(LoadoutsErrorKind::NotBound, sentence)
         } else {
-            Self::Load(sentence)
+            Self::new(LoadoutsErrorKind::Load, sentence)
         }
     }
 
     /// The refusal of a save.
     fn of_save(sentence: String) -> Self {
-        if sentence == STORE_NOT_BOUND {
-            Self::NotBound(sentence)
+        let kind = if sentence == STORE_NOT_BOUND {
+            LoadoutsErrorKind::NotBound
         } else if sentence.starts_with(STORE_NOT_LOADED) {
-            Self::NotLoaded(sentence)
+            LoadoutsErrorKind::NotLoaded
         } else if sentence.contains(STORE_CONFLICT) {
-            Self::Conflict(sentence)
+            LoadoutsErrorKind::Conflict
         } else {
-            Self::Write(sentence)
-        }
+            LoadoutsErrorKind::Write
+        };
+        Self::new(kind, sentence)
     }
 }
 

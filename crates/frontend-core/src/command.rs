@@ -843,6 +843,14 @@ impl OperatorCommand {
         }
     }
 
+    /// Whether this command accepts a member of `kind`.
+    ///
+    /// `WalkTo` also accepts the process member for an unfocused refusal
+    /// receipt; its ordinary target remains a profile.
+    pub(crate) fn accepts_subject(self, kind: SubjectKind) -> bool {
+        self.subject() == kind || matches!((self, kind), (Self::WalkTo, SubjectKind::Application))
+    }
+
     /// The `IntentMailbox` row this command posts to each member's slot, if
     /// it changes operator intent.
     pub const fn intent(self) -> Option<Intent> {
@@ -1454,7 +1462,7 @@ impl CommandBook {
         for (index, &(subject, scope)) in targets.iter().enumerate() {
             let application_in_process =
                 subject.kind() != SubjectKind::Application || scope == Scope::Process;
-            if subject.kind() != command.subject() || !application_in_process {
+            if !command.accepts_subject(subject.kind()) || !application_in_process {
                 return Err(CommandError::WrongSubject {
                     request,
                     subject,

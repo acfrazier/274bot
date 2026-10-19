@@ -3567,7 +3567,6 @@ fn script_parameter_text_input(
         session.scripts.stage_parameter_validation(
             key,
             selection,
-            def.id(),
             &initial_text,
             current.clone(),
             def,

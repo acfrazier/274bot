@@ -13,7 +13,7 @@ use super::{
     prepare_apply_settings_marked, restart_scope, BulkScope, MarkedAction, MarkedBlock,
     RestartScope,
 };
-use crate::scripts::{CardSource, ScriptChoice, ScriptRunState, ScriptStartError, Scripts};
+use crate::scripts::{CardSource, ScriptChoice, ScriptRunState, ScriptStartErrorKind, Scripts};
 use crate::selection::{marked_startable, start_marked, MarkedSelection, ProfileIdentity};
 use crate::session::OperatorSession;
 use crate::surface::HeadlessSurface;
@@ -801,8 +801,8 @@ fn operator_apply_assign_start_does_not_start_on_defaults() {
         .scripts
         .start_selected(&mut f.core, "bob", None, None)
         .unwrap_err();
-    match blocked {
-        ScriptStartError::Waiting(message) => assert!(
+    match (blocked.kind(), blocked.to_string()) {
+        (ScriptStartErrorKind::Waiting, message) => assert!(
             message.contains("blocked") && message.contains("waiting for Apply or Cancel"),
             "{message}"
         ),
@@ -812,8 +812,8 @@ fn operator_apply_assign_start_does_not_start_on_defaults() {
         .scripts
         .start_profile(&mut f.core, "bob", None)
         .unwrap_err();
-    match blocked {
-        ScriptStartError::Waiting(message) => assert!(
+    match (blocked.kind(), blocked.to_string()) {
+        (ScriptStartErrorKind::Waiting, message) => assert!(
             message.contains("blocked") && message.contains("waiting for Apply or Cancel"),
             "{message}"
         ),

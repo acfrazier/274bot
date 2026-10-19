@@ -6316,6 +6316,8 @@ fn save_credentials_upserts_under_username_key_keeping_uid() {
     );
     vault_upsert(&mut s.core, profile("alice", "oldpass", 42));
 
+    // Save commits the open form, so alice's is open for the edits below.
+    s.begin_edit_profile(Some("alice"));
     *s.profile_editor.draft_mut().username_mut() = "alice".into();
     *s.profile_editor.draft_mut().password_mut() = "newpass".into();
     assert!(s.save_credentials());
@@ -6408,10 +6410,13 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
         .settings_mut()
         .world_mut() = None;
     *session.profile_editor.draft_mut().password_mut() = "updated".into();
-    // Leave the editor first: the next save is programmatic (no bound form),
-    // so it must preserve the world pin rather than project the blank draft.
+    // Leave the editor first, dropping the blank-world draft: Save commits an
+    // open form, and a re-opened one starts from the saved row, pin included,
+    // so this save must not unpin the account.
     session.pump_status();
     session.cancel_edit_profile();
+    session.begin_edit_profile(Some("alice"));
+    *session.profile_editor.draft_mut().password_mut() = "updated".into();
     assert!(session.save_credentials());
     session.core.flush_writes();
     session.pump_status();
@@ -6423,12 +6428,12 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
             .settings()
             .world(),
         Some(2),
-        "a credentials save outside the editor must not unpin an account"
+        "a credentials save from a re-opened form must not unpin an account"
     );
     assert_eq!(
         arm.world_choice(),
         Some(2),
-        "a non-editor save must preserve the running slot's pin"
+        "a save from a re-opened form must preserve the running slot's pin"
     );
 }
 
@@ -6442,6 +6447,8 @@ fn save_credentials_creates_new_profile_when_username_is_new() {
     );
     vault_upsert(&mut s.core, profile("alice", "pw", 42));
 
+    // Save commits the open form: the new-profile form takes the edits.
+    s.begin_edit_profile(None);
     *s.profile_editor.draft_mut().username_mut() = "bob".into();
     *s.profile_editor.draft_mut().password_mut() = "bobpass".into();
     assert!(s.save_credentials());
@@ -6468,6 +6475,8 @@ fn save_credentials_rejects_empty_username() {
         &mut s.core,
         VaultFixture::create(&path, "test-passphrase-01"),
     );
+    // The refusal is the open form's own: the new-profile form takes the edits.
+    s.begin_edit_profile(None);
     *s.profile_editor.draft_mut().username_mut() = "  ".into();
     *s.profile_editor.draft_mut().password_mut() = "x".into();
     assert!(!s.save_credentials());
@@ -6483,6 +6492,8 @@ fn save_credentials_without_focus_upserts_spawns_and_selects() {
         VaultFixture::create(&path, "test-passphrase-01"),
     );
     assert!(s.focused_name().is_none());
+    // Save commits the open form: the new-profile form takes the edits.
+    s.begin_edit_profile(None);
     *s.profile_editor.draft_mut().username_mut() = "test".into();
     *s.profile_editor.draft_mut().password_mut() = "test".into();
     assert!(s.save_credentials());
@@ -6509,6 +6520,8 @@ fn save_credentials_does_not_duplicate_running_slot() {
             pixels: FrameBuf::new(),
         },
     );
+    // Save commits the open form, so alice's is open for the edits below.
+    s.begin_edit_profile(Some("alice"));
     *s.profile_editor.draft_mut().username_mut() = "alice".into();
     *s.profile_editor.draft_mut().password_mut() = "newpw".into();
     assert!(s.save_credentials());
@@ -6565,6 +6578,8 @@ fn first_time_save_spawns_nothing_until_the_write_is_durable() {
         &mut s.core,
         VaultFixture::create(&path, "test-passphrase-01"),
     );
+    // Save commits the open form: the new-profile form takes the edits.
+    s.begin_edit_profile(None);
     *s.profile_editor.draft_mut().username_mut() = "alice".into();
     *s.profile_editor.draft_mut().password_mut() = "pw".into();
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
@@ -6611,6 +6626,8 @@ fn save_credentials_upsert_error_surfaces_on_session_error() {
         &mut s.core,
         VaultFixture::create(&path, "test-passphrase-01"),
     );
+    // Save commits the open form: the new-profile form takes the edits.
+    s.begin_edit_profile(None);
     *s.profile_editor.draft_mut().username_mut() = "alice".into();
     *s.profile_editor.draft_mut().password_mut() = "pw".into();
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
@@ -8138,7 +8155,7 @@ fn script_start_selected_refuses_without_selection_or_play() {
         "{err}"
     );
     s.error = None;
-    s.script_sel = Some(ScriptChoice::compiled(
+    s.select_script_selection(ScriptChoice::compiled(
         CompiledCardId::lookup("Gatherer").unwrap(),
     ));
     s.script_start_selected();
@@ -9045,10 +9062,12 @@ fn panel_frame_hook_receives_client_through_slot_frame() {
         "alice",
         hook,
         host_play::SlotFrameInput::default(),
-        host_play::player_here_tile,
-        host_play::Host::publish_frontend_snapshot,
-        host_play::step_walk_arm_follow,
-        |client| client.gens.player,
+        (
+            host_play::player_here_tile,
+            host_play::Host::publish_frontend_snapshot,
+            host_play::step_walk_arm_follow,
+            |client: &_| client.gens.player,
+        ),
     );
 
     assert!(session.mainland_sent.lock().unwrap().contains("alice"));

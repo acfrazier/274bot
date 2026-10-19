@@ -15,7 +15,7 @@ use script::{LoadoutsBacking, LoadoutsBaseline, LoadoutsSaveError};
 
 use super::*;
 use crate::command::{CommandFailure, Completion, SubjectKind};
-use crate::scripts::{Loadouts, LoadoutsError};
+use crate::scripts::{Loadouts, LoadoutsErrorKind};
 use crate::Targets;
 
 fn version(n: u64) -> StoreVersion {
@@ -783,25 +783,27 @@ fn the_refusals_of_the_store_are_sorted_by_kind() {
     // Nowhere to load from or save to.
     let mut detached = Loadouts::detached(vec![melee()]);
     detached.upsert_for_test(Loadout::new("more"));
-    assert!(matches!(
-        detached.save_for_test(),
-        Err(LoadoutsError::NotBound(_))
-    ));
-    assert!(matches!(
-        detached.reload_for_test(),
-        Err(LoadoutsError::NotBound(_))
-    ));
+    assert_eq!(
+        detached.save_for_test().map_err(|error| error.kind()),
+        Err(LoadoutsErrorKind::NotBound)
+    );
+    assert_eq!(
+        detached.reload_for_test().map_err(|error| error.kind()),
+        Err(LoadoutsErrorKind::NotBound)
+    );
 
     // A load that failed and still stands.
     let mut unreadable = Loadouts::over_backing_for_test(Arc::new(Unreadable));
     unreadable.upsert_for_test(Loadout::new("more"));
-    assert!(matches!(
-        unreadable.save_for_test(),
-        Err(LoadoutsError::NotLoaded(_))
-    ));
     assert_eq!(
-        unreadable.reload_for_test(),
-        Err(LoadoutsError::Load("the store is unreadable".into()))
+        unreadable.save_for_test().map_err(|error| error.kind()),
+        Err(LoadoutsErrorKind::NotLoaded)
+    );
+    assert_eq!(
+        unreadable
+            .reload_for_test()
+            .map_err(|error| (error.kind(), error.to_string())),
+        Err((LoadoutsErrorKind::Load, "the store is unreadable".into()))
     );
 
     // Another writer changed the store after the rows loaded.
@@ -810,15 +812,17 @@ fn the_refusals_of_the_store_are_sorted_by_kind() {
         Loadouts::over_backing_for_test(Arc::clone(&memory) as Arc<dyn LoadoutsBacking>);
     memory.outside(|rows| rows.push(Loadout::new("tank")));
     loadouts.upsert_for_test(Loadout::new("mine"));
-    assert!(matches!(
-        loadouts.save_for_test(),
-        Err(LoadoutsError::Conflict(_))
-    ));
+    assert_eq!(
+        loadouts.save_for_test().map_err(|error| error.kind()),
+        Err(LoadoutsErrorKind::Conflict)
+    );
 
     // The store refused the write.
     memory.refuse_writes.store(true, Ordering::SeqCst);
     assert_eq!(
-        loadouts.save_for_test(),
-        Err(LoadoutsError::Write("the disk is full".into()))
+        loadouts
+            .save_for_test()
+            .map_err(|error| (error.kind(), error.to_string())),
+        Err((LoadoutsErrorKind::Write, "the disk is full".into()))
     );
 }

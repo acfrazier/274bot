@@ -141,6 +141,9 @@ fn session_with_profiles(names: &[&str]) -> (Session, TestDir) {
 #[test]
 fn focus_restores_assignment_not_other_profile_pending() {
     let (mut s, _dir) = session_with_profiles(&["alice", "bob"]);
+    s.persist_successful_assignment("bob", Assignment::catalog("Alcher"));
+    s.core.flush_writes();
+    s.pump_status();
     select_for_profile(
         &mut s,
         "alice",
@@ -170,6 +173,10 @@ fn two_profiles_keep_isolated_settings_after_legacy_claim() {
     let store = dir.join("script-settings.json");
     fs::write(&store, r#"{"catalog:SmithingBot":{"bar":"Adamant"}}"#).unwrap();
     s.scripts.set_legacy_store(store);
+    let root = dir.join("catalog");
+    fake_catalog(&root, &[("SmithingBot", BOT_TS)]);
+    s.import_rs2b0t_catalog(&root).unwrap();
+    settle(&mut s);
     let a = s.profile_overrides("alice", "catalog:SmithingBot", "SmithingBot");
     assert_eq!(a.get("bar"), Some(&Value::String("Adamantite".into())));
     s.set_profile_setting(
@@ -180,8 +187,12 @@ fn two_profiles_keep_isolated_settings_after_legacy_claim() {
         "bar",
         Value::String("Iron".into()),
     );
+    s.core.flush_writes();
+    s.pump_status();
     let b = s.profile_overrides("bob", "catalog:SmithingBot", "SmithingBot");
     assert_eq!(b.get("bar"), Some(&Value::String("Adamantite".into())));
+    s.core.flush_writes();
+    s.pump_status();
     let a = s.profile_overrides("alice", "catalog:SmithingBot", "SmithingBot");
     assert_eq!(a.get("bar"), Some(&Value::String("Iron".into())));
 }
@@ -320,11 +331,13 @@ fn initial_runtime_load_failure_survives_another_card_start() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let bad_source = "export const apiVersion = 2;\nthrow new Error('initial-load-proof');\nexport function tick(api) {}\n";
     let bad_path = write_bot(&dir, "bad.ts", bad_source);
-    let bad = s.scripts.load_card(&bad_path).unwrap();
-    s.script_sel = Some(ScriptChoice::loaded(
-        bad.source(),
-        &bad_path.to_string_lossy(),
-    ));
+    s.load_js(&bad_path);
+    let bad_identity = s
+        .scripts
+        .card(CardSource::File, &bad_path.to_string_lossy())
+        .unwrap()
+        .identity_key()
+        .to_owned();
     s.script_start_selected();
     settle(&mut s);
     assert!(
@@ -346,18 +359,16 @@ fn initial_runtime_load_failure_survives_another_card_start() {
     start_file_on(&mut s, "bob", &good_path);
     let failure = s
         .scripts
-        .load_failure(bad.identity_key())
+        .load_failure(&bad_identity)
         .expect("initial runtime failure must remain inspectable after another card starts");
     assert_eq!(failure.path(), bad_path.as_path());
     assert_eq!(failure.stage(), LoadStage::RuntimeLoad);
     assert_eq!(
-        s.scripts.load_failure_fingerprint(bad.identity_key()),
+        s.scripts.load_failure_fingerprint(&bad_identity),
         Some(raw_content_fingerprint(&bad_path, bad_source))
     );
     assert_eq!(
-        s.scripts
-            .load_failure_api_family(bad.identity_key())
-            .as_deref(),
+        s.scripts.load_failure_api_family(&bad_identity).as_deref(),
         Some("v2")
     );
     assert!(s
@@ -1675,17 +1686,14 @@ fn stop_all_during_a_reload_reap_drops_the_queued_replacement() {
     let path = write_bot(&dir, "reap.ts", BOT_TS);
     s.load_js(&path);
     start_file_on(&mut s, "alice", &path);
-    let card = s.scripts.load_card(&path).unwrap();
-    // Reload shape: the old isolate is reaping and its replacement Start is
-    // queued behind the reap (no observe has run in between).
-    s.core.stop_script("alice");
-    s.core
-        .start_script_for_test(
-            "alice",
-            frontend_core::ScriptStart::load(card.js().to_owned(), card.shape(), None, Vec::new()),
-            Some(card.identity_key().to_owned()),
-        )
-        .unwrap();
+    // Assign & restart holds the replacement behind the old isolate's reap.
+    s.select_script_selection(ScriptChoice::loaded(
+        CardSource::File,
+        &path.to_string_lossy(),
+    ));
+    let identity = s.core.profile_identity("alice").unwrap();
+    s.fleet_selection.set_for_test(identity, true);
+    s.fleet_assign_restart_selected();
     assert_eq!(s.core.script_state("alice"), ScriptRunState::Stopping);
 
     s.script_stop_all();
@@ -1998,25 +2006,37 @@ fn fleet_assign_and_restart_swaps_the_card_and_follows_the_paced_starts() {
         s.fleet_selection.set_for_test(identity, true);
     }
 
-    s.script_sel = None;
     s.fleet_assign_selected();
     assert_eq!(
         s.fleet_report.as_deref(),
         Some("Assign: select a card in Scripts first")
     );
 
-    s.script_sel = Some(ScriptChoice::loaded(new.source(), new.identity_id()));
+    s.select_script_selection(ScriptChoice::loaded(new.source(), new.identity_id()));
     let scope = s.fleet_restart_scope();
     assert_eq!(
         (scope.interrupted(), scope.starting()),
         (&["alice".to_string()][..], &["bob".to_string()][..])
     );
     s.fleet_assign_restart_selected();
-    settle(&mut s);
     s.core.flush_writes();
+    s.pump_status();
+    settle(&mut s);
     let play = s.core.play_for_test().unwrap();
     for name in ["alice", "bob"] {
-        assert_eq!(s.core.script_state(name), ScriptRunState::Running, "{name}");
+        assert_eq!(
+            s.core.script_state(name),
+            ScriptRunState::Running,
+            "{name}; report={:?}; last_bulk={:?}; error={:?}; assignment={:?}; \
+             starts_pending={}; queue={:?}; commands={:?}",
+            s.fleet_report,
+            s.scripts.last_bulk_report(),
+            s.error,
+            s.profile_assignment(name),
+            s.scripts.starts_pending(),
+            s.scripts.start_queue_place(name),
+            s.core.commands().reports().collect::<Vec<_>>()
+        );
         assert_eq!(
             s.profile_assignment(name).unwrap().key(),
             new.identity_key().to_owned(),

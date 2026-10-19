@@ -317,6 +317,9 @@ struct TuiSurface<'a> {
     walk_cleared: &'a mut bool,
     map_desk: &'a mut MapDesk,
     models: frontend_core::Models<'a>,
+    /// The TUI's per-frame client work, lent only to the vault rows that
+    /// start the play.
+    frame_hook: Option<Arc<dyn frontend_core::frames::FrameHook>>,
 }
 
 impl frontend_core::SlotSurface for TuiSurface<'_> {
@@ -347,6 +350,10 @@ impl frontend_core::SlotSurface for TuiSurface<'_> {
 
     /// The TUI draws no game image and captures no game input.
     fn draw_changed(&mut self, _switch: frontend_core::command::DrawSwitch, _on: bool) {}
+
+    fn frame_hook(&mut self) -> Option<Arc<dyn frontend_core::frames::FrameHook>> {
+        self.frame_hook.take()
+    }
 }
 
 /// The TUI session: the running play, the vault and the per-username walk
@@ -448,6 +455,15 @@ pub(crate) mod seam {
     use crate::fleet::FleetState;
     use crossterm::event::KeyEvent;
 
+    static QUESTER_PATHS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Serialize tests that use the process-global Quester folder registry.
+    pub(crate) fn lock_quester_paths_test_state() -> std::sync::MutexGuard<'static, ()> {
+        QUESTER_PATHS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+
     pub(crate) struct Seam {
         session: TuiSession,
     }
@@ -460,6 +476,16 @@ pub(crate) mod seam {
             let session =
                 TuiSession::with_launcher(launcher, frontend_core::launch::InstancePermit::skip());
             Self { session }
+        }
+
+        /// Restore preferences while serializing access to the process-wide
+        /// Quester source registry shared by tests.
+        pub(crate) fn restore_preferences(
+            app: &mut TuiApp,
+            preferences: frontend_core::UiPreferences,
+        ) {
+            let _guard = lock_quester_paths_test_state();
+            app.restore_preferences(preferences);
         }
 
         /// A session over a vault holding `profiles` (name, uid) and an
@@ -490,6 +516,11 @@ pub(crate) mod seam {
             dispatch(&mut self.session, app, action);
         }
 
+        /// Poll the session as the event loop does.
+        pub(crate) fn pump(&mut self, app: &mut TuiApp) {
+            self.session.pump(app);
+        }
+
         /// Send `key` to `app`, check that it returns `expected`, then
         /// apply that action.
         pub(crate) fn press(&mut self, app: &mut TuiApp, key: KeyEvent, expected: AppAction) {
@@ -516,6 +547,7 @@ pub(crate) mod seam {
                 walk_cleared: &mut walk_cleared,
                 map_desk: &mut desk,
                 models: frontend_core::Models::none().with_fleet_filter(&mut state.filter),
+                frame_hook: None,
             };
             self.session
                 .core
@@ -704,15 +736,17 @@ impl TuiSession {
         let (launch, hook) = self.play_launch();
         let command = if path.is_file() {
             self.core
-                .stage_vault_unlock(path.to_path_buf(), pass, launch, hook);
+                .stage_vault_unlock(path.to_path_buf(), pass, launch);
             OperatorCommand::UnlockVault
         } else {
             self.core
-                .stage_vault_create(path.to_path_buf(), pass, launch, hook);
+                .stage_vault_create(path.to_path_buf(), pass, launch);
             OperatorCommand::CreateVault
         };
-        let submitted = self
-            .submit_raw(command, Targets::Application)
+        let (core, mut surface) = self.core_and_surface();
+        surface.frame_hook = Some(hook);
+        let submitted = core
+            .submit(command, Targets::Application, &mut surface)
             .map_err(|error| error.to_string())?;
         if let Some(reason) = self.core.command_failure(submitted.request()) {
             return Err(reason.to_string());
@@ -833,6 +867,7 @@ impl TuiSession {
                     .with_scripts(&mut self.scripts)
                     .with_import(&mut self.profile_import)
                     .with_loadouts(&mut self.loadouts),
+                frame_hook: None,
             },
         )
     }
@@ -859,6 +894,7 @@ impl TuiSession {
                     .with_quester(&mut app.quester_paths_controller)
                     .with_walk_globals(&mut app.walk_permissions)
                     .with_form_save(&mut app.settings_save),
+                frame_hook: None,
             },
         )
     }
@@ -873,9 +909,15 @@ impl TuiSession {
         targets: Targets<'_>,
     ) -> Result<frontend_core::Submitted, String> {
         let (core, mut surface) = self.core_and_surface_with(app);
-        let submitted = core
-            .submit(command, targets, &mut surface)
-            .map_err(|error| error.to_string())?;
+        let submitted =
+            core.submit(command, targets, &mut surface)
+                .map_err(|error| match error {
+                    frontend_core::SubmitError::NoTarget(OperatorCommand::GroupWalk) => {
+                        "no bots selected".to_string()
+                    }
+                    error => error.to_string(),
+                })?;
+
         if let Some(reason) = core.command_failure(submitted.request()) {
             return Err(reason.to_string());
         }
@@ -1332,25 +1374,37 @@ impl TuiSession {
         match result {
             Ok(submitted) => {
                 let failure = self.core.command_failure(submitted.request());
-                let applied = self
-                    .core
-                    .commands()
-                    .report(submitted.request())
-                    .is_some_and(|report| {
-                        report.members().iter().any(|member| {
-                            matches!(
-                                member.terminal(),
-                                Some(api::identity::Settlement::Completed(
-                                    frontend_core::command::Completion::Done
-                                ))
-                            )
-                        })
-                    });
+                let report = self.core.commands().report(submitted.request());
+                let applied = report.is_some_and(|report| {
+                    report.members().iter().any(|member| {
+                        matches!(
+                            member.terminal(),
+                            Some(api::identity::Settlement::Completed(
+                                frontend_core::command::Completion::Done
+                            ))
+                        )
+                    })
+                });
+                let not_logged_in = report.is_some_and(|report| {
+                    report.members().iter().any(|member| {
+                        matches!(
+                            member.terminal(),
+                            Some(api::identity::Settlement::Completed(
+                                frontend_core::command::Completion::Skipped(
+                                    frontend_core::command::SkipReason::NotLoggedIn
+                                )
+                            ))
+                        )
+                    })
+                });
+
                 if let Some(error) = failure {
                     app.error = Some(error.to_string());
                 } else if applied {
                     app.walk_dest = self.map_desk.walk_dest();
                     app.error = None;
+                } else if not_logged_in {
+                    app.error = Some("map: no observed player".into());
                 } else {
                     app.error = Some("map: WalkTo was not applied".into());
                 }
@@ -1464,10 +1518,9 @@ impl TuiSession {
                     });
                 if let Some((id, generation)) = click {
                     self.scripts
-                        .stage_paint_input(frontend_core::scripts::PaintInput::Click {
-                            id,
-                            generation,
-                        });
+                        .stage_paint_input(frontend_core::scripts::PaintInput::click(
+                            id, generation,
+                        ));
                     app.error = self
                         .submit_with(
                             app,
@@ -1492,11 +1545,11 @@ impl TuiSession {
                     });
                 if let Some((key, select_name, generation)) = selection {
                     self.scripts
-                        .stage_paint_input(frontend_core::scripts::PaintInput::Select {
+                        .stage_paint_input(frontend_core::scripts::PaintInput::select(
                             key,
-                            name: select_name,
+                            select_name,
                             generation,
-                        });
+                        ));
                     app.error = self
                         .submit_with(
                             app,
@@ -1875,6 +1928,8 @@ impl TuiSession {
             self.apply_script_notice(app);
             return;
         }
+        self.scripts.show_load_failures();
+
         self.apply_script_notice(app);
     }
 

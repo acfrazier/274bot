@@ -35,10 +35,11 @@ pub enum FormLeave {
 }
 
 /// A staged Discard / Keep editing prompt: the operator asked to leave the
-/// form (a switch of it to [`Self::target`], `""` for a new profile, a
-/// close, the delete of its profile, MultiBox off or the import) while it
-/// holds unsaved edits or a save that has not settled. The text is built
-/// once, when the prompt is staged, so drawing it only borrows.
+/// form (a switch of it to [`Self::target`], `""` for a new profile, the
+/// delete of its profile or the import) while it holds unsaved edits or a
+/// save that has not settled, or (a close, or MultiBox off) while a save has
+/// not settled: a close drops unsaved edits. The text is built once, when
+/// the prompt is staged, so drawing it only borrows.
 #[derive(Debug, PartialEq, Eq)]
 pub struct LeavePrompt {
     target: String,
@@ -259,14 +260,16 @@ impl ProfileEditor {
         self.pending = None;
     }
 
-    /// Close the form unless it has unsaved edits or a save still being
-    /// written, which stages the prompt instead. Returns whether it closed.
+    /// Close the form unless its save is still being written, which stages
+    /// the prompt instead: the write can still fail and the draft is all
+    /// that is left of it. Unsaved edits alone do not stop a close (Cancel,
+    /// Close and MultiBox off drop them). Returns whether it closed.
     pub(crate) fn request_close<Io>(
         &mut self,
         core: &OperatorSession<Io>,
         leave: FormLeave,
     ) -> bool {
-        if self.dirty(core) || self.saving(core) {
+        if self.saving(core) {
             let then = match leave {
                 FormLeave::CloseWindow => "close Profiles",
                 _ => "close the form",

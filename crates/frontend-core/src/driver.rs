@@ -18,7 +18,6 @@
 //! file), which opens the vault and starts a real `Play`.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use api::identity::RequestId;
 
@@ -26,12 +25,15 @@ use crate::command::{CommandReport, DrawSwitch, OperatorCommand};
 use crate::fleet::FleetFilter;
 use crate::launch::{InstancePermit, PlayConfig, PlayLaunch};
 use crate::models::Models;
+use crate::profile_editor::ProfileEditor;
+use crate::quester_paths::QuesterPathsController;
 use crate::rs2b0t_import::ProfileImport;
 use crate::scripts::{LoadoutForm, Scripts};
 use crate::selection::MarkedSelection;
-use crate::session::{DrawPolicy, OperatorSession, SubmitError, Submitted, Targets};
+use crate::session::prefs::DrawPolicy;
+use crate::session::{OperatorSession, SubmitError, Submitted, Targets};
 use crate::surface::{SlotAttach, SlotSurface, SpawnProfile};
-use crate::{ProfileEditor, QuesterPathsController, WalkGlobalsView};
+use crate::walk_permissions::WalkGlobalsView;
 
 /// The operator models a headless driver holds, as a front end does.
 pub struct DriverModels {
@@ -44,7 +46,7 @@ pub struct DriverModels {
     quester: QuesterPathsController,
     walk_globals: WalkGlobalsView,
     draw: DrawPolicy,
-    map: crate::MapDesk,
+    map: crate::session::map::MapDesk,
 }
 
 impl DriverModels {
@@ -155,19 +157,6 @@ impl SlotSurface for DriverSurface<'_> {
     fn draw_changed(&mut self, _switch: DrawSwitch, _on: bool) {}
 }
 
-/// The per-frame client work of a headless play session: none.
-struct NoClientWork;
-
-impl crate::frames::FrameHook for NoClientWork {
-    fn frame(
-        &self,
-        _client: &mut dyn std::any::Any,
-        _slot: &str,
-        _frame: &crate::frames::FrameContext<'_>,
-    ) {
-    }
-}
-
 /// An operator session driven without a window.
 pub struct HeadlessDriver {
     session: OperatorSession<()>,
@@ -216,14 +205,11 @@ impl HeadlessDriver {
         play: &PlayConfig,
     ) -> Result<Submitted, SubmitError> {
         let launch = PlayLaunch::direct(play);
-        let hook: Arc<dyn crate::frames::FrameHook> = Arc::new(NoClientWork);
         let row = if vault.is_file() {
-            self.session
-                .stage_vault_unlock(vault, passphrase, launch, hook);
+            self.session.stage_vault_unlock(vault, passphrase, launch);
             OperatorCommand::UnlockVault
         } else {
-            self.session
-                .stage_vault_create(vault, passphrase, launch, hook);
+            self.session.stage_vault_create(vault, passphrase, launch);
             OperatorCommand::CreateVault
         };
         self.submit(row, Targets::Application)

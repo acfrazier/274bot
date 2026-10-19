@@ -177,6 +177,16 @@ pub trait SlotSurface {
     /// render mirror and capture channel). The session already holds and
     /// saved the new value.
     fn draw_changed(&mut self, switch: crate::command::DrawSwitch, on: bool);
+
+    /// The front end's per-frame client work for the play that
+    /// [`crate::OperatorCommand::UnlockVault`] or
+    /// [`crate::OperatorCommand::CreateVault`] starts. The session asks for
+    /// it only while it dispatches one of those rows and never keeps it
+    /// apart from the play. `None` (the default): the surface does no
+    /// per-frame client work (headless).
+    fn frame_hook(&mut self) -> Option<std::sync::Arc<dyn crate::frames::FrameHook>> {
+        None
+    }
 }
 
 /// A surface with no per-slot devices: raster forced off, no frame mailbox,
