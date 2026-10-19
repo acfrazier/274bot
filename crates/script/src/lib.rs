@@ -36,6 +36,8 @@ mod event_signal;
 #[cfg(feature = "load")]
 mod events;
 pub mod food_policy;
+/// Borrowed preset-location helpers for compiled and compatibility callers.
+pub mod gather_locations;
 /// Native gather-tool selection over the posted `api::gather_tools` rows.
 pub mod gather_tools;
 /// Native woodcutting and mining gatherer card.

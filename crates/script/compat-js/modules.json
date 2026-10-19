@@ -458,5 +458,9 @@
   {
     "module": "runtime/BotHost.js",
     "shim": "bot_host.js"
+  },
+  {
+    "module": "shim/gathering_locations.js",
+    "shim": "gathering_locations.js"
   }
 ]
