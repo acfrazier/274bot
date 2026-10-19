@@ -685,46 +685,6 @@
     "async": false
   },
   {
-    "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.record",
-    "module": "api/chatbox/gameMessages.js",
-    "selector": "GameMessages.record",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: mutable game-message recording remains unavailable.",
-    "runtime": "crates/script/src/shim/game_messages.js:17",
-    "preserveParameters": true,
-    "async": false
-  },
-  {
-    "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.firstSince",
-    "module": "api/chatbox/gameMessages.js",
-    "selector": "GameMessages.firstSince",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: message matching after a mark remains unavailable.",
-    "runtime": "crates/script/src/shim/game_messages.js:37",
-    "preserveParameters": true,
-    "async": false
-  },
-  {
-    "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.recent",
-    "module": "api/chatbox/gameMessages.js",
-    "selector": "GameMessages.recent",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: a mutable recent-message ring remains unavailable.",
-    "runtime": "crates/script/src/shim/game_messages.js:41",
-    "preserveParameters": true,
-    "async": false
-  },
-  {
-    "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.reset",
-    "module": "api/chatbox/gameMessages.js",
-    "selector": "GameMessages.reset",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: mutable game-message reset remains unavailable.",
-    "runtime": "crates/script/src/shim/game_messages.js:45",
-    "preserveParameters": true,
-    "async": false
-  },
-  {
     "id": "not-impl:paint/paintLogic.js:PaintState.publishRegions",
     "module": "paint/paintLogic.js",
     "selector": "PaintState.publishRegions",

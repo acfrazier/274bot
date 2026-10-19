@@ -3395,6 +3395,10 @@
       "owner": "T4"
     },
     {
+      "path": "crates/script/src/load/chatbox_v8.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/load/clue_facts_v8.rs",
       "owner": "T2"
     },
@@ -5084,6 +5088,10 @@
     },
     {
       "path": "crates/script/tests/supply_helpers.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_chatbox_family.rs",
       "owner": "T2"
     },
     {
