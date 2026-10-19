@@ -1,12 +1,14 @@
 use super::*;
 use crate::play_login::observe_client_session_exit;
+use crate::play_login::{synthetic_queue_attempt, LoginAttemptReturn, QueueAttemptCells};
 use api::bank_memory::Origin;
 use client::config::if_type::ComponentType;
+use client::io::client_stream::LoginCancel;
 use client::{ClientSessionConfig, ClientSessionProfile};
 use host::{Guardian, GuardianLiveContext, InputEv};
 use nav::bank_fetch::BankRows;
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -667,20 +669,20 @@ fn live_vault_passphrase_is_fresh_and_accepted() {
     vault::check_new_passphrase(&second).unwrap();
 }
 
-/// A login against a closed local port: a real refused connection.
+/// A login-connect receipt from a real refused local TCP connection.
 fn refused_login_error() -> LoginError {
     let port = {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         listener.local_addr().unwrap().port()
     };
-    let mut client = Client::new(ClientConfig {
-        host: "127.0.0.1".into(),
-        port,
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    });
-    client.login("alice", "secret", false).unwrap_err()
+    let error = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap_err();
+    LoginError {
+        transport: Some(client::client::LoginTransportError::from_io(
+            client::client::LoginStage::Connect,
+            &error,
+        )),
+        ..LoginError::response(-1, "", "Error connecting to server.")
+    }
 }
 
 #[test]
@@ -1033,9 +1035,7 @@ fn spawned_worker_response_21_retries_same_endpoint_without_fifo_ownership() {
         "a follower can enter while the transfer countdown runs"
     );
     assert!(
-        play.queue
-            .lock()
-            .abandon_permit(test_queue_owner(43)),
+        play.queue.lock().abandon_permit(test_queue_owner(43)),
         "an unused test grant is abandoned, never returned as a started flight"
     );
 
@@ -1319,12 +1319,9 @@ fn running_slot_profile_world_change_reseats_next_login_handshake() {
     // Keep this proof entirely local: pre-seat the key cache so production
     // world configuration never attempts an HTTPS fetch.
     for world in &worlds.worlds {
-        public_worlds::modulus_for(
-            world,
-            false,
-            &LoginCancel::new(),
-            |_, _| Some(client::PROD_LOGIN_RSAN.to_string()),
-        );
+        public_worlds::modulus_for(world, false, &LoginCancel::new(), |_, _| {
+            Some(client::PROD_LOGIN_RSAN.to_string())
+        });
     }
 
     let session_profile = Arc::new(
@@ -1381,7 +1378,7 @@ fn running_slot_profile_world_change_reseats_next_login_handshake() {
 
     let mut round = public_worlds::WorldRound::new(&worlds, None, Some(1)).unwrap();
     assert!(!refresh_slot_world_preference(&mut round, &worlds, &arm).unwrap());
-    configure_slot_world(&mut client, &worlds.worlds[round.index], false, &arm.stop).unwrap();
+    configure_slot_world(&mut client, &worlds.worlds[round.index], false, &arm).unwrap();
     let w1_server = thread::spawn(move || w1_listener.accept().unwrap());
     let socket =
         std::net::TcpStream::connect((client.config.host.as_str(), client.config.port)).unwrap();
@@ -1417,7 +1414,7 @@ fn running_slot_profile_world_change_reseats_next_login_handshake() {
         assert!(queue.abandon_permit(test_queue_owner(43)));
     }
     assert!(refresh_slot_world_preference(&mut round, &worlds, &arm).unwrap());
-    configure_slot_world(&mut client, &worlds.worlds[round.index], false, &arm.stop).unwrap();
+    configure_slot_world(&mut client, &worlds.worlds[round.index], false, &arm).unwrap();
     assert_eq!(client.config.host, "localhost");
     assert_eq!(client.config.port, w2_port);
     assert_eq!(client.node_id, 11);
@@ -2082,7 +2079,7 @@ fn stop_slot_during_unresponsive_public_key_fetch_is_bounded() {
             port,
             node_id: 42,
         };
-        configure_slot_world(&mut client, &world, true, &arm.stop).unwrap();
+        configure_slot_world(&mut client, &world, true, &arm).unwrap();
         assert!(arm.stop.load(Ordering::Relaxed));
     });
     play.handles.insert("alice".into(), slot);
@@ -2219,7 +2216,7 @@ fn copy_stream_bytes_mirrors_stream_counters() {
     let addr = listener.local_addr().unwrap();
     let log = Arc::new(Mutex::new(Vec::new()));
     let server = thread::spawn(move || {
-        let (mut s, _) = listener.accept().unwrap();
+        let mut s = accept_test_socket(listener);
         grant_login(&mut s, &log, 2);
         // Keep the socket open briefly so the writer thread flushes the
         // login block before the client drops it.
@@ -2238,7 +2235,8 @@ fn copy_stream_bytes_mirrors_stream_counters() {
         Arc::new(vec![]),
         Vec::new(),
     );
-    c.login("a", "pw", false).unwrap();
+    let arm = SlotArm::new(7, true);
+    let _driver = hosted_login(&mut c, addr, &arm, "a", "pw", false);
     let mut s = SlotStatus {
         username: "a".into(),
         ..SlotStatus::default()
@@ -2447,8 +2445,10 @@ fn client_after_observed_idle_logout() -> Client {
     );
     client.ingame = true;
     client.ptype = -1;
-    client.stream =
-        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    client.stream = Some(
+        client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+            .unwrap(),
+    );
     let (mut server, _) = listener.accept().unwrap();
     server
         .set_read_timeout(Some(Duration::from_secs(2)))
@@ -2665,6 +2665,136 @@ fn hosted_client_on_a_built_scene(addr: std::net::SocketAddr) -> Client {
     ));
     client
 }
+fn accept_test_socket(listener: TcpListener) -> TcpStream {
+    listener.set_nonblocking(true).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                let timeout = Duration::from_secs(8);
+                stream.set_read_timeout(Some(timeout)).unwrap();
+                stream.set_write_timeout(Some(timeout)).unwrap();
+                return stream;
+            }
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+            {
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("bounded loopback accept failed: {error}"),
+        }
+    }
+}
+
+/// Run a real host-owned login against a numeric loopback fixture. The
+/// reservation, transport binding, and slot authorization use the same exact
+/// owner path as the worker; the returned driver keeps the composition live.
+fn hosted_login(
+    client: &mut Client,
+    addr: std::net::SocketAddr,
+    arm: &SlotArm,
+    username: &str,
+    password: &str,
+    reconnect: bool,
+) -> client_adapter::service::MaintenanceDriver {
+    assert!(addr.ip().is_loopback());
+    assert_eq!(
+        client.config.host.parse::<std::net::IpAddr>().unwrap(),
+        addr.ip()
+    );
+    assert_eq!(client.config.port, addr.port());
+    assert_eq!(reconnect, arm.reconnects());
+
+    client.set_external_reconnect_owner(true);
+    let (command, world_generation) =
+        capture_login_authorization(arm, client.ingame).expect("current login authorization");
+    let token = arm.new_cancel_token().expect("attempt generation");
+    assert!(arm.publish_prequeue_cancel(token.clone(), command, world_generation));
+
+    let driver = client_adapter::service::NetworkService::start_composition()
+        .expect("host network composition starts");
+    let mut addresses = client_adapter::resolver::ResolvedAddresses::new();
+    assert!(addresses.push(addr), "one numeric loopback address fits");
+    let service = Arc::clone(driver.service().reactor());
+    let park = arm.park();
+    let retirement = Arc::new(client_adapter::cancel::AttemptRetire::new(token.generation()));
+    let transport = match client.session_transport() {
+        client::Transport::Tcp => client_adapter::host_network::GameTransport::Tcp,
+        client::Transport::Wss => client_adapter::host_network::GameTransport::Wss,
+    };
+    let prepared = match client.hosted_stream_binding() {
+        Some(previous) => client_adapter::host_network::PreparedGameAttempt::new_for_rebind(
+            service,
+            &previous,
+            park,
+            token,
+            retirement,
+            transport,
+            &client.config.host,
+            client.config.port,
+            addresses,
+        ),
+        None => client_adapter::host_network::PreparedGameAttempt::new(
+            service,
+            park,
+            token,
+            retirement,
+            transport,
+            &client.config.host,
+            client.config.port,
+            addresses,
+        ),
+    }
+    .expect("prepared loopback game transport");
+
+    let uid = arm.uid.load(Ordering::Relaxed);
+    let queue: SharedLoginQueue = Arc::new(QueueMutex::new(
+        LoginQueue::default().with_handshake_hold(Duration::from_secs(5)),
+    ));
+    {
+        let mut queue = queue.lock();
+        queue.enqueue_owner(arm.queue_owner, uid);
+        assert_eq!(
+            poll_permit(&mut queue, arm.queue_owner, uid, Instant::now()),
+            Permit::Grant
+        );
+    }
+    let mut permit = GrantedReservation::new(&queue, arm.queue_owner);
+    let backoff = LoginBackoff::new();
+    let hold = std::cell::Cell::new(None);
+    let mut login = crate::play_login::SlotLogin {
+        client,
+        arm,
+        command,
+        world_generation,
+        username,
+        password,
+        reconnect,
+        backoff: &backoff,
+    };
+    let outcome = permit
+        .attempt(
+            prepared,
+            || !arm.login_attempt_is_current(command, world_generation),
+            |cancel, generation| {
+                arm.begin_attempt_with_generation(command, world_generation, cancel, generation)
+            },
+            |deadline, cancel| {
+                let (result, server_hold) = login.run(deadline, cancel, |_| {});
+                hold.set(server_hold);
+                result
+            },
+            |_| hold.get(),
+        )
+        .expect("granted owner starts the prepared transport attempt");
+    assert_eq!(
+        login
+            .finish_after_q(outcome)
+            .expect("hosted login commits after queue return"),
+        crate::play_login::SlotLoginOutcome::Promoted
+    );
+    driver
+}
 
 fn scene_has_the_loc(client: &Client) -> bool {
     client.world.get_scene(0, 10, 10).is_some()
@@ -2676,8 +2806,8 @@ fn scene_has_the_loc(client: &Client) -> bool {
 /// the old session has gone (`World.ts:858-905`).
 fn serve_one_relog(listener: TcpListener) -> std::thread::JoinHandle<u8> {
     std::thread::spawn(move || {
-        let (mut s, _) = listener.accept().unwrap();
-        s.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
+        let mut s = accept_test_socket(listener);
+        s.set_read_timeout(Some(Duration::from_secs(8))).unwrap();
         let mut header = [0u8; 2];
         s.read_exact(&mut header).unwrap();
         s.write_all(&[0; 8]).unwrap();
@@ -2736,7 +2866,7 @@ fn protocol_error_t1_logs_in_fresh_and_rebuilds_the_world() {
     assert!(!reconnect, "a protocol error is followed by a fresh login");
     assert!(arm.login_applies_memory());
 
-    client.login("bob", "pw", reconnect).unwrap();
+    let _driver = hosted_login(&mut client, addr, &arm, "bob", "pw", reconnect);
     assert_eq!(server.join().unwrap(), 16);
     rebuild_same_zone(&mut client);
     assert_eq!(
@@ -2785,7 +2915,7 @@ fn connection_loss_reconnects_and_keeps_the_world() {
     let reconnect = arm.reconnects();
     assert!(reconnect, "a lost connection reconnects (opcode 18)");
 
-    client.login("bob", "pw", reconnect).unwrap();
+    let _driver = hosted_login(&mut client, addr, &arm, "bob", "pw", reconnect);
     assert_eq!(server.join().unwrap(), 18);
     rebuild_same_zone(&mut client);
     assert_eq!(client.scene_state, 2);
@@ -2812,7 +2942,7 @@ fn dead_server_deadline_reconnects_and_keeps_the_world() {
     let reconnect = arm.reconnects();
     assert!(reconnect);
 
-    client.login("bob", "pw", reconnect).unwrap();
+    let _driver = hosted_login(&mut client, addr, &arm, "bob", "pw", reconnect);
     assert_eq!(server.join().unwrap(), 18);
     rebuild_same_zone(&mut client);
     assert_eq!(client.scene_state, 2);
@@ -3227,7 +3357,7 @@ fn login_error_return_acknowledges_the_reserved_attempt() {
         .attempt_with_test_cells(
             cells,
             |_, _| true,
-            |_, _| Err("connect failed"),
+            |_, _| Err::<(), _>("connect failed"),
             |_| None,
         )
         .expect("started attempt returns Q facts");
@@ -3263,7 +3393,7 @@ fn panic_in_login_attempt_resolves_the_reservation() {
         let _ = permit.attempt_with_test_cells(
             release_cells.clone(),
             |_, _| true,
-            |_, _| panic!("synthetic client.login unwind"),
+            |_, _| -> Result<(), &'static str> { panic!("synthetic client.login unwind") },
             |_| None,
         );
     }));
@@ -3275,10 +3405,7 @@ fn panic_in_login_attempt_resolves_the_reservation() {
     release_cells.mark_physical_release();
     {
         let mut q = queue.lock();
-        assert!(release_cells.acknowledge_after_physical_release(
-            &mut q,
-            Instant::now()
-        ));
+        assert!(release_cells.acknowledge_after_physical_release(&mut q, Instant::now()));
     }
     assert_eq!(
         request_shared(&queue, 8, base + Duration::from_secs(61)),
@@ -3363,9 +3490,7 @@ fn spawned_worker_unwinding_after_its_grant_frees_the_next_login() {
     })
     .join();
     assert!(
-        play.queue
-            .lock()
-            .abandon_permit(test_queue_owner(99)),
+        play.queue.lock().abandon_permit(test_queue_owner(99)),
         "the unused sibling grant is returned before Alice's queue turn"
     );
     assert!(
@@ -3419,18 +3544,20 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
         permit
             .attempt_with_test_cells(
                 alice_cells,
-                |_| true,
+                |_, _| true,
                 |deadline, cancel| {
                     deadline_tx.send(deadline).unwrap();
                     // This native socket deliberately ignores the queue
                     // deadline. Only the exact cancel callback can end it.
-                    let mut socket = TcpStream::connect(endpoint)
-                        .map_err(|error| error.to_string())?;
+                    let mut socket =
+                        TcpStream::connect(endpoint).map_err(|error| error.to_string())?;
                     let close_socket = socket.try_clone().map_err(|error| error.to_string())?;
                     cancel.register_cancel_callback(move || {
                         let _ = close_socket.shutdown(Shutdown::Both);
                     });
-                    socket.write_all(&[14, 0]).map_err(|error| error.to_string())?;
+                    socket
+                        .write_all(&[14, 0])
+                        .map_err(|error| error.to_string())?;
                     let mut byte = [0; 1];
                     let read = socket.read(&mut byte);
                     read_ended_tx.send(()).unwrap();
@@ -3469,7 +3596,7 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
         let result = permit
             .attempt_with_test_cells(
                 synthetic_queue_attempt(bob_arm.queue_owner, 2),
-                |_| true,
+                |_, _| true,
                 |_, _| {
                     bob_started_tx.send(()).unwrap();
                     bob_release_rx
@@ -3716,7 +3843,7 @@ fn a_worker_delayed_after_its_grant_is_spaced_from_its_real_start() {
     let alice_result = permit
         .attempt_with_test_cells(
             synthetic_queue_attempt(alice_owner, 1),
-            |_| true,
+            |_, _| true,
             |_, _| {
                 alice_start = Some(Instant::now());
                 Err::<(), _>("refused at once")
@@ -3732,7 +3859,7 @@ fn a_worker_delayed_after_its_grant_is_spaced_from_its_real_start() {
     let bob_result = permit
         .attempt_with_test_cells(
             synthetic_queue_attempt(bob_owner, 2),
-            |_| true,
+            |_, _| true,
             |_, _| {
                 bob_start = Some(Instant::now());
                 Ok::<(), ()>(())
@@ -3778,12 +3905,14 @@ fn response_16_hold_reaches_siblings_before_the_slot_frees() {
     let login = permit
         .attempt_with_test_cells(
             synthetic_queue_attempt(attempt_owner, 1),
-            |_| true,
-            |_, _| Err::<(), _>(LoginError::response(
-                16,
-                "Login attempts exceeded.",
-                "Please wait 1 minute and try again.",
-            )),
+            |_, _| true,
+            |_, _| {
+                Err::<(), _>(LoginError::response(
+                    16,
+                    "Login attempts exceeded.",
+                    "Please wait 1 minute and try again.",
+                ))
+            },
             |result| {
                 let hold = server_hold(result, &backoff);
                 // Bob polls every 20 ms all through this.
@@ -3931,10 +4060,7 @@ fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
         request_shared(&play.queue, 8, window_started + Duration::from_secs(61)),
         Permit::Grant
     );
-    assert!(play
-        .queue
-        .lock()
-        .abandon_permit(test_queue_owner(8)));
+    assert!(play.queue.lock().abandon_permit(test_queue_owner(8)));
 
     assert_eq!(play.reap_finished_workers(), vec!["dead"]);
     assert!(play.arm("dead").is_none());
@@ -8561,7 +8687,9 @@ fn bank_client() -> Client {
     // attached precondition, like the nav-client fixture.
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let stream = client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+    let stream =
+        client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+            .unwrap();
     std::mem::forget(listener);
     let mut c = prepare_client(
         ClientConfig {
@@ -8901,8 +9029,10 @@ fn compat_labelled_deposit_dispatches_the_selected_same_name_side_row() {
     // A real (loopback) stream so `Interactions` sees an attached client.
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    c.stream =
-        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    c.stream = Some(
+        client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+            .unwrap(),
+    );
     std::mem::forget(listener);
     {
         let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
@@ -13624,7 +13754,9 @@ fn trade_offer_client() -> Client {
     use client::config::ObjType;
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let stream = client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+    let stream =
+        client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+            .unwrap();
     std::mem::forget(listener);
     let mut c = prepare_client(
         ClientConfig {
@@ -24862,7 +24994,9 @@ fn queued(navs: &Arc<Mutex<HashMap<String, NavBot>>>) -> Option<WorldTile> {
 pub(super) fn nav_client() -> Client {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let stream = client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+    let stream =
+        client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+            .unwrap();
     // Keep the listener alive so the connect stays established.
     std::mem::forget(listener);
     let mut c = prepare_client(
