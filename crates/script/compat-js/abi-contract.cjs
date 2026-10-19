@@ -5,7 +5,7 @@ const path = require('node:path');
 const ts = require('typescript');
 
 const BASE_PREDECESSORS = ['F0', 'T1.3', 'T2.1'];
-const ACTIVE_FAMILIES = ['bank', 'skills', 'world-primitives'];
+const ACTIVE_FAMILIES = ['bank', 'cow', 'skills', 'world-primitives'];
 // These nav values are expected assertions only; generated classifications
 // come from frozen import graphs and native backend source evidence.
 const SECTION_FAMILIES = new Map([
