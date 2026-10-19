@@ -392,8 +392,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 - Live script scenarios no longer send a world-wide `::speed 600` command by
   default. A scenario sends `::speed` only when it explicitly asks for a
-  different tick, such as `QUESTER_TICK_MS=300` on Engine Q, and a request for
-  the speed the engine's newest confirmation already reports sends nothing.
+  tick, such as `QUESTER_TICK_MS=300` on Engine Q. Every request is sent and
+  then confirmed by a system-chat line newer than that send; a matching
+  confirmation already in the ring neither suppresses nor satisfies it.
   Scenario pass criteria are unchanged.
 
 #### Maps

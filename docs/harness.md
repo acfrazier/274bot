@@ -61,11 +61,13 @@ otherwise starts from a clean account at the Path's authored anchor.
 
 `QUESTER_TICK_MS=300` opts the generic `quester_path` cell and the panel or
 TUI `--live script_quester_path` entry into a 300 ms world tick. All three
-entry points use one shared `ScenarioRunner` lifecycle: send `::speed <ms>`,
-wait for a fresh exact system-chat confirmation, then restore `::speed 600`
-during terminal teardown. A request for the speed the engine's newest exact
-confirmation already reports sends no command, and a scenario that asks for
-no speed sends none. `::speed` is world-wide, so use `QUESTER_TICK_MS`
+entry points use one shared `ScenarioRunner` lifecycle: a scenario that
+explicitly requests a tick sends `::speed <ms>`, waits for an exact
+system-chat confirmation newer than that send, then restores `::speed 600`
+during terminal teardown. A scenario that requests no tick — the default —
+sends nothing. Every send records the current chat mark first, so a matching
+confirmation already in the ring neither suppresses nor satisfies it.
+`::speed` is world-wide, so use `QUESTER_TICK_MS`
 only on isolated Engine Q, never on shared Engine A or the builder. The runner
 logs the target endpoint once when the command fires. Use `local-289q` only in
 the disposable run HOME's `~/.274bot/servers.json`, with game/asset ports

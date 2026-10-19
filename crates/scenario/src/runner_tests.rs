@@ -943,7 +943,7 @@ fn explicit_non_default_tick_sends_exactly_one_world_speed_command() {
 }
 
 #[test]
-fn explicit_default_tick_on_a_confirmed_600_engine_sends_nothing() {
+fn explicit_default_tick_sends_even_with_an_older_matching_confirmation() {
     let mut scenario = stat_scenario(0, 10);
     scenario.settings.nav.engine_speed_ms = Some(600);
     let mut runner = ScenarioRunner::new(scenario);
@@ -951,8 +951,41 @@ fn explicit_default_tick_on_a_confirmed_600_engine_sends_nothing() {
     let mut client = seeded_client();
     push_system_chat(&mut client, "World speed was changed to 600ms");
     runner.tick(&mut client);
-    assert_eq!(client.cheat_packets_sent(), 0);
-    assert!(!contains_outgoing_ascii(&client, "speed "));
+    assert_eq!(
+        outgoing_ascii_count(&client, "speed 600"),
+        1,
+        "a matching confirmation already in the ring does not suppress the request"
+    );
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+}
+
+#[test]
+fn world_speed_confirm_step_requires_a_line_newer_than_its_send() {
+    let mut scenario = stat_scenario(0, 10);
+    scenario.steps[0].kind = StepKind::Perform {
+        send: Box::new(|_, _| true),
+    };
+    scenario.steps[0].wait = wait(Proof::WorldSpeedChanged { ms: 600 }, 10);
+    scenario.settings.nav.engine_speed_ms = Some(600);
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+
+    // The ring already reports the requested rate. It predates this run's
+    // send, so it cannot satisfy the confirm step.
+    push_system_chat(&mut client, "World speed was changed to 600ms");
+    runner.tick(&mut client);
+    assert_eq!(outgoing_ascii_count(&client, "speed 600"), 1);
+    assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+    runner.tick(&mut client);
+    assert!(
+        matches!(runner.status(), RunnerStatus::Running { .. }),
+        "the pre-existing confirmation is stale"
+    );
+
+    // Only a confirmation newer than the send confirms the step.
+    push_system_chat(&mut client, "World speed was changed to 600ms");
+    runner.tick(&mut client);
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
 
