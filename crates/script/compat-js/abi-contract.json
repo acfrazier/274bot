@@ -9653,6 +9653,32 @@
       "mapping_kind": "re-export"
     },
     {
+      "public_name": "backpackSnapshots",
+      "source_name": "backpackSnapshots",
+      "module": "api/inventory/Inventory.js",
+      "family_id": "inventory",
+      "shim": "inventory.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "api/inventory/Inventory.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "backpackCapacity",
+      "source_name": "backpackCapacity",
+      "module": "api/inventory/Inventory.js",
+      "family_id": "inventory",
+      "shim": "inventory.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "api/inventory/Inventory.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
       "public_name": "Skills",
       "source_name": "Skills",
       "module": "api/skills/Skills.js",
@@ -13765,28 +13791,6 @@
       "async": false,
       "family_id": "clues",
       "nav_consuming": true
-    },
-    {
-      "id": "not-impl:api/inventory/Inventory.js:backpackSnapshots",
-      "module": "api/inventory/Inventory.js",
-      "selector": "backpackSnapshots",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: bank-side backpack snapshots are not exposed by the native inventory adapter.",
-      "runtime": "crates/script/src/shim/inventory.js:19",
-      "async": false,
-      "family_id": "inventory",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/inventory/Inventory.js:backpackCapacity",
-      "module": "api/inventory/Inventory.js",
-      "selector": "backpackCapacity",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: bank-side backpack capacity is not exposed by the native inventory adapter.",
-      "runtime": "crates/script/src/shim/inventory.js:23",
-      "async": false,
-      "family_id": "inventory",
-      "nav_consuming": false
     },
     {
       "id": "not-impl:api/trade/drivePartnerTrade.js:stableClosedPoll",
@@ -23728,26 +23732,6 @@
       "overlay_id": "not-impl:api/ai/clues/duelTravel.js:resetClueDuelSearch"
     },
     {
-      "family_id": "inventory",
-      "member": "backpackSnapshots",
-      "selector": "backpackSnapshots",
-      "module": "api/inventory/Inventory.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/inventory.js:19",
-      "reason": "Unconditional not-impl: bank-side backpack snapshots are not exposed by the native inventory adapter.",
-      "overlay_id": "not-impl:api/inventory/Inventory.js:backpackSnapshots"
-    },
-    {
-      "family_id": "inventory",
-      "member": "backpackCapacity",
-      "selector": "backpackCapacity",
-      "module": "api/inventory/Inventory.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/inventory.js:23",
-      "reason": "Unconditional not-impl: bank-side backpack capacity is not exposed by the native inventory adapter.",
-      "overlay_id": "not-impl:api/inventory/Inventory.js:backpackCapacity"
-    },
-    {
       "family_id": "trade",
       "member": "stableClosedPoll",
       "selector": "stableClosedPoll",
@@ -25426,6 +25410,7 @@
     "cooking",
     "cow",
     "gathering",
+    "inventory",
     "runecrafting",
     "skills",
     "world-primitives"
@@ -25705,7 +25690,7 @@
       "type_aliases": 0,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 2
+      "not_impl_debt": 0
     },
     {
       "family_id": "loadouts",

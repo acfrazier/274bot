@@ -27,7 +27,7 @@ SOFTWARE.
 declare module '@rs2b0t/api' {
 export function defineBot<T extends {name: string; create: () => unknown}>(manifest: T): T;
 export { Game } from '*api/game/Game.js';
-export { Inventory, InvItem } from '*api/inventory/Inventory.js';
+export { Inventory, InvItem, backpackSnapshots, backpackCapacity } from '*api/inventory/Inventory.js';
 export { Skills } from '*api/skills/Skills.js';
 export { Bank, withdrawOp } from '*api/bank/Bank.js';
 export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, NEARBY_BANK_RADIUS, resolveBankOpenRoute, parseBankStrategy, shouldBankNow } from '*api/bank/Banking.js';
@@ -2816,17 +2816,12 @@ declare module '*api/inventory/Inventory.js' {
 import * as ___model_Player_js from "*api/model/Player.js";
 import * as ___grounditems_GroundItems_js from "*api/grounditems/GroundItems.js";
 import * as ______adapter_ClientAdapter_js from "*adapter/ClientAdapter.js";
+import { InvItemSnapshot } from "*adapter/ClientAdapter.js";
 import { Loc } from "*api/model/Loc.js";
 import { Npc } from "*api/model/Npc.js";
-export function backpackSnapshots(): never;
-export function backpackCapacity(): never;
+export function backpackSnapshots(): InvItemSnapshot[];
+export function backpackCapacity(): number;
 export class InvItem {
-    readonly name: string | null;
-    readonly count: number;
-    readonly id: number;
-    readonly slot: number;
-    readonly noted: boolean;
-    readonly cert: number;
     constructor(snapshot: ______adapter_ClientAdapter_js.InvItemSnapshot);
     actions(): string[];
     interact(action: string): boolean;

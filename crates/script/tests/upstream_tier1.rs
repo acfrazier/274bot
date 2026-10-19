@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use serde_json::json;
 use script::isolate_fb::{encode_snapshot_with_native, ItemRowInput, NativeFactsInput};
 use script::{transpile_ts, LoadIsolate, LoadShape, Ready};
+use serde_json::json;
 
 mod common;
 
