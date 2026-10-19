@@ -558,6 +558,10 @@ const REGISTRY: &[Entry] = &[
         "jive_dragons_potion_restock",
         scenarios::jive_dragons_potion_restock_scenario,
     ),
+    Entry::new(
+        "jive_dragons_mixed_food_restock",
+        scenarios::jive_dragons_mixed_food_restock_scenario,
+    ),
     Entry::new("jive_demons", scenarios::jive_demons_scenario),
     Entry::new("jive_kbd", scenarios::jive_kbd_scenario),
 ];

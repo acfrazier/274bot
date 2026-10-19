@@ -917,19 +917,21 @@ pub struct SaveTicket(Arc<Mutex<Option<Result<PathBuf, String>>>>);
 
 impl SaveTicket {
     /// Share the in-flight handle with the writer thread. Not [`Clone`].
-    fn share(&self) -> Self {
+    pub(crate) fn share(&self) -> Self {
         Self(Arc::clone(&self.0))
     }
 
-    /// The outcome once the write finished; `None` while it runs.
+    /// The outcome once the write finished; `None` while it runs. Every
+    /// handle on the save sees it (the session settles the `SaveLog`
+    /// command from its own handle).
     pub fn poll(&self) -> Option<Result<PathBuf, String>> {
-        self.0.lock().take()
+        self.0.lock().clone()
     }
 }
 
 /// Write `text` to `path` off the caller's thread (private file and
-/// directory permissions).
-pub fn save_text(path: PathBuf, text: String) -> SaveTicket {
+/// directory permissions). Issued by the `SaveLog` command.
+pub(crate) fn save_text(path: PathBuf, text: String) -> SaveTicket {
     let ticket = SaveTicket::default();
     let out = ticket.share();
     std::thread::spawn(move || {

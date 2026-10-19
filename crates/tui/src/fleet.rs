@@ -11,19 +11,35 @@ use ratatui::style::{Modifier, Style};
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
+use frontend_core::scripts::ScriptRunState;
 use frontend_core::views::run_state_label;
 use frontend_core::{
-    fill_visible_indices, member_row, profile_id_at, state_label, FleetOrder, FleetRow,
-    MarkedSelection, ProfileIdentity,
+    fill_visible_indices, member_row, profile_id_at, state_label, FleetFilter, FleetOrder,
+    FleetRow, MarkedSelection, ProfileIdentity,
 };
-use script::RunState;
 
 use crate::layout::SizeClass;
 
+/// One edit of the fleet filter field. The field reports it; the dispatcher
+/// stages it on the core-owned filter text and commits it
+/// (`SetFleetFilter`), so the shown rows follow the text as it is typed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilterEdit {
+    /// Type a character.
+    Push(char),
+    /// Delete the last character.
+    Pop,
+    /// Clear the text.
+    Clear,
+}
+
 /// Renderer-local fleet state. Marks are the shared identity-based selection
 /// ("selected N of M"); they never change the selected bot and are dropped
-/// when their member leaves the fleet.
-#[derive(Debug, Default)]
+/// when their member leaves the fleet. The marks and the filter are
+/// operator models the command seam changes (`SetMark`, `MarkAll`,
+/// `ClearMarks`, `SetFleetFilter`); the cursor, the scroll window and the
+/// edit flag are presentation only.
+#[derive(Debug)]
 pub struct FleetState {
     /// Cursor position in the shown (filtered) rows.
     pub cursor: usize,
@@ -31,7 +47,9 @@ pub struct FleetState {
     pub scroll: usize,
     /// Shared checkbox state; identities are stable across renames.
     pub selection: MarkedSelection,
-    pub filter: String,
+    /// The filter text and row order: the field edits the staged text and
+    /// `SetFleetFilter` commits it to the filter the rows are shown with.
+    pub filter: FleetFilter,
     /// The filter line is being edited.
     pub editing: bool,
     /// Member indices passing the filter, in fleet order.
@@ -39,6 +57,20 @@ pub struct FleetState {
     /// The member under the cursor, so a filter or membership change keeps
     /// the cursor on the same bot while it is still shown.
     cursor_name: String,
+}
+
+impl Default for FleetState {
+    fn default() -> Self {
+        Self {
+            cursor: 0,
+            scroll: 0,
+            selection: MarkedSelection::default(),
+            filter: FleetFilter::new(FleetOrder::LoadOrder),
+            editing: false,
+            shown: Vec::new(),
+            cursor_name: String::new(),
+        }
+    }
 }
 
 impl FleetState {
@@ -50,8 +82,8 @@ impl FleetState {
         fill_visible_indices(
             names,
             rows,
-            &self.filter,
-            FleetOrder::LoadOrder,
+            self.filter.text(),
+            self.filter.order(),
             &mut self.shown,
         );
         if !self.cursor_name.is_empty() {
@@ -103,37 +135,35 @@ impl FleetState {
         self.remember_cursor(names);
     }
 
-    /// Toggle the row selection of member `index`, using the stable id when
-    /// the caller has a vault projection and a fixture id otherwise.
-    pub fn toggle_mark(&mut self, names: &[String], index: usize) {
-        self.toggle_mark_with_ids(names, &[], index);
-    }
-
-    pub fn toggle_mark_with_ids(
-        &mut self,
+    /// The `SetMark` request that flips member `index`'s row mark, using
+    /// the stable id when the caller has a vault projection and a fixture
+    /// id otherwise: the member's name and the value its mark takes.
+    pub fn toggled_mark(
+        &self,
         names: &[String],
         ids: &[ProfileIdentity],
         index: usize,
-    ) {
-        if names.get(index).is_none() {
-            return;
-        };
-        let Some(identity) = profile_id_at(ids, names, index) else {
-            return;
-        };
-        self.selection.toggle(identity);
+    ) -> Option<(String, bool)> {
+        let name = names.get(index)?;
+        let identity = profile_id_at(ids, names, index)?;
+        Some((name.clone(), !self.selection.contains(identity)))
     }
 
     pub fn is_marked_id(&self, identity: ProfileIdentity) -> bool {
         self.selection.contains(identity)
     }
 
-    pub fn mark_all_shown(&mut self, names: &[String]) {
-        self.mark_all_shown_with_ids(names, &[]);
-    }
-
-    pub fn mark_all_shown_with_ids(&mut self, names: &[String], ids: &[ProfileIdentity]) {
-        self.selection.mark_shown(names, ids, &self.shown);
+    /// The identities of the shown rows: the rows `MarkAll` marks for
+    /// "select all shown".
+    pub fn shown_identities(
+        &self,
+        names: &[String],
+        ids: &[ProfileIdentity],
+    ) -> Vec<ProfileIdentity> {
+        self.shown
+            .iter()
+            .filter_map(|&index| profile_id_at(ids, names, index))
+            .collect()
     }
 
     /// Keep the cursor inside a window of `rows` lines.
@@ -227,10 +257,17 @@ impl FleetTable<'_> {
         let dim = Style::default().add_modifier(Modifier::DIM);
         let bottom = area.y + area.height;
         let mut y = area.y;
-        if state.editing || !state.filter.is_empty() {
+        if state.editing || !state.filter.text().is_empty() {
             let mut x = area.x;
             put(buf, &mut x, y, right, "/filter: ", dim);
-            put(buf, &mut x, y, right, &state.filter, Style::default());
+            // The field shows what is typed while it is edited, the
+            // applied filter otherwise.
+            let line = if state.editing {
+                state.filter.staged()
+            } else {
+                state.filter.text()
+            };
+            put(buf, &mut x, y, right, line, Style::default());
             if state.editing {
                 put(
                     buf,
@@ -351,7 +388,7 @@ impl FleetTable<'_> {
                 cell.extend(std::iter::repeat_n(' ', QUEUE.saturating_sub(queue_len)));
                 cell.push(' ');
                 cell.push_str(run_state_label(
-                    row.map_or(RunState::Idle, |row| row.script()),
+                    row.map_or(ScriptRunState::Idle, |row| row.script()),
                 ));
             }
             if is_cursor && keys {

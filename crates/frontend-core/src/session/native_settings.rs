@@ -727,7 +727,7 @@ impl<Io> OperatorSession<Io> {
 mod tests {
     use super::*;
     use crate::marked::prepare_apply_settings_marked;
-    use crate::scripts::Scripts;
+    use crate::scripts::{CompiledCardId, ScriptChoice, Scripts};
     use crate::selection::{MarkedSelection, ProfileIdentity};
     use crate::surface::HeadlessSurface;
     use host_play::{InstancePermit, Play, PlayOptions};
@@ -738,6 +738,16 @@ mod tests {
     use vault::{Profile, ProfileSettings, Vault};
 
     const PASSPHRASE: &str = "test-passphrase-01";
+
+    /// Hang guard for every wait in this module, never a pass condition and
+    /// never a latency target. Each wait ends on the product's own settlement
+    /// signal (the slot's run state, the preparation leaving
+    /// `core.preparations`): every accepted preparation reaches a terminal.
+    /// Preparation runs on one process-wide background worker shared with
+    /// every other test in this binary, so on a loaded host a wait queues
+    /// behind all of them. The guard only stops a deadlocked test and is
+    /// minutes, not the expected duration.
+    const HANG_GUARD: Duration = Duration::from_secs(600);
 
     struct Fixture {
         core: OperatorSession<()>,
@@ -836,7 +846,7 @@ mod tests {
             .set_compiled_overrides(
                 &mut f.core,
                 "alice",
-                id,
+                CompiledCardId::from_script(id),
                 json!({"targetPreference": "Nearest"})
                     .as_object()
                     .unwrap()
@@ -845,7 +855,7 @@ mod tests {
             .unwrap();
         f.core.flush_writes();
         f.scripts
-            .prepare_compiled_settings_sync(&f.core, "alice", id, None)
+            .prepare_compiled_settings_sync(&f.core, "alice", CompiledCardId::from_script(id), None)
             .unwrap();
         f.scripts.apply_settings_sync(&mut f.core).unwrap();
         f
@@ -861,10 +871,23 @@ mod tests {
         gate
     }
 
+    /// Poll until the slot is Running; a slot that ends in `Error` has failed
+    /// its Start, which fails the test now.
     fn wait_running(f: &mut Fixture, name: &str) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while f.core.play().unwrap().script_state(name) != script::RunState::Running {
-            assert!(Instant::now() < deadline, "{name} did not start");
+        let guard = Instant::now() + HANG_GUARD;
+        loop {
+            let state = f.core.play().unwrap().script_state(name);
+            if state == script::RunState::Running {
+                return;
+            }
+            assert!(
+                state != script::RunState::Error,
+                "{name} ended {state:?} instead of Running"
+            );
+            assert!(
+                Instant::now() < guard,
+                "{name} did not start: hang guard expired"
+            );
             f.core.poll();
             f.scripts.poll(&mut f.core);
             std::thread::sleep(Duration::from_millis(5));
@@ -873,7 +896,10 @@ mod tests {
 
     fn assert_pre_copy_start(f: &mut Fixture) {
         let id = script::CompiledId("Gatherer");
-        let before = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
+        let before = f
+            .scripts
+            .compiled_bag(&f.core, "bob", CompiledCardId::from_script(id))
+            .unwrap();
         assert_ne!(before["targetPreference"], json!("Nearest"));
         f.scripts.start_profile(&mut f.core, "bob", None).unwrap();
         wait_running(f, "bob");
@@ -896,15 +922,24 @@ mod tests {
         f.scripts.start_all(&mut f.core, None);
         let place = f.scripts.start_queue_place("bob").unwrap();
         f.scripts
-            .set_compiled_setting(&mut f.core, "bob", id, "radius", json!(24))
+            .set_compiled_setting(
+                &mut f.core,
+                "bob",
+                CompiledCardId::from_script(id),
+                "radius",
+                json!(24),
+            )
             .unwrap();
         let release = block_preparation(&mut f);
 
         // Settle only the superseded copy, leaving the real replacement
         // result gated. The queued Start must not consume the pre-copy bag.
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let guard = Instant::now() + HANG_GUARD;
         while f.core.preparations.contains_key(&original) {
-            assert!(Instant::now() < deadline, "original copy did not settle");
+            assert!(
+                Instant::now() < guard,
+                "original copy did not settle: hang guard expired"
+            );
             f.core.poll();
             std::thread::yield_now();
         }
@@ -932,7 +967,10 @@ mod tests {
         f.core.flush_writes();
         f.scripts.poll(&mut f.core);
         wait_running(&mut f, "bob");
-        let bag = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
+        let bag = f
+            .scripts
+            .compiled_bag(&f.core, "bob", CompiledCardId::from_script(id))
+            .unwrap();
         assert_eq!(bag["targetPreference"], json!("Nearest"));
         assert_eq!(bag["radius"], json!(24));
         assert_eq!(
@@ -950,7 +988,10 @@ mod tests {
         let mut pending = f.core.preparations.remove(&op).unwrap();
         pending.worker.take().unwrap().join().unwrap().unwrap();
         let id = script::CompiledId("Gatherer");
-        let mut invalid = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
+        let mut invalid = f
+            .scripts
+            .compiled_bag(&f.core, "alice", CompiledCardId::from_script(id))
+            .unwrap();
         invalid.insert("radius".into(), json!("not a radius"));
         pending.worker = Some(
             f.core
@@ -1034,7 +1075,10 @@ mod tests {
     fn locked_vault_releases_its_native_preparation_hold() {
         let mut f = preparing_copy("copy-locked");
         let id = script::CompiledId("Gatherer");
-        let before = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
+        let before = f
+            .scripts
+            .compiled_bag(&f.core, "bob", CompiledCardId::from_script(id))
+            .unwrap();
         let release = block_preparation(&mut f);
         f.core.vault = None;
         f.core.poll();
@@ -1057,7 +1101,10 @@ mod tests {
     fn stalled_copy_writer_releases_hold_and_does_not_push_a_late_commit() {
         let mut f = preparing_copy("copy-writer-timeout");
         let id = script::CompiledId("Gatherer");
-        let before = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
+        let before = f
+            .scripts
+            .compiled_bag(&f.core, "bob", CompiledCardId::from_script(id))
+            .unwrap();
         let gate = f.core.write_gate();
         let held = gate.lock().unwrap();
         f.core.take_preparations(true);
@@ -1102,7 +1149,12 @@ mod tests {
         let mut source_values = Map::new();
         source_values.insert("targetPreference".into(), json!("Nearest"));
         f.scripts
-            .set_compiled_overrides(&mut f.core, "alice", id, source_values)
+            .set_compiled_overrides(
+                &mut f.core,
+                "alice",
+                CompiledCardId::from_script(id),
+                source_values,
+            )
             .unwrap();
         f.core.flush_writes();
 
@@ -1113,7 +1165,7 @@ mod tests {
             &f.core,
             &mut f.scripts,
             "alice",
-            &script::ScriptSel::Compiled(id),
+            &ScriptChoice::from_script(script::ScriptSel::Compiled(id)),
         )
         .unwrap();
         f.scripts.apply_settings_sync(&mut f.core).unwrap();
@@ -1155,19 +1207,13 @@ mod tests {
         );
         assert_eq!(values.get("targetPreference"), Some(&json!("Nearest")));
 
-        let copied_bag = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
+        let copied_bag = f
+            .scripts
+            .compiled_bag(&f.core, "bob", CompiledCardId::from_script(id))
+            .unwrap();
         assert_eq!(copied_bag["targetPreference"], "Nearest");
         f.scripts.start_profile(&mut f.core, "bob", None).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while f.core.play().unwrap().script_state("bob") != script::RunState::Running {
-            assert!(
-                Instant::now() < deadline,
-                "Bob's profile Start did not settle"
-            );
-            f.core.poll();
-            f.scripts.poll(&mut f.core);
-            std::thread::yield_now();
-        }
+        wait_running(&mut f, "bob");
         assert_eq!(
             f.configure_expected_bag("bob", id, copied_bag),
             script::CompiledDelivery::Unchanged,
@@ -1190,7 +1236,13 @@ mod tests {
                 script::compiled_assignment(id)
             ));
             f.scripts
-                .set_compiled_setting(&mut f.core, "alice", id, "radius", json!(24))
+                .set_compiled_setting(
+                    &mut f.core,
+                    "alice",
+                    CompiledCardId::from_script(id),
+                    "radius",
+                    json!(24),
+                )
                 .unwrap();
             f.core.flush_writes();
 
@@ -1203,7 +1255,7 @@ mod tests {
                 &f.core,
                 &mut f.scripts,
                 "alice",
-                &script::ScriptSel::Compiled(id),
+                &ScriptChoice::from_script(script::ScriptSel::Compiled(id)),
             )
             .unwrap();
             f.scripts.apply_settings_sync(&mut f.core).unwrap();
@@ -1238,12 +1290,24 @@ mod tests {
                 // A settings-only replacement must not inherit a stale
                 // assignment intent from the accepted same-card copy.
                 f.scripts
-                    .set_compiled_setting(&mut f.core, "bob", id, "radius", json!(32))
+                    .set_compiled_setting(
+                        &mut f.core,
+                        "bob",
+                        CompiledCardId::from_script(id),
+                        "radius",
+                        json!(32),
+                    )
                     .unwrap();
             }
             f.core.select("alice");
             f.scripts
-                .set_compiled_setting(&mut f.core, "alice", id, "radius", json!(40))
+                .set_compiled_setting(
+                    &mut f.core,
+                    "alice",
+                    CompiledCardId::from_script(id),
+                    "radius",
+                    json!(40),
+                )
                 .unwrap();
             assert_eq!(Scripts::assignment(&f.core, "bob"), Some(thiever.clone()));
             f.core.flush_writes();
@@ -1295,9 +1359,12 @@ mod tests {
         assert!(Scripts::assignment(&f.core, "bob").is_none());
 
         let intermediate = if let Some(release) = gate {
-            let deadline = Instant::now() + Duration::from_secs(10);
+            let guard = Instant::now() + HANG_GUARD;
             while f.core.preparations.contains_key(&second) {
-                assert!(Instant::now() < deadline, "second copy did not settle");
+                assert!(
+                    Instant::now() < guard,
+                    "second copy did not settle: hang guard expired"
+                );
                 f.core.poll();
                 std::thread::yield_now();
             }
@@ -1360,7 +1427,7 @@ mod tests {
         let mut values = Map::new();
         values.insert("targetPreference".into(), json!("Nearest"));
         f.scripts
-            .set_compiled_overrides(&mut f.core, "bob", id, values)
+            .set_compiled_overrides(&mut f.core, "bob", CompiledCardId::from_script(id), values)
             .unwrap();
 
         let concurrent_assignment = vault::ScriptAssignment {

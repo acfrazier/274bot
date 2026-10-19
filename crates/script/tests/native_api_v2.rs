@@ -814,7 +814,8 @@ export function tick(api) {
     assert_eq!(
         interacts,
         vec![InteractReq::Deposit {
-            name: "Bones".into()
+            name: "Bones".into(),
+            id: None,
         }],
         "a legal deposit request is the one row the host drains"
     );

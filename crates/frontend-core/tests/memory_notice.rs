@@ -6,18 +6,30 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
-use frontend_core::{HeadlessSurface, OperatorSession};
+use frontend_core::{HeadlessSurface, OperatorCommand, OperatorSession, Targets};
 use host_play::{InstancePermit, PlayOptions};
 use vault::{Profile, ProfileSettings, Vault};
 
+/// Hang guard for every wait in this test, never a pass condition and never a
+/// latency target. Each wait ends on a product signal: the login packet the
+/// fake server receives, or the slot's projected memory status. A server
+/// thread that fails drops its senders, so the test then fails at once rather
+/// than at the guard. On a loaded host the real client's connect, login and
+/// worker transitions are slow, so the guard is minutes and only stops a
+/// deadlocked test.
+const HANG_GUARD: Duration = Duration::from_secs(600);
+
 fn wait_for(session: &mut OperatorSession<()>, condition: impl Fn(&OperatorSession<()>) -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + HANG_GUARD;
     loop {
         session.poll();
         if condition(session) {
             return;
         }
-        assert!(Instant::now() < deadline, "worker transition timed out");
+        assert!(
+            Instant::now() < deadline,
+            "worker transition: hang guard expired"
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
 }
@@ -31,9 +43,7 @@ fn dirty_drop_notice_and_explicit_login_preserve_mode_until_clean_logout() {
     let server = std::thread::spawn(move || {
         for attempt in 0..3 {
             let (mut socket, _) = listener.accept().unwrap();
-            socket
-                .set_read_timeout(Some(Duration::from_secs(10)))
-                .unwrap();
+            socket.set_read_timeout(Some(HANG_GUARD)).unwrap();
             let mut preface = [0; 2];
             socket.read_exact(&mut preface).unwrap();
             assert_eq!(preface[0], 14);
@@ -46,7 +56,7 @@ fn dirty_drop_notice_and_explicit_login_preserve_mode_until_clean_logout() {
             socket
                 .write_all(if attempt == 1 { &[15] } else { &[2, 0, 0] })
                 .unwrap();
-            release_rx.recv_timeout(Duration::from_secs(30)).unwrap();
+            release_rx.recv_timeout(HANG_GUARD).unwrap();
         }
     });
     // Hermetic: never read the operator's `~/.274bot/274bot.navpack` even with a
@@ -104,15 +114,32 @@ fn dirty_drop_notice_and_explicit_login_preserve_mode_until_clean_logout() {
         .unwrap();
     let mut session: OperatorSession<()> = OperatorSession::new(InstancePermit::SkipLock);
     session.set_bypass_asset_startup(true);
-    session.start(vault, play);
+    session.start_for_test(vault, play);
     let mut surface = HeadlessSurface::new();
-    session.load("alice", &mut surface);
-    session.login("alice", &mut surface);
-    let first = login_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    session
+        .submit(
+            OperatorCommand::Load,
+            Targets::Profile("alice"),
+            &mut surface,
+        )
+        .unwrap();
+    session
+        .submit(
+            OperatorCommand::Login,
+            Targets::Profile("alice"),
+            &mut surface,
+        )
+        .unwrap();
+    let first = login_rx.recv_timeout(HANG_GUARD).unwrap();
     wait_for(&mut session, |s| {
         s.memory_status("alice").is_some_and(|n| n.connected)
     });
-    session.set_memory_mode("alice", false).unwrap();
+    session
+        .submit_detached(
+            OperatorCommand::SetMemoryMode(api::lifecycle::MemoryMode::High),
+            Targets::Profile("alice"),
+        )
+        .unwrap();
     session.flush_writes();
 
     // Dirty transport drop, not Logout. As for the clean exit below, the
@@ -125,37 +152,55 @@ fn dirty_drop_notice_and_explicit_login_preserve_mode_until_clean_logout() {
         })
     });
     let dirty = session.memory_status("alice").unwrap();
-    let arm = session.play().unwrap().arm("alice").unwrap();
+    let arm = session.play_for_test().unwrap().arm("alice").unwrap();
     assert!(!arm.wants_login(), "the dropped one-shot session is parked");
-    session.login("alice", &mut surface);
-    let reconnect = login_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    session
+        .submit(
+            OperatorCommand::Login,
+            Targets::Profile("alice"),
+            &mut surface,
+        )
+        .unwrap();
+    let reconnect = login_rx.recv_timeout(HANG_GUARD).unwrap();
     wait_for(&mut session, |s| {
         s.memory_status("alice").is_some_and(|n| n.connected)
     });
     let reconnected = session.memory_status("alice").unwrap();
 
-    session.logout("alice");
+    session
+        .submit(
+            OperatorCommand::Logout,
+            Targets::Profile("alice"),
+            &mut surface,
+        )
+        .unwrap();
     clean_logout.store(true, Ordering::Release);
-    session.play().unwrap().wake("alice");
+    session.play_for_test().unwrap().wake("alice");
     // The slot projects `!connected` in the same frame it observes the exit,
     // but the clean/dirty boundary (`login_applies_memory`) settles on the
     // next probe. Waiting on `!connected` alone catches the first projection
     // with stale metadata and reads the dirty notice. Wait for the settled
-    // clean notice itself, still bounded by `wait_for`'s deadline.
+    // clean notice itself; `wait_for` ends on that projection.
     wait_for(&mut session, |s| {
         s.memory_status("alice")
             .is_some_and(|n| n.notice_text() == "Applies at the next Log in.")
     });
     let clean = session.memory_status("alice").unwrap();
     release_tx.send(()).unwrap();
-    session.login("alice", &mut surface);
-    let relog = login_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    session
+        .submit(
+            OperatorCommand::Login,
+            Targets::Profile("alice"),
+            &mut surface,
+        )
+        .unwrap();
+    let relog = login_rx.recv_timeout(HANG_GUARD).unwrap();
     wait_for(&mut session, |s| {
         s.memory_status("alice").is_some_and(|n| !n.login_lowmem)
     });
     arm.stop.store(true, Ordering::Relaxed);
     release_tx.send(()).unwrap();
-    session.play_mut().unwrap().stop_slot("alice");
+    session.play_mut_for_test().unwrap().stop_slot("alice");
     server.join().unwrap();
     drop(session);
     std::fs::remove_dir_all(dir).unwrap();

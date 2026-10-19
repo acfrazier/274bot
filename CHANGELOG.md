@@ -12,6 +12,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- Fixed Quester rejecting quests whose game-journal title differs from the
+  script's label, including Rune Mysteries.
+- Quester now waits for a random-event window to close before it reads the
+  quest journal or the Shield of Arrav gang, instead of stopping the quest.
 - Compat v1 game-message recording and all readers now use one per-context
   Rust history, bounded to 64 records. Only posted type 0 chat lines enter it.
   `mark`, `since`, `sawSince` and `firstSince` read it. `since` returns original
@@ -172,6 +176,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - A Quester folder accepts at most 4,096 entries, 1 MiB per Path document and
   16 MiB of retained documents. Larger folders or documents report a typed
   validation error and leave the last successful registry available.
+- Fixed: on a bank trip, the JiveDragons, JiveDemons and JiveKBD hunting
+  scripts now deposit noted loot, such as noted Lobsters, instead of keeping
+  it as food. When the pack also holds edible food or a kept potion of the
+  same name, only the noted stack is deposited and the edible food and the
+  potion stay in the pack. The scripts also deposit part-used potions that
+  the script keeps only as full doses, and then withdraw fresh full doses.
 
 ### Navigation
 
@@ -374,16 +384,35 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - The Assign & restart confirmation names the first six bots it stops
   and the first six it starts, and counts the rest ("+N more") beside
   the total for each, instead of listing every name.
+- Panel and TUI now share `frontend-core` live scenario preparation, runner
+  state and proof gates; screenshot capture and TUI proof output remain
+  surface-specific.
 - Render-all draws up to 128 clients at once. A client past that shows
   "renderer refused: render head cap of 128 is full" in its own tile.
 - Clients without a drawn view retain less render scratch memory. Hiding a view
   releases that scratch, and showing it again keeps the same game connection.
+- Every panel action that changes state goes through the shared command
+  path that the TUI and the headless driver also use. This includes Start,
+  the draw switches, the Nav config grants, session log, map bake, Quest
+  Paths, marks, the filter, the vault and Quit. Each action returns a typed
+  report.
+- Fleet Assign & restart reports its paced Starts through completion, after
+  the assignment is durable.
+- Saved draw preferences (capture input, sidecar and focused 50 fps), the
+  render-all and background-bots acknowledgements, the map-bake choice and
+  the session log file are written only when you change them. Saving the
+  panel's own window state no longer rewrites them.
+- A capture frame that fills the input queue is reported, instead of
+  dropping events silently.
 
 ### TUI
 
 - The Assign & restart confirmation names the bots whose running script
   it stops and the idle bots it starts, as the panel's does: the first
   six of each, with the rest counted ("+N more") beside each total.
+- Marks, the fleet filter, log saving, the session log file, the Nav and
+  danger-routing settings, map bake, Quest Paths, vault unlock and Quit go
+  through the same command path as the panel.
 
 ### Profiles
 
@@ -499,6 +528,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - A loadout list that did not load can no longer save. Add, rename, remove
   and Save in the panel and the TUI refuse and show why the list did not
   load. The saved loadouts stay as they were.
+- On a slow or busy disk, 274bot no longer reports a preference change as
+  failed while the disk still saves it. This applies to a Nav config grant,
+  danger routing, a draw switch, the session log file, map bake, Quest Paths
+  and a notice's "Don't show again". The Nav config grants, danger routing
+  and the session log file change when the disk confirms the save. When two
+  changes to one of these settings wait for the disk, the later change
+  applies. If you close 274bot before the disk confirms a change, 274bot can
+  lose that change or a part of it. Check the setting after the next start.
 
 #### Login
 

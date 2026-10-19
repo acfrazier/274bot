@@ -47,6 +47,7 @@ pub struct BankRow {
     pub slot: i32,
     pub has_slot: bool,
     pub ops: Vec<String>,
+    pub noted: bool,
 }
 
 /// The hunt's cloned row behind the kernel's row interface, so its
@@ -264,7 +265,6 @@ struct Pending {
     before_inv: i32,
     before_bank: i32,
     before_side: i32,
-    before_used: usize,
     before_hp: i32,
     seq: u64,
     x_seq: u64,
@@ -296,7 +296,8 @@ struct BankRuntime {
     in_topup: bool,
     click_acked: bool,
     pending: Option<Pending>,
-    deposit_names: Vec<String>,
+    /// The deposit stage's selected bank-side rows: name and exact item id.
+    deposit_rows: Vec<(String, i32)>,
     deposit_i: usize,
     deposits_ready: bool,
     slot_free_done: bool,
@@ -357,7 +358,7 @@ impl BankRuntime {
             in_topup: false,
             click_acked: false,
             pending: None,
-            deposit_names: Vec::new(),
+            deposit_rows: Vec::new(),
             deposit_i: 0,
             deposits_ready: false,
             slot_free_done: false,
@@ -543,8 +544,10 @@ fn held_name(obs: &BankObservation, name: &str) -> bool {
 }
 
 fn food_count(obs: &BankObservation, forms: &[String]) -> i32 {
+    // Frozen `foodCount` counts edible food only (`isEdibleFood` rejects
+    // noted rows): a noted stack must not satisfy the food stage.
     slotted(obs)
-        .filter(|row| is_food_name(&row.name, forms))
+        .filter(|row| !row.noted && is_food_name(&row.name, forms))
         .map(|row| row.count.max(1))
         .sum()
 }
@@ -692,7 +695,6 @@ fn emit_close(rt: &mut BankRuntime, kind: OpKind) -> Value {
         before_inv: 0,
         before_bank: 0,
         before_side: 0,
-        before_used: pack_used(&obs),
         before_hp: obs.hp_effective,
         seq: obs.bank_op_result_seq,
         x_seq: obs.withdraw_x_result_seq,
@@ -744,7 +746,6 @@ fn emit_withdraw(
         before_inv: have,
         before_bank: row.count,
         before_side: name_count(&obs.bank_side, &row.name),
-        before_used: pack_used(&obs),
         before_hp: obs.hp_effective,
         seq: obs.bank_op_result_seq,
         x_seq: obs.withdraw_x_result_seq,
@@ -777,7 +778,6 @@ fn emit_withdraw_x(
         before_inv: have,
         before_bank: row.count,
         before_side: name_count(&obs.bank_side, &row.name),
-        before_used: pack_used(&obs),
         before_hp: obs.hp_effective,
         seq: obs.bank_op_result_seq,
         x_seq: obs.withdraw_x_result_seq,
@@ -817,17 +817,19 @@ fn emit_named_withdraw(
     }
 }
 
-fn emit_deposit(rt: &mut BankRuntime, name: &str, kind: OpKind) -> Value {
+/// Deposit-all the selected bank-side row. `id` is that row's item id: the
+/// host takes only that id, so a noted stack and the edible food of the same
+/// name stay apart (the noted form is its own obj type).
+fn emit_deposit(rt: &mut BankRuntime, name: &str, id: i32, kind: OpKind) -> Value {
     let obs = observation();
     rt.pending = Some(Pending {
         kind,
         name: name.to_string(),
-        id: 0,
+        id,
         fail_trip: kind == OpKind::SlotFree,
         before_inv: 0,
         before_bank: 0,
-        before_side: name_count(&obs.bank_side, name),
-        before_used: pack_used(&obs),
+        before_side: count_id(&obs.bank_side, id),
         before_hp: obs.hp_effective,
         seq: obs.bank_op_result_seq,
         x_seq: obs.withdraw_x_result_seq,
@@ -836,7 +838,7 @@ fn emit_deposit(rt: &mut BankRuntime, name: &str, kind: OpKind) -> Value {
     rt.click_acked = false;
     rt.phase = Phase::WaitOp;
     rt.clock.arm(WITHDRAW_MS);
-    rt.emit(json!({ "kind": "deposit", "name": name }))
+    rt.emit(json!({ "kind": "deposit", "name": name, "id": id }))
 }
 
 fn approach(rt: &mut BankRuntime, proj: &BankProj) -> Value {
@@ -1007,7 +1009,7 @@ fn deposit(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
                 keep
             })
             .unwrap_or_default();
-        let mut names = Vec::new();
+        let mut rows: Vec<(String, i32)> = Vec::new();
         for row in &obs.bank_side {
             if row.count <= 0 {
                 continue;
@@ -1015,22 +1017,21 @@ fn deposit(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
             if row.name.is_empty() {
                 return Some(rt.yield_value(false));
             }
-            if !kept(&keep, &row.name)
-                && !names.iter().any(|name: &String| eq_name(name, &row.name))
-            {
-                names.push(row.name.clone());
+            // Noted rows deposit even when the name is kept (frozen
+            // `depositLoot` matches notes by id before the keep list).
+            if (row.noted || !kept(&keep, &row.name)) && !rows.iter().any(|(_, id)| *id == row.id) {
+                rows.push((row.name.clone(), row.id));
             }
         }
-        rt.deposit_names = names;
+        rt.deposit_rows = rows;
         rt.deposits_ready = true;
         rt.deposit_i = 0;
     }
-    if rt.deposit_i >= rt.deposit_names.len() {
+    let Some((name, id)) = rt.deposit_rows.get(rt.deposit_i).cloned() else {
         rt.stage = Stage::SlotFree;
         return None;
-    }
-    let name = rt.deposit_names[rt.deposit_i].clone();
-    Some(emit_deposit(rt, &name, OpKind::Deposit))
+    };
+    Some(emit_deposit(rt, &name, id, OpKind::Deposit))
 }
 
 fn slot_free(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
@@ -1062,12 +1063,12 @@ fn slot_free(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
         .iter()
         .chain(slotted(&obs))
         .find(|row| is_food_name(&row.name, &forms) && !row.name.is_empty())
-        .map(|row| row.name.clone());
-    let Some(name) = food else {
+        .map(|row| (row.name.clone(), row.id));
+    let Some((name, id)) = food else {
         return Some(rt.yield_value(false));
     };
     rt.slot_free_done = false;
-    Some(emit_deposit(rt, &name, OpKind::SlotFree))
+    Some(emit_deposit(rt, &name, id, OpKind::SlotFree))
 }
 
 /// The deposit makes room first; the acquire stop takes the key next.
@@ -1576,7 +1577,6 @@ fn emit_wear(rt: &mut BankRuntime, name: &str) -> Value {
         before_inv: 0,
         before_bank: 0,
         before_side: 0,
-        before_used: pack_used(&obs),
         before_hp: obs.hp_effective,
         seq: obs.bank_op_result_seq,
         x_seq: obs.withdraw_x_result_seq,
@@ -1621,8 +1621,8 @@ fn heal(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
     let food_here = obs
         .bank_side
         .iter()
-        .any(|row| row.count > 0 && is_food_name(&row.name, &forms))
-        || slotted(&obs).any(|row| is_food_name(&row.name, &forms));
+        .any(|row| row.count > 0 && !row.noted && is_food_name(&row.name, &forms))
+        || slotted(&obs).any(|row| !row.noted && is_food_name(&row.name, &forms));
     if fraction >= proj.heal_to || !food_here && rt.heal_attempts == 0 {
         rt.heal_done = true;
         rt.stage = Stage::Topup;
@@ -1643,7 +1643,7 @@ fn heal(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
         return None;
     }
     let Some(row) = slotted(&obs)
-        .find(|row| is_food_name(&row.name, &forms))
+        .find(|row| !row.noted && is_food_name(&row.name, &forms))
         .cloned()
     else {
         rt.heal_done = true;
@@ -1664,7 +1664,6 @@ fn heal(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
         before_inv: row.count,
         before_bank: 0,
         before_side: 0,
-        before_used: 0,
         before_hp: obs.hp_effective,
         seq: 0,
         x_seq: 0,
@@ -1762,8 +1761,10 @@ fn ready_with(rt: &BankRuntime, proj: &BankProj, obs: &BankObservation) -> bool 
     if plan.food_owed && food_count(obs, &forms) == 0 {
         return false;
     }
-    for name in &plan.junk {
-        if slotted_has_name(obs, name) {
+    for junk in &plan.junk {
+        let held = slotted(obs)
+            .any(|row| eq_name(&row.name, &junk.name) && (!junk.noted_only || row.noted));
+        if held {
             return false;
         }
     }
@@ -1785,12 +1786,13 @@ fn op_proved(rt: &BankRuntime, obs: &BankObservation) -> bool {
     match pending.kind {
         OpKind::CloseWear | OpKind::CloseHeal | OpKind::CloseFinal => !obs.bank_open,
         OpKind::Wear => equip_has_name(obs, &pending.name),
+        // Only the selected id leaving the pack proves this deposit: another
+        // row of the same name, or any freed slot, is not this row.
         OpKind::Deposit | OpKind::SlotFree => {
             obs.bank_generation == pending.generation
                 && obs.bank_op_result
                 && obs.bank_op_result_seq > pending.seq
-                && (name_count(&obs.bank_side, &pending.name) < pending.before_side
-                    || pack_used(obs) < pending.before_used)
+                && count_id(&obs.bank_side, pending.id) < pending.before_side
         }
         OpKind::Withdraw => {
             let landed = slotted_count_id(obs, pending.id) > pending.before_inv
@@ -1987,7 +1989,7 @@ fn ack_heal(rt: &mut BankRuntime, proj: &BankProj, reply: Option<&Value>) -> Val
             1.0
         };
         let more = fraction < proj.heal_to
-            && slotted(&obs).any(|row| is_food_name(&row.name, &forms))
+            && slotted(&obs).any(|row| !row.noted && is_food_name(&row.name, &forms))
             && rt.heal_attempts < HEAL_BITES
             && rt.heal_misses < HEAL_MISSES;
         rt.phase = Phase::Work;
@@ -2073,6 +2075,7 @@ impl BankRow {
             slot,
             has_slot: row.slot.is_some() && slot >= 0,
             ops: observed::strings(&row.ops),
+            noted: row.noted,
         }
     }
 
@@ -2083,6 +2086,7 @@ impl BankRow {
             name: Some(self.name.into()),
             slot: self.has_slot.then_some(self.slot),
             ops: observed::ops_of(&self.ops),
+            noted: self.noted,
             ..ItemRow::default()
         }
     }
@@ -2319,6 +2323,7 @@ mod tests {
             slot: 0,
             has_slot: true,
             ops: ops.iter().map(|op| op.to_string()).collect(),
+            noted: false,
         }
     }
 
@@ -2411,16 +2416,17 @@ mod tests {
         assert!(quantity_label(11, 10).is_none());
     }
 
-    /// Characterization (T2.2): a hunt deposit effect is the item name
-    /// only — never a count, never an action.
+    /// Characterization (T2.2): a hunt deposit effect is the item name and
+    /// the selected row's id — never a count, never an action.
     #[test]
-    fn deposit_emits_the_name_only() {
+    fn deposit_emits_the_name_and_selected_id_only() {
         crate::observed::on_reset();
         BankObservation::empty().post();
         let mut rt = BankRuntime::new(9);
-        let step = emit_deposit(&mut rt, "Bones", OpKind::Deposit);
+        let step = emit_deposit(&mut rt, "Bones", 526, OpKind::Deposit);
         assert_eq!(step["kind"], "deposit", "{step}");
         assert_eq!(step["name"], "Bones", "{step}");
+        assert_eq!(step["id"], 526, "{step}");
         assert!(step.get("count").is_none(), "{step}");
         assert!(step.get("action").is_none(), "{step}");
     }

@@ -728,15 +728,18 @@ where
                     bot.inspect.apply_ack(seq, generation);
                 }
             }
-            InteractReq::Deposit { name } => {
+            InteractReq::Deposit { name, id } => {
                 // The content's Deposit All operation moves every held copy
                 // of this item, including copies in other inventory slots.
+                // A selected id takes only that item type, never another
+                // row of the same name.
                 if let Some((item, op)) = snapshot.bank_side().iter().find_map(|item| {
-                    obj_names
-                        .and_then(|names| names.name(item.def.id))
-                        .is_some_and(|actual| actual.eq_ignore_ascii_case(&name))
-                        .then(|| script::bank::ops::all_op_in(&item.actions).map(|op| (item, op)))
-                        .flatten()
+                    (id.is_none_or(|id| item.def.id == id)
+                        && obj_names
+                            .and_then(|names| names.name(item.def.id))
+                            .is_some_and(|actual| actual.eq_ignore_ascii_case(&name)))
+                    .then(|| script::bank::ops::all_op_in(&item.actions).map(|op| (item, op)))
+                    .flatten()
                 }) {
                     wrote |= matches!(
                         ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)),

@@ -755,7 +755,7 @@ impl AppWindow {
         // it, before GPU bring-up shows the frame.
         fit_new_window(&window, event_loop);
         #[cfg(feature = "memory-profile")]
-        host_play::memory::mark_startup(host_play::memory::StartupMark::WindowCreated);
+        frontend_core::bench::mark_startup(frontend_core::bench::StartupMark::WindowCreated);
 
         let (instance, surface, fallbacks) = first_surface(&window)?;
 
@@ -790,16 +790,15 @@ impl AppWindow {
         #[cfg(feature = "memory-profile")]
         {
             let info = adapter.get_info();
-            host_play::memory::record_adapter(host_play::memory::AdapterRecord {
-                name: info.name,
-                backend: format!("{:?}", info.backend),
-                device_type: format!("{:?}", info.device_type),
-                driver: info.driver,
-                driver_info: info.driver_info,
-                vendor: info.vendor,
-                device: info.device,
-                pci_bus_id: info.device_pci_bus_id,
-            });
+            frontend_core::bench::record_adapter(
+                frontend_core::bench::AdapterIdentity::new(
+                    info.name,
+                    format!("{:?}", info.backend),
+                    format!("{:?}", info.device_type),
+                )
+                .with_driver(info.driver, info.driver_info)
+                .with_pci(info.vendor, info.device, info.device_pci_bus_id),
+            );
         }
 
         if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
@@ -943,7 +942,7 @@ impl AppWindow {
         };
 
         #[cfg(feature = "memory-profile")]
-        host_play::memory::mark_startup(host_play::memory::StartupMark::GpuReady);
+        frontend_core::bench::mark_startup(frontend_core::bench::StartupMark::GpuReady);
 
         Ok(Self {
             instance,
@@ -986,7 +985,7 @@ impl AppWindow {
     {
         let _profile_frame = client::profiling::UI_FRAME.start();
         #[cfg(feature = "memory-profile")]
-        let memory_profile_frame = host_play::memory::PanelFrameTimer::start();
+        let memory_profile_frame = frontend_core::bench::PanelFrameTimer::start();
         self.imgui
             .platform
             .prepare_frame(&self.window, &mut self.imgui.context);
@@ -1804,7 +1803,7 @@ where
         // wakes for its next deadline, so a render grant whose head stops
         // consuming expires on time even when no frame is drawn. It never
         // renders on this thread.
-        let render_due = host::render_head::pump(Instant::now()).map(|deadline| deadline.instant());
+        let render_due = frontend_core::surface::pump_render(Instant::now());
         if self.poll_gpu(event_loop) {
             event_loop.set_control_flow(ControlFlow::WaitUntil(earliest(
                 Instant::now() + GPU_INIT_POLL,

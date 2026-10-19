@@ -115,7 +115,7 @@ mod frontend;
 
 use files::{ContentDigest, LockError, ReadDocument, ReadError, RenameRefusal, Rewrite, StoreKey};
 pub use files::{StateRoot, HINT_SCHEMA_VERSION, MAX_PREFERENCES_BYTES};
-pub use frontend::{Preferences, ServiceLoadouts};
+pub use frontend::{Preferences, QueuedUpdate, ServiceLoadouts, Update};
 
 /// How many edits of one operator store (loadouts, preferences) may wait
 /// behind the one in flight.
@@ -139,6 +139,11 @@ pub const START_LEASE_TIMEOUT: Duration = Duration::from_secs(5);
 /// and any readback already in progress. Exit waits while the writer runs.
 /// Losing a save is worse than a slower exit.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// A front-end test's stall at the start of each file write
+/// ([`LocalStateService::set_write_stall_for_test`]).
+#[cfg(any(test, feature = "test-support"))]
+pub type WriteStall = Arc<dyn Fn() + Send + Sync>;
 
 /// A test's stand-in for the file publication step: run on the writer
 /// thread with no state lock held (the file's write lock is held), so a
@@ -289,6 +294,14 @@ pub enum RequestState {
     Forgotten,
 }
 
+/// A queued re-read of one store's file
+/// ([`LocalStateService::start_readback`]): the completed-readback count
+/// that answers it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ReadbackTicket {
+    target: u64,
+}
+
 /// Whether an accepted request's rows reached the disk, following the
 /// requests that superseded it: a replaced hint is durable only when the
 /// request that replaced it is.
@@ -347,6 +360,11 @@ struct State {
     shutdown_timeout: Option<Duration>,
     #[cfg(test)]
     hooks: Hooks,
+    /// A front end's test stall at the start of each file write (it holds
+    /// a write to watch a command stay pending), run on the writer thread
+    /// with no lock held.
+    #[cfg(any(test, feature = "test-support"))]
+    write_stall: Option<WriteStall>,
 }
 
 #[cfg(test)]
@@ -670,31 +688,28 @@ impl LocalStateService {
         identity: &DomainIdentity,
         timeout: Duration,
     ) -> Result<(DomainLease, bool), ErrorCode> {
-        self.readback_with(identity, timeout, false)
+        let ticket = self.start_readback(identity, false)?;
+        self.finish_readback(identity, ticket, Some(Instant::now() + timeout))
+            .unwrap_or(Err(ErrorCode::NotReady {
+                domain: identity.domain(),
+            }))
     }
 
-    /// [`Self::readback`] for a save about to be made: the one read that
-    /// quarantines a preferences file whose content is malformed and
-    /// starts fresh preferences (the recovery the old shared writer made
-    /// on a save). A read for anything else refuses such a file, so its
-    /// readers fail closed until a save recovers it.
-    pub(crate) fn readback_for_save(
+    /// Queue a re-read of `identity`'s file and return what
+    /// [`Self::finish_readback`] waits for: a read that began after this
+    /// call. With `recover`, the read is a save's (a preferences update
+    /// about to write): the one read that quarantines a preferences file
+    /// whose content is malformed and starts fresh preferences (the
+    /// recovery the old shared writer made on a save). A read for anything
+    /// else refuses such a file, so its readers fail closed until a save
+    /// recovers it.
+    pub(crate) fn start_readback(
         &self,
         identity: &DomainIdentity,
-        timeout: Duration,
-    ) -> Result<(DomainLease, bool), ErrorCode> {
-        self.readback_with(identity, timeout, true)
-    }
-
-    fn readback_with(
-        &self,
-        identity: &DomainIdentity,
-        timeout: Duration,
         recover: bool,
-    ) -> Result<(DomainLease, bool), ErrorCode> {
+    ) -> Result<ReadbackTicket, ErrorCode> {
         let key = self.store_key(identity)?;
         let domain = identity.domain();
-        let deadline = Instant::now() + timeout;
         let mut state = self.shared.state.lock();
         state.admit(&key)?;
         if recover {
@@ -705,12 +720,31 @@ impl LocalStateService {
         let Some(target) = self.shared.request_readback(&mut state, &key) else {
             return Err(ErrorCode::NotReady { domain });
         };
+        Ok(ReadbackTicket { target })
+    }
+
+    /// The result of the read `ticket` waits for: the rows at the store's
+    /// real version and whether a file exists, or the typed refusal.
+    /// `None` while that read has not completed by `deadline`; without a
+    /// deadline, `None` at once (a frame's check, never a wait).
+    pub(crate) fn finish_readback(
+        &self,
+        identity: &DomainIdentity,
+        ticket: ReadbackTicket,
+        deadline: Option<Instant>,
+    ) -> Option<Result<(DomainLease, bool), ErrorCode>> {
+        let domain = identity.domain();
+        let key = match self.store_key(identity) {
+            Ok(key) => key,
+            Err(code) => return Some(Err(code)),
+        };
+        let mut state = self.shared.state.lock();
         loop {
             let Some(store) = state.stores.get(&key) else {
-                return Err(ErrorCode::NotReady { domain });
+                return Some(Err(ErrorCode::NotReady { domain }));
             };
-            if store.readbacks >= target {
-                return match &store.file {
+            if store.readbacks >= ticket.target {
+                return Some(match &store.file {
                     FileState::Cold => Err(ErrorCode::NotReady { domain }),
                     FileState::Rejected(rejection) => Err(ErrorCode::Failed {
                         domain,
@@ -719,15 +753,16 @@ impl LocalStateService {
                     FileState::Read(cached) => {
                         lease_of(identity, cached).map(|lease| (lease, cached.digest.is_some()))
                     }
-                };
+                });
             }
+            let deadline = deadline?;
             if self
                 .shared
                 .settled
                 .wait_until(&mut state, deadline)
                 .timed_out()
             {
-                return Err(ErrorCode::NotReady { domain });
+                return None;
             }
         }
     }
@@ -803,6 +838,13 @@ impl LocalStateService {
                 },
             }
         }
+    }
+
+    /// Test-support seam for front-end tests: run `stall` on the writer
+    /// thread at the start of every file write (a busy disk on demand).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_write_stall_for_test(&self, stall: WriteStall) {
+        self.shared.state.lock().write_stall = Some(stall);
     }
 
     /// Publish every file write through `hook` instead of the real file.
@@ -1714,7 +1756,7 @@ impl Shared {
     /// read ([`Self::dedupe_loadouts`]); a preferences file whose content is
     /// malformed (not JSON, or JSON that is not an object) is quarantined
     /// and started fresh, only on the read a save makes (`recover`,
-    /// [`LocalStateService::readback_for_save`];
+    /// [`LocalStateService::start_readback`];
     /// [`Self::quarantine_preferences`]). The file is then read as the
     /// repair left it. `held` is the lock when the caller (a write) holds it
     /// already; otherwise the repair takes it. Every other refusal (owner,
@@ -1963,6 +2005,13 @@ impl Shared {
         let domain = key.domain();
         let path = key.path(&self.root);
         let request = queued.request;
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            let stall = self.state.lock().write_stall.clone();
+            if let Some(stall) = stall {
+                stall();
+            }
+        }
         let guard =
             match files::lock_for_write(&path, Instant::now() + files::LOCK_TIMEOUT, &|| {
                 self.state.lock().abandoned

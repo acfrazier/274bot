@@ -206,19 +206,19 @@ impl ProfileFormSave {
     /// The form was opened on a target, switched to another one, or closed.
     /// Its notice goes, and a save still in flight from before never shows
     /// one.
-    pub fn form_changed(&mut self) {
+    pub(crate) fn form_changed(&mut self) {
         self.form = self.form.wrapping_add(1);
         self.notice = None;
     }
 
     /// The operator edited the form: a notice about its last save no longer
     /// describes it.
-    pub fn edited(&mut self) {
+    pub(crate) fn edited(&mut self) {
         self.notice = None;
     }
 
     /// The save was refused before anything was written.
-    pub fn refused(&mut self, reason: impl Into<String>) {
+    pub(crate) fn refused(&mut self, reason: impl Into<String>) {
         self.notice = Some(FormNotice::refused(reason));
     }
 
@@ -227,7 +227,7 @@ impl ProfileFormSave {
     /// was editing `source` (`None` for a new profile). The record of it,
     /// with the draft the write carries (the staged row), is registered on
     /// `core` under `op`; it is the only state of the save.
-    pub fn submitted<Io>(
+    pub(crate) fn submitted<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
         op: OperationId,

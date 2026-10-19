@@ -9,17 +9,26 @@ use host_play::{InstancePermit, Play, PlayOptions, SlotStatus};
 use vault::{Profile, ProfileSettings, Vault};
 
 use super::{
-    assign_and_restart_marked, assign_marked, combined_bulk_scope, login_marked, logout_marked,
-    marked_availability, prepare_apply_settings_marked, restart_scope, BulkScope, MarkedAction,
-    MarkedBlock, RestartScope,
+    assign_and_restart_marked, assign_marked, combined_bulk_scope, marked_availability,
+    prepare_apply_settings_marked, restart_scope, BulkScope, MarkedAction, MarkedBlock,
+    RestartScope,
 };
-use crate::scripts::Scripts;
+use crate::scripts::{CardSource, ScriptChoice, ScriptRunState, ScriptStartErrorKind, Scripts};
 use crate::selection::{marked_startable, start_marked, MarkedSelection, ProfileIdentity};
 use crate::session::OperatorSession;
 use crate::surface::HeadlessSurface;
 
 const LOOPING: &str = "export default class T extends LoopingBot { override loop() {} }\n";
 const THIEVER: &str = "export const SETTINGS = { target: { type: 'string', default: 'Guard' } };\nexport default class T extends LoopingBot { override loop() {} }\n";
+
+/// Hang guard for every wait in this file, never a pass condition and never a
+/// latency target. Each wait ends on the product's own settlement signal
+/// (`starts_pending()` false, the slot's run state): every accepted job
+/// reaches a terminal. Start preparation shares one process-wide background
+/// worker with every other test in this binary, so a wait on a loaded host
+/// queues behind all of them. The guard only stops a deadlocked test and is
+/// minutes, not the expected duration.
+const HANG_GUARD: Duration = Duration::from_secs(600);
 
 struct Fixture {
     core: OperatorSession<()>,
@@ -81,15 +90,16 @@ fn fixture(test: &str, profiles: &[&str], loaded: usize) -> Fixture {
 }
 
 impl Fixture {
-    fn card(&mut self, file: &str) -> (script::JsCard, script::ScriptSel) {
+    fn card(&mut self, file: &str) -> (script::JsCard, ScriptChoice) {
         self.card_src(file, LOOPING)
     }
 
-    fn card_src(&mut self, file: &str, src: &str) -> (script::JsCard, script::ScriptSel) {
+    fn card_src(&mut self, file: &str, src: &str) -> (script::JsCard, ScriptChoice) {
         let path = self.dir.join(file);
         std::fs::write(&path, src).unwrap();
         let card = self.scripts.js_mut().load(&path).unwrap();
-        let sel = script::ScriptSel::Loaded(card.source, card.identity_id());
+        let sel =
+            ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
         (card, sel)
     }
 
@@ -108,17 +118,33 @@ impl Fixture {
         }
     }
 
+    /// Pump the core and the coordinator until `done` holds. The pass condition
+    /// is the product's own settlement signal; the only time bound is
+    /// `HANG_GUARD`.
     fn until(&mut self, what: &str, mut done: impl FnMut(&Self) -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while !done(self) && Instant::now() < deadline {
+        let guard = Instant::now() + HANG_GUARD;
+        while !done(self) {
+            assert!(Instant::now() < guard, "{what}: hang guard expired");
             self.pump();
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(done(self), "timed out waiting for {what}");
     }
 
-    fn state(&self, name: &str) -> script::RunState {
-        self.core.play().unwrap().script_state(name)
+    /// Pump until the slot reaches `want`. A slot that ends in `Error` when
+    /// another state was wanted has failed, which fails the test now.
+    fn until_state(&mut self, name: &str, want: ScriptRunState) {
+        self.until(name, |f| {
+            let state = f.state(name);
+            assert!(
+                state == want || state != ScriptRunState::Error,
+                "{name} ended {state:?}, wanted {want:?}"
+            );
+            state == want
+        });
+    }
+
+    fn state(&self, name: &str) -> ScriptRunState {
+        ScriptRunState::from_script(self.core.play().unwrap().script_state(name))
     }
 
     fn start_running(&mut self, name: &str) {
@@ -126,7 +152,7 @@ impl Fixture {
             .start_profile(&mut self.core, name, None)
             .unwrap();
         self.until("start to settle", |f| !f.scripts.starts_pending());
-        self.until("Running", |f| f.state(name) == script::RunState::Running);
+        self.until_state(name, ScriptRunState::Running);
     }
 
     fn generation(&self, name: &str) -> u64 {
@@ -195,7 +221,7 @@ fn assign_saves_the_card_on_idle_marked_bots_and_skips_active_ones() {
     assert_eq!(f.assignment_key("alice"), Some(new.assignment().key()));
     assert_eq!(f.assignment_key("bob"), Some(old.assignment().key()));
     assert_eq!(f.assignment_key("carol"), None, "unmarked bot untouched");
-    assert_eq!(f.state("bob"), script::RunState::Running);
+    assert_eq!(f.state("bob"), ScriptRunState::Running);
     assert_eq!(f.generation("bob"), generation, "bob was not restarted");
     assert_eq!(
         f.core
@@ -216,7 +242,10 @@ fn assign_saves_the_card_on_idle_marked_bots_and_skips_active_ones() {
 #[test]
 fn assign_of_a_missing_card_fails_every_marked_bot_and_saves_nothing() {
     let mut f = fixture("assign-missing", &["alice", "bob"], 2);
-    let gone = script::ScriptSel::Loaded(script::ScriptSource::File, "gone.ts".into());
+    let gone = ScriptChoice::from_script(script::ScriptSel::Loaded(
+        script::ScriptSource::File,
+        "gone.ts".into(),
+    ));
     let report = assign_marked(&marks(&[1, 2]), &mut f.core, &mut f.scripts, &gone, None);
     assert_eq!(report.failed_count(), 2);
     assert_eq!(report.refusal(), Some("missing file: gone.ts"));
@@ -248,7 +277,7 @@ fn assign_and_restart_replaces_running_cards_and_starts_idle_ones() {
     assign_and_restart_marked(&selection, &mut f.core, &mut f.scripts, &new_sel, None);
     f.until("every restart to settle", |f| !f.scripts.starts_pending());
     for name in ["alice", "bob", "carol"] {
-        f.until(name, |f| f.state(name) == script::RunState::Running);
+        f.until_state(name, ScriptRunState::Running);
         f.core.flush_writes();
         assert_eq!(
             f.assignment_key(name),
@@ -281,11 +310,9 @@ fn logout_while_a_restart_waits_for_the_stop_cancels_it() {
     );
     assert!(f.scripts.cancel_queued_as("alice", "logged out"));
     assert!(!f.scripts.starts_pending());
-    f.until("the stop to finish", |f| {
-        f.state("alice") == script::RunState::Idle
-    });
+    f.until_state("alice", ScriptRunState::Idle);
     f.pump();
-    assert_eq!(f.state("alice"), script::RunState::Idle, "never restarted");
+    assert_eq!(f.state("alice"), ScriptRunState::Idle, "never restarted");
 }
 
 fn push_ready(f: &Fixture, name: &str) {
@@ -304,6 +331,48 @@ fn push_ready(f: &Fixture, name: &str) {
         });
 }
 
+/// The marked rows through the command seam (`Targets::Marked`), with
+/// `uids` marked and the fixture's scripts lent, as the Fleet window issues
+/// them; the per-row report the window shows.
+fn marked_row(f: &mut Fixture, command: crate::OperatorCommand, uids: &[i32]) -> crate::BulkReport {
+    struct Lend<'a> {
+        marks: &'a mut MarkedSelection,
+        scripts: &'a mut Scripts,
+    }
+    impl crate::SlotSurface for Lend<'_> {
+        type Io = ();
+        fn attach(
+            &mut self,
+            _name: &str,
+            profile: &mut crate::SpawnProfile<'_>,
+            _retained: Option<()>,
+        ) -> crate::SlotAttach<()> {
+            profile.set_raster(crate::command::RasterMode::Off);
+            crate::SlotAttach::new((), None, None)
+        }
+        fn lifetime_reset(&mut self, _name: &str, _walk_was_armed: bool) {}
+        fn released(&mut self, _name: &str) {}
+        fn models(&mut self) -> crate::Models<'_> {
+            crate::Models::none()
+                .with_marks(self.marks)
+                .with_scripts(self.scripts)
+        }
+        fn draw_changed(&mut self, _switch: crate::command::DrawSwitch, _on: bool) {}
+    }
+    let mut selection = marks(uids);
+    let mut lend = Lend {
+        marks: &mut selection,
+        scripts: &mut f.scripts,
+    };
+    let mut submitted = f
+        .core
+        .submit(command, crate::Targets::Marked, &mut lend)
+        .expect("marked command admitted");
+    submitted
+        .take_bulk()
+        .expect("a marked command reports per row")
+}
+
 /// Log out reaches the bots that are logged in and skips the ones that are
 /// not; Log in reaches the rest, loads a profile that was never loaded and
 /// skips a bot that is already in game.
@@ -313,7 +382,7 @@ fn login_and_logout_reach_only_the_bots_they_apply_to() {
     push_ready(&f, "alice");
     f.core.poll();
 
-    let out = logout_marked(&marks(&[1, 2]), &mut f.core, &mut f.scripts);
+    let out = marked_row(&mut f, crate::OperatorCommand::Logout, &[1, 2]);
     assert_eq!(
         out.summary(),
         "Log out marked: logging out 1, skipped 1: bob: not logged in"
@@ -325,7 +394,7 @@ fn login_and_logout_reach_only_the_bots_they_apply_to() {
     // Alice is out again and carol was never loaded; bob is offline.
     f.core.play().unwrap().statuses.lock().unwrap().clear();
     f.core.poll();
-    let login = login_marked(&marks(&[1, 3]), &mut f.core, &mut f.surface);
+    let login = marked_row(&mut f, crate::OperatorCommand::Login, &[1, 3]);
     assert_eq!(login.summary(), "Log in marked: logging in 2, skipped 0");
     assert!(
         f.core.members().iter().any(|m| m == "carol"),
@@ -336,7 +405,7 @@ fn login_and_logout_reach_only_the_bots_they_apply_to() {
 
     push_ready(&f, "alice");
     f.core.poll();
-    let again = login_marked(&marks(&[1]), &mut f.core, &mut f.surface);
+    let again = marked_row(&mut f, crate::OperatorCommand::Login, &[1]);
     assert_eq!(
         again.summary(),
         "Log in marked: logging in 0, skipped 1: alice: already logged in"
@@ -369,7 +438,7 @@ fn marked_logout_cancels_a_memory_relog_login_half() {
     assert!(f.core.play().unwrap().arm("alice").unwrap().wants_login());
     assert!(f.core.memory_status("alice").unwrap().relog_pending);
 
-    let out = logout_marked(&marks(&[1, 2]), &mut f.core, &mut f.scripts);
+    let out = marked_row(&mut f, crate::OperatorCommand::Logout, &[1, 2]);
 
     assert_eq!(out.summary(), "Log out marked: logging out 2, skipped 0");
     for name in ["alice", "bob"] {
@@ -401,7 +470,7 @@ fn apply_settings_to_marked_copies_only_to_marked_same_card_members() {
         .set_profile_setting(
             &mut f.core,
             "alice",
-            card.source,
+            CardSource::from_script(card.source),
             &card.name,
             &card.path,
             "target",
@@ -584,15 +653,17 @@ fn a_started_run_reports_progress_and_a_stopped_one_does_not() {
     let progress = |f: &Fixture| f.core.play().unwrap().script_progress("alice");
     assert!(progress(&f).is_none(), "never started");
 
+    let before_start = Instant::now();
     f.start_running("alice");
     let run = progress(&f).expect("a running slot has a run");
-    assert!(run.running_for < Duration::from_secs(20));
+    // A run cannot have been running for longer than this test has existed
+    // since it asked for the Start; no absolute duration is asserted, which a
+    // loaded host could exceed.
+    assert!(run.running_for <= before_start.elapsed());
     assert_eq!(run.levels_gained(), 0);
 
     f.core.play().unwrap().script_stop("alice");
-    f.until("the stop to finish", |f| {
-        f.state("alice") == script::RunState::Idle
-    });
+    f.until_state("alice", ScriptRunState::Idle);
     assert!(progress(&f).is_none(), "a stopped slot shows no run");
 
     f.start_running("alice");
@@ -613,7 +684,7 @@ fn apply_to_marked_assigns_unassigned_and_says_so() {
         .set_profile_setting(
             &mut f.core,
             "alice",
-            card.source,
+            CardSource::from_script(card.source),
             &card.name,
             &card.path,
             "target",
@@ -685,7 +756,7 @@ fn operator_apply_assign_start_does_not_start_on_defaults() {
         .set_profile_setting(
             &mut f.core,
             "alice",
-            card.source,
+            CardSource::from_script(card.source),
             &card.name,
             &card.path,
             "target",
@@ -695,8 +766,13 @@ fn operator_apply_assign_start_does_not_start_on_defaults() {
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
 
-    f.scripts
-        .prepare_settings_sync(&f.core, "alice", card.source, &card.name, &card.path);
+    f.scripts.prepare_settings_sync(
+        &f.core,
+        "alice",
+        CardSource::from_script(card.source),
+        &card.name,
+        &card.path,
+    );
     let wall = f.scripts.prepared_settings_sync().unwrap();
     assert!(
         wall.targets.is_empty(),
@@ -737,39 +813,48 @@ fn operator_apply_assign_start_does_not_start_on_defaults() {
         card.identity_key()
     );
 
-    f.scripts
-        .prepare_settings_sync(&f.core, "alice", card.source, &card.name, &card.path);
+    f.scripts.prepare_settings_sync(
+        &f.core,
+        "alice",
+        CardSource::from_script(card.source),
+        &card.name,
+        &card.path,
+    );
     assert_eq!(f.scripts.prepared_settings_sync().unwrap().targets, ["bob"]);
 
     let blocked = f
         .scripts
         .start_selected(&mut f.core, "bob", None, None)
         .unwrap_err();
-    assert!(
-        blocked.contains("blocked") && blocked.contains("waiting for Apply or Cancel"),
-        "{blocked}"
-    );
+    match (blocked.kind(), blocked.to_string()) {
+        (ScriptStartErrorKind::Waiting, message) => assert!(
+            message.contains("blocked") && message.contains("waiting for Apply or Cancel"),
+            "{message}"
+        ),
+        other => panic!("expected a waiting start error, got {other:?}"),
+    }
     let blocked = f
         .scripts
         .start_profile(&mut f.core, "bob", None)
         .unwrap_err();
-    assert!(
-        blocked.contains("blocked") && blocked.contains("waiting for Apply or Cancel"),
-        "{blocked}"
-    );
+    match (blocked.kind(), blocked.to_string()) {
+        (ScriptStartErrorKind::Waiting, message) => assert!(
+            message.contains("blocked") && message.contains("waiting for Apply or Cancel"),
+            "{message}"
+        ),
+        other => panic!("expected a waiting start error, got {other:?}"),
+    }
     start_marked(&marked, &mut f.core, &mut f.scripts, Some(&sel), None);
     let bulk = f.scripts.last_bulk_report().unwrap();
     assert!(bulk.contains("blocked"), "{bulk}");
-    assert_eq!(f.state("bob"), script::RunState::Idle);
+    assert_eq!(f.state("bob"), ScriptRunState::Idle);
 
     f.scripts.cancel_settings_sync();
     f.scripts
         .start_selected(&mut f.core, "bob", None, None)
         .unwrap();
     f.until("starts to settle", |f| !f.scripts.starts_pending());
-    f.until("bob running on default", |f| {
-        f.state("bob") == script::RunState::Running
-    });
+    f.until_state("bob", ScriptRunState::Running);
     let guard: serde_json::Map<String, serde_json::Value> =
         std::iter::once(("target".to_string(), serde_json::json!("Guard"))).collect();
     assert!(
@@ -777,12 +862,15 @@ fn operator_apply_assign_start_does_not_start_on_defaults() {
         "Cancel then Start uses the card default, not the unapplied copy"
     );
     f.core.play().unwrap().script_stop("bob");
-    f.until("bob idle after cancel-start", |f| {
-        f.state("bob") == script::RunState::Idle
-    });
+    f.until_state("bob", ScriptRunState::Idle);
 
-    f.scripts
-        .prepare_settings_sync(&f.core, "alice", card.source, &card.name, &card.path);
+    f.scripts.prepare_settings_sync(
+        &f.core,
+        "alice",
+        CardSource::from_script(card.source),
+        &card.name,
+        &card.path,
+    );
     f.scripts.apply_settings_sync(&mut f.core).unwrap();
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
@@ -790,9 +878,7 @@ fn operator_apply_assign_start_does_not_start_on_defaults() {
         .start_selected(&mut f.core, "bob", None, None)
         .unwrap();
     f.until("starts to settle", |f| !f.scripts.starts_pending());
-    f.until("bob running", |f| {
-        f.state("bob") == script::RunState::Running
-    });
+    f.until_state("bob", ScriptRunState::Running);
     let knight: serde_json::Map<String, serde_json::Value> = std::iter::once((
         "target".to_string(),
         serde_json::json!("Knight of Ardougne"),
@@ -872,7 +958,7 @@ fn restart_scope_prompt_bounds_each_list_and_counts_the_rest() {
         })
         .collect();
     for row in rows.iter_mut().take(20) {
-        row.set_script(script::RunState::Running);
+        row.set_script(ScriptRunState::Running);
     }
     let scope = RestartScope::from_rows(names.iter().map(String::as_str), &rows);
     assert_eq!(

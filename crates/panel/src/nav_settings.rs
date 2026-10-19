@@ -80,14 +80,14 @@ impl Default for NavSettings {
 }
 
 impl NavSettings {
-    pub fn walk_globals(&self) -> host_play::WalkGlobals {
-        host_play::WalkGlobals {
-            allow_teleports: self.allow_teleports,
-            allow_wilderness: self.allow_wilderness,
-            allow_bank_fetch: self.allow_bank_fetch,
-            allow_danger_zones: self.allow_danger_zones,
-            survivable_routing: self.survivable_routing,
-        }
+    pub fn walk_globals(&self) -> frontend_core::WalkGlobals {
+        frontend_core::WalkGlobals::new(
+            self.allow_teleports,
+            self.allow_wilderness,
+            self.allow_bank_fetch,
+            self.allow_danger_zones,
+            self.survivable_routing,
+        )
     }
 
     pub fn danger_level(&self) -> frontend_core::DangerLevel {
@@ -95,24 +95,24 @@ impl NavSettings {
     }
 
     pub fn set_danger_level(&mut self, level: frontend_core::DangerLevel) {
-        let mut globals = self.walk_globals();
-        globals.set_danger_level(level);
-        self.allow_danger_zones = globals.allow_danger_zones;
-        self.survivable_routing = globals.survivable_routing;
+        let globals = self.walk_globals().with_danger_level(level);
+        self.allow_danger_zones = globals.allow_danger_zones();
+        self.survivable_routing = globals.survivable_routing();
     }
 
     pub fn refresh_walk_globals(
         &mut self,
-        preferences: &host_play::local_state::Preferences,
+        preferences: &frontend_core::UiPreferences,
     ) -> std::io::Result<()> {
         let view = frontend_core::WalkGlobalsView::read(preferences);
-        self.allow_teleports = view.globals.allow_teleports;
-        self.allow_wilderness = view.globals.allow_wilderness;
-        self.allow_bank_fetch = view.globals.allow_bank_fetch;
-        self.allow_danger_zones = view.globals.allow_danger_zones;
-        self.survivable_routing = view.globals.survivable_routing;
-        self.script_scope_notice_ack = view.script_scope_notice_ack;
-        self.survivable_routing_notice_ack = view.survivable_routing_notice_ack;
+        let globals = view.globals();
+        self.allow_teleports = globals.allow_teleports();
+        self.allow_wilderness = globals.allow_wilderness();
+        self.allow_bank_fetch = globals.allow_bank_fetch();
+        self.allow_danger_zones = globals.allow_danger_zones();
+        self.survivable_routing = globals.survivable_routing();
+        self.script_scope_notice_ack = view.script_scope_notice_ack();
+        self.survivable_routing_notice_ack = view.survivable_routing_notice_ack();
         Ok(())
     }
 }
@@ -153,19 +153,19 @@ pub fn apply_paint_override(saved: &NavSettings, choice: Option<bool>) -> NavSet
 
 /// Map a scenario's session-only nav bag onto panel settings. Colours stay
 /// the rs2b0t Path-paint defaults (the scenario does not author HTML).
-pub fn from_scenario(n: &scenario::ScenarioNav, saved: &NavSettings) -> NavSettings {
+pub fn from_scenario(n: &frontend_core::live::ScenarioNav, saved: &NavSettings) -> NavSettings {
     NavSettings {
-        allow_teleports: n.allow_teleports,
-        allow_wilderness: n.allow_wilderness,
+        allow_teleports: n.allow_teleports(),
+        allow_wilderness: n.allow_wilderness(),
         allow_bank_fetch: false,
-        show_nav_path: n.show_nav_path,
-        hop_labels: n.hop_labels,
-        hop_label_px: n.hop_label_px,
-        collision_fill: n.collision_fill,
-        nsew_labels: n.nsew_labels,
-        client_trail: n.client_trail,
-        component_flood: n.component_flood,
-        camera_follow: n.camera_follow,
+        show_nav_path: n.show_nav_path(),
+        hop_labels: n.hop_labels(),
+        hop_label_px: n.hop_label_px(),
+        collision_fill: n.collision_fill(),
+        nsew_labels: n.nsew_labels(),
+        client_trail: n.client_trail(),
+        component_flood: n.component_flood(),
+        camera_follow: n.camera_follow(),
         pause_script_on_manual_walk_abort: saved.pause_script_on_manual_walk_abort,
         ..NavSettings::default()
     }
@@ -303,7 +303,10 @@ mod tests {
             pause_script_on_manual_walk_abort: false,
             ..NavSettings::default()
         };
-        let scenario_nav = scenario::nav_test_paints();
+        let scenario_nav = frontend_core::live::Scenario::get("nav_full")
+            .expect("nav_full scenario")
+            .view()
+            .nav();
         let scenario_overlay = super::from_scenario(&scenario_nav, &saved);
         assert!(!scenario_overlay.pause_script_on_manual_walk_abort);
         assert!(!effective(&saved, true).pause_script_on_manual_walk_abort);

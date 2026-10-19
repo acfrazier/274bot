@@ -40,10 +40,16 @@ pub fn other_cache_descriptor() -> MapProfileDescriptor {
     MapProfileDescriptor::new(289, Digest([6; 32]), Digest([8; 32]), Digest([9; 32]))
         .expect("fixture identities are valid")
 }
-// This is a harness settlement guard, not a product latency target. The shared
-// worker's eight-handle admission limit can serialize native map jobs from
-// concurrent tests, including their durable artifact writes.
-const MAP_FIXTURE_SETTLEMENT_TIMEOUT: Duration = Duration::from_secs(120);
+// Hang guard only, not a pass condition and not a latency target. Every map
+// job reaches a terminal status and a demand refused as Full is resubmitted on
+// each `status()` turn, so the wait below ends on the product's own signal.
+// The process-wide WorkService admits at most eight operation handles and a
+// map job charges at least four (`host_map_bake_charge`), so at most two map
+// jobs run at once across every test in the process; a demand waits behind the
+// other tests' jobs and their durable artifact writes, and on a loaded host
+// that queue is longer than any single job. The guard therefore only stops a
+// deadlocked test and is minutes, not the expected duration.
+const MAP_FIXTURE_SETTLEMENT_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Wait for an expected terminal status through the production publication port.
 pub fn wait_for_status(handle: &MapDemandHandle, expected: MapJobStatus) {

@@ -4,6 +4,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use frontend_core::scripts::{CardSource, Loadouts};
+use frontend_core::test_support::session::{
+    vault_assignment, vault_debug_rows, vault_script_bag, vault_touch, SettingsFixture,
+};
+use frontend_core::test_support::VaultFixture;
 use frontend_core::{MapBakeChoice, MapBakeGate, MapBakePrompt};
 use host_play::local_state::{LocalStateService, StateRoot};
 use host_play::map_cache::fixture::{
@@ -11,9 +16,7 @@ use host_play::map_cache::fixture::{
 };
 use host_play::map_cache::{MapCacheRoot, MapDemand, MapDemandManager, MapJobStatus};
 use panel::ui_state::{load_from, save_to};
-use script::{LoadoutsStore, ScriptSettingsStore, ScriptSource};
 use serde_json::json;
-use vault::{RasterMode, Vault};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
@@ -73,24 +76,27 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
     );
 
     let vault_path = copy_fixture_file(&fixture, &scratch, "vault-289");
-    let mut opened = Vault::unlock(&vault_path, "bot").unwrap();
-    let auto = opened.get("fixture-auto").unwrap().clone();
-    assert_eq!(auto.password, "bot");
-    assert_eq!(auto.uid, 289_018_101);
-    assert!(!auto.settings.lowmem);
-    assert!(auto.settings.auto_login);
-    assert_eq!(auto.settings.world, Some(2));
-    assert_eq!(auto.settings.tutorial_skipped, Some(true));
-    assert_eq!(auto.settings.raster, RasterMode::Cpu);
-    assert!(!auto.settings.random_events);
-    assert_eq!(auto.settings.lamp_skill, "magic");
-    assert!(!auto.settings.lamp_auto);
-    let assignment = auto.settings.script_assignment.as_ref().unwrap();
-    assert_eq!(assignment.source_kind, "catalog");
-    assert_eq!(assignment.identity, "ChickenKiller");
-    assert_eq!(assignment.display_name, "Chicken Killer");
-    assert_eq!(assignment.unavailable, None);
-    let bag = &auto.settings.script_settings["catalog:ChickenKiller"];
+    let mut opened = VaultFixture::unlock(&vault_path, "bot");
+    let auto = opened
+        .profile("fixture-auto")
+        .expect("fixture-auto is stored");
+    assert_eq!(auto.draft().password_for_test(), "bot");
+    assert_eq!(auto.uid(), 289_018_101);
+    assert!(!auto.lowmem());
+    assert!(auto.auto_login());
+    assert_eq!(auto.draft().settings().world(), Some(2));
+    assert_eq!(auto.tutorial_skipped(), Some(true));
+    assert_eq!(auto.raster(), frontend_core::command::RasterMode::Cpu);
+    assert!(!auto.random_events());
+    assert_eq!(auto.draft().settings().lamp_skill(), "magic");
+    assert!(!auto.draft().settings().lamp_auto());
+    let assignment = vault_assignment(&opened, "fixture-auto").expect("auto assignment");
+    assert_eq!(assignment.source_kind(), "catalog");
+    assert_eq!(assignment.identity(), "ChickenKiller");
+    assert_eq!(assignment.display_name(), "Chicken Killer");
+    assert_eq!(assignment.unavailable(), None);
+    let bag = vault_script_bag(&opened, "fixture-auto", "catalog:ChickenKiller")
+        .expect("auto ChickenKiller bag");
     assert_eq!(bag["buryBones"], json!(false));
     assert_eq!(bag["eatAtPercent"], json!(47));
     assert_eq!(bag["food"], json!("Lobster"));
@@ -98,54 +104,54 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
     assert_eq!(bag["patrol"], json!(["Lumbridge", "Falador"]));
     assert_eq!(bag["homeTile"], json!({"x": 3232, "z": 3298, "level": 0}));
 
-    let manual = opened.get("fixture-manual").unwrap().clone();
-    assert_eq!(manual.password, "bot");
-    assert_eq!(manual.uid, 289_018_102);
-    assert!(manual.settings.lowmem);
-    assert!(!manual.settings.auto_login);
-    assert_eq!(manual.settings.world, Some(1));
-    assert_eq!(manual.settings.tutorial_skipped, Some(false));
-    assert_eq!(manual.settings.raster, RasterMode::Off);
-    assert!(manual.settings.random_events);
-    assert_eq!(manual.settings.lamp_skill, "prayer");
-    assert!(manual.settings.lamp_auto);
-    let assignment = manual.settings.script_assignment.as_ref().unwrap();
-    assert_eq!(assignment.source_kind, "catalog");
-    assert_eq!(assignment.identity, "Thiever");
-    assert_eq!(assignment.display_name, "Thiever");
+    let manual = opened
+        .profile("fixture-manual")
+        .expect("fixture-manual is stored");
+    assert_eq!(manual.draft().password_for_test(), "bot");
+    assert_eq!(manual.uid(), 289_018_102);
+    assert!(manual.lowmem());
+    assert!(!manual.auto_login());
+    assert_eq!(manual.draft().settings().world(), Some(1));
+    assert_eq!(manual.tutorial_skipped(), Some(false));
+    assert_eq!(manual.raster(), frontend_core::command::RasterMode::Off);
+    assert!(manual.random_events());
+    assert_eq!(manual.draft().settings().lamp_skill(), "prayer");
+    assert!(manual.draft().settings().lamp_auto());
+    let assignment = vault_assignment(&opened, "fixture-manual").expect("manual assignment");
+    assert_eq!(assignment.source_kind(), "catalog");
+    assert_eq!(assignment.identity(), "Thiever");
+    assert_eq!(assignment.display_name(), "Thiever");
     assert_eq!(
-        assignment.unavailable.as_deref(),
+        assignment.unavailable(),
         Some("fixture catalog intentionally not bundled")
     );
-    assert_eq!(
-        manual.settings.script_settings["catalog:Thiever"]["food"],
-        json!("Cake")
-    );
-    assert_eq!(
-        manual.settings.script_settings["catalog:Thiever"]["bankAt"],
-        json!(9)
-    );
+    let thiever_bag =
+        vault_script_bag(&opened, "fixture-manual", "catalog:Thiever").expect("manual Thiever bag");
+    assert_eq!(thiever_bag["food"], json!("Cake"));
+    assert_eq!(thiever_bag["bankAt"], json!(9));
 
-    let defaults = opened.get("fixture-defaults").unwrap().clone();
-    assert_eq!(defaults.password, "bot");
-    assert_eq!(defaults.uid, 289_018_103);
-    assert!(defaults.settings.lowmem);
-    assert!(!defaults.settings.auto_login);
-    assert_eq!(defaults.settings.world, None);
-    assert_eq!(defaults.settings.tutorial_skipped, None);
-    assert_eq!(defaults.settings.raster, RasterMode::Gpu);
-    assert!(defaults.settings.random_events);
-    assert_eq!(defaults.settings.lamp_skill, "strength");
-    assert!(defaults.settings.lamp_auto);
-    assert!(defaults.settings.script_assignment.is_none());
-    assert!(defaults.settings.script_settings.is_empty());
+    let defaults = opened
+        .profile("fixture-defaults")
+        .expect("fixture-defaults is stored");
+    assert_eq!(defaults.draft().password_for_test(), "bot");
+    assert_eq!(defaults.uid(), 289_018_103);
+    assert!(defaults.lowmem());
+    assert!(!defaults.auto_login());
+    assert_eq!(defaults.draft().settings().world(), None);
+    assert_eq!(defaults.tutorial_skipped(), None);
+    assert_eq!(defaults.raster(), frontend_core::command::RasterMode::Gpu);
+    assert!(defaults.random_events());
+    assert_eq!(defaults.draft().settings().lamp_skill(), "strength");
+    assert!(defaults.draft().settings().lamp_auto());
+    assert!(vault_assignment(&opened, "fixture-defaults").is_none());
+    assert!(vault_script_bag(&opened, "fixture-defaults", "catalog:Thiever").is_none());
 
-    let expected_profiles: Vec<_> = opened.profiles().cloned().collect();
-    opened.upsert(auto).unwrap();
+    let expected_profiles = vault_debug_rows(&opened);
+    vault_touch(&mut opened, "fixture-auto");
     drop(opened);
-    let reopened = Vault::unlock(&vault_path, "bot").unwrap();
+    let reopened = VaultFixture::unlock(&vault_path, "bot");
     assert_eq!(
-        reopened.profiles().cloned().collect::<Vec<_>>(),
+        vault_debug_rows(&reopened),
         expected_profiles,
         "a current rewrite must preserve every 0.1.8.1 profile field"
     );
@@ -155,7 +161,7 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
     // The scratch directory is the state root the current readers open: the
     // preferences and the loadouts form go through one process service.
     let service = LocalStateService::open_process(StateRoot::new(scratch.0.clone()));
-    let preferences = service.preferences();
+    let preferences = frontend_core::UiPreferences::of_service_for_test(&service);
     let prefs = load_from(&preferences);
     assert_eq!(prefs.last_focus.as_deref(), Some("fixture-manual"));
     assert!(!prefs.collapsed["fixture-auto"]["script"]);
@@ -181,7 +187,7 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
     assert!(prefs.nav.camera_follow);
     assert!(prefs.rail_preview["fixture-auto"]);
     assert!(!prefs.rail_preview["fixture-manual"]);
-    assert_eq!(prefs.raster, RasterMode::Cpu);
+    assert_eq!(prefs.raster, frontend_core::command::RasterMode::Cpu);
     assert!(!prefs.lowmem);
     assert_eq!(prefs.server_revision, 289);
     assert_eq!(
@@ -220,11 +226,16 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
     let expected_prefs = prefs.clone();
     save_to(&preferences, &prefs);
     let reopened = LocalStateService::open_process(StateRoot::new(scratch.0.clone()));
-    assert_eq!(load_from(&reopened.preferences()), expected_prefs);
+    assert_eq!(
+        load_from(&frontend_core::UiPreferences::of_service_for_test(
+            &reopened
+        )),
+        expected_prefs
+    );
 
-    let mut loadouts = LoadoutsStore::over(Arc::new(service.operator_loadouts()));
+    let mut loadouts = Loadouts::operator(&service);
     assert_eq!(loadouts.load_error(), None);
-    let expected_loadouts = loadouts.snapshot();
+    let expected_loadouts = loadouts.loadouts().to_vec();
     assert_eq!(loadouts.names(), ["melee-main", "utility"]);
     let melee = loadouts.get("melee-main").unwrap();
     assert_eq!(melee.worn["hat"], "Rune full helm");
@@ -243,31 +254,31 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
     // so the file is rewritten from the typed rows twice.
     let mut edited = expected_loadouts[0].clone();
     edited.carry[0].qty += 1;
-    loadouts.upsert(edited);
-    loadouts.save().unwrap();
-    loadouts.upsert(expected_loadouts[0].clone());
-    loadouts.save().unwrap();
+    loadouts.upsert_for_test(edited);
+    loadouts.save_for_test().unwrap();
+    loadouts.upsert_for_test(expected_loadouts[0].clone());
+    loadouts.save_for_test().unwrap();
     let reopened = LocalStateService::open_process(StateRoot::new(scratch.0.clone()));
     assert_eq!(
-        LoadoutsStore::over(Arc::new(reopened.operator_loadouts())).snapshot(),
-        expected_loadouts
+        Loadouts::operator(&reopened).loadouts(),
+        expected_loadouts.as_slice()
     );
 
     let settings_path = copy_fixture_file(&fixture, &scratch, "script-settings.json");
-    let mut settings = ScriptSettingsStore::at(settings_path.clone());
-    let overrides = settings.overrides(ScriptSource::Catalog, "ChickenKiller");
+    let mut settings = SettingsFixture::at(settings_path.clone());
+    let overrides = settings.overrides(CardSource::Catalog, "ChickenKiller");
     assert_eq!(overrides["buryBones"], json!(false));
     assert_eq!(overrides["eatAtPercent"], json!(47.0));
     assert_eq!(overrides["loadout"], json!("melee-main"));
     settings.set_value(
-        ScriptSource::Catalog,
+        CardSource::Catalog,
         "ChickenKiller",
         "buryBones",
         overrides["buryBones"].clone(),
     );
     settings.save().unwrap();
     assert_eq!(
-        ScriptSettingsStore::at(settings_path).overrides(ScriptSource::Catalog, "ChickenKiller"),
+        SettingsFixture::at(settings_path).overrides(CardSource::Catalog, "ChickenKiller"),
         overrides
     );
 }
@@ -299,7 +310,7 @@ fn a_0181_home_opens_walkto_on_shipped_terrain_without_asking_and_keeps_its_file
 
     // The panel's gate starts from the 0.1.8.1 prefs, which never answered.
     let service = LocalStateService::open_process(StateRoot::new(bot.clone()));
-    let prefs = load_from(&service.preferences());
+    let prefs = load_from(&frontend_core::UiPreferences::of_service_for_test(&service));
     assert_eq!(prefs.map_bake, MapBakeChoice::Ask);
     let root = MapCacheRoot::from_home(&home);
     assert!(!root.path().exists(), "0.1.8.1 wrote no map cache");
@@ -308,7 +319,7 @@ fn a_0181_home_opens_walkto_on_shipped_terrain_without_asking_and_keeps_its_file
     let manager = MapDemandManager::with_shipped_map(root.clone(), producer.clone(), shipped);
     let mut gate = MapBakeGate::new(prefs.map_bake);
     let handle = gate
-        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
     assert_eq!(gate.prompt(), MapBakePrompt::None, "no bake question");
     let started = Instant::now();

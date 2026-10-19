@@ -7,10 +7,16 @@
 
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
 use frontend_core::scripts::ReloadOutcome;
-use frontend_core::Scripts;
+#[cfg(test)]
+use frontend_core::test_support::scripts::Assignment;
+use frontend_core::{
+    command::{CardKind, OperatorCommand},
+    scripts::{CardSource, CompiledCardId, SchemaRef, ScriptChoice},
+    Targets,
+};
 use serde_json::{Map, Value};
-use vault::ScriptAssignment;
 
 use crate::session::Session;
 
@@ -39,20 +45,18 @@ impl Session {
 
     pub fn restore_script_heading(&mut self, profile: &str) {
         let heading = self.scripts.heading(&self.core, profile);
-        let needs_catalog = heading.as_ref().is_some_and(|sel| {
-            matches!(
-                sel,
-                script::ScriptSel::Loaded(script::ScriptSource::Catalog, _)
-            )
-        });
+        let needs_catalog = heading
+            .as_ref()
+            .is_some_and(|sel| sel.source() == CardSource::Catalog);
         self.script_sel = heading;
         if needs_catalog {
             self.fill_rs2b0t_cards_once();
         }
     }
 
-    pub fn profile_assignment(&self, profile: &str) -> Option<ScriptAssignment> {
-        Scripts::assignment(&self.core, profile)
+    #[cfg(test)]
+    pub fn profile_assignment(&self, profile: &str) -> Option<Assignment> {
+        frontend_core::Scripts::test_assignment(&self.core, profile)
     }
 
     pub fn heading_is_pending(&self) -> bool {
@@ -60,13 +64,10 @@ impl Session {
             .is_some_and(|name| self.scripts.heading_is_pending(&self.core, &name))
     }
 
-    pub fn set_pending_browse(&mut self, profile: &str, sel: script::ScriptSel) {
-        self.scripts.set_pending_browse(profile, sel);
-    }
-
-    pub fn persist_successful_assignment(&mut self, profile: &str, assignment: ScriptAssignment) {
+    #[cfg(test)]
+    pub fn persist_successful_assignment(&mut self, profile: &str, assignment: Assignment) {
         self.scripts
-            .persist_assignment(&mut self.core, profile, assignment);
+            .persist_test_assignment(&mut self.core, profile, assignment);
         self.apply_script_notice();
     }
 
@@ -86,10 +87,10 @@ impl Session {
     pub fn merged_profile_bag(
         &mut self,
         profile: &str,
-        source: script::ScriptSource,
+        source: CardSource,
         name: &str,
         path: &Path,
-        schema: &[script::SettingDef],
+        schema: SchemaRef<'_>,
     ) -> Map<String, Value> {
         let bag =
             self.scripts
@@ -98,55 +99,69 @@ impl Session {
         bag
     }
 
-    /// Set one parameter on `profile`'s bag. The matching run receives it
-    /// once the write is durable. Returns whether the write was queued.
+    /// Set one parameter on `profile`'s bag through the settings command.
+    /// Returns whether the row accepted the write.
     pub fn set_profile_setting(
         &mut self,
         profile: &str,
-        source: script::ScriptSource,
+        source: CardSource,
         name: &str,
-        path: &Path,
+        _path: &Path,
         id: &str,
         value: Value,
     ) -> bool {
-        let queued = self
-            .scripts
-            .set_profile_setting(&mut self.core, profile, source, name, path, id, value)
-            .is_ok();
+        let selection = CompiledCardId::lookup(name)
+            .map(ScriptChoice::compiled)
+            .unwrap_or_else(|| ScriptChoice::loaded(source, name));
+        let kind = if selection.compiled_id().is_some() {
+            CardKind::Native
+        } else {
+            CardKind::Script
+        };
+        self.scripts
+            .stage_setting(Some(profile), &selection, id, value);
+        let Some(submitted) = self.submit_script_command(
+            OperatorCommand::SaveScriptSettings(kind),
+            Targets::Profile(profile),
+        ) else {
+            return false;
+        };
+        let accepted = self.core.command_failure(submitted.request()).is_none();
         self.apply_script_notice();
-        queued
+        accepted
     }
 
     /// Start the given profile using its last successful assignment only.
     pub fn script_start_profile(&mut self, profile: &str) -> Result<(), String> {
         let root = self.start_catalog_root();
-        let result = self
-            .scripts
-            .start_profile(&mut self.core, profile, root.as_deref());
+        self.scripts.stage_start_catalog_root(root);
+        let submitted = self
+            .submit_script_command(OperatorCommand::StartScript, Targets::Profile(profile))
+            .ok_or_else(|| {
+                self.error
+                    .clone()
+                    .unwrap_or_else(|| "script Start was not submitted".into())
+            })?;
         self.apply_script_notice();
-        result
+        self.core
+            .command_failure(submitted.request())
+            .map_or(Ok(()), |error| Err(error.to_owned()))
     }
 
-    /// Start the focused heading: the profile's pending Browse selection,
-    /// else the heading, else its assignment.
+    /// Start the focused profile through the same single-profile Start row.
     pub(crate) fn script_start_focused(&mut self, profile: &str) -> Result<(), String> {
-        let root = self.start_catalog_root();
-        let heading = self.script_sel.clone();
-        let result =
-            self.scripts
-                .start_selected(&mut self.core, profile, heading.as_ref(), root.as_deref());
-        self.apply_script_notice();
-        result
+        self.script_start_profile(profile)
     }
 
     pub fn script_start_all(&mut self) {
         let root = self.start_catalog_root();
-        self.scripts.start_all(&mut self.core, root.as_deref());
+        self.scripts.stage_start_catalog_root(root);
+        self.submit_script_command(OperatorCommand::StartScript, Targets::Everyone);
         self.apply_script_notice();
     }
 
     pub fn script_stop_all(&mut self) {
-        self.scripts.stop_all(&mut self.core);
+        self.submit_script_command(OperatorCommand::StopScript, Targets::Everyone);
         self.apply_script_notice();
     }
 
@@ -154,14 +169,22 @@ impl Session {
     /// report then follows the running Start report, which also covers a
     /// Start all that lands while these rows still wait.
     pub fn fleet_start_selected(&mut self) {
+        if let Some(selection) = self.script_sel.as_ref().map(ScriptChoice::duplicate) {
+            self.scripts.stage_browse_pick(selection);
+        } else {
+            self.scripts.stage_browse_pick_clear();
+        }
+        let Some(picked) =
+            self.submit_script_command(OperatorCommand::PickBrowseCard, Targets::Application)
+        else {
+            return;
+        };
+        if self.core.command_failure(picked.request()).is_some() {
+            return;
+        }
         let root = self.start_catalog_root();
-        frontend_core::start_marked(
-            &self.fleet_selection,
-            &mut self.core,
-            &mut self.scripts,
-            self.script_sel.as_ref(),
-            root.as_deref(),
-        );
+        self.scripts.stage_start_catalog_root(root);
+        self.submit_script_command(OperatorCommand::StartScript, Targets::Marked);
         self.apply_script_notice();
         self.fleet_report_follows_start = true;
         self.follow_fleet_report();
@@ -170,23 +193,37 @@ impl Session {
     /// Stop marked rows through the shared core stop path. The core skips
     /// idle/already-stopping rows and records those reasons in the report.
     pub fn fleet_stop_selected(&mut self) {
-        let report =
-            frontend_core::stop_marked(&self.fleet_selection, &mut self.core, &mut self.scripts);
+        let submitted = self.submit_script_command(OperatorCommand::StopScript, Targets::Marked);
         self.apply_script_notice();
         self.fleet_report_follows_start = false;
-        self.fleet_report = Some(report.summary());
+        self.fleet_report =
+            submitted.and_then(|submitted| submitted.bulk().map(|report| report.summary()));
     }
 
     /// Fold settled script work (reload validation, Start setup, parameter
     /// writes) once per UI frame, after the core poll.
     pub fn poll_scripts(&mut self) {
         self.scripts.poll(&mut self.core);
-        for (name, message) in self.scripts.take_start_failures() {
-            if let Some(watch) = self.external_core_watch() {
-                if watch.configured() && watch.account() == name {
-                    watch.fail_start(message);
+        if let Some((root, result)) = self.scripts.take_catalog_import_update() {
+            match result {
+                Ok(_) => {
+                    let _ = frontend_core::scripts::paths::clear_rs2b0t_import_at(
+                        &frontend_core::scripts::paths::rs2b0t_import_file(),
+                    );
+                    self.ui.script_catalog_last_dir = Some(root);
+                    if self.persist_ui {
+                        crate::ui_state::save(&self.preferences, &self.ui);
+                    }
+                    self.rs2b0t_catalog_open = false;
+                    self.error = None;
                 }
+                Err(error) => self.error = Some(error),
             }
+        }
+        for (name, message) in self.scripts.take_start_failures() {
+            self.core
+                .live_runner()
+                .fail_external_loader_start(&name, message);
         }
         self.apply_script_notice();
         if self.fleet_report_follows_start {
@@ -213,11 +250,12 @@ impl Session {
         self.scripts.reload_validation_pending()
     }
 
+    #[cfg(test)]
     pub(crate) fn take_reload_outcome(&mut self) -> Option<ReloadOutcome> {
         self.scripts.take_reload_outcome()
     }
 
-    fn current_reload_target(&self) -> Option<(script::ScriptSource, String)> {
+    fn current_reload_target(&self) -> Option<(CardSource, String)> {
         let focused = self.focused_name();
         self.scripts
             .reload_target(&self.core, focused.as_deref(), self.script_sel.as_ref())
@@ -226,7 +264,14 @@ impl Session {
     /// Product UI Reload click (or Confirm of a shown warning).
     pub fn begin_script_reload_clicked(&mut self) {
         let target = self.current_reload_target();
-        self.scripts.begin_reload(&mut self.core, target);
+        let confirming = self.scripts.reload_confirmation_pending(target.as_ref());
+        self.scripts.stage_reload_target(target);
+        let command = if confirming {
+            OperatorCommand::ConfirmReload
+        } else {
+            OperatorCommand::ReloadScripts
+        };
+        self.submit_script_command(command, Targets::Application);
         self.apply_script_notice();
     }
 
@@ -237,7 +282,7 @@ impl Session {
 
     /// Discard the prepared candidate without touching any execution.
     pub fn cancel_reload(&mut self) {
-        self.scripts.cancel_reload();
+        self.submit_script_command(OperatorCommand::CancelReload, Targets::Application);
         self.apply_script_notice();
     }
 
@@ -251,10 +296,12 @@ impl Session {
     }
 
     pub(crate) fn begin_refresh_catalog_at(&mut self, root: &Path) {
-        let added = self.scripts.begin_refresh_catalog(&mut self.core, root);
-        for name in added {
-            self.enqueue_transpile(script::ScriptSource::Catalog, name, false);
-        }
+        self.scripts.stage_catalog_action(
+            frontend_core::scripts::CatalogActionKind::Refresh,
+            Some(root.to_path_buf()),
+            frontend_core::scripts::paths::rs2b0t_path_file(),
+        );
+        self.submit_script_command(OperatorCommand::ImportCatalog, Targets::Application);
         self.apply_script_notice();
     }
 
@@ -264,52 +311,49 @@ impl Session {
             self.error = Some("Apply to all: no focused profile".into());
             return;
         };
-        if let Some(script::ScriptSel::Compiled(id)) = self.script_sel {
-            if let Err(error) = self
-                .scripts
-                .prepare_compiled_settings_sync(&self.core, &profile, id, None)
-            {
-                self.error = Some(error);
-            }
-            return;
-        }
-        let Some(script::ScriptSel::Loaded(source, lookup)) = self.script_sel.clone() else {
+        let Some(selection) = self.script_sel.as_ref() else {
             self.error = Some("Apply to all: select a script".into());
             return;
         };
-        let Some((name, path)) = self
-            .scripts
-            .js()
-            .get(source, &lookup)
-            .map(|card| (card.name.clone(), card.path.clone()))
-        else {
-            self.error = Some(format!("Apply to all: unavailable: {lookup}"));
-            return;
+        let kind = if selection.compiled_id().is_some() {
+            CardKind::Native
+        } else {
+            CardKind::Script
         };
         self.scripts
-            .prepare_settings_sync(&self.core, &profile, source, &name, &path);
+            .stage_settings_sync_prepare(&profile, selection);
+        self.submit_script_command(
+            OperatorCommand::ApplySettingsToMarked(kind),
+            Targets::Profile(&profile),
+        );
         self.apply_script_notice();
     }
 
     pub fn apply_settings_sync(&mut self) {
-        if let Err(error) = self.scripts.apply_settings_sync(&mut self.core) {
-            self.error = Some(error);
-        }
+        let Some(kind) = self.scripts.stage_settings_sync_apply() else {
+            self.error = Some("Apply to all: no prepared copy".into());
+            return;
+        };
+        self.submit_script_command(
+            OperatorCommand::ApplySettingsToMarked(kind),
+            Targets::Everyone,
+        );
         self.apply_script_notice();
     }
 
     pub fn cancel_settings_sync(&mut self) {
-        self.scripts.cancel_settings_sync();
+        self.submit_script_command(OperatorCommand::CancelSettingsSync, Targets::Application);
     }
 
     pub fn restart_pending_settings(&mut self) {
         let root = self.start_catalog_root();
-        if let Err(error) = self
-            .scripts
-            .restart_pending_settings(&mut self.core, root.as_deref())
-        {
-            self.error = Some(error);
-        }
+        self.scripts.stage_start_catalog_root(root);
+        self.submit_script_command(OperatorCommand::RestartForSettings, Targets::Application);
+        self.apply_script_notice();
+    }
+
+    pub fn defer_settings_restart(&mut self) {
+        self.submit_script_command(OperatorCommand::DeferSettingsRestart, Targets::Application);
         self.apply_script_notice();
     }
 }
