@@ -1756,8 +1756,7 @@ fn power_gatherer_rejects_bank_edit_at_lower_mine() {
         ] {
             bank_settings.insert(key.into(), value);
         }
-        let bank_config =
-            super::super::card::prepare(&mut cx, 2, Arc::new(bank_settings)).unwrap();
+        let bank_config = super::super::card::prepare(&mut cx, 2, Arc::new(bank_settings)).unwrap();
         (power_config, bank_config)
     })
     .unwrap()
