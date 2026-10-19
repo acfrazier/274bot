@@ -3060,11 +3060,14 @@ pub(super) fn dispatch_observed_bank_op(
         })
     };
     match req {
-        InteractReq::Deposit { name } => {
+        InteractReq::Deposit { name, id } => {
+            // A selected id names exactly one bank-side item type; a noted
+            // stack and the unnoted food of the same name differ by id.
             let item = snapshot.bank_side().iter().find(|item| {
-                obj_names
-                    .and_then(|names| names.name(item.def.id))
-                    .is_some_and(|actual| actual.eq_ignore_ascii_case(name))
+                id.is_none_or(|id| item.def.id == id)
+                    && obj_names
+                        .and_then(|names| names.name(item.def.id))
+                        .is_some_and(|actual| actual.eq_ignore_ascii_case(name))
             })?;
             let op = ops::all_op_in(&item.actions)?;
             let before_count = snapshot

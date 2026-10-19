@@ -1188,6 +1188,83 @@ fn blocked_slot_read_journal_is_terminal_and_retains_its_diagnostic() {
 }
 
 #[test]
+fn a_transient_foreign_main_modal_waits_before_the_journal_begins() {
+    let (mut script, mut snapshot) = fixture(true);
+    snapshot.seed_main_modal(6554, vec![]);
+    snapshot.seed_main_modal_texts(vec!["Close Window".into()]);
+    let mut ledger = None;
+
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    assert!(
+        !script.parked,
+        "a transient foreign main modal must not park"
+    );
+    assert!(script.journal.is_none());
+    assert!(ledger
+        .as_ref()
+        .is_none_or(|ledger| ledger.outbox.is_empty()));
+    assert_eq!(snapshot.modals().main, 6554, "the owner keeps its window");
+
+    snapshot.seed_main_modal(-1, vec![]);
+    snapshot.seed_main_modal_texts(vec![]);
+    finish_read(&mut script, &mut snapshot, &mut ledger, 2, "seeded branch");
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+    assert!(!script.parked);
+}
+
+#[test]
+fn a_persistent_foreign_main_modal_uses_the_existing_read_cap_without_clicks() {
+    let (mut script, mut snapshot) = fixture(true);
+    snapshot.seed_main_modal(777, vec![]);
+    snapshot.seed_main_modal_texts(vec!["Trade confirmation".into()]);
+    let mut ledger = None;
+
+    for (index, active_ms) in [0, 7_999, 8_000, 15_999, 16_000].into_iter().enumerate() {
+        with_tick(&snapshot, &mut ledger, index as u64 + 1, |tick| {
+            tick.cx.active_now = Duration::from_millis(active_ms);
+            script.tick(tick).unwrap();
+        });
+        assert_eq!(
+            script.parked,
+            active_ms == 16_000,
+            "the inherited read cap must remain 16 s, active_ms={active_ms}"
+        );
+        if active_ms == 16_000 {
+            assert_eq!(
+                script.blocked_failure().message.as_ref(),
+                "journal blocked by modal root 777 (Trade confirmation)"
+            );
+        }
+        assert!(script.journal.is_none());
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+        assert_eq!(snapshot.modals().main, 777, "never close an unowned window");
+    }
+}
+
+#[test]
+fn a_foreign_quest_journal_title_still_fails_instead_of_waiting() {
+    let (mut script, mut snapshot) = fixture(true);
+    snapshot.seed_main_modal(
+        8134,
+        vec![crate::quest_journal::test_widget(
+            8144,
+            "@dre@Romeo & Juliet",
+        )],
+    );
+    let mut ledger = None;
+
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    assert!(script.parked);
+    assert_eq!(
+        script.blocked_failure().message.as_ref(),
+        "journal blocked by quest journal 'Romeo & Juliet'"
+    );
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+}
+
+#[test]
 fn transient_busy_during_read_retries_but_repeated_busy_is_bounded() {
     let (mut script, mut snapshot) = fixture(true);
     let mut ledger = None;
