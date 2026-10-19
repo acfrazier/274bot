@@ -921,6 +921,8 @@ pub struct NativeFactsInput<'a> {
     /// post without Collision). `Some(UNAVAILABLE)` posts a clear.
     pub collision: Option<CollisionViewInput<'a>>,
     pub bank_selection: BankSelectionInput,
+    /// Public v2 load completion from the slot-owned native bank seat.
+    pub withdraw_load_result: (u64, bool),
     /// The local player's primary animation id (frozen `reader.selfAnim()`,
     /// `-1` idle or no local player). `None` omits the slot (callers that
     /// do not observe it); the isolate keeps its last value.
@@ -1334,6 +1336,8 @@ impl<'a> Snapshot<'a> {
         has_count_dialog_open => VT_COUNT_DIALOG_OPEN,
         has_withdraw_x_result_seq => VT_WITHDRAW_X_RESULT_SEQ,
         has_withdraw_x_result => VT_WITHDRAW_X_RESULT,
+        has_withdraw_load_result_seq => VT_WITHDRAW_LOAD_RESULT_SEQ,
+        has_withdraw_load_result => VT_WITHDRAW_LOAD_RESULT,
         has_bank_op_result_seq => VT_BANK_OP_RESULT_SEQ,
         has_bank_op_result => VT_BANK_OP_RESULT,
         has_reach => VT_REACH,
@@ -1829,6 +1833,8 @@ pub struct SnapshotFingerprint {
     pub count_dialog_open: bool,
     pub withdraw_x_result_seq: u64,
     pub withdraw_x_result: bool,
+    pub withdraw_load_result_seq: u64,
+    pub withdraw_load_result: bool,
     pub hold: bool,
     pub ours: bool,
     pub npcs: Vec<SceneEntityFp>,
@@ -2070,6 +2076,8 @@ impl SnapshotFingerprint {
             count_dialog_open: input.count_dialog_open,
             withdraw_x_result_seq: input.withdraw_x_result_seq,
             withdraw_x_result: input.withdraw_x_result,
+            withdraw_load_result_seq: native.withdraw_load_result.0,
+            withdraw_load_result: native.withdraw_load_result.1,
             bank_op_result_seq: input.bank_op_result_seq,
             bank_op_result: input.bank_op_result,
             hold: input.hold,
@@ -2308,6 +2316,8 @@ pub struct DeltaMask {
     pub count_dialog_open: bool,
     pub withdraw_x_result_seq: bool,
     pub withdraw_x_result: bool,
+    pub withdraw_load_result_seq: bool,
+    pub withdraw_load_result: bool,
     pub bank_op_result_seq: bool,
     pub bank_op_result: bool,
     pub hold: bool,
@@ -2424,6 +2434,8 @@ impl DeltaMask {
             count_dialog_open: true,
             withdraw_x_result_seq: true,
             withdraw_x_result: true,
+            withdraw_load_result_seq: true,
+            withdraw_load_result: true,
             bank_op_result_seq: true,
             bank_op_result: true,
             hold: true,
@@ -2531,6 +2543,9 @@ impl DeltaMask {
             count_dialog_open: next.count_dialog_open != last.count_dialog_open,
             withdraw_x_result_seq: next.withdraw_x_result_seq != last.withdraw_x_result_seq,
             withdraw_x_result: next.withdraw_x_result != last.withdraw_x_result,
+            withdraw_load_result_seq: next.withdraw_load_result_seq
+                != last.withdraw_load_result_seq,
+            withdraw_load_result: next.withdraw_load_result != last.withdraw_load_result,
             bank_op_result_seq: next.bank_op_result_seq != last.bank_op_result_seq,
             bank_op_result: next.bank_op_result != last.bank_op_result,
             // SEC-004: re-post hold every tick so JS cannot clear
@@ -2648,6 +2663,8 @@ impl DeltaMask {
             || self.count_dialog_open
             || self.withdraw_x_result_seq
             || self.withdraw_x_result
+            || self.withdraw_load_result_seq
+            || self.withdraw_load_result
             || self.bank_op_result_seq
             || self.bank_op_result
             || self.ours
@@ -3445,6 +3462,12 @@ fn encode_snapshot_masked_into(
     }
     if mask.withdraw_x_result {
         table.add_withdraw_x_result(input.withdraw_x_result);
+    }
+    if mask.withdraw_load_result_seq {
+        table.add_withdraw_load_result_seq(native.withdraw_load_result.0);
+    }
+    if mask.withdraw_load_result {
+        table.add_withdraw_load_result(native.withdraw_load_result.1);
     }
     if mask.bank_op_result_seq {
         table.add_bank_op_result_seq(input.bank_op_result_seq);
@@ -5985,12 +6008,15 @@ fn decode_interact_rows<'a>(
                     .bank_generation()
                     .ok_or_else(|| "withdraw-x has no bank_generation".to_string())?,
             }),
-            "withdraw-load" => {
-                return Err(
-                    "legacy withdraw-load interact opcode is refused; use the typed bank request"
-                        .into(),
-                )
-            }
+            "withdraw-load" => out.push(crate::shim::InteractReq::WithdrawLoad {
+                name: row
+                    .name()
+                    .ok_or_else(|| "withdraw-load has no name".to_string())?
+                    .to_string(),
+                bank_generation: row
+                    .bank_generation()
+                    .ok_or_else(|| "withdraw-load has no bank_generation".to_string())?,
+            }),
             "held" => out.push(crate::shim::InteractReq::Held {
                 name: row
                     .name()
@@ -6307,59 +6333,54 @@ fn validate_seat_wire_reqs<'a>(
         let op = row
             .op()
             .ok_or_else(|| "interact row has no op".to_string())?;
-        let class =
-            match op {
-                "abort-walk" => {
-                    let id = row.request_id();
-                    if id == 0 {
-                        return Err("AbortWalk release has no positive handle".into());
-                    }
-                    if walk_ids[..walk_count].contains(&id) {
-                        return Err(format!("duplicate AbortWalk release handle {id}"));
-                    }
-                    if walk_count == MAX_WALK_RELEASES {
-                        return Err(format!(
-                            "AbortWalk release count exceeds cap {MAX_WALK_RELEASES}"
-                        ));
-                    }
-                    walk_ids[walk_count] = id;
-                    walk_count += 1;
-                    reserved += 1;
-                    SeatInteractClass::WalkRelease
+        let class = match op {
+            "abort-walk" => {
+                let id = row.request_id();
+                if id == 0 {
+                    return Err("AbortWalk release has no positive handle".into());
                 }
-                "gather-stop" => {
-                    gather_count += 1;
-                    if gather_count > 1 {
-                        return Err("more than one coalesced GatherStop release".into());
-                    }
-                    reserved += 1;
-                    SeatInteractClass::GatherRelease
+                if walk_ids[..walk_count].contains(&id) {
+                    return Err(format!("duplicate AbortWalk release handle {id}"));
                 }
-                "combat-stop" => {
-                    combat_count += 1;
-                    if combat_count > 1 {
-                        return Err("more than one coalesced CombatStop release".into());
-                    }
-                    reserved += 1;
-                    SeatInteractClass::CombatRelease
+                if walk_count == MAX_WALK_RELEASES {
+                    return Err(format!(
+                        "AbortWalk release count exceeds cap {MAX_WALK_RELEASES}"
+                    ));
                 }
-                "run-policy" => {
-                    policy_count += 1;
-                    if policy_count > api::script_contract::MAX_RUN_POLICY {
-                        return Err("run-policy row count exceeds cap".into());
-                    }
-                    reserved += 1;
-                    SeatInteractClass::RunPolicy
+                walk_ids[walk_count] = id;
+                walk_count += 1;
+                reserved += 1;
+                SeatInteractClass::WalkRelease
+            }
+            "gather-stop" => {
+                gather_count += 1;
+                if gather_count > 1 {
+                    return Err("more than one coalesced GatherStop release".into());
                 }
-                "withdraw-load" => return Err(
-                    "legacy withdraw-load interact opcode is refused; use the typed bank request"
-                        .into(),
-                ),
-                "gather-run" | "combat-fight" | "progress-read" => {
-                    return Err("native family starts must use typed seat starts".into())
+                reserved += 1;
+                SeatInteractClass::GatherRelease
+            }
+            "combat-stop" => {
+                combat_count += 1;
+                if combat_count > 1 {
+                    return Err("more than one coalesced CombatStop release".into());
                 }
-                _ => SeatInteractClass::Gameplay,
-            };
+                reserved += 1;
+                SeatInteractClass::CombatRelease
+            }
+            "run-policy" => {
+                policy_count += 1;
+                if policy_count > api::script_contract::MAX_RUN_POLICY {
+                    return Err("run-policy row count exceeds cap".into());
+                }
+                reserved += 1;
+                SeatInteractClass::RunPolicy
+            }
+            "gather-run" | "combat-fight" | "progress-read" => {
+                return Err("native family starts must use typed seat starts".into())
+            }
+            _ => SeatInteractClass::Gameplay,
+        };
         if class == SeatInteractClass::Gameplay {
             gameplay_seen = true;
             gameplay += 1;
@@ -6809,6 +6830,7 @@ fn interact_off<'b>(
         InteractReq::Deposit { .. } => "deposit",
         InteractReq::Withdraw { .. } => "withdraw",
         InteractReq::WithdrawX { .. } => "withdraw-x",
+        InteractReq::WithdrawLoad { .. } => "withdraw-load",
         InteractReq::Held { .. } => "held",
         InteractReq::InvButton { .. } => "inv-button",
         InteractReq::PuzzleMove { .. } => "puzzle-move",
@@ -6864,6 +6886,7 @@ fn interact_off<'b>(
         InteractReq::Deposit { name }
         | InteractReq::Withdraw { name, .. }
         | InteractReq::WithdrawX { name, .. }
+        | InteractReq::WithdrawLoad { name, .. }
         | InteractReq::Held { name, .. }
         | InteractReq::Npc { name, .. }
         | InteractReq::Player { name, .. }
@@ -7197,6 +7220,12 @@ fn interact_off<'b>(
             table.add_bank_item_id(*bank_item_id);
             table.add_lands_as_id(*lands_as_id);
             table.add_action(action_off.unwrap());
+            table.add_bank_generation(*bank_generation);
+        }
+        InteractReq::WithdrawLoad {
+            bank_generation, ..
+        } => {
+            table.add_name(name_off.unwrap());
             table.add_bank_generation(*bank_generation);
         }
         InteractReq::Held { slot, .. } => {
@@ -8630,21 +8659,38 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn legacy_withdraw_load_interact_opcode_is_refused() {
-        let mut builder = FlatBufferBuilder::new();
-        let op = builder.create_string("withdraw-load");
-        let mut row = InteractBuilder::new(&mut builder);
-        row.add_op(op);
-        let row = row.finish();
-        let reqs = builder.create_vector(&[row]);
-        let mut batch = InteractBatchBuilder::new(&mut builder);
-        batch.add_reqs(reqs);
-        let root = batch.finish();
-        builder.finish(root, None);
+    fn withdraw_load_requires_its_name_and_bank_generation() {
+        for (name, missing) in [(None, "name"), (Some("Lobster"), "bank_generation")] {
+            let mut builder = FlatBufferBuilder::new();
+            let op = builder.create_string("withdraw-load");
+            let name = name.map(|name| builder.create_string(name));
+            let mut row = InteractBuilder::new(&mut builder);
+            row.add_op(op);
+            if let Some(name) = name {
+                row.add_name(name);
+            }
+            let row = row.finish();
+            let reqs = builder.create_vector(&[row]);
+            let mut batch = InteractBatchBuilder::new(&mut builder);
+            batch.add_reqs(reqs);
+            let root = batch.finish();
+            builder.finish(root, None);
 
-        let error = decode_interact_batch(builder.finished_data())
-            .expect_err("legacy withdraw-load must not decode to a request");
-        assert!(error.contains("refused"), "{error}");
+            let error = decode_interact_batch(builder.finished_data())
+                .expect_err("withdraw-load without its required fields must fail");
+            assert!(
+                error.contains(&format!("withdraw-load has no {missing}")),
+                "{error}"
+            );
+        }
+        let request = InteractReq::WithdrawLoad {
+            name: "Lobster".into(),
+            bank_generation: 7,
+        };
+        assert_eq!(
+            decode_interact_batch(&encode_interact_batch(&[request.clone()])).unwrap(),
+            vec![request]
+        );
     }
 
     #[test]
@@ -10657,6 +10703,131 @@ pub(crate) mod tests {
             .expect_err("unknown bank operation rejected")
             .contains("unknown bank seat operation")
         );
+        let unused_field_cases = [
+            (Operation::OpenBooth, false),
+            (Operation::OpenNearest, false),
+            (Operation::OpenNearestWorld, false),
+            (Operation::OpenObject, false),
+            (Operation::OpenNpc, false),
+            (Operation::OpenAccess, false),
+            (Operation::Open, false),
+            (Operation::Select, false),
+            (Operation::DepositLabel, true),
+            (Operation::WithdrawLabel, false),
+            (Operation::WithdrawDelta, false),
+            (Operation::WithdrawLoad, false),
+            (Operation::DepositAll, false),
+            (Operation::DepositKeep, false),
+            (Operation::DepositMatch, false),
+            (Operation::SetNoteMode, true),
+            (Operation::Close, false),
+            (Operation::WaitReady, false),
+            (Operation::WaitSnapshotAfter, false),
+            (Operation::BankNearest, false),
+        ];
+        for (operation, use_quantity) in unused_field_cases {
+            let kind = if operation == Operation::BankNearest {
+                NativeKind::BankNearest
+            } else {
+                NativeKind::BankPlan
+            };
+            let mut args = BankSeatArgs::new(operation);
+            if use_quantity {
+                args.quantity = Some(1);
+            } else {
+                args.note_mode = true;
+            }
+            if operation == Operation::DepositLabel {
+                args.item_name = Some("Coins".into());
+                args.menu_op = Some("Deposit".into());
+            }
+            let error = encode(kind, &args).expect_err("populated unused field rejected");
+            assert!(
+                error.contains("carries unused fields"),
+                "{operation:?} should reject its unused field, got: {error}"
+            );
+        }
+
+        for kind in [
+            NativeKind::Gather,
+            NativeKind::Combat,
+            NativeKind::QuestProgress,
+            NativeKind::Hunt,
+        ] {
+            let args = BankSeatArgs::new(Operation::DepositAll);
+            let error = encode(kind, &args).expect_err("bank payload on non-bank start rejected");
+            let expected = if kind == NativeKind::Hunt {
+                "unsupported typed arguments for native start kind"
+            } else {
+                "native start arguments do not match the family kind"
+            };
+            assert!(
+                error.contains(expected),
+                "{kind:?} should reject a bank payload, got: {error}"
+            );
+            let error = decode_seat_interact_batch(&raw_seat_batch_with_bank_kind(
+                seat_kind_wire(kind),
+                BankSeatOperation::DepositAll,
+            ))
+            .expect_err("raw bank payload on non-bank start rejected");
+            let expected = match kind {
+                NativeKind::Gather => "Gather start carries mismatched typed arguments",
+                NativeKind::Combat => "Combat start carries mismatched typed arguments",
+                NativeKind::QuestProgress => {
+                    "QuestProgress start carries mismatched typed arguments"
+                }
+                NativeKind::Hunt => "native start carries unsupported typed arguments",
+                _ => unreachable!(),
+            };
+            assert!(
+                error.contains(expected),
+                "{kind:?} raw decode should reject a bank payload, got: {error}"
+            );
+        }
+    }
+
+    fn raw_seat_batch_with_bank_kind(kind: SeatKind, operation: BankSeatOperation) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let mut bank = BankSeatArgsBuilder::new(&mut builder);
+        bank.add_operation(operation);
+        let bank = bank.finish();
+        // Supply the required family payload too, so a missing-field check
+        // cannot hide a regression in the mismatched-bank guard.
+        let gather_settings = (kind == SeatKind::Gather)
+            .then(|| builder.create_vector::<WIPOffset<SettingRow<'_>>>(&[]));
+        let combat =
+            (kind == SeatKind::Combat).then(|| CombatFightBuilder::new(&mut builder).finish());
+        let progress_name =
+            (kind == SeatKind::QuestProgress).then(|| builder.create_string("Cook's Assistant"));
+        let mut args = SeatArgsBuilder::new(&mut builder);
+        args.add_bank(bank);
+        if let Some(settings) = gather_settings {
+            args.add_gather_settings(settings);
+        }
+        if let Some(combat) = combat {
+            args.add_combat(combat);
+        }
+        if let Some(name) = progress_name {
+            args.add_progress_name(name);
+        }
+        let args = args.finish();
+        let mut start = NativeRequestBuilder::new(&mut builder);
+        start.add_id(1);
+        start.add_kind(kind);
+        start.add_args(args);
+        let start = start.finish();
+        let starts = builder.create_vector(&[start]);
+        let decisions = builder.create_vector::<WIPOffset<SeatDecide<'_>>>(&[]);
+        let cancels = builder.create_vector::<WIPOffset<SeatCancel<'_>>>(&[]);
+        let reqs = builder.create_vector::<WIPOffset<Interact<'_>>>(&[]);
+        let mut batch = InteractBatchBuilder::new(&mut builder);
+        batch.add_reqs(reqs);
+        batch.add_starts(starts);
+        batch.add_decisions(decisions);
+        batch.add_cancels(cancels);
+        let root = batch.finish();
+        builder.finish(root, None);
+        builder.finished_data().to_vec()
     }
 
     fn raw_seat_batch_with_start_kind(kind: SeatKind) -> Vec<u8> {

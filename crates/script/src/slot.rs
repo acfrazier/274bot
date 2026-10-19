@@ -2246,6 +2246,10 @@ impl SlotScript {
         force_banks: bool,
     ) -> Vec<u8> {
         let mut native = native;
+        native.withdraw_load_result = self
+            .bank
+            .as_ref()
+            .map_or((0, false), |bank| bank.withdraw_load_result);
         native.api_gather = self.api.as_ref().and_then(|seat| seat.page.as_deref());
         native.api_gather_outcome = self.api.as_ref().and_then(|seat| seat.terminal.as_ref());
         native.api_combat = self
@@ -2622,7 +2626,8 @@ impl SlotScript {
         };
         seat.take();
         seat.dispatch_into(&mut self.seat_delivery);
-        for row in self.seat_delivery.drain(..) {
+        let mut delivery = std::mem::take(&mut self.seat_delivery);
+        for row in delivery.drain(..) {
             match row {
                 SeatEffect::Native(action) => self.seat_native_delivery.push_back(action),
                 #[cfg(feature = "load")]
@@ -2640,8 +2645,29 @@ impl SlotScript {
                     self.seat_lifecycle.push(interact.req);
                 }
                 #[cfg(feature = "load")]
+                SeatEffect::Interact(crate::load::QueuedInteract {
+                    req:
+                        crate::shim::InteractReq::WithdrawLoad {
+                            name,
+                            bank_generation,
+                        },
+                    ..
+                }) => {
+                    if let Some(req) = self.start_v2_withdraw_load(name, bank_generation) {
+                        self.seat_delivery.push(SeatEffect::Interact(
+                            crate::load::QueuedInteract {
+                                req,
+                                observed_walk_outcome_seq: 0,
+                            },
+                        ));
+                    }
+                }
+                #[cfg(feature = "load")]
                 SeatEffect::Interact(interact) => self.seat_interact_delivery.push(interact),
             }
+        }
+        if self.seat_delivery.is_empty() {
+            self.seat_delivery = delivery;
         }
     }
 

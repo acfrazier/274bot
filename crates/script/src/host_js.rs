@@ -1789,6 +1789,8 @@ const SNAPSHOT_FIELDS: &[TsField] = &[
         optional: false,
         doc: None,
     },
+    TsField { name: "withdraw_load_result_seq", ty: "number", optional: false, doc: None },
+    TsField { name: "withdraw_load_result", ty: "boolean", optional: false, doc: None },
     TsField {
         name: "bank_op_result_seq",
         ty: "number",
@@ -2399,6 +2401,13 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
         ],
     },
     InteractVariant {
+        op: "withdraw-load",
+        fields: &[
+            TsField { name: "name", ty: "string", optional: false, doc: None },
+            TsField { name: "bank_generation", ty: "number", optional: false, doc: None },
+        ],
+    },
+    InteractVariant {
         op: "held",
         fields: &[
             TsField {
@@ -3000,7 +3009,7 @@ const NATIVE_SNAPSHOT_FIELDS: &[TsField] = &[
         name: "bank_generation",
         ty: "number",
         optional: false,
-        doc: Some("Pass this into withdraw-x. A changed generation is stale, not exhaustion."),
+        doc: Some("Pass this into withdraw-load or withdraw-x. A changed generation is stale, not exhaustion."),
     },
     TsField {
         name: "bank_snapshot_generation",
@@ -3026,6 +3035,8 @@ const NATIVE_SNAPSHOT_FIELDS: &[TsField] = &[
     },
     TsField { name: "withdraw_x_result_seq", ty: "number", optional: false, doc: None },
     TsField { name: "withdraw_x_result", ty: "boolean", optional: false, doc: None },
+    TsField { name: "withdraw_load_result_seq", ty: "number", optional: false, doc: None },
+    TsField { name: "withdraw_load_result", ty: "boolean", optional: false, doc: None },
     TsField { name: "bank_op_result_seq", ty: "number", optional: false, doc: None },
     TsField { name: "bank_op_result", ty: "boolean", optional: false, doc: None },
     TsField {
@@ -3173,6 +3184,13 @@ const NATIVE_OP_VARIANTS: &[InteractVariant] = &[
             TsField { name: "bank_item_id", ty: "number", optional: false, doc: None },
             TsField { name: "lands_as_id", ty: "number", optional: false, doc: None },
             TsField { name: "action", ty: "string", optional: false, doc: None },
+            TsField { name: "bank_generation", ty: "number", optional: false, doc: None },
+        ],
+    },
+    InteractVariant {
+        op: "withdraw-load",
+        fields: &[
+            TsField { name: "name", ty: "string", optional: false, doc: None },
             TsField { name: "bank_generation", ty: "number", optional: false, doc: None },
         ],
     },

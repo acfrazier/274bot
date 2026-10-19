@@ -31,6 +31,7 @@ pub(super) struct BankSeat {
     pub(super) action_owner: Option<RequestId>,
     note: Option<(u64, NoteIntent)>,
     selection: BankSelectionState,
+    pub(super) withdraw_load_result: (u64, bool),
 }
 
 #[derive(Default)]
@@ -100,6 +101,8 @@ impl BankSelectionState {
 struct BankRow {
     id: RequestId,
     runtime_generation: u64,
+    /// Only the public snapshot-polled v2 request supplies a session generation.
+    v2_generation: Option<u64>,
     selection_generation: Option<u64>,
     selected_bank: Option<SelectedBank>,
     family: &'static str,
@@ -228,6 +231,7 @@ impl BankSeat {
         self.rows.push(BankRow {
             id,
             runtime_generation,
+            v2_generation: None,
             selection_generation,
             selected_bank: None,
             family,
@@ -245,6 +249,7 @@ impl BankSeat {
         self.action_owner = None;
         self.note = None;
         self.selection.invalidate();
+        self.withdraw_load_result = (0, false);
     }
 }
 
@@ -305,6 +310,13 @@ impl BankRow {
         note: &mut Option<(u64, NoteIntent)>,
         common_casket_id: Option<i32>,
     ) -> Poll<Result<Value, ActionError>> {
+        if self.v2_generation.is_some_and(|expected| {
+            cx.snapshot()
+                .bank_session()
+                .is_none_or(|session| session.value.generation != expected)
+        }) {
+            return Poll::Ready(Err(ActionError::Stale));
+        }
         // A same-frame continuation can change policy but never replenishes
         // the slot's action or transition budget.
         loop {
@@ -628,6 +640,64 @@ impl SlotScript {
             })
     }
 
+    /// Latest public v2 load result. The sequence changes only at completion.
+    pub fn withdraw_load_result(&self) -> (u64, bool) {
+        self.bank
+            .as_ref()
+            .map_or((0, false), |bank| bank.withdraw_load_result)
+    }
+
+    /// Translate an accepted public v2 request into the same native transfer
+    /// used by Bank.withdrawLoad. Deferred starts retain their accepted row.
+    pub(super) fn start_v2_withdraw_load(
+        &mut self,
+        name: String,
+        bank_generation: u64,
+    ) -> Option<crate::shim::InteractReq> {
+        let execution = self
+            .seat_fence
+            .current()
+            .expect("accepted request execution");
+        let id = SEAT_REQUEST_IDS.mint().expect("host request id exhausted");
+        let stamp = RequestStamp::new(id, None, None, execution)
+            .expect("accepted request has a bound execution");
+        let admission = self.seat.as_mut().expect("accepted request seat").start(
+            stamp,
+            NativeKind::BankPlan,
+            false,
+        );
+        match admission {
+            Ok(Admission::Admitted) => {
+                let mut request = BankSeatArgs::new(BankSeatOperation::WithdrawLoad);
+                request.item_name = Some(name);
+                self.start_bank(id, request);
+                if let Some(row) = self
+                    .bank
+                    .as_mut()
+                    .and_then(|bank| bank.rows.iter_mut().find(|row| row.id == id))
+                {
+                    row.v2_generation = Some(bank_generation);
+                }
+            }
+            Ok(Admission::Deferred) => {
+                return Some(crate::shim::InteractReq::WithdrawLoad {
+                    name,
+                    bank_generation,
+                });
+            }
+            Ok(Admission::Refused(_) | Admission::Cancelled | Admission::Stale) => {
+                let bank = self.bank.get_or_insert_with(Default::default);
+                bank.withdraw_load_result.0 = bank.withdraw_load_result.0.wrapping_add(1);
+                bank.withdraw_load_result.1 = false;
+            }
+            Ok(Admission::Duplicate) => unreachable!("host request ids are unique"),
+            Err(error) => self
+                .pending_logs
+                .push(format!("v2 bank start refused: {error:?}")),
+        }
+        None
+    }
+
     pub(super) fn start_bank(&mut self, id: RequestId, request: BankSeatArgs) {
         let started = self.bank.get_or_insert_with(Default::default).start(
             id,
@@ -679,17 +749,19 @@ impl SlotScript {
             .as_ref()
             .and_then(|data| data.selected_pin().ok());
         let Some(pin) = pin else {
-            for row in bank.rows.drain(..) {
+            let mut rows = std::mem::take(&mut bank.rows);
+            for row in rows.drain(..) {
                 self.finish_bank(
                     row.id,
                     Err(ActionError::Unavailable(Arc::from(
                         "selected game data unavailable",
                     ))),
                     None,
-                    &mut bank.values,
-                    &mut bank.selection,
+                    row.v2_generation.is_some(),
+                    &mut bank,
                 );
             }
+            bank.rows = rows;
             self.bank = Some(bank);
             return;
         };
@@ -753,11 +825,12 @@ impl SlotScript {
                         |(selected, generation)| (selected, generation, row.runtime_generation),
                     );
                 let id = row.id;
+                let v2 = row.v2_generation.is_some();
                 bank.rows.remove(index);
                 if bank.action_owner == Some(id) {
                     bank.action_owner = None;
                 }
-                self.finish_bank(id, result, selection, &mut bank.values, &mut bank.selection);
+                self.finish_bank(id, result, selection, v2, &mut bank);
                 continue;
             }
             let prompt_failed = if row.prompt_posted {
@@ -790,6 +863,7 @@ impl SlotScript {
             };
             if prompt_failed {
                 let id = row.id;
+                let v2 = row.v2_generation.is_some();
                 bank.rows.remove(index);
                 if bank.action_owner == Some(id) {
                     bank.action_owner = None;
@@ -800,8 +874,8 @@ impl SlotScript {
                         "bank callback prompt could not be encoded",
                     ))),
                     None,
-                    &mut bank.values,
-                    &mut bank.selection,
+                    v2,
+                    &mut bank,
                 );
                 continue;
             }
@@ -815,8 +889,8 @@ impl SlotScript {
         id: RequestId,
         result: Result<Value, ActionError>,
         selection: Option<(SelectedBank, u64, u64)>,
-        values: &mut Vec<(RequestId, Vec<u8>)>,
-        bank_selection: &mut BankSelectionState,
+        v2: bool,
+        bank: &mut BankSeat,
     ) {
         let (failed, value) = match result {
             Ok(value) => (false, value),
@@ -832,6 +906,7 @@ impl SlotScript {
             }
             Err(error) => (true, json!(format!("{error:?}"))),
         };
+        let v2_result = !failed && value.as_bool() == Some(true);
         let current_runtime_generation = self.runtime_generation;
         match crate::channel::encode(&value) {
             Ok(value) => {
@@ -842,9 +917,14 @@ impl SlotScript {
                     .complete(id, failed)
                 {
                     Ok(()) => {
-                        values.push((id, value));
+                        bank.values.push((id, value));
+                        if v2 {
+                            bank.withdraw_load_result.0 =
+                                bank.withdraw_load_result.0.wrapping_add(1);
+                            bank.withdraw_load_result.1 = v2_result;
+                        }
                         if let Some((selected, generation, runtime_generation)) = selection {
-                            bank_selection.publish(
+                            bank.selection.publish(
                                 id,
                                 generation,
                                 runtime_generation,

@@ -679,6 +679,7 @@ pub(crate) fn script_observe_cached_with_channels(
         }
         host_results_dirty |= slot.last_snapshot_fingerprint().is_some_and(|last| {
             last.withdraw_x_result_seq != slot.withdraw_x_result().0
+                || last.withdraw_load_result_seq != slot.withdraw_load_result().0
                 || last.bank_op_result_seq != slot.bank_op_result().0
         });
         // Evidence wakes use the latest observed PLAYER_INFO tick. They poll

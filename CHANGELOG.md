@@ -18,8 +18,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   and local bank calculations are owned by Rust.
   Paused bank walks revalidate their saved destination on Resume without
   repeating bank callbacks or extending the operation's active-time limit.
-  The v2 BoneBurier example uses `Bank.withdrawLoad` instead of the removed
-  low-level `withdraw-load` request.
+  The v2 BoneBurier example uses `Bank.withdrawLoad`. The public v2
+  `withdraw-load` request and its snapshot result fields remain supported
+  through the same native operation, with the caller's bank generation.
+  Bank-opening log text is shortened at a UTF-8 boundary to fit the prompt
+  byte limit, without changing the operation's result.
 - Scripts no longer have WebCrypto (`crypto.subtle`, `Crypto`, `CryptoKey`,
   `SubtleCrypto`) or the `URL`, `URLSearchParams` and `URLPattern` globals.
   `crypto.randomUUID()` and `crypto.getRandomValues()` still work.

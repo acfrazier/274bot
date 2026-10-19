@@ -153,12 +153,6 @@ impl BankSeatArgs {
         validate_access(&self.fallback_access)?;
         if let Some(destination) = &self.destination {
             validate_access(&destination.object_access)?;
-            if let Some(access) = &destination.npc_access {
-                validate_npc_access(access)?;
-            }
-        }
-        if let Some(access) = &self.npc_access {
-            validate_npc_access(access)?;
         }
         if self.object_access.as_ref().is_some_and(has_open_first)
             && matches!(
@@ -472,10 +466,6 @@ fn validate_access(access: &Option<BankSeatObjectAccess>) -> Result<(), String> 
             "object open-first name and op must be supplied together",
         )?;
     }
-    Ok(())
-}
-
-fn validate_npc_access(_access: &BankSeatNpcAccess) -> Result<(), String> {
     Ok(())
 }
 

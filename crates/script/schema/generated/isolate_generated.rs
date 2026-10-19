@@ -6431,6 +6431,8 @@ impl<'a> Snapshot<'a> {
   pub const VT_COUNT_DIALOG_OPEN: ::flatbuffers::VOffsetT = 120;
   pub const VT_WITHDRAW_X_RESULT_SEQ: ::flatbuffers::VOffsetT = 122;
   pub const VT_WITHDRAW_X_RESULT: ::flatbuffers::VOffsetT = 124;
+  pub const VT_WITHDRAW_LOAD_RESULT_SEQ: ::flatbuffers::VOffsetT = 126;
+  pub const VT_WITHDRAW_LOAD_RESULT: ::flatbuffers::VOffsetT = 128;
   pub const VT_BANK_OP_RESULT_SEQ: ::flatbuffers::VOffsetT = 130;
   pub const VT_BANK_OP_RESULT: ::flatbuffers::VOffsetT = 132;
   pub const VT_REACH: ::flatbuffers::VOffsetT = 134;
@@ -6554,6 +6556,7 @@ impl<'a> Snapshot<'a> {
     builder.add_walk_outcome_generation(args.walk_outcome_generation);
     builder.add_walk_outcome_seq(args.walk_outcome_seq);
     builder.add_bank_op_result_seq(args.bank_op_result_seq);
+    builder.add_withdraw_load_result_seq(args.withdraw_load_result_seq);
     builder.add_withdraw_x_result_seq(args.withdraw_x_result_seq);
     builder.add_bank_generation(args.bank_generation);
     builder.add_tick(args.tick);
@@ -6654,6 +6657,7 @@ impl<'a> Snapshot<'a> {
     builder.add_quest_statuses_available(args.quest_statuses_available);
     builder.add_attacked_by_player(args.attacked_by_player);
     builder.add_bank_op_result(args.bank_op_result);
+    builder.add_withdraw_load_result(args.withdraw_load_result);
     builder.add_withdraw_x_result(args.withdraw_x_result);
     builder.add_count_dialog_open(args.count_dialog_open);
     builder.add_shop_open(args.shop_open);
@@ -7101,6 +7105,20 @@ impl<'a> Snapshot<'a> {
     // Created from valid Table for this object
     // which contains a valid value in this slot
     unsafe { self._tab.get::<bool>(Snapshot::VT_WITHDRAW_X_RESULT, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn withdraw_load_result_seq(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(Snapshot::VT_WITHDRAW_LOAD_RESULT_SEQ, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn withdraw_load_result(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(Snapshot::VT_WITHDRAW_LOAD_RESULT, Some(false)).unwrap()}
   }
   #[inline]
   pub fn bank_op_result_seq(&self) -> u64 {
@@ -7760,6 +7778,8 @@ impl ::flatbuffers::Verifiable for Snapshot<'_> {
      .visit_field::<bool>("count_dialog_open", Self::VT_COUNT_DIALOG_OPEN, false)?
      .visit_field::<u64>("withdraw_x_result_seq", Self::VT_WITHDRAW_X_RESULT_SEQ, false)?
      .visit_field::<bool>("withdraw_x_result", Self::VT_WITHDRAW_X_RESULT, false)?
+     .visit_field::<u64>("withdraw_load_result_seq", Self::VT_WITHDRAW_LOAD_RESULT_SEQ, false)?
+     .visit_field::<bool>("withdraw_load_result", Self::VT_WITHDRAW_LOAD_RESULT, false)?
      .visit_field::<u64>("bank_op_result_seq", Self::VT_BANK_OP_RESULT_SEQ, false)?
      .visit_field::<bool>("bank_op_result", Self::VT_BANK_OP_RESULT, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<Reach>>("reach", Self::VT_REACH, false)?
@@ -7910,6 +7930,8 @@ pub struct SnapshotArgs<'a> {
     pub count_dialog_open: bool,
     pub withdraw_x_result_seq: u64,
     pub withdraw_x_result: bool,
+    pub withdraw_load_result_seq: u64,
+    pub withdraw_load_result: bool,
     pub bank_op_result_seq: u64,
     pub bank_op_result: bool,
     pub reach: Option<::flatbuffers::WIPOffset<Reach<'a>>>,
@@ -8060,6 +8082,8 @@ impl<'a> Default for SnapshotArgs<'a> {
       count_dialog_open: false,
       withdraw_x_result_seq: 0,
       withdraw_x_result: false,
+      withdraw_load_result_seq: 0,
+      withdraw_load_result: false,
       bank_op_result_seq: 0,
       bank_op_result: false,
       reach: None,
@@ -8396,6 +8420,14 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SnapshotBuilder<'a, 'b, A> {
   #[inline]
   pub fn add_withdraw_x_result(&mut self, withdraw_x_result: bool) {
     self.fbb_.push_slot::<bool>(Snapshot::VT_WITHDRAW_X_RESULT, withdraw_x_result, false);
+  }
+  #[inline]
+  pub fn add_withdraw_load_result_seq(&mut self, withdraw_load_result_seq: u64) {
+    self.fbb_.push_slot::<u64>(Snapshot::VT_WITHDRAW_LOAD_RESULT_SEQ, withdraw_load_result_seq, 0);
+  }
+  #[inline]
+  pub fn add_withdraw_load_result(&mut self, withdraw_load_result: bool) {
+    self.fbb_.push_slot::<bool>(Snapshot::VT_WITHDRAW_LOAD_RESULT, withdraw_load_result, false);
   }
   #[inline]
   pub fn add_bank_op_result_seq(&mut self, bank_op_result_seq: u64) {
@@ -8812,6 +8844,8 @@ impl ::core::fmt::Debug for Snapshot<'_> {
       ds.field("count_dialog_open", &self.count_dialog_open());
       ds.field("withdraw_x_result_seq", &self.withdraw_x_result_seq());
       ds.field("withdraw_x_result", &self.withdraw_x_result());
+      ds.field("withdraw_load_result_seq", &self.withdraw_load_result_seq());
+      ds.field("withdraw_load_result", &self.withdraw_load_result());
       ds.field("bank_op_result_seq", &self.bank_op_result_seq());
       ds.field("bank_op_result", &self.bank_op_result());
       ds.field("reach", &self.reach());

@@ -15,7 +15,10 @@ use crate::native::{
     ActionContext, ActionError, NativeMachine, WalkAllow, WalkBit, WalkEnd, WalkOptions,
     WalkRequest,
 };
-use crate::native_bank::{BankSelector, PickKind, Select, SelectArgs, SelectedBank};
+use crate::native_bank::{
+    nearest_eligible_bank as select_nearest_eligible_bank, BankSelector, PickKind, Select,
+    SelectArgs, SelectedBank,
+};
 use crate::shim::InteractReq;
 use api::named_banks::{BankPreferences, NamedBank, NamedBankFacts};
 use api::snapshot::{LocView, WorldTile};
@@ -184,6 +187,19 @@ fn map_bool(poll: Poll<Result<bool, ActionError>>) -> Poll<Result<OpeningValue, 
     }
 }
 
+// `encode_arguments([String])` adds an array tag/u16 length and a string tag/u16 length.
+const MAX_LOG_TEXT_BYTES: usize = api::script_contract::PROMPT_ARGS_MAX_BYTES - 6;
+
+fn truncate_log_text(line: &mut String) {
+    if line.len() > MAX_LOG_TEXT_BYTES {
+        let mut end = MAX_LOG_TEXT_BYTES;
+        while !line.is_char_boundary(end) {
+            end -= 1;
+        }
+        line.truncate(end);
+    }
+}
+
 #[derive(Default)]
 struct LogCall {
     line: Option<String>,
@@ -191,8 +207,9 @@ struct LogCall {
 }
 
 impl LogCall {
-    fn queue(&mut self, line: String, enabled: bool) {
+    fn queue(&mut self, mut line: String, enabled: bool) {
         if enabled {
+            truncate_log_text(&mut line);
             self.line = Some(line);
         }
     }
@@ -2189,17 +2206,10 @@ fn nearest_eligible_bank_from_rows(
     quests: &[api::snapshot::QuestStatusView],
     from: WorldTile,
 ) -> Option<NamedBank> {
-    BankSelector::new(Arc::clone(facts), preferences)
-        .eligible_indices(stats, quests)
-        .into_iter()
-        .filter_map(|index| facts.banks().get(usize::from(index)).copied())
-        .min_by_key(|bank| air_distance_squared(from, bank.air_tile()))
-}
-
-fn air_distance_squared(a: WorldTile, b: WorldTile) -> u128 {
-    let dx = u128::from((i64::from(a.x) - i64::from(b.x)).unsigned_abs());
-    let dz = u128::from((i64::from(a.z) - i64::from(b.z)).unsigned_abs());
-    dx.saturating_mul(dx).saturating_add(dz.saturating_mul(dz))
+    let selector = BankSelector::new(Arc::clone(facts), preferences);
+    select_nearest_eligible_bank(facts.as_ref(), from, |bank| {
+        selector.eligible(bank, stats, quests)
+    })
 }
 
 struct SelectorCore {
@@ -2607,5 +2617,38 @@ mod tests {
         assert_eq!(request.arrival, ArrivalKind::Reach);
         assert_eq!(request.required_after, evidence);
         assert_eq!(request.options.allow_wilderness, WalkBit::Allow);
+    }
+    #[test]
+    fn opening_log_text_stays_inside_prompt_budget_and_utf8_boundary() {
+        fn encoded_len(line: &str) -> usize {
+            let args = [Value::String(line.to_owned())];
+            crate::channel::encode_arguments(&args)
+                .expect("opening log text should fit the prompt budget")
+                .len()
+        }
+
+        let mut log = LogCall::default();
+        let name = "n".repeat(300);
+        assert_eq!(name.len(), 300);
+        log.queue(format!("no usable '{name}' in the scene"), true);
+        let line = log
+            .line
+            .as_deref()
+            .expect("the opening log should be queued");
+        assert_eq!(line.len(), MAX_LOG_TEXT_BYTES);
+        assert_eq!(
+            encoded_len(line),
+            api::script_contract::PROMPT_ARGS_MAX_BYTES
+        );
+
+        let multibyte = format!("{}é", "x".repeat(MAX_LOG_TEXT_BYTES - 1));
+        log.queue(multibyte, true);
+        let line = log
+            .line
+            .as_deref()
+            .expect("the opening log should be queued");
+        assert_eq!(line.len(), MAX_LOG_TEXT_BYTES - 1);
+        assert!(line.is_char_boundary(line.len()));
+        assert!(encoded_len(line) <= api::script_contract::PROMPT_ARGS_MAX_BYTES);
     }
 }

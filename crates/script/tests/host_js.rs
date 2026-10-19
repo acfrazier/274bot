@@ -204,17 +204,16 @@ fn type_block<'a>(src: &'a str, name: &str) -> &'a str {
     &rest[..end]
 }
 
-/// The author queue keeps the live low-level bank opcodes, but the bank family
-/// uses typed native seat starts. Retired `withdraw-load` and the isolate's
-/// consume-only `inspect-ack` must not appear in the public author queue.
+/// The author queue keeps public v2 bank requests. The native seat owns their
+/// work. The isolate's consume-only inspect acknowledgement stays private.
 #[test]
 fn interact_union_publishes_only_live_bank_queue_ops() {
     let src = render_host_js_dts();
     let union = type_block(&src, "InteractReq");
     assert!(union.contains("| { op: 'walk-nearest-bank'}"), "{union}");
     assert!(
-        !union.contains("withdraw-load"),
-        "the retired load opcode stays off the public queue: {union}"
+        union.contains("| { op: 'withdraw-load'; name: string; bank_generation: number}"),
+        "the public v2 load request keeps its documented fields: {union}"
     );
     assert!(
         !union.contains("inspect-ack"),

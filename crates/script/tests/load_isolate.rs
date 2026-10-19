@@ -4973,6 +4973,71 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+fn isolate_bank_access_with_long_name_logs_and_resolves_false() {
+    let name = "x".repeat(300);
+    let src = format!(
+        r#"
+import {{ Bank }} from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {{
+    async loop() {{
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__done = false;
+        globalThis.__result = 'pending';
+        globalThis.__logs = [];
+        globalThis.__result = await Bank.openNearestAccess(
+            {{ name: {name:?}, op: 'Use' }},
+            (message) => {{
+                globalThis.__logs.push(message);
+            }},
+        );
+        globalThis.__done = true;
+    }}
+}}
+"#
+    );
+    let mut slot = new_bank_slot(&src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    for tick in 1..=3 {
+        tick_bank_slot(&mut slot, &mut input, tick, -1, -1, &mut snapshot);
+        assert!(
+            slot.take_actions().is_empty(),
+            "a missing object should not emit an interaction"
+        );
+        if slot.probe("__done").unwrap() == serde_json::json!(true) {
+            break;
+        }
+    }
+
+    assert_eq!(
+        slot.probe("__done").unwrap(),
+        serde_json::json!(true),
+        "the long-name opening should resolve instead of failing in its log prompt"
+    );
+    assert_eq!(slot.probe("__result").unwrap(), serde_json::json!(false));
+    assert_eq!(slot.probe("__logs.length").unwrap(), serde_json::json!(1));
+    let log = slot
+        .probe("__logs[0]")
+        .unwrap()
+        .as_str()
+        .expect("the log callback receives text")
+        .to_owned();
+    assert!(log.starts_with("no usable '"));
+    assert_eq!(
+        log.len() + 6,
+        api::script_contract::PROMPT_ARGS_MAX_BYTES,
+        "only the log text is truncated; the one-string binary argument fills the prompt budget"
+    );
+    assert!(
+        slot.slot.last_error().is_none(),
+        "the log prompt must not fail: {:?}",
+        slot.slot.last_error()
+    );
+    slot.stop();
+}
+
+#[test]
 fn isolate_banking_open_reaches_the_preset_access_and_waits_for_loaded_stock() {
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';

@@ -54,9 +54,9 @@ fn withdraw_op_reads_the_row_ops_for_every_frozen_amount() {
     iso.join();
 }
 
-/// These T2.2 characterizations now cross the real compatibility/native seat
-/// boundary. Only host dispatch receipts and observed inventory are supplied.
-mod native_withdraw_to {
+/// Bank API characterizations cross the real compatibility/native seat boundary.
+/// Only host dispatch receipts and observed inventory are supplied.
+mod native_bank_seat {
     use std::sync::Arc;
 
     use api::named_banks::NamedBankFacts;
@@ -99,6 +99,48 @@ export default class T extends LoopingBot {{
 }}
 "#
             );
+            Self::with_source(source, ops)
+        }
+
+        fn new_deposit_pair(ops: &[&str]) -> Self {
+            let source = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__firstSettled = false;
+        globalThis.__firstRejected = false;
+        globalThis.__secondSettled = false;
+        globalThis.__secondRejected = false;
+        globalThis.__secondValue = 'pending';
+        globalThis.__secondIsVoid = false;
+
+        Bank.depositInventory().then(
+            () => { globalThis.__firstSettled = true; },
+            () => {
+                globalThis.__firstSettled = true;
+                globalThis.__firstRejected = true;
+            },
+        );
+        Bank.depositInventory().then(
+            (value) => {
+                globalThis.__secondSettled = true;
+                globalThis.__secondValue = value === undefined ? null : value;
+                globalThis.__secondIsVoid = value === undefined;
+            },
+            () => {
+                globalThis.__secondSettled = true;
+                globalThis.__secondRejected = true;
+            },
+        );
+    }
+}
+"#;
+            Self::with_source(source.to_owned(), ops)
+        }
+
+        fn with_source(source: String, ops: &[&str]) -> Self {
             Self {
                 runner: BankSlot::new(
                     source,
@@ -290,28 +332,54 @@ export default class T extends LoopingBot {{
     }
 
     #[test]
+    fn a_second_deposit_settles_null_while_the_first_is_live() {
+        let mut harness = Harness::new_deposit_pair(&LADDER);
+        let clicks = harness.step(0, 1);
+        assert_eq!(clicks.len(), 1, "only the first deposit should click");
+        assert!(
+            matches!(clicks.first(), Some(InteractReq::InvButton { .. })),
+            "the live first deposit should emit the inventory button: {clicks:?}"
+        );
+        assert_eq!(
+            harness.runner.probe("__firstSettled").unwrap(),
+            json!(false)
+        );
+        assert_eq!(
+            harness.runner.probe("__firstRejected").unwrap(),
+            json!(false)
+        );
+        assert_eq!(
+            harness.runner.probe("__secondSettled").unwrap(),
+            json!(true)
+        );
+        assert_eq!(
+            harness.runner.probe("__secondRejected").unwrap(),
+            json!(false)
+        );
+        assert_eq!(harness.runner.probe("__secondValue").unwrap(), Value::Null);
+        assert_eq!(harness.runner.probe("__secondIsVoid").unwrap(), json!(true));
+        assert!(
+            harness.runner.slot.last_error().is_none(),
+            "the second deposit resolves without a slot error"
+        );
+        harness.runner.stop();
+    }
+
+    #[test]
     fn withdraw_to_settles_zero_while_a_deposit_is_live() {
         let mut harness = Harness::new(7, &LADDER, true);
-        let mut deposit_emitted = false;
-        for _ in 0..12 {
-            for request in harness.step(0, 1) {
-                assert!(
-                    matches!(request, InteractReq::InvButton { .. }),
-                    "the live deposit must not permit a withdrawal: {request:?}"
-                );
-                deposit_emitted = true;
-            }
-            if harness.result() == json!(0) && deposit_emitted {
-                harness.runner.stop();
-                return;
-            }
-        }
-        let logs = harness.runner.slot.drain_logs();
-        panic!(
-            "the live deposit did not exclude withdrawTo; result={}, state={:?}, error={:?}, logs={logs:?}",
-            harness.result(),
-            harness.runner.slot.state(),
-            harness.runner.slot.last_error(),
+        let clicks = harness.step(0, 1);
+        assert_eq!(clicks.len(), 1, "only the live deposit should click");
+        assert!(
+            matches!(clicks.first(), Some(InteractReq::InvButton { .. })),
+            "the live deposit must not permit a withdrawal: {clicks:?}"
         );
+        assert_eq!(
+            harness.result(),
+            json!(0),
+            "withdrawTo settles zero on the first native-seat step while the deposit stays live"
+        );
+        assert!(harness.runner.slot.last_error().is_none());
+        harness.runner.stop();
     }
 }
