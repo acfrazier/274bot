@@ -68,7 +68,7 @@ pub(crate) fn nearest_eligible_bank(
     facts
         .banks()
         .iter()
-        .filter(|bank| eligible(*bank))
+        .filter(|bank| eligible(bank))
         .min_by_key(|bank| air_distance_squared(from, bank.air_tile()))
         .copied()
 }
