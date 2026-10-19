@@ -2186,8 +2186,9 @@ fn search_worst_case_reservation(
         }
         SearchRequestShape::EntranceRequirements {
             target_capacity, ..
-        } => target_set_bytes(target_capacity)?
-            .checked_add(std::mem::size_of::<FirstGoals<'_>>())?,
+        } => {
+            target_set_bytes(target_capacity)?.checked_add(std::mem::size_of::<FirstGoals<'_>>())?
+        }
         _ => 0,
     };
 
@@ -6902,11 +6903,14 @@ async fn run_search_request(
                             }
                             .ok_or(SearchCursorError::ResultNotRepresentable)?;
                             let failure = state.exclusion_failure(edge).or_else(|| {
-                                edge.worn_all_req.iter()
+                                edge.worn_all_req
+                                    .iter()
                                     .find(|id| !state.worn.contains(id))
-                                    .map(|&id| crate::world_state::EntranceRequirement::MissingWorn {
-                                        id,
-                                        at: edge.at,
+                                    .map(|&id| {
+                                        crate::world_state::EntranceRequirement::MissingWorn {
+                                            id,
+                                            at: edge.at,
+                                        }
                                     })
                             });
                             if let Some(failure) = failure {
@@ -6921,10 +6925,7 @@ async fn run_search_request(
             } else {
                 None
             };
-            (
-                SearchOutcome::EntranceRequirements(requirement),
-                settled,
-            )
+            (SearchOutcome::EntranceRequirements(requirement), settled)
         }
     };
     match &mut outcome {

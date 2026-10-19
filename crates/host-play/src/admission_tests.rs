@@ -1782,25 +1782,31 @@ fn s2b_admission_route_and_publication_microbenchmarks() {
 
 #[cfg(feature = "test-support")]
 fn transport_edge(kind: TransportKind, from: WorldTile, to: WorldTile) -> TransportEdge {
-    TransportEdge { kind,
-    at: from,
-    to,
-    takeoff: None,
-    player_delta: None,
-    loc_id: -1,
-    option: 0,
-    ticks: 1,
-    dir: None,
-    open_loc_id: None,
-    skill_req: Vec::new(),
-    item_req: Vec::new(),
-    consumed_req: Vec::new(),
-    item_returns: Vec::new(),
-    quest_req: Vec::new(),
-    varp_req: Vec::new(),
-    worn_req: Vec::new(), worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        kind,
+        at: from,
+        to,
+        takeoff: None,
+        player_delta: None,
+        loc_id: -1,
+        option: 0,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: Vec::new(),
+        item_req: Vec::new(),
+        consumed_req: Vec::new(),
+        item_returns: Vec::new(),
+        quest_req: Vec::new(),
+        varp_req: Vec::new(),
+        worn_req: Vec::new(),
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 fn escape(state: EscapeState) -> Escape {

@@ -8773,7 +8773,7 @@
     "cache_identity": {
       "cache_id": "c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09",
       "content_id": "cdb2f161c35239f09bf5175648e15e7dbbc4bbf9be4419cea41f7053ccf8b044",
-      "nav_sha256": "131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924",
+      "nav_sha256": "4e8ab5af4694cf6722ed3836c3e1f42e9ac1be136d4d1127c7db698f4fc6500b",
       "flags_sha256": "67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a"
     },
     "bank_inputs": {
@@ -97150,6 +97150,80 @@
       "requires": []
     },
     {
+      "id": "mining.desert_mining_camp",
+      "skill": "mining",
+      "label": "Desert Mining Camp · Coal 4, Copper ore 4, Tin ore 4 +1",
+      "region": {
+        "min_x": 3284,
+        "min_z": 3015,
+        "max_x": 3304,
+        "max_z": 3025,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "coal",
+          "count": 4
+        },
+        {
+          "key": "copper",
+          "count": 4
+        },
+        {
+          "key": "tin",
+          "count": 4
+        },
+        {
+          "key": "iron",
+          "count": 3
+        }
+      ],
+      "requires": []
+    },
+    {
+      "id": "mining.desert_mining_camp.underground",
+      "skill": "mining",
+      "label": "Desert Mining Camp (lower mine) (Slave shirt, Slave robe, Slave boots) · Rock 63, Copper ore 4, Tin ore 4",
+      "region": {
+        "min_x": 3284,
+        "min_z": 9412,
+        "max_x": 3306,
+        "max_z": 9453,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "rock",
+          "count": 63
+        },
+        {
+          "key": "copper",
+          "count": 4
+        },
+        {
+          "key": "tin",
+          "count": 4
+        }
+      ],
+      "requires": [
+        {
+          "kind": "worn",
+          "item": 1844,
+          "name": "Slave shirt"
+        },
+        {
+          "kind": "worn",
+          "item": 1845,
+          "name": "Slave robe"
+        },
+        {
+          "kind": "worn",
+          "item": 1846,
+          "name": "Slave boots"
+        }
+      ]
+    },
+    {
       "id": "woodcutting.deserted_keep",
       "skill": "woodcutting",
       "label": "Deserted Keep · Charcoal 34, Logs 2",
@@ -98480,6 +98554,86 @@
         }
       ],
       "requires": []
+    },
+    {
+      "id": "mining.grand_tree.underground",
+      "skill": "mining",
+      "label": "Grand Tree mine (The Grand Tree) · Coal 11, Clay 4, Gold ore 4 +3",
+      "region": {
+        "min_x": 2472,
+        "min_z": 9905,
+        "max_x": 2494,
+        "max_z": 9917,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "coal",
+          "count": 11
+        },
+        {
+          "key": "clay",
+          "count": 4
+        },
+        {
+          "key": "gold",
+          "count": 4
+        },
+        {
+          "key": "adamantite",
+          "count": 3
+        },
+        {
+          "key": "mithril",
+          "count": 2
+        },
+        {
+          "key": "iron",
+          "count": 1
+        }
+      ],
+      "requires": [
+        {
+          "kind": "quest",
+          "name": "The Grand Tree"
+        }
+      ]
+    },
+    {
+      "id": "mining.grand_tree.underground.2",
+      "skill": "mining",
+      "label": "Grand Tree mine (west) (The Grand Tree) · Iron ore 7, Clay 5, Silver ore 4 +1",
+      "region": {
+        "min_x": 2435,
+        "min_z": 9898,
+        "max_x": 2453,
+        "max_z": 9915,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "iron",
+          "count": 7
+        },
+        {
+          "key": "clay",
+          "count": 5
+        },
+        {
+          "key": "silver",
+          "count": 4
+        },
+        {
+          "key": "mithril",
+          "count": 2
+        }
+      ],
+      "requires": [
+        {
+          "kind": "quest",
+          "name": "The Grand Tree"
+        }
+      ]
     },
     {
       "id": "woodcutting.graveyard_of_shadows",
@@ -100797,6 +100951,25 @@
         {
           "key": "normal",
           "count": 4
+        }
+      ],
+      "requires": []
+    },
+    {
+      "id": "fishing.dark_wizards_tower.underground.nw",
+      "skill": "fishing",
+      "label": "Taverley Dungeon · Bait",
+      "region": {
+        "min_x": 2889,
+        "min_z": 9766,
+        "max_x": 2891,
+        "max_z": 9766,
+        "level": 0
+      },
+      "keys": [
+        {
+          "key": "fishing.bait.tool_1585.products_2148",
+          "count": 3
         }
       ],
       "requires": []

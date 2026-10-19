@@ -319,22 +319,33 @@ fn retain_quest_upper_bounds(
         return;
     };
     for (index, token) in tokens.iter().enumerate() {
-        let Tok::Word(name) = token else { continue; };
-        let Some(varp) = name.strip_prefix('%').filter(|varp| exact.contains(*varp)) else { continue; };
+        let Tok::Word(name) = token else {
+            continue;
+        };
+        let Some(varp) = name.strip_prefix('%').filter(|varp| exact.contains(*varp)) else {
+            continue;
+        };
         let mut after = index + 1;
         while tokens.get(after) == Some(&Tok::Punct(","))
             && matches!(tokens.get(after + 1), Some(Tok::Word(name)) if name.starts_with('%') || name.starts_with('$'))
         {
             after += 2;
         }
-        if tokens.get(after) != Some(&Tok::Punct("=")) { continue; }
+        if tokens.get(after) != Some(&Tok::Punct("=")) {
+            continue;
+        }
         let scalar = match tokens.get(after + 1) {
             Some(Tok::Num(value)) => Some(*value),
-            Some(Tok::Word(name)) => name.strip_prefix('^').and_then(|name| constants.get(name)).copied(),
+            Some(Tok::Word(name)) => name
+                .strip_prefix('^')
+                .and_then(|name| constants.get(name))
+                .copied(),
             _ => None,
         };
-        let scalar_ends = matches!(tokens.get(after + 2),
-            Some(Tok::Punct(";" | ")" | "&" | "|" | ",")));
+        let scalar_ends = matches!(
+            tokens.get(after + 2),
+            Some(Tok::Punct(";" | ")" | "&" | "|" | ","))
+        );
         if after != index + 1
             || index.checked_sub(1).and_then(|index| tokens.get(index)) == Some(&Tok::Punct(","))
             || !scalar_ends
@@ -369,7 +380,11 @@ struct Sources {
 }
 
 impl Sources {
-    fn read(content_root: &Path, ids: &HashMap<String, i32>, quests: Option<&QuestSource<'_>>) -> Self {
+    fn read(
+        content_root: &Path,
+        ids: &HashMap<String, i32>,
+        quests: Option<&QuestSource<'_>>,
+    ) -> Self {
         let mut oplocs: [HashMap<String, Vec<Option<Block>>>; 5] =
             std::array::from_fn(|_| HashMap::new());
         let mut oplocu: HashMap<String, Vec<Option<Block>>> = HashMap::new();
@@ -377,9 +392,16 @@ impl Sources {
         let mut timers: HashMap<String, Vec<Option<Block>>> = HashMap::new();
         let mut procs: HashMap<String, Vec<ProcDef>> = HashMap::new();
         let constants = script_constants(content_root);
-        let quest_complete: HashMap<_, _> = quests.into_iter().flat_map(|quests| &quests.facts.rows)
+        let quest_complete: HashMap<_, _> = quests
+            .into_iter()
+            .flat_map(|quests| &quests.facts.rows)
             .filter(|row| !row.varp.is_empty() && row.varp_id >= 0 && row.complete > 0)
-            .map(|row| (row.varp.clone(), (api::selected::FactKey::new(&row.id), row.complete)))
+            .map(|row| {
+                (
+                    row.varp.clone(),
+                    (api::selected::FactKey::new(&row.id), row.complete),
+                )
+            })
             .collect();
         let mut quest_exact = quest_complete.keys().cloned().collect();
         let all_scripts_read = visit_rs2(&content_root.join("scripts"), &mut |text| {
@@ -387,11 +409,14 @@ impl Sources {
             for (kind, name, params, body) in header_blocks(text) {
                 let reads_members = body.contains("map_members");
                 if kind == "oplocu" {
-                    oplocu.entry(name).or_default().push(parse_body(&body).map(|body| Block {
-                        params,
-                        body,
-                        reads_members,
-                    }));
+                    oplocu
+                        .entry(name)
+                        .or_default()
+                        .push(parse_body(&body).map(|body| Block {
+                            params,
+                            body,
+                            reads_members,
+                        }));
                     continue;
                 }
                 if let Some(option) = oploc_option(&kind).filter(|op| (1..=5).contains(op)) {
@@ -415,11 +440,16 @@ impl Sources {
                                 reads_members,
                             }))
                     }
-                    "timer" => timers.entry(name).or_default().push(parse_body(&body).map(|body| Block {
-                        params,
-                        body,
-                        reads_members,
-                    })),
+                    "timer" => {
+                        timers
+                            .entry(name)
+                            .or_default()
+                            .push(parse_body(&body).map(|body| Block {
+                                params,
+                                body,
+                                reads_members,
+                            }))
+                    }
                     "proc" => procs.entry(name).or_default().push(ProcDef {
                         identity: proc_identity(&params, &body),
                         block: parse_body(&body).map(|body| Block {
@@ -432,7 +462,9 @@ impl Sources {
                 }
             }
         });
-        if !all_scripts_read { quest_exact.clear(); }
+        if !all_scripts_read {
+            quest_exact.clear();
+        }
         let objs = obj_ids_by_name(content_root);
         let worn_slots = worn_slot_facts(content_root, &objs, &constants);
         Self {
@@ -1528,7 +1560,9 @@ pub(super) fn stage_door_edges(
     bump(skipped, SKIP_STAGE_DOOR_PROC_DRIFT, drifted);
     if !OPEN_PROCS.iter().any(|p| supported.contains(p.name)) {
         bump(skipped, SKIP_STAGE_DOOR_PROCS, 1);
-        motion_facts.entrances(&src, positions, loc_defs, graph, collision, skipped, observable, audit);
+        motion_facts.entrances(
+            &src, positions, loc_defs, graph, collision, skipped, observable, audit,
+        );
         return;
     }
     let facts = loc_config_facts(content_root, ids);
@@ -1701,8 +1735,12 @@ pub(super) fn stage_door_edges(
             bump(skipped, SKIP_STAGE_DOOR_UNOBSERVABLE, 1);
         }
     }
-    keys::key_use_edges(&src, positions, graph, collision, skipped, observable, audit);
-    motion_facts.entrances(&src, positions, loc_defs, graph, collision, skipped, observable, audit);
+    keys::key_use_edges(
+        &src, positions, graph, collision, skipped, observable, audit,
+    );
+    motion_facts.entrances(
+        &src, positions, loc_defs, graph, collision, skipped, observable, audit,
+    );
 }
 
 /// Loc names with an `[oploc…]` block in `ladders+stairs/scripts/
@@ -1752,30 +1790,42 @@ fn gated_edge(
     needs: Needs,
 ) -> TransportEdge {
     let worn = max_per_key(&needs.worn);
-    let quest_gates = (!needs.quests.is_empty()).then(|| crate::quest_gates::QuestGates::new(
-        needs.quest_family.expect("quest predicate carries its family"), needs.quests,
-    ).expect("content-derived complete gates"));
-    TransportEdge { kind,
-    player_delta: None,
-    at,
-    to,
-    takeoff: None,
-    loc_id: id,
-    option: 1,
-    ticks: 1,
-    dir: None,
-    open_loc_id: None,
-    skill_req: max_per_key(&needs.skills),
-    item_req: max_per_key(&needs.items),
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: max_per_key(&needs.varps),
-    worn_req: vec![], worn_all_req: worn
-        .into_iter()
-        .filter(|(_, count)| *count > 0)
-        .map(|(obj, _)| obj)
-        .collect(), forbidden_held: needs.forbidden_held, forbidden_worn: needs.forbidden_worn, members_req: needs.members,
-    wildy_cap: None,
-    quest_gates, }
+    let quest_gates = (!needs.quests.is_empty()).then(|| {
+        crate::quest_gates::QuestGates::new(
+            needs
+                .quest_family
+                .expect("quest predicate carries its family"),
+            needs.quests,
+        )
+        .expect("content-derived complete gates")
+    });
+    TransportEdge {
+        kind,
+        player_delta: None,
+        at,
+        to,
+        takeoff: None,
+        loc_id: id,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: max_per_key(&needs.skills),
+        item_req: max_per_key(&needs.items),
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: max_per_key(&needs.varps),
+        worn_req: vec![],
+        worn_all_req: worn
+            .into_iter()
+            .filter(|(_, count)| *count > 0)
+            .map(|(obj, _)| obj)
+            .collect(),
+        forbidden_held: needs.forbidden_held,
+        forbidden_worn: needs.forbidden_worn,
+        members_req: needs.members,
+        wildy_cap: None,
+        quest_gates,
+    }
 }

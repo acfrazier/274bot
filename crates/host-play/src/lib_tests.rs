@@ -6896,25 +6896,31 @@ fn failed_bank_stand_subroute_omits_private_leg_metadata() {
         legs: vec![],
         ticks: 0.0,
     });
-    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Boat,
-    player_delta: None,
-    at,
-    to: stand,
-    loc_id: 378,
-    option: 1,
-    ticks: 7,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Boat,
+        player_delta: None,
+        at,
+        to: stand,
+        loc_id: 378,
+        option: 1,
+        ticks: 7,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     let mut arm = WalkArm {
         route: Some(Arc::new(Route {
             dest: stand,
@@ -13873,29 +13879,35 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
         level: 0,
     };
     let mut graph = TransportGraph::default();
-    graph.teleports.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Teleport,
-    player_delta: None,
-    at: WorldTile {
-        x: 0,
-        z: 0,
-        level: 0,
-    },
-    to: dest,
-    loc_id: 0,
-    option: 0,
-    ticks: 3,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, });
+    graph.teleports.push(TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Teleport,
+        player_delta: None,
+        at: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        to: dest,
+        loc_id: 0,
+        option: 0,
+        ticks: 3,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    });
     let (walk, blocked) = nav::collision::pack_walk(&flags);
     let world = Some(Arc::new(NavWorld::from_parts(
         WorldCollision {
@@ -14756,33 +14768,39 @@ fn knife_nav_world_with_target(knife_id: i32, solid_target: bool) -> NavWorld {
         flags[z * 5 + 1] |= client::dash3d::CollisionFlag::W_E as u32;
         flags[z * 5 + 2] |= client::dash3d::CollisionFlag::W_W as u32;
     }
-    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at: WorldTile {
-        x: 1,
-        z: 2,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 2,
-        z: 2,
-        level: 0,
-    },
-    loc_id: 2882,
-    option: 1,
-    ticks: 2,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![knife_id],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: WorldTile {
+            x: 1,
+            z: 2,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2,
+            z: 2,
+            level: 0,
+        },
+        loc_id: 2882,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![knife_id],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);
     graph.edges.push(edge);
@@ -25892,33 +25910,39 @@ fn host_npc_hop_recovery_retargets_and_clears_after_landing() {
     c.npc_ids = vec![0];
     c.npc_count = 1;
 
-    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Npc,
-    player_delta: None,
-    at: WorldTile {
-        x: 2,
-        z: 1,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 10,
-        z: 10,
-        level: 0,
-    },
-    loc_id: 7,
-    option: 1,
-    ticks: 1,
-    dir: None,
-    open_loc_id: None,
-    skill_req: Vec::new(),
-    item_req: Vec::new(),
-    consumed_req: Vec::new(),
-    item_returns: Vec::new(),
-    quest_req: Vec::new(),
-    varp_req: Vec::new(),
-    worn_req: Vec::new(),
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Npc,
+        player_delta: None,
+        at: WorldTile {
+            x: 2,
+            z: 1,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 10,
+            z: 10,
+            level: 0,
+        },
+        loc_id: 7,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: Vec::new(),
+        item_req: Vec::new(),
+        consumed_req: Vec::new(),
+        item_returns: Vec::new(),
+        quest_req: Vec::new(),
+        varp_req: Vec::new(),
+        worn_req: Vec::new(),
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     let route = Route {
         legs: vec![Leg::Transport {
             edge: Box::new(edge.clone()),
@@ -26830,33 +26854,39 @@ fn modeled_booth_behind_closed_door_routes_with_the_baked_graph() {
     }
     plant_nav_footprint_loc(&mut client, booth.x, booth.z, 1, 1);
 
-    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at: WorldTile {
-        x: 29,
-        z: 32,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 30,
-        z: 32,
-        level: 0,
-    },
-    loc_id: 1530,
-    option: 1,
-    ticks: 2,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: WorldTile {
+            x: 29,
+            z: 32,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 30,
+            z: 32,
+            level: 0,
+        },
+        loc_id: 1530,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);
     graph.edges.push(edge);
@@ -27244,33 +27274,39 @@ fn offscene_solid_radius_goals_reach_target_side_through_packed_door() {
     }
     flags[target.z as usize * SIZE + target.x as usize] |= CollisionFlag::SQ_BLOCKED as u32;
 
-    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at: WorldTile {
-        x: 19,
-        z: 32,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 18,
-        z: 32,
-        level: 0,
-    },
-    loc_id: 1530,
-    option: 1,
-    ticks: 2,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: WorldTile {
+            x: 19,
+            z: 32,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 18,
+            z: 32,
+            level: 0,
+        },
+        loc_id: 1530,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);
     graph.edges.push(edge);
@@ -27539,33 +27575,39 @@ fn solid_target_behind_worn_gate_in_a_large_world_plans_a_bank_session() {
         }
         mark(62, 50, CollisionFlag::SQ_BLOCKED);
     }
-    let door = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at: WorldTile {
-        x: 59,
-        z: 50,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 60,
-        z: 50,
-        level: 0,
-    },
-    loc_id: 2882,
-    option: 1,
-    ticks: 2,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![2],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let door = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: WorldTile {
+            x: 59,
+            z: 50,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 60,
+            z: 50,
+            level: 0,
+        },
+        loc_id: 2882,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![2],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     let mut graph = TransportGraph::default();
     graph.at.entry(door.at).or_default().push(0);
     graph.edges.push(door);
@@ -27657,25 +27699,31 @@ fn unfetchable_stands_do_not_hide_a_fetchable_one() {
         let mut graph = TransportGraph::default();
         for (index, (stand, worn)) in stands.into_iter().zip([2, 2, 3]).enumerate() {
             graph.at.entry(from).or_default().push(index);
-            graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
-            player_delta: None,
-            at: from,
-            to: stand,
-            loc_id: 1,
-            option: 1,
-            ticks: 2 + index as i32,
-            dir: None,
-            open_loc_id: None,
-            skill_req: vec![],
-            item_req: vec![],
-            consumed_req: vec![],
-            item_returns: vec![],
-            quest_req: vec![],
-            varp_req: vec![],
-            worn_req: vec![worn],
-            members_req: false,
-            wildy_cap: None,
-            quest_gates: None, });
+            graph.edges.push(TransportEdge {
+                takeoff: None,
+                worn_all_req: Vec::new(),
+                forbidden_held: Vec::new(),
+                forbidden_worn: Vec::new(),
+                kind: TransportKind::Door,
+                player_delta: None,
+                at: from,
+                to: stand,
+                loc_id: 1,
+                option: 1,
+                ticks: 2 + index as i32,
+                dir: None,
+                open_loc_id: None,
+                skill_req: vec![],
+                item_req: vec![],
+                consumed_req: vec![],
+                item_returns: vec![],
+                quest_req: vec![],
+                varp_req: vec![],
+                worn_req: vec![worn],
+                members_req: false,
+                wildy_cap: None,
+                quest_gates: None,
+            });
         }
         graph
     };
@@ -27769,25 +27817,31 @@ fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
     }
     let mut graph = TransportGraph::default();
     graph.at.entry(from).or_default().push(0);
-    graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at: from,
-    to: stand,
-    loc_id: 1,
-    option: 1,
-    ticks: 2,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![(995, 1)],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![3],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, });
+    graph.edges.push(TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: from,
+        to: stand,
+        loc_id: 1,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![(995, 1)],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![3],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    });
     let booth = nav::pack::BankStand {
         name: "Bank booth".into(),
         tile: from,
@@ -28145,33 +28199,39 @@ fn radius_walk_route_end_publishes_a_settled_outcome() {
 /// case 1); the group's sibling edges share `loc_id` + option and
 /// differ only in `to`, exactly as the bake emits them.
 fn glory_edge() -> TransportEdge {
-    TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Teleport,
-    player_delta: None,
-    at: WorldTile {
-        x: 0,
-        z: 0,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 3087,
-        z: 3496,
-        level: 0, // Edgeville (case 1)
-    },
-    loc_id: 1712,
-    option: 4, // Rub (opheld4)
-    ticks: 2,  // OP_BASE + the rub p_delay(1)
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![(1712, 1)],
-    item_returns: vec![(1711, 1)],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Teleport,
+        player_delta: None,
+        at: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3087,
+            z: 3496,
+            level: 0, // Edgeville (case 1)
+        },
+        loc_id: 1712,
+        option: 4, // Rub (opheld4)
+        ticks: 2,  // OP_BASE + the rub p_delay(1)
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![(1712, 1)],
+        item_returns: vec![(1711, 1)],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 /// The charged glory in the inv tab (side 3) TYPE_INV container: the
@@ -28391,33 +28451,39 @@ fn toll_nav_world() -> NavWorld {
         flags[z * 5 + 1] |= client::dash3d::CollisionFlag::W_E as u32;
         flags[z * 5 + 2] |= client::dash3d::CollisionFlag::W_W as u32;
     }
-    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at: WorldTile {
-        x: 1,
-        z: 2,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 2,
-        z: 2,
-        level: 0,
-    },
-    loc_id: 2882,
-    option: 1,
-    ticks: 2,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![(995, 10)],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: WorldTile {
+            x: 1,
+            z: 2,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2,
+            z: 2,
+            level: 0,
+        },
+        loc_id: 2882,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![(995, 10)],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);
     graph.edges.push(edge);
@@ -29976,44 +30042,37 @@ mod quest_route_evidence_tests {
     }
 
     fn selected_r289() -> Arc<api::game_data::SelectedGameData> {
-        static SELECTED: LazyLock<Arc<api::game_data::SelectedGameData>> =
-            LazyLock::new(|| {
-                let selected =
-                    api::game_data::for_revision(api::selected::ClientRevision::R289)
-                        .expect("selected R289 game data");
-                let worker_data = Arc::clone(&selected);
-                let input = script::preparation::PreparationInput::new(
-                    1,
-                    0,
-                    8 * 1024 * 1024,
-                    2 * 1024 * 1024,
-                )
-                .expect("quest preparation budget");
-                script::preparation::submit(
-                    script::preparation::PreparationKind::Profile,
-                    api::identity::Scope::Process,
-                    input,
-                    move |worker| worker_data.prepare_quests(worker),
-                )
-                .expect("submit production quest preparation")
-                .join()
-                .expect("quest preparation worker")
-                .expect("prepare selected quest family");
-                assert!(
-                    selected.try_quests().is_some(),
-                    "production preparation must retain the selected quest catalog"
-                );
-                selected
-            });
+        static SELECTED: LazyLock<Arc<api::game_data::SelectedGameData>> = LazyLock::new(|| {
+            let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
+                .expect("selected R289 game data");
+            let worker_data = Arc::clone(&selected);
+            let input =
+                script::preparation::PreparationInput::new(1, 0, 8 * 1024 * 1024, 2 * 1024 * 1024)
+                    .expect("quest preparation budget");
+            script::preparation::submit(
+                script::preparation::PreparationKind::Profile,
+                api::identity::Scope::Process,
+                input,
+                move |worker| worker_data.prepare_quests(worker),
+            )
+            .expect("submit production quest preparation")
+            .join()
+            .expect("quest preparation worker")
+            .expect("prepare selected quest family");
+            assert!(
+                selected.try_quests().is_some(),
+                "production preparation must retain the selected quest catalog"
+            );
+            selected
+        });
         Arc::clone(&SELECTED)
     }
 
     fn selected_quest(
         selected: &api::game_data::SelectedGameData,
     ) -> (api::selected::FactKey, String) {
-        let facts = selected
-            .try_quests()
-            .expect("selected quest catalog")
+        let catalog = selected.try_quests().expect("selected quest catalog");
+        let facts = catalog
             .iter()
             .next()
             .expect("selected quest catalog has rows");
@@ -30040,8 +30099,8 @@ mod quest_route_evidence_tests {
 
         let origin = tile(0, 0);
         let mut flags = vec![0; 5];
-        flags[0] |= CollisionFlag::W_E;
-        flags[1] |= CollisionFlag::W_W;
+        flags[0] |= CollisionFlag::W_E as u32;
+        flags[1] |= CollisionFlag::W_W as u32;
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         let edge = TransportEdge {
             kind: TransportKind::Door,
@@ -30071,8 +30130,10 @@ mod quest_route_evidence_tests {
                     .expect("typed Complete gate"),
             ),
         };
-        let mut graph = TransportGraph::default();
-        graph.quest_family = Some(family);
+        let mut graph = TransportGraph {
+            quest_family: Some(family),
+            ..TransportGraph::default()
+        };
         graph.at.entry(origin).or_default().push(0);
         graph.edges.push(edge);
         Arc::new(NavWorld::from_parts(
@@ -30149,7 +30210,10 @@ export default class T extends LoopingBot {
             match slot.poll_start() {
                 script::StartPoll::Settled(script::StartOutcome::Ready) => break,
                 script::StartPoll::Pending => {
-                    assert!(Instant::now() < deadline, "compatibility script start stalled");
+                    assert!(
+                        Instant::now() < deadline,
+                        "compatibility script start stalled"
+                    );
                     std::thread::yield_now();
                 }
                 other => panic!("compatibility script start failed: {other:?}"),
@@ -30177,9 +30241,37 @@ export default class T extends LoopingBot {
             true,
             true,
             tick,
-            Some((0, 0, 0)),
+            snapshot.tile(),
             None,
             state,
+            Some(snapshot),
+            None,
+            &rig.scripts,
+            &rig.cheats,
+            &rig.navs,
+            &rig.world,
+            false,
+            false,
+        );
+        // The isolate's tick posts a host command; the next observation
+        // dispatches it, as in ReconnectRig::frames.
+        let slot = script_slot(&rig.scripts, "alice").expect("observed script slot");
+        if slot.lock().unwrap().native_run().is_some() {
+            return;
+        }
+        slot.lock()
+            .unwrap()
+            .probe("true")
+            .expect("settle isolate tick");
+        script_observe(
+            driver,
+            "alice",
+            true,
+            false,
+            tick,
+            snapshot.tile(),
+            None,
+            None,
             Some(snapshot),
             None,
             &rig.scripts,
@@ -30254,7 +30346,10 @@ export default class T extends LoopingBot {
         };
         let navs = rig.navs.lock().unwrap();
         let bot = navs.get("alice").expect("navigation bot");
-        assert!(bot.has_route(), "the observed Complete row must open the gate");
+        assert!(
+            bot.has_route(),
+            "the observed Complete row must open the gate"
+        );
         let evidence = bot
             .route_quest_evidence
             .as_ref()
@@ -30405,7 +30500,10 @@ export default class T extends LoopingBot {
             .expect("assessment receipt")
             .1;
         assert_eq!(receipt.evidence, expected);
-        assert!(receipt.route_ticks > 0, "the assessed route crosses the gate");
+        assert!(
+            receipt.route_ticks > 0,
+            "the assessed route crosses the gate"
+        );
         assert_eq!(
             receipt.refusal, None,
             "the Complete row must not produce a no-route refusal"
@@ -30488,8 +30586,8 @@ export default class T extends LoopingBot {
         let height = 5usize;
         let mut flags = vec![0; width * height];
         for z in 0..height {
-            flags[z * width] |= CollisionFlag::W_E;
-            flags[z * width + 1] |= CollisionFlag::W_W;
+            flags[z * width] |= CollisionFlag::W_E as u32;
+            flags[z * width + 1] |= CollisionFlag::W_W as u32;
         }
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         let from = tile(origin.x, target.z);
@@ -30522,15 +30620,17 @@ export default class T extends LoopingBot {
                     .expect("typed Complete gate"),
             ),
         };
-        let mut graph = TransportGraph::default();
-        graph.quest_family = Some(family);
+        let mut graph = TransportGraph {
+            quest_family: Some(family),
+            ..TransportGraph::default()
+        };
         graph.at.entry(from).or_default().push(0);
         graph.edges.push(edge);
         Arc::new(NavWorld::from_parts(
             nav::collision::WorldCollision {
                 origin,
-                width: width as u16,
-                height: height as u16,
+                width,
+                height,
                 walk,
                 blocked,
                 flags: None,
@@ -30560,7 +30660,6 @@ export default class T extends LoopingBot {
         {
             let mut slot = slot.lock().unwrap();
             slot.stop();
-            slot.bind_incarnation(4271);
             slot.start_compiled(
                 "alice",
                 script::CompiledId("Gatherer"),
@@ -30629,12 +30728,13 @@ export default class T extends LoopingBot {
 
     fn cook_quest(selected: &api::game_data::SelectedGameData) -> api::selected::FactKey {
         let catalog = selected.try_quests().expect("selected quest catalog");
-        catalog
+        let id = catalog
             .iter()
             .find(|facts| facts.id.0.as_ref() == "cook")
             .expect("selected Cook's Assistant fact")
             .id
-            .clone()
+            .clone();
+        id
     }
 
     fn compiled_sheep_walk(
@@ -30642,9 +30742,11 @@ export default class T extends LoopingBot {
     ) -> Arc<script::quester::compile::CompiledPath> {
         use script::quester::path::{PathDocument, PredicateDocument};
 
-        let mut document: PathDocument =
-            serde_json::from_str(script::quester::compile::SHEEP_JSON)
-                .expect("bundled Sheep Shearer path");
+        let mut document: PathDocument = serde_json::from_str(script::quester::compile::SHEEP_JSON)
+            .expect("bundled Sheep Shearer path");
+        let header = document.quest.as_mut().expect("Sheep quest header");
+        header.owns_inventory = true;
+        header.coin_float = 0;
         let sequence = document.roles[0]
             .sequences
             .iter_mut()
@@ -30653,7 +30755,7 @@ export default class T extends LoopingBot {
         let step = &mut sequence.steps[0];
         step.kind = "walk".into();
         step.args = serde_json::json!({
-            "tile": [4, 0, 0],
+            "tile": [3224, 3220, 0],
             "source": "native Quester entrance-gate host test",
             "radius": 0
         });
@@ -30662,19 +30764,15 @@ export default class T extends LoopingBot {
         step.settle = PredicateDocument::Fact {
             kind: "near".into(),
             version: 1,
-            args: serde_json::json!({"tile": [4, 0, 0], "radius": 0}),
+            args: serde_json::json!({"tile": [3224, 3220, 0], "radius": 0}),
         };
 
         let bytes = serde_json::to_vec(&document).expect("serialize modified Quester path");
         let quests = selected.try_quests().expect("selected quest catalog");
         let selected = Arc::clone(selected);
-        let input = script::preparation::PreparationInput::new(
-            1,
-            0,
-            8 * 1024 * 1024,
-            2 * 1024 * 1024,
-        )
-        .expect("Quester path compilation budget");
+        let input =
+            script::preparation::PreparationInput::new(1, 0, 8 * 1024 * 1024, 2 * 1024 * 1024)
+                .expect("Quester path compilation budget");
         script::preparation::submit(
             script::preparation::PreparationKind::Profile,
             Scope::Process,
@@ -30709,7 +30807,9 @@ export default class T extends LoopingBot {
             .iter()
             .find(|facts| facts.id.0.as_ref() == "sheep")
             .expect("selected Sheep Shearer fact");
-        let mut snapshot = nav_frame_at(0, 0);
+        let mut snapshot = nav_frame_at(3220, 3220);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_equipment(Vec::new());
         snapshot.seed_quest_statuses(
             vec![
                 QuestStatusView {
@@ -30776,7 +30876,7 @@ export default class T extends LoopingBot {
         let quest = cook_quest(&selected);
         let quests = selected.try_quests().expect("selected quest catalog");
         let path = compiled_sheep_walk(&selected);
-        let world = gate_world(family(&selected), quest.clone());
+        let world = gatherer_world(tile(3224, 3220), family(&selected), quest.clone());
         let rig = nav_rig_with(Some(world));
         let slot = script_slot(&rig.scripts, "alice").expect("Quester slot");
         let snapshot = quester_snapshot(&selected, &quest);
@@ -30784,7 +30884,6 @@ export default class T extends LoopingBot {
         {
             let mut slot = slot.lock().unwrap();
             slot.stop();
-            slot.bind_incarnation(4272);
             slot.start_test_script(
                 Box::new(QuesterWalkHarness {
                     control: Arc::clone(&control),
@@ -30827,7 +30926,7 @@ export default class T extends LoopingBot {
 
         let destination = queued(&rig.navs).expect("Quester route destination");
         assert!(
-            destination.x > 0,
+            destination.x > 3220,
             "the Quester route must reach the far side of the transport"
         );
         let slot = slot.lock().unwrap();

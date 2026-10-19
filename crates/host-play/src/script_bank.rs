@@ -822,6 +822,7 @@ impl CooperativeJob for CooperativeBankPickJob {
                         SearchRequest::MissingItemReqs { .. }
                         | SearchRequest::MissingItemReqsForRoute { .. }
                         | SearchRequest::BlockingZones { .. }
+                        | SearchRequest::EntranceRequirements { .. }
                         | SearchRequest::UnresolvedQuestGates { .. } => {
                             unreachable!("bank-pick request uses a route search variant")
                         }
@@ -967,6 +968,7 @@ impl CooperativeJob for CooperativeBankPickJob {
                                 SearchOutcome::MissingItemReqs(_)
                                 | SearchOutcome::MissingItemReqsForRoute { .. }
                                 | SearchOutcome::BlockingZones(_)
+                                | SearchOutcome::EntranceRequirements(_)
                                 | SearchOutcome::UnresolvedQuestGates(_) => {
                                     unreachable!("bank-pick search returns a route outcome")
                                 }

@@ -103,25 +103,31 @@ mod tests {
     }
 
     fn door(at: WorldTile, to: WorldTile) -> nav::transport::TransportEdge {
-        nav::transport::TransportEdge { takeoff: None,
-        kind: nav::transport::TransportKind::Door,
-        player_delta: None,
-        at,
-        to,
-        loc_id: 1,
-        option: 1,
-        ticks: 1,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![],
-        item_req: vec![],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![], worn_all_req: vec![], forbidden_held: Vec::new(), forbidden_worn: Vec::new(), members_req: false,
-        wildy_cap: None,
-        quest_gates: None, }
+        nav::transport::TransportEdge {
+            takeoff: None,
+            kind: nav::transport::TransportKind::Door,
+            player_delta: None,
+            at,
+            to,
+            loc_id: 1,
+            option: 1,
+            ticks: 1,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            consumed_req: vec![],
+            item_returns: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            worn_all_req: vec![],
+            forbidden_held: Vec::new(),
+            forbidden_worn: Vec::new(),
+            members_req: false,
+            wildy_cap: None,
+            quest_gates: None,
+        }
     }
 
     #[test]

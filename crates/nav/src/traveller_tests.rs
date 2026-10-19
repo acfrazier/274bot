@@ -972,33 +972,39 @@ fn walk_leg(tiles: &[(i32, i32)]) -> Leg {
 /// (3203, 3200) (`to` 2 tiles away; the far-side tile between is
 /// blocked, so the far-side walk-out lands 2 out).
 fn door_edge() -> TransportEdge {
-    TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at: WorldTile {
-        x: 3201,
-        z: 3200,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 3203,
-        z: 3200,
-        level: 0,
-    },
-    loc_id: 1530,
-    option: 1,
-    ticks: 1,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: WorldTile {
+            x: 3201,
+            z: 3200,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3203,
+            z: 3200,
+            level: 0,
+        },
+        loc_id: 1530,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 fn web_cut_edges() -> [TransportEdge; 2] {
@@ -1039,59 +1045,71 @@ fn web_route(edge: TransportEdge) -> Route {
 
 /// A ladder edge standing at (3202, 3204) → (3202, 3205).
 fn ladder_edge() -> TransportEdge {
-    TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Ladder,
-    player_delta: None,
-    at: WorldTile {
-        x: 3202,
-        z: 3204,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 3202,
-        z: 3205,
-        level: 0,
-    },
-    loc_id: 1,
-    option: 1,
-    ticks: 2,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Ladder,
+        player_delta: None,
+        at: WorldTile {
+            x: 3202,
+            z: 3204,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3202,
+            z: 3205,
+            level: 0,
+        },
+        loc_id: 1,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 fn agility_at(loc_id: i32, at: WorldTile) -> TransportEdge {
-    TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::AgilityShortcut,
-    player_delta: None,
-    at,
-    to: WorldTile {
-        x: at.x - 5,
-        z: at.z,
-        level: at.level,
-    },
-    loc_id,
-    option: 1,
-    ticks: 2,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::AgilityShortcut,
+        player_delta: None,
+        at,
+        to: WorldTile {
+            x: at.x - 5,
+            z: at.z,
+            level: at.level,
+        },
+        loc_id,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 #[test]
@@ -1145,33 +1163,39 @@ fn find_transport_loc_rejects_unrelated_or_far_candidate_at_gap_4() {
         super::find_transport_loc(&snap, &agility_at(1, at)).is_none(),
         "unrelated far loc must not match"
     );
-    let closed = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at: WorldTile {
-        x: 3201,
-        z: 3200,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 3203,
-        z: 3200,
-        level: 0,
-    },
-    loc_id: 1530,
-    option: 1,
-    ticks: 1,
-    dir: None,
-    open_loc_id: Some(1531),
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let closed = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: WorldTile {
+            x: 3201,
+            z: 3200,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3203,
+            z: 3200,
+            level: 0,
+        },
+        loc_id: 1530,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: Some(1531),
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     assert!(
         super::find_transport_loc(&snap, &closed).is_none(),
         "closed-door id still required; 1×1 decoy is not 1530"
@@ -1182,65 +1206,77 @@ fn find_transport_loc_rejects_unrelated_or_far_candidate_at_gap_4() {
 /// Live `p_telejump(movecoord(coord(), 0, 0, 6400))` lands on the
 /// adjacent stand, Chebyshev 1 off that dest.
 fn trapdoor_edge() -> TransportEdge {
-    TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Ladder,
-    player_delta: None,
-    at: WorldTile {
-        x: 3202,
-        z: 3204,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 3202,
-        z: 3204 + CELLAR_SHIFT,
-        level: 0,
-    },
-    loc_id: 1568,
-    option: 1,
-    ticks: 3,
-    dir: None,
-    open_loc_id: Some(1570),
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Ladder,
+        player_delta: None,
+        at: WorldTile {
+            x: 3202,
+            z: 3204,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3202,
+            z: 3204 + CELLAR_SHIFT,
+            level: 0,
+        },
+        loc_id: 1568,
+        option: 1,
+        ticks: 3,
+        dir: None,
+        open_loc_id: Some(1570),
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 /// A cart-style Npc edge: the driver NPC (type `loc_id`) at (3201,
 /// 3201) carries the player to (3300, 3200).
 fn cart_edge() -> TransportEdge {
-    TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Npc,
-    player_delta: None,
-    at: WorldTile {
-        x: 3201,
-        z: 3201,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 3300,
-        z: 3200,
-        level: 0,
-    },
-    loc_id: 7,
-    option: 1,
-    ticks: 1,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Npc,
+        player_delta: None,
+        at: WorldTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3300,
+            z: 3200,
+            level: 0,
+        },
+        loc_id: 7,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 /// Drive `follow` to a terminal outcome, running `on_tick` (the host's
@@ -2641,29 +2677,35 @@ fn follow_disembark_plank_ops_the_boat_side_loc() {
         z: 3203,
         level: 0,
     };
-    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Ladder,
-    player_delta: None,
-    at: WorldTile {
-        x: 3201,
-        z: 3201,
-        level: 0,
-    },
-    to: dock,
-    loc_id: 2082,
-    option: 1,
-    ticks: 2,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Ladder,
+        player_delta: None,
+        at: WorldTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        },
+        to: dock,
+        loc_id: 2082,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     let route = Route {
         legs: vec![Leg::Transport {
             edge: Box::new(edge),
@@ -2700,29 +2742,35 @@ fn dest_dialog_choice_indexes_spirit_tree_siblings() {
         z: 3168,
         level: 0,
     };
-    let tree = |to| TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::SpiritTree,
-    player_delta: None,
-    at: WorldTile {
-        x: 2461,
-        z: 3444,
-        level: 0,
-    },
-    to,
-    loc_id: 1293,
-    option: 1,
-    ticks: 1,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let tree = |to| TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::SpiritTree,
+        player_delta: None,
+        at: WorldTile {
+            x: 2461,
+            z: 3444,
+            level: 0,
+        },
+        to,
+        loc_id: 1293,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     let packed = [tree(village), tree(varrock)];
     let leg = Leg::Transport {
         edge: Box::new(packed[1].clone()),
@@ -2928,25 +2976,31 @@ fn follow_spirit_tree_answers_gate_then_second_dest() {
         z: 3259,
         level: 0,
     };
-    let tree = |to| TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::SpiritTree,
-    player_delta: None,
-    at,
-    to,
-    loc_id: 1293,
-    option: 1,
-    ticks: 1,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let tree = |to| TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::SpiritTree,
+        player_delta: None,
+        at,
+        to,
+        loc_id: 1293,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     let packed = [tree(village), tree(varrock), tree(khazard)];
     let route = Route {
         legs: vec![Leg::Transport {
@@ -3742,25 +3796,31 @@ fn scene_of(base: (i32, i32), tile: WorldTile) -> (i32, i32) {
 }
 
 fn rangingguild_enter_edge() -> TransportEdge {
-    TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at: RANGING_OUTSIDE,
-    to: RANGING_INSIDE,
-    loc_id: 2514,
-    option: 1,
-    ticks: 1,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![(4, 40)],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: RANGING_OUTSIDE,
+        to: RANGING_INSIDE,
+        loc_id: 2514,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![(4, 40)],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 fn rangingguild_exit_edge() -> TransportEdge {
@@ -3774,25 +3834,31 @@ fn rangingguild_exit_edge() -> TransportEdge {
 }
 
 fn shantay_north_short_edge() -> TransportEdge {
-    TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at: SHANTAY_NORTH_AT,
-    to: SHANTAY_NORTH_TO,
-    loc_id: SHANTAY_HENGE_LOC_ID,
-    option: 1,
-    ticks: 3,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![(1854, 1)],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: SHANTAY_NORTH_AT,
+        to: SHANTAY_NORTH_TO,
+        loc_id: SHANTAY_HENGE_LOC_ID,
+        option: 1,
+        ticks: 3,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![(1854, 1)],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 fn shantay_south_free_edge() -> TransportEdge {
     let at = SHANTAY_SOUTH_AT;
@@ -3827,33 +3893,39 @@ fn follow_still_pending<D: Driver>(
 /// edge's `at` (3201, 3201) — the live target the `op_loc` resolves
 /// through — `to` the `[queue,shantay_pass_enter]` landing.
 fn shantay_edge() -> TransportEdge {
-    TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at: WorldTile {
-        x: 3201,
-        z: 3201,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 3200,
-        z: 3210,
-        level: 0,
-    },
-    loc_id: SHANTAY_HENGE_LOC_ID,
-    option: 1,
-    ticks: 3,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![(1854, 1)],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: WorldTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3200,
+            z: 3210,
+            level: 0,
+        },
+        loc_id: SHANTAY_HENGE_LOC_ID,
+        option: 1,
+        ticks: 3,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![(1854, 1)],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 #[test]
@@ -4067,33 +4139,39 @@ const COINS_OBJ: i32 = 995;
 const TEST_TOLL_COIN_OBJ: i32 = 4242;
 
 fn alkharid_toll_edge() -> TransportEdge {
-    TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at: WorldTile {
-        x: 3202,
-        z: 3201,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 3203,
-        z: 3201,
-        level: 0,
-    },
-    loc_id: ALKHARID_TOLL_LOC_ID,
-    option: 1,
-    ticks: 1,
-    dir: Some(DoorDir::E),
-    open_loc_id: Some(1562),
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![(COINS_OBJ, 10)],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: WorldTile {
+            x: 3202,
+            z: 3201,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3203,
+            z: 3201,
+            level: 0,
+        },
+        loc_id: ALKHARID_TOLL_LOC_ID,
+        option: 1,
+        ticks: 1,
+        dir: Some(DoorDir::E),
+        open_loc_id: Some(1562),
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![(COINS_OBJ, 10)],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 fn alkharid_toll_route() -> Route {
@@ -4658,29 +4736,35 @@ fn follow_far_dir_none_door_keeps_close_enough_tolerance() {
         z: 3300,
         level: 0,
     };
-    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at: WorldTile {
-        x: 3201,
-        z: 3201,
-        level: 0,
-    },
-    to: dest,
-    loc_id: 2409,
-    option: 1,
-    ticks: 4,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: WorldTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        },
+        to: dest,
+        loc_id: 2409,
+        option: 1,
+        ticks: 4,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     let mut t = Traveller::new();
     let route = Route {
         legs: vec![Leg::Transport {
@@ -4833,8 +4917,14 @@ fn follow_npc_edge_answers_choice_one_not_the_op_index() {
         ..FollowRec::default()
     };
     let mut t = Traveller::new();
-    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), option: 3, // essence-style op index, not a dialog choice
-    ..cart_edge() };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        option: 3, // essence-style op index, not a dialog choice
+        ..cart_edge()
+    };
     let route = Route {
         legs: vec![Leg::Transport {
             edge: Box::new(edge),
@@ -4908,22 +4998,28 @@ fn follow_essence_entry_latches_the_session_on_arrival() {
         ..FollowRec::default()
     };
     let mut t = Traveller::new();
-    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Npc,
-    player_delta: None,
-    at: WorldTile {
-        x: 3201,
-        z: 3201,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 2912,
-        z: 4833,
-        level: 0, // the mine pad
-    },
-    loc_id: 553,
-    option: 4, // Aubury's `[opnpc4,aubury]`
-    ticks: 5,  // OP_BASE + the portal p_delay(4)
-    ..cart_edge() };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Npc,
+        player_delta: None,
+        at: WorldTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2912,
+            z: 4833,
+            level: 0, // the mine pad
+        },
+        loc_id: 553,
+        option: 4, // Aubury's `[opnpc4,aubury]`
+        ticks: 5,  // OP_BASE + the portal p_delay(4)
+        ..cart_edge()
+    };
     let route = Route {
         legs: vec![Leg::Transport {
             edge: Box::new(edge),
@@ -4988,22 +5084,28 @@ fn follow_essence_entry_accepts_any_mine_landing() {
         ..FollowRec::default()
     };
     let mut t = Traveller::new();
-    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Npc,
-    player_delta: None,
-    at: WorldTile {
-        x: 3201,
-        z: 3201,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 2912,
-        z: 4833,
-        level: 0, // the mine pad
-    },
-    loc_id: 553,
-    option: 4,
-    ticks: 5,
-    ..cart_edge() };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Npc,
+        player_delta: None,
+        at: WorldTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2912,
+            z: 4833,
+            level: 0, // the mine pad
+        },
+        loc_id: 553,
+        option: 4,
+        ticks: 5,
+        ..cart_edge()
+    };
     let route = Route {
         legs: vec![Leg::Transport {
             edge: Box::new(edge),
@@ -5052,22 +5154,28 @@ fn follow_essence_exit_arrives_within_the_landing_radius() {
         ..FollowRec::default()
     };
     let mut t = Traveller::new();
-    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::EssenceExit,
-    player_delta: None,
-    at: WorldTile {
-        x: 3201,
-        z: 3201,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 3200,
-        z: 3205,
-        level: 0, // the wizard's anchor
-    },
-    loc_id: 2492,
-    option: 1,
-    ticks: 2,
-    ..cart_edge() };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::EssenceExit,
+        player_delta: None,
+        at: WorldTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3200,
+            z: 3205,
+            level: 0, // the wizard's anchor
+        },
+        loc_id: 2492,
+        option: 1,
+        ticks: 2,
+        ..cart_edge()
+    };
     let route = Route {
         legs: vec![Leg::Transport {
             edge: Box::new(edge),
@@ -5111,33 +5219,39 @@ fn follow_essence_exit_arrives_within_the_landing_radius() {
 /// 2552, `opheld4` Rub) carries the player to the Al Kharid Duel
 /// Arena. `at` is the any-tile placeholder — never indexed.
 fn ring_edge() -> TransportEdge {
-    TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Teleport,
-    player_delta: None,
-    at: WorldTile {
-        x: 0,
-        z: 0,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 3315,
-        z: 3235,
-        level: 0,
-    },
-    loc_id: 2552,
-    option: 4, // Rub (opheld4)
-    ticks: 2,  // OP_BASE + the rub p_delay(1)
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![(2552, 1)],
-    item_returns: vec![(2551, 1)],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Teleport,
+        player_delta: None,
+        at: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3315,
+            z: 3235,
+            level: 0,
+        },
+        loc_id: 2552,
+        option: 4, // Rub (opheld4)
+        ticks: 2,  // OP_BASE + the rub p_delay(1)
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![(2552, 1)],
+        item_returns: vec![(2551, 1)],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 /// A packed glory-style jewellery edge (obj 1712, `opheld4` Rub): the
@@ -5146,99 +5260,117 @@ fn ring_edge() -> TransportEdge {
 /// case 1); the group's sibling edges share `loc_id` + option and
 /// differ only in `to`, exactly as the bake emits them.
 fn glory_edge() -> TransportEdge {
-    TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Teleport,
-    player_delta: None,
-    at: WorldTile {
-        x: 0,
-        z: 0,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 3087,
-        z: 3496,
-        level: 0, // Edgeville (case 1)
-    },
-    loc_id: 1712,
-    option: 4, // Rub (opheld4)
-    ticks: 2,  // OP_BASE + the rub p_delay(1)
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![(1712, 1)],
-    item_returns: vec![(1711, 1)],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Teleport,
+        player_delta: None,
+        at: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3087,
+            z: 3496,
+            level: 0, // Edgeville (case 1)
+        },
+        loc_id: 1712,
+        option: 4, // Rub (opheld4)
+        ticks: 2,  // OP_BASE + the rub p_delay(1)
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![(1712, 1)],
+        item_returns: vec![(1711, 1)],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 /// A packed spell Teleport edge: Varrock (Magic 25, fire/air/law
 /// runes). `loc_id` 0 = "a spell button, not a loc/obj use"; the
 /// traveller resolves the spellbook button from the landing tile.
 fn varrock_spell_edge() -> TransportEdge {
-    TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Teleport,
-    player_delta: None,
-    at: WorldTile {
-        x: 0,
-        z: 0,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 3213,
-        z: 3424,
-        level: 0,
-    },
-    loc_id: 0, // a spell button, not a loc/obj use
-    option: 0,
-    ticks: 3, // OP_BASE + the cast p_delay(2)
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![(6, 25)],
-    item_req: vec![],
-    consumed_req: vec![(554, 1), (556, 3), (563, 1)],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Teleport,
+        player_delta: None,
+        at: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3213,
+            z: 3424,
+            level: 0,
+        },
+        loc_id: 0, // a spell button, not a loc/obj use
+        option: 0,
+        ticks: 3, // OP_BASE + the cast p_delay(2)
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![(6, 25)],
+        item_req: vec![],
+        consumed_req: vec![(554, 1), (556, 3), (563, 1)],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 /// A packed spell Teleport edge: Lumbridge (Magic 31, earth/air/law
 /// runes). `loc_id` 0 = "a spell button, not a loc/obj use"; the
 /// traveller resolves the spellbook button from the landing tile.
 fn lumbridge_spell_edge() -> TransportEdge {
-    TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Teleport,
-    player_delta: None,
-    at: WorldTile {
-        x: 0,
-        z: 0,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 3221,
-        z: 3218,
-        level: 0,
-    },
-    loc_id: 0, // a spell button, not a loc/obj use
-    option: 0,
-    ticks: 3, // OP_BASE + the cast p_delay(2)
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![(6, 31)],
-    item_req: vec![],
-    consumed_req: vec![(557, 1), (556, 3), (563, 1)],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Teleport,
+        player_delta: None,
+        at: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3221,
+            z: 3218,
+            level: 0,
+        },
+        loc_id: 0, // a spell button, not a loc/obj use
+        option: 0,
+        ticks: 3, // OP_BASE + the cast p_delay(2)
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![(6, 31)],
+        item_req: vec![],
+        consumed_req: vec![(557, 1), (556, 3), (563, 1)],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 /// The inventory tab (side 3) with a TYPE_INV child carrying one
@@ -5567,14 +5699,26 @@ fn follow_jewellery_teleport_answers_the_second_dest_choice() {
         level: 0, // `0_45_49_38_40` (case 2)
     };
     let glory = [
-        TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), to: WorldTile {
-            x: 3087,
-            z: 3496,
-            level: 0,
-        }, // Edgeville (case 1)
-        ..glory_edge() },
-        TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), to: karamja,
-        ..glory_edge() },
+        TransportEdge {
+            takeoff: None,
+            worn_all_req: Vec::new(),
+            forbidden_held: Vec::new(),
+            forbidden_worn: Vec::new(),
+            to: WorldTile {
+                x: 3087,
+                z: 3496,
+                level: 0,
+            }, // Edgeville (case 1)
+            ..glory_edge()
+        },
+        TransportEdge {
+            takeoff: None,
+            worn_all_req: Vec::new(),
+            forbidden_held: Vec::new(),
+            forbidden_worn: Vec::new(),
+            to: karamja,
+            ..glory_edge()
+        },
     ];
     let route = Route {
         legs: vec![Leg::Transport {
@@ -6810,9 +6954,15 @@ fn follow_cheap_hop_walks_when_the_open_leaf_is_offset() {
         ..FollowRec::default()
     };
     let mut t = Traveller::new();
-    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), open_loc_id: Some(1531),
-    dir: Some(DoorDir::E),
-    ..door_edge() };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        open_loc_id: Some(1531),
+        dir: Some(DoorDir::E),
+        ..door_edge()
+    };
     let route = Route {
         legs: vec![Leg::Transport {
             edge: Box::new(edge),
@@ -7715,8 +7865,14 @@ fn follow_blocks_when_the_transport_loc_is_missing() {
     };
     let mut t = Traveller::new();
     // Loc id 99 is never planted in the scene.
-    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), loc_id: 99,
-    ..ladder_edge() };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        loc_id: 99,
+        ..ladder_edge()
+    };
     let route = Route {
         legs: vec![Leg::Transport {
             edge: Box::new(edge),
@@ -8174,33 +8330,39 @@ fn level_change_transport_requires_proximity_to_to() {
     let mut c = scene_client();
     c.minusedlevel = 1;
     let snap = snap_at(&mut c, 100, 100);
-    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Ladder,
-    player_delta: None,
-    at: WorldTile {
-        x: 3202,
-        z: 3204,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 3202,
-        z: 3205,
-        level: 1,
-    },
-    loc_id: 1,
-    option: 1,
-    ticks: 2,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Ladder,
+        player_delta: None,
+        at: WorldTile {
+            x: 3202,
+            z: 3204,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3202,
+            z: 3205,
+            level: 1,
+        },
+        loc_id: 1,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     let route = Route {
         legs: vec![Leg::Transport {
             edge: Box::new(edge),
@@ -8278,29 +8440,35 @@ fn horizontal_climb_proves_translated_takeoff_without_widening_arrival() {
         z: 3233,
         level: 0,
     };
-    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Ladder,
-    player_delta: Some(WorldTile {
-        x: 10,
-        z: 30,
-        level: 0,
-    }),
-    at: anchor,
-    to: baked_to,
-    loc_id: 1,
-    option: 1,
-    ticks: 2,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Ladder,
+        player_delta: Some(WorldTile {
+            x: 10,
+            z: 30,
+            level: 0,
+        }),
+        at: anchor,
+        to: baked_to,
+        loc_id: 1,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     let mut options = TravelOptions {
         close_enough: 0,
         ..TravelOptions::default()

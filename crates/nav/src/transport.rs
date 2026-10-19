@@ -449,7 +449,8 @@ fn derive_transports_with_skips(
     loc_defs: &LocDefs,
     collision: &WorldCollision,
 ) -> (TransportGraph, HashMap<&'static str, usize>) {
-    let (graph, skipped, _) = derive_transports_with_audit(content_root, loc_defs, collision, None, None);
+    let (graph, skipped, _) =
+        derive_transports_with_audit(content_root, loc_defs, collision, None, None);
     (graph, skipped)
 }
 
@@ -460,8 +461,10 @@ fn derive_transports_with_audit(
     preloaded_doors: Option<(&HashSet<i32>, &[PathBuf])>,
     quests: Option<&QuestSource<'_>>,
 ) -> (TransportGraph, HashMap<&'static str, usize>, VarpGateAudit) {
-    let mut graph = TransportGraph::default();
-    graph.quest_family = quests.map(|quests| quests.family);
+    let mut graph = TransportGraph {
+        quest_family: quests.map(|quests| quests.family),
+        ..TransportGraph::default()
+    };
     let mut skipped: HashMap<&'static str, usize> = HashMap::new();
     let mut audit = VarpGateAudit::default();
     let gates = ObservableGates::from_content(content_root);

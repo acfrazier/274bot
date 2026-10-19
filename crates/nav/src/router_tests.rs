@@ -614,25 +614,31 @@ fn blocked_door_fixture() -> WorldCollision {
 
 /// One directed door edge `at -> to` (loc 1530, `Open` op 1).
 fn door(at: WorldTile, to: WorldTile, ticks: i32) -> TransportGraph {
-    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at,
-    to,
-    loc_id: 1530,
-    option: 1,
-    ticks,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at,
+        to,
+        loc_id: 1530,
+        option: 1,
+        ticks,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     let mut graph = TransportGraph::default();
     graph.at.entry(at).or_default().push(0);
     graph.edges.push(edge);
@@ -734,25 +740,31 @@ fn teleport(
     item_req: Vec<(i32, i32)>,
 ) -> TransportGraph {
     let mut graph = TransportGraph::default();
-    graph.teleports.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Teleport,
-    player_delta: None,
-    at: tile(0, 0, 0),
-    to,
-    loc_id: 0,
-    option: 0,
-    ticks,
-    dir: None,
-    open_loc_id: None,
-    skill_req,
-    item_req: vec![],
-    consumed_req: item_req,
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, });
+    graph.teleports.push(TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Teleport,
+        player_delta: None,
+        at: tile(0, 0, 0),
+        to,
+        loc_id: 0,
+        option: 0,
+        ticks,
+        dir: None,
+        open_loc_id: None,
+        skill_req,
+        item_req: vec![],
+        consumed_req: item_req,
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    });
     graph
 }
 
@@ -832,25 +844,31 @@ fn router_prefers_worn_slash_web_action_when_knife_and_blade_are_both_available(
     let collision = walled_5x5_gap(2);
     let at = tile(1, 2, 0);
     let to = tile(2, 2, 0);
-    let edge = |option, item_req, worn_req| TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
-    at,
-    to,
-    loc_id: 733,
-    option,
-    ticks: 2,
-    dir: Some(crate::transport::DoorDir::E),
-    open_loc_id: Some(734),
-    skill_req: vec![],
-    item_req,
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req,
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None,
-    player_delta: None, };
+    let edge = |option, item_req, worn_req| TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Door,
+        at,
+        to,
+        loc_id: 733,
+        option,
+        ticks: 2,
+        dir: Some(crate::transport::DoorDir::E),
+        open_loc_id: Some(734),
+        skill_req: vec![],
+        item_req,
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req,
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+        player_delta: None,
+    };
     // Pack order deliberately matches the extractor: oplocu first, Slash
     // second. Planning must follow slash_checker when a blade is worn rather
     // than letting a graph-order tie send the less-preferred knife action.
@@ -1039,25 +1057,31 @@ fn wall_tile_blocks_through_wall_steps_and_the_router_avoids_it() {
 #[test]
 fn find_transport_changes_level_and_walks_upstairs() {
     let wc = bake(4, 4, &[]);
-    let ladder = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Ladder,
-    player_delta: None,
-    at: tile(0, 0, 0),
-    to: tile(1, 1, 1),
-    loc_id: 1747,
-    option: 1,
-    ticks: 3,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let ladder = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Ladder,
+        player_delta: None,
+        at: tile(0, 0, 0),
+        to: tile(1, 1, 1),
+        loc_id: 1747,
+        option: 1,
+        ticks: 3,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     let mut g = TransportGraph::default();
     g.at.entry(ladder.at).or_default().push(0);
     g.edges.push(ladder.clone());
@@ -1672,25 +1696,31 @@ fn sealed_room(door: bool) -> (WorldCollision, TransportGraph) {
     if door {
         let at = tile(199, 201, 0);
         graph.at.entry(at).or_default().push(0);
-        graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
-        player_delta: None,
-        at,
-        to: tile(200, 201, 0),
-        loc_id: 1,
-        option: 1,
-        ticks: 2,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![],
-        item_req: vec![],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![2],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None, });
+        graph.edges.push(TransportEdge {
+            takeoff: None,
+            worn_all_req: Vec::new(),
+            forbidden_held: Vec::new(),
+            forbidden_worn: Vec::new(),
+            kind: TransportKind::Door,
+            player_delta: None,
+            at,
+            to: tile(200, 201, 0),
+            loc_id: 1,
+            option: 1,
+            ticks: 2,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            consumed_req: vec![],
+            item_returns: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![2],
+            members_req: false,
+            wildy_cap: None,
+            quest_gates: None,
+        });
     }
     (bake(256, 256, &ring), graph)
 }
@@ -2184,25 +2214,31 @@ fn shared_fallback_matches_a_fallback_only_search_on_random_worlds() {
         seed ^= seed << 17;
         seed % bound
     };
-    let edge = |kind, at, to, ticks, item_req| TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind,
-    player_delta: None,
-    at,
-    to,
-    loc_id: 1,
-    option: 1,
-    ticks,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req,
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let edge = |kind, at, to, ticks, item_req| TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind,
+        player_delta: None,
+        at,
+        to,
+        loc_id: 1,
+        option: 1,
+        ticks,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req,
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     let mut outcomes = HashMap::new();
     for _ in 0..400 {
         let mut extras = Vec::new();
@@ -6778,28 +6814,38 @@ fn real_289_cooperative_request_shapes_match_legacy_serialization() {
     assert_eq!(
         lease.identity().content().bytes(),
         [
-            0x42, 0x70, 0xf0, 0x27, 0x11, 0x44, 0x72, 0x67, 0xe0, 0xee, 0x63, 0x95, 0x79, 0xd4,
-            0x15, 0x32, 0x99, 0x6a, 0x3d, 0x37, 0xf7, 0x12, 0xd5, 0xd6, 0x3c, 0xdb, 0x79, 0x05,
-            0x1e, 0x45, 0x30, 0x0f,
+            0x4e, 0x8a, 0xb5, 0xaf, 0x46, 0x94, 0xcf, 0x67, 0x22, 0xed, 0x38, 0x36, 0xc3, 0xe1,
+            0xf4, 0x2e, 0x9a, 0xc1, 0xbe, 0x13, 0x6d, 0x4d, 0x11, 0x27, 0xc7, 0xdb, 0x69, 0x8f,
+            0x4f, 0xc6, 0x50, 0x0b,
         ],
-        "reference 289 pack SHA-256 is 4270f02711447267e0ee639579d41532996a3d37f712d5d63cdb79051e45300f; update this check for a changed pack"
+        "qualified entrance pack SHA-256 is 4e8ab5af4694cf6722ed3836c3e1f42e9ac1be136d4d1127c7db698f4fc6500b; update this pin with the transport and route corpus diff"
     );
     assert_eq!(
         world.graph.edges.len(),
-        3_249,
-        "update the reference-pack census"
+        3_361,
+        "qualified entrance-pack census: 3249 unchanged edges plus 112 additions"
     );
     assert_eq!(
-        world.graph.quest_family, None,
-        "update the no-quest-gates check"
+        world.graph.quest_family,
+        Some(crate::quest_gates::QuestFamilyId::new(
+            [
+                0xd5, 0x89, 0xa7, 0xd7, 0x77, 0x05, 0x21, 0xa7, 0x2d, 0xc5, 0x02, 0x24, 0x5d, 0x41,
+                0x61, 0x32, 0x14, 0x25, 0x9e, 0xc9, 0x2a, 0xc0, 0x96, 0x8a, 0x13, 0xb9, 0x33, 0x11,
+                0xdd, 0xb9, 0xb5, 0x9a,
+            ],
+            std::num::NonZeroU16::new(1).expect("quest schema is nonzero"),
+        )),
+        "qualified selected quest family"
     );
-    assert!(
+    assert_eq!(
         world
             .graph
             .edges
             .iter()
-            .all(|edge| edge.quest_gates.is_none()),
-        "reference 289 pack has no quest gates; update this check if a later pack adds gates"
+            .filter(|edge| edge.quest_gates.is_some())
+            .count(),
+        62,
+        "all 62 quest-gated edges are additions; the 3249 reference edges are unchanged"
     );
     let from = tile(3222, 3218, 0);
     let west_bank = tile(3092, 3243, 0);

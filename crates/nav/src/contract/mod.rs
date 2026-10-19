@@ -380,33 +380,39 @@ mod search_graph_envelope_tests {
     #[test]
     fn envelope_counts_graph_edges_and_teleports() {
         let mut graph = crate::transport::TransportGraph::default();
-        graph.edges.push(crate::transport::TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: crate::transport::TransportKind::Door,
-        player_delta: None,
-        at: api::snapshot::WorldTile {
-            x: 0,
-            z: 0,
-            level: 0,
-        },
-        to: api::snapshot::WorldTile {
-            x: 1,
-            z: 0,
-            level: 0,
-        },
-        loc_id: 0,
-        option: 0,
-        ticks: 1,
-        dir: None,
-        open_loc_id: None,
-        skill_req: Vec::new(),
-        item_req: Vec::new(),
-        consumed_req: Vec::new(),
-        item_returns: Vec::new(),
-        quest_req: Vec::new(),
-        varp_req: Vec::new(),
-        worn_req: vec![10, 11],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None, });
+        graph.edges.push(crate::transport::TransportEdge {
+            takeoff: None,
+            worn_all_req: Vec::new(),
+            forbidden_held: Vec::new(),
+            forbidden_worn: Vec::new(),
+            kind: crate::transport::TransportKind::Door,
+            player_delta: None,
+            at: api::snapshot::WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            to: api::snapshot::WorldTile {
+                x: 1,
+                z: 0,
+                level: 0,
+            },
+            loc_id: 0,
+            option: 0,
+            ticks: 1,
+            dir: None,
+            open_loc_id: None,
+            skill_req: Vec::new(),
+            item_req: Vec::new(),
+            consumed_req: Vec::new(),
+            item_returns: Vec::new(),
+            quest_req: Vec::new(),
+            varp_req: Vec::new(),
+            worn_req: vec![10, 11],
+            members_req: false,
+            wildy_cap: None,
+            quest_gates: None,
+        });
         let mut teleport = graph.edges[0].clone();
         teleport.kind = crate::transport::TransportKind::Teleport;
         teleport.worn_req = vec![11, 12, 13];

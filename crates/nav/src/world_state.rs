@@ -220,7 +220,8 @@ impl WorldState {
         ] {
             bytes = bytes.checked_add(table_bytes?)?;
         }
-        let bytes = self.quests
+        let bytes = self
+            .quests
             .iter()
             .try_fold(bytes, |total, quest| total.checked_add(quest.capacity()))?;
         bytes.checked_add(
@@ -405,7 +406,6 @@ impl WorldState {
             && self.worn_req_allows(e)
     }
 
-
     /// The legacy any-of gate also accepts items explicitly made available
     /// to a BankBudget route probe. `worn_all_req` deliberately does not.
     pub(crate) fn worn_req_allows(&self, e: &TransportEdge) -> bool {
@@ -452,8 +452,18 @@ impl WorldState {
             e,
             snapshot.inventory_size() > 0,
             snapshot.equipment_posted(),
-            |id| snapshot.inv().iter().any(|&(obj, count)| obj == id && count > 0),
-            |id| snapshot.equipment().iter().any(|item| item.def.id == id && item.count > 0),
+            |id| {
+                snapshot
+                    .inv()
+                    .iter()
+                    .any(|&(obj, count)| obj == id && count > 0)
+            },
+            |id| {
+                snapshot
+                    .equipment()
+                    .iter()
+                    .any(|item| item.def.id == id && item.count > 0)
+            },
         )
     }
 

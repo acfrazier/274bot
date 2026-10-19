@@ -37,33 +37,39 @@ fn client() -> Client {
 /// 10 coins, plus one requirement of each other kind so the gating
 /// test covers all five vectors.
 fn gated_edge() -> TransportEdge {
-    TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at: WorldTile {
-        x: 3268,
-        z: 3227,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 3269,
-        z: 3227,
-        level: 0,
-    },
-    loc_id: 2882,
-    option: 1,
-    ticks: 1,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![(6, 25)], // Magic 25 (spell teleports)
-    item_req: vec![],
-    consumed_req: vec![(995, 10)], // the 10-coin toll
-    item_returns: vec![],
-    quest_req: vec!["Rune Mysteries".to_string()],
-    varp_req: vec![(150, 160)], // Grand Tree complete
-    worn_req: vec![1712],       // a charged glory
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: WorldTile {
+            x: 3268,
+            z: 3227,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3269,
+            z: 3227,
+            level: 0,
+        },
+        loc_id: 2882,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![(6, 25)], // Magic 25 (spell teleports)
+        item_req: vec![],
+        consumed_req: vec![(995, 10)], // the 10-coin toll
+        item_returns: vec![],
+        quest_req: vec!["Rune Mysteries".to_string()],
+        varp_req: vec![(150, 160)], // Grand Tree complete
+        worn_req: vec![1712],       // a charged glory
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 #[test]
@@ -436,16 +442,25 @@ fn exclusions_require_observed_absence_and_name_the_actual_item_and_entrance() {
         Some(EntranceRequirement::InventoryNotObserved { at: edge.at })
     );
     state.inventory_ready = true;
-    assert!(state.allows(&edge), "observed empty inventory proves absence");
+    assert!(
+        state.allows(&edge),
+        "observed empty inventory proves absence"
+    );
     state.inv.insert(1842, 0);
     assert!(state.allows(&edge), "zero is not a held item");
     state.inv.insert(1842, 1);
     assert_eq!(
         state.exclusion_failure(&edge),
-        Some(EntranceRequirement::ForbiddenHeld { id: 1842, at: edge.at })
+        Some(EntranceRequirement::ForbiddenHeld {
+            id: 1842,
+            at: edge.at
+        })
     );
     assert!(!state.allows(&edge));
-    assert!(!state.allows_without_carry_worn(&edge), "BankBudget cannot remove an exclusion");
+    assert!(
+        !state.allows_without_carry_worn(&edge),
+        "BankBudget cannot remove an exclusion"
+    );
     state.inv.clear();
 
     edge.forbidden_worn = vec![1277];
@@ -459,7 +474,10 @@ fn exclusions_require_observed_absence_and_name_the_actual_item_and_entrance() {
     state.worn.insert(1277);
     assert_eq!(
         state.exclusion_failure(&edge),
-        Some(EntranceRequirement::ForbiddenWorn { id: 1277, at: edge.at })
+        Some(EntranceRequirement::ForbiddenWorn {
+            id: 1277,
+            at: edge.at
+        })
     );
     assert!(!state.allows(&edge));
     state.worn.clear();

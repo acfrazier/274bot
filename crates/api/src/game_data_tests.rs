@@ -165,8 +165,8 @@ fn is_bearing_distance(token: &str) -> bool {
 #[test]
 fn named_sites_are_selected_core_rows_with_skill_key_closure() {
     for (revision, counts) in [
-        (ClientRevision::R274, [231, 33, 25]),
-        (ClientRevision::R289, [231, 33, 25]),
+        (ClientRevision::R274, [231, 37, 26]),
+        (ClientRevision::R289, [231, 37, 26]),
     ] {
         let data = for_revision(revision).unwrap();
         let mut ids = std::collections::HashSet::new();

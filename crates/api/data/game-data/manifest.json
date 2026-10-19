@@ -116,24 +116,24 @@
           "override_dropped": 45
         },
         "mining": {
-          "sites": 33,
+          "sites": 37,
           "direct": 0,
           "dropped": 13,
           "outside_box": 0,
-          "extra": 8,
-          "renamed": 2,
-          "required": 1,
-          "override_dropped": 15
+          "extra": 11,
+          "renamed": 6,
+          "required": 4,
+          "override_dropped": 11
         },
         "fishing": {
-          "sites": 25,
+          "sites": 26,
           "direct": 20,
           "dropped": 5,
           "outside_box": 0,
-          "extra": 2,
-          "renamed": 0,
+          "extra": 3,
+          "renamed": 1,
           "required": 0,
-          "override_dropped": 11
+          "override_dropped": 10
         }
       },
       "equipment_names": {
@@ -213,8 +213,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 5335952,
-      "sha256": "7713598025855eb8d30d3a7aaa8dd340717a1c6cebb15e6f054f958d2be84ca0",
+      "bytes": 5339474,
+      "sha256": "1ae9ce963b17a4732fb59ec4a05d3f079df676478f421c8071315bad156bff06",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -8433,7 +8433,7 @@
           "path": "289/debug.json",
           "schema": 1,
           "bytes": 2516658,
-          "sha256": "55937fbeb2f54d3ad634666ac352ad70c19a97d3fcfef94a0386cf8750a1b79f"
+          "sha256": "1c97204726b5583c825235099751093cadd7b6c7024ab41eda51f2316a1c976b"
         }
       },
       "gathering": {
@@ -8517,24 +8517,24 @@
           "override_dropped": 61
         },
         "mining": {
-          "sites": 33,
+          "sites": 37,
           "direct": 0,
           "dropped": 13,
           "outside_box": 0,
-          "extra": 8,
-          "renamed": 2,
-          "required": 1,
-          "override_dropped": 16
+          "extra": 11,
+          "renamed": 6,
+          "required": 4,
+          "override_dropped": 12
         },
         "fishing": {
-          "sites": 25,
+          "sites": 26,
           "direct": 20,
           "dropped": 5,
           "outside_box": 0,
-          "extra": 2,
-          "renamed": 0,
+          "extra": 3,
+          "renamed": 1,
           "required": 0,
-          "override_dropped": 13
+          "override_dropped": 12
         }
       },
       "equipment_names": {
@@ -8614,8 +8614,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 5799600,
-      "sha256": "006350f58452f6783436ac4b7fd477873fdf0cf82e290fa575df5c95311d3f9a",
+      "bytes": 5803122,
+      "sha256": "18504553d864826f5c5076b7365aa2cc2f9e09bebc6bb27b1e8851795026acf9",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -17312,7 +17312,7 @@
       "cache_identity": {
         "cache_id": "c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09",
         "content_id": "cdb2f161c35239f09bf5175648e15e7dbbc4bbf9be4419cea41f7053ccf8b044",
-        "nav_sha256": "131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924",
+        "nav_sha256": "4e8ab5af4694cf6722ed3836c3e1f42e9ac1be136d4d1127c7db698f4fc6500b",
         "flags_sha256": "67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a"
       },
       "bank_inputs": {

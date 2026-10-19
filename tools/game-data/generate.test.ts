@@ -3072,10 +3072,10 @@ for (const { revision, root } of gatheringPins) {
     for (const item of siteCore.items) if (item.name !== null && item.name !== '') siteItemNames.set(item.id, item.name);
     const namedResourceRows = gatherResources(facts, siteItemNames);
     const siteResult = gatherSites(facts, namedResourceRows, root, siteBanksAll);
-    assert.equal(siteResult.rows.length, 289, `${revision} named sites`);
+    assert.equal(siteResult.rows.length, 294, `${revision} named sites`);
     const expectedSiteReport = revision === 289
-        ? { woodcutting: { sites: 231, direct: 0, dropped: 1205, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 61 }, mining: { sites: 33, direct: 0, dropped: 13, outside_box: 0, extra: 8, renamed: 2, required: 1, override_dropped: 16 }, fishing: { sites: 25, direct: 20, dropped: 5, outside_box: 0, extra: 2, renamed: 0, required: 0, override_dropped: 13 } }
-        : { woodcutting: { sites: 231, direct: 0, dropped: 1198, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 45 }, mining: { sites: 33, direct: 0, dropped: 13, outside_box: 0, extra: 8, renamed: 2, required: 1, override_dropped: 15 }, fishing: { sites: 25, direct: 20, dropped: 5, outside_box: 0, extra: 2, renamed: 0, required: 0, override_dropped: 11 } };
+        ? { woodcutting: { sites: 231, direct: 0, dropped: 1205, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 61 }, mining: { sites: 37, direct: 0, dropped: 13, outside_box: 0, extra: 11, renamed: 6, required: 4, override_dropped: 12 }, fishing: { sites: 26, direct: 20, dropped: 5, outside_box: 0, extra: 3, renamed: 1, required: 0, override_dropped: 12 } }
+        : { woodcutting: { sites: 231, direct: 0, dropped: 1198, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 45 }, mining: { sites: 37, direct: 0, dropped: 13, outside_box: 0, extra: 11, renamed: 6, required: 4, override_dropped: 11 }, fishing: { sites: 26, direct: 20, dropped: 5, outside_box: 0, extra: 3, renamed: 1, required: 0, override_dropped: 10 } };
     assert.deepEqual(siteResult.report, expectedSiteReport, `${revision} site report`);
     // Without the table the same rows keep their nearest-label names: the table is the only thing that renames or drops them.
     if (revision === 289) {
@@ -3152,7 +3152,7 @@ for (const { revision, root } of gatheringPins) {
     assert.equal(offering('woodcutting', 'normal').length, 212, `${revision} normal-tree choices`);
     assert.equal(offering('woodcutting', 'oak').length, 117, `${revision} oak choices`);
     assert.equal(offering('woodcutting', 'willow').length, 50, `${revision} willow choices`);
-    assert.equal(offering('mining', 'coal').length, 17, `${revision} coal choices`);
+    assert.equal(offering('mining', 'coal').length, 19, `${revision} coal choices`);
     assert.deepEqual(
         offering('woodcutting', 'willow').filter((row) => /draynor/i.test(`${row.id} ${row.label}`)).map((row) => row.id),
         ['woodcutting.draynor'],
@@ -3187,7 +3187,7 @@ for (const { revision, root } of gatheringPins) {
     const ids274 = siteRowsByRevision.get(274)!.map((row) => row.id);
     const rows289 = siteRowsByRevision.get(289)!;
     const ids289 = rows289.map((row) => row.id);
-    assert.equal(ids274.filter((id) => ids289.includes(id)).length, 289, 'shared site ids');
+    assert.equal(ids274.filter((id) => ids289.includes(id)).length, 294, 'shared site ids');
     assert.deepEqual(ids289.filter((id) => !ids274.includes(id)).sort(), [], '289-only site rows');
     assert.equal(ids274.filter((id) => !ids289.includes(id)).length, 0, 'no 274-only rows');
 }
@@ -3200,9 +3200,18 @@ for (const { revision, root } of gatheringPins) {
         return found!;
     };
     // Underground: the nearest labels.txt label to the surface projection, `<name> (underground)`, id `<skill>.<slug>.underground`.
-    // Dropped by the override table: the desert camp entrances need slave robes worn, so neither is a row on 289.
-    // The surface `mining.desert_mining_camp` is a 0.2.0 id and stays; only its two underground entrances are dropped.
-    assert.ok(!rows289.some((row) => row.id === 'mining.desert_mining_camp.underground' || row.id === 'mining.desert_mining_camp.underground.n'), '289 desert camp underground entrances are dropped');
+    // The lower mine has a proven worn-kit entrance. The northern room is still
+    // beyond a dialogue and chance-gated minecart, not the same connected mine.
+    assert.deepEqual(at289('mining.desert_mining_camp.underground').requires, [
+        { kind: 'worn', item: 1844, name: 'Slave shirt' },
+        { kind: 'worn', item: 1845, name: 'Slave robe' },
+        { kind: 'worn', item: 1846, name: 'Slave boots' },
+    ]);
+    assert.ok(!rows289.some((row) => row.id === 'mining.desert_mining_camp.underground.n'), '289 northern mine remains hidden behind the minecart');
+    assert.deepEqual(at289('mining.grand_tree.underground').requires, [{ kind: 'quest', name: 'The Grand Tree' }]);
+    assert.deepEqual(at289('mining.grand_tree.underground.2').requires, [{ kind: 'quest', name: 'The Grand Tree' }]);
+    assert.ok(at289('mining.desert_mining_camp'));
+    assert.ok(at289('fishing.dark_wizards_tower.underground.nw'));
     // The Falador Mining Guild cluster (3042,9758) is named by the nearest-label rule (Park is 23 tiles from its projection, Falador 39); the override table renames it.
     const guild = rows289.find((row) => row.skill === 'mining' && row.region.min_x <= 3042 && row.region.max_x >= 3042 && row.region.min_z <= 9758 && row.region.max_z >= 9758);
     assert.equal(guild?.id, 'mining.park.underground.se', '3042,9758 is the Park underground cluster');
