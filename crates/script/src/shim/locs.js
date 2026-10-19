@@ -1,6 +1,6 @@
 import Tile from '../../geometry/Tile.js';
 import EntityQuery from '../query/Query.js';
-import { snap, queue, proxy, presentOps, opIndex } from '../../shim/_kernel.js';
+import { snap, queue, proxy } from '../../shim/_kernel.js';
 
 export class Loc {
     constructor(row) {
@@ -8,37 +8,27 @@ export class Loc {
     }
 
     get name() {
-        return this.snap.name ?? null;
+        return globalThis.__rs2b0t_entities_v8('loc.name', this);
     }
 
     get id() {
-        return this.snap.id;
+        return globalThis.__rs2b0t_entities_v8('loc.id', this);
     }
 
     tile() {
-        return Tile.from({ x: this.snap.x, z: this.snap.z, level: this.snap.level ?? 0 });
+        return globalThis.__rs2b0t_entities_v8('loc.tile', this, Tile);
     }
 
     distance() {
-        return typeof this.snap.distance === 'number' ? this.snap.distance : 0;
+        return globalThis.__rs2b0t_entities_v8('loc.distance', this);
     }
 
     actions() {
-        return presentOps(this.snap.actions);
+        return globalThis.__rs2b0t_entities_v8('loc.actions', this);
     }
 
     interact(action) {
-        if (opIndex(this.snap.actions, action) === -1) return false;
-        const req = {
-            op: 'loc',
-            x: this.snap.x,
-            z: this.snap.z,
-            level: this.snap.level ?? 0,
-            action: String(action),
-        };
-        if (Number.isInteger(this.snap.id)) req.id = this.snap.id;
-        queue(req);
-        return true;
+        return globalThis.__rs2b0t_entities_v8('loc.interact', this, action, queue);
     }
 }
 
