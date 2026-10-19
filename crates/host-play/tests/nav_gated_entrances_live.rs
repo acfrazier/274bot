@@ -20,10 +20,11 @@ use client::io::ClientRevision;
 use host::Pump;
 use host_play::{mint_live_entries, mint_live_names, ProfileOptions, SharedClientTemplate};
 use nav::quest_gates::{QuestEvidence, QuestFamilyId};
-use nav::router::{find_with, FindOptions, Leg, Route, RouteError};
+use nav::router::{find_many_with, find_with, FindOptions, Leg, Route, RouteError, TargetError};
 use nav::transport::TransportEdge;
 use nav::traveller::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
 use nav::world::NavWorld;
+use nav::zones::ZoneExempt;
 use nav::WorldState;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -40,6 +41,15 @@ const DESERT_SURFACE_GATE_IDS: &[i32] = &[2673, 2674];
 const DESERT_UNDERGROUND_GATE_IDS: &[i32] = &[2675, 2676];
 const DUSTY_KEY_DOOR_ID: i32 = 2623;
 const DESERT_KIT_IDS: &[i32] = &[1844, 1845, 1846];
+const TAVERLEY_CROSS_ZONES: &[&str] = &[
+    "lesser_demon@2936,9793,0",
+    "lesser_demon@2931,9798,0",
+    "blue_dragon@2899,9802,0",
+    "blue_dragon@2904,9802,0",
+    "lesser_demon@2926,9802,0",
+    "lesser_demon@2931,9807,0",
+    "lesser_demon@2932,9810,0",
+];
 const NEIGHBOR_OFFSETS: &[(i32, i32)] = &[
     (-1, -1),
     (-1, 0),
@@ -143,6 +153,13 @@ impl EntranceCase {
         }
     }
 
+    fn cross_zones(self) -> &'static [&'static str] {
+        match self {
+            Self::TaverleyLavaEels => TAVERLEY_CROSS_ZONES,
+            _ => &[],
+        }
+    }
+
     fn required_item(self) -> Option<i32> {
         match self {
             Self::DesertMiningCamp => Some(DESERT_KEY_ID),
@@ -160,7 +177,12 @@ impl EntranceCase {
 
     fn quest_varp(self) -> Option<(&'static str, i32)> {
         match self {
-            Self::DesertMiningCamp | Self::DesertMiningCampUnderground => Some(("desertrescue", 30)),
+            // general/configs/quest.constant:16,28. The account-local cheat
+            // is followed by a relog and an actual quest-list observation.
+            Self::GrandTreeMine => Some(("grandtree", 160)),
+            Self::DesertMiningCamp | Self::DesertMiningCampUnderground => {
+                Some(("desertrescue", 30))
+            }
             _ => None,
         }
     }
@@ -199,6 +221,47 @@ struct TravelRecord {
     legs: Vec<String>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct RouteProof {
+    resource_arrival: bool,
+    fresh_tile_progress: bool,
+    entrance_attempt: bool,
+    entrance_crossing: bool,
+}
+
+fn route_proof(
+    travel: &TravelRecord,
+    stand: WorldTile,
+    loc_id: i32,
+    entrance_at: WorldTile,
+    entrance_to: WorldTile,
+) -> RouteProof {
+    let accepted = |attempt: &TransportAttemptRecord| {
+        attempt.expected_id == loc_id
+            && attempt.actual_id == loc_id
+            && attempt.target == entrance_at
+            && attempt.refusal.is_none()
+    };
+    RouteProof {
+        resource_arrival: matches!(
+            &travel.outcome,
+            Some(TravelOutcome::Arrived { at }) if *at == stand
+        ),
+        fresh_tile_progress: travel
+            .progress
+            .iter()
+            .any(|step| step.tick > travel.start_tick && Some(step.tile) != travel.start_tile),
+        entrance_attempt: travel.attempts.iter().any(&accepted),
+        entrance_crossing: travel.attempts.iter().any(|attempt| {
+            accepted(attempt)
+                && travel
+                    .progress
+                    .iter()
+                    .any(|step| step.tick > attempt.tick && step.tile == entrance_to)
+        }),
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ResourceTarget {
     site_id: String,
@@ -218,7 +281,8 @@ struct PlannedRoute {
 }
 
 fn required_path(name: &str) -> PathBuf {
-    let path = PathBuf::from(std::env::var_os(name).unwrap_or_else(|| panic!("{name} is required")));
+    let path =
+        PathBuf::from(std::env::var_os(name).unwrap_or_else(|| panic!("{name} is required")));
     assert!(path.is_absolute(), "{name} must be an absolute path");
     path
 }
@@ -409,174 +473,6 @@ fn quest_status(
     .map(|observed| observed.value)
 }
 
-fn chat_choices(snapshot: &GameSnapshot) -> Vec<String> {
-    snapshot
-        .chat_options()
-        .iter()
-        .map(|choice| choice.text.clone())
-        .collect()
-}
-
-fn choice_key(text: &str) -> String {
-    text.trim()
-        .trim_matches(|ch: char| matches!(ch, '.' | '!' | '?' | ':'))
-        .to_ascii_lowercase()
-}
-
-/// Complete only the named quest through the account-local single-quest menu.
-/// The helper never selects a choice that names all quests.
-fn complete_quest_via_menu(
-    client: &mut Client,
-    snapshot: &mut GameSnapshot,
-    pump: &mut Pump,
-    quests: &api::quest_facts::QuestCatalog,
-    quest_id: &str,
-    display: &str,
-) -> (bool, Vec<Value>) {
-    let mut steps = Vec::new();
-    if quest_status(quests, quest_id, snapshot) == Some(QuestListStatus::Complete) {
-        return (true, steps);
-    }
-    if !matches!(
-        quest_status(quests, quest_id, snapshot),
-        Some(QuestListStatus::NotStarted | QuestListStatus::InProgress)
-    ) {
-        return (false, steps);
-    }
-    if !interact::cheat(client, "quest").is_sent() {
-        steps.push(json!({"command":"quest", "sent":false}));
-        return (false, steps);
-    }
-    steps.push(json!({"command":"quest", "sent":true}));
-
-    let target = display.to_ascii_lowercase();
-    let deadline = Instant::now() + SETUP_TIMEOUT;
-    let mut selected_target = false;
-    let mut waiting_for_change: Option<Vec<String>> = None;
-    while Instant::now() < deadline {
-        pump_once(client, snapshot, pump);
-        if quest_status(quests, quest_id, snapshot) == Some(QuestListStatus::Complete) {
-            return (true, steps);
-        }
-        let choices = chat_choices(snapshot);
-        if waiting_for_change
-            .as_ref()
-            .is_some_and(|before| *before == choices)
-        {
-            std::thread::sleep(POLL_INTERVAL);
-            continue;
-        }
-        waiting_for_change = None;
-
-        let mut selected = None;
-        for (index, text) in choices.iter().enumerate() {
-            let key = choice_key(text);
-            if key.contains("complete all") || key.contains("all quests") {
-                continue;
-            }
-            if key.contains(&target) {
-                selected = Some((index, text.as_str(), true));
-                break;
-            }
-        }
-        if selected.is_none() {
-            for (index, text) in choices.iter().enumerate() {
-                let key = choice_key(text);
-                if key == "next" || key == "more" {
-                    selected = Some((index, text.as_str(), false));
-                    break;
-                }
-                if !selected_target
-                    && (key.contains("select individual quest")
-                        || key == "select quest"
-                        || key == "choose quest")
-                {
-                    selected = Some((index, text.as_str(), false));
-                    break;
-                }
-                if selected_target
-                    && (key == "complete"
-                        || key == "complete quest"
-                        || key == "complete this quest"
-                        || key == "yes")
-                {
-                    selected = Some((index, text.as_str(), false));
-                    break;
-                }
-            }
-        }
-        let Some((index, text, target_selected_now)) = selected else {
-            std::thread::sleep(POLL_INTERVAL);
-            continue;
-        };
-        let before = choices;
-        let sent = matches!(
-            Interactions::new(snapshot, client).answer_choice(index as i32 + 1),
-            SendResult::Sent { .. }
-        );
-        steps.push(json!({
-            "choice": text,
-            "option": index + 1,
-            "sent": sent,
-        }));
-        if !sent {
-            return (false, steps);
-        }
-        selected_target |= target_selected_now;
-        waiting_for_change = Some(before);
-    }
-    (false, steps)
-}
-
-fn complete_entrance_quests(
-    case: EntranceCase,
-    edges: &[(usize, &TransportEdge)],
-    client: &mut Client,
-    snapshot: &mut GameSnapshot,
-    pump: &mut Pump,
-    quests: &api::quest_facts::QuestCatalog,
-) -> Result<Vec<Value>, String> {
-    let mut quest_ids = HashSet::new();
-    for (_, edge) in edges {
-        if let Some(gates) = &edge.quest_gates {
-            for gate in gates.gates() {
-                if let QuestGate::Complete(quest) = gate {
-                    quest_ids.insert(quest.0.to_string());
-                }
-            }
-        }
-    }
-    let mut quest_ids: Vec<_> = quest_ids.into_iter().collect();
-    quest_ids.sort();
-    let mut completed = Vec::new();
-    for quest_id in quest_ids {
-        let facts = quests
-            .quest(&quest_id)
-            .map_err(|error| format!("{} names unknown quest {quest_id}: {error:?}", case.name()))?;
-        let status_before = quest_status(quests, &quest_id, snapshot);
-        let (success, steps) = complete_quest_via_menu(
-            client,
-            snapshot,
-            pump,
-            quests,
-            &quest_id,
-            &facts.display,
-        );
-        completed.push(json!({
-            "id": quest_id,
-            "display": facts.display,
-            "status_before": format!("{status_before:?}"),
-            "status_after": format!("{:?}", quest_status(quests, &facts.id.0, snapshot)),
-            "steps": steps,
-            "complete": success,
-        }));
-        if !success {
-            return Err(format!("could not observe completion for quest {}", facts.display));
-        }
-    }
-    Ok(completed)
-}
-
 fn selected_item(data: &game_data::SelectedGameData, id: i32) -> &GameItem {
     data.item_by_id(id)
         .unwrap_or_else(|| panic!("selected revision 289 data lacks object {id}"))
@@ -666,13 +562,13 @@ fn center(region: api::gather_methods::SceneRegionInput) -> WorldTile {
     }
 }
 
-fn resource_stand(world: &NavWorld, spot: &GatherSpot) -> Option<WorldTile> {
+fn resource_stands(world: &NavWorld, spot: &GatherSpot) -> Vec<WorldTile> {
     let width = i32::from(spot.width.max(1));
     let length = i32::from(spot.length.max(1));
-    let mut best = world
-        .collision
-        .standable(spot.origin)
-        .then_some((0, spot.origin));
+    let mut stands = Vec::new();
+    if world.collision.standable(spot.origin) {
+        stands.push((0, spot.origin));
+    }
     for dx in -1..=width {
         for dz in -1..=length {
             if dx != -1 && dx != width && dz != -1 && dz != length {
@@ -689,34 +585,37 @@ fn resource_stand(world: &NavWorld, spot: &GatherSpot) -> Option<WorldTile> {
                 z,
                 level: spot.origin.level,
             };
-            if !world.collision.standable(tile) {
-                continue;
-            }
-            let score = (i64::from(dx) * i64::from(dx) + i64::from(dz) * i64::from(dz)) as u64;
-            let improves = match best {
-                Some((best_score, _)) => score < best_score,
-                None => true,
-            };
-            if improves {
-                best = Some((score, tile));
+            if world.collision.standable(tile) {
+                stands.push((i64::from(dx).pow(2) + i64::from(dz).pow(2), tile));
             }
         }
     }
-    best.map(|(_, tile)| tile)
+    stands.sort_unstable_by_key(|(distance, tile)| (*distance, tile.x, tile.z));
+    stands.into_iter().map(|(_, tile)| tile).collect()
 }
 
-fn resource_target(
+fn resource_targets(
     data: &game_data::SelectedGameData,
     gathering: &GatherCatalog,
     world: &NavWorld,
     case: EntranceCase,
-) -> Result<ResourceTarget, String> {
+) -> Result<Vec<ResourceTarget>, String> {
+    use api::gather_methods::TargetClass;
+    use api::selected::Knowledge;
+
     let site = data
         .gather_site(case.skill(), case.site_id())
         .ok_or_else(|| format!("selected game data lacks site {}", case.site_id()))?;
     let from = center(site.region);
+    let mut targets = Vec::new();
     for key in &site.keys {
-        for method in gathering.methods_for_resource(&key.key) {
+        let option = data
+            .gather_option(case.skill(), &key.key)
+            .ok_or_else(|| format!("site {} names unknown option {}", site.id, key.key))?;
+        for method_id in &option.methods {
+            let method = gathering
+                .method(method_id)
+                .map_err(|error| format!("site {} method {method_id}: {error:?}", site.id))?;
             let expected_skill = match case.skill() {
                 "fishing" => GatherSkill::Fishing,
                 _ => GatherSkill::Mining,
@@ -724,31 +623,52 @@ fn resource_target(
             if method.skill != expected_skill {
                 continue;
             }
-            let nearest = gathering
-                .nearest(method, from, Some(&site.region), AccessPolicy::Possible, 1)
-                .map_err(|error| format!("nearest {} resource: {error:?}", key.key))?;
-            let Some(nearest) = nearest.first() else {
-                continue;
+            let Knowledge::Known(spots) = &method.spots else {
+                return Err(format!("method {method_id} placements are not complete"));
             };
-            let stand = resource_stand(world, nearest.spot).ok_or_else(|| {
-                format!("site {} resource {} has no adjacent standable tile", site.id, key.key)
-            })?;
-            return Ok(ResourceTarget {
-                site_id: site.id.clone(),
-                key: key.key.clone(),
-                method: method.id.0.to_string(),
-                spot_id: nearest.spot.id.0,
-                resource: nearest.spot.origin,
-                stand,
-                access: format!("{:?}", nearest.access),
-                region: site.region,
-            });
+            // We need a proved Resource member, not proof that this method
+            // has no additional targets (for example incidental hazards).
+            let method_targets = api::gather_methods::known_rows(&method.targets);
+            let nearest = gathering
+                .nearest(
+                    method,
+                    from,
+                    Some(&site.region),
+                    AccessPolicy::Possible,
+                    spots.len(),
+                )
+                .map_err(|error| format!("nearest {} resource: {error:?}", key.key))?;
+            for nearest in nearest {
+                if !method_targets.iter().any(|target| {
+                    target.entity == nearest.spot.entity && target.class == TargetClass::Resource
+                }) {
+                    continue;
+                }
+                for stand in resource_stands(world, nearest.spot) {
+                    targets.push(ResourceTarget {
+                        site_id: site.id.clone(),
+                        key: key.key.clone(),
+                        method: method.id.0.to_string(),
+                        spot_id: nearest.spot.id.0,
+                        resource: nearest.spot.origin,
+                        stand,
+                        access: format!("{:?}", nearest.access),
+                        region: site.region,
+                    });
+                }
+            }
         }
     }
-    Err(format!("site {} has no selected resource placement", site.id))
+    if targets.is_empty() {
+        return Err(format!(
+            "site {} has no selected resource placement with a stand",
+            site.id
+        ));
+    }
+    Ok(targets)
 }
 
-fn matching_edges<'a>(world: &'a NavWorld, case: EntranceCase) -> Vec<(usize, &'a TransportEdge)> {
+fn matching_edges(world: &NavWorld, case: EntranceCase) -> Vec<(usize, &TransportEdge)> {
     world
         .graph
         .edges
@@ -782,25 +702,39 @@ fn edge_value(edge: &TransportEdge) -> Value {
     })
 }
 
+fn route_options(world: &NavWorld, case: EntranceCase) -> FindOptions {
+    // The product's crossZones option resolves the same names into this
+    // request-local field. Keep every other zone and all defaults unchanged.
+    let keys: Vec<_> = case
+        .cross_zones()
+        .iter()
+        .map(|name| {
+            world
+                .graph
+                .zones
+                .as_ref()
+                .expect("named crossing requires the pack's zone table")
+                .resolve(name)
+                .unwrap_or_else(|| panic!("approved crossing is absent from the pack: {name}"))
+        })
+        .collect();
+    FindOptions {
+        allow_teleports: false,
+        allow_wilderness: false,
+        allow_bank_fetch: false,
+        zones: ZoneExempt::named(&keys).expect("at most eight named crossing grants"),
+        ..FindOptions::default()
+    }
+}
+
 fn find_route(
     world: &NavWorld,
     from: WorldTile,
     to: WorldTile,
+    options: FindOptions,
     state: &WorldState,
 ) -> Result<Route, RouteError> {
-    find_with(
-        &world.collision,
-        &world.graph,
-        from,
-        to,
-        FindOptions {
-            allow_teleports: false,
-            allow_wilderness: false,
-            allow_bank_fetch: false,
-            ..FindOptions::default()
-        },
-        state,
-    )
+    find_with(&world.collision, &world.graph, from, to, options, state)
 }
 
 fn planned_edge(route: &Route, case: EntranceCase) -> Option<TransportEdge> {
@@ -814,10 +748,9 @@ fn candidate_starts(world: &NavWorld, case: EntranceCase) -> Vec<WorldTile> {
     let mut starts = Vec::new();
     let mut seen = HashSet::new();
     for (_, edge) in matching_edges(world, case) {
-        if let Some(takeoff) = edge.takeoff {
-            if world.collision.standable(takeoff) && seen.insert(takeoff) {
-                starts.push(takeoff);
-            }
+        let takeoff = edge.takeoff.unwrap_or(edge.at);
+        if world.collision.standable(takeoff) && seen.insert(takeoff) {
+            starts.push(takeoff);
         }
         for &(dx, dz) in NEIGHBOR_OFFSETS {
             let Some(x) = edge.at.x.checked_add(dx) else {
@@ -842,26 +775,67 @@ fn candidate_starts(world: &NavWorld, case: EntranceCase) -> Vec<WorldTile> {
 fn plan_route(
     world: &NavWorld,
     case: EntranceCase,
-    target: WorldTile,
+    targets: &[ResourceTarget],
+    options: FindOptions,
     state: &WorldState,
-) -> Result<PlannedRoute, String> {
-    let starts = candidate_starts(world, case);
-    if starts.is_empty() {
-        return Err(format!("{} has no standable entrance approach", case.name()));
-    }
-    let mut failures = Vec::new();
-    for start in starts {
-        match find_route(world, start, target, state) {
-            Ok(route) => {
-                if let Some(edge) = planned_edge(&route, case) {
-                    return Ok(PlannedRoute { start, route, edge });
-                }
-                failures.push(format!("{start:?}: route omitted the declared entrance"));
+) -> Result<(usize, PlannedRoute), String> {
+    let tiles: Vec<_> = targets.iter().map(|target| target.stand).collect();
+    let mut approaches = Vec::new();
+    // Decide all of this site's actual stands in one bounded search per
+    // entrance approach, rather than repeating a world flood per rock.
+    for start in candidate_starts(world, case) {
+        let costs = find_many_with(
+            &world.collision,
+            &world.graph,
+            start,
+            &tiles,
+            options,
+            state,
+        );
+        assert!(
+            costs.complete(),
+            "resource-stand search from {start:?} did not finish"
+        );
+        let mut reachable = 0;
+        for (index, result) in costs.results().iter().enumerate() {
+            match result {
+                Err(TargetError::NoPath) => continue,
+                Err(error) => panic!("resource-stand search did not decide {start:?}: {error:?}"),
+                Ok(_) => reachable += 1,
             }
-            Err(error) => failures.push(format!("{start:?}: {error:?}")),
+            let route = find_route(world, start, tiles[index], options, state)
+                .expect("the completed costs-only search proved this stand reachable");
+            if let Some(edge) = planned_edge(&route, case) {
+                return Ok((index, PlannedRoute { start, route, edge }));
+            }
         }
+        let blockers = if approaches.is_empty() {
+            nav::router::find_first_blocking_zones(
+                &world.collision,
+                &world.graph,
+                start,
+                &tiles,
+                options,
+                state,
+                &[],
+            )
+            .map(|keys| {
+                let table = world.graph.zones.as_ref().expect("diagnosed zone table");
+                keys.into_iter()
+                    .map(|key| table.name(key))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        approaches.push(json!({
+            "start": start,
+            "reachable_stands": reachable,
+            "blocking_zones": blockers,
+        }));
     }
-    Err(format!("no route uses the declared entrance: {failures:?}"))
+    Err(format!("no actual resource stand is reachable through the declared entrance; approaches={approaches:?}"))
 }
 
 fn state_from_snapshot(
@@ -898,6 +872,11 @@ fn drive_route(
     let mut traveller = Traveller::new();
     let mut options = TravelOptions {
         close_enough: 0,
+        // The first lower-mine walk has 87 vertices. Keep this test's original
+        // 180-second limit, expressed in Engine A's real 600-ms server ticks,
+        // instead of expiring that valid leg at the default 60 ticks.
+        budget_ticks_per_hop: u32::try_from(TRAVEL_TIMEOUT.as_millis() / 600)
+            .expect("bounded acceptance window in server ticks"),
         edges: Some(&world.graph.edges),
         quest_evidence,
         on_event: Some(Box::new(|event| {
@@ -948,8 +927,7 @@ fn drive_route(
         }
         if last_tick != Some(snapshot.tick()) {
             last_tick = Some(snapshot.tick());
-            if let Some(terminal) =
-                traveller.follow(client, snapshot, route.clone(), &mut options)
+            if let Some(terminal) = traveller.follow(client, snapshot, route.clone(), &mut options)
             {
                 outcome = Some(terminal);
                 break;
@@ -984,9 +962,10 @@ fn travel_value(record: &TravelRecord) -> Value {
 }
 
 fn entrance_leg_index(route: &Route, case: EntranceCase) -> Option<usize> {
-    route.legs.iter().position(|leg| {
-        matches!(leg, Leg::Transport { edge } if case.matches_edge(edge))
-    })
+    route
+        .legs
+        .iter()
+        .position(|leg| matches!(leg, Leg::Transport { edge } if case.matches_edge(edge)))
 }
 
 fn route_moves_beyond_entrance(route: &Route, case: EntranceCase) -> bool {
@@ -1058,7 +1037,11 @@ fn run_case(case: EntranceCase) {
         .expect("bind Engine A R289 profile");
     let template = SharedClientTemplate::load(Arc::clone(&profile)).expect("client template");
     let world = template.world().expect("explicit WORLD_NAV_PACK");
-    assert_eq!(nav::pack::FORMAT_ID, "274V17", "acceptance requires pack v17");
+    assert_eq!(
+        nav::pack::FORMAT_ID,
+        "274V17",
+        "acceptance requires pack v17"
+    );
     let identity = profile.nav_identity().expect("navigation identity");
     receipt["nav_identity"] = json!({
         "pack_format": nav::pack::FORMAT_ID,
@@ -1073,12 +1056,13 @@ fn run_case(case: EntranceCase) {
         Deadline::at(Instant::now() + SETUP_TIMEOUT),
     );
     let mut preparation = StepContext::<PreparationPhase>::new(&clock, budget, &cancellation);
-    let (quests, gathering) = api::selected::FamilyPreparation::within(&mut preparation, |worker| {
-        (
-            selected.prepare_quests(worker),
-            selected.prepare_gathering(worker),
-        )
-    });
+    let (quests, gathering) =
+        api::selected::FamilyPreparation::within(&mut preparation, |worker| {
+            (
+                selected.prepare_quests(worker),
+                selected.prepare_gathering(worker),
+            )
+        });
     let quests = quests.expect("verified R289 quest identity catalog");
     let gathering = gathering.expect("verified R289 gathering catalog");
     let family_identity = selected
@@ -1090,10 +1074,20 @@ fn run_case(case: EntranceCase) {
         .admit_quest_family(&family)
         .expect("nav pack quest gates match verified manifest family");
     let edges = matching_edges(&world, case);
-    assert!(!edges.is_empty(), "pack lacks expected {} entrance edge", case.name());
+    assert!(
+        !edges.is_empty(),
+        "pack lacks expected {} entrance edge",
+        case.name()
+    );
     for (_, edge) in &edges {
-        assert!(edge.quest_req.is_empty(), "new entrance must not use quest_req: {edge:?}");
-        assert!(edge.varp_req.is_empty(), "new entrance must not use raw varps: {edge:?}");
+        assert!(
+            edge.quest_req.is_empty(),
+            "new entrance must not use quest_req: {edge:?}"
+        );
+        assert!(
+            edge.varp_req.is_empty(),
+            "new entrance must not use raw varps: {edge:?}"
+        );
         if let Some(gates) = &edge.quest_gates {
             assert_eq!(gates.family(), &family, "entrance gate family mismatch");
         }
@@ -1106,24 +1100,9 @@ fn run_case(case: EntranceCase) {
         .collect::<Vec<_>>());
     write_receipt(&receipt_path, &receipt);
 
-    let target = resource_target(&selected, &gathering, &world, case)
-        .unwrap_or_else(|error| panic!("select resource destination: {error}"));
-    assert!(
-        (target.region.min_x..=target.region.max_x).contains(&target.resource.x)
-            && (target.region.min_z..=target.region.max_z).contains(&target.resource.z)
-            && target.region.level == target.resource.level,
-        "selected resource is outside its published site region"
-    );
-    receipt["selected_resource"] = json!({
-        "site_id": target.site_id,
-        "key": target.key,
-        "method": target.method,
-        "spot_id": target.spot_id,
-        "resource_tile": target.resource,
-        "stand_tile": target.stand,
-        "access": target.access,
-        "region": target.region,
-    });
+    let targets = resource_targets(&selected, &gathering, &world, case)
+        .unwrap_or_else(|error| panic!("select resource destinations: {error}"));
+    receipt["resource_candidates"] = json!(targets.len());
     write_receipt(&receipt_path, &receipt);
 
     let mut client = template
@@ -1132,7 +1111,10 @@ fn run_case(case: EntranceCase) {
     client.draw = false;
     client.maininit();
     assert!(!client.error_loading, "client failed to load");
-    assert!(interact::login(&mut client, &account, &password, false), "local login refused");
+    assert!(
+        interact::login(&mut client, &account, &password, false),
+        "local login refused"
+    );
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
     assert!(
@@ -1145,13 +1127,22 @@ fn run_case(case: EntranceCase) {
 
     interact::mainland_hop(&mut client);
     assert!(interact::cheat(&mut client, "getvar tutorial").is_sent());
-    assert!(wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
-        s.chat_lines()
-            .iter()
-            .any(|line| line.text.contains("get tutorial: 1000"))
-    }), "tutorial skip was not acknowledged");
-    assert!(logout_and_wait(&mut client, &mut snapshot, &mut pump), "tutorial relog-out failed");
-    assert!(interact::login(&mut client, &account, &password, false), "relogin refused");
+    assert!(
+        wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
+            s.chat_lines()
+                .iter()
+                .any(|line| line.text.contains("get tutorial: 1000"))
+        }),
+        "tutorial skip was not acknowledged"
+    );
+    assert!(
+        logout_and_wait(&mut client, &mut snapshot, &mut pump),
+        "tutorial relog-out failed"
+    );
+    assert!(
+        interact::login(&mut client, &account, &password, false),
+        "relogin refused"
+    );
     assert!(
         wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
             s.ingame() && s.attached() && s.scene_state() == 2
@@ -1179,13 +1170,58 @@ fn run_case(case: EntranceCase) {
         "scene_state": snapshot.scene_state(),
     });
     write_receipt(&receipt_path, &receipt);
-    assert!(fresh_account_baseline, "account was not fresh before seeding: {receipt}");
-    assert!(snapshot.quest_statuses_available(), "quest-list observation is unavailable");
+    assert!(
+        fresh_account_baseline,
+        "account was not fresh before seeding: {receipt}"
+    );
+    assert!(
+        snapshot.quest_statuses_available(),
+        "quest-list observation is unavailable"
+    );
+    if case != EntranceCase::GrandTreeMine {
+        // Keep the real NPC danger policy. Seed only account combat stats,
+        // as permitted account state, so it does not mask entrance access.
+        // Engine ClientCheatHandler.ts:472-485 mutates only this player.
+        for skill in [
+            "attack",
+            "defence",
+            "strength",
+            "hitpoints",
+            "ranged",
+            "prayer",
+            "magic",
+        ] {
+            assert!(
+                interact::cheat(&mut client, &format!("setstat {skill} 99")).is_sent(),
+                "combat-stat account seed refused"
+            );
+        }
+        assert!(
+            wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
+                (0..7).all(|index| {
+                    s.stats()
+                        .iter()
+                        .any(|stat| stat.index == index && stat.base == 99 && stat.effective == 99)
+                })
+            }),
+            "actual combat-stat packets did not acknowledge the account seed"
+        );
+        let combat = WorldState::from_snapshot(&snapshot).combat_level;
+        assert_eq!(combat, Some(126), "observed maximum combat account");
+        receipt["combat_seed"] = json!({
+            "combat_level": combat,
+            "observed": snapshot.stats().iter().filter(|stat| stat.index < 7)
+                .map(|stat| (stat.index, stat.base, stat.effective)).collect::<Vec<_>>(),
+        });
+        write_receipt(&receipt_path, &receipt);
+    }
 
     let pre_quest_evidence = quest_evidence(
         &quests,
         family_identity,
-        selected.quest_family_identity().expect("selected quest family"),
+        selected
+            .quest_family_identity()
+            .expect("selected quest family"),
         family,
         &snapshot,
     );
@@ -1206,26 +1242,41 @@ fn run_case(case: EntranceCase) {
             "verdict": format!("{verdict:?}"),
         });
         write_receipt(&receipt_path, &receipt);
-        assert_eq!(verdict, Truth::False, "fresh account did not disprove Grand Tree completion");
+        assert_eq!(
+            verdict,
+            Truth::False,
+            "fresh account did not disprove Grand Tree completion"
+        );
     }
-
-    let quest_menu = complete_entrance_quests(
-        case,
-        &edges,
-        &mut client,
-        &mut snapshot,
-        &mut pump,
-        &quests,
-    )
-    .unwrap_or_else(|error| panic!("prepare entrance quest state: {error}; receipt={receipt}"));
-    receipt["quest_menu"] = json!(quest_menu);
-    write_receipt(&receipt_path, &receipt);
 
     let quest_varp = if let Some((name, value)) = case.quest_varp() {
         let observed = set_quest_varp(&mut client, &mut snapshot, &mut pump, name, value);
         receipt["quest_varp"] = json!({"name":name, "value":value, "observed":observed});
         write_receipt(&receipt_path, &receipt);
-        assert!(observed, "account-local {name}={value} quest varp was not observed");
+        assert!(
+            observed,
+            "account-local {name}={value} quest varp was not observed"
+        );
+        assert!(
+            logout_and_wait(&mut client, &mut snapshot, &mut pump),
+            "quest-seed relog-out failed"
+        );
+        assert!(
+            interact::login(&mut client, &account, &password, false),
+            "quest-seed relog-in failed"
+        );
+        assert!(
+            wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
+                s.ingame()
+                    && s.attached()
+                    && s.scene_state() == 2
+                    && quest_status(&quests, name, s) == Some(QuestListStatus::Complete)
+            }),
+            "relog did not publish actual Complete quest-list evidence for {name}"
+        );
+        receipt["quest_varp"]["observed_status_after_relog"] =
+            json!(format!("{:?}", quest_status(&quests, name, &snapshot)));
+        write_receipt(&receipt_path, &receipt);
         Some(json!({"name":name,"value":value}))
     } else {
         None
@@ -1236,7 +1287,10 @@ fn run_case(case: EntranceCase) {
     }
     for &id in case.required_worn() {
         let item = selected_item(&selected, id);
-        assert!(item.worn_model && item.wear_position >= 0, "kit object {id} is not wearable");
+        assert!(
+            item.worn_model && item.wear_position >= 0,
+            "kit object {id} is not wearable"
+        );
         give_item(&mut client, &mut snapshot, &mut pump, &selected, id, 1);
         wear_item(&mut client, &mut snapshot, &mut pump, id);
     }
@@ -1252,7 +1306,9 @@ fn run_case(case: EntranceCase) {
     let positive_evidence = quest_evidence(
         &quests,
         family_identity,
-        selected.quest_family_identity().expect("selected quest family"),
+        selected
+            .quest_family_identity()
+            .expect("selected quest family"),
         family,
         &snapshot,
     );
@@ -1270,8 +1326,38 @@ fn run_case(case: EntranceCase) {
         }
     }
     let state = state_from_snapshot(&snapshot, profile.map_members(), positive_evidence.clone());
-    let planned = plan_route(&world, case, target.stand, &state)
+    receipt["route_state"] = json!({
+        "inventory": state.inv,
+        "inventory_ready": state.inventory_ready,
+        "worn": state.worn,
+        "equipment_ready": state.equipment_ready,
+        "map_members": state.map_members,
+        "entrance_allowed": edges.iter().map(|(_, edge)| state.allows(edge)).collect::<Vec<_>>(),
+    });
+    let options = route_options(&world, case);
+    receipt["route_options"] = json!({
+        "crossZones": case.cross_zones(),
+        "allow_teleports": options.allow_teleports,
+        "allow_wilderness": options.allow_wilderness,
+        "allow_bank_fetch": options.allow_bank_fetch,
+    });
+    write_receipt(&receipt_path, &receipt);
+    let (target_index, planned) = plan_route(&world, case, &targets, options, &state)
         .unwrap_or_else(|error| panic!("route planning failed: {error}; receipt={receipt}"));
+    let target = targets
+        .into_iter()
+        .nth(target_index)
+        .expect("selected resource candidate");
+    receipt["selected_resource"] = json!({
+        "site_id": target.site_id,
+        "key": target.key,
+        "method": target.method,
+        "spot_id": target.spot_id,
+        "resource_tile": target.resource,
+        "stand_tile": target.stand,
+        "access": target.access,
+        "region": target.region,
+    });
     let provisional_route = json!({
         "start": planned.start,
         "target_resource": target.resource,
@@ -1290,18 +1376,55 @@ fn run_case(case: EntranceCase) {
     let final_evidence = quest_evidence(
         &quests,
         family_identity,
-        selected.quest_family_identity().expect("selected quest family"),
+        selected
+            .quest_family_identity()
+            .expect("selected quest family"),
         family,
         &snapshot,
     );
     let final_state = state_from_snapshot(&snapshot, profile.map_members(), final_evidence.clone());
-    let route = find_route(&world, planned.start, target.stand, &final_state)
-        .unwrap_or_else(|error| panic!("final live-state route failed: {error:?}; receipt={receipt}"));
+    let route = find_route(&world, planned.start, target.stand, options, &final_state)
+        .unwrap_or_else(|error| {
+            panic!("final live-state route failed: {error:?}; receipt={receipt}")
+        });
     let edge = planned_edge(&route, case).expect("final route uses the declared entrance");
-    assert!(edge.quest_req.is_empty(), "planned entrance contains raw quest requirement");
-    assert!(edge.varp_req.is_empty(), "planned entrance contains raw varp requirement");
+    if case == EntranceCase::TaverleyLavaEels {
+        let default_result = find_route(
+            &world,
+            planned.start,
+            target.stand,
+            FindOptions {
+                zones: ZoneExempt::NONE,
+                ..options
+            },
+            &final_state,
+        );
+        let default_refused = matches!(default_result, Err(RouteError::NoPath));
+        receipt["default_danger_policy"] = json!({
+            "combat_level": final_state.combat_level,
+            "result": format!("{default_result:?}"),
+            "no_path": default_refused,
+        });
+        write_receipt(&receipt_path, &receipt);
+        assert!(
+            default_refused,
+            "the named crossing must not alter default danger admission"
+        );
+    }
+    assert!(
+        edge.quest_req.is_empty(),
+        "planned entrance contains raw quest requirement"
+    );
+    assert!(
+        edge.varp_req.is_empty(),
+        "planned entrance contains raw varp requirement"
+    );
     if let Some(gates) = &edge.quest_gates {
-        assert_eq!(gates.family(), &family, "planned entrance uses another quest family");
+        assert_eq!(
+            gates.family(),
+            &family,
+            "planned entrance uses another quest family"
+        );
         for gate in gates.gates() {
             if matches!(gate, QuestGate::Window(_)) {
                 assert_eq!(final_evidence.test(gate), Truth::Unknown);
@@ -1311,7 +1434,9 @@ fn run_case(case: EntranceCase) {
 
     if let Some(required_item) = case.required_item() {
         assert!(
-            edge.item_req.iter().any(|&(id, count)| id == required_item && count > 0),
+            edge.item_req
+                .iter()
+                .any(|&(id, count)| id == required_item && count > 0),
             "planned entrance does not require selected item {required_item}: {edge:?}"
         );
     }
@@ -1320,31 +1445,48 @@ fn run_case(case: EntranceCase) {
         expected.sort_unstable();
         let mut actual = edge.worn_all_req.clone();
         actual.sort_unstable();
-        assert_eq!(actual, expected, "underground entrance must require all three worn kit pieces");
-        assert!(route_moves_beyond_entrance(&route, case), "lower mine resource route must continue beyond the entrance");
+        assert_eq!(
+            actual, expected,
+            "underground entrance must require all three worn kit pieces"
+        );
+        assert!(
+            route_moves_beyond_entrance(&route, case),
+            "lower mine resource route must continue beyond the entrance"
+        );
     }
     if case == EntranceCase::TaverleyLavaEels {
-        assert_eq!(edge.option, 0, "dusty-key door must use its content item-on-loc option");
+        assert_eq!(
+            edge.option, 0,
+            "dusty-key door must use its content item-on-loc option"
+        );
     }
     if case == EntranceCase::DesertMiningCamp {
-        assert!(edge.forbidden_held.contains(&ANA_BARREL_ID), "camp gate must exclude Ana's barrel");
-        assert!(!edge.forbidden_worn.is_empty(), "camp gate must carry its equipment exclusions");
+        assert!(
+            edge.forbidden_held.contains(&ANA_BARREL_ID),
+            "camp gate must exclude Ana's barrel"
+        );
+        assert!(
+            !edge.forbidden_worn.is_empty(),
+            "camp gate must carry its equipment exclusions"
+        );
     }
 
     let missing_result = if case == EntranceCase::GrandTreeMine {
-        let mut missing = final_state.clone().with_quest_evidence(pre_quest_evidence.clone());
+        let mut missing = final_state
+            .clone()
+            .with_quest_evidence(pre_quest_evidence.clone());
         missing.quests.remove("The Grand Tree");
-        find_route(&world, planned.start, target.stand, &missing)
+        find_route(&world, planned.start, target.stand, options, &missing)
     } else if case == EntranceCase::DesertMiningCampUnderground {
         let mut missing = final_state.clone();
         for id in DESERT_KIT_IDS {
             missing.worn.remove(id);
         }
-        find_route(&world, planned.start, target.stand, &missing)
+        find_route(&world, planned.start, target.stand, options, &missing)
     } else if let Some(id) = case.required_item() {
         let mut missing = final_state.clone();
         missing.inv.remove(&id);
-        find_route(&world, planned.start, target.stand, &missing)
+        find_route(&world, planned.start, target.stand, options, &missing)
     } else {
         Err(RouteError::NoPath)
     };
@@ -1358,7 +1500,10 @@ fn run_case(case: EntranceCase) {
     });
     receipt["precondition_no_path"] = json!(precondition_no_path);
     write_receipt(&receipt_path, &receipt);
-    assert!(precondition_no_path, "missing entrance prerequisite still produced a route: {receipt}");
+    assert!(
+        precondition_no_path,
+        "missing entrance prerequisite still produced a route: {receipt}"
+    );
 
     let start_stem = format!("{timestamp}_00-start");
     let end_stem = format!("{timestamp}_01-end");
@@ -1379,8 +1524,18 @@ fn run_case(case: EntranceCase) {
     let mut exclusion_runs = Vec::new();
     if case == EntranceCase::DesertMiningCamp {
         let held_item = selected_item(&selected, ANA_BARREL_ID);
-        assert!(held_item.alias.is_some(), "Ana's barrel has no selected content alias");
-        give_item(&mut client, &mut snapshot, &mut pump, &selected, ANA_BARREL_ID, 1);
+        assert!(
+            held_item.alias.is_some(),
+            "Ana's barrel has no selected content alias"
+        );
+        give_item(
+            &mut client,
+            &mut snapshot,
+            &mut pump,
+            &selected,
+            ANA_BARREL_ID,
+            1,
+        );
         let held_run = drive_route(
             &mut client,
             &mut snapshot,
@@ -1411,22 +1566,49 @@ fn run_case(case: EntranceCase) {
             .as_ref()
             .map(|_| format!("{timestamp}_held-refusal.png"))
             .map_err(Clone::clone));
-        assert!(held_expected, "Traveller did not return the typed held-item refusal: {receipt}");
-        assert!(interact::cheat(&mut client, "clearinv").is_sent(), "clearinv refused");
-        assert!(wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
-            inventory_count(s, ANA_BARREL_ID) == 0 && inventory_count(s, DESERT_KEY_ID) == 0
-        }), "held exclusion item did not clear");
-        give_item(&mut client, &mut snapshot, &mut pump, &selected, DESERT_KEY_ID, 1);
-        assert!(seed_at(&mut client, &mut snapshot, &mut pump, planned.start), "could not reset to camp approach");
+        assert!(
+            held_expected,
+            "Traveller did not return the typed held-item refusal: {receipt}"
+        );
+        assert!(
+            interact::cheat(&mut client, "~clearinv").is_sent(),
+            "inventory debugproc refused"
+        );
+        assert!(
+            wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
+                inventory_count(s, ANA_BARREL_ID) == 0 && inventory_count(s, DESERT_KEY_ID) == 0
+            }),
+            "held exclusion item did not clear"
+        );
+        give_item(
+            &mut client,
+            &mut snapshot,
+            &mut pump,
+            &selected,
+            DESERT_KEY_ID,
+            1,
+        );
+        assert!(
+            seed_at(&mut client, &mut snapshot, &mut pump, planned.start),
+            "could not reset to camp approach"
+        );
 
-        let forbidden_worn = edge
-            .forbidden_worn
-            .iter()
-            .filter_map(|&id| selected.item_by_id(id))
-            .find(|item| item.worn_model && item.wear_position >= 0 && item.alias.is_some())
-            .expect("camp edge has a selected wearable forbidden object");
-        let forbidden_id = forbidden_worn.id;
-        give_item(&mut client, &mut snapshot, &mut pump, &selected, forbidden_id, 1);
+        // A fresh account can wear the bronze sword. Selecting the first
+        // forbidden object can choose Excalibur, whose wear requirement is
+        // unrelated to this entrance proof.
+        let forbidden_id = 1277;
+        assert!(
+            edge.forbidden_worn.contains(&forbidden_id),
+            "the source-derived gate must forbid the bronze sword"
+        );
+        give_item(
+            &mut client,
+            &mut snapshot,
+            &mut pump,
+            &selected,
+            forbidden_id,
+            1,
+        );
         wear_item(&mut client, &mut snapshot, &mut pump, forbidden_id);
         let worn_run = drive_route(
             &mut client,
@@ -1458,7 +1640,10 @@ fn run_case(case: EntranceCase) {
             .as_ref()
             .map(|_| format!("{timestamp}_worn-refusal.png"))
             .map_err(Clone::clone));
-        assert!(worn_expected, "Traveller did not return the typed worn-item refusal: {receipt}");
+        assert!(
+            worn_expected,
+            "Traveller did not return the typed worn-item refusal: {receipt}"
+        );
         assert!(
             matches!(
                 Interactions::new(&snapshot, &mut client).unequip(forbidden_id),
@@ -1466,15 +1651,34 @@ fn run_case(case: EntranceCase) {
             ),
             "normal unequip({forbidden_id}) was refused"
         );
-        assert!(wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
-            equipment_count(s, forbidden_id) == 0
-        }), "forbidden worn object did not leave equipment");
-        assert!(interact::cheat(&mut client, "clearinv").is_sent(), "clearinv refused");
-        assert!(wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
-            inventory_count(s, DESERT_KEY_ID) == 0
-        }), "camp key did not clear");
-        give_item(&mut client, &mut snapshot, &mut pump, &selected, DESERT_KEY_ID, 1);
-        assert!(seed_at(&mut client, &mut snapshot, &mut pump, planned.start), "could not reset to camp approach");
+        assert!(
+            wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
+                equipment_count(s, forbidden_id) == 0
+            }),
+            "forbidden worn object did not leave equipment"
+        );
+        assert!(
+            interact::cheat(&mut client, "~clearinv").is_sent(),
+            "inventory debugproc refused"
+        );
+        assert!(
+            wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
+                inventory_count(s, DESERT_KEY_ID) == 0
+            }),
+            "camp key did not clear"
+        );
+        give_item(
+            &mut client,
+            &mut snapshot,
+            &mut pump,
+            &selected,
+            DESERT_KEY_ID,
+            1,
+        );
+        assert!(
+            seed_at(&mut client, &mut snapshot, &mut pump, planned.start),
+            "could not reset to camp approach"
+        );
     }
 
     let travel = drive_route(
@@ -1485,31 +1689,14 @@ fn run_case(case: EntranceCase) {
         &route,
         Some(&final_evidence),
     );
-    let resource_arrival = matches!(
-        &travel.outcome,
-        Some(TravelOutcome::Arrived { at }) if *at == target.stand
-    );
-    let fresh_tile_progress = travel
-        .progress
-        .iter()
-        .any(|step| step.tick > travel.start_tick && Some(step.tile) != travel.start_tile);
-    let entrance_attempt = travel.attempts.iter().any(|attempt| {
-        attempt.expected_id == edge.loc_id
-            && attempt.actual_id == edge.loc_id
-            && attempt.target == edge.at
-            && attempt.refusal.is_none()
-    });
-    let entrance_crossing = travel.attempts.iter().any(|attempt| {
-        attempt.expected_id == edge.loc_id
-            && attempt.actual_id == edge.loc_id
-            && attempt.target == edge.at
-            && attempt.refusal.is_none()
-            && travel
-                .progress
-                .iter()
-                .any(|step| step.tick > attempt.tick && step.tile == edge.to)
-    });
-    let arrival_scene_ready = snapshot.ingame() && snapshot.attached() && snapshot.scene_state() == 2;
+    let RouteProof {
+        resource_arrival,
+        fresh_tile_progress,
+        entrance_attempt,
+        entrance_crossing,
+    } = route_proof(&travel, target.stand, edge.loc_id, edge.at, edge.to);
+    let arrival_scene_ready =
+        snapshot.ingame() && snapshot.attached() && snapshot.scene_state() == 2;
     receipt["planned_route"] = json!({
         "start": planned.start,
         "target_resource": target.resource,
@@ -1577,16 +1764,43 @@ fn run_case(case: EntranceCase) {
         "tile":snapshot.tile(),
     });
     write_receipt(&receipt_path, &receipt);
-    println!("{}", serde_json::to_string_pretty(&receipt).expect("print receipt"));
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&receipt).expect("print receipt")
+    );
 
-    assert!(resource_arrival, "Traveller did not reach the selected resource stand: {receipt}");
-    assert!(entrance_attempt, "Traveller did not send the selected entrance interaction: {receipt}");
-    assert!(entrance_crossing, "no server-settled progress across the selected entrance: {receipt}");
-    assert!(fresh_tile_progress, "Traveller produced no fresh tile progress: {receipt}");
-    assert!(arrival_scene_ready, "resource arrival scene was not ready: {receipt}");
-    assert!(start_capture.is_ok(), "start capture was not preserved: {receipt}");
-    assert!(end_capture.is_ok(), "end capture was not preserved: {receipt}");
-    assert!(logout_observed, "successful explicit logout was not observed: {receipt}");
+    assert!(
+        resource_arrival,
+        "Traveller did not reach the selected resource stand: {receipt}"
+    );
+    assert!(
+        entrance_attempt,
+        "Traveller did not send the selected entrance interaction: {receipt}"
+    );
+    assert!(
+        entrance_crossing,
+        "no server-settled progress across the selected entrance: {receipt}"
+    );
+    assert!(
+        fresh_tile_progress,
+        "Traveller produced no fresh tile progress: {receipt}"
+    );
+    assert!(
+        arrival_scene_ready,
+        "resource arrival scene was not ready: {receipt}"
+    );
+    assert!(
+        start_capture.is_ok(),
+        "start capture was not preserved: {receipt}"
+    );
+    assert!(
+        end_capture.is_ok(),
+        "end capture was not preserved: {receipt}"
+    );
+    assert!(
+        logout_observed,
+        "successful explicit logout was not observed: {receipt}"
+    );
 }
 
 #[test]
@@ -1611,4 +1825,101 @@ fn live_desert_mining_camp_lower_mine_requires_worn_slave_kit() {
 #[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, BOT_LIVE_NAME_PREFIX=ngte, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_NAV_BUILD=skip, and NAV_GATED_ENTRANCES_EVIDENCE"]
 fn live_taverley_lava_eels_requires_dusty_key() {
     run_case(EntranceCase::TaverleyLavaEels);
+}
+
+#[cfg(test)]
+mod proof_tests {
+    use super::*;
+
+    fn tile(x: i32) -> WorldTile {
+        WorldTile { x, z: 1, level: 0 }
+    }
+
+    fn valid_travel() -> TravelRecord {
+        TravelRecord {
+            outcome: Some(TravelOutcome::Arrived { at: tile(4) }),
+            start_tile: Some(tile(1)),
+            start_tick: 10,
+            final_tile: Some(tile(4)),
+            progress: vec![
+                TileProgress {
+                    tick: 11,
+                    tile: tile(3),
+                },
+                TileProgress {
+                    tick: 12,
+                    tile: tile(4),
+                },
+            ],
+            attempts: vec![TransportAttemptRecord {
+                tick: 10,
+                kind: "Door".into(),
+                expected_id: 7,
+                actual_id: 7,
+                target: tile(2),
+                option: 1,
+                refusal: None,
+                tile_at_attempt: Some(tile(1)),
+            }],
+            events: Vec::new(),
+            legs: Vec::new(),
+        }
+    }
+
+    fn passes(travel: &TravelRecord) -> bool {
+        let proof = route_proof(travel, tile(4), 7, tile(2), tile(3));
+        proof.resource_arrival
+            && proof.fresh_tile_progress
+            && proof.entrance_attempt
+            && proof.entrance_crossing
+    }
+
+    #[test]
+    fn actual_arrival_after_a_matching_entrance_crossing_passes() {
+        assert!(passes(&valid_travel()));
+    }
+
+    #[test]
+    fn no_op_stale_wrong_or_refused_transport_proofs_fail() {
+        let mut missing_arrival = valid_travel();
+        missing_arrival.outcome = None;
+        assert!(!passes(&missing_arrival));
+
+        let mut wrong_destination = valid_travel();
+        wrong_destination.outcome = Some(TravelOutcome::Arrived { at: tile(5) });
+        assert!(!passes(&wrong_destination));
+
+        let mut no_move = valid_travel();
+        no_move.progress.clear();
+        assert!(!passes(&no_move));
+
+        let mut stale_move = valid_travel();
+        stale_move
+            .progress
+            .iter_mut()
+            .for_each(|step| step.tick = 10);
+        assert!(!passes(&stale_move));
+
+        let mut missing_crossing = valid_travel();
+        missing_crossing
+            .progress
+            .retain(|step| step.tile != tile(3));
+        assert!(!passes(&missing_crossing));
+
+        let mut wrong_expected_id = valid_travel();
+        wrong_expected_id.attempts[0].expected_id = 8;
+        assert!(!passes(&wrong_expected_id));
+
+        let mut wrong_actual_id = valid_travel();
+        wrong_actual_id.attempts[0].actual_id = 8;
+        assert!(!passes(&wrong_actual_id));
+
+        let mut wrong_target = valid_travel();
+        wrong_target.attempts[0].target = tile(5);
+        assert!(!passes(&wrong_target));
+
+        let mut refused = valid_travel();
+        refused.attempts[0].refusal = Some("refused".into());
+        assert!(!passes(&refused));
+    }
 }
