@@ -36,8 +36,13 @@ pub const QUEST_COMPLETE_COLOUR: i32 = 0xF800;
 pub struct WorldState {
     /// obj id → stacked count carried (the snapshot's `inv` family).
     pub inv: HashMap<i32, i32>,
+    /// The held inventory has been observed, including empty slots.
+    /// An empty, unobserved map cannot prove an item's absence.
+    pub inventory_ready: bool,
     /// obj ids currently worn (the snapshot's `equipment` family).
     pub worn: HashSet<i32>,
+    /// Equipment has been posted by the server, including an empty set.
+    pub equipment_ready: bool,
     /// BankBudget may satisfy the legacy any-of `worn_req` from positive
     /// counts in its available inventory. Never observed equipment, and
     /// never considered by the strict `worn_all_req` gate.
@@ -63,6 +68,25 @@ pub struct WorldState {
     /// never taken. [`WorldState::from_snapshot`] cannot fill it: the
     /// snapshot's varps and quest list are not stage evidence.
     pub quest_evidence: Option<QuestEvidence>,
+}
+
+/// A content exclusion that the route state cannot prove at an entrance.
+/// These are not bank-fetch requirements: the router never deposits or
+/// unequips an item to make an excluded state acceptable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
+pub enum EntranceRequirement {
+    /// The inventory observation cannot establish absence.
+    #[error("inventory is not observed at entrance {at:?}")]
+    InventoryNotObserved { at: api::WorldTile },
+    /// The equipment observation cannot establish absence.
+    #[error("equipment is not observed at entrance {at:?}")]
+    EquipmentNotObserved { at: api::WorldTile },
+    /// A forbidden item is held.
+    #[error("item {id} must not be carried through entrance {at:?}")]
+    ForbiddenHeld { id: i32, at: api::WorldTile },
+    /// A forbidden item is equipped.
+    #[error("item {id} must not be worn through entrance {at:?}")]
+    ForbiddenWorn { id: i32, at: api::WorldTile },
 }
 
 /// Checked map-capacity accounting for a bounded bank-state update.
@@ -292,7 +316,9 @@ impl WorldState {
             .collect();
         WorldState {
             inv,
+            inventory_ready: s.inventory_size() > 0,
             worn,
+            equipment_ready: s.equipment_posted(),
             stats,
             combat_level,
             varps,
@@ -356,6 +382,22 @@ impl WorldState {
             && self.worn_req_allows(e)
             && self.worn_all_req_allows(e)
     }
+    /// Check every snapshot requirement except the content exclusions.
+    /// Entrance diagnosis uses this predicate to find a route that differs
+    /// from the live state only at an excluded entrance.
+    pub(crate) fn snapshot_allows_ignoring_exclusions(&self, e: &TransportEdge) -> bool {
+        self.fixed_reqs_allow_ignoring_exclusions(e)
+            && e.item_req
+                .iter()
+                .all(|&(id, n)| self.inv.get(&id).is_some_and(|&c| c >= n))
+            && e.consumed_req.iter().all(|&(id, packed_count)| {
+                let carried = self.inv.get(&id).copied().unwrap_or(0);
+                carried >= e.consumption_count(id, packed_count, carried)
+            })
+            && self.worn_req_allows(e)
+            && self.worn_all_req_allows(e)
+    }
+
 
     /// The legacy any-of gate also accepts items explicitly made available
     /// to a BankBudget route probe. `worn_all_req` deliberately does not.
@@ -380,6 +422,66 @@ impl WorldState {
         ids.iter().all(|id| self.worn.contains(id))
     }
 
+    /// The first failed content exclusion, with the actual item and loc
+    /// anchor. Empty requirements need no observation. Positive item gates
+    /// retain their existing semantics.
+    pub fn exclusion_failure(&self, e: &TransportEdge) -> Option<EntranceRequirement> {
+        Self::exclusion_failure_with(
+            e,
+            self.inventory_ready,
+            self.equipment_ready,
+            |id| self.inv.get(&id).is_some_and(|&count| count > 0),
+            |id| self.worn.contains(&id),
+        )
+    }
+
+    /// Recheck the same exclusions against live observations without
+    /// allocating a route-state copy on each traveller poll.
+    pub fn snapshot_exclusion_failure(
+        e: &TransportEdge,
+        snapshot: &GameSnapshot,
+    ) -> Option<EntranceRequirement> {
+        Self::exclusion_failure_with(
+            e,
+            snapshot.inventory_size() > 0,
+            snapshot.equipment_posted(),
+            |id| snapshot.inv().iter().any(|&(obj, count)| obj == id && count > 0),
+            |id| snapshot.equipment().iter().any(|item| item.def.id == id && item.count > 0),
+        )
+    }
+
+    fn exclusion_failure_with(
+        e: &TransportEdge,
+        inventory_ready: bool,
+        equipment_ready: bool,
+        held: impl Fn(i32) -> bool,
+        worn: impl Fn(i32) -> bool,
+    ) -> Option<EntranceRequirement> {
+        if !e.forbidden_held.is_empty() {
+            if !inventory_ready {
+                return Some(EntranceRequirement::InventoryNotObserved { at: e.at });
+            }
+            if let Some(&id) = e.forbidden_held.iter().find(|&&id| held(id)) {
+                return Some(EntranceRequirement::ForbiddenHeld { id, at: e.at });
+            }
+        }
+        if !e.forbidden_worn.is_empty() {
+            if !equipment_ready {
+                return Some(EntranceRequirement::EquipmentNotObserved { at: e.at });
+            }
+            if let Some(&id) = e.forbidden_worn.iter().find(|&&id| worn(id)) {
+                return Some(EntranceRequirement::ForbiddenWorn { id, at: e.at });
+            }
+        }
+        None
+    }
+
+    #[inline(always)]
+    pub(crate) fn exclusions_allow(&self, e: &TransportEdge) -> bool {
+        (e.forbidden_held.is_empty() && e.forbidden_worn.is_empty())
+            || self.exclusion_failure(e).is_none()
+    }
+
     /// Like [`WorldState::allows`] but ignoring the `item_req`/`worn_req`
     /// gates: every other requirement, including `worn_all_req` and
     /// quest-stage gates, still fails closed. This is the BankBudget
@@ -392,14 +494,27 @@ impl WorldState {
             && self.quest_gates(e) == Truth::True
     }
 
-    /// The requirements neither a bank trip nor a journal read can supply:
-    /// membership, skill levels, completed quests and varp thresholds.
-    /// Everything but `item_req`/`worn_req` and the quest-stage gates.
-    // Keep one gate implementation without a nested call in the hot edge
-    // predicate: an ordinary inline hint left it outlined in the bank-target
-    // search, and forcing inlining measured about 1–2% faster there.
+    /// The fixed snapshot requirements neither a bank trip nor a journal
+    /// read can supply, plus the content exclusions. This excludes
+    /// `item_req`/`worn_req` and quest-stage gates.
+    // Keep this strict predicate flat in the hot edge path. Its entrance
+    // diagnosis sibling repeats these checks to omit exclusions.
     #[inline(always)]
     pub(crate) fn fixed_reqs_allow(&self, e: &TransportEdge) -> bool {
+        self.members_ok(e)
+            && e.skill_req
+                .iter()
+                .all(|&(skill, level)| self.stats.get(&skill).is_some_and(|&l| l >= level))
+            && e.quest_req.iter().all(|q| self.quests.contains(q))
+            && e.varp_req
+                .iter()
+                .all(|&(varp, min)| self.varps.get(&varp).is_some_and(|&v| v >= min))
+            && self.exclusions_allow(e)
+    }
+
+    /// The fixed snapshot requirements other than content exclusions.
+    #[inline(always)]
+    pub(crate) fn fixed_reqs_allow_ignoring_exclusions(&self, e: &TransportEdge) -> bool {
         self.members_ok(e)
             && e.skill_req
                 .iter()

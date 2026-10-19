@@ -409,6 +409,8 @@ impl std::fmt::Debug for CompactEdgeDebug<'_> {
                 .field("varp_req", &edge.varp_req)
                 .field("worn_req", &edge.worn_req)
                 .field("worn_all_req", &edge.worn_all_req)
+                .field("forbidden_held", &edge.forbidden_held)
+                .field("forbidden_worn", &edge.forbidden_worn)
                 .field("members_req", &edge.members_req)
                 .field("wildy_cap", &edge.wildy_cap)
                 .field("quest_gates", &edge.quest_gates)
@@ -960,6 +962,13 @@ pub enum SearchRequest {
         avoid: Box<[AvoidRect]>,
         max_settles: usize,
     },
+    EntranceRequirements {
+        from: WorldTile,
+        targets: Box<[WorldTile]>,
+        options: FindOptions,
+        avoid: Box<[AvoidRect]>,
+        max_settles: usize,
+    },
 }
 /// Allocation shape used by router producers before materializing target
 /// arrays. This is an implementation helper, not part of `nav::contract`.
@@ -1006,6 +1015,12 @@ pub enum SearchRequestShape {
         max_settles: usize,
     },
     UnresolvedQuestGates {
+        target_capacity: usize,
+        options: FindOptions,
+        avoid_capacity: usize,
+        max_settles: usize,
+    },
+    EntranceRequirements {
         target_capacity: usize,
         options: FindOptions,
         avoid_capacity: usize,
@@ -1101,6 +1116,18 @@ impl SearchRequestShape {
                 avoid_capacity: avoid.len(),
                 max_settles: *max_settles,
             },
+            SearchRequest::EntranceRequirements {
+                targets,
+                options,
+                avoid,
+                max_settles,
+                ..
+            } => Self::EntranceRequirements {
+                target_capacity: targets.len(),
+                options: *options,
+                avoid_capacity: avoid.len(),
+                max_settles: *max_settles,
+            },
         };
         shape.is_consistent().then_some(shape)
     }
@@ -1124,7 +1151,8 @@ impl SearchRequestShape {
             | Self::First { options, .. }
             | Self::MissingItemReqs { options, .. }
             | Self::BlockingZones { options, .. }
-            | Self::UnresolvedQuestGates { options, .. } => options,
+            | Self::UnresolvedQuestGates { options, .. }
+            | Self::EntranceRequirements { options, .. } => options,
         }
     }
 
@@ -1135,7 +1163,8 @@ impl SearchRequestShape {
             | Self::First { max_settles, .. }
             | Self::MissingItemReqs { max_settles, .. }
             | Self::BlockingZones { max_settles, .. }
-            | Self::UnresolvedQuestGates { max_settles, .. } => max_settles,
+            | Self::UnresolvedQuestGates { max_settles, .. }
+            | Self::EntranceRequirements { max_settles, .. } => max_settles,
             Self::MissingItemReqsForRoute { .. } => 0,
         }
     }
@@ -1263,6 +1292,25 @@ impl SearchRequestShape {
                     && max_settles >= actual_settles
             }
             (
+                Self::EntranceRequirements {
+                    target_capacity,
+                    options,
+                    avoid_capacity,
+                    max_settles,
+                },
+                Self::EntranceRequirements {
+                    target_capacity: actual_targets,
+                    options: actual_options,
+                    avoid_capacity: actual_avoid,
+                    max_settles: actual_settles,
+                },
+            ) => {
+                options == actual_options
+                    && target_capacity >= actual_targets
+                    && avoid_capacity >= actual_avoid
+                    && max_settles >= actual_settles
+            }
+            (
                 Self::MissingItemReqsForRoute {
                     route_bytes,
                     edge_capacity,
@@ -1300,6 +1348,9 @@ impl SearchRequestShape {
             }
             | Self::UnresolvedQuestGates {
                 target_capacity, ..
+            }
+            | Self::EntranceRequirements {
+                target_capacity, ..
             } => Some(target_capacity),
             Self::First {
                 target_capacity,
@@ -1324,6 +1375,11 @@ impl SearchRequestShape {
                 ..
             }
             | Self::UnresolvedQuestGates {
+                target_capacity,
+                avoid_capacity,
+                ..
+            }
+            | Self::EntranceRequirements {
                 target_capacity,
                 avoid_capacity,
                 ..
@@ -1417,9 +1473,9 @@ impl SearchRequest {
             | Self::First { max_settles, .. }
             | Self::MissingItemReqs { max_settles, .. }
             | Self::BlockingZones { max_settles, .. }
-            | Self::UnresolvedQuestGates { max_settles, .. } => *max_settles,
+            | Self::UnresolvedQuestGates { max_settles, .. }
+            | Self::EntranceRequirements { max_settles, .. } => *max_settles,
             Self::MissingItemReqsForRoute { .. } => 0,
-        }
     }
 }
 
@@ -1463,6 +1519,9 @@ pub enum SearchOutcome {
     },
     BlockingZones(Option<Box<[ZoneKey]>>),
     UnresolvedQuestGates(Result<Option<Box<[QuestGate]>>, QuestFamilyMismatch>),
+    /// First real exclusion on the relaxed route, if the route contains one.
+    /// The diagnosis does not return or retain a route.
+    EntranceRequirements(Option<crate::world_state::EntranceRequirement>),
 }
 
 /// A borrowed view of one missing requirement.
@@ -2071,6 +2130,7 @@ fn search_worst_case_reservation(
                 | SearchRequestShape::MissingItemReqs { .. }
                 | SearchRequestShape::BlockingZones { .. }
                 | SearchRequestShape::UnresolvedQuestGates { .. }
+                | SearchRequestShape::EntranceRequirements { .. }
         ) {
         // Each partition and its goal/index arrays reserve their exact input
         // capacities once. A key can contain only IDs from one spatial bucket.
@@ -2123,6 +2183,10 @@ fn search_worst_case_reservation(
         | SearchRequestShape::UnresolvedQuestGates { .. } => {
             target_set_bytes(target_count)?.checked_add(std::mem::size_of::<FirstGoals<'_>>())?
         }
+        SearchRequestShape::EntranceRequirements {
+            target_capacity, ..
+        } => target_set_bytes(target_capacity)?
+            .checked_add(std::mem::size_of::<FirstGoals<'_>>())?,
         _ => 0,
     };
 
@@ -2258,6 +2322,7 @@ fn search_worst_case_reservation(
                 vector_storage_bound::<QuestGate>(max_quest_gates)?,
             )?;
         }
+        SearchRequestShape::EntranceRequirements { .. } => {}
         SearchRequestShape::MissingItemReqsForRoute { .. } => {
             unreachable!("route-only diagnostics return before search reservation")
         }
@@ -2293,7 +2358,8 @@ fn search_worst_case_reservation(
             add_reserved(&mut materialization_phase, route_result_bytes(settles)?)?;
         }
         SearchRequestShape::BlockingZones { .. }
-        | SearchRequestShape::UnresolvedQuestGates { .. } => {
+        | SearchRequestShape::UnresolvedQuestGates { .. }
+        | SearchRequestShape::EntranceRequirements { .. } => {
             add_reserved(&mut materialization_phase, route_result_bytes(settles)?)?;
         }
         SearchRequestShape::Many { .. } | SearchRequestShape::First { .. } => {}
@@ -6793,6 +6859,64 @@ async fn run_search_request(
             .await?;
             (SearchOutcome::UnresolvedQuestGates(gates), settled)
         }
+        SearchRequest::EntranceRequirements {
+            from,
+            targets,
+            options,
+            avoid,
+            max_settles,
+        } => {
+            let search = first_cursor_search(
+                collision,
+                graph,
+                from,
+                &targets,
+                &[],
+                options,
+                &state,
+                Relax::EntranceExclusions,
+                &avoid,
+                FIRST_TARGET_BUDGET.min(max_settles),
+                max_settles,
+                progress,
+            )
+            .await?;
+            let settled = search.settled();
+            let requirement = if let Ok(route) = search.route() {
+                let mut edge_position = 0usize;
+                let mut first_failure = None;
+                for transition in 0..route.transition_count as usize {
+                    work_unit().await;
+                    let tag = route.tag(transition);
+                    if tag != 0 {
+                        if tag == 1 || tag == 2 {
+                            let index = *route
+                                .edge_ids
+                                .get(edge_position)
+                                .ok_or(SearchCursorError::ResultNotRepresentable)?;
+                            let edge = if tag == 1 {
+                                graph.edges.get(index as usize)
+                            } else {
+                                graph.teleports.get(index as usize)
+                            }
+                            .ok_or(SearchCursorError::ResultNotRepresentable)?;
+                            if let Some(failure) = state.exclusion_failure(edge) {
+                                first_failure = Some(failure);
+                                break;
+                            }
+                        }
+                        edge_position += 1;
+                    }
+                }
+                first_failure
+            } else {
+                None
+            };
+            (
+                SearchOutcome::EntranceRequirements(requirement),
+                settled,
+            )
+        }
     };
     match &mut outcome {
         SearchOutcome::Single { route: Ok(route) } => route.retain_lease(lease.clone()),
@@ -7605,10 +7729,11 @@ impl KernelOutcome {
     }
 }
 
-/// The gates a diagnosis search may cross; every routing search is strict.
+/// The gates a search may cross. Routing is strict; each diagnosis relaxes
+/// only the gate family named by that diagnosis.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Relax {
-    /// Every requirement holds, quest-stage gates only when `True`.
+    /// Every requirement holds, including quest-stage gates.
     Strict,
     /// The BankBudget diagnosis ([`find_missing_item_reqs`]): only the
     /// `item_req`/`worn_req` gates are ignored; `worn_all_req` stays strict.
@@ -7616,6 +7741,9 @@ enum Relax {
     /// The quest-evidence diagnosis ([`find_unresolved_quest_gates`]): a
     /// stage gate the evidence leaves `Unknown` is crossed; `False` closes.
     UnknownQuest,
+    /// Entrance diagnosis ignores only held/worn exclusions and their
+    /// observation readiness. Every positive and quest gate stays strict.
+    EntranceExclusions,
     /// Both diagnosis arms' fallback: `item_req`/`worn_req` gates are ignored
     /// and `Unknown` stage gates crossed, so a crossing that needs a fetched
     /// item and a journal read together is visible to each arm. Every other
@@ -7631,6 +7759,10 @@ fn edge_allowed(state: &WorldState, edge: &TransportEdge, relax: Relax) -> bool 
         Relax::UnknownQuest => {
             state.snapshot_allows(edge) && state.quest_gates(edge) != Truth::False
         }
+        Relax::EntranceExclusions => {
+            state.snapshot_allows_ignoring_exclusions(edge)
+                && state.quest_gates(edge) == Truth::True
+        }
         Relax::CarryWornUnknownQuest => {
             state.fixed_reqs_allow(edge)
                 && state.worn_all_req_allows(edge)
@@ -7640,15 +7772,20 @@ fn edge_allowed(state: &WorldState, edge: &TransportEdge, relax: Relax) -> bool 
 }
 
 // Backward reachability is an over-approximation. A charge downgrade can
-// supply a variant absent at departure; only forward resource labels can
-// decide its carried gate. Worn, fixed and quest gates remain exact.
+// supply a variant absent at departure; only forward resource labels decide
+// carried gates. Every gate remains exact except the selected relaxation.
 fn proof_edge_allowed(
     state: &WorldState,
     edge: &TransportEdge,
     relax: Relax,
     inventory_can_grow: bool,
 ) -> bool {
-    if inventory_can_grow && matches!(relax, Relax::Strict | Relax::UnknownQuest) {
+    if inventory_can_grow
+        && matches!(
+            relax,
+            Relax::Strict | Relax::UnknownQuest | Relax::EntranceExclusions
+        )
+    {
         resources::fixed_allowed(state, edge, relax)
     } else {
         edge_allowed(state, edge, relax)
@@ -7664,7 +7801,7 @@ fn prefer_worn_slash_for_web(
     state: &WorldState,
     relax: Relax,
 ) -> bool {
-    if relax != Relax::Strict
+    if !matches!(relax, Relax::Strict | Relax::EntranceExclusions)
         || !edge.is_slashable_web()
         || edge.option != 0
         || edge.item_req.is_empty()
@@ -8213,14 +8350,12 @@ thread_local! {
     static KERNEL_SEARCHES: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
 }
 
-/// The Dijkstra kernel shared by every search shape. `relax` is
-/// [`Relax::Strict`] for every routing search; the diagnosis arms relax
-/// only the carry/wear and `Unknown` stage gates a session can supply, so a
-/// caller can tell what is missing from a skill/quest/varp gate, a `False`
-/// stage gate or a hole in the graph. `budget` caps every
-/// search; within it, `goals` decide at each settled node whether the
-/// search goes on (a first-goal search's sets run their own budgets and
-/// backward proofs).
+/// The Dijkstra kernel shared by every search shape. Ordinary routing uses
+/// `Relax::Strict`. Each diagnosis uses only its declared relaxation. The
+/// entrance diagnosis ignores exclusions and observation readiness while
+/// keeping every positive requirement and quest-stage gate strict. `budget`
+/// caps each search; `goals` decide whether it continues after each settled
+/// node (first-goal searches also bound their goal sets and backward proofs).
 #[allow(clippy::too_many_arguments)]
 async fn search_kernel(
     collision: &WorldCollision,
