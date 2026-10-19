@@ -6591,6 +6591,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host/src/render_head.rs",
+      "owner": "T4"
+    },
+    {
       "path": "crates/host-play/src/script_nav_facade_tests.rs",
       "owner": "T5"
     },

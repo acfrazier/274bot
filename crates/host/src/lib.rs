@@ -7,6 +7,7 @@ pub mod login_queue;
 pub mod performance_profile;
 mod random;
 pub mod render;
+pub mod render_head;
 mod slot;
 mod slot_io;
 
@@ -26,7 +27,8 @@ use auto_run::{auto_run_ready, auto_run_tick, resolve_run_policy, RunPolicy};
 use client::client::{Client, ClientConfig};
 use client::config::{Cache, IfType, IfTypeMut};
 use client::render::backend::{BackendKind, FrameOutput};
-use client::render::Renderer;
+use render::RenderError;
+use render_head::Head;
 use vault::{Profile, ProfileSettings};
 
 pub use capacity::{
@@ -39,6 +41,7 @@ pub use random::{
     detect, is_lamp_skill, CooldownMap, DetectedRandom, Guardian, GuardianLiveContext, RandomClaim,
     RandomKind, RandomStatus,
 };
+pub use render_head::SlotRender;
 pub use slot::{dirty_families, should_emit_tick, DirtyFamilies, DrainResult, Pump};
 pub use slot_io::{
     map_image_to_applet, wake_channel, FrameBuf, InputEv, ManualMoveIntent, MouseOwner, SlotInput,
@@ -235,8 +238,8 @@ impl Host {
     /// tick [`Host::client_tick`] drains input, latches the click, applies
     /// packets in `mainloop`, then runs `observe` before rendering. The panel
     /// can latch draw/focus for this frame while scripts see fresh packets.
-    /// Rendering uses the slot's optional `Renderer` only while `client.draw`
-    /// is on. Dirty snapshot families
+    /// Rendering uses the slot's render head (attached to the process render
+    /// service through `render`) only while `client.draw` is on. Dirty snapshot families
     /// rebuild from [`DrainResult::dirty`] (not `Pump::dirty()` after
     /// drain); think (auto-run) reads energy from the live client field.
     /// The third observe arg is the count of accepted auto-run
@@ -275,7 +278,7 @@ impl Host {
         lamp_auto: Arc<AtomicBool>,
         lamp_skill: Arc<Mutex<String>>,
         input: Option<Arc<SlotInput>>,
-        mailbox: Option<Arc<FrameBuf>>,
+        render: Option<SlotRender>,
         ctl: Option<Arc<SlotPark>>,
         run_policy: ScriptRunPolicy,
         observe: F,
@@ -298,7 +301,7 @@ impl Host {
             random_event_policies,
             None,
             input,
-            mailbox,
+            render,
             ctl,
             run_policy,
             observe,
@@ -320,7 +323,7 @@ impl Host {
         random_event_policies: Arc<Mutex<BTreeMap<String, vault::RandomEventPolicy>>>,
         game_data: Option<Arc<SelectedGameData>>,
         input: Option<Arc<SlotInput>>,
-        mailbox: Option<Arc<FrameBuf>>,
+        render: Option<SlotRender>,
         ctl: Option<Arc<SlotPark>>,
         run_policy: ScriptRunPolicy,
         mut observe: F,
@@ -372,7 +375,7 @@ impl Host {
                     &mut slot,
                     username,
                     input.as_deref(),
-                    mailbox.as_deref(),
+                    render.as_ref(),
                     &mut run_sends,
                     &mut observe,
                     Some(&mut knock as &mut dyn FnMut(&DetectedRandom) -> RandomClaim),
@@ -421,7 +424,7 @@ impl Host {
                 &mut slot,
                 username,
                 input.as_deref(),
-                mailbox.as_deref(),
+                render.as_ref(),
                 &mut run_sends,
                 &mut observe,
                 Some(&mut knock as &mut dyn FnMut(&DetectedRandom) -> RandomClaim),
@@ -452,7 +455,7 @@ impl Host {
         slot: &mut SlotLoop,
         username: &str,
         input: Option<&SlotInput>,
-        mailbox: Option<&FrameBuf>,
+        render: Option<&SlotRender>,
         run_sends: &mut u32,
         observe: &mut F,
         knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
@@ -462,20 +465,21 @@ impl Host {
     {
         let _profile_tick = client::profiling::CLIENT_TICK.start();
         Self::client_frame_observed(
-            client, slot, username, input, mailbox, run_sends, knock, observe,
+            client, slot, username, input, render, run_sends, knock, observe,
         )
     }
 
     /// One 20 ms frame: drain optional input into the shell, latch the
     /// click, run one `mainloop` pass, drain gens, refresh the guardian,
-    /// then render the frame (the slot's optional `Renderer` —
-    /// `client.draw` gates paint; a drawing slot stores `FrameOutput`
-    /// into the optional mailbox, mirroring `Client::run`). A GPU↔CPU switch
-    /// or a memory-mode change at the next login reattaches the renderer
-    /// on the next paint — the slot's `Client` is retained. The panel takes the
-    /// mailbox: `FrameBuf::take` hands the whole `FrameOutput` off (the
-    /// `Texture` binds / reads back at the panel, the `PixMap` packs via
-    /// [`FrameBuf::snapshot`]). `run_sends` is
+    /// then render the frame (the slot's render head — `client.draw` gates
+    /// paint; a drawing slot attaches a head to the process render service
+    /// through `render` and publishes each `FrameOutput` into that slot's
+    /// mailbox, mirroring `Client::run`). A GPU↔CPU switch or a memory-mode
+    /// change at the next login retires the head and attaches a new
+    /// generation on the next paint — the slot's `Client` is retained. The
+    /// panel takes the mailbox: `FrameBuf::take` hands the whole
+    /// `FrameOutput` off (the `Texture` binds / reads back at the panel, the
+    /// `PixMap` packs via [`FrameBuf::snapshot`]). `run_sends` is
     /// overwritten with the slot's running count of accepted auto-run
     /// sends. Returns the [`RandomStatus`] the guardian published this
     /// frame. `knock` is
@@ -489,7 +493,7 @@ impl Host {
         slot: &mut SlotLoop,
         username: &str,
         input: Option<&SlotInput>,
-        mailbox: Option<&FrameBuf>,
+        render: Option<&SlotRender>,
         run_sends: &mut u32,
         knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
     ) -> RandomStatus {
@@ -498,7 +502,7 @@ impl Host {
             slot,
             username,
             input,
-            mailbox,
+            render,
             run_sends,
             knock,
             &mut |_, _, _, _, _| false,
@@ -512,7 +516,7 @@ impl Host {
         slot: &mut SlotLoop,
         username: &str,
         input: Option<&SlotInput>,
-        mailbox: Option<&FrameBuf>,
+        render: Option<&SlotRender>,
         run_sends: &mut u32,
         knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
         observe: &mut F,
@@ -584,14 +588,15 @@ impl Host {
         }
         // Publish actual render demand before the frontend observe hook.
         // A GPU-requested head may have fallen back to CpuPix3D, so the
-        // renderer kind — not the request — controls nav materialization.
+        // head's backend kind — not the request — controls nav
+        // materialization.
         let want_cpu = slot_want_cpu(input);
         client.set_nav_debug_drawable(
             !want_cpu
                 && slot
-                    .renderer
+                    .head
                     .as_ref()
-                    .is_some_and(|renderer| renderer.backend_kind() == BackendKind::Gpu),
+                    .is_some_and(|head| head.backend_kind() == BackendKind::Gpu),
         );
         let t_obs = Instant::now();
         let busy = observe(client, username, *run_sends, &status, &mut slot.run_policy);
@@ -630,33 +635,34 @@ impl Host {
         let title_fast = input.map(|i| i.enabled()).unwrap_or(false) || full_rate;
         // The per-slot CpuPix3D latch and BOT_CPU environment were sampled
         // before observe so the frontend sees current nav-draw demand.
-        // A drawing slot lazily builds its `Renderer` on the first paint
-        // tick; a headless (draw off) slot constructs none and never
-        // enters a draw.
+        // A drawing slot lazily attaches its render head on the first paint
+        // tick; a headless (draw off) slot attaches none and never enters a
+        // draw.
         // Draw off detaches: an unheaded slot must not keep headed data
         // (GPU textures, chrome) around. Cadence skips (1 fps watch, draw
-        // still on) keep the renderer. A head that no longer matches the
-        // slot also detaches: GPU↔CPU switches and next-login memory changes
-        // reattach on the same Client. Compare the head's build request,
-        // not its fallback kind, so a failed GPU init never rebuilds every
-        // frame. A changed request repaints this tick rather than waiting
-        // for the next 1 fps watch bound.
-        let backend_flip = slot.renderer.is_some()
-            && client.draw
-            && (slot.renderer_prefer_cpu != Some(want_cpu)
-                || slot.renderer_lowmem != Some(client.config.lowmem));
+        // still on) keep the head. A head that no longer matches the slot
+        // also detaches: GPU↔CPU switches and next-login memory changes
+        // reattach a new head generation on the same Client. Compare the
+        // head's build request, not its fallback kind, so a failed GPU init
+        // never rebuilds every frame. A changed request repaints this tick
+        // rather than waiting for the next 1 fps watch bound.
+        let backend_flip = client.draw
+            && slot.head.as_ref().is_some_and(|head| {
+                head.prefer_cpu() != want_cpu || head.lowmem() != client.config.lowmem
+            });
         if !client.draw || backend_flip {
-            // Drop any GPU `FrameOutput::Texture` *before* the backend:
-            // the handle's view aliases `GpuBackend.frame_texture`. 49
-            // heads detaching at once (only-render-selected) would
-            // otherwise leave mailboxes / ImGui bound to destroyed
-            // textures.
-            if let Some(mailbox) = mailbox {
-                let _ = mailbox.take();
+            // Retire the head, then drop any GPU `FrameOutput::Texture`
+            // *before* the backend: the handle's view aliases
+            // `GpuBackend.frame_texture`. 49 heads detaching at once
+            // (only-render-selected) would otherwise leave mailboxes / ImGui
+            // bound to destroyed textures.
+            render_head::detach(slot.head.take(), render.map(|render| &**render.output()));
+            if !client.draw {
+                slot.attach_error = None;
+                if let Some(render) = render {
+                    render.output().set_refusal(None);
+                }
             }
-            slot.renderer = None;
-            slot.renderer_prefer_cpu = None;
-            slot.renderer_lowmem = None;
             if backend_flip {
                 slot.raster_last = None;
                 slot.raster_was_on = false;
@@ -703,31 +709,50 @@ impl Host {
         let mut frame: Option<FrameOutput> = None;
         if paint {
             let t_r = std::time::Instant::now();
-            // The head's build request is latched beside it so the detach
-            // check above sees a GPU↔CPU switch or next-login memory change.
-            slot.renderer_prefer_cpu = Some(want_cpu);
-            slot.renderer_lowmem = Some(client.config.lowmem);
-            let renderer = slot.renderer.get_or_insert_with(|| {
-                // A new head owns a blank 512×512 minimap. Dirty the
-                // Client latch (a backend/next-login mode change keeps draw
-                // on, so `set_draw` does not) or `check_minimap` will skip.
-                client.minimap_level = -1;
-                // GPU-first (the host default): the slot's renderer
-                // prefers the wgpu backend, with `CpuBackend` as the
-                // fallback on wgpu init failure (`Renderer::new`
-                // selects, `Renderer::backend_kind` reports). The
-                // preference is process-wide and idempotent, so the
-                // first paint of any slot opts the process in;
-                // `BOT_CPU=1` forces the CPU fidelity path. GPU set-up
-                // blocks on the driver: not time the host kept us waiting.
-                capacity::off_cpu_wait(|| Renderer::new_prefer(client.config.lowmem, !want_cpu))
-            });
-            // `mainredraw` is the fidelity seam: it runs the `check_minimap`
-            // render half (loading splash + minimap image) and
-            // `follow_camera` before dispatching game/title draw.
-            frame = Some(renderer.mainredraw(client));
-            slot.raster_ns = slot.raster_ns.wrapping_add(t_r.elapsed().as_nanos() as u64);
-            slot.paint_n = slot.paint_n.wrapping_add(1);
+            if slot.head.is_none() {
+                if let Some(render) = render {
+                    match Head::attach(render, want_cpu, client.config.lowmem) {
+                        Ok(head) => {
+                            // A new head owns a blank 512×512 minimap. Dirty
+                            // the Client latch (a backend/next-login mode
+                            // change keeps draw on, so `set_draw` does not)
+                            // or `check_minimap` will skip.
+                            client.minimap_level = -1;
+                            slot.head = Some(head);
+                            slot.attach_error = None;
+                        }
+                        // Refused (the head cap is full): no picture this
+                        // paint, shown in the slot's own cell; the next paint
+                        // asks again.
+                        Err(error) => {
+                            if slot.attach_error != Some(error) {
+                                host_log!(
+                                    Category::Lifecycle,
+                                    Level::Warn,
+                                    slot = username,
+                                    "render head not attached: {error}"
+                                );
+                                slot.attach_error = Some(error);
+                            }
+                            render.output().set_refusal(match error {
+                                RenderError::Refused(refusal) => Some(refusal),
+                                _ => None,
+                            });
+                        }
+                    }
+                }
+            }
+            if let Some(head) = slot.head.as_mut() {
+                // `mainredraw` is the fidelity seam: it runs the
+                // `check_minimap` render half (loading splash + minimap
+                // image) and `follow_camera` before dispatching game/title
+                // draw.
+                frame = Some(head.paint(client));
+                slot.raster_ns = slot.raster_ns.wrapping_add(t_r.elapsed().as_nanos() as u64);
+                slot.paint_n = slot.paint_n.wrapping_add(1);
+            } else {
+                slot.skip_n = slot.skip_n.wrapping_add(1);
+            }
         } else {
             slot.skip_n = slot.skip_n.wrapping_add(1);
         }
@@ -771,24 +796,22 @@ impl Host {
                 slot.observe_max_ns = 0;
             }
         }
-        // The whole `FrameOutput` lands in the mailbox, not just the
+        // The whole `FrameOutput` lands in the head's mailbox, not just the
         // packed pixels: the panel takes the `FrameOutput::Texture` (GPU
         // backend) or packs the `PixMap` (CPU backend) at its consume
         // site, and `FrameBuf::snapshot` keeps the CPU packing path for
-        // the tests.
-        if let Some(frame) = frame {
-            if let Some(mailbox) = mailbox {
-                #[cfg(feature = "journal-paint-proof")]
-                mailbox.store_journal_paint(
-                    frame,
-                    JournalPaintStamp {
-                        modal_root: client.main_modal_id,
-                        journal_paint_hidden: client.journal_paint_hidden(),
-                    },
-                );
-                #[cfg(not(feature = "journal-paint-proof"))]
-                mailbox.store(frame);
-            }
+        // the tests. The mailbox accepts it only from its attached head.
+        if let (Some(frame), Some(head)) = (frame, slot.head.as_ref()) {
+            #[cfg(feature = "journal-paint-proof")]
+            head.publish_journal_paint(
+                frame,
+                JournalPaintStamp {
+                    modal_root: client.main_modal_id,
+                    journal_paint_hidden: client.journal_paint_hidden(),
+                },
+            );
+            #[cfg(not(feature = "journal-paint-proof"))]
+            head.publish(frame);
         }
         *run_sends = slot.run_sends;
         (busy, status)
@@ -804,21 +827,21 @@ impl Host {
 /// [`IDLE_PARK_MS`] so a draw toggle still lands, with no renderer. User
 /// input is applied as it arrives, and a Log In made while the owner already
 /// waits to log in is dropped: it asks for nothing new. The owner builds one
-/// when a wait starts and drops it before the pump, with its own renderer,
-/// takes over.
+/// when a wait starts and drops it before the pump, with its own render
+/// head, takes over.
 pub struct TitleWait {
     slot: SlotLoop,
     input: Option<Arc<SlotInput>>,
-    mailbox: Option<Arc<FrameBuf>>,
+    render: Option<SlotRender>,
     last_frame: Option<Instant>,
 }
 
 impl TitleWait {
-    pub fn new(input: Option<Arc<SlotInput>>, mailbox: Option<Arc<FrameBuf>>) -> Self {
+    pub fn new(input: Option<Arc<SlotInput>>, render: Option<SlotRender>) -> Self {
         Self {
             slot: SlotLoop::new(),
             input,
-            mailbox,
+            render,
             last_frame: None,
         }
     }
@@ -856,7 +879,7 @@ impl TitleWait {
             &mut self.slot,
             username,
             input,
-            self.mailbox.as_deref(),
+            self.render.as_ref(),
             &mut run_sends,
             None,
             &mut |c, _, _, _, _| {
@@ -1176,8 +1199,8 @@ fn raster_this_tick(
 }
 
 /// Per-login post-drain state: snapshot, auto-run echo, the full-rate switch,
-/// the random-event guardian, and the optional `Renderer` a drawing slot
-/// owns. The script run policy is supplied by the outer slot thread.
+/// the random-event guardian, and the render head a drawing slot attaches.
+/// The script run policy is supplied by the outer slot thread.
 struct SlotLoop {
     pump: Pump,
     snapshot: GameSnapshot,
@@ -1208,15 +1231,13 @@ struct SlotLoop {
     /// Last status published by the guardian. The 289 idle-timer
     /// interruption consumes this before the next `mainloop` pass.
     guardian_status: RandomStatus,
-    renderer: Option<Renderer>,
-    /// The `prefer_cpu` request the attached head was built with, so a
-    /// GPU↔CPU flip on a live slot is a drop+reattach, not a restart.
-    /// `None` while no head is attached (kept in sync with
-    /// [`SlotLoop::renderer`]).
-    renderer_prefer_cpu: Option<bool>,
-    /// The memory mode this head was built with. A different next-login
-    /// mode rebuilds it before the first paint of that login.
-    renderer_lowmem: Option<bool>,
+    /// The slot's attached render head: its service lease and the backend
+    /// that draws it, with the build request it was made for. `None` while
+    /// draw is off or the attach was refused.
+    head: Option<Head>,
+    /// The last failed attach, logged once until a head attaches or draw
+    /// turns off.
+    attach_error: Option<RenderError>,
     /// `Instant` of the last paint: the watch-only 1 fps decision repaints
     /// when it is ≥1 s old, and a fast title keeps its flame deadline here.
     raster_last: Option<Instant>,
@@ -1287,11 +1308,10 @@ impl SlotLoop {
             lamp_skill,
             guardian: Guardian::new(),
             guardian_status: RandomStatus::default(),
-            renderer: None,
-            renderer_prefer_cpu: None,
+            head: None,
+            attach_error: None,
             random_event_policies,
             game_data: None,
-            renderer_lowmem: None,
             raster_last: None,
             raster_was_on: false,
             #[cfg(test)]

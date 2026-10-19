@@ -308,6 +308,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - The Assign & restart confirmation names the first six bots it stops
   and the first six it starts, and counts the rest ("+N more") beside
   the total for each, instead of listing every name.
+- Render-all draws up to 128 clients at once. A client past that shows
+  "renderer refused: render head cap of 128 is full" in its own tile.
 
 ### TUI
 

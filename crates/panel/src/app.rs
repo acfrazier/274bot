@@ -1472,7 +1472,16 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         let focus = state.session.focus.lock().unwrap();
         (should_draw(&focus), should_capture(&focus))
     };
-    if draw {
+    // A head the render service refused (its cap is full) draws nothing:
+    // say so in this cell instead of showing a stale picture.
+    let refused = draw
+        .then(|| state.session.focused_pixels())
+        .flatten()
+        .and_then(|buf| buf.refusal());
+    if let Some(refusal) = refused {
+        ui.text_disabled(format!("renderer refused: {refusal}"));
+        state.paint.release_canvas(gpu);
+    } else if draw {
         let buf = state.session.focused_pixels();
         // One consumer per `FrameBuf`: `take` moves the stored frame out
         // (a `FrameOutput::Texture` hands its view off once, no Clone),
@@ -5303,12 +5312,22 @@ fn cell_body(
     size: [f32; 2],
     draw: bool,
 ) -> bool {
-    if !draw {
+    // A head the render service refused (its cap is full) draws nothing:
+    // its own cell says so.
+    let refused = draw
+        .then(|| state.session.core.slot_io(name))
+        .flatten()
+        .and_then(|io| io.pixels.refusal());
+    if !draw || refused.is_some() {
         if let Some(tv) = state.views.remove(name) {
             tv.view.dispose(gpu);
         }
         let _id = ui.push_id(name);
-        return ui.selectable_config("renderer off").size(size).build();
+        let label = match refused {
+            Some(refusal) => format!("renderer refused: {refusal}"),
+            None => "renderer off".to_string(),
+        };
+        return ui.selectable_config(&label).size(size).build();
     }
     if !state.views.contains_key(name) {
         state.views.insert(

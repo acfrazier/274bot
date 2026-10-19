@@ -20,12 +20,25 @@ use thiserror::Error;
 
 /// Maximum number of simultaneously attached render heads.
 ///
-/// This is a finite admission ceiling, not a claim that every value up to the
-/// cap has been M3-qualified for GPU resources. T4.4 publishes the supported
-/// headed count and its measured limits before production activation.
-pub const RENDER_HEAD_CAP: usize = 8;
+/// F0 amendment 3: a placeholder ≥ the qualified fleet (Q1 = 100), so no
+/// supported launch refuses a head; T4.4/M3 replaces it with the measured
+/// `N_head_supported`. It is a finite admission ceiling, not a claim that
+/// every value up to the cap has been M3-qualified for GPU resources.
+pub const RENDER_HEAD_CAP: usize = 128;
 
-const NOTICE_BATCH_CAP: usize = RENDER_HEAD_CAP + 4;
+/// Notices one service call may queue. Every call except
+/// [`RenderService::unregister_pump`] publishes at most
+/// [`CALL_NOTICE_BOUND`] (a due expiry, its own transition and one grant),
+/// so the per-call stack batch stays small at any head cap.
+const NOTICE_BATCH_CAP: usize = 4;
+
+/// The most notices a call other than unregister publishes; debug builds
+/// assert it on every push.
+const CALL_NOTICE_BOUND: usize = 3;
+
+/// Unregister retires every attached head in one atomic pass, so its one
+/// batch holds a notice per head.
+const UNREGISTER_NOTICE_CAP: usize = RENDER_HEAD_CAP + 4;
 
 /// A render-head generation, distinct from the slot worker's [`SlotKey`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -827,12 +840,12 @@ impl HeadEntry {
     }
 }
 
-struct NoticeBatch {
-    entries: [Option<PendingNotice>; NOTICE_BATCH_CAP],
+struct NoticeBatch<const N: usize = NOTICE_BATCH_CAP> {
+    entries: [Option<PendingNotice>; N],
     len: usize,
 }
 
-impl NoticeBatch {
+impl<const N: usize> NoticeBatch<N> {
     fn new() -> Self {
         Self {
             entries: std::array::from_fn(|_| None),
@@ -841,9 +854,10 @@ impl NoticeBatch {
     }
 
     fn push(&mut self, notifier: Arc<dyn Notifier>, notice: Notice) {
-        assert!(
-            self.len < NOTICE_BATCH_CAP,
-            "render transition notice bound"
+        assert!(self.len < N, "render transition notice bound");
+        debug_assert!(
+            N > NOTICE_BATCH_CAP || self.len < CALL_NOTICE_BOUND,
+            "a render service call published more than {CALL_NOTICE_BOUND} notices"
         );
         self.entries[self.len] = Some(PendingNotice { notifier, notice });
         self.len += 1;
@@ -929,7 +943,10 @@ fn ensure_publication_capacity(entry: &HeadEntry, publications: u64) -> Result<(
     }
 }
 
-fn publish_entry(entry: &HeadEntry, notices: &mut NoticeBatch) -> Result<(), RenderError> {
+fn publish_entry<const N: usize>(
+    entry: &HeadEntry,
+    notices: &mut NoticeBatch<N>,
+) -> Result<(), RenderError> {
     ensure_publication_capacity(entry, 1)?;
     let capture = CaptureNotice::default();
     entry.cell.publication.publish(entry.snapshot(), &capture)?;
@@ -1345,7 +1362,7 @@ fn release_frame(
 }
 
 fn unregister_pump_inner(service: &Arc<ServiceInner>) -> Result<(), RenderError> {
-    let mut notices = NoticeBatch::new();
+    let mut notices = NoticeBatch::<UNREGISTER_NOTICE_CAP>::new();
     let result = {
         let mut state = lock_unpoisoned(&service.state);
         (|| {
@@ -2153,5 +2170,137 @@ mod tests {
             RenderService::new(Duration::MAX),
             Err(RenderError::DeadlineOverflow)
         ));
+    }
+
+    /// Counts every notice delivered to any head that shares it.
+    #[derive(Default)]
+    struct CountingNotifier(std::sync::atomic::AtomicUsize);
+
+    impl CountingNotifier {
+        fn count(&self) -> usize {
+            self.0.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl Notifier for CountingNotifier {
+        fn notify(&self, _notice: Notice) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// Notices delivered by `call`, checked against the per-call bound.
+    fn notices_of<T>(counter: &CountingNotifier, call: impl FnOnce() -> T) -> (T, usize) {
+        let before = counter.count();
+        let result = call();
+        let published = counter.count() - before;
+        assert!(published <= CALL_NOTICE_BOUND, "{published} notices");
+        (result, published)
+    }
+
+    #[test]
+    fn non_unregister_calls_publish_at_most_three_notices() {
+        let now = clock();
+        let (service, pump) = service(now);
+        let counter = Arc::new(CountingNotifier::default());
+        let shared: Arc<dyn Notifier> = counter.clone();
+        let a = attach(&service, &pump, 301, Arc::clone(&shared));
+        let mut b = attach(&service, &pump, 302, Arc::clone(&shared));
+        let c = attach(&service, &pump, 303, Arc::clone(&shared));
+
+        // request_frame: expire a's grant, publish b Pending, grant b.
+        let (_, published) = notices_of(&counter, || request(&service, &a, now, now));
+        assert_eq!(published, 2, "a Pending, a Granted");
+        let t1 = now + TTL;
+        let (b_grant, published) = notices_of(&counter, || request(&service, &b, t1, t1));
+        assert_eq!(published, 3, "a Expired, b Pending, b Granted");
+        granted(b_grant);
+
+        // try_consume: expire b's grant, grant c, consume c.
+        let (c_wait, published) = notices_of(&counter, || request(&service, &c, t1, t1));
+        assert_eq!(published, 1, "c Pending behind b's live grant");
+        let c_wait = pending(c_wait);
+        let t2 = t1 + TTL;
+        let (frame, published) =
+            notices_of(&counter, || service.try_consume(&c, c_wait, t2).unwrap());
+        assert_eq!(published, 3, "b Expired, c Granted, c Consumed");
+        let (published_scene, published) = notices_of(&counter, || {
+            frame.publish_retained_scene(SceneHandle::from_opaque(9))
+        });
+        assert_eq!(published_scene, Ok(()));
+        assert_eq!(published, 1, "c retained scene");
+
+        // finish: c Idle and the waiting a granted.
+        pending(notices_of(&counter, || request(&service, &a, t2, t2)).0);
+        let (finished, published) = notices_of(&counter, || frame.finish(t2));
+        assert_eq!(finished, Ok(()));
+        assert_eq!(published, 2, "c Idle, a Granted");
+
+        // cancel_request: expire a's grant, cancel b, grant c.
+        pending(notices_of(&counter, || request(&service, &b, t2, t2)).0);
+        pending(notices_of(&counter, || request(&service, &c, t2, t2)).0);
+        let t3 = t2 + TTL;
+        let (cancelled, published) = notices_of(&counter, || service.cancel_request(&b, t3));
+        assert_eq!(cancelled, Ok(()));
+        assert_eq!(published, 3, "a Expired, b Cancelled, c Granted");
+
+        // poll and pump: expire c's grant and grant the oldest waiting head.
+        pending(notices_of(&counter, || request(&service, &a, t3, t3)).0);
+        let t4 = t3 + TTL;
+        let (polled, published) = notices_of(&counter, || service.poll(&a, t4));
+        assert_eq!(polled.unwrap().1.state(), ReservationState::Granted);
+        assert_eq!(published, 2, "c Expired, a Granted");
+        pending(notices_of(&counter, || request(&service, &c, t4, t4)).0);
+        let t5 = t4 + TTL;
+        let (_, published) = notices_of(&counter, || service.pump(&pump, t5).unwrap());
+        assert_eq!(published, 2, "a Expired, c Granted");
+        let (_, published) = notices_of(&counter, || service.set_focused(&a, true, t5).unwrap());
+        assert_eq!(published, 0, "focus changes publish nothing by themselves");
+
+        // retire: expire c's grant, retire b, grant a.
+        pending(notices_of(&counter, || request(&service, &a, t5, t5)).0);
+        pending(notices_of(&counter, || request(&service, &b, t5, t5)).0);
+        let t6 = t5 + TTL;
+        let (retired, published) = notices_of(&counter, || service.retire(&mut b, t6));
+        assert_eq!(retired, Ok(()));
+        assert_eq!(published, 3, "c Expired, b Cancelled, a Granted");
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "published more than 3 notices")]
+    fn a_fourth_notice_in_one_call_trips_the_debug_bound() {
+        let publication = Publication::new(Scope::Slot(slot(304)), 0u8);
+        let capture = CaptureNotice::default();
+        publication.publish(1, &capture).unwrap();
+        let notice = lock_unpoisoned(&capture.0).take().unwrap();
+        let mut batch: NoticeBatch = NoticeBatch::new();
+        for _ in 0..NOTICE_BATCH_CAP {
+            batch.push(Arc::new(NoopNotifier), notice);
+        }
+    }
+
+    #[test]
+    fn unregister_notifies_a_full_head_table_in_one_batch() {
+        let now = clock();
+        let (service, mut pump) = service(now);
+        let counter = Arc::new(CountingNotifier::default());
+        let shared: Arc<dyn Notifier> = counter.clone();
+        let heads: Vec<HeadLease> = (1..=RENDER_HEAD_CAP as u64)
+            .map(|raw| attach(&service, &pump, 400 + raw, Arc::clone(&shared)))
+            .collect();
+        assert_eq!(
+            service
+                .attach(&pump, slot(399), Arc::clone(&shared))
+                .unwrap_err(),
+            RenderError::Refused(RenderRefusal::HeadCap {
+                cap: RENDER_HEAD_CAP
+            })
+        );
+        let before = counter.count();
+        service.unregister_pump(&mut pump).unwrap();
+        assert_eq!(counter.count() - before, RENDER_HEAD_CAP);
+        for head in &heads {
+            assert_eq!(head.snapshot().1.state(), ReservationState::Cancelled);
+        }
     }
 }
