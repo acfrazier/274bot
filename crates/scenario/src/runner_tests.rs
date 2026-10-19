@@ -842,6 +842,15 @@ fn contains_outgoing_ascii(client: &Client, text: &str) -> bool {
         .any(|window| window == text.as_bytes())
 }
 
+fn outgoing_ascii_count(client: &Client, text: &str) -> usize {
+    client
+        .out
+        .data()
+        .windows(text.len())
+        .filter(|window| *window == text.as_bytes())
+        .count()
+}
+
 fn push_system_chat(client: &mut Client, text: &str) {
     client.add_chat(0, text, "");
     client.bump_gens(ServerProt::MESSAGE_GAME);
@@ -856,12 +865,16 @@ fn world_speed_requires_fresh_confirmation_and_resets_after_pass() {
     runner.set_scene_settle(Duration::ZERO);
     let mut client = seeded_client();
 
-    push_system_chat(&mut client, "World speed was changed to 300ms");
+    // An older confirmation of a different rate neither satisfies the step
+    // nor suppresses the requested change.
+    push_system_chat(&mut client, "World speed was changed to 600ms");
     runner.tick(&mut client);
     assert!(contains_outgoing_ascii(&client, "speed 300"));
     assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
     assert!(!contains_outgoing_ascii(&client, "speed 600"));
 
+    // Only a fresh 300 confirmation newer than the command completes the
+    // step; the runner then restores 600 during terminal cleanup.
     push_system_chat(&mut client, "World speed was changed to 300ms");
     runner.tick(&mut client);
     assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
@@ -894,6 +907,53 @@ fn world_speed_resets_after_failed_run() {
         }
         other => panic!("expected failed run after speed reset, got {other:?}"),
     }
+}
+
+#[test]
+fn default_scenario_sends_no_world_speed_command() {
+    let mut runner = ScenarioRunner::new(stat_scenario(0, 10));
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+    runner.tick(&mut client);
+    assert_eq!(
+        client.cheat_packets_sent(),
+        0,
+        "a scenario that asks for no speed sends no cheat"
+    );
+    assert!(!contains_outgoing_ascii(&client, "speed "));
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+}
+
+#[test]
+fn explicit_non_default_tick_sends_exactly_one_world_speed_command() {
+    let mut runner = ScenarioRunner::new(fast_speed_scenario(
+        Proof::WorldSpeedChanged { ms: 300 },
+        10,
+    ));
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+    runner.tick(&mut client);
+    runner.tick(&mut client);
+    assert_eq!(
+        outgoing_ascii_count(&client, "speed 300"),
+        1,
+        "the initial request is sent once, not once per tick"
+    );
+    assert_eq!(outgoing_ascii_count(&client, "speed 600"), 0);
+}
+
+#[test]
+fn explicit_default_tick_on_a_confirmed_600_engine_sends_nothing() {
+    let mut scenario = stat_scenario(0, 10);
+    scenario.settings.nav.engine_speed_ms = Some(600);
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+    push_system_chat(&mut client, "World speed was changed to 600ms");
+    runner.tick(&mut client);
+    assert_eq!(client.cheat_packets_sent(), 0);
+    assert!(!contains_outgoing_ascii(&client, "speed "));
+    assert_eq!(runner.status(), RunnerStatus::Passed);
 }
 
 #[test]

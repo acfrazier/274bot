@@ -388,6 +388,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   They skip finished reachability proofs and unnecessary zone-check futures.
   Routes, search budgets and cancellation checks stay unchanged.
 
+#### Live scenarios
+
+- Live script scenarios no longer send a world-wide `::speed 600` command by
+  default. A scenario sends `::speed` only when it explicitly asks for a
+  different tick, such as `QUESTER_TICK_MS=300` on Engine Q, and a request for
+  the speed the engine's newest confirmation already reports sends nothing.
+  Scenario pass criteria are unchanged.
+
 #### Maps
 
 - Map baking saves progress in batches of 64 tiles. Cancelling or finishing a

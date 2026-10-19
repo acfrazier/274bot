@@ -929,16 +929,19 @@ impl ScenarioRunner {
                 return;
             }
             if !self.engine_speed_sent {
-                if let Some(ms) = self.engine_speed_ms {
-                    match crate::quest_fast::send_tick_speed(client, &self.snapshot, ms) {
-                        Ok(baseline) => {
-                            self.speed_chat_baseline = Some(baseline);
-                            self.log_tick_speed_endpoint(ms);
-                        }
-                        Err(error) => {
-                            self.finish_fail(&error);
-                            return;
-                        }
+                match crate::quest_fast::request_initial_tick_speed(
+                    &self.snapshot,
+                    self.engine_speed_ms,
+                    &mut |cmd| cheat(client, cmd).is_sent(),
+                ) {
+                    Ok(Some((ms, baseline))) => {
+                        self.speed_chat_baseline = Some(baseline);
+                        self.log_tick_speed_endpoint(ms);
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        self.finish_fail(&error);
+                        return;
                     }
                 }
                 self.engine_speed_sent = true;
