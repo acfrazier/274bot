@@ -1736,6 +1736,28 @@ those approach endpoints directly.
   `takeAnchor()` returns the anchor the stalled run latched; an unused hint
   clears once the new `onStart` succeeds.
 
+## Game messages (compat v1)
+
+Posted type 0 host chat lines and public `record(text)` calls enter one history.
+The history retains at most 64 original `{ seq, text }` objects per script context.
+Its sequence increases for each record, including repeated text, even after older records leave the history.
+
+`mark()` returns the current history sequence. `since(mark)` returns original
+history objects whose sequence exceeds `mark`, oldest first. Each call creates
+a new result array, not new message objects. `sawSince(mark, pattern)` searches
+the same history. `firstSince(mark, pattern)` returns its first matching original
+object. Pattern matching resets `lastIndex` before each test.
+
+`recent(limit)` returns original history objects newest first, with a default
+limit of eight. `reset()` clears history and resets its sequence to zero.
+It does not replay previously ingested host lines. Session resets also clear
+the host-ingestion cursor. Omitted chat pages do not add duplicate records.
+Host ingestion excludes nonzero message types. The posted rows do not identify
+their source packet, so ingestion cannot distinguish local type 0 notices
+(such as examine text) from `MESSAGE_GAME` lines. Frozen rs2b0t records only
+type 0 lines received through `MESSAGE_GAME`. This is a remaining ingestion
+limit, not a full match of the frozen host's recording gate.
+
 ## Bank item ops (compat v1)
 
 `Bank` transfers are Rust families on the shared transfer kernel
@@ -1767,6 +1789,21 @@ flight settles false (a deposit loop does nothing).
 
 NativeApi v2 scripts can use `withdraw-x` with the number of free inventory
 slots, or compatibility `Bank.withdrawLoad(name)`.
+
+## Entity wrappers and queries (compat v1)
+
+`Npcs`, `Locs`, `Players` and `GroundItems` select and rank from the decoded
+Rust scene. Native filters do not read the mutable public snapshot arrays.
+The adapter pairs each category with its original row objects after the whole
+snapshot materializes successfully. Omitted delta pages keep their last pair.
+A failed materialization cannot publish new native facts to those queries.
+
+Wrappers retain the original public `snap` object. Their getters observe edits
+to that object, as the compatibility API requires. Such edits do not change
+production selection, built-in filters, nearest ranking, validity or targeting.
+`EntityQuery.fromSnapshots` remains caller-driven and preserves supplier,
+wrapper, predicate, getter, public-override and thrown-value behavior.
+Interactions keep the existing selected-identity checks and host queue.
 
 ## Hard no
 
