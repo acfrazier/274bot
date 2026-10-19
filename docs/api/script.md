@@ -1736,6 +1736,24 @@ those approach endpoints directly.
   `takeAnchor()` returns the anchor the stalled run latched; an unused hint
   clears once the new `onStart` succeeds.
 
+## Game messages (compat v1)
+
+`GameMessages.since(mark)` returns fresh `{ seq, text }` copies of messages
+whose sequence is greater than `mark` on the current posted chat page. Results
+keep page order, newest first. Each call creates new DTOs. Changing a returned
+DTO does not change a later result. Messages retained only in history, including
+manual `record` calls and messages from older pages, are not included.
+
+This intentionally differs from frozen rs2b0t: its `since` reads the retained
+64-record history, returns the original DTO references, and orders them oldest
+first. The operator ruling of 2026-10-19 keeps 274bot's newest-first copies.
+
+`mark` and `sawSince` also read only the current posted page. The separate
+history methods are `record`, `firstSince`, `recent` and `reset`. History uses
+its own sequence numbers. `firstSince` returns an original matching history DTO;
+`recent(limit)` returns original history DTOs newest first, with a default limit
+of eight. Do not treat a posted-page mark as the history sequence counter.
+
 ## Bank item ops (compat v1)
 
 `Bank` transfers are Rust families on the shared transfer kernel
