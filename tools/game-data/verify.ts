@@ -9,7 +9,7 @@ import { parseCombatScripts } from './extractors/combat.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import { extractGatheringFamily, compareCodepoint, gatherResources, gatherSites, hiddenSitesRecord, HIDDEN_SITES_FILE, miningHazards, SITE_OVERRIDES, type GatherSiteWire } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
-import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs, requireEnvPath, BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION, baseProvenanceInputs } from './generate.ts';
+import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs, requireEnvPath, BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION, QUESTS_SCHEMA, baseProvenanceInputs } from './generate.ts';
 import { ENGINE_DEBUG_COMMANDS, extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
 import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
 import { extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
@@ -492,8 +492,9 @@ async function verifyRevision(revision: number) {
     }
     if (payload.gather_methods !== undefined || payload.gather_placements !== undefined || payload.provenance.placement_inputs !== undefined) throw new Error(`${revision}: gathering facts live in the gathering family, not the core asset`);
     const gathering = extractGatheringFamily(pin.contentRoot);
+    const upstream = familyInputs(spec, pinnedCommits);
     const familyFile = path.join(root, `crates/api/data/game-data/${revision}/gathering.json`);
-    if (!fs.readFileSync(familyFile).equals(Buffer.from(familyBytes(familyInputs(spec, pinnedCommits), gathering, 'gathering')))) throw new Error(`${revision}: gathering family differs from the writer extract`);
+    if (!fs.readFileSync(familyFile).equals(Buffer.from(familyBytes(upstream, gathering, 'gathering')))) throw new Error(`${revision}: gathering family differs from the writer extract`);
     assertEqual(JSON.stringify(manifestRow.families?.gathering), JSON.stringify({ path: `${revision}/gathering.json`, schema: gathering.schema, ...digest(familyFile) }), `${revision} manifest gathering descriptor`);
     assertEqual(JSON.stringify(manifestRow.gathering), JSON.stringify(gathering.summary), `${revision} manifest gathering summary`);
     assertEqual(JSON.stringify(payload.mining_hazards), JSON.stringify(miningHazards(gathering.payload)), `${revision} core mining_hazards is the family's hazard slice`);
@@ -564,6 +565,11 @@ async function verifyRevision(revision: number) {
     if (payload.quest_prereqs !== undefined) throw new Error(`${revision}: quest_prereqs is not a second field`);
     const extractedQuest = extractQuestIdentityFacts(pin.contentRoot, revision);
     assertEqual(JSON.stringify(questIdentity), JSON.stringify(extractedQuest), `${revision} quest_identity matches the writer extract`);
+    const questsFile = path.join(root, `crates/api/data/game-data/${revision}/quests.json`);
+    const questsDraft = { schema: QUESTS_SCHEMA, payload: extractedQuest };
+    assertEqual(JSON.stringify(Object.keys(questsDraft.payload).sort()), JSON.stringify(['coverage', 'rows']), `${revision} quests family is identity rows plus coverage only`);
+    if (!fs.readFileSync(questsFile).equals(Buffer.from(familyBytes(upstream, questsDraft, 'quests')))) throw new Error(`${revision}: quests family differs from the writer extract`);
+    assertEqual(JSON.stringify(manifestRow.families?.quests), JSON.stringify({ path: `${revision}/quests.json`, schema: QUESTS_SCHEMA, ...digest(questsFile) }), `${revision} manifest quests descriptor`);
     if (revision === 289 && payload.quest_starts === undefined) throw new Error(`${revision}: quest_starts family missing`);
     if (payload.quest_starts !== undefined) {
         const questStarts = payload.quest_starts;
