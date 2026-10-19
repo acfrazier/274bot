@@ -1389,9 +1389,7 @@ fn bank_nearest_two_prompts_stay_ordered_and_invoke_once() {
         id,
         NativeKind::BankNearest,
         0,
-        1,
-        "deposit",
-        &serde_json::json!(["Feather"]),
+        (1, "deposit", &serde_json::json!(["Feather"])),
     );
     let first = iso.drain_seat_batches();
     assert_eq!(
@@ -1418,9 +1416,7 @@ fn bank_nearest_two_prompts_stay_ordered_and_invoke_once() {
         id,
         NativeKind::BankNearest,
         0,
-        1,
-        "deposit",
-        &serde_json::json!(["Feather"]),
+        (1, "deposit", &serde_json::json!(["Feather"])),
     );
     let repeated = iso.drain_seat_batches();
     assert_eq!(
@@ -1445,9 +1441,7 @@ fn bank_nearest_two_prompts_stay_ordered_and_invoke_once() {
         id,
         NativeKind::BankNearest,
         1,
-        2,
-        "afterDeposit",
-        &serde_json::json!(["Feather"]),
+        (2, "afterDeposit", &serde_json::json!(["Feather"])),
     );
     let waiting = iso.drain_seat_batches();
     assert!(
@@ -1466,9 +1460,7 @@ fn bank_nearest_two_prompts_stay_ordered_and_invoke_once() {
         id,
         NativeKind::BankNearest,
         1,
-        2,
-        "afterDeposit",
-        &serde_json::json!(["Feather"]),
+        (2, "afterDeposit", &serde_json::json!(["Feather"])),
     );
     let waiting = iso.drain_seat_batches();
     assert!(
@@ -1488,9 +1480,7 @@ fn bank_nearest_two_prompts_stay_ordered_and_invoke_once() {
         id,
         NativeKind::BankNearest,
         1,
-        2,
-        "afterDeposit",
-        &serde_json::json!(["Feather"]),
+        (2, "afterDeposit", &serde_json::json!(["Feather"])),
     );
     let completed = iso.drain_seat_batches();
     assert_eq!(
@@ -1620,9 +1610,7 @@ fn exercise_bank_sync_prompt(
         id,
         kind,
         0,
-        1,
-        member,
-        &serde_json::json!(["bank-prompt"]),
+        (1, member, &serde_json::json!(["bank-prompt"])),
     );
     let value_batches = iso.drain_seat_batches();
     assert_eq!(
@@ -1634,7 +1622,11 @@ fn exercise_bank_sync_prompt(
         .iter()
         .flat_map(|batch| &batch.batch.decisions)
         .collect();
-    assert_eq!(value_decisions.len(), 1, "{family}/{member}: {value_batches:?}");
+    assert_eq!(
+        value_decisions.len(),
+        1,
+        "{family}/{member}: {value_batches:?}"
+    );
     assert_eq!(value_decisions[0].of, id);
     assert_eq!(value_decisions[0].sequence, DecisionSequence::FIRST);
     assert_eq!(
@@ -1652,9 +1644,7 @@ fn exercise_bank_sync_prompt(
         id,
         kind,
         0,
-        1,
-        member,
-        &serde_json::json!(["bank-prompt"]),
+        (1, member, &serde_json::json!(["bank-prompt"])),
     );
     let repeated_batches = iso.drain_seat_batches();
     assert_eq!(
@@ -1679,17 +1669,12 @@ fn exercise_bank_sync_prompt(
         id,
         kind,
         1,
-        2,
-        member,
-        &serde_json::json!(["bank-prompt"]),
+        (2, member, &serde_json::json!(["bank-prompt"])),
     );
     let promise_batches = iso.drain_seat_batches();
     assert_eq!(
         iso.probe("globalThis.__calls").unwrap(),
-        serde_json::json!([
-            [member, ["bank-prompt"]],
-            [member, ["bank-prompt"]],
-        ])
+        serde_json::json!([[member, ["bank-prompt"]], [member, ["bank-prompt"]],])
     );
     let promise_decisions: Vec<_> = promise_batches
         .iter()
@@ -1722,9 +1707,7 @@ fn exercise_bank_sync_prompt(
         id,
         kind,
         2,
-        3,
-        member,
-        &serde_json::json!(["bank-prompt"]),
+        (3, member, &serde_json::json!(["bank-prompt"])),
     );
     let thrown_batches = iso.drain_seat_batches();
     assert_eq!(
@@ -2349,9 +2332,7 @@ fn post_bank_prompt_page(
     id: api::identity::RequestId,
     kind: crate::native::request::NativeKind,
     decisions_consumed: u32,
-    sequence: u32,
-    point: &str,
-    args: &serde_json::Value,
+    (sequence, point, args): (u32, &str, &serde_json::Value),
 ) {
     use api::script_contract::{ChildOrigin, DecisionSequence};
 

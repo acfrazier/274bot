@@ -40,14 +40,27 @@ fn post_snapshot_delta_native(
     last: &mut Option<SnapshotFingerprint>,
     input: &SnapshotInput<'_>,
 ) {
-    let (bytes, next) =
-        encoder.encode_snapshot_delta_with_native(last.as_ref(), input, NativeFactsInput::default(), false);
+    let (bytes, next) = encoder.encode_snapshot_delta_with_native(
+        last.as_ref(),
+        input,
+        NativeFactsInput::default(),
+        false,
+    );
     *last = Some(next);
     slot.post_snapshot_bytes(bytes, input, NativeFactsInput::default());
 }
 
-fn tick(slot: &mut BankSlot, n: u64) {
-    slot.tick_posted(n);
+fn tick(slot: &mut BankSlot, n: u64, input: &SnapshotInput<'_>) {
+    slot.tick_posted_with_frames(
+        n,
+        input,
+        NativeFactsInput {
+            bank_snapshot_generation: (input.bank_generation != 0).then(|| {
+                i64::try_from(input.bank_generation).expect("fixture packet generation fits i64")
+            }),
+            ..Default::default()
+        },
+    );
 }
 
 fn one_action(slot: &mut BankSlot, message: &str) -> HostAction {
@@ -265,10 +278,6 @@ fn tile(x: i32, z: i32) -> TileInput {
     TileInput { x, z, level: 0 }
 }
 
-fn tick(slot: &mut BankSlot, n: u64) {
-    slot.tick_posted(n);
-}
-
 const OPEN_NEAREST: &str = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
@@ -312,18 +321,6 @@ fn east_booth<'a>(actions: &'a [String]) -> SceneEntityInput<'a> {
     loc_row(2213, Some("Bank booth"), 3011, 3354, 2, actions)
 }
 
-fn named_open_booth() -> InteractReq {
-    InteractReq::OpenBooth {
-        x: 3011,
-        z: 3354,
-        level: 0,
-        id: 2213,
-        name: Some("Bank booth".into()),
-        action: Some("Use-quickly".into()),
-    }
-}
-
-
 #[test]
 fn named_open_nearest_from_chebyshev_2_queues_walk_near_then_same_named_open_booth() {
     let mut slot = spawn(OPEN_NEAREST);
@@ -334,32 +331,45 @@ fn named_open_nearest_from_chebyshev_2_queues_walk_near_then_same_named_open_boo
     snap.locs = &locs;
     snap.reach = reach.view();
     post_snapshot_native(&mut slot, &snap);
-    tick(&mut slot, 1);
+    tick(&mut slot, 1, &snap);
     assert_eq!(slot.probe("__ok").unwrap(), serde_json::Value::Null);
-    let walk = one_action(&mut slot, "Chebyshev 2 must walk to the producer destination");
+    let walk = one_action(
+        &mut slot,
+        "Chebyshev 2 must walk to the producer destination",
+    );
     let HostEffect::Walk(request) = &walk.effect else {
-        panic!("expected native walk, got {:?}", walk.effect);
+        panic!("expected native walk");
     };
-    assert_eq!(request.target, WorldTile { x: 3011, z: 3353, level: 0 });
+    assert_eq!(
+        request.target,
+        WorldTile {
+            x: 3011,
+            z: 3353,
+            level: 0
+        }
+    );
     assert_eq!(request.radius, 0);
     accept_walk(&mut slot, &walk, 1);
 
     snap.tick = 2;
     snap.here = Some(tile(3011, 3353));
     post_snapshot_native(&mut slot, &snap);
-    tick(&mut slot, 2);
+    tick(&mut slot, 2, &snap);
     let open = one_action(&mut slot, "the selected booth must open after arrival");
-    assert!(matches!(
-        &open.effect,
-        HostEffect::Interaction(InteractReq::OpenBooth {
-            x: 3011,
-            z: 3354,
-            level: 0,
-            id: 2213,
-            name: Some(name),
-            action: Some(action),
-        }) if name == "Bank booth" && action == "Use-quickly"
-    ), "click must reuse the same id/name/action/tile, not a later nearest");
+    assert!(
+        matches!(
+            &open.effect,
+            HostEffect::Interaction(InteractReq::OpenBooth {
+                x: 3011,
+                z: 3354,
+                level: 0,
+                id: 2213,
+                name: Some(name),
+                action: Some(action),
+            }) if name == "Bank booth" && action == "Use-quickly"
+        ),
+        "click must reuse the same id/name/action/tile, not a later nearest"
+    );
     slot.stop();
 }
 
@@ -384,8 +394,11 @@ fn native_bank_open_does_not_roundtrip_js_snapshot_collections() {
     )
     .unwrap();
 
-    tick(&mut slot, 1);
-    let walk = one_action(&mut slot, "native bank open must read GameSnapshot, not JS collections");
+    tick(&mut slot, 1, &snap);
+    let walk = one_action(
+        &mut slot,
+        "native bank open must read GameSnapshot, not JS collections",
+    );
     assert!(matches!(
         &walk.effect,
         HostEffect::Walk(request)
@@ -406,13 +419,16 @@ fn named_open_nearest_from_chebyshev_1_queues_named_open_booth_only() {
     snap.locs = &locs;
     snap.reach = reach.view();
     post_snapshot_native(&mut slot, &snap);
-    tick(&mut slot, 1);
+    tick(&mut slot, 1, &snap);
     let open = one_action(&mut slot, "an operable booth must not start a walk");
-    assert!(matches!(
-        &open.effect,
-        HostEffect::Interaction(InteractReq::OpenBooth { id: 2213, name: Some(name), action: Some(op), .. })
-            if name == "Bank booth" && op == "Use-quickly"
-    ), "projected can_operate must not walk");
+    assert!(
+        matches!(
+            &open.effect,
+            HostEffect::Interaction(InteractReq::OpenBooth { id: 2213, name: Some(name), action: Some(op), .. })
+                if name == "Bank booth" && op == "Use-quickly"
+        ),
+        "projected can_operate must not walk"
+    );
     slot.stop();
 }
 
@@ -426,7 +442,7 @@ fn named_open_nearest_missing_loc_after_approach_sends_no_click() {
     snap.locs = &locs;
     snap.reach = reach.view();
     post_snapshot_native(&mut slot, &snap);
-    tick(&mut slot, 1);
+    tick(&mut slot, 1, &snap);
     let walk = one_action(&mut slot, "first approach the selected booth");
     assert!(matches!(&walk.effect, HostEffect::Walk(_)));
     accept_walk(&mut slot, &walk, 1);
@@ -436,8 +452,11 @@ fn named_open_nearest_missing_loc_after_approach_sends_no_click() {
     snap.here = Some(tile(3011, 3353));
     snap.locs = &empty;
     post_snapshot_native(&mut slot, &snap);
-    tick(&mut slot, 2);
-    assert!(slot.take_actions().is_empty(), "missing loc must not invent a click");
+    tick(&mut slot, 2, &snap);
+    assert!(
+        slot.take_actions().is_empty(),
+        "missing loc must not invent a click"
+    );
     assert_eq!(slot.probe("__ok").unwrap(), false);
     slot.stop();
 }
@@ -452,7 +471,7 @@ fn named_open_nearest_replaced_loc_after_approach_sends_no_click() {
     snap.locs = &locs;
     snap.reach = reach.view();
     post_snapshot_native(&mut slot, &snap);
-    tick(&mut slot, 1);
+    tick(&mut slot, 1, &snap);
     let walk = one_action(&mut slot, "first approach the selected booth");
     assert!(matches!(&walk.effect, HostEffect::Walk(_)));
     accept_walk(&mut slot, &walk, 1);
@@ -465,7 +484,7 @@ fn named_open_nearest_replaced_loc_after_approach_sends_no_click() {
     snap.here = Some(tile(3011, 3353));
     snap.locs = &replaced;
     post_snapshot_native(&mut slot, &snap);
-    tick(&mut slot, 2);
+    tick(&mut slot, 2, &snap);
     assert!(
         slot.take_actions().is_empty(),
         "replaced id or a later matching booth must not receive the click"
@@ -473,7 +492,6 @@ fn named_open_nearest_replaced_loc_after_approach_sends_no_click() {
     assert_eq!(slot.probe("__ok").unwrap(), false);
     slot.stop();
 }
-
 
 #[test]
 fn unnamed_banking_open_continues_through_omitted_locs_to_fresh_bank() {
@@ -495,31 +513,47 @@ fn unnamed_banking_open_continues_through_omitted_locs_to_fresh_bank() {
     let mut encoder = IsolateBuf::new();
     let mut last = None;
     post_snapshot_delta_native(&mut slot, &mut encoder, &mut last, &snap);
-    tick(&mut slot, 1);
-    let walk = one_action(&mut slot, "unnamed banking must approach the observed booth");
+    tick(&mut slot, 1, &snap);
+    let walk = one_action(
+        &mut slot,
+        "unnamed banking must approach the observed booth",
+    );
     let HostEffect::Walk(request) = &walk.effect else {
-        panic!("expected booth walk, got {:?}", walk.effect);
+        panic!("expected booth walk");
     };
-    assert_eq!(request.target, WorldTile { x: 200, z: 100, level: 0 });
+    assert_eq!(
+        request.target,
+        WorldTile {
+            x: 200,
+            z: 100,
+            level: 0
+        }
+    );
     assert_eq!(request.radius, 1);
     accept_walk(&mut slot, &walk, 1);
 
     snap.tick = 2;
     snap.here = Some(tile(199, 100));
     post_snapshot_delta_native(&mut slot, &mut encoder, &mut last, &snap);
-    tick(&mut slot, 2);
-    let open = one_action(&mut slot, "omitted locs delta must preserve the selected booth");
-    assert!(matches!(
-        &open.effect,
-        HostEffect::Interaction(InteractReq::OpenBooth {
-            x: 200,
-            z: 100,
-            level: 0,
-            id: 2213,
-            name: None,
-            action: None,
-        })
-    ), "unnamed continuation must reuse the selected id/tile without inventing name/action");
+    tick(&mut slot, 2, &snap);
+    let open = one_action(
+        &mut slot,
+        "omitted locs delta must preserve the selected booth",
+    );
+    assert!(
+        matches!(
+            &open.effect,
+            HostEffect::Interaction(InteractReq::OpenBooth {
+                x: 200,
+                z: 100,
+                level: 0,
+                id: 2213,
+                name: None,
+                action: None,
+            })
+        ),
+        "unnamed continuation must reuse the selected id/tile without inventing name/action"
+    );
     accept_interaction(&mut slot, &open, 2);
 
     snap.tick = 3;
@@ -533,7 +567,7 @@ fn unnamed_banking_open_continues_through_omitted_locs_to_fresh_bank() {
             ..Default::default()
         },
     );
-    tick(&mut slot, 3);
+    tick(&mut slot, 3, &snap);
     assert_eq!(slot.probe("__ok").unwrap(), true);
     slot.stop();
 }
@@ -563,21 +597,31 @@ export default class T extends LoopingBot {
     snap.locs = &locs;
     snap.reach = reach.view();
     post_snapshot_native(&mut slot, &snap);
-    tick(&mut slot, 1);
+    tick(&mut slot, 1, &snap);
     assert_eq!(slot.probe("globalThis.__first").unwrap(), false);
-    assert_eq!(slot.probe("globalThis.__second ?? null").unwrap(), serde_json::Value::Null);
+    assert_eq!(
+        slot.probe("globalThis.__second ?? null").unwrap(),
+        serde_json::Value::Null
+    );
     let walk = one_action(&mut slot, "only the current open may own the walk");
     let HostEffect::Walk(request) = &walk.effect else {
-        panic!("expected active native walk, got {:?}", walk.effect);
+        panic!("expected active native walk");
     };
-    assert_eq!(request.target, WorldTile { x: 3011, z: 3353, level: 0 });
+    assert_eq!(
+        request.target,
+        WorldTile {
+            x: 3011,
+            z: 3353,
+            level: 0
+        }
+    );
     assert_eq!(request.radius, 0);
     accept_walk(&mut slot, &walk, 1);
 
     snap.tick = 2;
     snap.here = Some(tile(3011, 3353));
     post_snapshot_native(&mut slot, &snap);
-    tick(&mut slot, 2);
+    tick(&mut slot, 2, &snap);
     let open = one_action(&mut slot, "the active open must click its selected booth");
     assert!(matches!(
         &open.effect,
@@ -596,7 +640,7 @@ export default class T extends LoopingBot {
             ..Default::default()
         },
     );
-    tick(&mut slot, 3);
+    tick(&mut slot, 3, &snap);
     assert_eq!(slot.probe("globalThis.__second").unwrap(), true);
     assert_eq!(slot.probe("globalThis.__first").unwrap(), false);
     assert!(slot.take_actions().is_empty());
@@ -613,7 +657,7 @@ fn named_open_nearest_completes_on_fresh_generation_not_queued_click() {
     snap.locs = &locs;
     snap.reach = reach.view();
     post_snapshot_native(&mut slot, &snap);
-    tick(&mut slot, 1);
+    tick(&mut slot, 1, &snap);
     assert_eq!(slot.probe("__ok").unwrap(), serde_json::Value::Null);
     let open = one_action(&mut slot, "named open must post the selected booth click");
     assert!(matches!(
@@ -633,9 +677,12 @@ fn named_open_nearest_completes_on_fresh_generation_not_queued_click() {
             ..Default::default()
         },
     );
-    tick(&mut slot, 2);
+    tick(&mut slot, 2, &snap);
     assert_eq!(slot.probe("__ok").unwrap(), serde_json::Value::Null);
-    assert!(slot.take_actions().is_empty(), "open without loaded stock is not ready");
+    assert!(
+        slot.take_actions().is_empty(),
+        "open without loaded stock is not ready"
+    );
 
     snap.tick = 3;
     snap.bank_loaded = true;
@@ -646,9 +693,12 @@ fn named_open_nearest_completes_on_fresh_generation_not_queued_click() {
             ..Default::default()
         },
     );
-    tick(&mut slot, 3);
+    tick(&mut slot, 3, &snap);
     assert_eq!(slot.probe("__ok").unwrap(), true);
-    assert!(slot.take_actions().is_empty(), "fresh generation completes without re-click");
+    assert!(
+        slot.take_actions().is_empty(),
+        "fresh generation completes without re-click"
+    );
     slot.stop();
 }
 #[test]
@@ -668,19 +718,26 @@ fn supplied_stand_walks_then_delivers_fresh_bank_result() {
     snap.locs = &locs;
     snap.reach = reach.view();
     post_snapshot_input(&mut slot, &snap);
-    tick(&mut slot, 1);
+    tick(&mut slot, 1, &snap);
     let walk = one_action(&mut slot, "supplied stand must be approached natively");
     let HostEffect::Walk(request) = &walk.effect else {
-        panic!("expected walk to supplied stand, got {:?}", walk.effect);
+        panic!("expected walk to supplied stand");
     };
-    assert_eq!(request.target, WorldTile { x: 3013, z: 3355, level: 0 });
+    assert_eq!(
+        request.target,
+        WorldTile {
+            x: 3013,
+            z: 3355,
+            level: 0
+        }
+    );
     assert_eq!(request.radius, 1);
     accept_walk(&mut slot, &walk, 1);
 
     snap.tick = 2;
     snap.here = Some(tile(3013, 3355));
     post_snapshot_native(&mut slot, &snap);
-    tick(&mut slot, 2);
+    tick(&mut slot, 2, &snap);
     let open = one_action(&mut slot, "arrived stand must open the same booth");
     assert!(matches!(
         &open.effect,
@@ -707,11 +764,10 @@ fn supplied_stand_walks_then_delivers_fresh_bank_result() {
             ..Default::default()
         },
     );
-    tick(&mut slot, 3);
+    tick(&mut slot, 3, &snap);
     assert_eq!(slot.probe("__ok").unwrap(), true);
     slot.stop();
 }
-
 
 /// A chest access row interacts with its native loc identity and waits for a loaded bank.
 #[test]
@@ -740,8 +796,11 @@ export default class T extends LoopingBot {
     snap.here = Some(tile(3308, 3120));
     snap.locs = &locs;
     post_snapshot_input(&mut slot, &snap);
-    tick(&mut slot, 1);
-    let open = one_action(&mut slot, "native access must interact with the selected chest");
+    tick(&mut slot, 1, &snap);
+    let open = one_action(
+        &mut slot,
+        "native access must interact with the selected chest",
+    );
     assert!(matches!(
         &open.effect,
         HostEffect::Interaction(InteractReq::Loc {
@@ -766,7 +825,7 @@ export default class T extends LoopingBot {
             ..Default::default()
         },
     );
-    tick(&mut slot, 2);
+    tick(&mut slot, 2, &snap);
     assert_eq!(slot.probe("__ok").unwrap(), true);
     assert!(slot.take_actions().is_empty());
     slot.stop();
@@ -794,8 +853,11 @@ export default class T extends LoopingBot {
     let mut snap = base_snapshot();
     snap.npcs = &npcs;
     post_snapshot_input(&mut slot, &snap);
-    tick(&mut slot, 1);
-    let talk = one_action(&mut slot, "native NPC access must talk to the matching banker");
+    tick(&mut slot, 1, &snap);
+    let talk = one_action(
+        &mut slot,
+        "native NPC access must talk to the matching banker",
+    );
     assert!(matches!(
         &talk.effect,
         HostEffect::Interaction(InteractReq::Npc { name, action, index })
@@ -818,12 +880,15 @@ export default class T extends LoopingBot {
     snap.chat_open = true;
     snap.chat_options = &options;
     post_snapshot_input(&mut slot, &snap);
-    tick(&mut slot, 2);
+    tick(&mut slot, 2, &snap);
     let answer = one_action(&mut slot, "NPC access must answer the matching option");
-    assert!(matches!(
-        &answer.effect,
-        HostEffect::Interaction(InteractReq::Answer { option: 2 })
-    ), "the option containing `choose`, 1-based");
+    assert!(
+        matches!(
+            &answer.effect,
+            HostEffect::Interaction(InteractReq::Answer { option: 2 })
+        ),
+        "the option containing `choose`, 1-based"
+    );
     accept_interaction(&mut slot, &answer, 2);
 
     snap.chat_modal_id = -1;
@@ -841,7 +906,7 @@ export default class T extends LoopingBot {
                 ..Default::default()
             },
         );
-        tick(&mut slot, tick_number as u64);
+        tick(&mut slot, tick_number, &snap);
     }
     assert_eq!(slot.probe("__ok").unwrap(), true);
     assert!(slot.take_actions().is_empty());
@@ -864,7 +929,7 @@ fn a_named_approach_opens_the_same_identity_across_an_omitted_locs_delta() {
     let mut encoder = IsolateBuf::new();
     let mut last = None;
     post_snapshot_delta_native(&mut slot, &mut encoder, &mut last, &snap);
-    tick(&mut slot, 1);
+    tick(&mut slot, 1, &snap);
     let walk = one_action(&mut slot, "nearest named booth must be approached");
     assert!(matches!(
         &walk.effect,
@@ -879,8 +944,11 @@ fn a_named_approach_opens_the_same_identity_across_an_omitted_locs_delta() {
     snap.tick = 2;
     snap.here = Some(tile(3011, 3353));
     post_snapshot_delta_native(&mut slot, &mut encoder, &mut last, &snap);
-    tick(&mut slot, 2);
-    let open = one_action(&mut slot, "the omitted locs delta must preserve the selected booth");
+    tick(&mut slot, 2, &snap);
+    let open = one_action(
+        &mut slot,
+        "the omitted locs delta must preserve the selected booth",
+    );
     assert!(matches!(
         &open.effect,
         HostEffect::Interaction(InteractReq::OpenBooth {
@@ -906,7 +974,7 @@ fn session_reset_clears_the_native_bank_observation() {
     post_snapshot_input(&mut slot, &snap);
     slot.reset_session_work();
 
-    tick(&mut slot, 1);
+    tick(&mut slot, 1, &snap);
     assert_eq!(
         slot.probe("__ok").unwrap(),
         serde_json::Value::Bool(false),
@@ -932,15 +1000,17 @@ export default class T extends LoopingBot {
     snap.locs = &locs;
     snap.reach = reach.view();
     post_snapshot_native(&mut slot, &snap);
-    tick(&mut slot, 1);
-    let action = one_action(&mut slot, "already-adjacent bank access must not walk again");
+    tick(&mut slot, 1, &snap);
+    let action = one_action(
+        &mut slot,
+        "already-adjacent bank access must not walk again",
+    );
     assert!(matches!(
         &action.effect,
         HostEffect::Interaction(InteractReq::OpenBooth { .. })
     ));
     slot.stop();
 }
-
 
 /// The default booth's `isArrived` pre-check respects a blocked edge.
 #[test]
@@ -976,23 +1046,32 @@ export default class T extends LoopingBot {
         snap.locs = &locs;
         snap.reach = reach;
         post_snapshot_native(&mut slot, &snap);
-        tick(&mut slot, 1);
-        let action = one_action(&mut slot, "wall-edge fixture must produce one native action");
+        tick(&mut slot, 1, &snap);
+        let action = one_action(
+            &mut slot,
+            "wall-edge fixture must produce one native action",
+        );
         slot.stop();
         action
     };
     let blocked = run(view(&[0b01], &[0, u16::MAX]));
-    assert!(matches!(
-        &blocked.effect,
-        HostEffect::Walk(request)
-            if request.target == (WorldTile { x: 11, z: 10, level: 0 })
-                && request.radius == 1
-    ), "Chebyshev 1 across a wall is not arrived");
+    assert!(
+        matches!(
+            &blocked.effect,
+            HostEffect::Walk(request)
+                if request.target == (WorldTile { x: 11, z: 10, level: 0 })
+                    && request.radius == 1
+        ),
+        "Chebyshev 1 across a wall is not arrived"
+    );
     let open = run(view(&[0b11], &[0, 1]));
-    assert!(matches!(
-        &open.effect,
-        HostEffect::Interaction(InteractReq::OpenBooth { x: 11, z: 10, .. })
-    ), "a live adjacent reach opens without another walk");
+    assert!(
+        matches!(
+            &open.effect,
+            HostEffect::Interaction(InteractReq::OpenBooth { x: 11, z: 10, .. })
+        ),
+        "a live adjacent reach opens without another walk"
+    );
 }
 /// Frozen calls the openers' `log?.()` without awaiting it.
 #[test]
@@ -1013,14 +1092,22 @@ export default class T extends LoopingBot {
     let mut slot = spawn(src);
     let mut snap = base_snapshot();
     post_snapshot_input(&mut slot, &snap);
-    tick(&mut slot, 1);
-    assert_eq!(slot.probe("__chest").unwrap(), false, "no chest: frozen false");
+    tick(&mut slot, 1, &snap);
+    assert_eq!(
+        slot.probe("__chest").unwrap(),
+        false,
+        "no chest: frozen false"
+    );
     for tick_number in 2..=6u64 {
-        snap.tick = tick_number as i32;
+        snap.tick = tick_number;
         post_snapshot_input(&mut slot, &snap);
-        tick(&mut slot, tick_number);
+        tick(&mut slot, tick_number, &snap);
     }
-    assert_eq!(slot.probe("__npc").unwrap(), false, "three banker attempts, then false");
+    assert_eq!(
+        slot.probe("__npc").unwrap(),
+        false,
+        "three banker attempts, then false"
+    );
     let lines = slot.probe("__lines").unwrap();
     assert_eq!(lines[0], "no usable 'Shantay chest' in the scene");
     assert!(
@@ -1034,4 +1121,3 @@ export default class T extends LoopingBot {
     assert!(slot.take_actions().is_empty());
     slot.stop();
 }
-

@@ -79,11 +79,7 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     )?;
     cb::install(runtime, "__rs2b0t_bank_snapshot", bank_snapshot)?;
     cb::install(runtime, "__rs2b0t_deposit_matcher", deposit_matcher)?;
-    cb::install(
-        runtime,
-        "__rs2b0t_deposit_all_except",
-        deposit_all_except,
-    )?;
+    cb::install(runtime, "__rs2b0t_deposit_all_except", deposit_all_except)?;
     cb::install(
         runtime,
         "__rs2b0t_periodic_bank_settings",
@@ -730,6 +726,7 @@ fn bank_snapshot<'s>(
                 }
                 "items" => bank_items(scope, rows),
                 "count" => {
+                    // The public reduction starts at positive zero, even with no matches.
                     let name = name.as_deref().unwrap_or_default();
                     let total: f64 = rows
                         .iter()
@@ -737,9 +734,9 @@ fn bank_snapshot<'s>(
                             row.name
                                 .as_deref()
                                 .filter(|actual| same_name(actual, name))
-                                .map(|_| f64::from(row.count))
+                                .map(|_| row.count)
                         })
-                        .sum();
+                        .fold(0.0, |total, count| total + f64::from(count));
                     Ok(cb::num(scope, total))
                 }
                 "countById" => {
@@ -752,8 +749,7 @@ fn bank_snapshot<'s>(
                     let total: f64 = rows
                         .iter()
                         .filter(|row| f64::from(row.id) == wanted_id)
-                        .map(|row| f64::from(row.count))
-                        .sum();
+                        .fold(0.0, |total, row| total + f64::from(row.count));
                     Ok(cb::num(scope, total))
                 }
                 _ => Err(cb::type_error(scope, "unknown bank snapshot query")),
@@ -818,11 +814,8 @@ fn deposit_matcher<'s>(
     let result = (|| -> JsResult<'s, v8::Local<'s, v8::Value>> {
         let own = args.get(0);
         if !own.is_function() {
-            let message = v8::String::new(
-                scope,
-                "not impl: depositMatcher: requires a function",
-            )
-            .unwrap_or_else(|| v8::String::empty(scope));
+            let message = v8::String::new(scope, "not impl: depositMatcher: requires a function")
+                .unwrap_or_else(|| v8::String::empty(scope));
             return Err(cb::Throw::Value(v8::Exception::error(scope, message)));
         }
         let include_common = cb::truthy(scope, args.get(1));
@@ -870,8 +863,7 @@ fn deposit_matcher_predicate<'s>(
             return Ok(v8::Boolean::new(scope, false).into());
         }
         let common = cb::get(scope, data, "common")?;
-        Callback::plain(scope, common, "matchesCommonBankLoot")
-            .call(scope, &[name, args.get(1)])
+        Callback::plain(scope, common, "matchesCommonBankLoot").call(scope, &[name, args.get(1)])
     })();
     cb::finish(scope, rv, result);
 }
@@ -891,22 +883,10 @@ fn deposit_all_except<'s>(
         let global = scope.get_current_context().global(scope);
         let array = cb::get(scope, global.into(), "Array")?;
         let from = cb::get(scope, array, "from")?;
-        let array = cb::call(
-            scope,
-            from,
-            array,
-            &[keep],
-            "Array.from",
-        )?;
+        let array = cb::call(scope, from, array, &[keep], "Array.from")?;
         let mapper = v8::Function::new(scope, lower_string)
             .ok_or_else(|| cb::type_error(scope, "could not create bank matcher mapper"))?;
-        let mapped = cb::call_method(
-            scope,
-            array,
-            "map",
-            &[mapper.into()],
-            "Array.from(...).map",
-        )?;
+        let mapped = cb::call_method(scope, array, "map", &[mapper.into()], "Array.from(...).map")?;
         let set_constructor = cb::get(scope, global.into(), "Set")?;
         let set = cb::construct(scope, set_constructor, &[mapped], "Set")?;
         let data = cb::object(scope, &[("set", set)])?;
@@ -933,20 +913,8 @@ fn lower_string<'s>(
         let global = scope.get_current_context().global(scope);
         let string = cb::get(scope, global.into(), "String")?;
         let undefined = v8::undefined(scope).into();
-        let value = cb::call(
-            scope,
-            string,
-            undefined,
-            &[args.get(0)],
-            "String",
-        )?;
-        cb::call_method(
-            scope,
-            value,
-            "toLowerCase",
-            &[],
-            "String(...).toLowerCase",
-        )
+        let value = cb::call(scope, string, undefined, &[args.get(0)], "String")?;
+        cb::call_method(scope, value, "toLowerCase", &[], "String(...).toLowerCase")
     })();
     cb::finish(scope, rv, result);
 }
@@ -973,90 +941,12 @@ fn deposit_all_except_predicate<'s>(
     cb::finish(scope, rv, result);
 }
 
-const BANK_STRATEGY_OPTIONS: [&str; 4] = ["Off", "Loot count", "Time", "Either"];
-
 fn periodic_bank_settings<'s>(
     scope: &mut v8::HandleScope<'s>,
     _args: v8::FunctionCallbackArguments<'s>,
     rv: v8::ReturnValue,
 ) {
-    let result = (|| -> JsResult<'s, v8::Local<'s, v8::Value>> {
-        let options = v8::Array::new(scope, 0);
-        for (index, option) in BANK_STRATEGY_OPTIONS.iter().enumerate() {
-            let option = cb::string(scope, option);
-            let index = u32::try_from(index)
-                .map_err(|_| cb::type_error(scope, "bank strategy options exceed V8 array limit"))?;
-            if !cb::catching(scope, |s| options.set_index(s, index, option))? {
-                return Err(cb::type_error(
-                    scope,
-                    "could not materialize bank strategy options",
-                ));
-            }
-        }
-        let bank_type = cb::string(scope, "string");
-        let bank_default = cb::string(scope, "Off");
-        let bank_label = cb::string(scope, "Periodic bank");
-        let bank_help = cb::string(scope, "save accumulated loot so a death does not lose it all");
-        let bank_strategy = cb::object(
-            scope,
-            &[
-                ("type", bank_type),
-                ("default", bank_default),
-                ("options", options.into()),
-                ("label", bank_label),
-                ("help", bank_help),
-            ],
-        )?;
-        let items_type = cb::string(scope, "number");
-        let items_default = cb::num(scope, 15.0);
-        let items_min = cb::num(scope, 1.0);
-        let items_max = cb::num(scope, 27.0);
-        let items_label = cb::string(scope, "Bank at N loot items");
-        let items = cb::object(
-            scope,
-            &[
-                ("type", items_type),
-                ("default", items_default),
-                ("min", items_min),
-                ("max", items_max),
-                ("label", items_label),
-            ],
-        )?;
-        let minutes_type = cb::string(scope, "number");
-        let minutes_default = cb::num(scope, 10.0);
-        let minutes_min = cb::num(scope, 1.0);
-        let minutes_max = cb::num(scope, 120.0);
-        let minutes_label = cb::string(scope, "Bank every N minutes");
-        let minutes = cb::object(
-            scope,
-            &[
-                ("type", minutes_type),
-                ("default", minutes_default),
-                ("min", minutes_min),
-                ("max", minutes_max),
-                ("label", minutes_label),
-            ],
-        )?;
-        let common_junk_type = cb::string(scope, "boolean");
-        let common_junk_default = v8::Boolean::new(scope, true).into();
-        let common_junk_label = cb::string(scope, "Also bank gems/fruit/beer/kebabs/caskets");
-        let common_junk = cb::object(
-            scope,
-            &[
-                ("type", common_junk_type),
-                ("default", common_junk_default),
-                ("label", common_junk_label),
-            ],
-        )?;
-        cb::object(
-            scope,
-            &[
-                ("bankStrategy", bank_strategy),
-                ("bankEveryItems", items),
-                ("bankEveryMinutes", minutes),
-                ("bankCommonJunk", common_junk),
-            ],
-        )
-    })();
+    let result = rustyscript::deno_core::serde_v8::to_v8(scope, &crate::bank::PERIODIC_SETTINGS)
+        .map_err(|error| cb::type_error(scope, &format!("periodic bank settings: {error}")));
     cb::finish(scope, rv, result);
 }

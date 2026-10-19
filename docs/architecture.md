@@ -503,6 +503,7 @@ behind the operator's consent and adopts the tiles already verified).
 | `slot/compiled.rs` | off-pump compiled preparation, fenced install/configure and shared output | lazy per-active-card state; compiled XOR Load |
 | `slot/api.rs`, `slot/progress.rs` | API-owned Gatherer seat; one-attempt progress policy | registration and authority stay native |
 | `slot/combat.rs` | API-owned combat seat; one `api.combat.fight` session per slot | mirrors the gather seat; Pause, reconnect and manual movement cancel at any point |
+| `slot/bank.rs`, `bank/seat_open.rs`, `bank/seat_transfer.rs` | native bank seat, opening and transfer continuations | shared `bank/ops.rs` and `bank/npc.rs` kernels; hooks use seat prompts, not a second isolate behavior |
 | `slot/pending.rs` | bank settlement records | host-owned pending accessors |
 | `machine.rs` | step-machine host | one multi-tick behavior in Rust |
 | `quester/` | Quester card, Path types and compiler, runner, queue, pair and gang, eligibility, provisioning, watchdog, quest handlers and step families | `card.rs` card; `path.rs`, `compile.rs`, `schema.rs` Path values, lazy compile and JSON Schema; `runner.rs` colour-first tick loop with journal evidence; `registry.rs` bundled documents plus optional folder; `families/` one step family each (combat, dialogue, gather, partner, reach, thieve, ...) |
@@ -518,7 +519,7 @@ behind the operator's consent and adopts the tiles already verified).
 | `channel.rs` | bounded structured-clone subset for the BroadcastChannel broker | bytes over the FlatBuffer wire |
 | `content.rs` | curated sites and hostile predicate | bank aliases posted via the shim payload |
 | `ent.rs` | Ent lookup over caller rows | no scene scan |
-| `bank_access.rs`, `bank_deposit.rs`, `bank_op.rs`, `bank_open.rs`, `bank_withdraw.rs`, `bank_select.rs`, `banking_open.rs` | bank open, op, deposit, withdraw and select steps | machine families, shared pieces |
+| `bank/request.rs`, `bank/compat.rs`, `bank_select.rs`, `bank_withdraw.rs` | typed bank arguments, local calculations, catalog materialization and thieving bank sequencing | bank actions use the native seat; no isolate-owned bank transfer, access or selection loop |
 | `bank_hints.rs` | persisted last-seen bank hint | one schema-1 file per account; planning before any bank opens in a new process |
 | `clue.rs`, `clue/isolate.rs` | native recovery declaration; load-only clue session machine | isolate token, clock, identify, verbs stay private to the crate |
 | `clue/scene.rs`, `clue/puzzle.rs`, `clue/entrana.rs`, `clue/acquire.rs`, `clue/shop.rs`, `clue/talk.rs`, `clue/combat.rs`, `clue/verbs.rs`, `clue/family.rs` | clue phase helpers | one phase slice each |
@@ -564,6 +565,11 @@ behind the operator's consent and adopts the tiles already verified).
 | `shim/mod.rs` | import-remap facade | re-exports, JS bytes untouched |
 | `shim/content.rs`, `shim/paint.rs`, `shim/interact.rs`, `shim/modules.rs` | shim Rust producers | wire, paint, and content |
 | `shim/*.js` | embedded JS sources | name maps, coercion, await plumbing only |
+
+Native bank booth approach borrows the current scene and the host's cached
+exact reach plane. The snapshot query shares the existing footprint,
+force-approach, directional-wall and stand-ranking rules. It does not copy
+the scene, build a second flood, or allocate a temporary stand vector.
 
 The crate root holds the data the modules embed: `paths/289/` (the built-in
 Quester Path documents) with `paths/path.schema.json`, `schema/isolate.fbs`

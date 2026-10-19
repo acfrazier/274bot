@@ -565,8 +565,10 @@ impl NativeMachine for Transfer {
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
-        if cx.run().session != self.login_session {
-            return Poll::Ready(Err(ActionError::Stale));
+        if cx.run().session != self.login_session && !matches!(&self.phase, Phase::Deposit(_)) {
+            // A kept request resumes, but its old interface operation does not.
+            // Deposit loops take their normal closed-bank exit below.
+            return Poll::Ready(Ok(TransferValue::Bool(false)));
         }
         if let Some(continuation) = self.callback {
             let answer = lock_hooks(&self.args.hooks).answer.take();
@@ -709,12 +711,8 @@ impl NativeMachine for Transfer {
                         Progress::Incomplete => {}
                     }
                     if held <= baseline {
-                        if transfer_expired(
-                            sent_tick,
-                            cx.evidence().tick,
-                            sent_at,
-                            cx.active_now(),
-                        ) {
+                        if transfer_expired(sent_tick, cx.evidence().tick, sent_at, cx.active_now())
+                        {
                             return Poll::Ready(Ok(TransferValue::Bool(false)));
                         }
                         self.phase = Phase::DeltaAwait {
@@ -1446,11 +1444,9 @@ impl Transfer {
             return Poll::Ready(Ok(false));
         };
         let held_count = ops::count_id(held, goal.lands_as_id);
-        let Some(request) = ops::withdraw_click(
-            row,
-            ops::withdraw_remaining(&goal, held_count),
-            &goal,
-        ) else {
+        let Some(request) =
+            ops::withdraw_click(row, ops::withdraw_remaining(&goal, held_count), &goal)
+        else {
             return Poll::Ready(Ok(false));
         };
         self.phase = Phase::Emit {

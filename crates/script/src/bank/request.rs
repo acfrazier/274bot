@@ -160,10 +160,7 @@ impl BankSeatArgs {
         if let Some(access) = &self.npc_access {
             validate_npc_access(access)?;
         }
-        if self
-            .object_access
-            .as_ref()
-            .is_some_and(has_open_first)
+        if self.object_access.as_ref().is_some_and(has_open_first)
             && matches!(
                 self.operation,
                 BankSeatOperation::OpenBooth
@@ -325,7 +322,9 @@ impl BankSeatArgs {
                     || !(0..=16_383).contains(&from.x)
                     || !(0..=16_383).contains(&from.z)
                 {
-                    return Err("Select origin is outside the supported bank-selection bounds".into());
+                    return Err(
+                        "Select origin is outside the supported bank-selection bounds".into(),
+                    );
                 }
             }
         }
@@ -458,13 +457,9 @@ fn hook_mask(operation: BankSeatOperation) -> u32 {
         | BankSeatOperation::OpenAccess
         | BankSeatOperation::Open
         | BankSeatOperation::WaitReady => HOOK_LOG,
-        BankSeatOperation::DepositMatch => {
-            DEPOSIT_MATCH_HOOK_MATCH | DEPOSIT_MATCH_HOOK_LOG
-        }
+        BankSeatOperation::DepositMatch => DEPOSIT_MATCH_HOOK_MATCH | DEPOSIT_MATCH_HOOK_LOG,
         BankSeatOperation::BankNearest => {
-            BANK_NEAREST_HOOK_DEPOSIT
-                | BANK_NEAREST_HOOK_AFTER_DEPOSIT
-                | BANK_NEAREST_HOOK_LOG
+            BANK_NEAREST_HOOK_DEPOSIT | BANK_NEAREST_HOOK_AFTER_DEPOSIT | BANK_NEAREST_HOOK_LOG
         }
         _ => 0,
     }

@@ -12,6 +12,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- Bank opening, selection, deposits, withdrawals, note mode and close operations
+  now run in the native request seat. Compatibility callbacks keep their
+  existing call order, return handling and thrown values. Bank snapshot reads
+  and local bank calculations are owned by Rust.
+  Paused bank walks revalidate their saved destination on Resume without
+  repeating bank callbacks or extending the operation's active-time limit.
+  The v2 BoneBurier example uses `Bank.withdrawLoad` instead of the removed
+  low-level `withdraw-load` request.
 - Script operations now share a bounded request seat across native cards and
   JavaScript. A second top-level Gatherer, combat, quest progress or Hunt
   Session reports **busy** while one Session is live. Capability roots started
@@ -432,6 +440,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   needs an operator commit in `274bot-arch` (`policy.toml` plus a
   regenerated `graph-provenance.json`, operator publishes first); propose
   it as a patch or branch bundle for the operator to push.
+
+### Not in this release
+
+- Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk`),
+  pack purging at a bank (`purgePackAtBank`) and coin withdrawal
+  (`withdrawCoins`) are **Planned**, not included here. These calls still
+  report `not impl`; moving existing banking into the native seat does not
+  implement them.
+- Caller-supplied bank-cost routers (`nearestWalkableBank`,
+  `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
+  random bank pacing (`bankPace`, `bankPaceTicks`) remain deliberately
+  unavailable. The host does not recreate the foreign router or random pacing.
 
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 

@@ -440,6 +440,11 @@ impl TickBudget {
         self.scene.entered_scene()
     }
 
+    #[cfg(feature = "load")]
+    pub(super) fn transition_available(&self) -> bool {
+        self.transitions < 32
+    }
+
     pub fn transition(&mut self) -> bool {
         if self.transitions == 32 {
             return false;

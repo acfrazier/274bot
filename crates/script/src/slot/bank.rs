@@ -13,6 +13,7 @@ use crate::bank::seat_transfer::{
     Transfer, TransferAnswer, TransferArgs, TransferCall, TransferHooks, TransferValue,
 };
 use crate::isolate_fb::BankSelectionInput;
+use crate::native::request::NativeKind;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine};
 use crate::native_bank::{PickKind, SelectedBank};
 use api::named_banks::{BankPreferences, NamedBankFacts};
@@ -119,6 +120,14 @@ enum Job {
     Start(BankSeatArgs),
     Opening(ActionHandle<Opening>),
     Transfer(ActionHandle<Transfer>),
+    ResumeOpening {
+        kind: NativeKind,
+        handle: ActionHandle<Opening>,
+    },
+    ResumeTransfer {
+        kind: NativeKind,
+        handle: ActionHandle<Transfer>,
+    },
     /// Observation-only waits do not contend with a running transfer.
     Wait(Transfer),
     AfterDeposit {
@@ -127,7 +136,9 @@ enum Job {
     Settle {
         due: u64,
     },
-    Return,
+    Return {
+        deadline: Option<Duration>,
+    },
     ReturnWalk {
         handle: ActionHandle<crate::native::walk::Walk>,
         deadline: Duration,
@@ -192,11 +203,7 @@ impl BankSeat {
             return Ok(());
         }
         let selection_generation = if request.operation == BankSeatOperation::Select {
-            Some(
-                self.selection
-                    .admit(id)
-                    .ok_or(ActionError::Cancelled)?,
-            )
+            Some(self.selection.admit(id).ok_or(ActionError::Cancelled)?)
         } else {
             None
         };
@@ -357,6 +364,30 @@ impl BankRow {
                     // emission reaches the host's dispatch lane.
                     return Poll::Pending;
                 }
+                Job::ResumeOpening { kind, mut handle } => {
+                    match actions.resume_kept(kind, &mut handle, cx) {
+                        Ok(()) => self.job = Job::Opening(handle),
+                        Err(
+                            ActionError::Held | ActionError::Busy | ActionError::BudgetExhausted,
+                        ) => {
+                            self.job = Job::ResumeOpening { kind, handle };
+                            return Poll::Pending;
+                        }
+                        Err(error) => return Poll::Ready(Err(error)),
+                    }
+                }
+                Job::ResumeTransfer { kind, mut handle } => {
+                    match actions.resume_kept(kind, &mut handle, cx) {
+                        Ok(()) => self.job = Job::Transfer(handle),
+                        Err(
+                            ActionError::Held | ActionError::Busy | ActionError::BudgetExhausted,
+                        ) => {
+                            self.job = Job::ResumeTransfer { kind, handle };
+                            return Poll::Pending;
+                        }
+                        Err(error) => return Poll::Ready(Err(error)),
+                    }
+                }
                 Job::Opening(handle) => match actions.poll(&handle, cx) {
                     Poll::Pending => {
                         self.job = Job::Opening(handle);
@@ -381,20 +412,22 @@ impl BankRow {
                         self.job = Job::Transfer(handle);
                         return Poll::Pending;
                     }
-                    Poll::Ready(result) => match self.transfer_done(result, note) {
-                        Some(result) => return Poll::Ready(result),
-                        None => {}
-                    },
+                    Poll::Ready(result) => {
+                        if let Some(result) = self.transfer_done(result, note) {
+                            return Poll::Ready(result);
+                        }
+                    }
                 },
                 Job::Wait(mut wait) => match wait.poll(cx) {
                     Poll::Pending => {
                         self.job = Job::Wait(wait);
                         return Poll::Pending;
                     }
-                    Poll::Ready(result) => match self.transfer_done(result, note) {
-                        Some(result) => return Poll::Ready(result),
-                        None => {}
-                    },
+                    Poll::Ready(result) => {
+                        if let Some(result) = self.transfer_done(result, note) {
+                            return Poll::Ready(result);
+                        }
+                    }
                 },
                 Job::AfterDeposit { asked } => {
                     if self.trip.as_ref().is_some_and(|trip| {
@@ -432,12 +465,15 @@ impl BankRow {
                         self.job = Job::Settle { due };
                         return Poll::Pending;
                     }
-                    self.job = Job::Return;
+                    self.job = Job::Return { deadline: None };
                 }
-                Job::Return => {
+                Job::Return { deadline } => {
                     let Some(target) = self.trip.as_ref().and_then(|trip| trip.return_to) else {
                         return Poll::Ready(Ok(json!(true)));
                     };
+                    if deadline.is_some_and(|deadline| cx.active_now() >= deadline) {
+                        return Poll::Ready(Ok(json!(true)));
+                    }
                     if cx
                         .snapshot()
                         .here()
@@ -466,12 +502,14 @@ impl BankRow {
                         Ok(handle) => {
                             self.job = Job::ReturnWalk {
                                 handle,
-                                deadline: cx.active_now().saturating_add(Duration::from_secs(120)),
+                                deadline: deadline.unwrap_or_else(|| {
+                                    cx.active_now().saturating_add(Duration::from_secs(120))
+                                }),
                             };
                             return Poll::Pending;
                         }
                         Err(ActionError::BudgetExhausted | ActionError::Held) => {
-                            self.job = Job::Return;
+                            self.job = Job::Return { deadline };
                             return Poll::Pending;
                         }
                         // Frozen BankNearest does not use the walk's result.
@@ -479,10 +517,23 @@ impl BankRow {
                     }
                 }
                 Job::ReturnWalk { handle, deadline } => {
-                    if cx.active_now() >= deadline || actions.poll(&handle, cx).is_ready() {
+                    if cx.active_now() >= deadline {
                         return Poll::Ready(Ok(json!(true)));
                     }
-                    self.job = Job::ReturnWalk { handle, deadline };
+                    match actions.poll(&handle, cx) {
+                        Poll::Ready(Ok(receipt))
+                            if receipt.end == crate::native::WalkEnd::Cancelled =>
+                        {
+                            // Pause ended the host follow, not the bank trip.
+                            // Revalidate its return target without extending
+                            // the original active-time bound.
+                            self.job = Job::Return {
+                                deadline: Some(deadline),
+                            };
+                        }
+                        Poll::Ready(_) => return Poll::Ready(Ok(json!(true))),
+                        Poll::Pending => self.job = Job::ReturnWalk { handle, deadline },
+                    }
                     return Poll::Pending;
                 }
                 Job::Finished => return Poll::Ready(Err(ActionError::Stale)),
@@ -526,6 +577,37 @@ impl SlotScript {
                 bank.note = None;
                 bank.action_owner = None;
                 bank.selection.invalidate();
+                for row in &mut bank.rows {
+                    let kind = self.seat.as_ref().and_then(|seat| {
+                        seat.live()
+                            .iter()
+                            .find(|entry| entry.id == row.id)
+                            .map(|entry| entry.kind)
+                    });
+                    let Some(kind) = kind.filter(|kind| {
+                        kind.policy().reconnect() == api::script_contract::ReconnectPolicy::Resume
+                    }) else {
+                        continue;
+                    };
+                    row.job = match std::mem::replace(&mut row.job, Job::Finished) {
+                        Job::Opening(handle) | Job::ResumeOpening { handle, .. } => {
+                            Job::ResumeOpening { kind, handle }
+                        }
+                        Job::Transfer(handle) | Job::ResumeTransfer { handle, .. } => {
+                            Job::ResumeTransfer { kind, handle }
+                        }
+                        Job::ReturnWalk { handle, deadline } => {
+                            // The old primitive belongs to the dropped
+                            // session. Retain the trip's return cursor and
+                            // deadline, then revalidate a fresh follow.
+                            drop(handle);
+                            Job::Return {
+                                deadline: Some(deadline),
+                            }
+                        }
+                        job => job,
+                    };
+                }
             } else {
                 bank.clear_work();
             }
@@ -539,16 +621,19 @@ impl SlotScript {
     }
 
     pub fn bank_selection_input(&self) -> BankSelectionInput {
-        self.bank.as_ref().map_or_else(BankSelectionInput::default, |bank| {
-            bank.selection.for_runtime(self.runtime_generation)
-        })
+        self.bank
+            .as_ref()
+            .map_or_else(BankSelectionInput::default, |bank| {
+                bank.selection.for_runtime(self.runtime_generation)
+            })
     }
 
     pub(super) fn start_bank(&mut self, id: RequestId, request: BankSeatArgs) {
-        let started = self
-            .bank
-            .get_or_insert_with(Default::default)
-            .start(id, request, self.runtime_generation);
+        let started = self.bank.get_or_insert_with(Default::default).start(
+            id,
+            request,
+            self.runtime_generation,
+        );
         if let Err(error) = started {
             self.pending_logs
                 .push(format!("bank seat start refused: {error:?}"));
@@ -663,25 +748,16 @@ impl SlotScript {
                 bank.action_owner = None;
             }
             if let Poll::Ready(result) = result {
-                let selection = row
-                    .selected_bank
-                    .take()
-                    .zip(row.selection_generation)
-                    .map(|(selected, generation)| {
-                        (selected, generation, row.runtime_generation)
-                    });
+                let selection =
+                    row.selected_bank.take().zip(row.selection_generation).map(
+                        |(selected, generation)| (selected, generation, row.runtime_generation),
+                    );
                 let id = row.id;
                 bank.rows.remove(index);
                 if bank.action_owner == Some(id) {
                     bank.action_owner = None;
                 }
-                self.finish_bank(
-                    id,
-                    result,
-                    selection,
-                    &mut bank.values,
-                    &mut bank.selection,
-                );
+                self.finish_bank(id, result, selection, &mut bank.values, &mut bank.selection);
                 continue;
             }
             let prompt_failed = if row.prompt_posted {

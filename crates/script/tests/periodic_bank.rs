@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-mod common;
-use common::bank_slot::BankSlot;
+#[path = "common/bank_slot.rs"]
+mod bank_slot;
+use bank_slot::BankSlot;
 use script::isolate_fb::{
     ItemRowInput, NativeFactsInput, ReachViewInput, SnapshotInput, TileInput,
 };
@@ -30,18 +31,6 @@ fn picker_facts() -> Arc<api::named_banks::NamedBankFacts> {
             },
         ),
     ]))
-}
-
-fn spawn_with_settings(
-    source: impl Into<String>,
-    settings: &serde_json::Map<String, serde_json::Value>,
-) -> BankSlot {
-    BankSlot::new(
-        source,
-        LoadShape::CompatClass,
-        Some(settings),
-        Arc::new(api::named_banks::NamedBankFacts::empty()),
-    )
 }
 
 fn take_interactions(slot: &mut BankSlot) -> Vec<InteractReq> {
@@ -89,15 +78,25 @@ fn post_snapshot_input(slot: &mut BankSlot, input: &SnapshotInput<'_>) {
         NativeFactsInput {
             bank_snapshot_generation: input
                 .bank_open
-                .then(|| i32::try_from(input.bank_generation).expect("small fixture generation")),
+                .then(|| i64::try_from(input.bank_generation).expect("small fixture generation")),
             side_modal_id: Some(side_root(input)),
             ..Default::default()
         },
     );
 }
 
-fn tick(slot: &mut BankSlot, tick: u64) {
-    slot.tick_posted(tick);
+fn tick(slot: &mut BankSlot, tick: u64, input: &SnapshotInput<'_>) {
+    slot.tick_posted_with_frames(
+        tick,
+        input,
+        NativeFactsInput {
+            bank_snapshot_generation: input
+                .bank_open
+                .then(|| i64::try_from(input.bank_generation).expect("small fixture generation")),
+            side_modal_id: Some(side_root(input)),
+            ..Default::default()
+        },
+    );
 }
 
 fn one_action(slot: &mut BankSlot, message: &str) -> HostAction {
@@ -369,9 +368,9 @@ fn diagonal_approach_reach() -> ReachViewInput<'static> {
         height: 2,
         walkable: &[0b1010],
         reachable: &[0b1010],
-        reachable_adj: &[0b1010],
+        reachable_adj: &[0b1111],
         exact_rank: &[u16::MAX, 0, u16::MAX, 1],
-        adjacent_rank: &[u16::MAX, 0, u16::MAX, 1],
+        adjacent_rank: &[0, 0, 1, 1],
         step: &[0, 0, 0, 0],
         canlight: &[],
         stamp: 1,
@@ -441,8 +440,8 @@ fn off_periodic_bank_validates_false_and_sends_nothing() {
         level: 0,
     });
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 1);
-    tick(&mut iso, 2);
+    tick(&mut iso, 1, &snap);
+    tick(&mut iso, 2, &snap);
     assert!(
         iso.drain_interacts().is_empty(),
         "Off must not queue open/deposit/walk"
@@ -465,7 +464,7 @@ fn combat_suppresses_loot_count_trigger() {
         level: 0,
     });
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 1);
+    tick(&mut iso, 1, &snap);
     assert!(
         iso.drain_interacts().is_empty(),
         "combat suppresses banking"
@@ -490,18 +489,21 @@ fn loot_count_chicken_shape_observes_deposit_afterdeposit_and_return() {
     snap.locs = std::slice::from_ref(seers_booth());
     snap.reach = seers_reach();
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 1);
+    tick(&mut iso, 1, &snap);
     let open = one_action(&mut iso, "named booth opens through the native seat");
-    assert!(matches!(
-        &open.effect,
-        HostEffect::Interaction(InteractReq::OpenBooth {
-            x: 2725,
-            z: 3490,
-            level: 0,
-            id: 2213,
-            ..
-        })
-    ), "queued open is not completion; identity is the adjacent booth");
+    assert!(
+        matches!(
+            &open.effect,
+            HostEffect::Interaction(InteractReq::OpenBooth {
+                x: 2725,
+                z: 3490,
+                level: 0,
+                id: 2213,
+                ..
+            })
+        ),
+        "queued open is not completion; identity is the adjacent booth"
+    );
     accept_interaction(&mut iso, &open, 1);
     assert!(
         iso.probe("__after").is_err(),
@@ -519,11 +521,11 @@ fn loot_count_chicken_shape_observes_deposit_afterdeposit_and_return() {
     snap.bank_side = &bones;
     snap.inv = &bones;
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 2);
+    tick(&mut iso, 2, &snap);
     let deposit = one_action(&mut iso, "deposit operation reaches the host");
     assert!(matches!(
-        deposit.effect,
-        HostEffect::Interaction(request) if request == deposit_all(526, 0, 1)
+        &deposit.effect,
+        HostEffect::Interaction(request) if request == &deposit_all(526, 0, 1)
     ));
     accept_interaction(&mut iso, &deposit, 2);
     assert!(
@@ -536,7 +538,7 @@ fn loot_count_chicken_shape_observes_deposit_afterdeposit_and_return() {
     snap.bank_side = &kept;
     snap.inv = &kept;
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 3);
+    tick(&mut iso, 3, &snap);
     assert_eq!(
         iso.probe("__after").unwrap(),
         true,
@@ -549,7 +551,7 @@ fn loot_count_chicken_shape_observes_deposit_afterdeposit_and_return() {
 
     snap.tick = 4;
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 4);
+    tick(&mut iso, 4, &snap);
     let action = one_action(&mut iso, "walk back starts next");
     assert!(
         matches!(
@@ -571,7 +573,7 @@ fn loot_count_chicken_shape_observes_deposit_afterdeposit_and_return() {
         level: 0,
     });
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 5);
+    tick(&mut iso, 5, &snap);
     assert!(iso.take_actions().is_empty());
     assert_eq!(iso.probe("__log").unwrap(), "periodic bank: completed");
     assert_eq!(iso.probe("__status").unwrap(), "periodic bank run");
@@ -606,7 +608,7 @@ export default class T extends TaskBot {
     });
     set_seers_scene(&mut snap);
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 1);
+    tick(&mut iso, 1, &snap);
     assert_eq!(iso.probe("__shim").unwrap(), "items");
     assert!(matches!(
         iso.drain_interacts().as_slice(),
@@ -649,7 +651,7 @@ export default class T extends TaskBot {
     });
     set_seers_scene(&mut snap);
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 1);
+    tick(&mut iso, 1, &snap);
     assert_eq!(
         iso.probe("__calls").unwrap(),
         serde_json::json!([
@@ -712,29 +714,35 @@ export default class T extends TaskBot {
             snap.reach = open_reach_at(booth.x - 1, booth.z);
         }
         post_snapshot_input(&mut iso, &snap);
-        tick(&mut iso, 1);
+        tick(&mut iso, 1, &snap);
         let first = one_action(&mut iso, "local access or supplied destination");
         if local {
-            assert!(matches!(
-                &first.effect,
-                HostEffect::Interaction(InteractReq::OpenBooth {
-                    x: 3011,
-                    z: 3354,
-                    id: 2213,
-                    ..
-                })
-            ), "local access must beat the distant destination");
+            assert!(
+                matches!(
+                    &first.effect,
+                    HostEffect::Interaction(InteractReq::OpenBooth {
+                        x: 3011,
+                        z: 3354,
+                        id: 2213,
+                        ..
+                    })
+                ),
+                "local access must beat the distant destination"
+            );
             accept_interaction(&mut iso, &first, 1);
         } else {
-            assert!(matches!(
-                &first.effect,
-                HostEffect::Walk(request)
-                    if request.target == (api::snapshot::WorldTile {
-                        x: 2724,
-                        z: 3490,
-                        level: 0,
-                    }) && request.radius == 4
-            ), "a supplied destination must bypass bank selection");
+            assert!(
+                matches!(
+                    &first.effect,
+                    HostEffect::Walk(request)
+                        if request.target == (api::snapshot::WorldTile {
+                            x: 2724,
+                            z: 3490,
+                            level: 0,
+                        }) && request.radius == 4
+                ),
+                "a supplied destination must bypass bank selection"
+            );
             arrive_walk(&mut iso, &first, 1);
             snap.tick = 2;
             snap.here = Some(TileInput {
@@ -745,7 +753,7 @@ export default class T extends TaskBot {
             snap.locs = &locs;
             snap.reach = seers_reach();
             post_snapshot_input(&mut iso, &snap);
-            tick(&mut iso, 2);
+            tick(&mut iso, 2, &snap);
             let open = one_action(&mut iso, "adjacent booth opens after arrival");
             assert!(matches!(
                 &open.effect,
@@ -763,7 +771,7 @@ export default class T extends TaskBot {
         snap.bank_open = true;
         snap.bank_generation = 1;
         post_snapshot_input(&mut iso, &snap);
-        tick(&mut iso, 3);
+        tick(&mut iso, 3, &snap);
         assert_eq!(
             iso.probe("__after").unwrap(),
             0,
@@ -775,7 +783,7 @@ export default class T extends TaskBot {
         for n in 4..=6 {
             snap.tick = n;
             post_snapshot_input(&mut iso, &snap);
-            tick(&mut iso, n);
+            tick(&mut iso, n, &snap);
         }
         assert_eq!(iso.probe("__after").unwrap(), 1);
         iso.join();
@@ -818,19 +826,19 @@ export default class T extends TaskBot {
     });
     snap.bank_open = true;
     snap.bank_loaded = true;
-    snap.bank_generation = 4;
+    snap.bank_generation = 1;
     snap.bank_side = &side;
     snap.inv = &pack;
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 1);
-    assert_eq!(iso.drain_interacts(), vec![deposit_all(1623, 0, 4)]);
+    tick(&mut iso, 1, &snap);
+    assert_eq!(iso.drain_interacts(), vec![deposit_all(1623, 0, 1)]);
     iso.join();
 
     let mut iso = spawn(src);
     iso.probe("globalThis.__junk = false").unwrap();
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 1);
-    assert_eq!(iso.drain_interacts(), vec![deposit_all(995, 1, 4)]);
+    tick(&mut iso, 1, &snap);
+    assert_eq!(iso.drain_interacts(), vec![deposit_all(995, 1, 1)]);
     iso.join();
 }
 
@@ -842,14 +850,14 @@ fn missing_access_backs_off_without_retry_spam() {
     iso.post_settings_bag(&bag);
     let mut snap = base_snapshot();
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 1);
+    tick(&mut iso, 1, &snap);
     let pick = one_action(&mut iso, "no-scene banking must await the native picker");
     assert!(matches!(&pick.effect, HostEffect::BankPick(_)));
     no_bank_candidate(&mut iso, &pick, 2);
     for n in 2..=6u64 {
-        snap.tick = n as i32;
+        snap.tick = n;
         post_snapshot_input(&mut iso, &snap);
-        tick(&mut iso, n);
+        tick(&mut iso, n, &snap);
     }
     assert!(
         iso.take_actions().is_empty(),
@@ -872,7 +880,7 @@ fn pause_and_session_reset_drop_late_callback_and_sends() {
     });
     set_seers_scene(&mut snap);
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 1);
+    tick(&mut iso, 1, &snap);
     let open = one_action(&mut iso, "nearby booth opens");
     assert!(matches!(
         &open.effect,
@@ -890,7 +898,7 @@ fn pause_and_session_reset_drop_late_callback_and_sends() {
     snap.bank_side = &bones;
     snap.inv = &pack;
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 2);
+    tick(&mut iso, 2, &snap);
     assert!(
         iso.take_actions().is_empty(),
         "Pause/hold must not send deposit while frozen"
@@ -900,7 +908,7 @@ fn pause_and_session_reset_drop_late_callback_and_sends() {
     iso.slot.resume();
     snap.tick = 3;
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 3);
+    tick(&mut iso, 3, &snap);
     let deposit = one_action(&mut iso, "resumed bank deposit");
     assert!(matches!(
         deposit.effect,
@@ -910,16 +918,15 @@ fn pause_and_session_reset_drop_late_callback_and_sends() {
     iso.reset_session_work();
     snap.tick = 4;
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 4);
+    tick(&mut iso, 4, &snap);
     assert!(
         iso.probe("__after").is_err(),
         "session replacement must not run the old afterDeposit"
     );
     assert!(
-        iso.take_actions().iter().all(|action| !matches!(
-            &action.effect,
-            HostEffect::Interaction(InteractReq::Close)
-        )),
+        iso.take_actions()
+            .iter()
+            .all(|action| !matches!(&action.effect, HostEffect::Interaction(InteractReq::Close))),
         "old close must not land after reset"
     );
     iso.join();
@@ -942,17 +949,20 @@ fn chicken_killer_closed_face_walks_approach_before_opening_the_same_booth() {
     snap.locs = &locs;
     snap.reach = diagonal_approach_reach();
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 1);
+    tick(&mut iso, 1, &snap);
     let walk = one_action(&mut iso, "a diagonal approach walks to the same booth");
-    assert!(matches!(
-        &walk.effect,
-        HostEffect::Walk(request)
-            if request.target == (api::snapshot::WorldTile {
-                x: 3011,
-                z: 3355,
-                level: 0,
-            }) && request.radius == 0
-    ), "the access must walk before it opens the booth");
+    assert!(
+        matches!(
+            &walk.effect,
+            HostEffect::Walk(request)
+                if request.target == (api::snapshot::WorldTile {
+                    x: 3011,
+                    z: 3355,
+                    level: 0,
+                }) && request.radius == 0
+        ),
+        "the access must walk before it opens the booth"
+    );
     arrive_walk(&mut iso, &walk, 1);
 
     snap.tick = 2;
@@ -963,7 +973,7 @@ fn chicken_killer_closed_face_walks_approach_before_opening_the_same_booth() {
     });
     snap.reach = stand_ready_reach();
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 2);
+    tick(&mut iso, 2, &snap);
     let open = one_action(&mut iso, "the selected booth opens after approach");
     assert!(matches!(
         &open.effect,
@@ -997,7 +1007,7 @@ fn approach_dest_late_can_operate_opens_without_bank_generation_advance() {
     snap.locs = &locs;
     snap.reach = diagonal_approach_reach();
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 1);
+    tick(&mut iso, 1, &snap);
     let walk = one_action(&mut iso, "the native approach chooses a stand");
     assert!(matches!(
         &walk.effect,
@@ -1012,7 +1022,7 @@ fn approach_dest_late_can_operate_opens_without_bank_generation_advance() {
 
     snap.tick = 2;
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 2);
+    tick(&mut iso, 2, &snap);
     assert!(
         iso.take_actions().is_empty(),
         "must wait on native approach readiness, not bank generation"
@@ -1026,7 +1036,7 @@ fn approach_dest_late_can_operate_opens_without_bank_generation_advance() {
     });
     snap.reach = stand_ready_reach();
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 3);
+    tick(&mut iso, 3, &snap);
     let open = one_action(&mut iso, "a later reach view opens the booth");
     assert!(matches!(
         &open.effect,
@@ -1100,7 +1110,7 @@ export default class T extends LoopingBot {
     snap.locs = &locs;
     snap.reach = open_reach_at(3308, 3120);
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 1);
+    tick(&mut iso, 1, &snap);
     let open = one_action(&mut iso, "the selected chest receives the native open");
     assert!(matches!(
         &open.effect,
@@ -1123,7 +1133,7 @@ export default class T extends LoopingBot {
     snap.bank_side = &side;
     snap.inv = &pack;
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 2);
+    tick(&mut iso, 2, &snap);
     let deposit = one_action(&mut iso, "selected chest deposit");
     assert!(matches!(
         deposit.effect,
@@ -1179,11 +1189,12 @@ export default class T extends TaskBot {
     snap.reach = open_reach_at(2724, 3490);
     snap.bank_open = true;
     snap.bank_loaded = true;
-    snap.bank_generation = 4;
+    snap.bank_generation = 1;
     snap.bank_side = &side;
+    snap.inv = &pack;
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 1);
-    assert_eq!(iso.drain_interacts(), vec![deposit_all(526, 0, 4)]);
+    tick(&mut iso, 1, &snap);
+    assert_eq!(iso.drain_interacts(), vec![deposit_all(526, 0, 1)]);
     assert_eq!(
         iso.probe("__calls").unwrap(),
         serde_json::json!(["status:periodic bank run", "deposit:Bones"]),
@@ -1193,9 +1204,9 @@ export default class T extends TaskBot {
     snap.bank_open = false;
     snap.bank_loaded = false;
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 2);
+    tick(&mut iso, 2, &snap);
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 3);
+    tick(&mut iso, 3, &snap);
     assert_eq!(
         iso.probe("__calls").unwrap(),
         serde_json::json!([
@@ -1225,7 +1236,7 @@ fn an_adjacent_booth_without_an_approach_fact_fails_closed() {
     let locs = [*seers_booth()];
     snap.locs = &locs;
     post_snapshot_input(&mut iso, &snap);
-    tick(&mut iso, 1);
+    tick(&mut iso, 1, &snap);
     assert!(
         iso.drain_interacts().is_empty(),
         "no OpenBooth without native reach evidence"
@@ -1255,7 +1266,8 @@ export default class T extends LoopingBot {{
 }}"#
         );
         let mut iso = spawn(source);
-        let mut local_locs = [*seers_booth()];
+        let local_locs = [*seers_booth()];
+        let arrived_locs = [booth_at(3094, 3493)];
         let mut snap = base_snapshot();
         snap.here = Some(TileInput {
             x: 2724,
@@ -1265,29 +1277,35 @@ export default class T extends LoopingBot {{
         snap.locs = &local_locs;
         snap.reach = open_reach_at(2724, 3490);
         post_snapshot_input(&mut iso, &snap);
-        tick(&mut iso, 1);
+        tick(&mut iso, 1, &snap);
         let action = one_action(&mut iso, "selecting the nearby booth or preset");
         if prefer {
-            assert!(matches!(
-                &action.effect,
-                HostEffect::Interaction(InteractReq::OpenBooth {
-                    x: 2725,
-                    z: 3490,
-                    id: 2213,
-                    ..
-                })
-            ), "the reachable nearby booth must win");
+            assert!(
+                matches!(
+                    &action.effect,
+                    HostEffect::Interaction(InteractReq::OpenBooth {
+                        x: 2725,
+                        z: 3490,
+                        id: 2213,
+                        ..
+                    })
+                ),
+                "the reachable nearby booth must win"
+            );
             accept_interaction(&mut iso, &action, 1);
         } else {
-            assert!(matches!(
-                &action.effect,
-                HostEffect::Walk(request)
-                    if request.target == (api::snapshot::WorldTile {
-                        x: 3094,
-                        z: 3492,
-                        level: 0,
-                    }) && request.radius == 2
-            ), "preferNearby:false must honor the preset");
+            assert!(
+                matches!(
+                    &action.effect,
+                    HostEffect::Walk(request)
+                        if request.target == (api::snapshot::WorldTile {
+                            x: 3094,
+                            z: 3492,
+                            level: 0,
+                        }) && request.radius == 2
+                ),
+                "preferNearby:false must honor the preset"
+            );
             arrive_walk(&mut iso, &action, 1);
             snap.tick = 2;
             snap.here = Some(TileInput {
@@ -1295,11 +1313,10 @@ export default class T extends LoopingBot {{
                 z: 3492,
                 level: 0,
             });
-            local_locs = [booth_at(3094, 3493)];
-            snap.locs = &local_locs;
+            snap.locs = &arrived_locs;
             snap.reach = open_reach_at(3094, 3492);
             post_snapshot_input(&mut iso, &snap);
-            tick(&mut iso, 2);
+            tick(&mut iso, 2, &snap);
             let open = one_action(&mut iso, "the preset booth opens after arrival");
             assert!(matches!(
                 &open.effect,
@@ -1317,12 +1334,12 @@ export default class T extends LoopingBot {{
         snap.bank_open = true;
         snap.bank_generation = 1;
         post_snapshot_input(&mut iso, &snap);
-        tick(&mut iso, 3);
+        tick(&mut iso, 3, &snap);
         assert_eq!(iso.probe("__ok").unwrap(), serde_json::Value::Null);
         snap.tick = 4;
         snap.bank_loaded = true;
         post_snapshot_input(&mut iso, &snap);
-        tick(&mut iso, 4);
+        tick(&mut iso, 4, &snap);
         assert_eq!(iso.probe("__ok").unwrap(), true);
         iso.join();
     }

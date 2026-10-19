@@ -800,6 +800,10 @@ pub struct SeatStartInput {
 
 /// Owned typed arguments decoded from a native start.
 #[derive(Debug, Clone, PartialEq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "the bounded start batch owns its typed bank arguments without an additional allocation per decoded request"
+)]
 pub enum SeatStartArgs {
     /// No typed argument schema is active for this family.
     Empty,
@@ -10589,79 +10593,68 @@ pub(crate) mod tests {
 
         let mut args = BankSeatArgs::new(Operation::BankNearest);
         assert!(encode(NativeKind::BankPlan, &args)
-            .err()
-            .expect("wrong kind rejected")
+            .expect_err("wrong kind rejected")
             .contains("requires native kind BankNearest"));
 
         args = BankSeatArgs::new(Operation::OpenObject);
         assert!(encode(NativeKind::BankPlan, &args)
-            .err()
-            .expect("missing access rejected")
+            .expect_err("missing access rejected")
             .contains("requires object_access"));
 
         args = BankSeatArgs::new(Operation::DepositMatch);
         args.hooks_present = 1 << 2;
         assert!(encode(NativeKind::BankPlan, &args)
-            .err()
-            .expect("unknown callback bit rejected")
+            .expect_err("unknown callback bit rejected")
             .contains("unknown callback bits"));
 
         args = BankSeatArgs::new(Operation::WithdrawLabel);
         args.item_id = Some(995);
         args.item_name = Some("Coins".into());
         assert!(encode(NativeKind::BankPlan, &args)
-            .err()
-            .expect("conflicting selectors rejected")
+            .expect_err("conflicting selectors rejected")
             .contains("exactly one of item_id and item_name"));
 
         args = BankSeatArgs::new(Operation::WithdrawLabel);
         args.item_name = Some("Coins".into());
         args.quantity = Some(i64::MIN);
         assert!(encode(NativeKind::BankPlan, &args)
-            .err()
-            .expect("unsafe integer rejected")
+            .expect_err("unsafe integer rejected")
             .contains("safe integer"));
 
         args = BankSeatArgs::new(Operation::WaitSnapshotAfter);
         assert!(encode(NativeKind::BankPlan, &args)
-            .err()
-            .expect("missing baseline rejected")
+            .expect_err("missing baseline rejected")
             .contains("requires baseline_generation"));
 
         args = BankSeatArgs::new(Operation::DepositLabel);
         args.item_name = Some("x".repeat(MAX_START_CHARGE + 1));
         args.menu_op = Some("Deposit".into());
         assert!(encode(NativeKind::BankPlan, &args)
-            .err()
-            .expect("oversize text rejected")
+            .expect_err("oversize text rejected")
             .contains("bank start text exceeds"));
 
         let oversized_wire_name = "x".repeat(MAX_START_CHARGE + 1);
         assert!(
             decode_seat_interact_batch(&raw_seat_batch_with_bank_item_name(&oversized_wire_name,))
-                .err()
-                .expect("oversized wire string rejected")
+                .expect_err("oversized wire string rejected")
                 .contains("bank start text exceeds")
         );
 
         assert!(
             decode_seat_interact_batch(&raw_seat_batch_with_start_kind(SeatKind::BankPlan))
-                .err()
-                .expect("missing bank payload rejected")
+                .expect_err("missing bank payload rejected")
                 .contains("bank start has no typed banking arguments")
         );
         assert!(
             decode_seat_interact_batch(&raw_seat_batch_with_start_kind(SeatKind::BankNearest))
-                .err()
-                .expect("missing nearest-bank payload rejected")
+                .expect_err("missing nearest-bank payload rejected")
                 .contains("bank start has no typed banking arguments")
         );
         assert!(
             decode_seat_interact_batch(
                 &raw_seat_batch_with_bank_operation(BankSeatOperation(255),)
             )
-            .err()
-            .expect("unknown bank operation rejected")
+            .expect_err("unknown bank operation rejected")
             .contains("unknown bank seat operation")
         );
     }

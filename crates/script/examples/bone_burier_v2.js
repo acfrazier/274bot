@@ -1,5 +1,4 @@
-// crates/script/examples/bone_burier_v2.ts
-import { Bank } from '../../api/bank/Bank.js';
+import { Bank } from "../../api/bank/Bank.js";
 export const apiVersion = 2;
 export const SETTINGS = {
   boneName: {
@@ -9,15 +8,16 @@ export const SETTINGS = {
     description: "The unnoted inventory and bank item to bury"
   }
 };
-var PENDING_TICK_LIMIT = 12;
-var WALK_PENDING_TICK_LIMIT = 120;
-var phase = "finding-bank";
-var pending = null;
-var waitingForBankSince = 0;
-var activeBone = "";
-var buried = 0;
-var prayerXp = 0;
-var initialPrayerXp = null;
+const PENDING_TICK_LIMIT = 12;
+const WALK_PENDING_TICK_LIMIT = 120;
+let phase = "finding-bank";
+let pending = null;
+let waitingForBankSince = 0;
+let bankLoadInFlight = false;
+let activeBone = "";
+let buried = 0;
+let prayerXp = 0;
+let initialPrayerXp = null;
 function count(items, name) {
   return items.filter((item) => item.name?.toLowerCase() === name.toLowerCase() && !item.noted).reduce((total, item) => total + item.count, 0);
 }
@@ -29,9 +29,7 @@ function prayer(api, stats) {
   return prayerXp;
 }
 function paint(api, bone, stats) {
-  api.paint.begin({
-    accent: "#ffb15b"
-  }).title("BoneBurier v2").row("bone", bone).row("phase", phase).row("burials", buried).row("prayer XP", prayer(api, stats)).end();
+  api.paint.begin({ accent: "#ffb15b" }).title("BoneBurier v2").row("bone", bone).row("phase", phase).row("burials", buried).row("prayer XP", prayer(api, stats)).end();
 }
 function fail(api, reason) {
   phase = "stopping";
@@ -96,6 +94,7 @@ function observePending(api, bone, invCount) {
   return false;
 }
 export async function tick(api) {
+  if (bankLoadInFlight) return;
   const bone = api.settings.str("boneName", "Bones").trim() || "Bones";
   if (activeBone && activeBone !== bone) {
     pending = null;
@@ -136,23 +135,12 @@ export async function tick(api) {
         before: invCount,
         seq: api.snapshot.bank_op_result_seq
       };
-      api.request({
-        op: "close"
-      });
+      api.request({ op: "close" });
       return;
     }
     phase = "burying";
-    pending = {
-      kind: "bury",
-      sent: api.tick,
-      before: invCount,
-      seq: 0
-    };
-    api.request({
-      op: "held",
-      name: bone,
-      action: "Bury"
-    });
+    pending = { kind: "bury", sent: api.tick, before: invCount, seq: 0 };
+    api.request({ op: "held", name: bone, action: "Bury" });
     return;
   }
   if (api.snapshot.bank_open) {
@@ -168,9 +156,14 @@ export async function tick(api) {
       return;
     }
     phase = "loading";
-    const loaded = await Bank.withdrawLoad(bone);
-    if (!loaded || count(api.snapshot.inv, bone) <= invCount) {
-      fail(api, "withdraw refused or inventory has no free slot");
+    bankLoadInFlight = true;
+    try {
+      const loaded = await Bank.withdrawLoad(bone);
+      if (!loaded || count(api.snapshot.inv, bone) <= invCount) {
+        fail(api, "withdraw refused or inventory has no free slot");
+      }
+    } finally {
+      bankLoadInFlight = false;
     }
     return;
   }
@@ -186,9 +179,7 @@ export async function tick(api) {
         before: 0,
         seq: api.snapshot.walk_outcome_seq
       };
-      api.request({
-        op: "walk-nearest-bank"
-      });
+      api.request({ op: "walk-nearest-bank" });
     }
     return;
   }
@@ -207,8 +198,6 @@ export async function tick(api) {
     kind: stand.kind,
     name: stand.name,
     stand_op: stand.op,
-    ...stand.choose ? {
-      choose: stand.choose
-    } : {}
+    ...stand.choose ? { choose: stand.choose } : {}
   });
 }

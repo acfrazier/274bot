@@ -387,7 +387,7 @@ enum Child {
     Bank(Box<Hunt<crate::hunt_bank::Bank>>),
     Cell(Box<Hunt<crate::hunt_cell::Cell>>),
     Teleport(crate::teleport::Teleport),
-    BankOpen(crate::bank_open::BankOpen),
+    BankOpen(crate::machine::NativeBankChild),
 }
 
 /// One hunt row.
@@ -564,7 +564,7 @@ impl<K: Kind> Hunt<K> {
             Child::Bank(hunt) => (hunt.drive(cx)?, "banked"),
             Child::Cell(hunt) => (hunt.drive(cx)?, "celled"),
             Child::Teleport(teleport) => (map_bool(teleport.step(cx)), "teleported"),
-            Child::BankOpen(open) => (map_bool(open.step(cx)), "opened"),
+            Child::BankOpen(open) => (open.step(cx), "opened"),
         };
         match step {
             Step::Done(value) => {
@@ -680,20 +680,15 @@ impl<K: Kind> Hunt<K> {
                 }
             }
             "bank-open" => {
-                let args = serde_json::from_value(json!({
-                    "mode": "open-nearest",
-                    "stand": null,
-                    "booth_name": "Bank booth",
-                    "booth_action": "Use-quickly",
-                }))
-                .expect("bank open arguments");
-                match <crate::bank_open::BankOpen as Family>::begin(args, cx) {
-                    Begin::Run(open) => {
+                let args = crate::bank::request::BankSeatArgs::new(
+                    crate::bank::request::BankSeatOperation::OpenBooth,
+                );
+                match crate::machine::NativeBankChild::start(args, &[], cx) {
+                    Ok(open) => {
                         self.child = Some(Child::BankOpen(open));
                         return Ok(Some(Step::Wait));
                     }
-                    Begin::Done(ok) => self.reply = Some(json!({ "opened": ok })),
-                    Begin::Refuse(_) => self.reply = Some(json!({ "opened": false })),
+                    Err(_) => self.reply = Some(json!({ "opened": false })),
                 }
             }
             // A bank run's own `opts.leave`, else the leave family.

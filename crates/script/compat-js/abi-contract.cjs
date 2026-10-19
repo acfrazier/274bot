@@ -1256,6 +1256,7 @@ function buildArtifacts({
             nav_consuming: row.nav_consuming,
             activation_unit: row.family_id === 'bank' ? 'I-family(bank)' : `I-family(${row.family_id})`,
             activation_endpoint: row.family_id === 'bank' ? 'T2.3' : 'T2.rest',
+            activation_state: row.family_id === 'bank' ? 'activated' : 'not-activated',
             canonical_endpoint_predecessors: row.family_id === 'bank'
                 ? ['F0', 'T1.3', 'T2.2', 'T5.1']
                 : predecessors,
@@ -1275,7 +1276,7 @@ function buildArtifacts({
     const contract = {
         schema_version: 1,
         endpoint: 'T2.1',
-        activation_state: 'not-activated',
+        activation_state: 'partially-activated',
         frozen_source: {
             repository: 'https://github.com/rs2b2t/rs2b0t.git',
             revision: frozenRevision,
@@ -1287,7 +1288,7 @@ function buildArtifacts({
         overlays: classifiedOverlays,
         callbacks,
         not_impl_debt: debt,
-        active_families: [],
+        active_families: ['bank'],
         family_counts: familyCounts,
     };
     const predecessors = {
@@ -1305,7 +1306,10 @@ function buildArtifacts({
 }
 
 function validateArtifacts(contract, predecessors, navFamilies = null) {
-    if (contract.active_families.length) fail('T2.1 must not activate a family');
+    if (contract.activation_state !== 'partially-activated' ||
+        JSON.stringify(contract.active_families) !== JSON.stringify(['bank'])) {
+        fail('T2.3 activates exactly the bank family');
+    }
     const familyIds = new Set(predecessors.families.map(row => row.family_id));
     if (familyIds.size !== predecessors.families.length) fail('Duplicate family predecessor row');
     const checkFamily = (row, where) => {
@@ -1323,6 +1327,8 @@ function validateArtifacts(contract, predecessors, navFamilies = null) {
         for (const row of contract[collection]) checkFamily(row, row.selector || row.member || row.public_name || collection);
     }
     for (const family of predecessors.families) {
+        const expectedState = family.family_id === 'bank' ? 'activated' : 'not-activated';
+        if (family.activation_state !== expectedState) fail(`Unexpected activation state for family ${family.family_id}`);
         for (const required of BASE_PREDECESSORS) {
             if (!family.predecessors.includes(required)) fail(`Family ${family.family_id} is missing predecessor ${required}`);
         }

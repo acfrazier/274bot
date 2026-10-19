@@ -2198,8 +2198,6 @@ fn encode_inspect_bytes(nav: &InspectNav, tick: u64, hold: bool) -> Vec<u8> {
             count_dialog_open: false,
             withdraw_x_result_seq: 0,
             withdraw_x_result: false,
-            withdraw_load_result_seq: 0,
-            withdraw_load_result: false,
             bank_op_result_seq: 0,
             bank_op_result: false,
             hold,
@@ -3263,16 +3261,62 @@ fn real_content_inspection_capture_bytes() {
         "old/new real-content snapshot bytes include the dynamic route and refusal"
     );
     let old_bytes = std::fs::read(OLD_CAPTURE).expect("immutable old inspection capture");
-    assert_eq!(
-        bytes, old_bytes,
-        "candidate must preserve captured inspection bytes"
-    );
-    assert_eq!(bytes.len(), 1_376);
-    let digest: [u8; 32] = sha2::Sha256::digest(&bytes).into();
+    assert_eq!(old_bytes.len(), 1_376, "immutable capture size");
+    let digest: [u8; 32] = sha2::Sha256::digest(&old_bytes).into();
     assert_eq!(
         nav::pack::sha256_hex(&digest),
         "886f2db744cd8f7f7b90004af412b6a24b0211b2fdd23a460ccc54eb531188ab",
-        "real-content inspection wire must match the old captured bytes"
+        "immutable real-content inspection capture authority"
+    );
+    let old_snapshot = script::isolate_fb::decode_snapshot(&old_bytes).unwrap();
+    let snapshot = script::isolate_fb::decode_snapshot(&bytes).unwrap();
+
+    // The approved I-wire retirement reserves these two old vtable slots.
+    // flatc omits their accessors, so inspect only the authenticated old
+    // capture's little-endian slots: seq at 126 and result at 128.
+    let root = u32::from_le_bytes(old_bytes[..4].try_into().unwrap()) as usize;
+    let distance = i32::from_le_bytes(old_bytes[root..root + 4].try_into().unwrap());
+    let vtable = usize::try_from(i64::try_from(root).unwrap() - i64::from(distance)).unwrap();
+    let slot = |offset: usize| {
+        usize::from(u16::from_le_bytes(
+            old_bytes[vtable + offset..vtable + offset + 2]
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let seq = slot(126);
+    let result = slot(128);
+    assert_ne!(seq, 0, "old forced-default sequence slot is present");
+    assert_ne!(result, 0, "old forced-default result slot is present");
+    assert_eq!(
+        u64::from_le_bytes(old_bytes[root + seq..root + seq + 8].try_into().unwrap()),
+        0,
+        "the retired withdraw-load sequence carries no information"
+    );
+    assert_eq!(old_bytes[root + result], 0, "the retired result is false");
+    assert_eq!(
+        bytes.len() + 16,
+        old_bytes.len(),
+        "only retired padding is removed"
+    );
+
+    // flatc's generated Debug visits every active accessor recursively;
+    // FlatBuffers Vector Debug iterates every entry without truncation.
+    // Thus this compares every active nested field, not just route fields.
+    let active_fields = format!("{snapshot:?}");
+    assert_eq!(
+        active_fields,
+        format!("{old_snapshot:?}"),
+        "all active decoded snapshot fields preserve the immutable capture"
+    );
+    let changed = encode_inspect_bytes(&expected_snapshot, 289_002, false);
+    assert_ne!(
+        active_fields,
+        format!(
+            "{:?}",
+            script::isolate_fb::decode_snapshot(&changed).unwrap()
+        ),
+        "changing an active tick must fail the capture comparison"
     );
     if let Some(output) = output {
         std::fs::write(&output, &bytes).expect("write exact inspection snapshot bytes");

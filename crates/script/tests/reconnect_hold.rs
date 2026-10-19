@@ -13,6 +13,9 @@ use script::{LoadIsolate, LoadShape};
 mod common;
 use common::{ingame_snapshot, post_snapshot_input};
 
+#[path = "common/bank_slot.rs"]
+mod bank_slot;
+
 fn tile(x: i32, z: i32) -> TileInput {
     TileInput { x, z, level: 0 }
 }
@@ -112,15 +115,30 @@ export default class T extends LoopingBot {
         if (globalThis.__did) return;
         globalThis.__did = true;
         globalThis.__ok = null;
+        globalThis.__settled = 0;
         globalThis.__ok = await Banking.open({
             stand: { x: 3250, z: 3250, level: 0 },
             boothName: 'Bank chest',
             boothOp: 'Bank',
         });
+        globalThis.__settled++;
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    use api::snapshot::{GameSnapshot, SceneView, WorldTile};
+    use script::isolate_fb::NativeFactsInput;
+    use script::native::HostEffect;
+
+    fn bank_tick(slot: &mut bank_slot::BankSlot, snap: &SnapshotInput<'_>) {
+        slot.tick_from_input(snap.tick, snap, NativeFactsInput::default());
+    }
+
+    let mut iso = bank_slot::BankSlot::new(
+        src,
+        LoadShape::CompatClass,
+        None,
+        std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+    );
     let bank = ["Bank".to_string()];
     let locs = [SceneEntityInput {
         index: 0,
@@ -140,69 +158,289 @@ export default class T extends LoopingBot {
         combat_level: 0,
         target_kind: 0,
         target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
-        shape: 0,
+        size: 1,
+        nx: 3251,
+        nz: 3250,
+        shape: 10,
         angle: 0,
     }];
     let mut snap = ingame_snapshot();
     snap.here = Some(tile(3222, 3222));
     snap.locs = &locs;
-    tick(&iso, &snap);
+    bank_tick(&mut iso, &snap);
+    let actions = iso.take_actions();
     assert!(
-        matches!(
-            walks(&iso.drain_interacts()).as_slice(),
-            [InteractReq::WalkNear {
-                x: 3250,
-                z: 3250,
-                ..
-            }]
-        ),
+        matches!(actions.as_slice(), [action]
+            if matches!(&action.effect, HostEffect::Walk(request)
+                if request.target == (WorldTile { x: 3250, z: 3250, level: 0 }))),
         "Banking.open walks to the stand first"
     );
+    let old = actions[0].authority();
 
-    iso.reconnect_session_work(None);
-    let next = relog(&iso, &mut snap, 2, tile(3230, 3230));
-    assert_eq!(value(&iso, "globalThis.__ok"), serde_json::Value::Null);
-    assert!(walks(&iso.drain_interacts()).is_empty());
-
-    // At the stand: the held Banking.open carries on to the booth.
-    snap.tick = next;
-    snap.here = Some(tile(3250, 3250));
-    let approaches = [script::isolate_fb::BankApproachInput {
-        loc_id: 4483,
-        x: 3251,
-        z: 3250,
-        level: 0,
-        can_operate: true,
-        dest_ok: true,
-        dest_x: 3250,
-        dest_z: 3250,
-        dest_level: 0,
-    }];
-    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
-        &snap,
-        script::isolate_fb::NativeFactsInput {
-            bank_approaches: Some(&approaches),
-            ..Default::default()
+    iso.reconnect_session_work();
+    assert!(!old.live(), "the old session's native action is revoked");
+    iso.slot.complete_native_walk(
+        &old,
+        script::native::WalkReceipt {
+            request_id: old.request_id().get(),
+            evidence: api::quest_progress::EvidenceStamp {
+                run: old.run(),
+                tick: 2,
+                sequence: 2,
+            },
+            end: script::native::WalkEnd::Arrived,
+            blocked: None,
+            detail: None,
+            refusal: None,
+            assessment: None,
+            escape: None,
         },
-    ));
-    iso.on_game_tick(next);
-    let _ = iso.probe("true");
-    assert!(
-        iso.drain_interacts()
-            .iter()
-            .any(|req| matches!(req, InteractReq::OpenBooth { id: 4483, .. })),
-        "the resumed Banking.open opens the booth"
     );
-    snap.tick = next + 1;
+    snap.here = Some(tile(3230, 3230));
+    snap.hold = true;
+    snap.tick = 2;
+    bank_tick(&mut iso, &snap);
+    assert!(
+        iso.take_actions().is_empty(),
+        "a held relog emits no follow"
+    );
+    snap.hold = false;
+    snap.tick = 3;
+    bank_tick(&mut iso, &snap);
+    snap.tick = 4;
+    bank_tick(&mut iso, &snap);
+    assert_eq!(
+        iso.probe("globalThis.__ok").unwrap(),
+        serde_json::Value::Null
+    );
+    let resumed = iso.take_actions();
+    let [follow] = resumed.as_slice() else {
+        panic!("the saved bank walk is revalidated exactly once after the held relog");
+    };
+    assert!(matches!(
+        &follow.effect,
+        HostEffect::Walk(request)
+            if request.target == (WorldTile { x: 3250, z: 3250, level: 0 })
+    ));
+    assert_ne!(follow.authority().run().session, old.run().session);
+    assert!(
+        !old.live(),
+        "fresh follow authority cannot revive the old session"
+    );
+
+    // At the stand: fresh raw scene facts, not an echoed approach, open the chest.
+    snap.tick = 5;
+    snap.here = Some(tile(3250, 3250));
+    let mut native = GameSnapshot::new();
+    bank_slot::update_native_snapshot(&mut native, &snap, NativeFactsInput::default(), None);
+    native.seed_scene(SceneView {
+        available: true,
+        base_x: 3250,
+        base_z: 3250,
+        level: 0,
+        width: 2,
+        height: 1,
+        collision_flags: vec![0, 0],
+    });
+    iso.tick(5, &snap, NativeFactsInput::default(), &native);
+    let opens = iso.take_actions();
+    assert_eq!(opens.len(), 1, "exactly one chest open follows the relog");
+    assert!(matches!(
+        &opens[0].effect,
+        HostEffect::Interaction(InteractReq::OpenBooth { id: 4483, .. })
+    ));
+    assert_ne!(opens[0].authority().run().session, old.run().session);
+    snap.tick = 6;
     snap.bank_open = true;
     snap.bank_loaded = true;
     snap.bank_generation = 1;
-    tick(&iso, &snap);
-    assert_eq!(value(&iso, "globalThis.__ok"), true);
-    iso.join();
+    bank_tick(&mut iso, &snap);
+    assert_eq!(iso.probe("globalThis.__ok").unwrap(), true);
+    assert_eq!(iso.probe("globalThis.__settled").unwrap(), 1);
+    snap.tick = 7;
+    bank_tick(&mut iso, &snap);
+    assert_eq!(iso.probe("globalThis.__settled").unwrap(), 1);
+    assert!(iso.take_actions().is_empty());
+    iso.stop();
+}
+
+#[test]
+fn kept_bank_transfer_steps_take_the_closed_bank_path_without_replay() {
+    use script::isolate_fb::{ItemRowInput, NativeFactsInput};
+    use script::native::{HostEffect, InteractionReceipt};
+
+    for (call, terminal_value) in [
+        ("Bank.deposit('Bones')", serde_json::json!(false)),
+        ("Bank.withdraw('Bones', 1)", serde_json::json!(false)),
+        ("Bank.depositInventory()", serde_json::Value::Null),
+    ] {
+        let source = format!(
+            r#"
+import {{ Bank }} from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {{
+    async loop() {{
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__settled = 0;
+        const take = globalThis.__rs2b0t_machine_take;
+        globalThis.__rs2b0t_machine_take = (handle) => {{
+            const result = take(handle);
+            if (result !== undefined) globalThis.__terminal = result;
+            return result;
+        }};
+        globalThis.__ok = await {call};
+        globalThis.__settled++;
+    }}
+}}
+"#
+        );
+        let mut slot = bank_slot::BankSlot::new(
+            source,
+            LoadShape::CompatClass,
+            None,
+            std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+        );
+        let bank_ops = ["Withdraw-1".to_string()];
+        let side_ops = ["Deposit-1".to_string(), "Deposit-All".to_string()];
+        let bank = [ItemRowInput {
+            id: 526,
+            name: Some("Bones"),
+            count: 40,
+            ops: &bank_ops,
+            noted: false,
+            cert: -1,
+            component_id: 3214,
+            slot: 0,
+        }];
+        let side = [ItemRowInput {
+            count: 1,
+            ops: &side_ops,
+            component_id: 701,
+            ..bank[0]
+        }];
+        let mut snap = ingame_snapshot();
+        snap.inv = &side;
+        snap.inv_size = 28;
+        snap.bank = &bank;
+        snap.bank_side = &side;
+        snap.bank_open = true;
+        snap.bank_loaded = true;
+        snap.bank_generation = 1;
+        let native = NativeFactsInput {
+            bank_snapshot_generation: Some(1),
+            side_modal_id: Some(700),
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        for tick in 1..=4 {
+            snap.tick = tick;
+            slot.tick_from_input(tick, &snap, native);
+            actions.extend(slot.take_actions());
+            if !actions.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(actions.len(), 1, "{call}: one transfer is in flight");
+        assert!(matches!(&actions[0].effect, HostEffect::Interaction(_)));
+        assert_eq!(slot.probe("__settled").unwrap(), 0);
+        let old = actions[0].authority();
+        slot.reconnect_session_work();
+        assert!(!old.live(), "{call}: a queued old effect cannot dispatch");
+        slot.slot.complete_native_interaction(
+            &old,
+            InteractionReceipt {
+                request_id: old.request_id().get(),
+                evidence: api::quest_progress::EvidenceStamp {
+                    run: old.run(),
+                    tick: snap.tick + 1,
+                    sequence: snap.tick + 1,
+                },
+                accepted: true,
+                chat_since: -1,
+            },
+        );
+        snap.bank_open = false;
+        snap.bank_loaded = false;
+        snap.bank = &[];
+        snap.bank_side = &[];
+        snap.hold = true;
+        snap.tick += 1;
+        slot.tick_from_input(snap.tick, &snap, Default::default());
+        assert_eq!(slot.probe("__settled").unwrap(), 0);
+        snap.hold = false;
+        for _ in 0..4 {
+            snap.tick += 1;
+            slot.tick_from_input(snap.tick, &snap, Default::default());
+            assert!(
+                slot.take_actions().is_empty(),
+                "{call}: no old verb is replayed"
+            );
+        }
+        assert_eq!(slot.probe("__settled").unwrap(), 1, "{call}");
+        assert_eq!(
+            slot.probe("__terminal").unwrap(),
+            serde_json::json!({"kind": "done", "value": terminal_value}),
+            "{call}: the late accepted receipt cannot turn the closed-bank exit into success"
+        );
+        slot.stop();
+    }
+}
+
+#[test]
+fn non_kept_reset_aborts_bank_opening_and_settles_its_promise_once() {
+    use script::native::HostEffect;
+
+    let source = r#"
+import { Banking } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__settled = 0;
+        const take = globalThis.__rs2b0t_machine_take;
+        globalThis.__rs2b0t_machine_take = (handle) => {
+            const result = take(handle);
+            if (result !== undefined) globalThis.__terminal = result;
+            return result;
+        };
+        globalThis.__ok = await Banking.open({
+            stand: { x: 3250, z: 3250, level: 0 },
+            boothName: 'Bank chest',
+            boothOp: 'Bank',
+        });
+        globalThis.__settled++;
+    }
+}
+"#;
+    let mut slot = bank_slot::BankSlot::new(
+        source,
+        LoadShape::CompatClass,
+        None,
+        std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+    );
+    let mut snap = ingame_snapshot();
+    snap.here = Some(tile(3222, 3222));
+    slot.tick_from_input(1, &snap, Default::default());
+    let actions = slot.take_actions();
+    assert!(matches!(actions.as_slice(), [action] if matches!(action.effect, HostEffect::Walk(_))));
+    let old = actions[0].authority();
+    slot.reset_session_work();
+    assert!(!old.live());
+    for tick in 2..=5 {
+        snap.tick = tick;
+        slot.tick_from_input(tick, &snap, Default::default());
+        assert!(
+            slot.take_actions().is_empty(),
+            "a non-kept opening must not resume"
+        );
+    }
+    assert_eq!(
+        slot.probe("__terminal").unwrap(),
+        serde_json::json!({"kind": "aborted", "reason": "reset"})
+    );
+    assert_eq!(slot.probe("__ok").unwrap(), false);
+    assert_eq!(slot.probe("__settled").unwrap(), 1);
+    slot.stop();
 }
 
 fn line(seq: i32, text: &'static str) -> ChatLineInput<'static> {

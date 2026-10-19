@@ -425,7 +425,7 @@ fn update_native_bank_snapshot(
                 },
                 distance,
                 layer: api::snapshot::LocLayer::Ground,
-                shape: 0,
+                shape: 10,
                 angle: 0,
                 width: 1,
                 length: 1,
@@ -3172,7 +3172,7 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
-        shape: 0,
+        shape: 10,
         angle: 0,
     }];
     let mut input = ready_snapshot();
@@ -4928,7 +4928,7 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
-        shape: 0,
+        shape: 10,
         angle: 0,
     }];
     for source in sources {
@@ -5011,7 +5011,7 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
-        shape: 0,
+        shape: 10,
         angle: 0,
     }];
     let mut input = base_snapshot();
@@ -5103,6 +5103,7 @@ export default class T extends LoopingBot {
     ]));
     let mut slot = new_bank_slot(src, LoadShape::CompatClass, banks);
     let mut input = base_snapshot();
+    input.inv_size = 28;
     input.here = Some(script::isolate_fb::TileInput {
         x: 100,
         z: 100,
@@ -5200,7 +5201,7 @@ export default class T extends LoopingBot {
         size: 1,
         nx: 300,
         nz: 400,
-        shape: 0,
+        shape: 10,
         angle: 0,
     }];
     input.here = Some(script::isolate_fb::TileInput {
@@ -5246,6 +5247,12 @@ export default class T extends LoopingBot {
     );
     input.bank_loaded = true;
     tick_bank_slot(&mut slot, &mut input, 5, 1, SIDE_ROOT, &mut snapshot);
+    assert_eq!(
+        slot.probe("globalThis.__banked ?? null").unwrap(),
+        serde_json::Value::Null,
+        "bankNearest waits one frozen settle tick after the loaded bank",
+    );
+    tick_bank_slot(&mut slot, &mut input, 6, 1, SIDE_ROOT, &mut snapshot);
     assert_eq!(
         slot.probe("globalThis.__banked").unwrap(),
         serde_json::json!(true)
@@ -5374,7 +5381,14 @@ export default class T extends LoopingBot {
         },
         &snapshot,
     );
-    assert_eq!(slot.probe("__after").unwrap(), serde_json::json!(true));
+    let logs = slot.slot.drain_logs();
+    assert_eq!(
+        slot.probe("globalThis.__after ?? null").unwrap(),
+        serde_json::json!(true),
+        "native bank generation: {:?}; loaded: {}; logs: {logs:?}",
+        snapshot.bank_snapshot_generation(),
+        snapshot.bank_loaded(),
+    );
     slot.stop();
 }
 
@@ -5969,7 +5983,7 @@ export default class T extends LoopingBot {
         }
         if (globalThis.__neverArrived === undefined) {
             globalThis.__readyBeforeTimeout = Bank.ready();
-            globalThis.__neverArrived = await Bank.waitReady(1, (message) => {
+            globalThis.__neverArrived = await Bank.waitReady(1000, (message) => {
                 globalThis.__waitLog = message;
             });
         }
@@ -6009,7 +6023,7 @@ export default class T extends LoopingBot {
         serde_json::json!("undefined")
     );
 
-    thread::sleep(Duration::from_millis(2));
+    thread::sleep(Duration::from_millis(1002));
     tick_bank_slot(&mut slot, &mut input, 5, -1, SIDE_ROOT, &mut snapshot);
     tick_bank_slot(&mut slot, &mut input, 6, -1, SIDE_ROOT, &mut snapshot);
     assert_eq!(
@@ -6204,6 +6218,12 @@ export default class T extends LoopingBot {
     input.bank_loaded = false;
     input.bank_generation += 1;
     tick_bank_slot(&mut slot, &mut input, 5, -1, -1, &mut snapshot);
+    assert_eq!(
+        slot.probe("typeof __closed").unwrap(),
+        serde_json::json!("undefined"),
+        "the frozen confirm waits one observed tick after the bank actually closes",
+    );
+    tick_bank_slot(&mut slot, &mut input, 6, -1, -1, &mut snapshot);
     assert_eq!(slot.probe("__closed").unwrap(), serde_json::json!(true));
     slot.stop();
 }
@@ -11368,7 +11388,9 @@ export default class T extends LoopingBot {
     tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
     assert_eq!(
         slot.probe("__picked").unwrap(),
-        serde_json::json!(["Strange fruit"])
+        serde_json::json!(["Strange fruit"]),
+        "periodic bank error: {:?}",
+        slot.probe("__error"),
     );
     assert_eq!(slot.probe("__error").unwrap(), serde_json::Value::Null);
     let actions = slot.take_actions();
@@ -11506,6 +11528,18 @@ export default class T extends LoopingBot {
     );
     for tick in 2..=6 {
         tick_bank_slot(&mut slot, &mut input, tick, -1, -1, &mut snapshot);
+        for action in slot.take_actions() {
+            let script::native::HostEffect::Walk(request) = &action.effect else {
+                panic!("the air fallback must walk to its captured bank");
+            };
+            assert_eq!(request.target, bank_tile);
+            accept_bank_walk(&mut slot, &action, tick);
+            input.here = Some(script::isolate_fb::TileInput {
+                x: bank_tile.x,
+                z: bank_tile.z,
+                level: bank_tile.level,
+            });
+        }
         if slot.probe("__done").unwrap().as_bool() == Some(true) {
             break;
         }
@@ -11514,7 +11548,10 @@ export default class T extends LoopingBot {
     assert_eq!(slot.probe("__error").unwrap(), serde_json::Value::Null);
     assert_eq!(
         slot.probe("__logMessages").unwrap(),
-        serde_json::json!(["periodic bank: no bank reachable — will retry later"])
+        serde_json::json!([
+            "no usable 'Bank booth' in the scene",
+            "periodic bank: no bank reachable — will retry later",
+        ])
     );
     slot.stop();
 }
@@ -11595,6 +11632,7 @@ export default class T extends LoopingBot {
 "#;
     let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
     let mut input = base_snapshot();
+    input.inv_size = 28;
     input.bank_open = true;
     input.bank_loaded = true;
     input.bank_generation = 7;
@@ -11700,6 +11738,131 @@ export default class T extends LoopingBot {
     );
     assert!(slot.take_actions().is_empty());
     slot.stop();
+}
+
+#[test]
+fn bank_nearest_pause_and_kept_reconnect_revalidate_return_follow_without_repeating_hooks() {
+    for reconnect in [false, true] {
+        let src = r#"
+import { Banking } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__settled = 0;
+        globalThis.__afterCalls = 0;
+        globalThis.__result = await Banking.bankNearest({
+            returnTo: { x: 3252, z: 3222, level: 0 },
+            afterDeposit() { globalThis.__afterCalls++; },
+        });
+        globalThis.__settled++;
+    }
+}
+"#;
+        let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+        let mut input = ready_snapshot();
+        input.bank_open = true;
+        input.bank_loaded = true;
+        input.bank_generation = 7;
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
+        assert_eq!(slot.probe("__afterCalls").unwrap(), serde_json::json!(1));
+        tick_bank_slot(&mut slot, &mut input, 2, 1, SIDE_ROOT, &mut snapshot);
+        let actions = slot.take_actions();
+        let [first] = actions.as_slice() else {
+            panic!("the settled bank trip must start exactly one return follow");
+        };
+        let script::native::HostEffect::Walk(first_request) = &first.effect else {
+            panic!("returnTo must use the native walk primitive");
+        };
+        assert_eq!(first_request.target.x, 3252);
+        assert_eq!(first_request.target.z, 3222);
+        assert_eq!(first_request.radius, 6);
+        let first_authority = first.authority();
+        if reconnect {
+            slot.reconnect_session_work();
+            assert!(
+                !first_authority.live(),
+                "the old session is irrevocably fenced"
+            );
+            accept_bank_walk(&mut slot, first, 2);
+            input.hold = true;
+        } else {
+            slot.slot.pause();
+            assert!(
+                first_authority.live(),
+                "Pause retains the bank continuation"
+            );
+            slot.slot.complete_native_walk(
+                &first_authority,
+                script::native::WalkReceipt {
+                    request_id: first.request_id.get(),
+                    evidence: api::quest_progress::EvidenceStamp {
+                        run: first.run(),
+                        tick: 2,
+                        sequence: 2,
+                    },
+                    end: script::native::WalkEnd::Cancelled,
+                    blocked: None,
+                    detail: None,
+                    refusal: None,
+                    assessment: None,
+                    escape: None,
+                },
+            );
+        }
+        for tick in 3..=4 {
+            tick_bank_slot(&mut slot, &mut input, tick, 1, SIDE_ROOT, &mut snapshot);
+            assert!(
+                slot.take_actions().is_empty(),
+                "a paused or held trip emits no follow"
+            );
+            assert_eq!(slot.probe("__settled").unwrap(), serde_json::json!(0));
+        }
+        input.hold = false;
+        if !reconnect {
+            slot.slot.resume();
+        }
+        let mut resumed = Vec::new();
+        for tick in 5..=6 {
+            tick_bank_slot(&mut slot, &mut input, tick, 1, SIDE_ROOT, &mut snapshot);
+            resumed.extend(slot.take_actions());
+        }
+        let [next] = resumed.as_slice() else {
+            panic!("Resume must revalidate and re-arm the return follow exactly once");
+        };
+        let script::native::HostEffect::Walk(next_request) = &next.effect else {
+            panic!("Resume must not replay a bank click or callback");
+        };
+        assert_eq!(next_request.target, first_request.target);
+        assert_eq!(next_request.radius, first_request.radius);
+        assert_ne!(
+            (next.run(), next.request_id),
+            (first.run(), first.request_id),
+            "a resumed follow must have fresh scoped request authority"
+        );
+        assert_eq!(next.run().session != first.run().session, reconnect);
+        assert!(
+            !first_authority.live(),
+            "the interrupted follow's authority is retired"
+        );
+        assert_eq!(slot.probe("__afterCalls").unwrap(), serde_json::json!(1));
+        assert_eq!(slot.probe("__settled").unwrap(), serde_json::json!(0));
+        accept_bank_walk(&mut slot, next, 6);
+        input.here = Some(script::isolate_fb::TileInput {
+            x: 3252,
+            z: 3222,
+            level: 0,
+        });
+        for tick in 7..=8 {
+            tick_bank_slot(&mut slot, &mut input, tick, 1, SIDE_ROOT, &mut snapshot);
+            assert!(slot.take_actions().is_empty());
+        }
+        assert_eq!(slot.probe("__result").unwrap(), serde_json::json!(true));
+        assert_eq!(slot.probe("__settled").unwrap(), serde_json::json!(1));
+        assert_eq!(slot.probe("__afterCalls").unwrap(), serde_json::json!(1));
+        slot.stop();
+    }
 }
 
 #[path = "load_isolate/seat_product_cases.rs"]

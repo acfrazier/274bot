@@ -52,6 +52,8 @@ pub const MAX_START_CHARGE: usize = 64 * 1024;
 pub const START_METADATA: usize = 128;
 /// Charge for each rooted callback handle (§28.4).
 pub const HOOK_CHARGE: usize = 16;
+/// Maximum encoded arguments of one native prompt, retained until answered.
+pub const PROMPT_ARGS_MAX_BYTES: usize = 256;
 /// Maximum rooted callback handles per pending start (§28.4).
 pub const MAX_HOOKS: usize = 32;
 /// Existing Gather encoded-settings limit, not a general argument-size limit.

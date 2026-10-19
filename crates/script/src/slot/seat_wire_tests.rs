@@ -237,7 +237,7 @@ fn typed_batch_watermark_decide_start_and_own_push_share_turn() {
 #[test]
 fn native_prompt_page_decision_and_late_copy_are_bounded_and_ordered() {
     use crate::isolate_fb::{SeatDecisionInput, SeatPageInput};
-    use api::script_contract::{DecisionSequence, HOOK_CHARGE};
+    use api::script_contract::{DecisionSequence, PROMPT_ARGS_MAX_BYTES};
 
     let point = crate::native::PromptPoint::from_contract_row(
         crate::native::abi::HOOK_CHARACTERIZATIONS
@@ -275,7 +275,7 @@ fn native_prompt_page_decision_and_late_copy_are_bounded_and_ordered() {
         assert_eq!(prompt.sequence.get(), 1);
     }
     assert_eq!(
-        seat.prompt_with_details(id(1), point, &[0; HOOK_CHARGE + 1]),
+        seat.prompt_with_details(id(1), point, &[0; PROMPT_ARGS_MAX_BYTES + 1]),
         Err(crate::native::seat::SeatError::PromptTooLarge)
     );
 
@@ -294,8 +294,12 @@ fn native_prompt_page_decision_and_late_copy_are_bounded_and_ordered() {
         vec![9, 8, 7]
     );
     assert_eq!(
-        seat.prompt_with_details(id(1), point, &[5]),
+        seat.prompt_with_details(id(1), point, &[5; PROMPT_ARGS_MAX_BYTES]),
         Ok(DecisionSequence::FIRST.next().unwrap())
+    );
+    assert_eq!(
+        seat.prompt_payload(id(1)).unwrap().args,
+        [5; PROMPT_ARGS_MAX_BYTES]
     );
     let late_before = seat.late_controls();
     let logs_before = slot.pending_logs.len();
@@ -508,6 +512,9 @@ fn nested_four_root_wire_starts_publish_the_fifth_root_refusal() {
 
     let mut slot = slot();
     let execution = ExecutionId::first(slot.seat.as_ref().unwrap().run());
+    let bank = crate::bank::request::BankSeatArgs::new(
+        crate::bank::request::BankSeatOperation::BankNearest,
+    );
     let starts = [
         (1, None, NativeKind::Prayer),
         (2, None, NativeKind::Autocast),
@@ -521,7 +528,11 @@ fn nested_four_root_wire_starts_publish_the_fifth_root_refusal() {
         stamp: RequestStamp::new(id(raw), parent.map(id), None, execution)
             .expect("current seat execution"),
         kind,
-        args: SeatStartArgsRef::Empty,
+        args: if kind == NativeKind::BankNearest {
+            SeatStartArgsRef::Bank(&bank)
+        } else {
+            SeatStartArgsRef::Empty
+        },
     });
     let input = SeatInteractBatchInput {
         consumed_terminal_seq: 0,
