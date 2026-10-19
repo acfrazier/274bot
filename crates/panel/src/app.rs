@@ -147,7 +147,7 @@ enum DockLayout {
 /// running slots, focus).
 struct PanelState {
     #[cfg(feature = "memory-profile")]
-    memory: Option<host_play::memory::Run>,
+    memory: Option<frontend_core::bench::BenchRun>,
     game_view: Option<GameView>,
     session: Session,
     keyboard: KeyboardOwner,
@@ -218,7 +218,7 @@ struct PanelState {
 #[derive(Debug)]
 enum Boot {
     #[cfg(feature = "memory-profile")]
-    Memory(host_play::memory::Config),
+    Memory(frontend_core::bench::BenchConfig),
     /// The vault passphrase from the in-panel prompt or `--vault-pass-stdin`.
     /// Failure is non-fatal: the in-panel prompt covers typing. `Debug` never
     /// prints it.
@@ -341,7 +341,7 @@ fn boot_execute(state: &mut PanelState, boot: Boot) -> Result<(), String> {
     match boot {
         #[cfg(feature = "memory-profile")]
         Boot::Memory(config) => {
-            let run = host_play::memory::Run::prepare_unseeded(config, "panel")?;
+            let run = frontend_core::bench::BenchRun::prepare(config, "panel")?;
             state.session.prepare_memory(&run)?;
             state.memory = Some(run);
             Ok(())
@@ -371,7 +371,7 @@ fn boot_failure_is_fatal(boot: &Boot) -> bool {
 }
 
 fn exit_after_work_shutdown(code: i32) -> ! {
-    let code = match script::work_admission::WorkService::shutdown_if_started() {
+    let code = match frontend_core::process::shutdown_background_work() {
         Ok(()) => code,
         Err(error) => {
             api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "background work shutdown: {error}");
@@ -835,7 +835,7 @@ fn parse_fixture_flags(args: Vec<String>) -> Result<(FixtureFlags, Vec<String>),
                         "panel-play: --prepare-fixture needs a scenario name".into(),
                     ));
                 };
-                if scenario::get(&name).is_none() {
+                if frontend_core::live::Scenario::get(&name).is_none() {
                     return Err((
                         2,
                         format!("panel-play: unknown prepare-fixture scenario {name}"),
@@ -967,7 +967,7 @@ impl RunMode {
 /// shot files sort chronologically). Already in the 377 safe alphabet, so
 /// `safe_label` is a no-op on it.
 fn manual_shot_label(now: SystemTime) -> String {
-    format!("manual-{}", scenario::shot::stamp_utc(now))
+    format!("manual-{}", frontend_core::live::shot_stamp_utc(now))
 }
 
 /// F12 whole-window shot: pair the pixels with the focused slot's last
@@ -1037,7 +1037,8 @@ pub fn parse_live_args(
     }
     if let Some(name) = live.as_deref() {
         let script_ok = name.strip_prefix("script_").is_some_and(|n| {
-            n == host_play::external_loader::LIVE_SCENARIO || scenario::is_registered(n)
+            n == frontend_core::live::external_loader_scenario_name()
+                || frontend_core::live::Scenario::is_registered(n)
         });
         if name != "null_raster"
             && name != "stress50"
@@ -4501,7 +4502,7 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
     if ui.checkbox("only render focused", &mut only) {
         only_render_selected_clicked(session, only);
     }
-    let live = session.scenario.lock().unwrap().is_some();
+    let live = session.core.live_runner().status().is_some();
     if live {
         let mut full = session.focus.lock().unwrap().live_full_rate;
         if ui.checkbox("full rate (this run)", &mut full) {
@@ -6299,12 +6300,13 @@ fn chooser_row(
 /// Offline prepare: mint isolated identity, write server-native `.sav` via
 /// `tools/harness`, write durable fixture identity — no live engine/window.
 fn run_offline_prepare_fixture(args: &PanelArgs, scenario: &str) -> Result<(), String> {
-    let sc = scenario::get(scenario).ok_or_else(|| format!("unknown scenario {scenario}"))?;
-    let profile_count = sc.seed.profiles.len();
+    let scenario_value = frontend_core::live::Scenario::get(scenario)
+        .ok_or_else(|| format!("unknown scenario {scenario}"))?;
+    let view = scenario_value.view();
+    let profile_count = view.profile_count();
     if profile_count == 0 {
         return Err(format!("scenario {scenario} has zero seed profiles"));
     }
-    let fixture_preset = scenario::fixture_preset_for(scenario)?;
     let server_root = args
         .server_root
         .clone()
@@ -6319,38 +6321,34 @@ fn run_offline_prepare_fixture(args: &PanelArgs, scenario: &str) -> Result<(), S
     let identity_path = args
         .fixture_path
         .clone()
-        .unwrap_or_else(|| scenario::default_fixture_path(scenario));
+        .unwrap_or_else(|| scenario_value.default_fixture_path());
     let sav_dir = identity_path
         .parent()
-        .map(|p| p.join(scenario))
-        .unwrap_or_else(|| scenario::default_fixture_sav_dir(scenario));
-    let names = host_play::mint_live_names(profile_count);
-    let entries = host_play::mint_live_entries(&names);
-    let pass = host_play::live_vault_passphrase();
-    let passwords: Vec<String> = entries.iter().map(|(_, p)| p.clone()).collect();
-    let identity = scenario::prepare_offline_fixture(scenario::OfflinePrepareOpts {
-        scenario: scenario.to_string(),
-        fixture_preset: fixture_preset.to_string(),
-        profile: "main".into(),
+        .map(|path| path.join(view.name()))
+        .unwrap_or_else(|| scenario_value.default_fixture_sav_dir());
+    let profiles = frontend_core::live::LiveProfiles::mint(profile_count);
+    let passwords = profiles
+        .entries()
+        .iter()
+        .map(|(_, password)| password.clone())
+        .collect();
+    let identity = scenario_value.prepare_offline_fixture(
         server_root,
-        identity_path: identity_path.clone(),
+        identity_path.clone(),
         sav_dir,
-        usernames: names,
+        profiles.names().to_vec(),
         passwords,
-        vault_passphrase: pass,
-        overwrite: true,
-    })?;
+        profiles.passphrase().to_owned(),
+    )?;
+    let accounts = identity.accounts();
     println!(
         "[panel] offline fixture prepared: scenario={} identity={} accounts={}",
-        identity.scenario,
+        identity.scenario_name(),
         identity_path.display(),
-        identity.accounts.len()
+        accounts.len()
     );
-    for a in &identity.accounts {
-        println!(
-            "[panel]   {} sav={} sha256={} bytes={}",
-            a.username, a.sav_path, a.sav_sha256, a.sav_bytes
-        );
+    for (username, sav_path, sha256, bytes) in accounts {
+        println!("[panel]   {username} sav={sav_path} sha256={sha256} bytes={bytes}");
     }
     println!("PASS: offline prepare fixture {scenario}");
     Ok(())
@@ -6370,9 +6368,9 @@ fn init_panel_running(
     state.session.set_external_ts(args.external_ts.clone());
     crate::log_pane::apply_session_log_pref(&mut state.session);
     let fixture_mode = if args.run_prepared {
-        scenario::FixtureMode::RunPrepared
+        frontend_core::live::FixtureMode::RunPrepared
     } else {
-        scenario::FixtureMode::Default
+        frontend_core::live::FixtureMode::Default
     };
     state
         .session
@@ -6398,7 +6396,7 @@ fn init_panel_running(
     };
     let boot = boot_for(&args.mode, vault_pass);
     #[cfg(feature = "memory-profile")]
-    let boot = match host_play::memory::Config::from_env() {
+    let boot = match frontend_core::bench::BenchConfig::from_env() {
         Ok(Some(config)) => {
             client::profiling::enable();
             // The profile is not bound yet (an unbound session reads as
@@ -6406,12 +6404,8 @@ fn init_panel_running(
             let class = state
                 .session
                 .launcher
-                .configured_class(state.session.ui.server_revision)
-                .map(|class| match class {
-                    frontend_core::launch::ProfileClass::Local => host_play::ProfileClass::Local,
-                    frontend_core::launch::ProfileClass::Remote => host_play::ProfileClass::Remote,
-                });
-            if let Err(error) = class.and_then(host_play::memory::require_live_benchmark) {
+                .configured_class(state.session.ui.server_revision);
+            if let Err(error) = class.and_then(frontend_core::bench::require_live_benchmark) {
                 eprintln!("FAIL: {error}");
                 exit_after_work_shutdown(1);
             }
@@ -6498,7 +6492,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     let skip_lock = !matches!(args.mode, RunMode::Interactive);
     #[cfg(feature = "memory-profile")]
     let skip_lock = skip_lock
-        || host_play::memory::Config::from_env()
+        || frontend_core::bench::BenchConfig::from_env()
             .ok()
             .flatten()
             .is_some();
@@ -6623,7 +6617,7 @@ fn pump_shots(state: &mut PanelState) -> usize {
     let mut written = 0;
     for cap in done {
         if state.shot_dir.is_none() {
-            match scenario::shot::create_run_dir() {
+            match frontend_core::live::create_shot_run_dir() {
                 Ok(dir) => state.shot_dir = Some(dir),
                 Err(error) => {
                     let message = format!("shot directory unavailable: {error}");
@@ -6638,7 +6632,7 @@ fn pump_shots(state: &mut PanelState) -> usize {
             }
         }
         if let Some(dir) = state.shot_dir.as_deref() {
-            match scenario::shot::write_shot(
+            match frontend_core::live::write_shot(
                 dir,
                 &cap.label,
                 &cap.rgba,
@@ -6725,15 +6719,8 @@ fn pump_shots(state: &mut PanelState) -> usize {
 fn pump_record(state: &mut PanelState) {
     if state.record.needs_arm() && state.live.is_some() {
         if let Some(dir) = state.shot_dir.clone() {
-            let scenario = state
-                .session
-                .scenario
-                .lock()
-                .unwrap()
-                .as_ref()
-                .map(|runner| runner.scenario_name().to_string());
-            if let Some(scenario) = scenario {
-                state.record.arm(&dir, &scenario);
+            if let Some(scenario) = state.session.core.live_runner().scenario_name() {
+                state.record.arm(&dir, scenario);
             }
         }
     }
@@ -6766,18 +6753,14 @@ fn pump_record(state: &mut PanelState) {
 /// frames actually staged, so the lock never costs a non-recording frame.
 fn record_step_info(session: &Session) -> StepInfo {
     session
-        .scenario
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|runner| {
-            let (step, total, name) = runner.record_step();
-            StepInfo {
-                step,
-                total,
-                name: name.to_string(),
-                tick: runner.total_ticks(),
-            }
+        .core
+        .live_runner()
+        .record_step()
+        .map(|(step, total, name, tick)| StepInfo {
+            step,
+            total,
+            name: name.to_string(),
+            tick,
         })
         .unwrap_or(StepInfo {
             step: 0,
@@ -6888,40 +6871,30 @@ fn ui_frame(
     #[cfg(feature = "memory-profile")]
     if let Some(run) = state.memory.as_mut() {
         state.session.memory_focus(run);
-        if let Some(play) = state.session.core.play() {
-            match run.poll(play) {
-                Ok(true) => {
-                    eprintln!("PASS: memory panel observation complete");
-                    exit_after_work_shutdown(0);
-                }
-                Ok(false) => {}
-                Err(error) => {
-                    eprintln!("FAIL: memory panel: {error}");
-                    exit_after_work_shutdown(1);
-                }
+        match run.poll(&state.session.core) {
+            Ok(true) => {
+                eprintln!("PASS: memory panel observation complete");
+                exit_after_work_shutdown(0);
+            }
+            Ok(false) => {}
+            Err(error) => {
+                eprintln!("FAIL: memory panel: {error}");
+                exit_after_work_shutdown(1);
             }
         }
     }
     state.session.poll_quester_paths_reload();
     state.session.pump_script_transpile();
     if let Some(live) = state.live.as_mut() {
-        // Harness runs only: an interactive frame copies no status rows.
-        let statuses = state.session.statuses().to_vec();
-        let terminal_shot_status = {
-            let label = state
-                .session
-                .scenario
-                .lock()
-                .unwrap()
-                .as_ref()
-                .and_then(|runner| runner.terminal_shot());
-            label
-                .map(|label| state.shot_state.lock().unwrap().status(label))
-                .unwrap_or(ShotStatus::Missing)
-        };
+        let terminal_shot_status = state
+            .session
+            .core
+            .live_runner()
+            .terminal_shot()
+            .map(|label| state.shot_state.lock().unwrap().status(label))
+            .unwrap_or(ShotStatus::Missing);
         let failure = live.tick(
             &mut state.session,
-            &statuses,
             &terminal_shot_status,
             Some(&state.shot_state),
             wrote_shots,

@@ -612,6 +612,8 @@ pub struct OperatorSession<Io> {
     /// Per-slot frame state the slot threads share: walk arms, published
     /// snapshots, step latch.
     frames: Arc<crate::frames::FrameShared>,
+    #[cfg(feature = "live-harness")]
+    live_runner: crate::live::RunnerHandle,
     /// Shared preference applied whenever a Play is installed and whenever
     /// either front end updates its projection.
     pause_script_on_manual_walk_abort: bool,
@@ -695,6 +697,8 @@ impl<Io> OperatorSession<Io> {
             op_line: String::new(),
             resources: Resources::default(),
             frames: Arc::new(crate::frames::FrameShared::new()),
+            #[cfg(feature = "live-harness")]
+            live_runner: crate::live::RunnerHandle::default(),
             pause_script_on_manual_walk_abort: true,
             walk_globals: crate::walk_permissions::WalkGlobals::default(),
             walk_globals_store: None,
@@ -708,6 +712,11 @@ impl<Io> OperatorSession<Io> {
             commands: commands::CommandDesk::default(),
             focus_hint: None,
         }
+    }
+
+    #[cfg(feature = "live-harness")]
+    pub fn live_runner(&self) -> &crate::live::RunnerHandle {
+        &self.live_runner
     }
 
     /// Adopt an unlocked vault and its freshly built [`Play`]. No slot is
@@ -742,16 +751,19 @@ impl<Io> OperatorSession<Io> {
         let (parts, auto_world, keep_world_state) = launch.into_parts();
         let map_members = parts.map_members();
         self.frames.set_keep_world_state(keep_world_state);
-        let per_frame = crate::frames::slot_frame(
-            Arc::clone(&self.frames),
-            hook,
-            crate::frames::ClientOps::new(
-                host_play::player_here_tile,
-                host_play::Host::publish_frontend_snapshot,
-                host_play::step_walk_arm_follow,
-                |client| client.gens.player,
-            ),
+        let ops = crate::frames::ClientOps::new(
+            host_play::player_here_tile,
+            host_play::Host::publish_frontend_snapshot,
+            host_play::step_walk_arm_follow,
+            |client| client.gens.player,
         );
+        #[cfg(feature = "live-harness")]
+        let ops = ops.with_live_frame(crate::live::ScenarioFrame::new(
+            self.live_runner.share(),
+            scenario::ScenarioRunner::tick_with_hold,
+            scenario::ScenarioRunner::companion_tick,
+        ));
+        let per_frame = crate::frames::slot_frame(Arc::clone(&self.frames), hook, ops);
         let mut play = match parts {
             LaunchParts::Validated(validated, mainland) => host_play::run_prepared_template(
                 validated,
@@ -777,6 +789,12 @@ impl<Io> OperatorSession<Io> {
         self.frames.bind_world(play.world(), map_members);
         self.frames.bind_script_nav_paint(play.script_nav_paint());
         self.start(vault, play);
+        #[cfg(feature = "live-harness")]
+        {
+            // `start` adopts the session state before the runner snapshots its StartHandle.
+            self.live_runner
+                .install_play(self.play.as_ref().expect("started play is installed"));
+        }
         Ok(())
     }
 
@@ -959,6 +977,14 @@ impl<Io> OperatorSession<Io> {
     /// Rows from the last [`Self::poll`] (or [`Self::start`]).
     pub fn statuses(&self) -> &[SlotStatus] {
         &self.statuses
+    }
+
+    /// Find a terminal startup failure among slots owned by the live runner.
+    #[cfg(feature = "live-harness")]
+    pub fn live_terminal_startup_failure(&self) -> Option<String> {
+        self.play
+            .as_ref()
+            .and_then(|_| self.live_runner.terminal_startup_failure(&self.statuses))
     }
 
     /// Copy the rows into a front end's retained vector, reusing its row

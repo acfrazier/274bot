@@ -2,7 +2,7 @@
 //! All gameplay, rendering and scenario handling use the production panel.
 
 fn main() {
-    script::bootstrap_v8_platform().expect("protected V8 bootstrap on process main thread");
+    frontend_core::process::bootstrap().expect("protected V8 bootstrap on process main thread");
     let mut args = match panel::parse_args(std::env::args().skip(1), None) {
         Ok(args) => args,
         Err((code, message)) => {

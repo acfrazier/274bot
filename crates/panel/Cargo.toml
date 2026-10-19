@@ -14,7 +14,7 @@ client = { workspace = true, features = ["audio"] }
 dear-imgui-rs = "0.15"
 dear-imgui-wgpu = "0.15"
 dear-imgui-winit = "0.15"
-frontend-core = { path = "../frontend-core", features = ["debug-catalog"] }
+frontend-core = { path = "../frontend-core", features = ["debug-catalog", "live-harness"] }
 host = { path = "../host" }
 host-play = { path = "../host-play", features = ["live-harness", "debug-catalog"] }
 nav = { path = "../nav" }
@@ -57,10 +57,14 @@ path = "tests/ime_frame.rs"
 harness = false
 
 [features]
-render-diagnostics = ["client/render-diagnostics", "host/render-diagnostics"]
-memory-profile = ["host-play/memory-profile"]
+render-diagnostics = ["client/render-diagnostics", "host/render-diagnostics", "frontend-core/render-diagnostics"]
+memory-profile = ["host-play/memory-profile", "frontend-core/memory-profile"]
 # CPU diagnostic: use System directly, report allocator metrics unavailable.
-memory-profile-no-alloc = ["memory-profile", "host-play/memory-profile-no-alloc"]
+memory-profile-no-alloc = [
+    "memory-profile",
+    "host-play/memory-profile-no-alloc",
+    "frontend-core/memory-profile-no-alloc",
+]
 
 [dev-dependencies]
 frontend-core = { path = "../frontend-core", features = ["test-support"] }

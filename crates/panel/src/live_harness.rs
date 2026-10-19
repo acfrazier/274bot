@@ -7,8 +7,6 @@ use std::time::{Duration, Instant};
 
 use crate::session::Session;
 use crate::window::{ShotState, ShotStatus};
-use host_play::live_gate::{self, CoreGate, PassHold};
-use host_play::sample_process;
 
 /// Headed live harness: null_raster (2 slots), stress50 / stress50_full
 /// (50 slots), a shared scenario (`script_<name>`), or `--smoke` (one
@@ -170,20 +168,18 @@ impl LiveBoot {
             LiveBoot::Script { name } => {
                 let scenario_name = name.strip_prefix("script_").unwrap_or(&name);
                 let scenario = if session.external_core_enabled()
-                    && scenario_name == host_play::external_loader::LIVE_SCENARIO
+                    && scenario_name == frontend_core::live::external_loader_scenario_name()
                 {
-                    crate::session::external_loader_fixture()
+                    frontend_core::live::Scenario::external_loader_fixture()
                 } else {
-                    scenario::try_get(scenario_name)?
+                    frontend_core::live::Scenario::try_get(scenario_name)?
                         .ok_or_else(|| format!("unknown scenario {scenario_name}"))?
                 };
-                let scenario_deadline = scenario.settings.deadline;
+                let scenario_deadline = scenario.view().deadline();
                 session.live_prepare_script(scenario)?;
                 arm_scenario_shots(session, Arc::clone(&shots), shot_dir);
-                let budget = scenario::budget_s_from_env();
-                let core_deadline = live_gate::core_deadline(
-                    session.catalog_core_watch().as_ref(),
-                    session.paired_core_watch().as_ref(),
+                let budget = frontend_core::live::budget_s_from_env();
+                let core_deadline = session.core.live_runner().core_deadline(
                     budget,
                     scenario_deadline,
                     Instant::now(),
@@ -208,7 +204,7 @@ impl LiveBoot {
                 }))
             }
             LiveBoot::Smoke => {
-                let scenario = scenario::get("render_smoke")
+                let scenario = frontend_core::live::Scenario::get("render_smoke")
                     .ok_or_else(|| "unknown scenario render_smoke".to_string())?;
                 session.live_prepare_script(scenario)?;
                 arm_scenario_shots(session, Arc::clone(&shots), shot_dir);
@@ -273,14 +269,14 @@ pub(super) fn smoke_settled(saw_scene2_at: Option<Instant>, now: Instant, ingame
 /// the headless `e2e` twin.
 pub(super) fn live_null_tick(
     live: &mut LiveNull,
-    statuses: &[host_play::SlotStatus],
+    statuses: &frontend_core::StatusBuf,
 ) -> Option<String> {
     if live.passed {
         return None;
     }
     let ready = statuses
         .iter()
-        .filter(|s| s.ingame && s.scene_state == 2)
+        .filter(|status| status.ingame() && status.scene_state() == 2)
         .count();
     if ready < 2 {
         if live.started.elapsed() >= Duration::from_secs(120) {
@@ -290,21 +286,23 @@ pub(super) fn live_null_tick(
         }
         return None;
     }
-    let (rss, _) = sample_process();
-    let Some(test2) = statuses.iter().find(|s| s.username == "test2") else {
+    let rss = frontend_core::live::process_rss_kib();
+    let Some(test2) = statuses.get("test2") else {
         return Some("live null_raster: missing test2".into());
     };
-    let Some(test) = statuses.iter().find(|s| s.username == "test") else {
+    let Some(test) = statuses.get("test") else {
         return Some("live null_raster: missing test".into());
     };
     println!("live null_raster: rss={rss}");
     println!(
         "live null_raster test2 bytes={}/{}",
-        test2.bytes_in, test2.bytes_out
+        test2.bytes_in(),
+        test2.bytes_out()
     );
     println!(
         "live null_raster test  bytes={}/{}",
-        test.bytes_in, test.bytes_out
+        test.bytes_in(),
+        test.bytes_out()
     );
     println!("PASS: live null_raster");
     live.saw_scene2 = true;
@@ -320,13 +318,13 @@ pub(super) fn live_null_tick(
 /// the same wall with every renderer at 50 fps.
 pub(super) fn live_stress_tick(
     live: &mut LiveStress,
-    statuses: &[host_play::SlotStatus],
+    statuses: &frontend_core::StatusBuf,
 ) -> Option<String> {
     if live.passed {
         return None;
     }
     let name = live.name;
-    let n = statuses.iter().filter(|s| s.is_up()).count();
+    let n = statuses.iter().filter(|status| status.is_up()).count();
     if n >= 1 && live.last_announced < 1 {
         println!("live {name}: 1/50 up");
         live.last_announced = 1;
@@ -336,9 +334,9 @@ pub(super) fn live_stress_tick(
         live.last_announced = 10;
     }
     if n >= 50 {
-        let (rss, _) = sample_process();
+        let rss = frontend_core::live::process_rss_kib();
         let workers = client::io::OnDemand::live_workers_for(&live.host, live.port);
-        let tcp = host_play::count_tcp_to(&live.host, live.port);
+        let tcp = frontend_core::live::count_tcp_to(&live.host, live.port);
         let tcp_s = tcp.map(|c| c.to_string()).unwrap_or_else(|| "?".into());
         println!("PASS: live {name} rss={rss} up={n}/50 ondemand={workers} tcp={tcp_s}");
         live.last_announced = 50;
@@ -352,10 +350,9 @@ pub(super) fn live_stress_tick(
 }
 
 pub(super) fn pair_terminal_actor_names(session: &Session) -> Option<(String, String)> {
-    let runner = session.scenario.lock().unwrap();
-    let runner = runner.as_ref()?;
-    let a = runner.profile_name().to_string();
-    let b = runner.companion_profile_name(0).to_string();
+    let runner = session.core.live_runner();
+    let a = runner.profile_name()?;
+    let b = runner.companion_profile_name(0)?;
     if a.is_empty() || b.is_empty() || a == b {
         None
     } else {
@@ -446,13 +443,9 @@ pub(super) fn enqueue_external_terminal_shot(
     shots: &Mutex<ShotState>,
     label: &str,
 ) {
-    let Some(watch) = session.external_core_watch() else {
+    let Some(name) = session.core.live_runner().external_loader_account() else {
         return;
     };
-    if !watch.configured() {
-        return;
-    }
-    let name = watch.account();
     let json = session
         .core
         .with_slot_snapshot(&name, |snapshot| {
@@ -576,17 +569,12 @@ pub(super) fn enqueue_soak_capture(session: &Session, shots: &Mutex<ShotState>, 
     if !matches!(shots.lock().unwrap().status(label), ShotStatus::Missing) {
         return;
     }
-    if session
-        .paired_core_watch()
-        .is_some_and(|watch| watch.configured())
-    {
+    let runner = session.core.live_runner();
+    if runner.pair_core_configured() {
         enqueue_pair_terminal_shots(session, shots, label);
         return;
     }
-    if session
-        .external_core_watch()
-        .is_some_and(|watch| watch.configured())
-    {
+    if runner.external_loader_configured() {
         enqueue_external_terminal_shot(session, shots, label);
         return;
     }
@@ -608,10 +596,7 @@ pub(super) fn enqueue_soak_capture(session: &Session, shots: &Mutex<ShotState>, 
 }
 
 pub(super) fn soak_capture_status(session: &Session, shots: &ShotState, label: &str) -> ShotStatus {
-    if session
-        .paired_core_watch()
-        .is_some_and(|watch| watch.configured())
-    {
+    if session.core.live_runner().pair_core_configured() {
         if let Some((a, b)) = pair_terminal_actor_names(session) {
             return pair_terminal_shot_status(shots, &pair_shot_labels(label, &a, &b));
         }
@@ -647,13 +632,14 @@ pub(super) fn hold_script_terminal_shot(
 ) -> Result<bool, String> {
     let owned;
     let mut pair_labels: Option<[String; 2]> = None;
+    let runner = session.core.live_runner();
     let status = match (
         shots,
         terminal_shot,
-        session.paired_core_watch(),
-        session.external_core_watch(),
+        runner.pair_core_configured(),
+        runner.external_loader_configured() && runner.external_loader_needs_terminal_hold(),
     ) {
-        (Some(shots), Some(label), Some(watch), _) if watch.configured() => {
+        (Some(shots), Some(label), true, _) => {
             enqueue_pair_terminal_shots(session, shots, label);
             match pair_terminal_actor_names(session) {
                 Some((a, b)) => {
@@ -665,12 +651,12 @@ pub(super) fn hold_script_terminal_shot(
                 None => fallback,
             }
         }
-        (Some(shots), _, _, Some(watch)) if watch.configured() && watch.needs_terminal_hold() => {
-            let label = host_play::external_loader::TERMINAL_SHOT;
+        (Some(shots), _, _, true) => {
+            let label = frontend_core::live::external_loader_terminal_shot();
             enqueue_external_terminal_shot(session, shots, label);
             owned = shots.lock().unwrap().status(label);
             if !matches!(owned, ShotStatus::Missing) {
-                watch.note_capture_requested();
+                runner.note_external_loader_capture_requested();
             }
             return hold_terminal_shot(live, Some(label), &owned);
         }
@@ -807,6 +793,7 @@ pub(super) fn soak_capture_tick(
     }
 }
 
+#[cfg(test)]
 pub(super) fn script_failure_scenario(
     live_name: &str,
     evidence: Option<&scenario::Evidence>,
@@ -821,7 +808,7 @@ pub(super) fn script_failure_scenario(
         })
 }
 
-/// Headed script watch: mirror the shared `ScenarioRunner` each frame.
+/// Headed script watch: mirror the shared frontend-core runner each frame.
 /// PASS prints the JSON evidence record and latches `passed` (the caller
 /// exits 0); FAIL prints the record and returns the message (exit 1).
 /// When the runner armed a terminal shot, either outcome holds until the
@@ -835,104 +822,75 @@ pub(super) fn live_script_tick(
     if live.passed || live.failed.is_some() {
         return None;
     }
-    let (status, evidence, terminal_shot) = {
-        let guard = session.scenario.lock().unwrap();
-        (
-            guard.as_ref().map(|r| r.status()),
-            guard.as_ref().and_then(|r| r.evidence().cloned()),
-            guard.as_ref().and_then(|r| r.terminal_shot()),
-        )
-    };
     let now = Instant::now();
-    let core_watch = session.catalog_core_watch();
-    let core_gate = live_gate::catalog_core_gate(core_watch.as_ref(), live.core_deadline, now);
-    let pair_watch = session.paired_core_watch();
-    let pair_gate = live_gate::pair_core_gate(pair_watch.as_ref(), live.core_deadline, now);
-    if let Some(watch) = session.external_core_watch() {
-        match &status {
-            Some(scenario::RunnerStatus::Passed) => watch.note_prereq_passed(),
-            Some(scenario::RunnerStatus::Failed(msg)) => watch.note_prereq_failed(msg),
-            _ => {}
-        }
-    }
-    session.pump_external_loader();
+    session
+        .core
+        .live_runner()
+        .note_external_loader_prerequisite();
+    session.core.pump_live_external_loader(
+        &mut session.scripts,
+        &mut session.script_sel,
+        &session.statuses,
+        now,
+    );
+    let runner = session.core.live_runner();
+    let status = runner.status();
+    let evidence = runner.evidence_json();
+    let terminal_shot = runner.terminal_shot();
+
     // A failed proof still owns its execution. Stop must reach its bounded
     // outcome before a terminal capture or scenario failure can exit the host.
-    if session
-        .external_core_watch()
-        .is_some_and(|watch| watch.cleanup_pending())
-    {
+    if runner.external_loader_cleanup_pending() {
         return None;
     }
-    if let (Some(watch), Some(shots)) = (session.external_core_watch(), shots) {
-        if watch.needs_terminal_hold() || watch.terminal_capture_due() {
-            let label = host_play::external_loader::TERMINAL_SHOT;
+    if let Some(shots) = shots {
+        if runner.external_loader_needs_terminal_hold()
+            || runner.external_loader_terminal_capture_due()
+        {
+            let label = frontend_core::live::external_loader_terminal_shot();
             enqueue_external_terminal_shot(session, shots, label);
             let issued = !matches!(shots.lock().unwrap().status(label), ShotStatus::Missing);
             if issued {
-                watch.note_capture_requested();
-            } else if watch.terminal_capture_due() {
-                watch.fail("external loader terminal capture without ingame && scene_state == 2");
+                runner.note_external_loader_capture_requested();
+            } else if runner.external_loader_terminal_capture_due() {
+                runner.fail_external_loader(
+                    "external loader terminal capture without ingame && scene_state == 2",
+                );
             }
         }
     }
-    let ext_watch = session.external_core_watch();
-    let ext_gate = live_gate::external_core_gate(ext_watch.as_ref());
-    let record = |evidence: &Option<scenario::Evidence>| {
-        evidence.as_ref().map(|ev| ev.to_json()).unwrap_or_default()
-    };
-    // Compact core evidence is additive: preserve the existing scenario JSON
-    // receipt byte-for-byte and emit the shared witness only at a terminal
-    // decision, off the gameplay observation thread.
-    let record_core = || live_gate::catalog_core_record(core_watch.as_ref(), &core_gate);
-    let record_pair = || live_gate::pair_core_record(pair_watch.as_ref(), &pair_gate);
-    let record_ext = || live_gate::external_core_record(ext_watch.as_ref(), &ext_gate);
-    let live_line = || record_ext().unwrap_or_else(|| record(&evidence));
-    let failure_name = script_failure_scenario(&live.name, evidence.as_ref());
-    let failure_evidence = evidence.clone();
-    let failure_line = |message: &str| {
-        serde_json::json!({
-            "scenario": failure_name,
-            "outcome": "FAIL",
-            "message": message,
-            "prerequisite": failure_evidence,
-        })
-        .to_string()
+    let decision = runner.watch_decision(live.core_deadline, now);
+    let live_line = || {
+        decision
+            .external_record()
+            .or(evidence.as_deref())
+            .unwrap_or("")
     };
     let proof_name = live.name.clone();
     let emit_proof = |ok: bool| {
-        for (tag, witness) in [
-            (live_gate::CATALOG_CORE_TAG, record_core()),
-            (live_gate::PAIRED_CORE_TAG, record_pair()),
-            (live_gate::EXTERNAL_LOADER_TAG, record_ext()),
-        ] {
-            let Some(witness) = witness else {
-                continue;
-            };
+        decision.for_each_record(|tag, witness| {
             if ok {
                 println!("{tag}: {proof_name} {witness}");
             } else {
                 eprintln!("{tag}: {proof_name} {witness}");
             }
-        }
+        });
     };
+
     // Preparation can fail before the scenario runner receives its first
-    // client tick. Surface only the runner-owned slots' producer-marked,
-    // terminal asset-init fact; ordinary retryable login errors stay pending.
-    let terminal_startup_failure = {
-        let guard = session.scenario.lock().unwrap();
-        guard.as_ref().and_then(|runner| {
-            let owned = runner.owned_profile_names();
-            host_play::owned_terminal_startup_error(session.statuses(), &owned)
-        })
-    };
-    if let Some(message) = terminal_startup_failure {
+    // client tick. Only producer-marked terminal asset failures end the run.
+    if let Some(message) = session.core.live_terminal_startup_failure() {
         emit_proof(false);
-        eprintln!("FAIL: live {} {}", live.name, failure_line(&message));
+        eprintln!(
+            "FAIL: live {} {}",
+            live.name,
+            runner.failure_record(&live.name, &message)
+        );
         live.failed = Some(message.clone());
         return Some(message);
     }
-    if let CoreGate::Failed(message) = &core_gate {
+
+    if let Some(message) = decision.catalog().failure_message().map(str::to_owned) {
         request_native_failure_capture(live, session, shots, terminal_shot);
         match hold_script_terminal_shot(live, session, terminal_shot, terminal_shot_status, shots) {
             Ok(true) => return None,
@@ -940,11 +898,15 @@ pub(super) fn live_script_tick(
             Ok(false) => {}
         }
         emit_proof(false);
-        eprintln!("FAIL: live {} {}", live.name, failure_line(message));
+        eprintln!(
+            "FAIL: live {} {}",
+            live.name,
+            runner.failure_record(&live.name, &message)
+        );
         live.failed = Some(message.clone());
-        return Some(message.clone());
+        return Some(message);
     }
-    if let CoreGate::Failed(message) = &pair_gate {
+    if let Some(message) = decision.pair().failure_message().map(str::to_owned) {
         match hold_script_terminal_shot(live, session, terminal_shot, terminal_shot_status, shots) {
             Ok(true) => return None,
             Err(error) => eprintln!("[panel] {error}"),
@@ -953,9 +915,9 @@ pub(super) fn live_script_tick(
         emit_proof(false);
         eprintln!("FAIL: live {} {}", live.name, live_line());
         live.failed = Some(message.clone());
-        return Some(message.clone());
+        return Some(message);
     }
-    if let CoreGate::Failed(message) = &ext_gate {
+    if let Some(message) = decision.external().failure_message().map(str::to_owned) {
         match hold_script_terminal_shot(live, session, terminal_shot, terminal_shot_status, shots) {
             Ok(true) => return None,
             Err(error) => eprintln!("[panel] {error}"),
@@ -964,26 +926,33 @@ pub(super) fn live_script_tick(
         emit_proof(false);
         eprintln!("FAIL: live {} {}", live.name, live_line());
         live.failed = Some(message.clone());
-        return Some(message.clone());
+        return Some(message);
     }
-    let wait_script_stop = {
-        let guard = session.scenario.lock().unwrap();
-        guard.as_ref().and_then(|runner| runner.wait_script_stop())
-    };
+
     match status {
-        Some(scenario::RunnerStatus::Passed) => {
+        Some(frontend_core::live::RunnerStatus::Passed) => {
             let mut grace = session.live_script_stop_wait_started;
-            let hold = live_gate::pass_hold(
-                &[&core_gate, &pair_gate, &ext_gate],
+            let wait_script_stop = runner.wait_script_stop();
+            let focused = session.focused_name();
+            let hold = decision.pass_hold(
                 wait_script_stop,
-                |needle| session.script_self_stop_observed(needle),
+                |needle| {
+                    focused.as_deref().is_some_and(|profile| {
+                        session.core.live_script_self_stop_observed(profile, needle)
+                    })
+                },
                 &mut grace,
                 now,
             );
             session.live_script_stop_wait_started = grace;
-            match hold {
-                PassHold::Core | PassHold::CleanStop => return None,
-                PassHold::TimedOut(message) => {
+            match hold.kind() {
+                frontend_core::live::PassHoldKind::Core
+                | frontend_core::live::PassHoldKind::CleanStop => return None,
+                frontend_core::live::PassHoldKind::TimedOut => {
+                    let message = hold
+                        .failure_message()
+                        .expect("timed-out live hold includes its failure")
+                        .to_owned();
                     request_native_failure_capture(live, session, shots, terminal_shot);
                     match hold_script_terminal_shot(
                         live,
@@ -997,23 +966,26 @@ pub(super) fn live_script_tick(
                         Ok(false) => {}
                     }
                     emit_proof(false);
-                    eprintln!("FAIL: live {} {}", live.name, failure_line(&message));
+                    eprintln!(
+                        "FAIL: live {} {}",
+                        live.name,
+                        runner.failure_record(&live.name, &message)
+                    );
                     live.failed = Some(message.clone());
                     return Some(message);
                 }
-                PassHold::Release { clean_stop: true } => {
-                    if let Err(error) =
-                        request_clean_stop_capture(live, session, shots, terminal_shot)
-                    {
-                        live.failed = Some(error.clone());
-                        return Some(error);
+                frontend_core::live::PassHoldKind::Release => {
+                    if hold.clean_stop() {
+                        if let Err(error) =
+                            request_clean_stop_capture(live, session, shots, terminal_shot)
+                        {
+                            live.failed = Some(error.clone());
+                            return Some(error);
+                        }
                     }
                 }
-                PassHold::Release { clean_stop: false } => {}
             }
-            if core_watch.as_ref().is_some_and(|watch| watch.configured())
-                && matches!(core_gate, CoreGate::Qualified(_))
-            {
+            if runner.catalog_core_configured() && decision.catalog().is_qualified() {
                 request_native_failure_capture(live, session, shots, terminal_shot);
             }
             match hold_script_terminal_shot(
@@ -1070,7 +1042,10 @@ pub(super) fn live_script_tick(
             live.passed = true;
             None
         }
-        Some(scenario::RunnerStatus::Failed(msg)) => {
+        Some(frontend_core::live::RunnerStatus::Failed) => {
+            let message = runner
+                .failure_message()
+                .expect("failed live runner includes its failure message");
             match hold_script_terminal_shot(
                 live,
                 session,
@@ -1084,11 +1059,11 @@ pub(super) fn live_script_tick(
             }
             emit_proof(false);
             eprintln!("FAIL: live {} {}", live.name, live_line());
-            live.failed = Some(msg.clone());
-            Some(msg)
+            live.failed = Some(message.clone());
+            Some(message)
         }
-        Some(scenario::RunnerStatus::Seeding) => None,
-        Some(scenario::RunnerStatus::Running { step, total }) => {
+        Some(frontend_core::live::RunnerStatus::Seeding) => None,
+        Some(frontend_core::live::RunnerStatus::Running { step, total }) => {
             if live.last_step != Some((step, total)) {
                 live.last_step = Some((step, total));
                 if step >= total {
@@ -1107,12 +1082,12 @@ pub(super) fn live_script_tick(
 /// focused username has no row this pump.
 pub(super) fn focused_slot<'a>(
     session: &Session,
-    statuses: &'a [host_play::SlotStatus],
-) -> Option<&'a host_play::SlotStatus> {
+    statuses: &'a frontend_core::StatusBuf,
+) -> Option<frontend_core::SlotView<'a>> {
     let focused = session.focused_name();
     statuses
         .iter()
-        .find(|s| focused.as_deref() == Some(s.username.as_str()))
+        .find(|status| focused.as_deref() == Some(status.username()))
 }
 
 /// Headed `--smoke` watch. `wrote_shots` is the count `pump_shots` wrote
@@ -1125,7 +1100,6 @@ pub(super) fn focused_slot<'a>(
 pub(super) fn live_smoke_tick(
     live: &mut LiveSmoke,
     session: &mut Session,
-    statuses: &[host_play::SlotStatus],
     wrote_shots: usize,
 ) -> Option<String> {
     if live.passed || live.failed.is_some() {
@@ -1136,31 +1110,30 @@ pub(super) fn live_smoke_tick(
         live.passed = true;
         return None;
     }
-    let slot = focused_slot(session, statuses);
+    let slot = focused_slot(session, &session.statuses);
     if smoke_should_fire(
         true,
         live.saw_scene2_at.is_some(),
-        slot.is_some_and(|s| s.ingame),
-        slot.map_or(0, |s| s.scene_state),
+        slot.is_some_and(|status| status.ingame()),
+        slot.map_or(0, |status| status.scene_state()),
     ) {
         live.saw_scene2_at = Some(Instant::now());
         println!(
             "smoke: focused slot at scene 2; waiting for the render to settle before the capture"
         );
     }
-    // Mirror the shared runner so a scenario failure is the failure.
-    let status = session
-        .scenario
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|r| r.status());
+    // Mirror the shared core runner so a scenario failure is the failure.
+    let runner = session.core.live_runner();
+    let status = runner.status();
     match status {
-        Some(scenario::RunnerStatus::Failed(msg)) => {
-            live.failed = Some(msg.clone());
-            return Some(msg);
+        Some(frontend_core::live::RunnerStatus::Failed) => {
+            let message = runner
+                .failure_message()
+                .expect("failed live runner includes its failure message");
+            live.failed = Some(message.clone());
+            return Some(message);
         }
-        Some(scenario::RunnerStatus::Running { step, total })
+        Some(frontend_core::live::RunnerStatus::Running { step, total })
             if live.last_step != Some((step, total)) =>
         {
             live.last_step = Some((step, total));
@@ -1191,53 +1164,49 @@ pub(super) fn arm_scenario_shots(
     shots: Arc<Mutex<ShotState>>,
     shot_dir: &mut Option<PathBuf>,
 ) {
-    *shot_dir = scenario::shot::create_run_dir()
+    *shot_dir = frontend_core::live::create_shot_run_dir()
         .map(Some)
-        .unwrap_or_else(|e| {
-            eprintln!("[panel] shot dir: {e}; shots will be skipped");
+        .unwrap_or_else(|error| {
+            eprintln!("[panel] shot dir: {error}; shots will be skipped");
             None
         });
-    if let Some(runner) = session.scenario.lock().unwrap().as_mut() {
-        if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
-            eprintln!(
-                "[panel] scenario capture armed: {:?}",
-                runner.terminal_shot()
-            );
-        }
-        runner.set_shot_sink(Box::new(
-            move |label: &str, snap: &api::snapshot::GameSnapshot| {
-                if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
-                    eprintln!("[panel] scenario capture requested: {label}");
-                }
-                match serde_json::to_string_pretty(snap) {
-                    Ok(json) => shots.lock().unwrap().enqueue(label.to_string(), json),
-                    Err(error) => {
-                        eprintln!("[panel] shot {label}: snapshot serialization failed: {error}");
-                        shots
-                            .lock()
-                            .unwrap()
-                            .mark_failed(label, &format!("snapshot serialization failed: {error}"));
-                    }
-                }
-            },
-        ));
+    let runner = session.core.live_runner();
+    if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
+        eprintln!(
+            "[panel] scenario capture armed: {:?}",
+            runner.terminal_shot()
+        );
     }
+    runner.set_shot_sink(move |label: &str, snap: &api::snapshot::GameSnapshot| {
+        if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
+            eprintln!("[panel] scenario capture requested: {label}");
+        }
+        match serde_json::to_string_pretty(snap) {
+            Ok(json) => shots.lock().unwrap().enqueue(label.to_string(), json),
+            Err(error) => {
+                eprintln!("[panel] shot {label}: snapshot serialization failed: {error}");
+                shots
+                    .lock()
+                    .unwrap()
+                    .mark_failed(label, &format!("snapshot serialization failed: {error}"));
+            }
+        }
+    });
 }
 
 impl LiveHarness {
     pub(super) fn tick(
         &mut self,
         session: &mut Session,
-        statuses: &[host_play::SlotStatus],
         terminal_shot_status: &ShotStatus,
         shots: Option<&Mutex<ShotState>>,
         written_shots: usize,
     ) -> Option<String> {
         match self {
-            Self::Null(n) => live_null_tick(n, statuses),
-            Self::Stress(s) => live_stress_tick(s, statuses),
+            Self::Null(n) => live_null_tick(n, &session.statuses),
+            Self::Stress(s) => live_stress_tick(s, &session.statuses),
             Self::Script(ls) => live_script_tick(ls, session, terminal_shot_status, shots),
-            Self::Smoke(s) => live_smoke_tick(s, session, statuses, written_shots),
+            Self::Smoke(s) => live_smoke_tick(s, session, written_shots),
         }
     }
 
@@ -1246,7 +1215,7 @@ impl LiveHarness {
             Self::Smoke(s) => !smoke_settled(
                 s.saw_scene2_at,
                 now,
-                focused_slot(session, session.statuses()).is_some_and(|slot| slot.ingame),
+                focused_slot(session, &session.statuses).is_some_and(|slot| slot.ingame()),
             ),
             _ => false,
         }

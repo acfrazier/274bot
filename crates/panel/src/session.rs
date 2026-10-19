@@ -42,8 +42,7 @@ use frontend_core::walk_map::{
 };
 use frontend_core::MapBakeChoice;
 use frontend_core::{GuardianEdit, GuardianPolicy, UiPreferences};
-use host_play::live_gate::LiveCore;
-use host_play::live_start::{self, PendingCatalogStart, StartArming};
+#[cfg(test)]
 use host_play::SlotStatus;
 use nav::paint::{
     collision_at_with, hop_captions, hull_targets, reached, remaining_path_tiles, remaining_trail,
@@ -52,39 +51,14 @@ use nav::paint::{
 use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
 use nav::world::NavWorld;
-use vault::{Profile, Vault};
 
 use crate::focus::{draw_for_slot, full_rate_for};
 use crate::nav_settings::{from_scenario, parse_html_color, NavSettings};
 use crate::wall::Wall;
 use frontend_core::{OperatorCommand, OperatorSession, SlotAttach, SlotSurface, Targets};
 
-fn scenario_fixture_loadouts(settings: &scenario::ScenarioSettings) -> Vec<api::loadout::Loadout> {
-    settings
-        .fixture_loadouts
-        .unwrap_or(&[])
-        .iter()
-        .map(|row| {
-            row.carry.iter().fold(
-                api::loadout::Loadout::new(row.name),
-                |loadout, &(item, qty)| loadout.with_carry(item, qty),
-            )
-        })
-        .collect()
-}
-
-enum ExternalReloadPending {
-    Unchanged,
-    Changed {
-        path: PathBuf,
-        source_before: String,
-        source_after: String,
-        compiled_before: String,
-    },
-}
-
-/// Load one exact in-tree example and return the File card selected by
-/// canonical-path identity. Never looks up the shared stem.
+#[cfg(test)]
+/// Load one exact in-tree example by canonical-path identity.
 fn load_live_example_card(
     js: &mut script::JsLibrary,
     file_name: &str,
@@ -93,63 +67,11 @@ fn load_live_example_card(
         .ok_or_else(|| format!("no in-tree example {file_name}"))?;
     let loaded = js
         .load(&path)
-        .map_err(|e| format!("load {file_name}: {e}"))?;
+        .map_err(|error| format!("load {file_name}: {error}"))?;
     let identity = loaded.identity_id();
     js.get(script::ScriptSource::File, &identity)
         .cloned()
         .ok_or_else(|| format!("file example {file_name} missing after identity load"))
-}
-
-/// Stash StartScript isolate(s). Driven slot always. When
-/// `inject_companion_as` is set on a fleet, also Start the same JS on
-/// slot 1 with that key naming the driven player (P2P Trade), as the game
-/// shows it ([`partner_screen_name`]).
-#[allow(clippy::too_many_arguments)] // pending start packs names/companion/loadout fields
-fn stash_pending_starts(
-    pending: &Mutex<Vec<PendingCatalogStart>>,
-    names: &[String],
-    inject_companion_as: Option<&str>,
-    js: String,
-    shape: script::LoadShape,
-    bag: Option<serde_json::Map<String, serde_json::Value>>,
-    siblings: Vec<(String, String)>,
-    loadouts: Vec<api::loadout::Loadout>,
-) {
-    let mut starts = vec![PendingCatalogStart::load(
-        names[0].clone(),
-        js.clone(),
-        shape,
-        bag.clone(),
-        siblings.clone(),
-        loadouts.clone(),
-    )];
-    if let Some(key) = inject_companion_as {
-        if names.len() > 1 {
-            let mut companion_bag = bag.unwrap_or_default();
-            companion_bag.insert(
-                key.to_string(),
-                serde_json::Value::String(partner_screen_name(&names[0])),
-            );
-            starts.push(PendingCatalogStart::load(
-                names[1].clone(),
-                js,
-                shape,
-                Some(companion_bag),
-                siblings,
-                loadouts,
-            ));
-        }
-    }
-    *pending.lock().unwrap() = starts;
-}
-
-/// A partner setting names the player as the game shows it: minted
-/// usernames (`live…_1`) display as screen names (`Live… 1`), and the
-/// frozen `Players.query().name()` (like host dispatch) matches the shown
-/// name exactly, ignoring case. The pair watches do the same
-/// ([`host_play::paired_core::pair_settings`]).
-fn partner_screen_name(username: &str) -> String {
-    client::util::JString::to_screen_name(username)
 }
 
 /// Scatter / mainland hop only on a cold world, not after a `lostCon`
@@ -1084,7 +1006,8 @@ pub struct Session {
     /// Shared script coordination (card library and catalog, assignment,
     /// per-profile parameters, Start/Stop all, reload, Apply to all).
     pub scripts: frontend_core::Scripts,
-    external_reload_pending: Option<ExternalReloadPending>,
+    #[cfg(test)]
+    pub(crate) scenario: Arc<Mutex<Option<scenario::ScenarioRunner>>>,
     /// Catalog warmup: at most one `ensure_js` per armed frame.
     pub transpile_queue: VecDeque<(CardSource, String)>,
     pub(crate) transpile_armed: bool,
@@ -1148,24 +1071,14 @@ pub struct Session {
     pub loadouts_qty_bufs: Vec<String>,
     /// Process-wide equipment/inventory presets.
     pub loadouts: Loadouts,
-    /// Shared `--live script_*` harness runner (Task 6): the slot thread
-    /// ticks it from the per-frame hook (sends go through the slot's own
-    /// `Client`), the UI frame reads its status/evidence. `None` when no
-    /// scenario is live.
-    pub scenario: Arc<Mutex<Option<scenario::ScenarioRunner>>>,
-    /// Headed wait for [`scenario::ScenarioSettings::wait_script_stop`].
-    pub(crate) live_script_stop_wait_started: Option<Instant>,
-    /// Catalog card `live_prepare_script` stashes; the live pump Starts
-    /// it once on [`scenario::StepKind::StartScript`].
-    pending_script: Arc<Mutex<Vec<PendingCatalogStart>>>,
-    /// Isolate-start handle the per-frame hook uses (filled after Play).
-    script_start_handle: Arc<Mutex<Option<host_play::ScriptStartHandle>>>,
-    /// Shared full-core observer handle, filled from Play and configured only
-    /// by the catalog_watch executable.
-    catalog_core_watch: Arc<Mutex<Option<host_play::catalog_core::CoreWatch>>>,
     catalog_core_enabled: bool,
-    paired_core_watch: Arc<Mutex<Option<host_play::paired_core::PairWatch>>>,
     pair_core_enabled: bool,
+    pub(super) live_script_stop_wait_started: Option<Instant>,
+    #[cfg(test)]
+    catalog_core_watch: Arc<Mutex<Option<host_play::catalog_core::CoreWatch>>>,
+    #[cfg(test)]
+    paired_core_watch: Arc<Mutex<Option<host_play::paired_core::PairWatch>>>,
+    #[cfg(test)]
     external_core_watch: Arc<Mutex<Option<host_play::external_loader::ExternalWatch>>>,
     external_core_enabled: bool,
     external_ts: Option<PathBuf>,
@@ -1184,7 +1097,7 @@ pub struct Session {
     /// or a single-mode switch.
     pub background_ack_open: bool,
     /// Explicit PREPARE / RUN-PREPARED fixture path (default live is unchanged).
-    pub fixture_mode: scenario::FixtureMode,
+    pub fixture_mode: frontend_core::live::FixtureMode,
     /// Optional identity receipt path; default `~/.274bot/fixtures/<scenario>.json`.
     pub fixture_path: Option<PathBuf>,
 }
@@ -1197,76 +1110,6 @@ fn slot_log(name: &str, level: Level, message: &str) {
 /// A panel-owned line no slot owns (vault, profile binding).
 fn process_log(level: Level, message: &str) {
     frontend_core::log::global().process_line(Source::Host, level, message);
-}
-
-pub(crate) fn external_loader_fixture() -> scenario::Scenario {
-    use api::interact::cheat;
-    use host_play::external_loader::{BONES_COUNT, PREP_DEADLINE, PREREQ_SHOT};
-    use scenario::{Proof, Scenario, ScenarioSettings, Seed, Step, StepKind, Wait};
-    Scenario {
-        name: host_play::external_loader::LIVE_SCENARIO,
-        seed: Seed {
-            profiles: vec![("test", "test")],
-            mainland: true,
-        },
-        steps: vec![
-            Step {
-                name: "prepare twenty-five carried bones",
-                kind: StepKind::Perform {
-                    send: Box::new(|c, _| {
-                        cheat(c, scenario::tutorial::TUTORIAL_SETVAR);
-                        cheat(c, scenario::tutorial::TUTORIAL_GETVAR);
-                        cheat(c, "give bones 25");
-                        true
-                    }),
-                },
-                wait: Wait {
-                    arm: Proof::Chat {
-                        needle: scenario::tutorial::TUTORIAL_CHAT_NEEDLE,
-                    },
-                    budget_ticks: 200,
-                },
-            },
-            Step {
-                name: "relog so the inv tab binds",
-                kind: StepKind::Relog,
-                wait: Wait {
-                    arm: Proof::SideTabAvailable { index: 3 },
-                    budget_ticks: 600,
-                },
-            },
-            Step {
-                name: "reseed tutorial after relog and verify fresh value",
-                kind: StepKind::Repeat {
-                    send: Box::new(|c, _| {
-                        cheat(c, scenario::tutorial::TUTORIAL_SETVAR);
-                        cheat(c, scenario::tutorial::TUTORIAL_GETVAR);
-                        true
-                    }),
-                },
-                wait: Wait {
-                    // Fresh reply newer than the post-relog baseline the
-                    // runner latched at step start, like the host-play cells.
-                    arm: Proof::FreshTutorial,
-                    budget_ticks: 200,
-                },
-            },
-        ],
-        proof: Proof::Item {
-            name: "Bones",
-            count: BONES_COUNT,
-        },
-        companions: vec![],
-        settings: ScenarioSettings {
-            full_rate: true,
-            require_mainland_base: true,
-            deadline: PREP_DEADLINE,
-            start_script: None,
-            terminal_shot: Some(PREREQ_SHOT),
-            nav: scenario::ScenarioNav::default().with_tick_ms(600),
-            ..Default::default()
-        },
-    }
 }
 
 #[cfg(test)]
@@ -1283,11 +1126,7 @@ struct PanelFrameHook {
     mainland: Arc<AtomicBool>,
     mainland_sent: Arc<Mutex<HashSet<String>>>,
     scatter: Arc<AtomicBool>,
-    scenario: Arc<Mutex<Option<scenario::ScenarioRunner>>>,
-    pending_script: Arc<Mutex<Vec<PendingCatalogStart>>>,
-    script_start_handle: Arc<Mutex<Option<host_play::ScriptStartHandle>>>,
-    catalog_core_watch: Arc<Mutex<Option<host_play::catalog_core::CoreWatch>>>,
-    paired_core_watch: Arc<Mutex<Option<host_play::paired_core::PairWatch>>>,
+    live_runner: frontend_core::live::RunnerHandle,
     audio: Arc<AudioGate<AudioOut>>,
     nav_publish: Arc<Mutex<NavPublishCfg>>,
     nav_paint_cache: Mutex<crate::nav_paint_cache::Cache>,
@@ -1310,18 +1149,13 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
             mainland,
             mainland_sent,
             scatter,
-            scenario,
-            pending_script,
-            script_start_handle,
-            catalog_core_watch,
-            paired_core_watch,
             audio,
+            live_runner,
             nav_publish,
             nav_paint_cache,
             audio_fail,
             scatter_template,
         } = self;
-        let hold = frame.hold();
         if frame.walk_cancelled() {
             nav_paint_cache.lock().unwrap().invalidate(name);
         }
@@ -1352,12 +1186,6 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
         let is_focused = focused.as_deref() == Some(name);
         let drawing = is_focused && draw;
         let walk = frame.walk_route();
-        let (driven, live) = match scenario.lock().unwrap().as_ref() {
-            Some(runner) if runner.drives(name) => {
-                (true, (runner.armed_route().cloned(), runner.current_aim()))
-            }
-            _ => (false, (None, None)),
-        };
         match crate::picker::pack() {
             Some(world) => {
                 let here = c.local_player.as_ref().map(|lp| WorldTile {
@@ -1386,35 +1214,38 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
                     trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
                     run_on,
                 };
-                let project_route = |script_route: Option<RouteProjectionView<'_>>| {
-                    let (route, click) = live_or_walk_paint(
-                        driven,
-                        (live.0.as_ref(), live.1),
-                        (walk.0.as_ref(), walk.1),
-                        script_route,
-                    );
-                    let facts = crate::nav_paint_cache::Facts {
-                        route: scene_route_fingerprint(route.as_ref()),
-                        click,
-                        ..base_facts
-                    };
-                    let changed = previous != Some(facts);
-                    let path = camera || (changed && active && layers.show_nav_path);
-                    let hops = changed && active && layers.show_nav_path && layers.hop_labels;
-                    let outputs = if path || hops {
-                        SceneRoutePaint::build(
-                            &world,
-                            route.as_ref().map(ScenePaintRoute::projection),
-                            here,
-                            path,
-                            hops,
-                        )
-                    } else {
-                        SceneRoutePaint::default()
-                    };
-                    (facts, changed, outputs)
-                };
-                let (facts, changed, outputs) = frame.with_script_route(project_route);
+                let (facts, changed, outputs) =
+                    live_runner.with_route_for(name, |driven, live_route, live_aim| {
+                        frame.with_script_route(|script_route| {
+                            let (route, click) = live_or_walk_paint(
+                                driven,
+                                (live_route, live_aim),
+                                (walk.0.as_ref(), walk.1),
+                                script_route,
+                            );
+                            let facts = crate::nav_paint_cache::Facts {
+                                route: scene_route_fingerprint(route.as_ref()),
+                                click,
+                                ..base_facts
+                            };
+                            let changed = previous != Some(facts);
+                            let path = camera || (changed && active && layers.show_nav_path);
+                            let hops =
+                                changed && active && layers.show_nav_path && layers.hop_labels;
+                            let outputs = if path || hops {
+                                SceneRoutePaint::build(
+                                    &world,
+                                    route.as_ref().map(ScenePaintRoute::projection),
+                                    here,
+                                    path,
+                                    hops,
+                                )
+                            } else {
+                                SceneRoutePaint::default()
+                            };
+                            (facts, changed, outputs)
+                        })
+                    });
                 // The route borrow and the process-wide navs lock end above.
                 if camera {
                     apply_path_camera(c, &outputs.path, here);
@@ -1499,90 +1330,6 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
             } else if mainland.load(Ordering::Relaxed) {
                 api::interact::mainland_hop(c);
                 slot_log(name, Level::Info, "mainland hop queued");
-            }
-        }
-
-        // Shared `--live script_*` runner: tick the scenario's
-        // driven slot and its companion slots, before the
-        // local-player gate (seeding must observe frames with no
-        // player decode yet). Hold freezes scenario follow the
-        // same way `step_nav_bot` freezes (route stays latched).
-        if let Some(runner) = scenario.lock().unwrap().as_mut() {
-            if runner.drives(name) {
-                if runner.wants_script_paint() {
-                    let paint = script_start_handle
-                        .lock()
-                        .unwrap()
-                        .as_ref()
-                        .and_then(|handle| handle.paint(name));
-                    if let Some(paint) = paint {
-                        runner.observe_script_paint(paint.lines.iter().map(String::as_str));
-                    }
-                }
-                let pump = live_start::fire_pending_catalog_start(
-                    &mut pending_script.lock().unwrap(),
-                    runner.on_start_script(),
-                    runner.on_stop_script(),
-                    || StartArming {
-                        handle: script_start_handle.lock().unwrap().clone(),
-                        catalog: catalog_core_watch.lock().unwrap().clone(),
-                        pair: paired_core_watch.lock().unwrap().clone(),
-                    },
-                );
-                match pump {
-                    live_start::StartScriptPump::Hold => {}
-                    live_start::StartScriptPump::CompiledFailed(error) => {
-                        runner.fail_start(&error);
-                    }
-                    live_start::StartScriptPump::Continue
-                    | live_start::StartScriptPump::CompiledRunning => {
-                        if pump == live_start::StartScriptPump::CompiledRunning {
-                            runner.observe_script_running();
-                        }
-                        if runner.on_stop_script() {
-                            runner.observe_script_idle(script_start_handle.lock().is_ok_and(
-                                |handle| handle.as_ref().is_some_and(|handle| handle.idle(name)),
-                            ));
-                        }
-                        runner.tick_with_hold(c, hold);
-                        // A relog can enter Start on the final off-world frame.
-                        // Arm it now rather than after the reconnect posts colour.
-                        if runner.on_start_script() {
-                            if let Ok(mut pending) = pending_script.lock() {
-                                let pump = live_start::fire_pending_catalog_start(
-                                    &mut pending,
-                                    true,
-                                    false,
-                                    || StartArming {
-                                        handle: script_start_handle
-                                            .lock()
-                                            .ok()
-                                            .and_then(|handle| handle.clone()),
-                                        catalog: catalog_core_watch
-                                            .lock()
-                                            .ok()
-                                            .and_then(|watch| watch.clone()),
-                                        pair: paired_core_watch
-                                            .lock()
-                                            .ok()
-                                            .and_then(|watch| watch.clone()),
-                                    },
-                                );
-                                match pump {
-                                    live_start::StartScriptPump::CompiledRunning => {
-                                        runner.observe_script_running();
-                                    }
-                                    live_start::StartScriptPump::CompiledFailed(error) => {
-                                        runner.fail_start(&error);
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                    }
-                }
-            } else if let Some(index) = runner.companion_for(name) {
-                runner.companion_tick(index, c);
             }
         }
     }
@@ -1732,7 +1479,8 @@ impl Session {
             ui,
             script_sel: None,
             scripts,
-            external_reload_pending: None,
+            #[cfg(test)]
+            scenario: Arc::new(Mutex::new(None)),
             transpile_queue: VecDeque::new(),
             transpile_armed: false,
             transpile_done: 0,
@@ -1764,14 +1512,14 @@ impl Session {
             loadouts_picker_rows: crate::name_picker::PickerRows::default(),
             loadouts_qty_bufs: Vec::new(),
             loadouts,
-            scenario: Arc::new(Mutex::new(None)),
             live_script_stop_wait_started: None,
-            pending_script: Arc::new(Mutex::new(Vec::new())),
-            script_start_handle: Arc::new(Mutex::new(None)),
-            catalog_core_watch: Arc::new(Mutex::new(None)),
             catalog_core_enabled: false,
-            paired_core_watch: Arc::new(Mutex::new(None)),
             pair_core_enabled: false,
+            #[cfg(test)]
+            catalog_core_watch: Arc::new(Mutex::new(None)),
+            #[cfg(test)]
+            paired_core_watch: Arc::new(Mutex::new(None)),
+            #[cfg(test)]
             external_core_watch: Arc::new(Mutex::new(None)),
             external_core_enabled: false,
             external_ts: None,
@@ -1779,7 +1527,7 @@ impl Session {
             mem_relog_armed: None,
             persist_ui: true,
             background_ack_open: false,
-            fixture_mode: scenario::FixtureMode::Default,
+            fixture_mode: frontend_core::live::FixtureMode::Default,
             fixture_path: None,
             launcher: ProfileLauncher::legacy_local(),
             requested_unlock: None,
@@ -1802,37 +1550,27 @@ impl Session {
         self.catalog_core_enabled = enabled;
     }
 
+    #[cfg(test)]
+    pub fn install_catalog_core_watch(&self, watch: Option<host_play::catalog_core::CoreWatch>) {
+        *self.catalog_core_watch.lock().unwrap() = watch.clone();
+        self.core
+            .live_runner()
+            .install_catalog_watch_for_test(watch);
+    }
+
+    #[cfg(test)]
+    pub fn install_paired_core_watch(&self, watch: Option<host_play::paired_core::PairWatch>) {
+        self.core.live_runner().install_pair_watch_for_test(watch);
+    }
+
     /// Apply a session-only memory choice to every slot, including companions.
     pub fn set_memory_override(&mut self, memory_override: Option<bool>) {
         self.memory_override = memory_override;
     }
 
-    /// Clone the Play-owned proof handle without exposing slot snapshots.
-    pub fn catalog_core_watch(&self) -> Option<host_play::catalog_core::CoreWatch> {
-        self.catalog_core_watch.lock().unwrap().clone()
-    }
-
-    pub(crate) fn install_catalog_core_watch(
-        &self,
-        watch: Option<host_play::catalog_core::CoreWatch>,
-    ) {
-        *self.catalog_core_watch.lock().unwrap() = watch;
-    }
-
     /// Enable pair proof only for the dedicated pair_watch entry.
     pub fn set_pair_core_enabled(&mut self, enabled: bool) {
         self.pair_core_enabled = enabled;
-    }
-
-    pub fn paired_core_watch(&self) -> Option<host_play::paired_core::PairWatch> {
-        self.paired_core_watch.lock().unwrap().clone()
-    }
-
-    pub(crate) fn install_paired_core_watch(
-        &self,
-        watch: Option<host_play::paired_core::PairWatch>,
-    ) {
-        *self.paired_core_watch.lock().unwrap() = watch;
     }
 
     pub fn set_external_core_enabled(&mut self, enabled: bool) {
@@ -1848,7 +1586,11 @@ impl Session {
     }
 
     /// Configure the optional prepare / run-prepared fixture path for the next live boot.
-    pub fn set_fixture_boot(&mut self, mode: scenario::FixtureMode, path: Option<PathBuf>) {
+    pub fn set_fixture_boot(
+        &mut self,
+        mode: frontend_core::live::FixtureMode,
+        path: Option<PathBuf>,
+    ) {
         self.fixture_mode = mode;
         self.fixture_path = path;
     }
@@ -1857,310 +1599,33 @@ impl Session {
     pub fn fixture_identity_path(&self, scenario: &str) -> PathBuf {
         self.fixture_path
             .clone()
-            .unwrap_or_else(|| scenario::default_fixture_path(scenario))
+            .unwrap_or_else(|| frontend_core::live::default_fixture_path(scenario))
     }
 
+    #[cfg(test)]
     pub fn external_core_watch(&self) -> Option<host_play::external_loader::ExternalWatch> {
         self.external_core_watch.lock().unwrap().clone()
     }
 
+    #[cfg(test)]
     pub(crate) fn install_external_core_watch(
         &self,
         watch: Option<host_play::external_loader::ExternalWatch>,
     ) {
-        *self.external_core_watch.lock().unwrap() = watch;
+        *self.external_core_watch.lock().unwrap() = watch.clone();
+        self.core
+            .live_runner()
+            .install_external_watch_for_test(watch);
     }
 
+    #[cfg(test)]
     pub fn pump_external_loader(&mut self) {
-        use host_play::external_loader::{
-            apply_harmless_whitespace, source_sha256, Operation, BONES_ID, PRAYER_STAT_ID,
-            SCRIPT_NAME,
-        };
-        let Some(watch) = self.external_core_watch() else {
-            return;
-        };
-        if !watch.configured() {
-            return;
-        }
-        let now = Instant::now();
-        watch.poll_deadlines(now);
-        let account = watch.account();
-        let name = self.focused_name().unwrap_or_else(|| account.clone());
-        if name == account {
-            if let Some(slot) = self.statuses.get(&name) {
-                watch.note_scene(slot.ingame(), slot.scene_state());
-                watch.note_paint(slot.has_script_paint());
-            }
-            let counts = self.core.with_slot_snapshot(&name, |snap| {
-                let bones: i32 = snap
-                    .inventory()
-                    .iter()
-                    .filter(|item| item.def.id == BONES_ID)
-                    .map(|item| item.count)
-                    .sum();
-                let prayer = snap
-                    .stats()
-                    .iter()
-                    .find(|stat| stat.index == PRAYER_STAT_ID)
-                    .map(|stat| stat.xp)
-                    .unwrap_or(0);
-                (bones, prayer)
-            });
-            if let Some((bones, prayer)) = counts {
-                watch.note_inventory(now, &account, bones, prayer);
-            }
-        }
-        if watch.status() == host_play::external_loader::ExternalWatchStatus::Failed {
-            let state = self.core.script_state(&account);
-            let idle = state == ScriptRunState::Idle;
-            let mut stop_invoked = false;
-            if !idle && state != ScriptRunState::Stopping {
-                if let Some(play) = self.core.play() {
-                    play.script_stop(&account);
-                }
-                stop_invoked = true;
-            }
-            watch.note_cleanup_progress(now, idle, stop_invoked);
-            return;
-        }
-        match watch.dispatch_operation() {
-            Some(Operation::LoadRawTs) => {
-                let path = watch.source_path();
-                let already_loaded = self
-                    .script_sel
-                    .as_ref()
-                    .and_then(ScriptChoice::loaded_card)
-                    .is_some_and(|(source, lookup)| {
-                        source == CardSource::File
-                            && self
-                                .scripts
-                                .card(CardSource::File, lookup)
-                                .is_some_and(|card| card.path() == path)
-                    });
-                if !already_loaded {
-                    self.load_js(&path);
-                    if let Some(error) = self.error.clone() {
-                        watch.fail(format!("load: {error}"));
-                        return;
-                    }
-                }
-                let lookup = self
-                    .script_sel
-                    .as_ref()
-                    .and_then(ScriptChoice::loaded_card)
-                    .map_or_else(
-                        || path.to_string_lossy().into_owned(),
-                        |(_, lookup)| lookup.to_owned(),
-                    );
-                if let Some(Err(error)) = self
-                    .scripts
-                    .take_external_loader_transpile_result(CardSource::File, &lookup)
-                {
-                    watch.fail(format!("transpile: {error}"));
-                    return;
-                }
-                if !self.scripts.card_is_prepared(CardSource::File, &lookup) {
-                    match self
-                        .scripts
-                        .request_external_loader_transpile(CardSource::File, &lookup)
-                    {
-                        Ok(_) => return,
-                        Err(error) => {
-                            watch.fail(format!("transpile: {error}"));
-                            return;
-                        }
-                    }
-                }
-                let Some(card) = self.scripts.card(CardSource::File, &lookup).or_else(|| {
-                    self.scripts
-                        .card(CardSource::File, &path.display().to_string())
-                }) else {
-                    watch.fail("external loader load did not produce a File card");
-                    return;
-                };
-                let count = self
-                    .scripts
-                    .cards()
-                    .filter(|c| {
-                        c.source() == CardSource::File
-                            && (c.identity_key() == card.identity_key() || c.name() == SCRIPT_NAME)
-                    })
-                    .count();
-                let want = card.choice();
-                let selected = self.script_sel.as_ref() == Some(&want)
-                    || self.scripts.pending_browse(&account) == Some(&want);
-                let running = self.core.script_state(&account) != ScriptRunState::Idle;
-                watch.note_load(
-                    count,
-                    card.name(),
-                    card.path(),
-                    &card.identity_key(),
-                    card.sha256(),
-                    selected,
-                    running,
-                );
-            }
-            Some(Operation::Start) => {
-                // A pending copy is a temporary admission hold, not a failed
-                // proof. Leave the witness at Start until admission can run.
-                if self
-                    .core
-                    .play()
-                    .is_some_and(|play| play.script_start_wait_reason().is_some())
-                {
-                    return;
-                }
-                if watch.begin_start(now).is_err() {
-                    return;
-                }
-                self.script_start_selected();
-                if let Some(error) = self.error.clone() {
-                    watch.fail_start(error);
-                }
-            }
-            Some(Operation::Stop) => {
-                let state = self.core.script_state(&account);
-                let paint = self
-                    .statuses
-                    .get(&account)
-                    .is_some_and(|s| s.has_script_paint());
-                match state {
-                    ScriptRunState::Idle => watch.note_stop(now, true, paint),
-                    ScriptRunState::Stopping => watch.note_stop(now, false, paint),
-                    _ => {
-                        self.script_stop();
-                        watch.note_stop(now, false, paint);
-                    }
-                }
-            }
-            Some(Operation::ReloadUnchanged) => {
-                match self.external_reload_pending.as_ref() {
-                    None => {
-                        self.external_reload_pending = Some(ExternalReloadPending::Unchanged);
-                        self.begin_script_reload_clicked();
-                    }
-                    Some(ExternalReloadPending::Unchanged) => {}
-                    Some(ExternalReloadPending::Changed { .. }) => {
-                        watch.fail("external loader reload operation changed while pending");
-                        return;
-                    }
-                }
-                if self.reload_validation_pending() {
-                    return;
-                }
-                let Some(outcome) = self.take_reload_outcome() else {
-                    return;
-                };
-                let pending = self.external_reload_pending.take();
-                if !matches!(pending, Some(ExternalReloadPending::Unchanged)) {
-                    watch.fail("external loader unchanged reload lost its pending operation");
-                    return;
-                }
-                if outcome.is_nothing_changed() {
-                    watch.note_reload_unchanged(host_play::external_loader::NOTHING_CHANGED);
-                } else {
-                    watch.fail(format!("unchanged reload: {outcome:?}"));
-                }
-            }
-            Some(Operation::ReloadChanged) => {
-                if self.external_reload_pending.is_none() {
-                    let path = watch.source_path();
-                    let before_bytes = match std::fs::read(&path) {
-                        Ok(bytes) => bytes,
-                        Err(error) => {
-                            watch.fail(format!("changed reload read {}: {error}", path.display()));
-                            return;
-                        }
-                    };
-                    let source_before = source_sha256(&before_bytes);
-                    let compiled_before = self
-                        .scripts
-                        .card(CardSource::File, &path.display().to_string())
-                        .map(|card| card.sha256().to_owned())
-                        .unwrap_or_default();
-                    if let Err(error) = apply_harmless_whitespace(&path) {
-                        watch.fail(error);
-                        return;
-                    }
-                    let after_bytes = match std::fs::read(&path) {
-                        Ok(bytes) => bytes,
-                        Err(error) => {
-                            watch
-                                .fail(format!("changed reload reread {}: {error}", path.display()));
-                            return;
-                        }
-                    };
-                    self.external_reload_pending = Some(ExternalReloadPending::Changed {
-                        path,
-                        source_before,
-                        source_after: source_sha256(&after_bytes),
-                        compiled_before,
-                    });
-                    self.begin_script_reload_clicked();
-                }
-                if self.reload_validation_pending() {
-                    return;
-                }
-                let Some(outcome) = self.take_reload_outcome() else {
-                    return;
-                };
-                let Some(ExternalReloadPending::Changed {
-                    path,
-                    source_before,
-                    source_after,
-                    compiled_before,
-                }) = self.external_reload_pending.take()
-                else {
-                    watch.fail("external loader changed reload lost its pending operation");
-                    return;
-                };
-                let (applied, nothing_changed) = if outcome.applied_counts().is_some() {
-                    (true, false)
-                } else if outcome.is_nothing_changed() {
-                    (false, true)
-                } else if let Some(error) = outcome.failure() {
-                    watch.fail(format!("changed reload: {error}"));
-                    return;
-                } else {
-                    watch.fail(format!("changed reload: {outcome:?}"));
-                    return;
-                };
-                let Some(card) = self
-                    .scripts
-                    .card(CardSource::File, &path.display().to_string())
-                else {
-                    watch.fail("external loader changed reload lost the File card");
-                    return;
-                };
-                let count = self
-                    .scripts
-                    .cards()
-                    .filter(|candidate| {
-                        candidate.source() == CardSource::File
-                            && (candidate.identity_key() == card.identity_key()
-                                || candidate.name() == SCRIPT_NAME)
-                    })
-                    .count();
-                let want = card.choice();
-                let selected = self.script_sel.as_ref() == Some(&want)
-                    || self.scripts.pending_browse(&account) == Some(&want);
-                let running = self.core.script_state(&account) != ScriptRunState::Idle;
-                watch.note_reload_changed(
-                    count,
-                    applied,
-                    nothing_changed,
-                    card.path(),
-                    &card.identity_key(),
-                    &source_before,
-                    &source_after,
-                    &compiled_before,
-                    card.sha256(),
-                    selected,
-                    running,
-                );
-            }
-            _ => {}
-        }
+        self.core.pump_live_external_loader(
+            &mut self.scripts,
+            &mut self.script_sel,
+            &self.statuses,
+            Instant::now(),
+        );
     }
 
     /// Install production launch inputs while the locked panel still exposes
@@ -2408,14 +1873,9 @@ impl Session {
     /// then `login_all`. Slot threads keep using real `Focus` → `set_draw`.
     pub fn live_prepare_null_raster(&mut self) -> Result<(), String> {
         self.persist_ui = false;
-        let pass = host_play::live_vault_passphrase();
-        let entries = null_raster_live_entries();
-        let entry_refs: Vec<(&str, &str)> = entries
-            .iter()
-            .map(|(u, p)| (u.as_str(), p.as_str()))
-            .collect();
-        let path = temp_live_vault_from(&entry_refs, 274_000_001, &pass, true);
-        if !self.unlock_at(&path, &pass) {
+        let profiles = frontend_core::live::LiveProfiles::null_raster();
+        let path = profiles.panel_vault(274_000_001, true);
+        if !self.unlock_at(&path, profiles.passphrase()) {
             return Err(self
                 .error
                 .clone()
@@ -2436,38 +1896,29 @@ impl Session {
     }
 
     #[cfg(feature = "memory-profile")]
-    pub fn prepare_memory(&mut self, run: &host_play::memory::Run) -> Result<(), String> {
+    pub fn prepare_memory(&mut self, run: &frontend_core::bench::BenchRun) -> Result<(), String> {
+        use frontend_core::bench::RenderPolicy;
         self.persist_ui = false;
         self.mainland.store(true, Ordering::Relaxed);
-        let stress_wall = matches!(
-            run.render_policy,
-            host_play::memory::RenderPolicy::Stress50
-                | host_play::memory::RenderPolicy::Stress50Full
-        );
+        let policy = run.render_policy();
+        let stress_wall = matches!(policy, RenderPolicy::Stress50 | RenderPolicy::Stress50Full);
         self.scatter.store(stress_wall, Ordering::Relaxed);
-        if !self.start_vault(&run.vault, &run.pass) {
+        if !self.start_vault(run.vault(), run.passphrase()) {
             return Err(self
                 .error
                 .clone()
                 .unwrap_or_else(|| "benchmark vault failed".into()));
         }
-        run.bind_seed_nav(host_play::memory::SeedNav::FromPlay {
-            world: self.core.nav_world(),
-            obj_names: self.core.obj_names(),
-            map_members: self.core.map_members(),
-        })?;
+        run.bind_seed_nav(&self.core)?;
         self.set_multibox(true);
-        for name in &run.names {
+        for name in run.names() {
             self.submit_reporting(OperatorCommand::Load, Targets::Profile(name));
         }
         self.sync_wall_focus();
         self.wall.chooser_open = false;
         self.memory_focus(run);
         if stress_wall {
-            self.set_live_full_rate(matches!(
-                run.render_policy,
-                host_play::memory::RenderPolicy::Stress50Full
-            ));
+            self.set_live_full_rate(matches!(policy, RenderPolicy::Stress50Full));
             self.sync_sidecar_cadence();
         }
         self.login_all();
@@ -2475,14 +1926,14 @@ impl Session {
     }
 
     #[cfg(feature = "memory-profile")]
-    pub fn memory_focus(&mut self, run: &host_play::memory::Run) {
-        let index = run.focus_index();
-        let name = &run.names[index];
+    pub fn memory_focus(&mut self, run: &frontend_core::bench::BenchRun) {
+        let names = run.names();
+        let name = &names[run.focus_index()];
         if self.focus.lock().unwrap().focused.as_ref() != Some(name) {
             self.select(name);
         }
         let mut focus = self.focus.lock().unwrap();
-        crate::focus::memory_draw_policy(&mut focus, &run.names, run.render_policy);
+        crate::focus::memory_draw_policy(&mut focus, names, run.render_policy());
     }
 
     /// Live `stress50` RAM watch: temp vault `s00`…`s49` (password =
@@ -2510,16 +1961,10 @@ impl Session {
     /// paints every member at 50 fps; otherwise cap-only RAM watch.
     fn live_prepare_stress(&mut self, n: usize, full_rate: bool) -> Result<(), String> {
         self.persist_ui = false;
-        let n = n.max(1);
-        let names = stress_live_entries(n);
-        let entries: Vec<(&str, &str)> = names
-            .iter()
-            .map(|(u, p)| (u.as_str(), p.as_str()))
-            .collect();
-        let pass = host_play::live_vault_passphrase();
-        let path = temp_live_vault_from(&entries, 274_000_100, &pass, true);
+        let profiles = frontend_core::live::LiveProfiles::stress(n);
+        let path = profiles.panel_vault(274_000_100, true);
         // Empty Play first: do not spawn last_focus before s00 focuses.
-        if !self.start_vault(&path, &pass) {
+        if !self.start_vault(&path, profiles.passphrase()) {
             return Err(self
                 .error
                 .clone()
@@ -2529,19 +1974,8 @@ impl Session {
         // stay raster Off so a flipped only-render-selected cannot attach
         // 49 extra RenderWorlds (~1 GB of loc Model clones each). Full-rate
         // keeps Gpu on every member on purpose.
-        for (i, (name, _)) in names.iter().enumerate() {
-            if let Some(mut p) = self.core.vault().and_then(|v| v.get(name)).cloned() {
-                p.settings.lowmem = true;
-                p.settings.raster = if full_rate || i == 0 {
-                    vault::RasterMode::Gpu
-                } else {
-                    vault::RasterMode::Off
-                };
-                let _ = self
-                    .core
-                    .save_profile(p, frontend_core::ArmMirror::none(), "stress");
-            }
-        }
+        self.core
+            .prepare_live_stress_profiles(profiles.entries(), full_rate);
         // Harness setup, not a frame path: the spawns below read the durable
         // rows, so the raster prefs must be on disk first.
         self.core.flush_writes();
@@ -2557,12 +1991,12 @@ impl Session {
         // on the UI thread — the window never presents). Raster switches
         // reattach the renderer; memory stays queued until the next login.
         // s00 is focused last so it is FIFO head.
-        for (name, _) in &names {
+        for name in profiles.names() {
             self.submit_reporting(OperatorCommand::Load, Targets::Profile(name));
         }
         self.sync_wall_focus();
         self.wall.chooser_open = false;
-        self.select(&names[0].0);
+        self.select(&profiles.names()[0]);
         // NEVER assign sidecar_50 — it stays the operator knob. The live
         // overlay raises every *drawing* slot, Game included.
         self.set_live_full_rate(full_rate);
@@ -2584,314 +2018,272 @@ impl Session {
             .map_err(|error| error.to_string())
     }
 
-    /// Live `script_<name>` setup: temp vault with the scenario's seed
-    /// profiles minted to unique per-run usernames (the engine
-    /// auto-registers unknown names, so a live boot never logs the shared
-    /// `test` account — player saves accumulate under the engine's
-    /// `player/` dir, wipe it to reset), mainland hop per the seed,
-    /// single-client boot (the MultiBox wall for a fleet — more than one
-    /// seed profile — so the sidecar rail pops out and every bot is
-    /// visible), and the shared [`scenario::ScenarioRunner`] installed for
-    /// the slot thread's per-frame hook. The UI frame reads the runner's
-    /// status/evidence.
-    pub fn live_prepare_script(&mut self, scenario: scenario::Scenario) -> Result<(), String> {
-        // Ephemeral boot: never persist focus/last_focus from a live run.
+    fn stage_live_starts(&mut self, plan: frontend_core::live::StartPlan) {
+        self.core.live_runner().stage(plan);
+    }
+
+    /// Live `script_<name>` setup with a shared frontend-core scenario runner.
+    pub fn live_prepare_script(
+        &mut self,
+        scenario: impl Into<frontend_core::live::Scenario>,
+    ) -> Result<(), String> {
+        let scenario = scenario.into();
         self.persist_ui = false;
-        // Offline prepare never boots live — refuse here so a miswired path fails closed.
-        if matches!(self.fixture_mode, scenario::FixtureMode::Prepare) {
+        self.core.live_runner().clear();
+        #[cfg(test)]
+        {
+            self.scenario.lock().unwrap().take();
+            self.catalog_core_watch.lock().unwrap().take();
+            self.paired_core_watch.lock().unwrap().take();
+            self.external_core_watch.lock().unwrap().take();
+        }
+        if self.fixture_mode == frontend_core::live::FixtureMode::Prepare {
             return Err(
                 "FixtureMode::Prepare is offline-only; use panel --prepare-fixture (no live boot)"
                     .into(),
             );
         }
-        // Apply run-prepared rewrite (strips mainland/setup cheats) before seed.
-        let mut scenario = scenario::apply_fixture_mode(scenario, self.fixture_mode)?;
-        if matches!(self.fixture_mode, scenario::FixtureMode::RunPrepared)
-            && scenario::run_prepared_has_setup_cheats(&scenario)
+        let mut scenario = scenario.fixture_mode(self.fixture_mode)?;
+        if self.fixture_mode == frontend_core::live::FixtureMode::RunPrepared
+            && scenario.run_prepared_has_setup_cheats()
         {
             return Err(format!(
                 "run-prepared scenario {:?} still has setup cheats after rewrite",
-                scenario.name
+                scenario.view().name()
             ));
         }
-        // Copy the view knobs before `scenario` moves into the runner.
-        let script_settings_overrides = scenario.settings.script_settings_overrides.take();
-        let view = scenario.settings.clone();
-        let scenario_name = scenario.name.to_string();
-        let profile_count = scenario.seed.profiles.len();
-        // Run-prepared reuses the exact identity receipt (no fresh random suffix).
-        // Default live still mints.
-        let (names, entries, pass, auto_login) = match self.fixture_mode {
-            scenario::FixtureMode::RunPrepared => {
+
+        let mut inject = scenario.settings_inject();
+        if let Some(overrides) = scenario.take_settings_overrides() {
+            inject
+                .get_or_insert_with(serde_json::Map::new)
+                .extend(overrides);
+        }
+        let view = scenario.view();
+        let scenario_name = view.name().to_owned();
+        let profile_count = view.profile_count();
+        let mainland = view.mainland();
+        let renderer = view.renderer();
+        let only_render_selected = view.only_render_selected();
+        let capture = view.capture();
+        let full_rate = view.full_rate();
+        let nav = view.nav();
+        let inject_companion_as = view.inject_companion_as().map(str::to_owned);
+        let start_script = view.start_script().map(str::to_owned);
+        let start_file = view.start_file().map(str::to_owned);
+        let fleet_start = view.fleet_start();
+
+        let profiles = match self.fixture_mode {
+            frontend_core::live::FixtureMode::RunPrepared => {
                 let path = self.fixture_identity_path(&scenario_name);
-                let identity = scenario::FixtureIdentity::read_from(&path)?;
+                let identity = frontend_core::live::FixtureIdentity::read_from(&path)?;
                 identity.validate_for(&scenario_name, profile_count)?;
-                // Install .sav into engine players dir when the operator points one.
                 if let Ok(players) = std::env::var("BOT_PLAYERS_DIR") {
-                    let players = PathBuf::from(players);
-                    let installed = identity.install_into_players_dir(&players, true)?;
-                    for p in &installed {
-                        println!("[panel] installed fixture save -> {}", p.display());
+                    let installed =
+                        identity.install_into_players_dir(&PathBuf::from(players), true)?;
+                    for path in &installed {
+                        println!("[panel] installed fixture save -> {}", path.display());
                     }
                 } else {
+                    let save_paths = identity
+                        .accounts()
+                        .into_iter()
+                        .map(|(_, path, _, _)| path)
+                        .collect::<Vec<_>>();
                     println!(
                         "[panel] run-prepared: BOT_PLAYERS_DIR unset; ensure engine already has {}",
-                        identity
-                            .accounts
-                            .iter()
-                            .map(|a| a.sav_path.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
+                        save_paths.join(", ")
                     );
                 }
-                let names = identity.usernames();
-                let entries = identity.entries();
-                let pass = identity.vault_passphrase.clone();
-                (names, entries, pass, true)
+                frontend_core::live::LiveProfiles::from_fixture_identity(identity)
             }
-            scenario::FixtureMode::Default => {
-                let names = host_play::mint_live_names(profile_count);
-                let entries = host_play::mint_live_entries(&names);
-                let pass = host_play::live_vault_passphrase();
-                (names, entries, pass, true)
+            frontend_core::live::FixtureMode::Default => {
+                frontend_core::live::LiveProfiles::mint(profile_count)
             }
-            scenario::FixtureMode::Prepare => unreachable!("prepare rejected above"),
+            frontend_core::live::FixtureMode::Prepare => unreachable!("prepare rejected above"),
         };
+        let names = profiles.names();
         if self.external_core_enabled && (self.catalog_core_enabled || self.pair_core_enabled) {
             return Err(
                 "external loader watch is mutually exclusive with catalog/pair core".into(),
             );
         }
-        let live_core = LiveCore::resolve(
-            scenario.name,
+        let live_core = self.core.resolve_live_core(
+            &scenario_name,
             names.len(),
             self.catalog_core_enabled,
             self.pair_core_enabled,
         )?;
-        let pair_case = match live_core {
-            LiveCore::Pair(case) => Some(case),
-            LiveCore::Off | LiveCore::Catalog(_) => None,
-        };
-        let mut inject = scenario::settings_inject_map(view.script_settings_inject);
-        if let Some(overrides) = script_settings_overrides {
-            inject
-                .get_or_insert_with(serde_json::Map::new)
-                .extend(overrides);
-        }
-        if pair_case.is_none() {
-            if let Some(key) = view.inject_companion_as {
+        if live_core != frontend_core::live::LiveCoreMode::Pair {
+            if let Some(key) = inject_companion_as.as_deref() {
                 if names.len() > 1 {
                     inject.get_or_insert_with(serde_json::Map::new).insert(
                         key.to_string(),
-                        serde_json::Value::String(partner_screen_name(&names[1])),
+                        serde_json::Value::String(frontend_core::live::screen_name(&names[1])),
                     );
                 }
             }
         }
         self.set_script_settings_inject(inject);
-        let path = temp_live_vault_from(&entries, 274_000_001, &pass, auto_login);
-        if !self.unlock_at(&path, &pass) {
+        let path = profiles.panel_vault(274_000_001, true);
+        if !self.unlock_at(&path, profiles.passphrase()) {
             return Err(self
                 .error
                 .clone()
                 .unwrap_or_else(|| "unlock_at failed".into()));
         }
-        if live_core != LiveCore::Off {
-            let play = self
-                .core
-                .play()
-                .ok_or_else(|| "live core watch needs the unlocked play".to_string())?;
-            live_core.configure(play, &names)?;
-        }
+        self.core.configure_live_core(names)?;
         if self.external_core_enabled {
-            let frozen = host_play::external_loader::resolve_source(self.external_ts.as_deref())?;
-            let owned = host_play::external_loader::materialize_owned_source(&frozen)?;
-            let watch = host_play::external_loader::ExternalWatch::default();
-            watch.configure(
-                names[0].clone(),
-                owned,
-                host_play::external_loader::FROZEN_SHA256.into(),
-            );
-            self.install_external_core_watch(Some(watch));
+            self.core
+                .configure_live_external_loader(names[0].clone(), self.external_ts.as_deref())?;
         }
-        self.mainland
-            .store(scenario.seed.mainland, Ordering::Relaxed);
+
+        self.mainland.store(mainland, Ordering::Relaxed);
         self.scatter.store(false, Ordering::Relaxed);
-        // Fleet scenario (2+ seed profiles): open the MultiBox wall like
-        // `live_prepare_null_raster`/`live_prepare_stress`, so the rail
-        // pops out and every bot is visible.
-        if scenario.seed.profiles.len() > 1 {
+        if profile_count > 1 {
             self.set_multibox(true);
         }
         self.wall.chooser_open = false;
-        for name in &names {
+        for name in names {
             self.load(name);
         }
         self.select(&names[0]);
-        // Apply the scenario's view knobs now the wall is up; the slot
-        // threads re-read the focus within a frame.
-        self.set_renderer(view.renderer);
-        self.focus.lock().unwrap().only_render_selected = view.only_render_selected;
-        self.set_capture(view.capture);
-        self.set_live_full_rate(view.full_rate);
-        // Scenario nav bag is session-only — never ui_state::save'd.
-        self.nav_overlay = Some(from_scenario(&view.nav, &self.ui.nav));
-        // NEVER assign sidecar_50 — it stays the operator knob.
+        self.set_renderer(renderer);
+        self.focus.lock().unwrap().only_render_selected = only_render_selected;
+        self.set_capture(capture);
+        self.set_live_full_rate(full_rate);
+        self.nav_overlay = Some(from_scenario(&nav, &self.ui.nav));
         self.sync_sidecar_cadence();
-        let world = self.core.play().and_then(|play| play.world());
-        let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
-        let play = self.launcher.play_config();
-        runner.set_tick_speed_endpoint(play.host(), play.port());
-        if let Some(play) = self.core.play() {
-            runner.set_map_members(play.map_members());
-        }
-        if let Some(budget) = scenario::budget_s_from_env() {
-            runner.set_deadline(budget);
-        }
-        // The runner drives/companions the minted names, never the seed's
-        // `test`/`test2` (the vault holds the fresh accounts).
-        runner.set_live_names(&names);
-        if let Some(play) = self.core.play() {
-            runner.set_obj_names(play.obj_names());
-        }
-        *self.scenario.lock().unwrap() = Some(runner);
+
+        let fixture_loadouts = scenario.fixture_loadouts();
+        let fleet_cards = scenario.fleet_cards(names)?;
+        #[cfg(test)]
+        let test_world = self.core.play().and_then(|play| play.world());
+        let play_config = self.launcher.play_config();
+        let budget = frontend_core::live::budget_s_from_env();
+        let runner = self.core.live_scenario_runner(
+            scenario,
+            names,
+            play_config.host(),
+            play_config.port(),
+            budget,
+        );
+
+        #[cfg(test)]
+        let test_scenario = {
+            let mode = match self.fixture_mode {
+                frontend_core::live::FixtureMode::Default => scenario::FixtureMode::Default,
+                frontend_core::live::FixtureMode::Prepare => scenario::FixtureMode::Prepare,
+                frontend_core::live::FixtureMode::RunPrepared => scenario::FixtureMode::RunPrepared,
+            };
+            scenario::try_get(&scenario_name)
+                .ok()
+                .flatten()
+                .and_then(|scenario| scenario::apply_fixture_mode(scenario, mode).ok())
+        };
+        self.core.live_runner().install(runner);
         self.live_script_stop_wait_started = None;
-        // A scenario that names a script card (`start_script`) selects
-        // the script; Start waits for [`scenario::StepKind::StartScript`]
-        // after seed. A fleet launch Starts the scenario's own card on each
-        // member slot.
-        if let Some(fleet) = view.fleet_start {
-            self.fill_live_catalog()?;
-            for member in fleet.members(&names)? {
-                if !self
-                    .scripts
-                    .card_is_prepared(CardSource::Catalog, member.card)
-                {
-                    self.scripts
-                        .transpile_blocking(CardSource::Catalog, member.card)?;
+        #[cfg(test)]
+        {
+            let mut test_runner = test_scenario
+                .map(|scenario| scenario::ScenarioRunner::with_world(scenario, test_world));
+            if let Some(runner) = test_runner.as_mut() {
+                runner.set_tick_speed_endpoint(play_config.host(), play_config.port());
+                runner.set_live_names(names);
+                if let Some(play) = self.core.play() {
+                    runner.set_map_members(play.map_members());
+                    runner.set_obj_names(play.obj_names());
+                }
+                if let Some(budget) = budget {
+                    runner.set_deadline(budget);
                 }
             }
-            let scripts = &mut self.scripts;
-            let (js, legacy, inject) = scripts.live_start_parts();
-            let starts = live_start::fleet_catalog_starts(
+            *self.scenario.lock().unwrap() = test_runner;
+        }
+
+        if let Some(fleet) = fleet_start {
+            self.fill_live_catalog()?;
+            for card in &fleet_cards {
+                if !self.scripts.card_is_prepared(CardSource::Catalog, card) {
+                    self.scripts.transpile_blocking(CardSource::Catalog, card)?;
+                }
+            }
+            let plan = frontend_core::live::StartPlan::fleet_catalog(
+                &mut self.scripts,
                 fleet,
-                &names,
-                js,
-                legacy,
-                inject,
-                &scenario_fixture_loadouts(&view),
+                names,
+                &fixture_loadouts,
             )?;
-            *self.pending_script.lock().unwrap() = starts;
-        // Exact example files (`start_file`) Load through normal File
-        // provenance and select by identity_id.
-        } else if let Some(file_name) = view.start_file {
-            let card = load_live_example_card(self.scripts.live_start_parts().0, file_name)?;
-            let identity = card.identity_id();
+            self.stage_live_starts(plan);
+        } else if let Some(file_name) = start_file.as_deref() {
+            let identity = self.scripts.load_live_example_identity(file_name)?;
             self.script_sel = Some(ScriptChoice::loaded(CardSource::File, &identity));
             let bag = self.pending_card_settings_bag(CardSource::File, &identity);
-            let siblings = self.scripts.card_siblings(CardSource::File, &identity)?;
-            stash_pending_starts(
-                &self.pending_script,
-                &names,
-                view.inject_companion_as,
-                card.js.clone(),
-                card.shape,
+            let choice = self
+                .script_sel
+                .as_ref()
+                .expect("live loaded-card selection is set");
+            let plan = self.core.live_runner().stage_loaded_card(
+                &mut self.scripts,
+                names,
+                choice,
                 bag,
-                siblings,
-                scenario_fixture_loadouts(&view),
+                inject_companion_as.as_deref(),
+                fixture_loadouts,
             );
-        } else if let Some(card_name) = view.start_script {
-            if let (Some(id), Some(card)) = (
-                script::compiled_id(card_name),
-                frontend_core::scripts::CompiledCardId::lookup(card_name),
-            ) {
+            plan?;
+        } else if let Some(card_name) = start_script.as_deref() {
+            if let Some(card) = frontend_core::scripts::CompiledCardId::lookup(card_name) {
                 self.script_sel = Some(ScriptChoice::compiled(card));
                 let bag = self.scripts.compiled_bag(&self.core, &names[0], card)?;
-                *self.pending_script.lock().unwrap() =
-                    vec![PendingCatalogStart::compiled(names[0].clone(), id, bag)];
-            } else if let Some(fixture) = script::live_file_fixture_path(card_name) {
-                let stem = script::live_file_fixture_stem(card_name)
-                    .ok_or_else(|| format!("no file stem for live fixture {card_name}"))?;
+                let plan = frontend_core::live::StartPlan::compiled(names[0].clone(), card, bag);
+                self.stage_live_starts(plan);
+            } else if let Some((fixture, stem)) = frontend_core::live::live_file_fixture(card_name)
+            {
                 self.scripts
                     .load_file(&fixture)
-                    .map_err(|e| format!("load {card_name} fixture: {e}"))?;
-                let card = self
-                    .scripts
-                    .live_start_parts()
-                    .0
-                    .get(script::ScriptSource::File, stem)
-                    .cloned()
-                    .ok_or_else(|| format!("file fixture {card_name} missing after load"))?;
-                self.script_sel = Some(ScriptChoice::loaded(CardSource::File, stem));
-                let bag = self.pending_card_settings_bag(CardSource::File, stem);
-                let siblings = self.scripts.card_siblings(CardSource::File, stem)?;
-                if let Some(case) = pair_case {
-                    let watch = self
-                        .paired_core_watch()
-                        .ok_or_else(|| "pair core watch handle unavailable".to_string())?;
-                    *self.pending_script.lock().unwrap() = live_start::pair_starts(
-                        &names,
-                        case,
-                        card.js.clone(),
-                        card.shape,
-                        &card.settings_schema,
-                        siblings,
-                        &watch,
-                    )?;
-                } else {
-                    stash_pending_starts(
-                        &self.pending_script,
-                        &names,
-                        view.inject_companion_as,
-                        card.js.clone(),
-                        card.shape,
-                        bag,
-                        siblings,
-                        scenario_fixture_loadouts(&view),
-                    );
+                    .map_err(|error| format!("load {card_name} fixture: {error}"))?;
+                if self.scripts.card(CardSource::File, &stem).is_none() {
+                    return Err(format!("file fixture {card_name} missing after load"));
                 }
+                self.script_sel = Some(ScriptChoice::loaded(CardSource::File, &stem));
+                let bag = self.pending_card_settings_bag(CardSource::File, &stem);
+                let choice = self
+                    .script_sel
+                    .as_ref()
+                    .expect("live loaded-card selection is set");
+                self.core.live_runner().stage_loaded_card(
+                    &mut self.scripts,
+                    names,
+                    choice,
+                    bag,
+                    inject_companion_as.as_deref(),
+                    fixture_loadouts,
+                )?;
             } else {
                 self.fill_live_catalog()?;
                 self.scripts
                     .transpile_blocking(CardSource::Catalog, card_name)
                     .map_err(|error| format!("transpile {card_name}: {error}"))?;
-                let card = self
-                    .scripts
-                    .live_start_parts()
-                    .0
-                    .get(script::ScriptSource::Catalog, card_name)
-                    .cloned()
-                    .ok_or_else(|| {
-                        format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
-                    })?;
+                if self.scripts.card(CardSource::Catalog, card_name).is_none() {
+                    return Err(format!(
+                        "$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)"
+                    ));
+                }
                 self.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, card_name));
                 let bag = self.pending_card_settings_bag(CardSource::Catalog, card_name);
-                let siblings = self.scripts.card_siblings(CardSource::Catalog, card_name)?;
-                if let Some(case) = pair_case {
-                    let watch = self
-                        .paired_core_watch()
-                        .ok_or_else(|| "pair core watch handle unavailable".to_string())?;
-                    *self.pending_script.lock().unwrap() = live_start::pair_starts(
-                        &names,
-                        case,
-                        card.js.clone(),
-                        card.shape,
-                        &card.settings_schema,
-                        siblings,
-                        &watch,
-                    )?;
-                } else {
-                    stash_pending_starts(
-                        &self.pending_script,
-                        &names,
-                        view.inject_companion_as,
-                        card.js.clone(),
-                        card.shape,
-                        bag,
-                        siblings,
-                        scenario_fixture_loadouts(&view),
-                    );
-                }
+                let choice = self
+                    .script_sel
+                    .as_ref()
+                    .expect("live loaded-card selection is set");
+                self.core.live_runner().stage_loaded_card(
+                    &mut self.scripts,
+                    names,
+                    choice,
+                    bag,
+                    inject_companion_as.as_deref(),
+                    fixture_loadouts,
+                )?;
             }
         }
         self.login_all();
@@ -2906,28 +2298,17 @@ impl Session {
             mainland: Arc::clone(&self.mainland),
             mainland_sent: Arc::clone(&self.mainland_sent),
             scatter: Arc::clone(&self.scatter),
-            scenario: Arc::clone(&self.scenario),
-            pending_script: Arc::clone(&self.pending_script),
-            script_start_handle: Arc::clone(&self.script_start_handle),
-            catalog_core_watch: Arc::clone(&self.catalog_core_watch),
-            paired_core_watch: Arc::clone(&self.paired_core_watch),
             audio: Arc::clone(&self.audio),
             nav_publish: Arc::clone(&self.nav_publish),
             nav_paint_cache: Mutex::new(crate::nav_paint_cache::Cache::default()),
             // Last failed device-open `(slot, when)`; a machine without an
             // audio device must not re-open cpal (or re-log) every frame.
             audio_fail: Mutex::new(None),
+            live_runner: self.core.live_runner().share(),
             scatter_template: self.launcher.template().map(ProfileTemplate::share),
         };
         let launch = self.launcher.take_launch().keeping_world_state();
         self.core.unlock_vault(path, pass, launch, Arc::new(hook))?;
-        // Live harness wiring: the Start handle and the core watches the
-        // `--live` runner arms its Starts with.
-        if let Some(play) = self.core.play() {
-            *self.script_start_handle.lock().unwrap() = Some(play.script_start_handle());
-            self.install_catalog_core_watch(Some(play.catalog_core_watch()));
-            self.install_paired_core_watch(Some(play.paired_core_watch()));
-        }
         crate::picker::set_pack(self.core.nav_world());
         self.statuses.refresh(&self.core);
         Ok(())
@@ -2993,22 +2374,10 @@ impl Session {
         self.ingest_tutorial_chat(&current);
         self.maybe_getvar_tutorial(&current);
         self.maybe_drain_getvar_dialogue(&current);
-        // The core moved transitions and script lines onto the shared
-        // log; the external-loader watch still reads its account's lines.
-        let watch = if self.core.script_lines().is_empty() {
-            None
-        } else {
-            self.external_core_watch()
-        };
-        if let Some(watch) = watch {
-            if watch.configured() {
-                for (slot, line) in self.core.script_lines() {
-                    if watch.account() == *slot {
-                        watch.note_logs(Instant::now(), slot, std::slice::from_ref(line));
-                    }
-                }
-            }
-        }
+        // Script lifecycle lines also feed the frontend-core-owned external proof.
+        self.core
+            .live_runner()
+            .note_external_loader_logs(self.core.script_lines());
         self.statuses = current;
         self.settle_walk_dest();
     }
@@ -3045,8 +2414,8 @@ impl Session {
         }
     }
 
-    /// Every slot's status row from the last poll, as the live harness
-    /// reads them.
+    /// The raw status rows for adapter-boundary tests.
+    #[cfg(test)]
     pub fn statuses(&self) -> &[SlotStatus] {
         self.statuses.live_rows()
     }
@@ -4819,14 +4188,7 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return false;
         };
-        let Some(play) = self.core.play() else {
-            return false;
-        };
-        host_play::live_gate::script_self_stop_observed(
-            play.script_state(&name),
-            play.script_lifecycle_receipt(&name).as_ref(),
-            needle,
-        )
+        self.core.live_script_self_stop_observed(&name, needle)
     }
 
     /// The focused slot's script `last_error`; `None` when the slot has no
@@ -4958,71 +4320,30 @@ impl Session {
 }
 
 /// `(username, password)` pairs for live `null_raster` (`test`/`test2`).
+#[cfg(test)]
 fn null_raster_live_entries() -> Vec<(String, String)> {
-    ["test", "test2"]
-        .iter()
-        .map(|user| {
-            let user = user.to_string();
-            (user.clone(), host_play::profile_password(&user))
-        })
-        .collect()
+    frontend_core::live::null_raster_entries()
 }
 
 /// `(username, password)` pairs for live stress walls (`s00`…`s{n-1}`).
+#[cfg(test)]
 fn stress_live_entries(n: usize) -> Vec<(String, String)> {
-    (0..n.max(1))
-        .map(|i| {
-            let name = format!("s{i:02}");
-            (name.clone(), host_play::profile_password(&name))
-        })
-        .collect()
+    frontend_core::live::stress_entries(n)
 }
 
-/// Throwaway encrypted vault for live prepare (e2e `temp_vault` pattern,
-/// kept panel-private so panel does not depend on the e2e crate).
-/// Null raster keeps base uid `274_000_001`. Accepts `&str` or `String`
-/// entries (live scripts mint per-run usernames).
-/// Same as a single-base [`temp_live_vault_from`] (`274_000_001`).
+/// Create a throwaway encrypted vault for a headed live boot.
+#[cfg(test)]
 fn temp_live_vault_from<S: AsRef<str>>(
     entries: &[(S, S)],
     uid_base: i32,
     vault_pass: &str,
     auto_login: bool,
 ) -> PathBuf {
-    // Unique per call: parallel tests boot several scenarios and must not
-    // race on one temp vault path.
-    static SERIAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let serial = SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "274bot-panel-live-{}-{}-{}-{serial}",
-        std::process::id(),
-        entries.len(),
-        uid_base
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("vault");
-    if path.exists() {
-        std::fs::remove_file(&path).unwrap();
-    }
-    let mut vault = Vault::create(&path, vault_pass).unwrap();
-    for (i, (user, pass)) in entries.iter().enumerate() {
-        vault
-            .upsert(Profile {
-                username: user.as_ref().into(),
-                password: pass.as_ref().into(),
-                uid: uid_base + i as i32,
-                settings: vault::ProfileSettings {
-                    // Relog leaves run_client when !ingame; auto_login
-                    // keeps want_login armed so the FIFO handshakes again
-                    // instead of sitting on the title ("logging in…").
-                    // Prepare-fixture turns this off so LoggedOut holds.
-                    auto_login,
-                    ..vault::ProfileSettings::default()
-                },
-            })
-            .unwrap();
-    }
-    path
+    let owned = entries
+        .iter()
+        .map(|(username, password)| (username.as_ref().to_owned(), password.as_ref().to_owned()))
+        .collect::<Vec<_>>();
+    frontend_core::live::panel_live_vault(&owned, uid_base, vault_pass, auto_login)
 }
 
 /// 50-head watches are a release RAM/GPU check. Debug cargo run looks

@@ -7,7 +7,9 @@
 
 use std::path::{Path, PathBuf};
 
-use frontend_core::scripts::{CardSource, ReloadOutcome, SchemaRef, ScriptChoice};
+#[cfg(test)]
+use frontend_core::scripts::ReloadOutcome;
+use frontend_core::scripts::{CardSource, SchemaRef, ScriptChoice};
 use serde_json::{Map, Value};
 #[cfg(test)]
 use vault::ScriptAssignment;
@@ -181,11 +183,9 @@ impl Session {
     pub fn poll_scripts(&mut self) {
         self.scripts.poll(&mut self.core);
         for (name, message) in self.scripts.take_start_failures() {
-            if let Some(watch) = self.external_core_watch() {
-                if watch.configured() && watch.account() == name {
-                    watch.fail_start(message);
-                }
-            }
+            self.core
+                .live_runner()
+                .fail_external_loader_start(&name, message);
         }
         self.apply_script_notice();
         if self.fleet_report_follows_start {
@@ -212,6 +212,7 @@ impl Session {
         self.scripts.reload_validation_pending()
     }
 
+    #[cfg(test)]
     pub(crate) fn take_reload_outcome(&mut self) -> Option<ReloadOutcome> {
         self.scripts.take_reload_outcome()
     }

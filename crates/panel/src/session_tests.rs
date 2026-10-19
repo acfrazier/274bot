@@ -560,22 +560,11 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
     save_store_patiently(&mut own);
 
     assert!(session.unlock("prepared-pass"));
-    let handle = session
-        .script_start_handle
-        .lock()
-        .unwrap()
-        .clone()
-        .expect("start_play keeps the Start handle");
+    let handle = session.core.live_runner();
     let start = || {
         let mut bag = serde_json::Map::new();
         bag.insert("loadout".into(), serde_json::json!("melee"));
-        handle.start_load(
-            "alice",
-            "export function tick() {}".into(),
-            script::LoadShape::NativeTick,
-            Some(bag),
-            vec![],
-        )
+        handle.start_native_tick_for_test("alice", "export function tick() {}".into(), Some(bag))
     };
     let refused = start().expect_err("the session's service holds no melee row");
     assert!(refused.contains("\"melee\""), "{refused}");
@@ -5252,7 +5241,7 @@ fn live_prepare_script_trade_loads_the_file_fixture_and_injects_partner() {
         .map(|p| p.username.clone())
         .collect();
     assert_eq!(names.len(), 2, "script_trade is a two-profile fleet");
-    let pending = s.pending_script.lock().unwrap().clone();
+    let pending = s.core.live_runner().pending_starts_for_test();
     assert_eq!(
         pending.len(),
         2,
@@ -5316,7 +5305,7 @@ fn live_prepare_jive_kq_stashes_four_starts_with_the_same_roster() {
         .map(|name| client::util::JString::to_screen_name(name))
         .collect::<Vec<_>>()
         .join(",");
-    let starts = session.pending_script.lock().unwrap();
+    let starts = session.core.live_runner().pending_starts_for_test();
     assert_eq!(starts.len(), 4, "StartScript prepares all four isolates");
     let mut prepared_slots = starts
         .iter()
@@ -5355,7 +5344,7 @@ fn live_prepare_thiever_posts_guard_target_when_schema_empty() {
     let mut s = preparation_only_session();
     s.live_prepare_script(scenario::get("thiever").expect("registered"))
         .expect("prepare");
-    let pending = s.pending_script.lock().unwrap();
+    let pending = s.core.live_runner().pending_starts_for_test();
     let card = pending.first().expect("catalog start stashed");
     let bag = card
         .bag
@@ -5415,7 +5404,7 @@ fn live_prepare_sherlock_starts_the_compiled_card_without_catalog() {
         )),
         "live_prepare must select the compiled registry card"
     );
-    let pending = s.pending_script.lock().unwrap();
+    let pending = s.core.live_runner().pending_starts_for_test();
     let card = pending.first().expect("compiled start stashed");
     assert_eq!(card.compiled, Some(script::CompiledId("Sherlock")));
     assert!(
@@ -5605,9 +5594,15 @@ fn requested_nav_paints_survive_scenario_install_without_changing_gameplay_or_pr
         let mut scenario = scenario::get("nav_door").unwrap();
         scenario.settings.nav.allow_teleports = true;
         scenario.settings.nav.allow_wilderness = true;
-        let baseline = crate::nav_settings::from_scenario(&scenario.settings.nav, &saved.nav);
-        let deadline = scenario.settings.deadline;
-        let terminal_shot = scenario.settings.terminal_shot;
+        let scenario = frontend_core::live::Scenario::from(scenario);
+        let (baseline, deadline, terminal_shot) = {
+            let view = scenario.view();
+            (
+                crate::nav_settings::from_scenario(&view.nav(), &saved.nav),
+                view.deadline(),
+                view.terminal_shot().map(str::to_owned),
+            )
+        };
         session.live_prepare_script(scenario).unwrap();
         session.pump_status();
         let published = session
@@ -5639,7 +5634,7 @@ fn requested_nav_paints_survive_scenario_install_without_changing_gameplay_or_pr
             runner.deadline(),
             scenario::budget_s_from_env().unwrap_or(deadline)
         );
-        assert_eq!(runner.terminal_shot(), terminal_shot);
+        assert_eq!(runner.terminal_shot(), terminal_shot.as_deref());
         assert_eq!(session.nav_overlay.as_ref(), Some(&baseline));
         assert_eq!(crate::ui_state::load(&session.preferences).nav, saved.nav);
     }
@@ -5652,8 +5647,9 @@ fn live_force_layers_does_not_write_panel_ui() {
         ..Default::default()
     });
     let mut s = Session::new();
+    let scenario = frontend_core::live::Scenario::get("nav_door").unwrap();
     s.nav_overlay = Some(crate::nav_settings::from_scenario(
-        &scenario::nav_test_paints(),
+        &scenario.view().nav(),
         &s.ui.nav,
     ));
     assert!(

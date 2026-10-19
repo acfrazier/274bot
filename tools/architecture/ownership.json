@@ -6769,6 +6769,14 @@
     {
       "path": "crates/frontend-core/src/launch_tests.rs",
       "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/bench.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/live/mod.rs",
+      "owner": "T3"
     }
   ]
 }

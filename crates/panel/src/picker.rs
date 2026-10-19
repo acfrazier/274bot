@@ -1446,7 +1446,7 @@ fn cached_remaining_path_view(
 
 /// Remaining path tiles for the focused slot. Delegate live > script > manual
 /// precedence and the script/manual lock order to `Play::with_map_route`.
-/// Release the scenario guard before looking up script or manual routes.
+/// The core lends its route only for projection, avoiding a cloned path.
 /// Cached by `(source, route generation)`; `here` advances a monotonic start
 /// index using [`remaining_path_tiles`] leg semantics without flattening again.
 fn bind_focused_route_cache(session: &Session, here: Option<WorldTile>) {
@@ -1463,21 +1463,25 @@ fn bind_focused_route_cache(session: &Session, here: Option<WorldTile>) {
             here,
         );
     };
-    {
-        let scenario = session.scenario.lock().unwrap();
-        let live_route = scenario
-            .as_ref()
-            .and_then(|runner| runner.drives(&name).then(|| runner.armed_route()).flatten());
-        if let Some(route) = live_route {
-            let live = Some(RouteProjectionView::legacy(
-                route,
-                WalkRouteSource::Live,
-                session.route_gen(),
-                None,
-            ));
-            session.core.with_walk_route(&name, live, read);
-            return;
-        }
+    let has_live_route = session
+        .core
+        .live_runner()
+        .with_route_for(&name, |_, route, _| {
+            if let Some(route) = route {
+                let live = Some(RouteProjectionView::legacy(
+                    route,
+                    WalkRouteSource::Live,
+                    session.route_gen(),
+                    None,
+                ));
+                session.core.with_walk_route(&name, live, read);
+                true
+            } else {
+                false
+            }
+        });
+    if has_live_route {
+        return;
     }
     #[cfg(test)]
     tests::before_map_route();

@@ -526,6 +526,46 @@ const CORE: &[(&str, Decision)] = &[
     ("launch.rs::debug_teleport_authorized", Excluded(FORMAT)),
     ("launch.rs::default_scatter_tile_for", Excluded(FORMAT)),
     ("process.rs::debug_enabled", Excluded(PROCESS)),
+    ("process.rs::bootstrap", Excluded(PROCESS)),
+    ("process.rs::raise_fd_limit", Excluded(PROCESS)),
+    ("process.rs::shutdown_background_work", Excluded(PROCESS)),
+    // bench.rs: the opt-in memory benchmark's run and records.
+    ("bench.rs::BenchRun::poll", Excluded(BENCH)),
+    ("bench.rs::mark_startup", Excluded(BENCH)),
+    ("bench.rs::record_adapter", Excluded(BENCH)),
+    ("bench.rs::require_live_benchmark", Excluded(BENCH)),
+    // live/mod.rs: headed harness preparation and proof reporting.
+    ("live/mod.rs::WatchDecision::pass_hold", Excluded(HARNESS)),
+    ("live/mod.rs::RunnerHandle::stage_loaded_card", Excluded(HARNESS)),
+    ("live/mod.rs::Scenario::take_settings_overrides", Excluded(HARNESS)),
+    ("live/mod.rs::Scenario::is_registered", Excluded(HARNESS)),
+    ("live/mod.rs::default_fixture_path", Excluded(HARNESS)),
+    ("live/mod.rs::live_file_fixture", Excluded(HARNESS)),
+    ("live/mod.rs::screen_name", Excluded(HARNESS)),
+    ("live/mod.rs::profile_password", Excluded(HARNESS)),
+    ("live/mod.rs::null_raster_entries", Excluded(HARNESS)),
+    ("live/mod.rs::stress_entries", Excluded(HARNESS)),
+    ("live/mod.rs::panel_live_vault", Excluded(HARNESS)),
+    ("live/mod.rs::budget_s_from_env", Excluded(HARNESS)),
+    ("live/mod.rs::shot_stamp_utc", Excluded(HARNESS)),
+    ("live/mod.rs::create_shot_run_dir", Excluded(HARNESS)),
+    ("live/mod.rs::write_shot", Excluded(HARNESS)),
+    ("live/mod.rs::external_loader_scenario_name", Excluded(HARNESS)),
+    ("live/mod.rs::external_loader_live_name", Excluded(HARNESS)),
+    ("live/mod.rs::external_loader_terminal_shot", Excluded(HARNESS)),
+    ("live/mod.rs::external_loader_prereq_shot", Excluded(HARNESS)),
+    ("live/mod.rs::external_loader_script_name", Excluded(HARNESS)),
+    ("live/mod.rs::external_loader_nothing_changed", Excluded(HARNESS)),
+    ("live/mod.rs::external_loader_frozen_sha256", Excluded(HARNESS)),
+    ("live/mod.rs::external_loader_bones_id", Excluded(HARNESS)),
+    ("live/mod.rs::external_loader_prayer_stat_id", Excluded(HARNESS)),
+    ("live/mod.rs::external_loader_bones_count", Excluded(HARNESS)),
+    ("live/mod.rs::resolve_external_loader_source", Excluded(HARNESS)),
+    ("live/mod.rs::materialize_external_loader_source", Excluded(HARNESS)),
+    ("live/mod.rs::count_tcp_to", Excluded(HARNESS)),
+    ("live/mod.rs::process_rss_kib", Excluded(HARNESS)),
+    ("live/mod.rs::OperatorSession::pump_live_external_loader", Excluded(HARNESS)),
+    ("live/mod.rs::OperatorSession::prepare_live_stress_profiles", Excluded(HARNESS)),
     ("session.rs::OperatorSession::start_play", Row(C::UnlockVault)),
     ("session.rs::OperatorSession::unlock_vault", Row(C::UnlockVault)),
     ("slot_view.rs::StatusBuf::refresh", Excluded(PROJECTION)),
@@ -632,8 +672,8 @@ const CORE: &[(&str, Decision)] = &[
     ("scripts/mod.rs::Scripts::start_all", Row(C::StartScript)),
     ("scripts/mod.rs::Scripts::stop_all", Row(C::StopScript)),
     (
-        "scripts/mod.rs::Scripts::live_start_parts",
-        Excluded(ACCESSOR),
+        "scripts/mod.rs::Scripts::load_live_example_identity",
+        Excluded(HARNESS),
     ),
     (
         "scripts/mod.rs::Scripts::set_inject",
@@ -979,7 +1019,6 @@ const SURFACE: &[(&str, Decision)] = &[
     ),
     ("panel/headed_record.rs::HeadedRecord::finish", Excluded(HARNESS)),
     ("panel/session.rs::Session::live_prepare_stress", Excluded(HARNESS)),
-    ("panel/session.rs::temp_live_vault_from", Excluded(HARNESS)),
     ("panel/session.rs::Session::with_instance", Excluded(STARTUP)),
     (
         "panel/session.rs::Session::pump_status",
@@ -1178,7 +1217,6 @@ const SURFACE: &[(&str, Decision)] = &[
         "tui/bin.rs::exit_after_work_shutdown",
         Excluded("final process exit after WorkAdmission shutdown; no operator decision"),
     ),
-    ("tui/bin.rs::temp_live_vault", Excluded(HARNESS)),
     (
         "tui/bin.rs::map_bundle",
         Excluded("`--map-bundle` packaging flag: bakes the shipped map bundle; not an operator command"),
@@ -1371,6 +1409,8 @@ const SURFACE: &[(&str, Decision)] = &[
 const PROCESS: &str =
     "process entry, argument errors or start-up failure exits; not an operator command";
 const HARNESS: &str = "`--live`/headed harness preparation and records; not an operator command";
+const BENCH: &str =
+    "opt-in memory benchmark (`memory-profile`) run and records; not an operator command";
 const DROP_QUEUED: &str = "drops the member's queued Start first, then issues the row";
 const RUN_STATE: &str = "the run's state selects the row";
 const RELOAD_CLICK: &str = "the first click begins the reload; while a warning awaits confirmation the same click confirms it";
