@@ -1715,3 +1715,84 @@ fn unbankable_items_report_supply_reason_when_withdrawals_fill_the_pack() {
     );
     assert!(matches!(gatherer.active, Active::None));
 }
+
+#[test]
+fn power_gatherer_rejects_bank_edit_at_lower_mine() {
+    let (power_config, bank_config) = FamilyPreparation::run(|families| {
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let mut cx = crate::native::PrepareContext {
+            pin: selected.selected_pin().unwrap(),
+            selected,
+            banks: Arc::default(),
+            families,
+        };
+        let mut power_settings = crate::native::SettingsBag::new();
+        for (key, value) in [
+            ("skill", serde_json::json!("Mining")),
+            ("miningResources", serde_json::json!(["copper"])),
+            ("location", serde_json::json!("Site")),
+            (
+                "site",
+                serde_json::json!("mining.desert_mining_camp.underground"),
+            ),
+            ("radius", serde_json::json!(20)),
+            ("disposition", serde_json::json!("Power")),
+        ] {
+            power_settings.insert(key.into(), value);
+        }
+        let power_config =
+            super::super::card::prepare(&mut cx, 1, Arc::new(power_settings)).unwrap();
+        let mut bank_settings = crate::native::SettingsBag::new();
+        for (key, value) in [
+            ("skill", serde_json::json!("Mining")),
+            ("miningResources", serde_json::json!(["copper"])),
+            ("location", serde_json::json!("Site")),
+            (
+                "site",
+                serde_json::json!("mining.desert_mining_camp.underground"),
+            ),
+            ("radius", serde_json::json!(20)),
+            ("disposition", serde_json::json!("Bank")),
+        ] {
+            bank_settings.insert(key.into(), value);
+        }
+        let bank_config =
+            super::super::card::prepare(&mut cx, 2, Arc::new(bank_settings)).unwrap();
+        (power_config, bank_config)
+    })
+    .unwrap()
+    .join()
+    .unwrap();
+    let bank_start_error = match super::super::card::create(
+        RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        Arc::clone(&bank_config),
+        &mut crate::native::RetainedMemory::default(),
+    ) {
+        Err(crate::native::StartError::Config(error)) => error,
+        Err(error) => panic!("unexpected Bank-mode Start error: {error}"),
+        Ok(_) => panic!("Bank-mode Start unexpectedly accepted the lower mine"),
+    };
+    let mut gatherer = Gatherer::new(
+        RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        Arc::clone(&power_config),
+        Arc::clone(power_config.get::<Arc<Prepared>>().unwrap()),
+        GatherRetained::default(),
+    );
+
+    let edit_error = match gatherer.configure(Arc::clone(&bank_config)) {
+        Err(error) => error,
+        Ok(_) => panic!("the running Power Gatherer accepted Bank mode at the lower mine"),
+    };
+
+    assert_eq!(edit_error, bank_start_error);
+    assert_eq!(gatherer.settings().disposition, "Power");
+    assert!(gatherer.pending.is_none());
+}
