@@ -21,6 +21,7 @@ libc = "0.2"
 
 [dev-dependencies]
 allocation-counter = "=0.8.1"
+client = { workspace = true, features = ["test-support"] }
 
 [[bin]]
 name = "nav-pack"

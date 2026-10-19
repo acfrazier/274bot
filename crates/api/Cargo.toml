@@ -22,6 +22,7 @@ thiserror = "=2.0.20"
 
 [dev-dependencies]
 allocation-counter = "=0.8.1"
+client = { workspace = true, features = ["test-support"] }
 
 [build-dependencies]
 flate2 = "=1.1.9"

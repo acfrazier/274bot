@@ -216,7 +216,7 @@ fn attach_loopback(client: &mut Client) -> (std::net::TcpListener, std::net::Tcp
     use client::io::{ClientStream, ServerProt};
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let port = listener.local_addr().unwrap().port();
-    client.stream = Some(ClientStream::connect("127.0.0.1", port).unwrap());
+    client.stream = Some(ClientStream::connect_tcp_for_test("127.0.0.1", port).unwrap());
     let (peer, _) = listener.accept().unwrap();
     client.bump_gens(ServerProt::UPDATE_INV_FULL);
     (listener, peer)
@@ -1628,7 +1628,7 @@ fn bank_fletcher_seed_close_uses_native_modal_path() {
     client.main_modal_id = 100;
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let port = listener.local_addr().unwrap().port();
-    client.stream = Some(ClientStream::connect("127.0.0.1", port).unwrap());
+    client.stream = Some(ClientStream::connect_tcp_for_test("127.0.0.1", port).unwrap());
     let _peer = listener.accept().unwrap();
     client.bump_gens(ServerProt::IF_OPENMAIN);
     let mut snapshot = GameSnapshot::new();
@@ -10162,7 +10162,7 @@ fn pair_companion_close_bank_uses_native_modal_path() {
     client.main_modal_id = 100;
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let port = listener.local_addr().unwrap().port();
-    client.stream = Some(ClientStream::connect("127.0.0.1", port).unwrap());
+    client.stream = Some(ClientStream::connect_tcp_for_test("127.0.0.1", port).unwrap());
     let _peer = listener.accept().unwrap();
     client.bump_gens(ServerProt::IF_OPENMAIN);
     let mut snapshot = GameSnapshot::new();
@@ -10438,7 +10438,7 @@ fn synthetic_client() -> Client {
     client.local_player = Some(ClientPlayer::at(20, 20));
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let port = listener.local_addr().unwrap().port();
-    client.stream = Some(ClientStream::connect("127.0.0.1", port).unwrap());
+    client.stream = Some(ClientStream::connect_tcp_for_test("127.0.0.1", port).unwrap());
     let _peer = listener.accept().unwrap();
     client
 }
