@@ -294,6 +294,34 @@ impl SceneRow {
     }
 }
 
+/// One other player, with targeting identity beside the shared scene fields.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlayerRow {
+    pub row: SceneRow,
+    pub index: i32,
+    pub target_kind: i32,
+    pub target_index: i32,
+}
+
+impl std::ops::Deref for PlayerRow {
+    type Target = SceneRow;
+
+    fn deref(&self) -> &Self::Target {
+        &self.row
+    }
+}
+
+impl PlayerRow {
+    fn read(row: &SceneEntity<'_>, strings: &mut Interner) -> Self {
+        Self {
+            row: SceneRow::read(row, strings),
+            index: row.index(),
+            target_kind: row.target_kind(),
+            target_index: row.target_index(),
+        }
+    }
+}
+
 /// One posted UI button row. The combat tab's style buttons and the magic
 /// tab's target buttons arrive with the same shape: a varp mode, the button's
 /// own label, and its component id.
@@ -562,6 +590,7 @@ macro_rules! scene_pages {
     (
         copy { $( $(#[$cdoc:meta])* $cname:ident : $cty:ty ),* $(,)? }
         rows { $( $(#[$doc:meta])* $rname:ident : $rty:ty ),* $(,)? }
+        shared { $( $sname:ident : $sty:ty => $shared:ident ),* $(,)? }
     ) => {
         /// The decoded scene. Fields are pages; read them through a [`Lens`].
         #[derive(Default)]
@@ -578,6 +607,7 @@ macro_rules! scene_pages {
             scene_fence: crate::native::ledger::SceneFence,
             $( $cname: Slot<$cty>, )*
             $( $rname: Slot<$rty>, )*
+            $( $sname: Slot<Rc<Vec<$sty>>>, )*
         }
 
         impl<'a> Lens<'a> {
@@ -593,6 +623,15 @@ macro_rules! scene_pages {
                     self.get(&self.scene.$rname)
                 }
             )*
+            $(
+                pub fn $sname(&self) -> Option<&'a Vec<$sty>> {
+                    self.get(&self.scene.$sname).map(Rc::as_ref)
+                }
+
+                pub(crate) fn $shared(&self) -> Option<Rc<Vec<$sty>>> {
+                    self.get(&self.scene.$sname).cloned()
+                }
+            )*
         }
 
         impl Post<'_> {
@@ -605,6 +644,15 @@ macro_rules! scene_pages {
             $(
                 pub(crate) fn $rname(&mut self, value: $rty) -> &mut Self {
                     self.scene.$rname = Some(Page { seq: self.seq, value });
+                    self
+                }
+            )*
+            $(
+                pub(crate) fn $sname(&mut self, value: Vec<$sty>) -> &mut Self {
+                    self.scene.$sname = Some(Page {
+                        seq: self.seq,
+                        value: Rc::new(value),
+                    });
                     self
                 }
             )*
@@ -684,10 +732,6 @@ scene_pages! {
         shop_player: Option<Vec<ItemRow>>,
         /// `None` inside the page: the skill-multi panel was not decoded.
         main_make: Option<Vec<ItemRow>>,
-        npcs: Vec<EntityRow>,
-        locs: Vec<SceneRow>,
-        ground: Vec<SceneRow>,
-        players: Vec<SceneRow>,
         /// Combat-classification inputs retained from the existing snapshot post.
         projectiles: Vec<ProjectileRow>,
         varps: Vec<VarpRow>,
@@ -711,6 +755,12 @@ scene_pages! {
         api_combat: GatherObservation,
         api_combat_outcome: CombatOutcomeObservation,
         api_progress: ProgressPage,
+    }
+    shared {
+        npcs: EntityRow => shared_npcs,
+        locs: SceneRow => shared_locs,
+        ground: SceneRow => shared_ground,
+        players: PlayerRow => shared_players,
     }
 }
 
@@ -1276,7 +1326,13 @@ impl Scene {
             p.ground(read_places(snap.ground(), strings));
         }
         if snap.has_players() {
-            p.players(read_places(snap.players(), strings));
+            p.players(
+                snap.players()
+                    .into_iter()
+                    .flat_map(|rows| rows.iter())
+                    .map(|row| PlayerRow::read(&row, strings))
+                    .collect(),
+            );
         }
         if let Some(projectiles) = snap.projectiles() {
             p.projectiles(

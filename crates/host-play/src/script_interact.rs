@@ -1319,7 +1319,6 @@ where
             | InteractReq::GatherStop { .. }
             | InteractReq::CombatFight { .. }
             | InteractReq::CombatStop { .. }
-            | InteractReq::WithdrawLoad { .. }
             | InteractReq::ProgressRead { .. } => {
                 // Host-local controls are consumed by the slot before game
                 // dispatch; none can authorize a Driver packet here.

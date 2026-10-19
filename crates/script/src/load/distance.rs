@@ -61,6 +61,30 @@ fn run_distance<'s>(
     Ok(v8::Number::new(scope, js_tile_distance(from, to, planar)).into())
 }
 
+/// Query a native posted tile without allocating an echoed Tile-like object.
+pub(super) fn planar_from_posted<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    from: crate::observed::Tile,
+    to: v8::Local<'s, v8::Value>,
+) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
+    let to = cb::catching(scope, |scope| match required_tile(scope, to, "to") {
+        Ok(tile) => Some(tile),
+        Err(error) => {
+            let message =
+                v8::String::new(scope, &error).unwrap_or_else(|| v8::String::empty(scope));
+            let error = v8::Exception::error(scope, message);
+            scope.throw_exception(error);
+            None
+        }
+    })?;
+    let from = JsTile {
+        x: f64::from(from.x),
+        z: f64::from(from.z),
+        level: f64::from(from.level),
+    };
+    Ok(cb::num(scope, js_tile_distance(from, to, true)))
+}
+
 fn tiles_to_callback<'s>(
     scope: &mut v8::HandleScope<'s>,
     args: v8::FunctionCallbackArguments<'s>,

@@ -68,27 +68,16 @@ export function arrived(dest, radius) {
 }
 
 export function presentOps(actions) {
-    return (actions || []).filter((a) => a && a !== 'hidden');
+    return globalThis.__rs2b0t_entities_v8(1 /* presentOps */, actions);
 }
 
 export function opIndex(actions, action) {
-    const wanted = String(action).toLowerCase();
-    for (let i = 0; i < (actions || []).length; i++) {
-        const a = actions[i];
-        if (a && String(a).toLowerCase() === wanted) return i + 1;
-    }
-    return -1;
+    return globalThis.__rs2b0t_entities_v8(2 /* opIndex */, actions, action);
 }
 
 /** Snapshot row → EntityQuery view ({ name, ops, tile, distance }). */
 export function entitySnapView(row) {
-    if (!row) return null;
-    return {
-        ...row,
-        tile: { x: row.x, z: row.z, level: row.level ?? 0 },
-        ops: row.actions || [],
-        distance: typeof row.distance === 'number' ? row.distance : 0,
-    };
+    return globalThis.__rs2b0t_entities_v8(0 /* entitySnapView */, row);
 }
 
 export function optionalText(value) {
