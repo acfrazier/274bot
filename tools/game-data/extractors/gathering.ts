@@ -1635,6 +1635,8 @@ export type GatherSiteWire = {
     region: RegionWire;
     keys: GatherSiteKeyWire[];
     requires: GatherSiteRequirement[];
+    /** Reason Bank mode must not use this site. Power mode remains available. */
+    banking_unavailable?: string;
 };
 
 /** Per-skill generator report, recorded on the manifest and pinned by verify. `sites` counts published rows. */
@@ -1653,13 +1655,14 @@ export type GatherSiteBank = { name: string; tile: { x: number; z: number; level
  * what the override claims (rs2 / enum / loc paths are relative to `scripts/`,
  * `maps/` paths to the content root). `optional` marks a site only some
  * revisions publish; any other unmatched id throws. A `name` row renames the
- * label and shows `requires` after the name. A `drop` row hides the site until
- * the route finder learns the entrance named in `reason`; `place` is what the
- * content calls the place, which the nearest-label name did not always say.
+ * label and shows `requires` after the name. It may also give a
+ * `banking_unavailable` reason, which blocks Bank-mode selection only. A
+ * `drop` row hides the site until the route finder learns its `reason`;
+ * `place` is the content name when the nearest label did not give it.
  * The reachability guard keeps every hidden site unreachable on the open graph.
  */
 export type SiteOverride = { id: string; cite: string; optional?: true } & (
-    | { action: 'name'; name: string; requires: GatherSiteRequirement[] }
+    | { action: 'name'; name: string; requires: GatherSiteRequirement[]; banking_unavailable?: string }
     | { action: 'drop'; place: string; reason: string }
 );
 
@@ -1702,7 +1705,19 @@ export const SITE_OVERRIDES: readonly SiteOverride[] = [
     { id: 'mining.grand_tree.underground', action: 'name', name: 'Grand Tree mine', requires: [{ kind: 'quest', name: 'The Grand Tree' }], cite: 'quests/quest_grandtree/scripts/quest_grandtree.rs2:1-11,153-168; maps/m38_54.jm2:6055' },
     { id: 'mining.grand_tree.underground.2', action: 'name', name: 'Grand Tree mine (west)', requires: [{ kind: 'quest', name: 'The Grand Tree' }], cite: 'quests/quest_grandtree/scripts/quest_grandtree.rs2:1-11,153-168; maps/m38_54.jm2:6055' },
     { id: 'mining.desert_mining_camp', action: 'name', name: 'Desert Mining Camp', requires: [], cite: 'quests/quest_desertrescue/scripts/quest_desertrescue.rs2:68-174' },
-    { id: 'mining.desert_mining_camp.underground', action: 'name', name: 'Desert Mining Camp (lower mine)', requires: [{ kind: 'worn', item: 1844, name: 'Slave shirt' }, { kind: 'worn', item: 1845, name: 'Slave robe' }, { kind: 'worn', item: 1846, name: 'Slave boots' }], cite: 'quests/quest_desertrescue/scripts/quest_desertrescue.rs2:402-530' },
+    {
+        id: 'mining.desert_mining_camp.underground',
+        action: 'name',
+        name: 'Desert Mining Camp (lower mine)',
+        requires: [
+            { kind: 'worn', item: 1844, name: 'Slave shirt' },
+            { kind: 'worn', item: 1845, name: 'Slave robe' },
+            { kind: 'worn', item: 1846, name: 'Slave boots' },
+            { kind: 'quest', name: 'The Tourist Trap' },
+        ],
+        banking_unavailable: 'No bank route returns from the lower mine. The mine requires the slave kit, but the camp exit rejects worn kit pieces.',
+        cite: 'quests/quest_desertrescue/scripts/quest_desertrescue.rs2:110-117,402-488,465-469',
+    },
     { id: 'fishing.dark_wizards_tower.underground.nw', action: 'name', name: 'Taverley Dungeon', requires: [], cite: 'skill_fishing/configs/fishing_movement.enum:328-337; areas/area_taverly/dungeon/scripts/jail_doors.rs2:8-12,21-35; maps/m45_153.jm2:6707' },
 
     // ---- Hidden: the route finder has no way in yet. Each reason names the entrance it lacks and keeps two kinds of statement apart:
@@ -2273,7 +2288,7 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
     // Overrides name, require or drop published rows by id. Ids are fixed by now, so a drop never renumbers a neighbour.
     const overridden = new Set<string>();
     const droppedIds = new Set<string>();
-    const renames: { row: GatherSiteWire; name: string; requires: GatherSiteRequirement[] }[] = [];
+    const renames: { row: GatherSiteWire; name: string; requires: GatherSiteRequirement[]; banking_unavailable?: string }[] = [];
     for (const override of overrides) {
         const row = rows.find((candidate) => candidate.id === override.id);
         if (row === undefined) {
@@ -2283,7 +2298,7 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
         if (overridden.has(override.id)) throw new Error(`gather_sites: ${override.id} has two overrides`);
         overridden.add(override.id);
         if (override.action === 'drop') droppedIds.add(override.id);
-        else renames.push({ row, name: override.name, requires: override.requires });
+        else renames.push({ row, name: override.name, requires: override.requires, banking_unavailable: override.banking_unavailable });
     }
     // Same-named overrides in one skill take `(n)` from the second on, as duplicate labels do; no unmatched site may already carry the name.
     const groups = new Map<string, typeof renames>();
@@ -2308,6 +2323,7 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             const contents = entry.row.label.slice(entry.row.label.indexOf(' · ') + ' · '.length);
             entry.row.label = `${entry.name}${reqs === '' ? '' : ` (${reqs})`}${ordinal} · ${contents}`;
             entry.row.requires = entry.requires;
+            if (entry.banking_unavailable !== undefined) entry.row.banking_unavailable = entry.banking_unavailable;
         });
     }
     const droppedRows = rows.filter((row) => droppedIds.has(row.id));

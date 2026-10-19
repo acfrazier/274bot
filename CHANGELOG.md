@@ -222,6 +222,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - The Gatherer now offers both Grand Tree mine sites, the Desert Mining
   Camp's surface and lower mine, and Taverley Dungeon's lava eels. Their
   routes check the quest, keys and worn slave kit that the content requires.
+  The lower mine requires The Tourist Trap complete and supports Power mode
+  only. Bank mode refuses it because the bot cannot remove the kit to leave
+  the camp.
   The northern Desert Mining Camp mine stays hidden: its intervening
   minecart needs a dialogue and a chance-gated crossing that is not modelled
   yet. The remaining hidden-site counts are 85 on 289 and 66 on 274.

@@ -92979,7 +92979,7 @@
     {
       "id": "mining.desert_mining_camp.underground",
       "skill": "mining",
-      "label": "Desert Mining Camp (lower mine) (Slave shirt, Slave robe, Slave boots) · Rock 63, Copper ore 4, Tin ore 4",
+      "label": "Desert Mining Camp (lower mine) (Slave shirt, Slave robe, Slave boots, The Tourist Trap) · Rock 63, Copper ore 4, Tin ore 4",
       "region": {
         "min_x": 3284,
         "min_z": 9412,
@@ -93016,8 +93016,13 @@
           "kind": "worn",
           "item": 1846,
           "name": "Slave boots"
+        },
+        {
+          "kind": "quest",
+          "name": "The Tourist Trap"
         }
-      ]
+      ],
+      "banking_unavailable": "No bank route returns from the lower mine. The mine requires the slave kit, but the camp exit rejects worn kit pieces."
     },
     {
       "id": "woodcutting.deserted_keep",

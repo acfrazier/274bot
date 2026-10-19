@@ -245,7 +245,10 @@ impl NavWorld {
                 );
                 None
             }
-            Err(e) => panic!("could not load selected nav pack at {}: {e}", path.display()),
+            Err(e) => panic!(
+                "could not load selected nav pack at {}: {e}",
+                path.display()
+            ),
         }
     }
 

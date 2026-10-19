@@ -22,12 +22,19 @@ fn exclusion_route(forbidden_held: bool, forbidden_worn: bool) -> Route {
 }
 
 fn observe_empty_inventory_and_equipment(c: &mut Client) {
-    // A posted zero-count slot makes the snapshot's inventory observation ready.
+    // Allocate the tab rows, then receive empty full packets for both components.
     plant_inv_item(c, FORBIDDEN_HELD);
     clear_inventory_item(c);
-    // A posted zero-count equipment slot makes the equipment observation ready.
     plant_equipment_item(c, FORBIDDEN_WORN);
     clear_equipment_item(c);
+    c.handle_packet(
+        client::io::ServerProt::UPDATE_INV_FULL,
+        &mut client::io::Packet::new(vec![1, 45, 0]),
+    );
+    c.handle_packet(
+        client::io::ServerProt::UPDATE_INV_FULL,
+        &mut client::io::Packet::new(vec![1, 145, 0]),
+    );
 }
 
 fn expected_tile(scene: (i32, i32)) -> WorldTile {

@@ -3191,6 +3191,24 @@ for (const { revision, root } of gatheringPins) {
     assert.deepEqual(ids289.filter((id) => !ids274.includes(id)).sort(), [], '289-only site rows');
     assert.equal(ids274.filter((id) => !ids289.includes(id)).length, 0, 'no 274-only rows');
 }
+
+{
+    const requires = [
+        { kind: 'worn', item: 1844, name: 'Slave shirt' },
+        { kind: 'worn', item: 1845, name: 'Slave robe' },
+        { kind: 'worn', item: 1846, name: 'Slave boots' },
+        { kind: 'quest', name: 'The Tourist Trap' },
+    ];
+    const bankingUnavailable = 'No bank route returns from the lower mine. The mine requires the slave kit, but the camp exit rejects worn kit pieces.';
+    for (const revision of [274, 289]) {
+        const lowerMine = siteRowsByRevision
+            .get(revision)!
+            .find((row) => row.id === 'mining.desert_mining_camp.underground');
+        assert.ok(lowerMine, `${revision} lower mine is published`);
+        assert.deepEqual(lowerMine.requires, requires, `${revision} lower mine requirements`);
+        assert.equal(lowerMine.banking_unavailable, bankingUnavailable, `${revision} lower mine banking limit`);
+    }
+}
 // Real rows for the naming rules and the 0.2.0 id contract, checked on the regenerated data.
 {
     const rows289 = siteRowsByRevision.get(289)!;
@@ -3199,14 +3217,8 @@ for (const { revision, root } of gatheringPins) {
         assert.ok(found, `289 site ${id} is published`);
         return found!;
     };
-    // Underground: the nearest labels.txt label to the surface projection, `<name> (underground)`, id `<skill>.<slug>.underground`.
-    // The lower mine has a proven worn-kit entrance. The northern room is still
-    // beyond a dialogue and chance-gated minecart, not the same connected mine.
-    assert.deepEqual(at289('mining.desert_mining_camp.underground').requires, [
-        { kind: 'worn', item: 1844, name: 'Slave shirt' },
-        { kind: 'worn', item: 1845, name: 'Slave robe' },
-        { kind: 'worn', item: 1846, name: 'Slave boots' },
-    ]);
+    // The lower mine has a proven worn-kit entrance and needs The Tourist Trap. The northern room remains beyond the dialogue and chance-gated minecart.
+    assert.equal(at289('mining.desert_mining_camp.underground').banking_unavailable, 'No bank route returns from the lower mine. The mine requires the slave kit, but the camp exit rejects worn kit pieces.');
     assert.ok(!rows289.some((row) => row.id === 'mining.desert_mining_camp.underground.n'), '289 northern mine remains hidden behind the minecart');
     assert.deepEqual(at289('mining.grand_tree.underground').requires, [{ kind: 'quest', name: 'The Grand Tree' }]);
     assert.deepEqual(at289('mining.grand_tree.underground.2').requires, [{ kind: 'quest', name: 'The Grand Tree' }]);

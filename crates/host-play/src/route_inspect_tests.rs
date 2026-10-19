@@ -3022,7 +3022,9 @@ fn real_content_inspection_world() -> (Arc<NavWorld>, Arc<Cache>, Arc<ObjNames>)
         );
     }
 
-    let cache_dir = std::path::Path::new(CACHE);
+    let cache_dir = std::env::var_os("BOT_CACHE_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(CACHE));
     let versionlist =
         std::fs::read(cache_dir.join("versionlist")).expect("matching decoded versionlist");
     assert_eq!(

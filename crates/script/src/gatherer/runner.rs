@@ -3913,7 +3913,7 @@ mod tests {
     fn hazard_retreat_uses_a_reachable_draynor_stand_on_the_real_pack() {
         let Some(_pack) = crate::ctx::test_support::local_asset_path(
             "NAV_PACK",
-            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+            "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
             "real 289 nav pack",
         ) else {
             return;
