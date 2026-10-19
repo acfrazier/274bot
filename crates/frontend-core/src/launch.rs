@@ -12,6 +12,19 @@ use host_play::{PlayOptions, SharedClientTemplate, ValidatedTemplate};
 pub struct PlayConfig(Box<PlayOptions>);
 
 impl PlayConfig {
+    /// Settings for a direct play session over TCP to `host`:`port`, with
+    /// the client cache in `cache_dir` (a headless driver's play).
+    pub fn direct(host: &str, port: u16, cache_dir: &str, lowmem: bool) -> Self {
+        Self(Box::new(PlayOptions {
+            host: host.to_string(),
+            transport: host_play::Transport::Tcp,
+            port,
+            cache_dir: cache_dir.to_string(),
+            lowmem,
+            mainland: false,
+        }))
+    }
+
     /// The same settings, copied.
     pub fn duplicate(&self) -> Self {
         Self(Box::new((*self.0).clone()))
@@ -1349,7 +1362,7 @@ pub(crate) fn open_vault_typed(
 
 /// Delete the vault file at `path` (forgotten-passphrase recovery). A
 /// missing file is not an error.
-pub fn reset_vault_file(path: &std::path::Path) -> Result<(), String> {
+pub(crate) fn reset_vault_file(path: &std::path::Path) -> Result<(), String> {
     vault::Vault::reset_file(path).map_err(|error| error.to_string())
 }
 

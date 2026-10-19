@@ -138,12 +138,23 @@ impl WalkGlobals {
         }
     }
 
-    pub fn set_danger_level(&mut self, level: DangerLevel) {
-        (self.allow_danger_zones, self.survivable_routing) = match level {
+    /// These globals at `level` (the one mapping of a danger level onto the
+    /// two stored booleans).
+    pub const fn with_danger_level(self, level: DangerLevel) -> Self {
+        let (allow_danger_zones, survivable_routing) = match level {
             DangerLevel::Never => (false, false),
             DangerLevel::WhenSurvivable => (false, true),
             DangerLevel::Always => (true, false),
         };
+        Self {
+            allow_danger_zones,
+            survivable_routing,
+            ..self
+        }
+    }
+
+    pub(crate) fn set_danger_level(&mut self, level: DangerLevel) {
+        *self = self.with_danger_level(level);
     }
 
     pub fn manual_options(self, danger_this_walk: bool) -> FindOptions {
@@ -322,7 +333,7 @@ impl WalkGlobalsView {
         }
     }
 
-    pub fn persist_changed(
+    pub(crate) fn persist_changed(
         preferences: &crate::prefs::UiPreferences,
         before: Self,
         after: Self,
@@ -571,11 +582,12 @@ mod tests {
         assert_eq!(persisted["nav"]["survivable_routing_notice_ack"], true);
         assert_eq!(persisted["nav"]["show_nav_path"], false);
 
-        crate::nav_preference(
+        crate::nav_prefs::write_nav_preference(
             store.prefs(),
             crate::NavPreference::AllowTeleports,
-            Some(false),
+            false,
         )
+        .map(|()| false)
         .unwrap();
         WalkGlobalsView::persist_changed(store.prefs(), after, after).unwrap();
         let after_noop = WalkGlobalsView::read(store.prefs());

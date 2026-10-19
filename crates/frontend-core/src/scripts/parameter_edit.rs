@@ -551,6 +551,10 @@ impl ParameterEditKey {
             == Some(identity)
     }
 
+    pub(crate) fn matches_selection(&self, selection: &ScriptChoice, field: &str) -> bool {
+        self.matches(self.profile.as_deref(), selection.as_script(), field)
+    }
+
     /// Owned HashMap key for a first insert. Not [`Clone`].
     pub(crate) fn duplicate(&self) -> Self {
         Self {
@@ -837,6 +841,33 @@ impl Scripts {
         validate_edit(edit, def, options)
     }
 
+    pub(crate) fn validate_staged_parameter_validation(
+        &mut self,
+        staged: super::StagedParameterValidation,
+    ) -> Result<(ParameterEditKey, ScriptChoice, String, Value, Option<Value>), String> {
+        if !staged
+            .key
+            .matches_selection(&staged.selection, &staged.field)
+        {
+            return Err("parameter edit identity changed".to_string());
+        }
+        let key = staged.key;
+        let edit = edit_mut_or_insert(
+            &mut self.parameter_edits,
+            &key,
+            &staged.baseline_text,
+            &staged.baseline_value,
+        );
+        let value = validate_edit(edit, &staged.definition, &staged.options)?;
+        Ok((
+            key,
+            staged.selection,
+            staged.field,
+            value,
+            staged.baseline_value,
+        ))
+    }
+
     pub fn parameter_text_error(&self, key: &ParameterEditKey) -> Option<&str> {
         self.parameter_edits
             .get(key)
@@ -857,33 +888,10 @@ impl Scripts {
             .and_then(|edit| edit.error.as_deref())
     }
 
-    pub fn discard_parameter_text_for(
-        &mut self,
-        profile: Option<&str>,
-        selection: &ScriptChoice,
-        field: &str,
-    ) {
-        let selection = selection.as_script();
-        let (cache, edits) = (&self.parameter_key_cache, &mut self.parameter_edits);
-        let Some(key) = cache
-            .iter()
-            .find(|key| key.matches(profile, selection, field))
-        else {
-            return;
-        };
-        if edits.get(key).is_some_and(|edit| edit.pending.is_some()) {
-            if let Some(edit) = edits.get_mut(key) {
-                edit.discard_after_pending = true;
-            }
-        } else {
-            edits.remove(key);
-        }
-    }
-
     /// Queue one profile save for a committed field. Both UI front ends call
     /// this after shared text validation; failed attempts remain deduplicated
     /// until a different value is committed.
-    pub fn commit_parameter_value<Io>(
+    pub(crate) fn commit_parameter_value<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
         key: &ParameterEditKey,
@@ -1002,7 +1010,7 @@ impl Scripts {
 
     /// A text buffer was cancelled. An already accepted write keeps Start
     /// blocked until it settles, then the deliberate discard is honored.
-    pub fn discard_parameter_text(&mut self, key: &ParameterEditKey) {
+    pub(crate) fn discard_parameter_text(&mut self, key: &ParameterEditKey) {
         if let Some(edit) = self.parameter_edits.get_mut(key) {
             if edit.pending.is_some() {
                 edit.discard_after_pending = true;

@@ -3,39 +3,63 @@
 //! (the window open, the focus request, the rs2b0t import sharing the editor
 //! pane, MultiBox off) around the form's staging and saves.
 
-use frontend_core::{FormLeave, FormOpen, SaveRefused};
+use frontend_core::command::{FormClose, ProfileDraftField};
+use frontend_core::{FormLeave, OperatorCommand, Submitted, Targets};
 
 use super::Session;
 
 impl Session {
-    /// Save the credentials form as a vault profile through the core form
-    /// ([`frontend_core::ProfileEditor::save`]): the username field is the
-    /// key, the password field the secret, and an existing profile's
-    /// uid/settings are kept. A new profile or a rename onto a taken
-    /// username is refused, never an overwrite. The form keeps its target
-    /// until the write is durable, then follows a renamed or new profile to
-    /// its saved name and shows `Saved <name>.`; the profile is selected
-    /// (and so spawned) only then. Returns whether the write was accepted:
-    /// a refusal shows inline and on the banner and writes nothing, and a
-    /// Save while this form's previous save is unsettled is not accepted.
+    fn command_done(&self, submitted: &Submitted) -> bool {
+        self.core
+            .commands()
+            .report(submitted.request())
+            .and_then(|report| report.members().first())
+            .and_then(|member| member.terminal())
+            .is_some_and(|terminal| {
+                matches!(
+                    terminal,
+                    api::identity::Settlement::Completed(frontend_core::command::Completion::Done)
+                )
+            })
+    }
+
+    fn command_staged(&self, submitted: &Submitted) -> bool {
+        self.core
+            .commands()
+            .report(submitted.request())
+            .and_then(|report| report.members().first())
+            .and_then(|member| member.terminal())
+            .is_some_and(|terminal| {
+                matches!(
+                    terminal,
+                    api::identity::Settlement::Completed(
+                        frontend_core::command::Completion::Skipped(
+                            frontend_core::command::SkipReason::DecisionStaged
+                        )
+                    )
+                )
+            })
+    }
+    /// Save the credentials form through its profile-writer command.
     pub fn save_credentials(&mut self) -> bool {
-        match self.profile_editor.save(&mut self.core, &self.scripts) {
-            Ok(()) => {
-                self.error = None;
-                true
+        let (command, target) = match self.profile_editor.target() {
+            Some("") | None => (OperatorCommand::CreateProfile, None),
+            Some(name) => (OperatorCommand::SaveProfile, Some(name.to_owned())),
+        };
+        let targets = target
+            .as_deref()
+            .map_or(Targets::Application, Targets::Profile);
+        let Some(submitted) = self.submit(command, targets) else {
+            return false;
+        };
+        if submitted.operation().is_some() || self.command_done(&submitted) {
+            self.error = None;
+            true
+        } else {
+            if let Some(error) = self.core.command_failure(submitted.request()) {
+                self.error = Some(error.to_owned());
             }
-            Err(SaveRefused::StillSaving) => false,
-            Err(SaveRefused::Refused) => {
-                // The banner is hidden while Profiles is open, so the form
-                // shows the refusal too.
-                self.error = self
-                    .profile_editor
-                    .save_state()
-                    .notice()
-                    .and_then(|notice| notice.error())
-                    .map(str::to_string);
-                false
-            }
+            false
         }
     }
 
@@ -49,17 +73,22 @@ impl Session {
         }
     }
 
-    /// Empty the credentials-section fields. The vault entry is untouched.
+    /// Empty the staged credentials fields, then notify the form row.
     pub fn clear_credentials(&mut self) {
-        self.profile_editor.clear_credentials();
+        self.profile_editor.username_mut().clear();
+        self.profile_editor.password_mut().clear();
+        let _ = self.submit(
+            OperatorCommand::EditProfileDraft(ProfileDraftField::Username),
+            Targets::Application,
+        );
+        let _ = self.submit(
+            OperatorCommand::EditProfileDraft(ProfileDraftField::Password),
+            Targets::Application,
+        );
     }
 
-    /// Open the profile picker on `name` (or a blank new row). With unsaved
-    /// changes on another target, or this form's save still being written,
-    /// the switch waits behind the Discard / Keep editing prompt. Focus
-    /// changes never come through here. The form and the rs2b0t import
-    /// share the editor pane: an import whose writes are still being saved
-    /// keeps it, and any other import closes.
+    /// Open the profile picker on `name` (or a blank new row). Any dirty
+    /// form waits behind the Discard / Keep editing prompt.
     pub fn begin_edit_profile(&mut self, name: Option<&str>) {
         if self.import_writing() {
             self.wall.chooser_open = true;
@@ -68,9 +97,14 @@ impl Session {
         if self.profile_import_open {
             self.close_profile_import();
         }
-        let target = name.unwrap_or("");
-        if self.profile_editor.request_open(&self.core, target) == FormOpen::Staged {
-            self.request_window_focus(super::PanelWindow::Profiles);
+        let (command, targets) = match name {
+            Some(name) => (OperatorCommand::OpenProfileForm, Targets::Profile(name)),
+            None => (OperatorCommand::OpenNewProfileForm, Targets::Application),
+        };
+        if let Some(submitted) = self.submit(command, targets) {
+            if self.command_staged(&submitted) {
+                self.request_window_focus(super::PanelWindow::Profiles);
+            }
         }
         self.wall.chooser_open = true;
     }
@@ -82,14 +116,17 @@ impl Session {
         if self.profile_import_open {
             return;
         }
-        if self.profile_editor.is_open() {
-            if self.edit_dirty() || self.form_saving() {
-                self.stage_edit_exit(FormLeave::OpenImport, "", "import rs2b0t profiles");
-                return;
-            }
-            self.cancel_edit_profile();
+        let Some(submitted) =
+            self.submit(OperatorCommand::EditProfileImportPath, Targets::Application)
+        else {
+            return;
+        };
+        if self.command_done(&submitted) {
+            self.open_import();
+        } else if self.command_staged(&submitted) {
+            self.request_window_focus(super::PanelWindow::Profiles);
+            self.wall.chooser_open = true;
         }
-        self.open_import();
     }
 
     fn open_import(&mut self) {
@@ -103,73 +140,86 @@ impl Session {
         self.profile_import_open && self.profile_import.writing(&self.core)
     }
 
-    /// Stage the Discard / Keep editing prompt for leaving the form to
-    /// `then`, and bring Profiles to the front.
-    pub(super) fn stage_edit_exit(&mut self, leave: FormLeave, target: &str, then: &str) {
-        self.profile_editor
-            .stage_leave(&self.core, leave, target, then);
-        self.request_window_focus(super::PanelWindow::Profiles);
-    }
-
     /// Discard the draft and leave the form as the prompt asked. No-op when
     /// no prompt is waiting.
     pub fn confirm_pending_edit_switch(&mut self) {
-        let Some(prompt) = self.profile_editor.discard(&self.core) else {
+        let Some((leave, target)) = self
+            .profile_editor
+            .pending()
+            .map(|prompt| (prompt.leave(), prompt.target().to_owned()))
+        else {
+            let _ = self.submit(OperatorCommand::DiscardProfileEdits, Targets::Application);
             return;
         };
-        match prompt.leave() {
+        let Some(submitted) =
+            self.submit(OperatorCommand::DiscardProfileEdits, Targets::Application)
+        else {
+            return;
+        };
+        if !self.command_done(&submitted) {
+            return;
+        }
+        match leave {
             FormLeave::Switch => self.wall.chooser_open = true,
             FormLeave::CloseForm => {}
             FormLeave::CloseWindow => self.wall.chooser_open = false,
             FormLeave::DeleteTarget => {
-                self.vault_remove(prompt.target());
+                self.vault_remove(&target);
             }
-            FormLeave::MultiBoxOff => self.apply_multibox(false),
+            FormLeave::MultiBoxOff => {
+                self.set_multibox(false);
+            }
             FormLeave::OpenImport => self.open_import(),
         }
     }
 
     /// Keep editing: drop the pending prompt, the form untouched.
     pub fn cancel_pending_edit_switch(&mut self) {
-        self.profile_editor.keep_editing();
+        let _ = self.submit(OperatorCommand::KeepEditing, Targets::Application);
     }
 
     /// The form's Cancel: closes the form, unless its save is still being
     /// written (the prompt is staged instead). Returns whether it closed.
     pub fn request_cancel_edit(&mut self) -> bool {
-        let closed = self
-            .profile_editor
-            .request_close(&self.core, FormLeave::CloseForm);
-        if !closed {
-            self.request_window_focus(super::PanelWindow::Profiles);
+        let Some(submitted) = self.submit(
+            OperatorCommand::CloseProfileForm(FormClose::Form),
+            Targets::Application,
+        ) else {
+            return false;
+        };
+        if self.command_done(&submitted) {
+            true
+        } else {
+            if self.command_staged(&submitted) {
+                self.request_window_focus(super::PanelWindow::Profiles);
+            }
+            false
         }
-        closed
     }
 
-    /// Close Profiles (its Close button and its ✕), and the form with it,
-    /// unless the form's save is still being written (the prompt is staged
-    /// and Profiles stays open). Returns whether Profiles closed.
+    /// Close Profiles (its Close button and its ✕), and the form with it.
     pub fn request_close_profiles(&mut self) -> bool {
-        if !self
-            .profile_editor
-            .request_close(&self.core, FormLeave::CloseWindow)
-        {
-            self.request_window_focus(super::PanelWindow::Profiles);
-            self.wall.chooser_open = true;
+        let Some(submitted) = self.submit(
+            OperatorCommand::CloseProfileForm(FormClose::Window),
+            Targets::Application,
+        ) else {
             return false;
+        };
+        if self.command_done(&submitted) {
+            self.wall.chooser_open = false;
+            true
+        } else {
+            if self.command_staged(&submitted) {
+                self.request_window_focus(super::PanelWindow::Profiles);
+                self.wall.chooser_open = true;
+            }
+            false
         }
-        self.wall.chooser_open = false;
-        true
     }
 
     /// Whether the open edit form holds changes its Save would write.
     pub fn edit_dirty(&self) -> bool {
         self.profile_editor.dirty(&self.core)
-    }
-
-    /// A form edit: a stale inline refusal or save notice goes.
-    pub fn note_chooser_edited(&mut self) {
-        self.profile_editor.edited();
     }
 
     /// Chooser row pick: focus the profile (loading it onto the wall in
@@ -182,22 +232,16 @@ impl Session {
         }
     }
 
-    /// Close the edit form, whatever it holds. A save it submitted still
-    /// settles, but a failure of it shows only on the banner.
+    /// Close the form through its command row.
     pub fn cancel_edit_profile(&mut self) {
-        self.profile_editor.close();
+        let _ = self.submit(
+            OperatorCommand::CloseProfileForm(FormClose::Window),
+            Targets::Application,
+        );
     }
 
-    /// The chooser's confirmed delete of `name`: the vault row goes, and
-    /// the form editing it closes with it. While that form's save has not
-    /// settled the delete waits behind the prompt instead. Returns whether
-    /// a row was removed.
+    /// The chooser's confirmed delete of `name`.
     pub fn delete_profile(&mut self, name: &str) -> bool {
-        if !self.profile_editor.before_delete(&self.core, name) {
-            self.request_window_focus(super::PanelWindow::Profiles);
-            self.wall.chooser_open = true;
-            return false;
-        }
         self.vault_remove(name)
     }
 

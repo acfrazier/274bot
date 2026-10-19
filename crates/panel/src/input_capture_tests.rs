@@ -1,7 +1,7 @@
 use client::client::GameShell;
 use dear_imgui_rs::Key;
-use frontend_core::surface::InputEv;
-use frontend_core::surface::InputSender;
+use frontend_core::surface::{InputEv, InputSender};
+use frontend_core::{GameInputEvent, MapDesk};
 use winit::keyboard::{Key as WinitKey, KeyLocation, NamedKey};
 
 use super::{
@@ -12,27 +12,43 @@ use super::{
 
 struct KeyCapture {
     owner: KeyboardOwner,
-    tx: InputSender,
-    rx: frontend_core::surface::InputProbe,
+    map_desk: MapDesk,
+}
+
+fn test_map_desk() -> MapDesk {
+    let (tx, _rx) = InputSender::probe();
+    let mut map_desk = MapDesk::default();
+    map_desk.set_input_sender(Some(tx));
+    map_desk
+}
+
+fn captured_input(map_desk: &MapDesk) -> Vec<InputEv> {
+    map_desk
+        .staged_game_input_for_test()
+        .into_iter()
+        .filter_map(|event| match event {
+            GameInputEvent::Captured(event) => Some(event),
+            GameInputEvent::Wire(_) => None,
+        })
+        .collect()
 }
 
 impl KeyCapture {
     fn new() -> Self {
-        let (tx, rx) = InputSender::probe();
         Self {
             owner: KeyboardOwner::default(),
-            tx,
-            rx,
+            map_desk: test_map_desk(),
         }
     }
 }
 
 fn capture_keys(ui: &dear_imgui_rs::Ui, capture: &mut KeyCapture) -> Vec<(bool, i32)> {
+    capture.map_desk.begin_game_input_frame();
     capture
         .owner
-        .process_ownership(ui, Some(&capture.tx), Some("game"));
-    capture.owner.capture_keys(ui, Some(&capture.tx));
-    key_chs(&capture.rx.try_iter().collect::<Vec<_>>())
+        .process_ownership(ui, &mut capture.map_desk, Some("game"));
+    capture.owner.capture_keys(ui, &mut capture.map_desk);
+    key_chs(&captured_input(&capture.map_desk))
 }
 
 #[test]
@@ -448,10 +464,10 @@ fn native_capture_leaves_numpad_punctuation_unqueued() {
 }
 
 #[test]
-fn stream_capture_sends_move_then_down() {
-    let (tx, rx) = InputSender::probe();
+fn stream_capture_stages_move_then_down() {
+    let mut map_desk = test_map_desk();
     stream_capture(
-        &Some(tx),
+        &mut map_desk,
         0.0,
         0.0,
         765.0,
@@ -462,22 +478,24 @@ fn stream_capture_sends_move_then_down() {
         false,
         &[],
     );
-    match rx.try_recv() {
-        Ok(InputEv::Move { x, y }) => assert_eq!((x, y), (0, 0)),
-        other => panic!("{other:?}"),
-    }
-    match rx.try_recv() {
-        Ok(InputEv::Down { button, x, y }) => assert_eq!((button, x, y), (1, 0, 0)),
-        other => panic!("{other:?}"),
-    }
-    assert!(rx.try_recv().is_err());
+    let events = captured_input(&map_desk);
+    assert!(matches!(events[0], InputEv::Move { x: 0, y: 0 }));
+    assert!(matches!(
+        events[1],
+        InputEv::Down {
+            button: 1,
+            x: 0,
+            y: 0
+        }
+    ));
+    assert_eq!(events.len(), 2);
 }
 
 #[test]
-fn stream_capture_sends_right_up_and_key() {
-    let (tx, rx) = InputSender::probe();
+fn stream_capture_stages_right_up_and_key() {
+    let mut map_desk = test_map_desk();
     stream_capture(
-        &Some(tx),
+        &mut map_desk,
         0.0,
         0.0,
         765.0,
@@ -488,35 +506,28 @@ fn stream_capture_sends_right_up_and_key() {
         false,
         &[(true, 10)],
     );
-    let evs: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
-    assert!(matches!(evs[0], InputEv::Move { x: 0, y: 0 }));
+    let events = captured_input(&map_desk);
+    assert!(matches!(events[0], InputEv::Move { x: 0, y: 0 }));
     assert!(matches!(
-        evs[1],
+        events[1],
         InputEv::Down {
             button: 2,
             x: 0,
             y: 0
         }
     ));
-    assert!(matches!(evs[2], InputEv::Up));
-    assert!(matches!(evs[3], InputEv::Key { down: true, ch: 10 }));
+    assert!(matches!(events[2], InputEv::Up));
+    assert!(matches!(events[3], InputEv::Key { down: true, ch: 10 }));
 }
 
 #[test]
-fn maybe_send_click_sends_when_tx_present() {
-    let (tx, rx) = InputSender::probe();
-    maybe_send_click(&Some(tx), 0.0, 0.0, 765.0, 503.0);
-    match rx.try_recv() {
-        Ok(InputEv::Down { x, y, .. }) => assert_eq!((x, y), (0, 0)),
-        other => panic!("{other:?}"),
-    }
-}
-
-#[test]
-fn maybe_send_click_outside_image_sends_nothing() {
-    let (tx, rx) = InputSender::probe();
-    maybe_send_click(&Some(tx), -5.0, 10.0, 765.0, 503.0);
-    assert!(rx.try_recv().is_err());
+fn maybe_send_click_stages_when_capture_is_connected() {
+    let mut map_desk = test_map_desk();
+    maybe_send_click(&mut map_desk, 0.0, 0.0, 765.0, 503.0);
+    assert!(matches!(
+        captured_input(&map_desk).as_slice(),
+        [InputEv::Down { x: 0, y: 0, .. }]
+    ));
 }
 
 fn prepare_opts() -> dear_imgui_rs::FramePrepareOptions {
@@ -553,11 +564,12 @@ fn stream_hovered_keys(
     capture: &mut KeyCapture,
 ) -> Vec<InputEv> {
     ctx.prepare_frame(prepare_opts());
+    capture.map_desk.begin_game_input_frame();
     {
         let ui = ctx.frame();
         capture
             .owner
-            .process_ownership(ui, Some(&capture.tx), Some("game"));
+            .process_ownership(ui, &mut capture.map_desk, Some("game"));
         if let Some(buf) = buf {
             let _ = ui
                 .window("debug-search-probe")
@@ -578,7 +590,7 @@ fn stream_hovered_keys(
             );
         }
         stream_capture(
-            &Some(capture.tx.duplicate()),
+            &mut capture.map_desk,
             0.0,
             0.0,
             765.0,
@@ -589,10 +601,10 @@ fn stream_hovered_keys(
             false,
             &[],
         );
-        capture.owner.capture_keys(ui, Some(&capture.tx));
+        capture.owner.capture_keys(ui, &mut capture.map_desk);
     }
     ctx.render();
-    capture.rx.try_iter().collect()
+    captured_input(&capture.map_desk)
 }
 
 fn key_chs(evs: &[InputEv]) -> Vec<(bool, i32)> {
@@ -712,7 +724,7 @@ fn held_game_key_release_reaches_client_after_panel_focus() {
 }
 
 /// Real ImGui Image hover and InputText click transitions, through the
-/// production keyboard adapter/channel and SlotInput → GameShell consumer.
+/// production keyboard adapter and MapDesk queue before SlotInput consumption.
 struct OwnershipProbe {
     ctx: dear_imgui_rs::Context,
     text: String,
@@ -720,6 +732,7 @@ struct OwnershipProbe {
     game: [f32; 2],
     input: std::sync::Arc<frontend_core::surface::SlotInput>,
     keyboard: KeyboardOwner,
+    map_desk: MapDesk,
     tx: Option<InputSender>,
     shell: GameShell,
 }
@@ -732,15 +745,18 @@ impl OwnershipProbe {
         let input = frontend_core::surface::SlotInput::new();
         input.set_enabled(true);
         let tx = InputSender::connect(&input);
+        let mut map_desk = MapDesk::default();
+        map_desk.set_input_sender(Some(tx.duplicate()));
         let mut probe = Self {
             ctx,
             text: String::new(),
             field: [0.0; 2],
             game: [0.0; 2],
             input,
+            keyboard: KeyboardOwner::default(),
+            map_desk,
             tx: Some(tx),
             shell: GameShell::new(),
-            keyboard: KeyboardOwner::default(),
         };
         probe.frame("layout 1");
         probe.frame("layout 2");
@@ -751,11 +767,12 @@ impl OwnershipProbe {
 
     fn frame(&mut self, label: &str) -> (bool, bool) {
         self.ctx.prepare_frame(prepare_opts());
+        self.map_desk.begin_game_input_frame();
         let ui = self.ctx.frame();
         let captured = ui.io().want_capture_keyboard();
         self.input.set_keyboard_enabled(game_keyboard_available(ui));
         self.keyboard
-            .process_ownership(ui, self.tx.as_ref(), Some("game"));
+            .process_ownership(ui, &mut self.map_desk, Some("game"));
         let mut hovered = false;
         ui.window("Debug")
             .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
@@ -775,9 +792,9 @@ impl OwnershipProbe {
                 let hi = ui.item_rect_max();
                 self.game = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
                 hovered = ui.is_item_hovered();
-                if hovered && self.tx.is_some() {
+                if hovered {
                     stream_capture(
-                        &self.tx,
+                        &mut self.map_desk,
                         0.0,
                         0.0,
                         765.0,
@@ -788,11 +805,16 @@ impl OwnershipProbe {
                         false,
                         &[],
                     );
-                    self.keyboard.capture_keys(ui, self.tx.as_ref());
+                    self.keyboard.capture_keys(ui, &mut self.map_desk);
                 }
             });
         discard_unconsumed_native_capture();
         self.ctx.render();
+        if let Some(tx) = self.tx.as_ref() {
+            for event in captured_input(&self.map_desk) {
+                let _ = tx.send(event);
+            }
+        }
         self.input.drain(&mut self.shell);
         println!(
             "{label}: capture={captured} hovered={hovered} key_held[1]={}",
@@ -815,10 +837,11 @@ impl OwnershipProbe {
     /// drain the old slot here: its disabled wake tick already ran.
     fn ownership_frame(&mut self, target: &str) {
         self.ctx.prepare_frame(prepare_opts());
+        self.map_desk.begin_game_input_frame();
         let ui = self.ctx.frame();
         self.input.set_keyboard_enabled(game_keyboard_available(ui));
         self.keyboard
-            .process_ownership(ui, self.tx.as_ref(), Some(target));
+            .process_ownership(ui, &mut self.map_desk, Some(target));
         discard_unconsumed_native_capture();
         self.ctx.render();
     }

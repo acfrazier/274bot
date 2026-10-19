@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 use std::fmt::{self, Write as _};
 use std::path::Path;
 
+use crate::operations::OperationId;
 use crate::scripts::ScriptChoice;
 use crate::scripts::Scripts;
 use crate::session::OperatorSession;
@@ -103,8 +104,9 @@ impl MarkedSelection {
         self.marks.contains(&identity)
     }
 
+    #[cfg(test)]
     /// Toggle one identity and return its new marked state.
-    pub fn toggle(&mut self, identity: ProfileIdentity) -> bool {
+    pub(crate) fn toggle(&mut self, identity: ProfileIdentity) -> bool {
         if !self.marks.insert(identity) {
             self.marks.remove(&identity);
             false
@@ -113,7 +115,7 @@ impl MarkedSelection {
         }
     }
 
-    pub fn set(&mut self, identity: ProfileIdentity, marked: bool) {
+    pub(crate) fn set(&mut self, identity: ProfileIdentity, marked: bool) {
         if marked {
             self.marks.insert(identity);
         } else {
@@ -121,38 +123,28 @@ impl MarkedSelection {
         }
     }
 
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.marks.clear();
     }
 
     /// Mark every identity in the iterator. Existing marks are retained.
-    pub fn mark_all<I>(&mut self, identities: I)
+    pub(crate) fn mark_all<I>(&mut self, identities: I)
     where
         I: IntoIterator<Item = ProfileIdentity>,
     {
         self.marks.extend(identities);
     }
 
-    /// Mark every shown member: `shown` indices into `names`, resolved
-    /// through the parallel `ids` (see [`profile_id_at`]). Existing marks
-    /// are retained.
-    pub fn mark_shown(&mut self, names: &[String], ids: &[ProfileIdentity], shown: &[usize]) {
-        for &index in shown {
-            if let Some(identity) = profile_id_at(ids, names, index) {
-                self.marks.insert(identity);
-            }
-        }
-    }
-
     /// Remove a deleted profile's mark. Returns whether a mark was removed.
-    pub fn remove(&mut self, identity: ProfileIdentity) -> bool {
+    pub(crate) fn remove(&mut self, identity: ProfileIdentity) -> bool {
         self.marks.remove(&identity)
     }
 
+    #[cfg(test)]
     /// Rename does not change a profile identity. This explicit operation is
     /// useful to adapters that have to migrate a profile whose UID changed
     /// while preserving the logical profile row.
-    pub fn rename(&mut self, old: ProfileIdentity, new: ProfileIdentity) {
+    pub(crate) fn rename(&mut self, old: ProfileIdentity, new: ProfileIdentity) {
         if old != new && self.marks.remove(&old) {
             self.marks.insert(new);
         }
@@ -179,6 +171,28 @@ impl MarkedSelection {
 
     pub fn iter(&self) -> impl Iterator<Item = ProfileIdentity> + '_ {
         self.marks.iter().copied()
+    }
+
+    /// Fixture seam: mark or unmark `identity` without a command (front-end
+    /// tests that arrange marks before the behaviour they check).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_for_test(&mut self, identity: ProfileIdentity, marked: bool) {
+        self.set(identity, marked);
+    }
+
+    /// Fixture seam: mark every identity of `identities` without a command.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn mark_all_for_test<I>(&mut self, identities: I)
+    where
+        I: IntoIterator<Item = ProfileIdentity>,
+    {
+        self.mark_all(identities);
+    }
+
+    /// Fixture seam: drop every mark without a command.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn clear_for_test(&mut self) {
+        self.clear();
     }
 }
 
@@ -215,6 +229,7 @@ pub struct StopReport {
     stopped: usize,
     cancelled: usize,
     skipped: Vec<BulkSkip>,
+    operation: Option<OperationId>,
 }
 
 impl StopReport {
@@ -231,6 +246,11 @@ impl StopReport {
     /// Rows that could not take Stop.
     pub fn skipped(&self) -> &[BulkSkip] {
         &self.skipped
+    }
+
+    /// The core stop operation, when at least one marked script was stopping.
+    pub fn operation(&self) -> Option<OperationId> {
+        self.operation
     }
 }
 
@@ -260,16 +280,17 @@ impl fmt::Display for StopReport {
 /// `None`) on marked profiles. Eligible rows wait for the same paced permit
 /// as Start all; the running Start report ([`Scripts::last_bulk_report`])
 /// names each row as it is started, skipped or failed.
-pub fn start_marked<Io>(
+pub(crate) fn start_marked<Io>(
     selection: &MarkedSelection,
     core: &mut OperatorSession<Io>,
     scripts: &mut Scripts,
     card: Option<&ScriptChoice>,
     catalog_root: Option<&Path>,
-) {
+) -> Vec<String> {
     let card = card.map(ScriptChoice::as_script);
     scripts.open_tally("Start selected");
     let profiles = profile_rows(core);
+    let mut accepted = Vec::new();
     for identity in selection.iter() {
         let Some((name, _)) = profiles.iter().find(|(_, id)| *id == identity) else {
             scripts.tally_skip_unavailable(
@@ -278,7 +299,8 @@ pub fn start_marked<Io>(
             );
             continue;
         };
-        if scripts.start_queue_place(name).is_some() {
+        if scripts.start_queue_place(name).is_some() || scripts.has_start_preparation(name) {
+            accepted.push(name.clone());
             continue;
         }
         if script_active(core, name) {
@@ -294,12 +316,14 @@ pub fn start_marked<Io>(
                 None => Err("no assignment".to_string()),
             },
         };
-        if let Err(reason) = result {
-            scripts.tally_fail(name, &reason);
+        match result {
+            Ok(()) => accepted.push(name.clone()),
+            Err(reason) => scripts.tally_fail(name, &reason),
         }
     }
     scripts.admit_starts(core, catalog_root);
     scripts.publish_bulk();
+    accepted
 }
 
 /// Whether a Start on the marked profiles could start anything, in the
@@ -347,6 +371,7 @@ pub fn stop_marked<Io>(
         stopped: 0,
         cancelled: 0,
         skipped: Vec::new(),
+        operation: None,
     };
     let profiles = profile_rows(core);
     let mut candidates = Vec::new();
@@ -377,7 +402,8 @@ pub fn stop_marked<Io>(
         }
     }
     if !candidates.is_empty() {
-        let (_, stopped) = core.stop_scripts(&candidates);
+        let (operation, stopped) = core.stop_scripts(&candidates);
+        report.operation = Some(operation);
         report.stopped = stopped;
     }
     scripts.publish_start_places(core);

@@ -1,9 +1,8 @@
-//! Native schema, per-account settings, presentation and fenced controls.
+//! Native schema, per-account settings, and presentation.
 use super::CompiledCardId;
 use super::{LiveSettings, Scripts};
 use crate::operations::OperationId;
 use crate::session::{ArmMirror, OperatorSession};
-use api::selected::RunKey;
 use script::native::ScriptStatus;
 use script::shim::ScriptPaint;
 use script::{RunState, ScriptLifecycleReceipt};
@@ -16,29 +15,6 @@ pub enum SchemaView<'a> {
         version: u16,
         fields: super::SchemaRef<'a>,
     },
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NativeCommand {
-    Pause,
-    Resume,
-    Stop,
-}
-#[derive(Debug)]
-pub struct NativeTarget {
-    pub(crate) profile: String,
-    pub(crate) run: RunKey,
-}
-
-impl NativeTarget {
-    /// Profile this native command targets.
-    pub fn profile(&self) -> &str {
-        &self.profile
-    }
-
-    /// Run key this native command targets.
-    pub fn run(&self) -> RunKey {
-        self.run
-    }
 }
 
 pub struct NativeDetail {
@@ -174,7 +150,7 @@ impl Scripts {
         Ok(self.run_bag_with((card.schema)(), &overrides, &row.settings.clue_duel_partner))
     }
 
-    pub fn set_compiled_setting<Io>(
+    pub(crate) fn set_compiled_setting<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
         profile: &str,
@@ -194,7 +170,7 @@ impl Scripts {
 
     /// Bulk and single-account edits use the same prepare → durable → configure
     /// transaction; the session reports a SettingsWrite for every accepted edit.
-    pub fn set_compiled_overrides<Io>(
+    pub(crate) fn set_compiled_overrides<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
         profile: &str,
@@ -275,17 +251,6 @@ impl Scripts {
         result
     }
 
-    pub fn native_target<Io>(
-        &self,
-        core: &OperatorSession<Io>,
-        profile: &str,
-    ) -> Option<NativeTarget> {
-        Some(NativeTarget {
-            profile: profile.into(),
-            run: core.play()?.script_native_run(profile)?,
-        })
-    }
-
     pub fn native_detail<Io>(
         &self,
         core: &OperatorSession<Io>,
@@ -310,25 +275,6 @@ impl Scripts {
             paint: play.script_paint(profile),
             terminal: play.script_lifecycle_receipt(profile),
         })
-    }
-
-    pub fn native_command<Io>(
-        &mut self,
-        core: &OperatorSession<Io>,
-        target: &NativeTarget,
-        command: NativeCommand,
-    ) -> Result<(), String> {
-        let play = core.play().ok_or("no play")?;
-        let accepted = match command {
-            NativeCommand::Pause => play.script_native_pause(&target.profile, target.run, true),
-            NativeCommand::Resume => play.script_native_pause(&target.profile, target.run, false),
-            NativeCommand::Stop => play.script_native_stop(&target.profile, target.run),
-        };
-        if accepted {
-            Ok(())
-        } else {
-            Err("stale native run".into())
-        }
     }
 }
 

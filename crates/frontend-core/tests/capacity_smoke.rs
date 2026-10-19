@@ -36,7 +36,7 @@
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use frontend_core::{OperatorSession, RenderPolicyLabel};
+use frontend_core::OperatorSession;
 use host::SlotInput;
 use host_play::{
     mint_live_names, profile_password, run_with_template, InstancePermit, ProfileOptions,
@@ -243,7 +243,7 @@ fn live_host_capacity_warning_appears_under_real_load_and_clears() {
     )
     .expect("play");
     let mut session = OperatorSession::<()>::new(InstancePermit::SkipLock);
-    session.set_capacity_render(RenderPolicyLabel::Headless);
+    session.declare_headless_render();
     session.start_for_test(vault, play);
 
     let login_deadline = Instant::now() + Duration::from_secs(180);

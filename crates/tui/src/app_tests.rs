@@ -12,6 +12,7 @@ use frontend_core::SettingsDraft;
 use host_play::local_state::{LocalStateService, StateRoot};
 use nav::tile::Tile;
 
+use crate::bin::seam::Seam;
 use crate::layout::Screen;
 use crate::overlay::Modal;
 use crate::script_shape::BrowseCard;
@@ -371,20 +372,13 @@ fn draw_map_paints_walkable_dots_after_explicit_activation() {
 }
 #[test]
 fn wilderness_persistence_errors_are_visible() {
-    let root =
-        std::env::temp_dir().join(format!("274bot-tui-map-pref-error-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).unwrap();
-    let blocker = root.join("not-a-directory");
-    std::fs::write(&blocker, b"file").unwrap();
-    // A service rooted at a file cannot write: the failure surfaces.
-    let blocked = frontend_core::UiPreferences::of_service_for_test(
-        &LocalStateService::open_process(StateRoot::new(blocker.clone())),
-    );
-
+    let mut seam = Seam::new();
     let mut app = TuiApp::new("274bot headless");
-    app.restore_preferences(blocked.share());
-    app.toggle_map_wilderness();
+    // A store that refuses writes: the failure surfaces.
+    seam.refuse_preference_writes();
+    let action = app.toggle_map_wilderness();
+    assert_eq!(action, AppAction::MapWilderness(true));
+    seam.apply(&mut app, action);
 
     assert!(app.map.layers.wilderness);
     assert!(
@@ -395,17 +389,16 @@ fn wilderness_persistence_errors_are_visible() {
         app.error
     );
 
-    std::fs::remove_file(&blocker).unwrap();
-    std::fs::create_dir(&blocker).unwrap();
-    app.toggle_map_wilderness();
+    seam.allow_preference_writes();
+    let action = app.toggle_map_wilderness();
+    assert_eq!(action, AppAction::MapWilderness(false));
+    seam.apply(&mut app, action);
     assert!(!app.map.layers.wilderness);
     assert!(
         app.error.is_none(),
         "a later successful save clears the stale map error: {:?}",
         app.error
     );
-
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 /// The spec's WASD test: from (10,10) W steps north. +z is north on
@@ -688,13 +681,20 @@ fn routing_scope_note_heads_the_routing_rows_once_at_common_sizes() {
 }
 
 #[test]
-fn settings_enter_flips_random_events_and_marks_dirty() {
+fn settings_enter_returns_random_events_edit_and_marks_dirty() {
     let mut app = TuiApp::new("274bot headless");
     app.settings = SettingsDraft::default();
     assert!(app.settings.random_events());
     app.settings_state.open = true;
-    app.on_key(key(KeyCode::Enter));
-    assert!(!app.settings.random_events(), "popup flips random_events");
+    let action = app.on_key(key(KeyCode::Enter));
+    assert_eq!(
+        action,
+        AppAction::SettingsDraftEdited(crate::settings::SettingsEdit::RandomEvents(false))
+    );
+    assert!(
+        app.settings.random_events(),
+        "the dispatcher applies the returned edit"
+    );
     assert!(app.settings_dirty, "the binary persists the change");
 }
 
@@ -724,7 +724,9 @@ fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped
 fn wrapped_global_settings_rows_use_the_drawn_hit_target() {
     let mut app = TuiApp::new("274bot headless");
     app.settings_state.open = true;
-    app.nav.set_danger_level(frontend_core::DangerLevel::Always);
+    app.nav = app
+        .nav
+        .with_danger_level(frontend_core::DangerLevel::Always);
     app.script_scope_notice_ack = true;
     app.survivable_routing_notice_ack = true;
     app.settings_state.row = 8;
@@ -851,8 +853,9 @@ fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
         !app.map_route_through_zones,
         "MapOpen also resets stale state"
     );
-    app.nav
-        .set_danger_level(frontend_core::DangerLevel::WhenSurvivable);
+    app.nav = app
+        .nav
+        .with_danger_level(frontend_core::DangerLevel::WhenSurvivable);
     app.map_route_through_zones = true;
     app.settings_state.open = true;
     app.settings_state.row = 8;
@@ -916,10 +919,10 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
     let crossing = text(&draw(&mut app, 120, 40));
     assert!(crossing.contains("crossing (z)"), "{crossing}");
 
-    frontend_core::nav_preference(
+    frontend_core::nav_prefs::write_nav_preference_for_test(
         &preferences,
         frontend_core::NavPreference::AllowDangerZones,
-        Some(true),
+        true,
     )
     .unwrap();
     let globally_on = text(&draw(&mut app, 120, 40));
@@ -943,10 +946,10 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
     );
     app.params_state.open = false;
 
-    frontend_core::nav_preference(
+    frontend_core::nav_prefs::write_nav_preference_for_test(
         &preferences,
         frontend_core::NavPreference::AllowDangerZones,
-        Some(false),
+        false,
     )
     .unwrap();
     let globally_off = text(&draw(&mut app, 120, 40));
@@ -1017,6 +1020,7 @@ fn map_focus_reserves_l_for_pan_and_esc_orders_search_before_close() {
 }
 
 fn run_map_keyboard_walkthrough(width: u16, height: u16) {
+    let mut seam = Seam::new();
     let mut app = open_map_world();
     assert_eq!(
         app.map_catalogue_status,
@@ -1130,7 +1134,8 @@ fn run_map_keyboard_walkthrough(width: u16, height: u16) {
     );
     assert!(app.map_model.pending().is_some());
 
-    assert_eq!(app.on_key(ch('g')), AppAction::None);
+    let alice = app.profile_id_for_name("alice");
+    seam.press(&mut app, ch('g'), AppAction::MarkAll(vec![alice]));
     assert_eq!(app.walk_send.mode, WalkSendMode::Group);
     assert_eq!(app.walk_send.walk_label(), "Walk 1 bots");
     assert!(
@@ -1254,7 +1259,8 @@ fn map_poi_selection_keeps_catalogue_stand_and_blocks_view_only_labels() {
     search_and_jump(&mut app, "booth");
     app.names = vec!["poi-walker".into()];
     app.refresh_walk_send(|_| WalkSlotStatus::eligible(tile(0, 0)));
-    assert_eq!(app.on_key(ch('g')), AppAction::None);
+    let walker = app.profile_id_for_name("poi-walker");
+    Seam::new().press(&mut app, ch('g'), AppAction::MarkAll(vec![walker]));
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::MapWalkGroup);
     assert_eq!(
         app.map_model.pending().expect("group").walk_target(),

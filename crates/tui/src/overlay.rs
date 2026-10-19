@@ -542,13 +542,15 @@ impl TuiApp {
     fn run_context_item(&mut self, item: ContextItem) -> AppAction {
         match item {
             ContextItem::Select(name) => self.select_bot(&name),
-            ContextItem::Mark(name) => {
-                if let Some(index) = self.names.iter().position(|n| *n == name) {
+            ContextItem::Mark(name) => self
+                .names
+                .iter()
+                .position(|n| *n == name)
+                .and_then(|index| {
                     self.table
-                        .toggle_mark_with_ids(&self.names, &self.profile_ids, index);
-                }
-                AppAction::None
-            }
+                        .toggled_mark(&self.names, &self.profile_ids, index)
+                })
+                .map_or(AppAction::None, |(name, on)| AppAction::SetMark(name, on)),
             ContextItem::Open(name, screen) => {
                 let select = self.select_bot(&name);
                 let show = self.show_screen(screen);

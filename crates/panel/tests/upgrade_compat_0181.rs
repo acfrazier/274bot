@@ -254,10 +254,10 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
     // so the file is rewritten from the typed rows twice.
     let mut edited = expected_loadouts[0].clone();
     edited.carry[0].qty += 1;
-    loadouts.upsert(edited);
-    loadouts.save().unwrap();
-    loadouts.upsert(expected_loadouts[0].clone());
-    loadouts.save().unwrap();
+    loadouts.upsert_for_test(edited);
+    loadouts.save_for_test().unwrap();
+    loadouts.upsert_for_test(expected_loadouts[0].clone());
+    loadouts.save_for_test().unwrap();
     let reopened = LocalStateService::open_process(StateRoot::new(scratch.0.clone()));
     assert_eq!(
         Loadouts::operator(&reopened).loadouts(),

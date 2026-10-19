@@ -518,8 +518,7 @@ pub fn run_frame_for_test<C, G, H, P, T, S>(
     publish: P,
     step: S,
     tick: T,
-)
-where
+) where
     C: Any,
     G: Default + Send + 'static,
     H: Fn(&C) -> Option<(i32, i32, i32)> + Send + Sync + 'static,

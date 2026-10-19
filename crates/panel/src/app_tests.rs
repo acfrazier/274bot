@@ -1007,9 +1007,10 @@ fn edit_parameters_enabled_for_operator_bag() {
 fn loadout_combo_lists_store_names() {
     use api::loadout::Loadout;
 
-    let mut loadouts = frontend_core::scripts::Loadouts::default();
-    loadouts.upsert(Loadout::new("guard"));
-    loadouts.upsert(Loadout::new("stall"));
+    let loadouts = frontend_core::scripts::Loadouts::detached(vec![
+        Loadout::new("guard"),
+        Loadout::new("stall"),
+    ]);
     let mut schema = frontend_core::test_support::scripts::TestSchema::setting(
         "loadout",
         "string",
@@ -5900,12 +5901,18 @@ fn fleet_sort_is_a_full_width_drop_down_that_stores_the_pick() {
         choices.len(),
         frontend_core::FleetOrder::PANEL_CHOICES.len()
     );
-    assert_eq!(session.fleet_sort, frontend_core::FleetOrder::Name);
+    assert_eq!(
+        session.fleet_filter.order(),
+        frontend_core::FleetOrder::Name
+    );
     let status = rect_centre(choices[1]);
     for pressed in [false, false, true, false] {
         fleet_frame(&mut ctx, &mut session, size, status, pressed);
     }
-    assert_eq!(session.fleet_sort, frontend_core::FleetOrder::Status);
+    assert_eq!(
+        session.fleet_filter.order(),
+        frontend_core::FleetOrder::Status
+    );
 }
 
 /// The Send window opens inside the screen and, for a short list, shows every

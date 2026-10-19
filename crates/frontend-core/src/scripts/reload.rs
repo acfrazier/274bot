@@ -588,7 +588,7 @@ impl Scripts {
 
     /// Queue the first source-only catalog scan. The caller may retry this
     /// method after a hard refusal; Full is retained internally.
-    pub fn request_catalog_fill(
+    pub(crate) fn request_catalog_fill(
         &mut self,
         root: &Path,
         path_file: &Path,
@@ -626,7 +626,7 @@ impl Scripts {
 
     /// Queue an explicit catalog import and its bounded preparation. Unlike
     /// the first Browse scan, the import also prepares changed cards.
-    pub fn request_catalog_import(
+    pub(crate) fn request_catalog_import(
         &mut self,
         root: &Path,
         path_file: &Path,
@@ -659,6 +659,10 @@ impl Scripts {
     /// refused until this is collected.
     pub fn take_catalog_import_result(&mut self) -> Option<(PathBuf, Result<usize, CatalogError>)> {
         self.async_work.catalog_import_result.take()
+    }
+
+    pub(crate) fn take_catalog_fill_result(&mut self) -> Option<Result<(), CatalogError>> {
+        self.async_work.catalog_fill_result.take()
     }
 
     /// Request one card's preparation through WorkAdmission for the panel
@@ -1685,7 +1689,7 @@ impl Scripts {
             }
         }
     }
-    pub(super) fn has_start_preparation(&self, profile: &str) -> bool {
+    pub(crate) fn has_start_preparation(&self, profile: &str) -> bool {
         self.async_work.starts.contains_key(profile)
     }
 
@@ -1717,6 +1721,7 @@ impl Scripts {
             .map(|preparation| (preparation.demand.kind, preparation.demand.tallied))
     }
 
+    #[cfg(test)]
     pub(super) fn cancel_all_start_preparations(&mut self) -> Vec<(String, StartKind, bool)> {
         self.async_work
             .starts
@@ -1780,6 +1785,10 @@ impl Scripts {
     /// The terminal result of the latest reload or catalog refresh.
     pub fn take_reload_outcome(&mut self) -> Option<ReloadOutcome> {
         self.reload.outcome.take()
+    }
+
+    pub(crate) fn reload_outcome(&self) -> Option<&ReloadOutcome> {
+        self.reload.outcome.as_ref()
     }
 
     /// The warning awaiting confirmation, if any.
@@ -2341,7 +2350,7 @@ impl Scripts {
     /// Reload `target` (see [`Self::reload_target`]). Bounded preparation and
     /// throwaway V8 validation run off the caller, polled by [`Scripts::poll`].
     /// A second Reload submits a bounded confirmation scan for a shown warning.
-    pub fn begin_reload<Io>(
+    pub(crate) fn begin_reload<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
         target: Option<(CardSource, String)>,
@@ -2397,7 +2406,7 @@ impl Scripts {
     }
 
     /// Discard the prepared candidate without touching any execution.
-    pub fn cancel_reload(&mut self) {
+    pub(crate) fn cancel_reload(&mut self) {
         self.reload.invalidate();
         self.reload.outcome = None;
         self.clear_notice();
@@ -2606,7 +2615,7 @@ impl Scripts {
 
     /// Queue a bounded catalogue refresh. New cards are prepared internally,
     /// so callers receive no names to warm on the UI thread.
-    pub fn begin_refresh_catalog<Io>(
+    pub(crate) fn begin_refresh_catalog<Io>(
         &mut self,
         _core: &mut OperatorSession<Io>,
         root: &Path,

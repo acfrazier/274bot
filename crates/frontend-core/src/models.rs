@@ -13,8 +13,9 @@
 //! then refused with [`crate::command::Rejection::NoModel`].
 
 use crate::fleet::FleetFilter;
+use crate::profile_form::ProfileFormSave;
 use crate::rs2b0t_import::ProfileImport;
-use crate::scripts::{Loadouts, Scripts};
+use crate::scripts::{LoadoutForm, Scripts};
 use crate::selection::MarkedSelection;
 use crate::session::map::MapDesk;
 use crate::session::prefs::DrawPolicy;
@@ -29,7 +30,8 @@ pub struct Models<'a> {
     pub(crate) fleet_filter: Option<&'a mut FleetFilter>,
     pub(crate) editor: Option<&'a mut ProfileEditor>,
     pub(crate) import: Option<&'a mut ProfileImport>,
-    pub(crate) loadouts: Option<&'a mut Loadouts>,
+    pub(crate) form_save: Option<&'a mut ProfileFormSave>,
+    pub(crate) loadouts: Option<&'a mut LoadoutForm>,
     pub(crate) map: Option<&'a mut MapDesk>,
     pub(crate) quester: Option<&'a mut QuesterPathsController>,
     pub(crate) walk_globals: Option<&'a mut WalkGlobalsView>,
@@ -51,6 +53,7 @@ impl<'a> Models<'a> {
             fleet_filter: self.fleet_filter.as_deref_mut(),
             editor: self.editor.as_deref_mut(),
             import: self.import.as_deref_mut(),
+            form_save: self.form_save.as_deref_mut(),
             loadouts: self.loadouts.as_deref_mut(),
             map: self.map.as_deref_mut(),
             quester: self.quester.as_deref_mut(),
@@ -89,8 +92,14 @@ impl<'a> Models<'a> {
         self
     }
 
+    /// Lend the TUI settings popup's save feedback.
+    pub fn with_form_save(mut self, form_save: &'a mut ProfileFormSave) -> Self {
+        self.form_save = Some(form_save);
+        self
+    }
+
     /// Lend the loadout form.
-    pub fn with_loadouts(mut self, loadouts: &'a mut Loadouts) -> Self {
+    pub fn with_loadouts(mut self, loadouts: &'a mut LoadoutForm) -> Self {
         self.loadouts = Some(loadouts);
         self
     }

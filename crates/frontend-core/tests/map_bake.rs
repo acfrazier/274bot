@@ -9,9 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use frontend_core::walk_map::WalkMapDemand;
-use frontend_core::{
-    load_map_bake_choice, persist_map_bake_choice, MapBakeChoice, MapBakeGate, MapBakePrompt,
-};
+use frontend_core::{load_map_bake_choice, MapBakeChoice, MapBakeGate, MapBakePrompt};
 use host_play::map_cache::fixture::{
     fixture_descriptor, other_cache_descriptor, ship_fixture_terrain, CountingMapProducer,
 };
@@ -134,7 +132,7 @@ fn not_now_keeps_the_map_catalogue_only_across_reopens() {
     assert!(!has_terrain(&first));
     gate.note_ready_without_terrain(WalkMapDemand::ReadyImages);
     assert_eq!(gate.prompt(), MapBakePrompt::Asking);
-    gate.decline();
+    gate.decline_for_test();
     assert_eq!(gate.prompt(), MapBakePrompt::Declined);
     drop(first);
     manager.reap();
@@ -156,7 +154,7 @@ fn accepting_bakes_the_terrain_and_joins_the_open_catalogue_demand() {
     let asking = gate
         .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
-    gate.accept();
+    gate.accept_for_test();
     let baking = gate
         .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
@@ -336,7 +334,7 @@ fn damaged_shipped_terrain_raises_the_prompt_instead_of_baking() {
     drop(handle);
     manager.reap();
     // A reopen probes again, without starting a local bake.
-    gate.decline();
+    gate.decline_for_test();
     let mut again = MapBakeGate::new(MapBakeChoice::Ask);
     let reopened = again
         .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
@@ -349,7 +347,7 @@ fn damaged_shipped_terrain_raises_the_prompt_instead_of_baking() {
     assert_eq!(again.prompt(), MapBakePrompt::Asking);
     assert_eq!(producer.image_runs(), 0, "no bake before consent");
     // Consent bakes locally, as without shipped terrain.
-    again.accept();
+    again.accept_for_test();
     let baking = again
         .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
@@ -450,7 +448,7 @@ fn an_adopt_only_demand_without_terrain_never_bakes_and_raises_the_prompt() {
     let mut gate = MapBakeGate::new(MapBakeChoice::Ask);
     gate.note_ready_without_terrain(WalkMapDemand::ReadyImages);
     assert_eq!(gate.prompt(), MapBakePrompt::Asking);
-    gate.accept();
+    gate.accept_for_test();
     let baking = gate
         .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
@@ -482,7 +480,8 @@ fn preferences(iso: &script::IsolatedEnv) -> frontend_core::UiPreferences {
 fn the_remembered_always_choice_bakes_without_asking() {
     let iso = script::IsolatedEnv::enter("map-bake-always");
     let preferences = preferences(&iso);
-    persist_map_bake_choice(&preferences, MapBakeChoice::Always).unwrap();
+    frontend_core::map_bake::persist_map_bake_choice_for_test(&preferences, MapBakeChoice::Always)
+        .unwrap();
     let scratch = Scratch::new("always");
     let (manager, producer) = manager(&scratch);
     let mut gate = MapBakeGate::new(load_map_bake_choice(&preferences));
@@ -514,7 +513,8 @@ fn the_choice_is_ask_when_absent_or_unknown_and_persists_beside_other_prefs() {
     .unwrap();
     preferences.reload().unwrap();
     assert_eq!(load_map_bake_choice(&preferences), MapBakeChoice::Ask);
-    persist_map_bake_choice(&preferences, MapBakeChoice::Always).unwrap();
+    frontend_core::map_bake::persist_map_bake_choice_for_test(&preferences, MapBakeChoice::Always)
+        .unwrap();
     assert_eq!(load_map_bake_choice(&preferences), MapBakeChoice::Always);
     let prefs: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(prefs["last_focus"], "alice");

@@ -3,9 +3,9 @@
 //! random-event toggle, per-event Guardian policy, and lamp reward settings,
 //! plus durable global walk grants (teleports / wilderness / danger zones),
 //! manual WalkTo bank fetch, and the remembered terrain-bake choice shared
-//! with the panel. Profile settings are edited in place (the operator vault;
-//! `--live` still ephemeral, no persist). Not crowding the main view — a small
-//! centered box drawn after the panes.
+//! with the panel. Profile settings return typed edits for the application
+//! to stage through the command seam (`--live` stays ephemeral). Not crowding
+//! the main view — a small centered box drawn after the panes.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::buffer::Buffer;
@@ -46,7 +46,6 @@ pub struct SettingsState {
     /// 0=random events, 1=lamp skill, 2=lamp auto, 3=event, 4=event policy,
     /// 5=teleports, 6=wilderness, 7=bank fetch, 8=danger zones,
     /// 9=manual-walk pause, 10=map bake, 11=memory, 12=folder gate,
-    /// 13=folder, 14=reload.
     pub row: usize,
     /// Selected per-event policy row.
     pub random_event_index: usize,
@@ -66,13 +65,27 @@ impl SettingsState {
     }
 }
 
+/// One profile-setting value selected by the popup. The app stages it and
+/// submits `EditProfileDraft(Settings)` in the same dispatch handler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsEdit {
+    RandomEvents(bool),
+    LampSkill(&'static str),
+    LampAuto(bool),
+    RandomEventPolicy {
+        event: &'static str,
+        policy: GuardianPolicy,
+    },
+    Lowmem(bool),
+}
+
 /// The outcome of one settings key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsKey {
-    /// A profile setting value changed — persist the [`SettingsDraft`] back.
-    Changed,
-    /// An unavailable policy was reset to Flee and the reason should be shown.
-    ChangedWithNotice(&'static str),
+    /// A profile setting edit for the app to stage and submit.
+    Changed(SettingsEdit),
+    /// An unavailable policy gets a Flee edit and a reason to show.
+    ChangedWithNotice(SettingsEdit, &'static str),
     /// The selected setting is unavailable; show the refusal reason.
     Refused(&'static str),
     /// The remembered map-bake choice changed; persist it to the shared
@@ -106,7 +119,7 @@ pub enum SettingsKey {
 /// changes take effect only at the next login, with an explicit `r` offer.
 /// The notices are drawn into the same buffer as the settings rows.
 pub struct SettingsPane<'a> {
-    pub settings: &'a mut SettingsDraft,
+    pub settings: &'a SettingsDraft,
     pub nav: &'a mut frontend_core::WalkGlobals,
     pub map_bake: &'a mut MapBakeChoice,
     pub state: &'a mut SettingsState,
@@ -124,7 +137,7 @@ pub struct SettingsPane<'a> {
 
 impl<'a> SettingsPane<'a> {
     pub fn new(
-        settings: &'a mut SettingsDraft,
+        settings: &'a SettingsDraft,
         nav: &'a mut frontend_core::WalkGlobals,
         map_bake: &'a mut MapBakeChoice,
         state: &'a mut SettingsState,
@@ -256,14 +269,18 @@ impl<'a> SettingsPane<'a> {
             _ => SettingsKey::Consumed,
         }
     }
-
-    /// The focused row's toggle/cycle or command.
     fn activate(&mut self) -> SettingsKey {
         match self.state.row {
-            0..=2 | 11 => {
-                self.activate_value();
-                SettingsKey::Changed
+            0 => SettingsKey::Changed(SettingsEdit::RandomEvents(!self.settings.random_events())),
+            1 => {
+                let next = LAMP_SKILLS
+                    .iter()
+                    .position(|skill| *skill == self.settings.lamp_skill())
+                    .map(|index| (index + 1) % LAMP_SKILLS.len())
+                    .unwrap_or(0);
+                SettingsKey::Changed(SettingsEdit::LampSkill(LAMP_SKILLS[next]))
             }
+            2 => SettingsKey::Changed(SettingsEdit::LampAuto(!self.settings.lamp_auto())),
             3 => {
                 self.activate_value();
                 SettingsKey::Consumed
@@ -293,6 +310,7 @@ impl<'a> SettingsPane<'a> {
                 self.activate_value();
                 SettingsKey::MapBake
             }
+            11 => SettingsKey::Changed(SettingsEdit::Lowmem(!self.settings.lowmem())),
             12 => {
                 let Some(paths) = self.quester_paths.as_deref_mut() else {
                     return SettingsKey::Consumed;
@@ -317,29 +335,17 @@ impl<'a> SettingsPane<'a> {
         if self.settings.random_event_policy(event) == GuardianPolicy::Flee {
             return SettingsKey::Refused(EVENT_POLICY_UNAVAILABLE);
         }
-        self.settings
-            .set_random_event_policy(event, GuardianPolicy::Flee);
-        SettingsKey::ChangedWithNotice(EVENT_POLICY_UNAVAILABLE)
+        SettingsKey::ChangedWithNotice(
+            SettingsEdit::RandomEventPolicy {
+                event,
+                policy: GuardianPolicy::Flee,
+            },
+            EVENT_POLICY_UNAVAILABLE,
+        )
     }
 
     fn activate_value(&mut self) {
         match self.state.row {
-            0 => {
-                let events = self.settings.random_events_mut();
-                *events = !*events;
-            }
-            1 => {
-                let next = LAMP_SKILLS
-                    .iter()
-                    .position(|s| *s == self.settings.lamp_skill())
-                    .map(|i| (i + 1) % LAMP_SKILLS.len())
-                    .unwrap_or(0);
-                *self.settings.lamp_skill_mut() = LAMP_SKILLS[next].into();
-            }
-            2 => {
-                let auto = self.settings.lamp_auto_mut();
-                *auto = !*auto;
-            }
             3 => {
                 self.state.random_event_index =
                     (self.state.random_event_index + 1) % GUARDIAN_EVENTS.len();
@@ -376,7 +382,7 @@ impl<'a> SettingsPane<'a> {
             }
             8 => {
                 let next = self.nav.danger_level().next();
-                self.nav.set_danger_level(next);
+                *self.nav = self.nav.with_danger_level(next);
             }
             9 => {
                 if let Some(pause) = self.pause_script_on_manual_walk_abort.as_deref_mut() {
@@ -384,10 +390,6 @@ impl<'a> SettingsPane<'a> {
                 }
             }
             10 => *self.map_bake = self.map_bake.toggled(),
-            11 => {
-                let lowmem = self.settings.lowmem_mut();
-                *lowmem = !*lowmem;
-            }
             _ => {}
         }
     }
@@ -795,7 +797,10 @@ mod tests {
 
     use frontend_core::WalkGlobals;
 
-    use super::{SettingsKey, SettingsPane, SettingsState, EVENT_POLICY_UNAVAILABLE, LAMP_SKILLS};
+    use super::{
+        SettingsEdit, SettingsKey, SettingsPane, SettingsState, EVENT_POLICY_UNAVAILABLE,
+        LAMP_SKILLS,
+    };
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -815,10 +820,9 @@ mod tests {
             .collect()
     }
 
-    /// The spec's settings test: the popup flips `random_events` on a
-    /// mock `SettingsDraft`.
+    /// The popup returns the selected profile edit for its caller to stage.
     #[test]
-    fn popup_flips_random_events_on_the_profile() {
+    fn popup_returns_random_events_edits_without_mutating_the_draft() {
         let mut settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
@@ -828,24 +832,35 @@ mod tests {
         };
         assert!(settings.random_events(), "default random events on");
         let first = {
-            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
+            let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
             pane.on_key(key(KeyCode::Enter))
         };
-        assert_eq!(first, SettingsKey::Changed, "Enter reports the change");
+        assert_eq!(
+            first,
+            SettingsKey::Changed(SettingsEdit::RandomEvents(false))
+        );
+        assert!(
+            settings.random_events(),
+            "the pane returns the edit without mutating the draft"
+        );
+
+        *settings.random_events_mut() = false;
+        let second = {
+            let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
+            pane.on_key(key(KeyCode::Enter))
+        };
+        assert_eq!(
+            second,
+            SettingsKey::Changed(SettingsEdit::RandomEvents(true))
+        );
         assert!(
             !settings.random_events(),
-            "Enter on the random-events row flips it off"
+            "the caller applies the first edit"
         );
-        let second = {
-            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
-            pane.on_key(key(KeyCode::Enter))
-        };
-        assert_eq!(second, SettingsKey::Changed);
-        assert!(settings.random_events(), "and back on");
     }
 
     #[test]
-    fn popup_refuses_unavailable_fight_and_ignore_policies_with_reason() {
+    fn popup_returns_supported_policy_reset_and_refuses_repeated_choice() {
         let mut settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
@@ -858,21 +873,28 @@ mod tests {
         for policy in [GuardianPolicy::Fight, GuardianPolicy::Ignore] {
             settings.set_random_event_policy("river troll", policy);
             let changed = {
-                let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
+                let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
                 pane.on_key(key(KeyCode::Enter))
             };
             assert_eq!(
                 changed,
-                SettingsKey::ChangedWithNotice(EVENT_POLICY_UNAVAILABLE)
+                SettingsKey::ChangedWithNotice(
+                    SettingsEdit::RandomEventPolicy {
+                        event: "river troll",
+                        policy: GuardianPolicy::Flee,
+                    },
+                    EVENT_POLICY_UNAVAILABLE,
+                )
             );
             assert_eq!(
                 settings.random_event_policy("river troll"),
-                GuardianPolicy::Flee,
-                "the operator can restore the supported policy"
+                policy,
+                "the caller applies the supported reset"
             );
+            settings.set_random_event_policy("river troll", GuardianPolicy::Flee);
 
             let refused = {
-                let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
+                let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
                 pane.on_key(key(KeyCode::Enter))
             };
             assert_eq!(refused, SettingsKey::Refused(EVENT_POLICY_UNAVAILABLE));
@@ -885,8 +907,8 @@ mod tests {
     }
 
     #[test]
-    fn popup_cycles_lamp_skill_and_toggles_lamp_auto() {
-        let mut settings = SettingsDraft::default();
+    fn popup_returns_lamp_skill_and_auto_edits_without_mutating_the_draft() {
+        let settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -894,27 +916,32 @@ mod tests {
             row: 1,
             ..Default::default()
         };
-        {
-            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
-            pane.on_key(key(KeyCode::Enter));
-        }
+        let skill = {
+            let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
+            pane.on_key(key(KeyCode::Enter))
+        };
+        assert_eq!(
+            skill,
+            SettingsKey::Changed(SettingsEdit::LampSkill(LAMP_SKILLS[2]))
+        );
         assert_eq!(
             settings.lamp_skill(),
-            LAMP_SKILLS[2],
-            "default strength (index 1) cycles to the next skill"
+            LAMP_SKILLS[1],
+            "the caller applies the selected skill"
         );
+
         let flipped = {
-            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
+            let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
             pane.state.row = 2;
             pane.on_key(key(KeyCode::Char(' ')))
         };
-        assert_eq!(flipped, SettingsKey::Changed);
-        assert!(!settings.lamp_auto(), "space toggles lamp auto");
+        assert_eq!(flipped, SettingsKey::Changed(SettingsEdit::LampAuto(false)));
+        assert!(settings.lamp_auto(), "space returns the edit");
     }
 
     #[test]
     fn popup_toggles_bank_fetch_and_requests_single_key_persistence() {
-        let mut settings = SettingsDraft::default();
+        let settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -923,7 +950,7 @@ mod tests {
             ..Default::default()
         };
         let key = {
-            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
+            let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
             pane.on_key(key(KeyCode::Enter))
         };
         assert_eq!(key, SettingsKey::WalkGlobal(NavPreference::AllowBankFetch));
@@ -932,7 +959,7 @@ mod tests {
 
     #[test]
     fn each_permission_row_requests_its_global_preference() {
-        let mut settings = SettingsDraft::default();
+        let settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         for (row, preference) in [
@@ -947,7 +974,7 @@ mod tests {
                 ..Default::default()
             };
             let outcome = {
-                let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
+                let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
                 pane.on_key(key(KeyCode::Enter))
             };
             assert_eq!(outcome, SettingsKey::WalkGlobal(preference));
@@ -961,7 +988,7 @@ mod tests {
 
     #[test]
     fn script_scope_notice_is_dismissible_and_stays_hidden_after_ack() {
-        let mut settings = SettingsDraft::default();
+        let settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -971,7 +998,7 @@ mod tests {
         };
         let mut acknowledged = false;
         let text = render(
-            SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
+            SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
                 .script_scope_notice_ack(&mut acknowledged),
             100,
             24,
@@ -981,14 +1008,14 @@ mod tests {
             "the unacknowledged notice is shown: {text:?}"
         );
         let outcome = {
-            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
+            let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
                 .script_scope_notice_ack(&mut acknowledged);
             pane.on_key(key(KeyCode::Char('d')))
         };
         assert_eq!(outcome, SettingsKey::ScriptScopeNoticeAck);
         acknowledged = true;
         let text = render(
-            SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
+            SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
                 .script_scope_notice_ack(&mut acknowledged),
             100,
             24,
@@ -998,7 +1025,7 @@ mod tests {
 
     #[test]
     fn survivable_routing_notice_uses_an_independent_acknowledgement() {
-        let mut settings = SettingsDraft::default();
+        let settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -1009,7 +1036,7 @@ mod tests {
         let mut old_acknowledged = true;
         let mut acknowledged = false;
         let text = render(
-            SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
+            SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
                 .script_scope_notice_ack(&mut old_acknowledged)
                 .survivable_routing_notice_ack(&mut acknowledged),
             100,
@@ -1020,7 +1047,7 @@ mod tests {
             "the migration notice remains visible after the old notice was dismissed: {text:?}"
         );
         let outcome = {
-            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
+            let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
                 .script_scope_notice_ack(&mut old_acknowledged)
                 .survivable_routing_notice_ack(&mut acknowledged);
             pane.on_key(key(KeyCode::Char('n')))
@@ -1028,7 +1055,7 @@ mod tests {
         assert_eq!(outcome, SettingsKey::SurvivableRoutingNoticeAck);
         acknowledged = true;
         let text = render(
-            SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
+            SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
                 .script_scope_notice_ack(&mut old_acknowledged)
                 .survivable_routing_notice_ack(&mut acknowledged),
             100,
@@ -1039,7 +1066,7 @@ mod tests {
 
     #[test]
     fn held_survivable_setting_and_notice_are_truthful_in_the_popup() {
-        let mut settings = SettingsDraft::default();
+        let settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -1049,7 +1076,7 @@ mod tests {
         };
         let mut acknowledged = false;
         let text = render(
-            SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
+            SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
                 .survivable_routing_notice_ack(&mut acknowledged),
             120,
             40,
@@ -1073,7 +1100,7 @@ mod tests {
                 .collect()
         };
         for (w, h) in [(120u16, 50u16), (80, 50), (60, 60)] {
-            let mut settings = SettingsDraft::default();
+            let settings = SettingsDraft::default();
             let mut nav = WalkGlobals::default();
             let mut bake = MapBakeChoice::Ask;
             let mut state = SettingsState {
@@ -1083,7 +1110,7 @@ mod tests {
             };
             let mut acknowledged = false;
             let text = render(
-                SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
+                SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
                     .survivable_routing_notice_ack(&mut acknowledged),
                 w,
                 h,
@@ -1100,7 +1127,7 @@ mod tests {
 
     #[test]
     fn up_and_down_move_the_row_and_esc_closes() {
-        let mut settings = SettingsDraft::default();
+        let settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -1109,7 +1136,7 @@ mod tests {
             ..Default::default()
         };
         let rows = {
-            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
+            let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
             let down = pane.on_key(key(KeyCode::Down));
             let at = pane.state.row;
             let up = pane.on_key(key(KeyCode::Up));
@@ -1124,7 +1151,7 @@ mod tests {
 
     #[test]
     fn popup_draws_the_rows_while_open_and_nothing_when_closed() {
-        let mut settings = SettingsDraft::default();
+        let settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -1133,7 +1160,7 @@ mod tests {
             ..Default::default()
         };
         let text = render(
-            SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state),
+            SettingsPane::new(&settings, &mut nav, &mut bake, &mut state),
             60,
             14,
         );
@@ -1141,14 +1168,14 @@ mod tests {
 
         state.row = 7;
         let text = render(
-            SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state),
+            SettingsPane::new(&settings, &mut nav, &mut bake, &mut state),
             60,
             14,
         );
         assert!(text.contains("bank fetch"), "nav row paints: {text:?}");
         state.open = false;
         let text = render(
-            SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state),
+            SettingsPane::new(&settings, &mut nav, &mut bake, &mut state),
             60,
             14,
         );
@@ -1161,7 +1188,7 @@ mod tests {
     #[test]
     fn manual_movement_pause_row_is_reachable_persistent_and_visible_at_common_sizes() {
         for (width, height) in [(120, 40), (80, 24)] {
-            let mut settings = SettingsDraft::default();
+            let settings = SettingsDraft::default();
             let mut nav = WalkGlobals::default();
             let mut bake = MapBakeChoice::Ask;
             let mut pause = true;
@@ -1171,7 +1198,7 @@ mod tests {
                 ..Default::default()
             };
             {
-                let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
+                let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
                     .pause_script_on_manual_walk_abort(&mut pause);
                 for _ in 0..9 {
                     assert_eq!(pane.on_key(key(KeyCode::Down)), SettingsKey::Consumed);
@@ -1184,7 +1211,7 @@ mod tests {
             }
             assert!(!pause, "activation flips the saved global toggle off");
             let text = render(
-                SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
+                SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
                     .pause_script_on_manual_walk_abort(&mut pause),
                 width,
                 height,
@@ -1196,8 +1223,8 @@ mod tests {
         }
     }
     #[test]
-    fn memory_row_toggles_lowmem_and_reports_the_change() {
-        let mut settings = SettingsDraft::default();
+    fn memory_row_returns_lowmem_edit_for_the_caller_to_persist() {
+        let settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -1206,19 +1233,19 @@ mod tests {
             ..Default::default()
         };
         let outcome = {
-            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
+            let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
             pane.on_key(key(KeyCode::Enter))
         };
-        assert_eq!(outcome, SettingsKey::Changed, "the binary must persist it");
+        assert_eq!(outcome, SettingsKey::Changed(SettingsEdit::Lowmem(false)));
         assert!(
-            !settings.lowmem(),
-            "Enter on the memory row flips to highmem"
+            settings.lowmem(),
+            "the caller applies the edit before persistence"
         );
     }
 
     #[test]
     fn r_requests_relog_only_while_the_server_mode_differs_and_none_is_queued() {
-        let mut settings = SettingsDraft::default();
+        let settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -1226,7 +1253,7 @@ mod tests {
             row: 0,
             ..Default::default()
         };
-        let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
+        let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
         assert_eq!(
             pane.on_key(key(KeyCode::Char('r'))),
             SettingsKey::Consumed,
@@ -1263,7 +1290,7 @@ mod tests {
             row: 11,
             ..Default::default()
         };
-        let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
+        let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
         pane.memory = Some(MemoryNotice {
             login_lowmem: true,
             desired_lowmem: false,
@@ -1281,7 +1308,7 @@ mod tests {
 
     #[test]
     fn map_bake_row_flips_the_shared_choice_and_asks_the_binary_to_persist_it() {
-        let mut settings = SettingsDraft::default();
+        let settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
@@ -1290,7 +1317,7 @@ mod tests {
             ..Default::default()
         };
         let (moved, flipped) = {
-            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
+            let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
             let moved = pane.on_key(key(KeyCode::Down));
             (moved, pane.on_key(key(KeyCode::Enter)))
         };
@@ -1300,13 +1327,13 @@ mod tests {
         assert_eq!(bake, MapBakeChoice::Always);
         assert!(!nav.allow_bank_fetch(), "the bank row is untouched");
         let text = render(
-            SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state),
+            SettingsPane::new(&settings, &mut nav, &mut bake, &mut state),
             60,
             14,
         );
         assert!(text.contains("map bake: always"), "row paints: {text:?}");
         let back = {
-            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
+            let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
             pane.on_key(key(KeyCode::Char(' ')))
         };
         assert_eq!(back, SettingsKey::MapBake);

@@ -95,8 +95,7 @@ impl NavSettings {
     }
 
     pub fn set_danger_level(&mut self, level: frontend_core::DangerLevel) {
-        let mut globals = self.walk_globals();
-        globals.set_danger_level(level);
+        let globals = self.walk_globals().with_danger_level(level);
         self.allow_danger_zones = globals.allow_danger_zones();
         self.survivable_routing = globals.survivable_routing();
     }

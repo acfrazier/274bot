@@ -39,26 +39,27 @@ use ratatui::Terminal;
 
 use frontend_core::resources::background_ack_text;
 use frontend_core::scripts::{
-    CardSource, CompiledCardId, Loadouts, OwnedSchema, PaintFrame, ScriptChoice,
+    CardSource, CatalogActionKind, CompiledCardId, LoadoutForm, OwnedSchema, PaintFrame,
+    ScriptChoice,
 };
 #[cfg(test)]
 use frontend_core::test_support::VaultFixture;
 use frontend_core::walk_map::{
-    peek_walk_catalogue, WalkMapDemand, WalkMapDemandHandle, WalkMapJobState, WalkMapStage,
-    WalkReadyCatalogue,
+    peek_walk_catalogue, WalkMapDemand, WalkMapJobState, WalkMapStage, WalkReadyCatalogue,
 };
 #[cfg(test)]
 use frontend_core::HeadlessSurface;
 use frontend_core::UiPreferences;
 use frontend_core::{
-    load_map_bake_choice, persist_map_bake_choice, GuardianEdit, MapBakeGate, OperatorCommand,
-    OperatorSession, SubmitError, Targets,
+    load_map_bake_choice, GuardianEdit, MapDesk, OperatorCommand, OperatorSession, SubmitError,
+    Targets,
 };
 #[cfg(test)]
 use host_play::{PlayOptions, SharedClientTemplate};
 
 use crate::app::{AppAction, ChatData, MapCatalogueStatus, TuiApp};
 use crate::chat::ChatAction;
+use crate::loadouts::LoadoutsIntent;
 use crate::overlay::{ConfirmKind, Modal};
 use crate::profile_import::ImportAction;
 use crate::script_shape::{
@@ -314,6 +315,7 @@ impl frontend_core::frames::FrameHook for TuiFrameHook {
 /// destination for clearing.
 struct TuiSurface<'a> {
     walk_cleared: &'a mut bool,
+    map_desk: &'a mut MapDesk,
     models: frontend_core::Models<'a>,
 }
 
@@ -332,6 +334,7 @@ impl frontend_core::SlotSurface for TuiSurface<'_> {
 
     fn lifetime_reset(&mut self, _name: &str, walk_was_armed: bool) {
         if walk_was_armed {
+            self.map_desk.clear_walk_dest();
             *self.walk_cleared = true;
         }
     }
@@ -339,7 +342,7 @@ impl frontend_core::SlotSurface for TuiSurface<'_> {
     fn released(&mut self, _name: &str) {}
 
     fn models(&mut self) -> frontend_core::Models<'_> {
-        self.models.reborrow()
+        self.models.reborrow().with_map(&mut *self.map_desk)
     }
 
     /// The TUI draws no game image and captures no game input.
@@ -364,11 +367,8 @@ pub struct TuiSession {
     /// The server-profile binding: its prepared template, connection
     /// settings and the launch the next play session uses.
     launcher: frontend_core::launch::ProfileLauncher,
-    /// Catalogue-only demand lease. Dropped on MapClose; never requests PNGs.
-    map_demand: Option<WalkMapDemandHandle>,
-    /// Map demand goes through the shared bake consent (catalogue-only here,
-    /// so it never asks); the remembered choice is edited in settings.
-    map_bake: MapBakeGate,
+    /// Core-owned map demand, bake consent and accepted walk destination.
+    map_desk: MapDesk,
     map_catalogue_named: bool,
     /// The username the settings popup currently edits; reload
     /// `ProfileSettings` into the app when it changes.
@@ -410,7 +410,7 @@ pub struct TuiSession {
     preferences: UiPreferences,
     /// Process-wide loadout presets: the form's editor over the process
     /// local-state service (slots read the same file through it).
-    loadouts: Loadouts,
+    loadouts: LoadoutForm,
     /// Last directory visited in the out-of-tree Load file browser.
     script_load_last_dir: Option<PathBuf>,
     /// Core projection generations the app last copied (fleet rows, the
@@ -436,6 +436,120 @@ impl TuiSession {
 
     fn expire_ack_cache(&mut self) {
         self.ack_checked_at = None;
+    }
+}
+
+/// A real command seam for app-level tests: the actions a key returns are
+/// applied through the dispatcher, over a session on isolated stores and
+/// the models the app lends, as the event loop does.
+#[cfg(test)]
+pub(crate) mod seam {
+    use super::*;
+    use crate::fleet::FleetState;
+    use crossterm::event::KeyEvent;
+
+    pub(crate) struct Seam {
+        session: TuiSession,
+    }
+
+    impl Seam {
+        /// A session on isolated stores: no play and no vault.
+        pub(crate) fn new() -> Self {
+            let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
+            launcher.set_play_host("127.0.0.1");
+            let session =
+                TuiSession::with_launcher(launcher, frontend_core::launch::InstancePermit::skip());
+            Self { session }
+        }
+
+        /// A session over a vault holding `profiles` (name, uid) and an
+        /// empty play: a command that names a profile resolves it to its
+        /// vault identity.
+        pub(crate) fn with_profiles(profiles: &[(&str, i32)]) -> Self {
+            let mut seam = Self::new();
+            seam.session.core.set_spawn_workers(false);
+            let path = frontend_core::scripts::paths::bot_home().join("seam-vault");
+            let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+            for (name, uid) in profiles {
+                vault.put(frontend_core::test_support::FixtureProfile::new(name, "pw").uid(*uid));
+            }
+            let play = frontend_core::test_support::empty_play(&PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            });
+            vault.start_session(&mut seam.session.core, play);
+            seam
+        }
+
+        /// Apply `action` as the event loop does.
+        pub(crate) fn apply(&mut self, app: &mut TuiApp, action: AppAction) {
+            dispatch(&mut self.session, app, action);
+        }
+
+        /// Send `key` to `app`, check that it returns `expected`, then
+        /// apply that action.
+        pub(crate) fn press(&mut self, app: &mut TuiApp, key: KeyEvent, expected: AppAction) {
+            let action = app.on_key(key);
+            assert_eq!(action, expected);
+            self.apply(app, action);
+        }
+
+        /// Send `key` to `app` and apply whatever action it returns.
+        pub(crate) fn send(&mut self, app: &mut TuiApp, key: KeyEvent) {
+            let action = app.on_key(key);
+            self.apply(app, action);
+        }
+
+        /// Commit `text` as the fleet filter of a bare fleet table
+        /// (`SetFleetFilter`).
+        pub(crate) fn filter(&mut self, state: &mut FleetState, text: &str) {
+            let staged = state.filter.staged_mut();
+            staged.clear();
+            staged.push_str(text);
+            let mut walk_cleared = false;
+            let mut desk = MapDesk::default();
+            let mut surface = TuiSurface {
+                walk_cleared: &mut walk_cleared,
+                map_desk: &mut desk,
+                models: frontend_core::Models::none().with_fleet_filter(&mut state.filter),
+            };
+            self.session
+                .core
+                .submit(
+                    OperatorCommand::SetFleetFilter,
+                    Targets::Application,
+                    &mut surface,
+                )
+                .expect("SetFleetFilter opens");
+        }
+
+        /// Make the session's preferences refuse writes (a file past the
+        /// size bound), as a damaged store does.
+        pub(crate) fn refuse_preference_writes(&mut self) {
+            let path = self.session.preferences.path().to_path_buf();
+            std::fs::create_dir_all(path.parent().expect("a preferences directory"))
+                .expect("create the preferences directory");
+            std::fs::write(
+                &path,
+                vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
+            )
+            .expect("write the oversized preferences file");
+            assert!(self.session.preferences.reload().is_err());
+        }
+
+        /// Undo [`Self::refuse_preference_writes`]: a valid empty document.
+        pub(crate) fn allow_preference_writes(&mut self) {
+            let path = self.session.preferences.path().to_path_buf();
+            std::fs::write(&path, b"{}").expect("write an empty preferences document");
+            self.session
+                .preferences
+                .reload()
+                .expect("the empty document loads");
+        }
     }
 }
 
@@ -473,18 +587,16 @@ impl TuiSession {
         // writes through the same service.
         let mut core = OperatorSession::open(permit);
         core.open_process_state();
-        let loadouts = Loadouts::operator_of(&core);
+        let loadouts = LoadoutForm::operator_of(&core);
         let preferences = core
             .preferences()
             .expect("the session's local state was bound just now");
-        let pause_manual_walk = frontend_core::nav_preference(
-            &preferences,
-            frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
-            None,
-        )
-        .unwrap_or(true);
-        core.set_pause_script_on_manual_walk_abort(pause_manual_walk);
-        core.set_walk_globals_store(preferences.share());
+        // The bound operator preferences (the durable walk globals and
+        // their store, the manual-movement pause) become the session's;
+        // the app reads its walk-permission view itself when it binds them.
+        core.adopt_operator_preferences();
+        // This front end draws no game image: the capacity warning says so.
+        core.declare_headless_render();
         let background_ack = frontend_core::resources::background_bots_acked(&preferences);
         Self {
             #[cfg(feature = "memory-profile")]
@@ -495,8 +607,7 @@ impl TuiSession {
             names: Vec::new(),
             mainland: false,
             launcher,
-            map_demand: None,
-            map_bake: MapBakeGate::new(load_map_bake_choice(&preferences)),
+            map_desk: MapDesk::new(load_map_bake_choice(&preferences)),
             map_catalogue_named: false,
             last_focused: None,
             walk_reset: false,
@@ -586,12 +697,26 @@ impl TuiSession {
         }
     }
 
-    /// Unlock (or first-run create) the vault at `path` and start the play.
+    /// Unlock the vault at `path` (`UnlockVault`), or create it on a first
+    /// run, when there is no vault file yet (`CreateVault`), and start the
+    /// play.
     fn unlock_at(&mut self, path: &Path, pass: &str) -> Result<(), String> {
         let (launch, hook) = self.play_launch();
-        self.core
-            .unlock_vault(path, pass, launch, hook)
-            .map_err(|e| e.to_string())?;
+        let command = if path.is_file() {
+            self.core
+                .stage_vault_unlock(path.to_path_buf(), pass, launch, hook);
+            OperatorCommand::UnlockVault
+        } else {
+            self.core
+                .stage_vault_create(path.to_path_buf(), pass, launch, hook);
+            OperatorCommand::CreateVault
+        };
+        let submitted = self
+            .submit_raw(command, Targets::Application)
+            .map_err(|error| error.to_string())?;
+        if let Some(reason) = self.core.command_failure(submitted.request()) {
+            return Err(reason.to_string());
+        }
         self.play_started();
         Ok(())
     }
@@ -703,6 +828,7 @@ impl TuiSession {
             &mut self.core,
             TuiSurface {
                 walk_cleared: &mut self.walk_reset,
+                map_desk: &mut self.map_desk,
                 models: frontend_core::Models::none()
                     .with_scripts(&mut self.scripts)
                     .with_import(&mut self.profile_import)
@@ -711,23 +837,64 @@ impl TuiSession {
         )
     }
 
-    /// Submit a profile-write row for `name`: its operation, or its owner's
-    /// refusal text (today's `Err` of the core write).
-    fn submit_profile_write(
+    /// [`Self::core_and_surface`] that also lends the models the app owns:
+    /// the fleet's marks and filter, the Quester Paths controller, the
+    /// walk-permission view and the settings form-save model. Handlers that
+    /// submit rows over them build their surface here.
+    fn core_and_surface_with<'a>(
+        &'a mut self,
+        app: &'a mut TuiApp,
+    ) -> (&'a mut OperatorSession<()>, TuiSurface<'a>) {
+        (
+            &mut self.core,
+            TuiSurface {
+                walk_cleared: &mut self.walk_reset,
+                map_desk: &mut self.map_desk,
+                models: frontend_core::Models::none()
+                    .with_scripts(&mut self.scripts)
+                    .with_import(&mut self.profile_import)
+                    .with_loadouts(&mut self.loadouts)
+                    .with_marks(&mut app.table.selection)
+                    .with_fleet_filter(&mut app.table.filter)
+                    .with_quester(&mut app.quester_paths_controller)
+                    .with_walk_globals(&mut app.walk_permissions)
+                    .with_form_save(&mut app.settings_save),
+            },
+        )
+    }
+
+    /// Submit `command` for `targets` over the app's lent models. `Err` is
+    /// a refused command, the owner's refusal or failure text of the first
+    /// failed member, or the failure of the operation it opened.
+    fn submit_with(
         &mut self,
+        app: &mut TuiApp,
         command: OperatorCommand,
-        name: &str,
-    ) -> Result<frontend_core::OperationId, String> {
-        let (core, mut surface) = self.core_and_surface();
+        targets: Targets<'_>,
+    ) -> Result<frontend_core::Submitted, String> {
+        let (core, mut surface) = self.core_and_surface_with(app);
         let submitted = core
-            .submit(command, Targets::Profile(name), &mut surface)
+            .submit(command, targets, &mut surface)
             .map_err(|error| error.to_string())?;
         if let Some(reason) = core.command_failure(submitted.request()) {
             return Err(reason.to_string());
         }
-        submitted
-            .operation()
-            .ok_or_else(|| format!("{name}: no operation"))
+        match submitted.operation().and_then(|op| core.failure(op)) {
+            Some(failure) => Err(failure),
+            None => Ok(submitted),
+        }
+    }
+    /// Submit with app-owned models without collapsing a bulk report into
+    /// its first failed member.
+    fn submit_raw_with(
+        &mut self,
+        app: &mut TuiApp,
+        command: OperatorCommand,
+        targets: Targets<'_>,
+    ) -> Result<frontend_core::Submitted, String> {
+        let (core, mut surface) = self.core_and_surface_with(app);
+        core.submit(command, targets, &mut surface)
+            .map_err(|error| error.to_string())
     }
 
     /// Log in the focused member (explicit handshake; recreates a terminal
@@ -744,8 +911,14 @@ impl TuiSession {
     /// Log out the focused member; the slot stays loaded and latched.
     fn logout(&mut self, app: &mut TuiApp) {
         if let Some(name) = app.focused_name() {
-            self.scripts.cancel_queued_as(&name, "logged out");
-            self.scripts.publish_start_places(&mut self.core);
+            self.scripts.stage_cancel_queued("logged out");
+            if let Err(error) = self.submit_with(
+                app,
+                OperatorCommand::CancelQueuedStart,
+                Targets::Profile(&name),
+            ) {
+                app.error = Some(error);
+            }
             self.apply_script_notice(app);
             if let Err(error) = self.submit(OperatorCommand::Logout, Targets::Profile(&name)) {
                 app.error = Some(error);
@@ -774,8 +947,14 @@ impl TuiSession {
 
     /// Relog through the login FIFO to apply the entire queued memory mode.
     fn memory_relog_now(&mut self, app: &mut TuiApp, name: &str) {
-        self.scripts.cancel_queued_as(name, "logged out");
-        self.scripts.publish_start_places(&mut self.core);
+        self.scripts.stage_cancel_queued("logged out");
+        if let Err(error) = self.submit_with(
+            app,
+            OperatorCommand::CancelQueuedStart,
+            Targets::Profile(name),
+        ) {
+            app.error = Some(error);
+        }
         self.apply_script_notice(app);
         app.error = self
             .submit(OperatorCommand::RelogNow, Targets::Profile(name))
@@ -785,8 +964,14 @@ impl TuiSession {
     /// Remove `name` (frozen when the operator confirmed): clean logout,
     /// then its worker stops. The neighbour becomes selected when it was.
     fn remove(&mut self, app: &mut TuiApp, name: &str) {
-        self.scripts.cancel_queued_as(name, "removed");
-        self.scripts.publish_start_places(&mut self.core);
+        self.scripts.stage_cancel_queued("removed");
+        if let Err(error) = self.submit_with(
+            app,
+            OperatorCommand::CancelQueuedStart,
+            Targets::Profile(name),
+        ) {
+            app.error = Some(error);
+        }
         self.apply_script_notice(app);
         let submitted = match self.submit(OperatorCommand::Remove, Targets::Profile(name)) {
             Ok(submitted) => submitted,
@@ -998,18 +1183,14 @@ impl TuiSession {
         let Some(profile) = self.bound().map(|profile| profile.share()) else {
             return;
         };
-        if self.map_demand.is_none() {
-            match self
-                .map_bake
-                .open_profile(&profile, WalkMapDemand::CatalogueOnly)
-            {
-                Ok(handle) => self.map_demand = Some(handle),
-                Err(error) => {
-                    app.set_map_unavailable(format!(
-                        "coverage: catalogue unavailable: {error}; terrain imagery unavailable"
-                    ));
-                    return;
-                }
+        if self.map_desk.map_demand().is_none() {
+            self.map_desk
+                .stage_open_demand(profile, WalkMapDemand::CatalogueOnly);
+            if let Err(error) = self.submit(OperatorCommand::OpenMapDemand, Targets::Application) {
+                app.set_map_unavailable(format!(
+                    "coverage: catalogue unavailable: {error}; terrain imagery unavailable"
+                ));
+                return;
             }
         }
         if app.map_catalogue_status == MapCatalogueStatus::Unavailable
@@ -1025,18 +1206,18 @@ impl TuiSession {
         if !app.map_active {
             return;
         }
+        self.core.poll_map_demand(&mut self.map_desk);
         let Some(profile) = self.bound().map(|profile| profile.share()) else {
             return;
         };
-        let Some(handle) = self.map_demand.as_ref() else {
+        let Some(status) = self.map_desk.map_demand().map(|handle| handle.status()) else {
             return;
         };
-        let status = handle.status();
         match status.state() {
             WalkMapJobState::Ready => {
                 if let Some(ready) = self
-                    .map_demand
-                    .as_ref()
+                    .map_desk
+                    .map_demand()
                     .and_then(|handle| handle.ready_catalogue().ok())
                 {
                     self.bind_ready_catalogue(app, ready);
@@ -1127,117 +1308,202 @@ impl TuiSession {
     }
 
     fn release_map_catalogue(&mut self) {
-        self.map_demand = None;
+        if self.map_desk.needs_release() {
+            if let Err(error) = self.submit(OperatorCommand::ReleaseMapDemand, Targets::Application)
+            {
+                self.error = Some(error);
+            }
+        }
         self.map_catalogue_named = false;
-        frontend_core::walk_map::reap_walk_map_demand();
     }
 
     /// Confirm the pending map Walk through the shared operator session.
     fn arm_walk_on(&mut self, app: &mut TuiApp, _dest: Tile) {
-        let Some(name) = app.focused_name() else {
-            app.error = Some("map: no focused slot".into());
-            return;
-        };
-        let Some(context) = self.map_context(app) else {
-            app.error = Some("map: navigation identity unavailable".into());
-            return;
-        };
-        let options = app.map_find_options();
-        let result = self
-            .core
-            .confirm_walk(&mut app.map_model, context, Some(&name), options);
+        let name = app.focused_name();
+        if let (Some(name), Some(context)) = (name.as_deref(), self.map_context(app)) {
+            let origin = self.core.walk_slot_status(name).origin();
+            let options = app.map_find_options();
+            self.map_desk
+                .stage_walk_to(&mut app.map_model, context, origin, options);
+        }
+        let targets = name.as_deref().map_or(Targets::Selected, Targets::Profile);
+        let result = self.submit(OperatorCommand::WalkTo, targets);
         app.clear_consumed_map_selection();
         match result {
-            Ok(destination) => {
-                app.walk_dest = Some(destination);
-                app.error = None;
+            Ok(submitted) => {
+                let failure = self.core.command_failure(submitted.request());
+                let applied = self
+                    .core
+                    .commands()
+                    .report(submitted.request())
+                    .is_some_and(|report| {
+                        report.members().iter().any(|member| {
+                            matches!(
+                                member.terminal(),
+                                Some(api::identity::Settlement::Completed(
+                                    frontend_core::command::Completion::Done
+                                ))
+                            )
+                        })
+                    });
+                if let Some(error) = failure {
+                    app.error = Some(error.to_string());
+                } else if applied {
+                    app.walk_dest = self.map_desk.walk_dest();
+                    app.error = None;
+                } else {
+                    app.error = Some("map: WalkTo was not applied".into());
+                }
             }
-            Err(error) => app.error = Some(format!("map: {error}")),
+            Err(error) => app.error = Some(error),
         }
     }
 
     fn map_teleport(&mut self, app: &mut TuiApp, _dest: Tile) {
-        let Some(name) = app.focused_name() else {
-            app.error = Some("map: no focused slot".into());
-            return;
-        };
-        let Some(context) = self.map_context(app) else {
-            app.error = Some("map: navigation identity unavailable".into());
-            return;
-        };
-        let options = app.map_find_options();
-        let result = self
-            .core
-            .confirm_teleport(&mut app.map_model, context, Some(&name), options);
+        let name = app.focused_name();
+        if let (Some(name), Some(context)) = (name.as_deref(), self.map_context(app)) {
+            let origin = self.core.walk_slot_status(name).origin();
+            let options = app.map_find_options();
+            self.map_desk
+                .stage_teleport(&mut app.map_model, context, origin, options);
+        }
+        let targets = name.as_deref().map_or(Targets::Selected, Targets::Profile);
+        let result = self.submit(OperatorCommand::Teleport, targets);
         app.clear_consumed_map_selection();
-        app.error = result.err().map(|error| format!("map: {error}"));
+        app.error = match result {
+            Err(error) => Some(error),
+            Ok(submitted) => self
+                .core
+                .command_failure(submitted.request())
+                .map(|error| error.to_string()),
+        };
     }
 
     /// Walk every marked bot through the shared operator-session operation.
     fn map_walk_group(&mut self, app: &mut TuiApp) {
-        if frontend_core::marked_availability(
-            frontend_core::MarkedAction::Walk,
-            app.table.selection.len(),
-            app.script_sel.is_some(),
-            app.focused_name().is_some(),
-        ) == Err(frontend_core::MarkedBlock::NothingMarked)
-        {
-            app.error = Some("no bots selected".into());
-            return;
+        if let Some(context) = self.map_context(app) {
+            let options = app.map_find_options();
+            self.map_desk
+                .stage_group_walk(&mut app.map_model, context, options);
         }
-        let Some(context) = self.map_context(app) else {
-            app.error = Some("map: focused slot or navigation identity unavailable".into());
-            return;
-        };
-        let options = app.map_find_options();
-        let planned = app
-            .map_model
-            .pending()
-            .map(|selection| selection.reported_destination());
-        let report = self.core.confirm_marked_walk(
-            &app.table.selection,
-            &mut app.map_model,
-            context,
-            options,
-        );
         app.clear_consumed_map_selection();
-        if report.done_count() > 0 {
-            app.walk_dest = planned;
+        let result = self.submit_with(app, OperatorCommand::GroupWalk, Targets::Marked);
+        match result {
+            Err(error) => app.error = Some(error),
+            Ok(mut submitted) => match submitted.take_bulk() {
+                Some(report) => {
+                    if report.done_count() > 0 {
+                        app.walk_dest = self.map_desk.walk_dest();
+                    }
+                    app.error = Some(report.summary());
+                }
+                None => app.error = Some("map: GroupWalk produced no result".into()),
+            },
         }
-        app.error = Some(report.summary());
     }
 
     /// WASD one-tile walk: the client pathfinds this adjacent step.
-    fn wasd_walk(&self, app: &TuiApp, dest: Tile) {
+    fn wasd_walk(&mut self, app: &mut TuiApp, dest: Tile) {
         let Some(name) = app.focused_name() else {
             return;
         };
-        self.core.step_to(&name, dest.x, dest.z, dest.level);
+        self.submit_wire(
+            app,
+            &name,
+            frontend_core::GameInputEvent::walk(dest.x, dest.z, dest.level),
+        );
+    }
+
+    fn submit_wire(&mut self, app: &mut TuiApp, name: &str, event: frontend_core::GameInputEvent) {
+        self.map_desk.begin_game_input_frame();
+        if !self.map_desk.stage_game_input(event) {
+            app.error = Some("game input frame is full".into());
+            return;
+        }
+        app.error = match self.submit(OperatorCommand::GameInput, Targets::Profile(name)) {
+            Err(error) => Some(error),
+            Ok(submitted) => self
+                .core
+                .command_failure(submitted.request())
+                .map(|error| error.to_string()),
+        };
     }
 
     /// Chat modal advance: queue `continue_dialog` / `answer_choice` on
     /// the focused slot (the guardian's hold still lets chat through).
-    fn chat_send(&self, app: &TuiApp, action: ChatAction) {
+    fn chat_send(&mut self, app: &mut TuiApp, action: ChatAction) {
         let Some(name) = app.focused_name() else {
             return;
         };
         match action {
-            ChatAction::Continue => self.core.chat_continue(&name),
-            ChatAction::Answer(option) => self.core.chat_answer(&name, option as i32),
+            ChatAction::Continue => {
+                self.submit_wire(
+                    app,
+                    &name,
+                    frontend_core::GameInputEvent::continue_dialogue(),
+                );
+            }
+            ChatAction::Answer(option) => {
+                self.submit_wire(
+                    app,
+                    &name,
+                    frontend_core::GameInputEvent::answer(option as i32),
+                );
+            }
             ChatAction::PaintButton(index) => {
-                if let Some(paint) = app.chat_data.script_paint.as_ref().map(PaintFrame::view) {
-                    if let Some(id) = paint.buttons().nth(index).map(|b| b.id().to_owned()) {
-                        self.core.script_paint_click(&name, &id, paint.generation());
-                    }
+                let click = app
+                    .chat_data
+                    .script_paint
+                    .as_ref()
+                    .map(PaintFrame::view)
+                    .and_then(|paint| {
+                        paint
+                            .buttons()
+                            .nth(index)
+                            .map(|button| (button.id().to_owned(), paint.generation()))
+                    });
+                if let Some((id, generation)) = click {
+                    self.scripts
+                        .stage_paint_input(frontend_core::scripts::PaintInput::Click {
+                            id,
+                            generation,
+                        });
+                    app.error = self
+                        .submit_with(
+                            app,
+                            OperatorCommand::ScriptPaintInput,
+                            Targets::Profile(&name),
+                        )
+                        .err();
                 }
             }
             ChatAction::PaintChrome(index) => {
-                if let Some(paint) = app.chat_data.script_paint.as_ref().map(PaintFrame::view) {
-                    let rows = super::chat::paint_chrome_rows(paint);
-                    if let Some((key, select_name, _)) = rows.get(index) {
-                        self.core
-                            .script_paint_select(&name, key, select_name, paint.generation());
-                    }
+                let selection = app
+                    .chat_data
+                    .script_paint
+                    .as_ref()
+                    .map(PaintFrame::view)
+                    .and_then(|paint| {
+                        super::chat::paint_chrome_rows(paint).get(index).map(
+                            |(key, select_name, _)| {
+                                (key.to_owned(), select_name.to_owned(), paint.generation())
+                            },
+                        )
+                    });
+                if let Some((key, select_name, generation)) = selection {
+                    self.scripts
+                        .stage_paint_input(frontend_core::scripts::PaintInput::Select {
+                            key,
+                            name: select_name,
+                            generation,
+                        });
+                    app.error = self
+                        .submit_with(
+                            app,
+                            OperatorCommand::ScriptPaintInput,
+                            Targets::Profile(&name),
+                        )
+                        .err();
                 }
             }
             ChatAction::None => {}
@@ -1249,7 +1515,17 @@ impl TuiSession {
             return Ok(());
         }
         let Some(root) = self.catalog_root() else {
-            self.scripts.mark_catalog_filled();
+            self.scripts.stage_catalog_action(
+                CatalogActionKind::Fill,
+                None,
+                frontend_core::scripts::paths::rs2b0t_path_file(),
+            );
+            let submitted = self
+                .submit_raw(OperatorCommand::ImportCatalog, Targets::Application)
+                .map_err(|error| error.to_string())?;
+            if let Some(error) = self.core.command_failure(submitted.request()) {
+                return Err(error.to_string());
+            }
             return Ok(());
         };
         self.scripts
@@ -1257,19 +1533,22 @@ impl TuiSession {
             .map_err(|error| error.to_string())
     }
 
-    /// Fill the JS library's cards from the `$RS2B0T` registry once when
-    /// the env/persisted root is already known (live boot). Errors are
-    /// debug-only.
-    fn fill_rs2b0t_cards_once(&mut self) {
+    /// Fill the JS library's cards from the known catalog root once.
+    fn fill_rs2b0t_cards_once(&mut self, app: &mut TuiApp) {
         if self.scripts.catalog_filled() {
             return;
         }
-        let root = self.catalog_root();
-        if let Some(root) = root.as_deref() {
-            self.scripts.fill_catalog_once(Some(root));
-        } else {
-            self.scripts.mark_catalog_filled();
+        self.scripts.stage_catalog_action(
+            CatalogActionKind::Fill,
+            self.catalog_root(),
+            frontend_core::scripts::paths::rs2b0t_path_file(),
+        );
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::ImportCatalog, Targets::Application)
+        {
+            app.error = Some(error);
         }
+        self.apply_script_notice(app);
     }
 
     /// Opening Browse: fill from `$RS2B0T`/persisted root, or prompt for a
@@ -1278,11 +1557,22 @@ impl TuiSession {
         if self.scripts.catalog_filled() {
             return;
         }
-        if let Some(root) = self.catalog_root() {
-            self.scripts.fill_catalog_once(Some(&root));
+        let root = self.catalog_root();
+        self.scripts.stage_catalog_action(
+            CatalogActionKind::Fill,
+            root.clone(),
+            frontend_core::scripts::paths::rs2b0t_path_file(),
+        );
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::ImportCatalog, Targets::Application)
+        {
+            app.error = Some(error);
             return;
         }
-        self.scripts.mark_catalog_filled();
+        self.apply_script_notice(app);
+        if root.is_some() {
+            return;
+        }
         if frontend_core::scripts::paths::rs2b0t_import_deferred_at(
             &frontend_core::scripts::paths::rs2b0t_import_file(),
         ) {
@@ -1296,9 +1586,15 @@ impl TuiSession {
     }
 
     fn defer_rs2b0t_catalog(&mut self, app: &mut TuiApp) {
-        let _ = frontend_core::scripts::paths::set_rs2b0t_import_deferred_at(
-            &frontend_core::scripts::paths::rs2b0t_import_file(),
-        );
+        self.scripts
+            .stage_defer_catalog(frontend_core::scripts::paths::rs2b0t_import_file());
+        if let Err(error) = self.submit_with(
+            app,
+            OperatorCommand::DeferCatalogImport,
+            Targets::Application,
+        ) {
+            app.error = Some(error);
+        }
         self.rs2b0t_catalog_open = false;
         app.rs2b0t_catalog_open = false;
     }
@@ -1309,11 +1605,29 @@ impl TuiSession {
         // Script names map through the catalog. If its first scan is still
         // running, hold this preview until the worker publishes the catalog.
         if let ImportAction::Preview(path) = &action {
+            *self.profile_import.path_mut() = path.clone();
+            if let Err(error) = self.submit_with(
+                app,
+                OperatorCommand::EditProfileImportPath,
+                Targets::Application,
+            ) {
+                app.error = Some(error);
+                self.show_profile_import(app);
+                return;
+            }
             if !self.scripts.catalog_filled() {
                 if let Some(root) = self.catalog_root() {
-                    self.scripts.fill_catalog_once(Some(&root));
+                    self.scripts.stage_catalog_action(
+                        frontend_core::scripts::CatalogActionKind::Fill,
+                        Some(root),
+                        frontend_core::scripts::paths::rs2b0t_path_file(),
+                    );
+                    if let Err(error) =
+                        self.submit_with(app, OperatorCommand::ImportCatalog, Targets::Application)
+                    {
+                        app.error = Some(error);
+                    }
                     if self.scripts.catalog_work_pending() {
-                        *self.profile_import.path_mut() = path.clone();
                         self.profile_import_preview_pending = true;
                         self.show_profile_import(app);
                         return;
@@ -1326,24 +1640,127 @@ impl TuiSession {
             self.show_profile_import(app);
             return;
         }
-        let flow = &mut self.profile_import;
         match action {
-            ImportAction::Preview(path) => {
-                *flow.path_mut() = path;
-                flow.preview(&self.core, &self.scripts);
+            ImportAction::Preview(_) => {
+                if let Err(error) = self.submit_with(
+                    app,
+                    OperatorCommand::PreviewProfileImport,
+                    Targets::Application,
+                ) {
+                    app.error = Some(error);
+                }
             }
-            ImportAction::Policy(policy) => flow.set_policy(&self.core, &self.scripts, policy),
+            ImportAction::Policy(policy) => {
+                if let Err(error) = self.submit_with(
+                    app,
+                    OperatorCommand::SetProfileImportPolicy(policy),
+                    Targets::Application,
+                ) {
+                    app.error = Some(error);
+                }
+            }
             ImportAction::IncludeUnusable(include) => {
-                flow.set_include_unusable(&self.core, &self.scripts, include)
+                if let Err(error) = self.submit_with(
+                    app,
+                    OperatorCommand::SetProfileImportIncludeUnusable(include),
+                    Targets::Application,
+                ) {
+                    app.error = Some(error);
+                }
             }
-            ImportAction::Confirm => flow.confirm(&mut self.core, &self.scripts),
-            ImportAction::Back => flow.back(),
-            ImportAction::AskDelete => flow.ask_delete(),
-            ImportAction::CancelDelete => flow.cancel_delete(),
-            ImportAction::ConfirmDelete => flow.confirm_delete(&self.core),
+            ImportAction::Confirm => {
+                match self
+                    .profile_import
+                    .prepare_confirmation(&self.core, &self.scripts)
+                {
+                    Ok(()) => {
+                        let planned = self
+                            .profile_import
+                            .planned_writes()
+                            .map(|(index, name, command)| (index, name.to_owned(), command))
+                            .collect::<Vec<_>>();
+                        for (index, name, planned_command) in planned {
+                            match planned_command {
+                                OperatorCommand::CreateProfile => {
+                                    if let Err(error) =
+                                        self.profile_import.stage_create_account(index)
+                                    {
+                                        app.error = Some(format!("profile import: {error}"));
+                                        break;
+                                    }
+                                    if let Err(error) = self.submit(
+                                        OperatorCommand::CreateProfile,
+                                        Targets::Application,
+                                    ) {
+                                        app.error = Some(format!("profile import: {error}"));
+                                    }
+                                }
+                                OperatorCommand::SaveProfile => {
+                                    if let Err(error) =
+                                        self.profile_import.stage_save_account(index)
+                                    {
+                                        app.error = Some(format!("profile import: {error}"));
+                                        break;
+                                    }
+                                    if let Err(error) = self.submit(
+                                        OperatorCommand::SaveProfile,
+                                        Targets::Profile(&name),
+                                    ) {
+                                        app.error = Some(format!("profile import: {error}"));
+                                    }
+                                }
+                                _ => {
+                                    app.error = Some(format!(
+                                        "profile import account {name} has an unsupported writer"
+                                    ));
+                                    break;
+                                }
+                            }
+                            self.profile_import.cancel_staged_account(index);
+                        }
+                    }
+                    Err(error) => app.error = Some(format!("profile import: {error}")),
+                }
+            }
+            ImportAction::Back => {
+                if let Err(error) = self.submit_with(
+                    app,
+                    OperatorCommand::ReturnToProfileImportPath,
+                    Targets::Application,
+                ) {
+                    app.error = Some(error);
+                }
+            }
+            ImportAction::AskDelete => {
+                if let Err(error) = self.submit_with(
+                    app,
+                    OperatorCommand::SetProfileImportDeletePrompt(true),
+                    Targets::Application,
+                ) {
+                    app.error = Some(error);
+                }
+            }
+            ImportAction::CancelDelete => {
+                if let Err(error) = self.submit_with(
+                    app,
+                    OperatorCommand::SetProfileImportDeletePrompt(false),
+                    Targets::Application,
+                ) {
+                    app.error = Some(error);
+                }
+            }
+            ImportAction::ConfirmDelete => {
+                if let Err(error) = self.submit_with(
+                    app,
+                    OperatorCommand::DeleteProfileImportExport,
+                    Targets::Application,
+                ) {
+                    app.error = Some(error);
+                }
+            }
             ImportAction::Close => {
                 self.profile_import_preview_pending = false;
-                *flow = frontend_core::rs2b0t_import::ProfileImport::new();
+                self.profile_import = frontend_core::rs2b0t_import::ProfileImport::new();
                 return;
             }
         }
@@ -1394,16 +1811,21 @@ impl TuiSession {
         view.delete_asked = flow.delete_asked();
     }
 
-    fn import_rs2b0t_catalog(&mut self, root: &Path) -> Result<(), String> {
+    fn import_rs2b0t_catalog(&mut self, app: &mut TuiApp, root: &Path) -> Result<(), String> {
         if !rs2b0t_root_has_index(root) {
             return Err(format!(
                 "no catalog at {}",
                 frontend_core::scripts::paths::registry_index_path(root).display()
             ));
         }
-        self.scripts
-            .request_catalog_import(root, &frontend_core::scripts::paths::rs2b0t_path_file())
-            .map_err(|error| error.to_string())
+        self.scripts.stage_catalog_action(
+            CatalogActionKind::Import,
+            Some(root.to_path_buf()),
+            frontend_core::scripts::paths::rs2b0t_path_file(),
+        );
+        self.submit_with(app, OperatorCommand::ImportCatalog, Targets::Application)?;
+        self.apply_script_notice(app);
+        Ok(())
     }
 
     /// Show the script coordinator's latest notice on the strip.
@@ -1422,26 +1844,36 @@ impl TuiSession {
         }
     }
 
-    /// Operator Start on the focused profile: `sel` becomes its pending
-    /// selection and Starts with its own parameters; the assignment is
-    /// saved once the Start is Ready (the same core path as the panel).
+    /// Operator Start on the focused profile: stage its selected card, then
+    /// submit selection and Start as separate command rows.
     fn script_start(&mut self, app: &mut TuiApp, sel: &ScriptChoice) {
         let Some(name) = app.focused_name() else {
             app.error = Some("script: no focused profile".into());
             return;
         };
-        self.scripts.set_pending_browse(&name, sel.duplicate());
-        let root = self.start_catalog_root();
-        let result = self
-            .scripts
-            .start_selected(&mut self.core, &name, Some(sel), root.as_deref());
-        match result {
-            Ok(()) => self.scripts.show_load_failures(),
-            Err(e) => {
-                self.apply_script_notice(app);
-                app.error = Some(format!("script: {e}"));
-                return;
-            }
+        self.scripts.stage_browse_pick(sel.duplicate());
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::PickBrowseCard, Targets::Application)
+        {
+            app.error = Some(error);
+            return;
+        }
+        if let Err(error) = self.submit_with(
+            app,
+            OperatorCommand::SelectScriptCard,
+            Targets::Profile(&name),
+        ) {
+            app.error = Some(error);
+            return;
+        }
+        self.scripts
+            .stage_start_catalog_root(self.start_catalog_root());
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::StartScript, Targets::Profile(&name))
+        {
+            app.error = Some(format!("script: {error}"));
+            self.apply_script_notice(app);
+            return;
         }
         self.apply_script_notice(app);
     }
@@ -1451,22 +1883,30 @@ impl TuiSession {
     /// pump.
     fn poll_scripts(&mut self, app: &mut TuiApp) {
         self.scripts.poll(&mut self.core);
-        if let Some((_, result)) = self.scripts.take_catalog_import_result() {
+        if let Some((root, result)) = self.scripts.take_catalog_import_update() {
             match result {
                 Ok(_) => {
                     let _ = frontend_core::scripts::paths::clear_rs2b0t_import_at(
                         &frontend_core::scripts::paths::rs2b0t_import_file(),
                     );
+                    self.rs2b0t_catalog_dir = root.clone();
+                    app.rs2b0t_catalog_dir = root;
                     self.rs2b0t_catalog_open = false;
                     app.rs2b0t_catalog_open = false;
                     app.error = None;
                 }
-                Err(error) => app.error = Some(error.to_string()),
+                Err(error) => app.error = Some(error),
             }
         }
         if self.profile_import_preview_pending && !self.scripts.catalog_work_pending() {
             self.profile_import_preview_pending = false;
-            self.profile_import.preview(&self.core, &self.scripts);
+            if let Err(error) = self.submit_with(
+                app,
+                OperatorCommand::PreviewProfileImport,
+                Targets::Application,
+            ) {
+                app.error = Some(error);
+            }
             self.show_profile_import(app);
         }
         self.scripts.take_start_failures();
@@ -1526,17 +1966,33 @@ impl TuiSession {
         let root = self.start_catalog_root();
         match frontend_core::combined_bulk_scope(&app.table.selection) {
             frontend_core::BulkScope::Marked => {
-                frontend_core::start_marked(
-                    &app.table.selection,
-                    &mut self.core,
-                    &mut self.scripts,
-                    app.script_sel.as_ref(),
-                    root.as_deref(),
-                );
+                if let Some(selection) = app.script_sel.as_ref().map(ScriptChoice::duplicate) {
+                    self.scripts.stage_browse_pick(selection);
+                } else {
+                    self.scripts.stage_browse_pick_clear();
+                }
+                if let Err(error) =
+                    self.submit_with(app, OperatorCommand::PickBrowseCard, Targets::Application)
+                {
+                    app.error = Some(error);
+                    return;
+                }
+                self.scripts.stage_start_catalog_root(root);
+                match self.submit_raw_with(app, OperatorCommand::StartScript, Targets::Marked) {
+                    Ok(mut submitted) => {
+                        app.error = submitted.take_bulk().map(|report| report.summary());
+                    }
+                    Err(error) => app.error = Some(error),
+                }
                 self.apply_script_notice(app);
             }
             frontend_core::BulkScope::All => {
-                self.scripts.start_all(&mut self.core, root.as_deref());
+                self.scripts.stage_start_catalog_root(root);
+                if let Err(error) =
+                    self.submit_with(app, OperatorCommand::StartScript, Targets::Everyone)
+                {
+                    app.error = Some(error);
+                }
                 self.apply_script_notice(app);
             }
         }
@@ -1549,16 +2005,22 @@ impl TuiSession {
             app.error = Some(frontend_core::ASSIGN_NO_CARD.into());
             return;
         };
-        let root = self.start_catalog_root();
-        let report = frontend_core::assign_marked(
-            &app.table.selection,
-            &mut self.core,
-            &mut self.scripts,
-            &card,
-            root.as_deref(),
-        );
+        self.scripts.stage_browse_pick(card);
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::PickBrowseCard, Targets::Application)
+        {
+            app.error = Some(error);
+            return;
+        }
+        self.scripts
+            .stage_start_catalog_root(self.start_catalog_root());
+        match self.submit_raw_with(app, OperatorCommand::AssignScript, Targets::Marked) {
+            Ok(mut submitted) => {
+                app.error = submitted.take_bulk().map(|report| report.summary());
+            }
+            Err(error) => app.error = Some(error),
+        }
         self.apply_script_notice(app);
-        app.error = Some(report.summary());
     }
 
     /// Assign the selected script to every marked bot and start it there
@@ -1568,14 +2030,21 @@ impl TuiSession {
             app.error = Some(frontend_core::ASSIGN_RESTART_NO_CARD.into());
             return;
         };
-        let root = self.start_catalog_root();
-        frontend_core::assign_and_restart_marked(
-            &app.table.selection,
-            &mut self.core,
-            &mut self.scripts,
-            &card,
-            root.as_deref(),
-        );
+        self.scripts.stage_browse_pick(card);
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::PickBrowseCard, Targets::Application)
+        {
+            app.error = Some(error);
+            return;
+        }
+        self.scripts
+            .stage_start_catalog_root(self.start_catalog_root());
+        match self.submit_raw_with(app, OperatorCommand::AssignAndRestart, Targets::Marked) {
+            Ok(mut submitted) => {
+                app.error = submitted.take_bulk().map(|report| report.summary());
+            }
+            Err(error) => app.error = Some(error),
+        }
         self.apply_script_notice(app);
     }
 
@@ -1590,48 +2059,70 @@ impl TuiSession {
             app.error = Some("Apply to marked: focus a bot and select a script".into());
             return;
         };
-        match frontend_core::prepare_apply_settings_marked(
-            &app.table.selection,
-            &self.core,
-            &mut self.scripts,
-            &source,
-            &card,
+        let kind = if card.compiled_id().is_some() {
+            frontend_core::command::CardKind::Native
+        } else {
+            frontend_core::command::CardKind::Script
+        };
+        self.scripts.stage_settings_sync_prepare(&source, &card);
+        match self.submit_with(
+            app,
+            OperatorCommand::ApplySettingsToMarked(kind),
+            Targets::Marked,
         ) {
-            Ok(scope) => app.confirm(ConfirmKind::ApplyMarked(scope.prompt().to_string())),
+            Ok(_) => match self.scripts.prepared_settings_sync() {
+                Some(scope) => app.confirm(ConfirmKind::ApplyMarked(scope.prompt().to_string())),
+                None => app.error = Some("Apply to marked: no prepared settings".into()),
+            },
             Err(error) => app.error = Some(error),
         }
         self.apply_script_notice(app);
     }
 
-    /// Log in every marked bot, loading the ones not loaded yet.
+    /// Log in every marked bot, loading the ones not loaded yet (`Login`
+    /// over the marks).
     fn login_marked(&mut self, app: &mut TuiApp) {
-        let (core, mut surface) = self.core_and_surface();
-        let report = frontend_core::login_marked(&app.table.selection, core, &mut surface);
-        app.error = Some(report.summary());
+        self.submit_marked(app, OperatorCommand::Login);
     }
 
-    /// Log out every marked bot that is logged in or logging in.
+    /// Log out every marked bot that is logged in or logging in (`Logout`
+    /// over the marks).
     fn logout_marked(&mut self, app: &mut TuiApp) {
-        let report =
-            frontend_core::logout_marked(&app.table.selection, &mut self.core, &mut self.scripts);
+        self.submit_marked(app, OperatorCommand::Logout);
+    }
+
+    /// Submit `command` over the marked rows and show the per-row report's
+    /// summary; a refused command or a failed member shows its reason.
+    fn submit_marked(&mut self, app: &mut TuiApp, command: OperatorCommand) {
+        let outcome = self.submit_with(app, command, Targets::Marked);
         self.apply_script_notice(app);
-        app.error = Some(report.summary());
+        app.error = Some(match outcome {
+            Err(error) => error,
+            Ok(mut submitted) => submitted.take_bulk().map_or_else(
+                || format!("{command:?}: produced no result"),
+                |report| report.summary(),
+            ),
+        });
     }
 
     fn script_stop_all(&mut self, app: &mut TuiApp) {
         match frontend_core::combined_bulk_scope(&app.table.selection) {
             frontend_core::BulkScope::Marked => {
-                let report = frontend_core::stop_marked(
-                    &app.table.selection,
-                    &mut self.core,
-                    &mut self.scripts,
-                );
+                match self.submit_raw_with(app, OperatorCommand::StopScript, Targets::Marked) {
+                    Ok(mut submitted) => {
+                        app.error = submitted.take_bulk().map(|report| report.summary());
+                    }
+                    Err(error) => app.error = Some(error),
+                }
                 app.reload_confirm = self.scripts.reload_awaiting_confirm();
                 self.apply_script_notice(app);
-                app.error = Some(report.summary());
             }
             frontend_core::BulkScope::All => {
-                self.scripts.stop_all(&mut self.core);
+                if let Err(error) =
+                    self.submit_with(app, OperatorCommand::StopScript, Targets::Everyone)
+                {
+                    app.error = Some(error);
+                }
                 app.reload_confirm = self.scripts.reload_awaiting_confirm();
                 self.apply_script_notice(app);
             }
@@ -1644,13 +2135,25 @@ impl TuiSession {
         let target =
             self.scripts
                 .reload_target(&self.core, focused.as_deref(), app.script_sel.as_ref());
-        self.scripts.begin_reload(&mut self.core, target);
+        let command = if self.scripts.reload_confirmation_pending(target.as_ref()) {
+            OperatorCommand::ConfirmReload
+        } else {
+            OperatorCommand::ReloadScripts
+        };
+        self.scripts.stage_reload_target(target);
+        if let Err(error) = self.submit_with(app, command, Targets::Application) {
+            app.error = Some(error);
+        }
         app.reload_confirm = self.scripts.reload_awaiting_confirm();
         self.apply_script_notice(app);
     }
 
     fn script_reload_cancel(&mut self, app: &mut TuiApp) {
-        self.scripts.cancel_reload();
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::CancelReload, Targets::Application)
+        {
+            app.error = Some(error);
+        }
         app.reload_confirm = false;
         self.apply_script_notice(app);
     }
@@ -1698,53 +2201,136 @@ impl TuiSession {
         self.apply_script_notice(app);
     }
 
-    /// One key into the open params popup: each edit is a typed parameter
-    /// write on the focused profile through the coordinator.
+    /// One key into the params popup: edits become typed settings rows on
+    /// the focused profile.
     fn params_key(&mut self, app: &mut TuiApp, key: crossterm::event::KeyEvent) -> AppAction {
         let (Some(profile), Some(selection)) = (app.focused_name(), app.params_card()) else {
             app.params_state.open = false;
             return AppAction::None;
         };
-        let data = self.bound().and_then(|profile| profile.game_data());
         let was_open = app.params_state.open;
         let was_editing = app.params_state.editing;
+        let old_params_state = app.params_state.clone();
+        let mut pending_setting = None;
         let action = {
-            let scripts = &mut self.scripts;
-            let core = &mut self.core;
+            let data = self.bound().and_then(|profile| profile.game_data());
             let mut commit =
                 |field: &str, value: serde_json::Value, current: Option<serde_json::Value>| {
-                    let edit_key = frontend_core::scripts::ParameterEditKey::new(
-                        Some(&profile),
-                        &selection,
-                        field,
-                    );
-                    scripts
-                        .commit_parameter_value(core, &edit_key, &selection, field, value, current)
-                        .map(|_| ())
+                    pending_setting = Some((field.to_owned(), value, current));
+                    Ok(())
                 };
-            app.params_on_key(&mut commit, &self.loadouts, data.as_deref(), key)
+            app.params_on_key(&mut commit, self.loadouts.store(), data.as_deref(), key)
         };
+        if let Some((field, value, current)) = pending_setting {
+            let kind = if selection.compiled_id().is_some() {
+                frontend_core::command::CardKind::Native
+            } else {
+                frontend_core::command::CardKind::Script
+            };
+            self.scripts
+                .stage_setting(Some(&profile), &selection, &field, value);
+            if let Err(error) = self.submit_with(
+                app,
+                OperatorCommand::SaveScriptSettings(kind),
+                Targets::Profile(&profile),
+            ) {
+                app.params_state = old_params_state;
+                match current {
+                    Some(value) => {
+                        app.params_bag.insert(field, value);
+                    }
+                    None => {
+                        app.params_bag.remove(&field);
+                    }
+                }
+                app.params_state.error = Some(format!("Save failed: {error}"));
+            }
+        }
         if key.code == crossterm::event::KeyCode::Esc
             && was_open
             && (!app.params_state.open || (was_editing && !app.params_state.editing))
         {
-            if let Some(field) = app
+            let edit_key = app
                 .params_schema
                 .as_ref()
                 .iter()
                 .filter(|def| def.visible(&app.params_bag))
                 .nth(app.params_state.cursor)
-            {
-                let edit_key = frontend_core::scripts::ParameterEditKey::new(
-                    Some(&profile),
-                    &selection,
-                    field.id(),
-                );
-                self.scripts.discard_parameter_text(&edit_key);
+                .map(|field| {
+                    frontend_core::scripts::ParameterEditKey::new(
+                        Some(&profile),
+                        &selection,
+                        field.id(),
+                    )
+                });
+            if let Some(edit_key) = edit_key {
+                self.scripts.stage_parameter_discard(edit_key);
+                if let Err(error) = self.submit_with(
+                    app,
+                    OperatorCommand::DiscardParameterText,
+                    Targets::Application,
+                ) {
+                    app.error = Some(error);
+                }
             }
         }
         self.apply_script_notice(app);
         action
+    }
+
+    /// A key for the loadouts popup, when it is open: the popup's cursor and
+    /// text rows take the key, and what it asks of the loadout form is
+    /// staged and submitted as that row. `false` when the popup is closed.
+    fn loadouts_key(&mut self, app: &mut TuiApp, key: crossterm::event::KeyEvent) -> bool {
+        if !app.loadouts_state.open {
+            return false;
+        }
+        self.loadouts_opened(app);
+        if app.loadouts_state.name_scratch.is_empty() && !self.loadouts.loadouts().is_empty() {
+            app.loadouts_state.fill(&self.loadouts);
+        }
+        let generation = self.loadouts.generation();
+        let count = self.loadouts.loadouts().len();
+        match app.loadouts_state.on_key(key, count) {
+            LoadoutsIntent::None => {}
+            LoadoutsIntent::SelectNext => {
+                self.loadouts
+                    .stage_selection((self.loadouts.selected() + 1) % count);
+                self.submit_loadout(app, OperatorCommand::SelectLoadout);
+            }
+            LoadoutsIntent::Save => {
+                self.loadouts.stage_draft(app.loadouts_state.text_loadout());
+                self.submit_loadout(app, OperatorCommand::SaveLoadout);
+            }
+            LoadoutsIntent::Create => self.submit_loadout(app, OperatorCommand::CreateLoadout),
+            LoadoutsIntent::Duplicate => {
+                self.submit_loadout(app, OperatorCommand::DuplicateLoadout);
+            }
+            LoadoutsIntent::Delete => self.submit_loadout(app, OperatorCommand::DeleteLoadout),
+        }
+        if self.loadouts.generation() != generation {
+            app.loadouts_state.fill(&self.loadouts);
+        }
+        true
+    }
+
+    /// The loadouts popup was opened since the last look: select its first
+    /// loadout and fill the text rows from it.
+    fn loadouts_opened(&mut self, app: &mut TuiApp) {
+        if !std::mem::take(&mut app.loadouts_state.reopened) {
+            return;
+        }
+        self.loadouts.stage_selection(0);
+        self.submit_loadout(app, OperatorCommand::SelectLoadout);
+        app.loadouts_state.fill(&self.loadouts);
+    }
+
+    /// Submit `command` for the loadout form. What the row did is the
+    /// form's status line; a refused command shows on the message line.
+    fn submit_loadout(&mut self, app: &mut TuiApp, command: OperatorCommand) {
+        if let Err(error) = self.submit_raw(command, Targets::Application) {
+            app.error = Some(error.to_string());
+        }
     }
 
     /// Re-read the params popup's bag from the focused profile.
@@ -1763,21 +2349,29 @@ impl TuiSession {
         let Some(profile) = app.focused_name() else {
             return;
         };
-        let result = if let Some(id) = app.params_card().and_then(|choice| choice.compiled_id()) {
-            self.scripts
-                .prepare_compiled_settings_sync(&self.core, &profile, id, None)
-        } else if let Some((source, name, path)) = self.loaded_params_card(app) {
-            Ok(self
-                .scripts
-                .prepare_settings_sync(&self.core, &profile, source, &name, &path))
-        } else {
-            Err("parameters unavailable".into())
+        let Some(selection) = app.params_card() else {
+            app.error = Some("parameters unavailable".into());
+            return;
         };
-        match result {
-            Ok(scope) => {
-                app.params_state.sync_prompt =
-                    Some(format!("{} y apply · n cancel", scope.prompt()))
-            }
+        let kind = if selection.compiled_id().is_some() {
+            frontend_core::command::CardKind::Native
+        } else {
+            frontend_core::command::CardKind::Script
+        };
+        self.scripts
+            .stage_settings_sync_prepare(&profile, &selection);
+        match self.submit_with(
+            app,
+            OperatorCommand::ApplySettingsToMarked(kind),
+            Targets::Profile(&profile),
+        ) {
+            Ok(_) => match self.scripts.prepared_settings_sync() {
+                Some(scope) => {
+                    app.params_state.sync_prompt =
+                        Some(format!("{} y apply · n cancel", scope.prompt()));
+                }
+                None => app.error = Some("Apply to all: nothing prepared".into()),
+            },
             Err(error) => app.error = Some(error),
         }
         self.apply_script_notice(app);
@@ -1785,8 +2379,16 @@ impl TuiSession {
 
     fn apply_settings_sync(&mut self, app: &mut TuiApp) {
         app.params_state.sync_prompt = None;
-        if let Err(error) = self.scripts.apply_settings_sync(&mut self.core) {
-            app.error = Some(error);
+        if let Some(kind) = self.scripts.stage_settings_sync_apply() {
+            if let Err(error) = self.submit_with(
+                app,
+                OperatorCommand::ApplySettingsToMarked(kind),
+                Targets::Everyone,
+            ) {
+                app.error = Some(error);
+            }
+        } else {
+            app.error = Some("Apply to all: nothing prepared".into());
         }
         // The popup repeats the report: the strip may be too narrow for it.
         app.params_state.report = self
@@ -1813,8 +2415,15 @@ impl TuiSession {
     /// Stop the focused slot's script.
     fn script_stop(&mut self, app: &mut TuiApp) {
         if let Some(name) = app.focused_name() {
-            self.scripts.cancel_queued(&name);
-            self.scripts.publish_start_places(&mut self.core);
+            self.scripts.stage_cancel_queued("cancelled");
+            if let Err(error) = self.submit_with(
+                app,
+                OperatorCommand::CancelQueuedStart,
+                Targets::Profile(&name),
+            ) {
+                app.error = Some(error);
+            }
+            self.apply_script_notice(app);
             if let Err(error) = self.submit(OperatorCommand::StopScript, Targets::Profile(&name)) {
                 app.error = Some(error);
             }
@@ -1824,13 +2433,10 @@ impl TuiSession {
     /// Load a local JS bot file into the library, select it for Start,
     /// and persist the store. Errors land on the strip.
     fn script_load(&mut self, app: &mut TuiApp, path: &Path) {
-        let loaded = self
-            .scripts
-            .load_file(path)
-            .map(|card| ScriptChoice::loaded(card.source(), card.name()));
-        match loaded {
-            Ok(choice) => {
-                app.script_sel = Some(choice);
+        self.scripts.stage_load_file(path.to_path_buf());
+        match self.submit_with(app, OperatorCommand::LoadScriptFile, Targets::Application) {
+            Ok(_) => {
+                app.script_sel = self.scripts.browse_selection().map(ScriptChoice::duplicate);
                 app.browse_changed = true;
                 app.error = if self.scripts.load_failure_count() == 0 {
                     None
@@ -1842,14 +2448,15 @@ impl TuiSession {
                     app.script_load_last_dir = self.script_load_last_dir.clone();
                 }
             }
-            Err(e) => {
+            Err(error) => {
                 app.error = if self.scripts.load_failure_count() > 1 {
                     Some(self.scripts.named_failure_output())
                 } else {
-                    Some(format!("script: {e}"))
+                    Some(format!("script: {error}"))
                 };
             }
         }
+        self.apply_script_notice(app);
     }
 
     /// Persist the settings popup's changes onto the profile it was opened
@@ -1877,108 +2484,139 @@ impl TuiSession {
             })
             .unwrap_or_default();
         // Field edit, not a whole-settings replacement: the popup owns the
-        // guardian fields and the memory row, and each arm change lands
-        // through its own write (the form tracks the latest).
-        let settings = &app.settings;
+        // guardian fields and the memory row, and each row lands through its
+        // own write (the form tracks the latest).
+        let lowmem = app.settings.lowmem();
+        let random_events = app.settings.random_events();
+        let lamp_skill = app.settings.lamp_skill().to_string();
+        let lamp_auto = app.settings.lamp_auto();
         let lowmem_changed = self
             .core
             .profile(&name)
-            .is_some_and(|p| p.lowmem() != settings.lowmem());
+            .is_some_and(|p| p.lowmem() != lowmem);
         if lowmem_changed {
-            let mode = if settings.lowmem() {
+            let mode = if lowmem {
                 api::lifecycle::MemoryMode::Low
             } else {
                 api::lifecycle::MemoryMode::High
             };
-            match self.submit_profile_write(OperatorCommand::SetMemoryMode(mode), &name) {
-                Ok(op) => app
-                    .settings_save
-                    .submitted(&mut self.core, op, Some(&name), &name),
-                Err(e) => {
-                    let reason = format!("settings: {e}");
-                    app.settings_save.refused(reason.clone());
-                    app.error = Some(reason);
-                }
+            if let Err(error) = self.submit_with(
+                app,
+                OperatorCommand::SetMemoryMode(mode),
+                Targets::Profile(&name),
+            ) {
+                app.error = Some(format!("settings: {error}"));
             }
         }
-        let fields = GuardianEdit::fields(
-            settings.random_events(),
-            settings.lamp_skill(),
-            settings.lamp_auto(),
-        );
-        self.core.stage_guardian(fields);
-        match self.submit_profile_write(OperatorCommand::SetGuardian, &name) {
-            Ok(op) => app
-                .settings_save
-                .submitted(&mut self.core, op, Some(&name), &name),
-            Err(e) => {
-                let reason = format!("settings: {e}");
-                app.settings_save.refused(reason.clone());
-                app.error = Some(reason);
-            }
+        self.core
+            .stage_guardian(GuardianEdit::fields(random_events, &lamp_skill, lamp_auto));
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::SetGuardian, Targets::Profile(&name))
+        {
+            app.error = Some(format!("settings: {error}"));
         }
         for (event, policy) in changed_policies {
             self.core
                 .stage_guardian(GuardianEdit::policy(event, policy));
-            match self.submit_profile_write(OperatorCommand::SetGuardian, &name) {
-                Ok(op) => app
-                    .settings_save
-                    .submitted(&mut self.core, op, Some(&name), &name),
-                Err(e) => {
-                    let reason = format!("settings: {e}");
-                    app.settings_save.refused(reason.clone());
-                    app.error = Some(reason);
-                }
+            if let Err(error) =
+                self.submit_with(app, OperatorCommand::SetGuardian, Targets::Profile(&name))
+            {
+                app.error = Some(format!("settings: {error}"));
             }
         }
     }
-    /// Persist only user-changed globals and publish the latest durable
-    /// projection to the session on every pump.
+
+    /// Submit what the settings popup changed in the walk permissions
+    /// (`SetNavPreference`, `SetDangerLevel`), then adopt the durable
+    /// projection (the core hands it to the play session too) on every pump.
     fn project_walk_globals(&mut self, app: &mut TuiApp) {
+        let dirty = std::mem::take(&mut app.nav_preferences_dirty);
+        if !dirty.is_empty() && self.persist_ui {
+            self.persist_walk_globals(app);
+        }
+        app.refresh_walk_permissions();
+        self.core.refresh_walk_globals();
+    }
+
+    /// One row per walk permission the operator changed since the last
+    /// durable read: the buffer (`app.nav`, the acknowledgements) against
+    /// the projection (`app.walk_permissions`).
+    fn persist_walk_globals(&mut self, app: &mut TuiApp) {
+        use frontend_core::NavPreference;
         let before = app.walk_permissions;
         let after = frontend_core::WalkGlobalsView::new(
             app.nav,
             app.script_scope_notice_ack,
             app.survivable_routing_notice_ack,
         );
-        let dirty = std::mem::take(&mut app.nav_preferences_dirty);
-        self.core.set_walk_globals_store(self.preferences.share());
-
-        if !dirty.is_empty() && self.persist_ui {
-            match frontend_core::WalkGlobalsView::persist_changed(&self.preferences, before, after)
-            {
-                Ok(()) => {
-                    if app
-                        .error
-                        .as_deref()
-                        .is_some_and(|error| error.starts_with("settings: walk permissions:"))
-                    {
-                        app.error = None;
-                    }
-                }
-                Err(error) => {
-                    app.error = Some(format!("settings: walk permissions: {error}"));
-                }
+        let (was, now) = (before.globals(), after.globals());
+        let changes = [
+            (was.allow_teleports() != now.allow_teleports()).then_some(
+                OperatorCommand::SetNavPreference(
+                    NavPreference::AllowTeleports,
+                    now.allow_teleports(),
+                ),
+            ),
+            (was.allow_wilderness() != now.allow_wilderness()).then_some(
+                OperatorCommand::SetNavPreference(
+                    NavPreference::AllowWilderness,
+                    now.allow_wilderness(),
+                ),
+            ),
+            (was.allow_bank_fetch() != now.allow_bank_fetch()).then_some(
+                OperatorCommand::SetNavPreference(
+                    NavPreference::AllowBankFetch,
+                    now.allow_bank_fetch(),
+                ),
+            ),
+            (was.danger_level() != now.danger_level())
+                .then_some(OperatorCommand::SetDangerLevel(now.danger_level())),
+            (before.script_scope_notice_ack() != after.script_scope_notice_ack()).then_some(
+                OperatorCommand::SetNavPreference(
+                    NavPreference::ScriptScopeNoticeAck,
+                    after.script_scope_notice_ack(),
+                ),
+            ),
+            (before.survivable_routing_notice_ack() != after.survivable_routing_notice_ack())
+                .then_some(OperatorCommand::SetNavPreference(
+                    NavPreference::SurvivableRoutingNoticeAck,
+                    after.survivable_routing_notice_ack(),
+                )),
+        ];
+        let mut failure = None;
+        for command in changes.into_iter().flatten() {
+            if let Err(error) = self.submit_with(app, command, Targets::Application) {
+                failure = Some(error);
             }
         }
-
-        app.refresh_walk_permissions();
-        self.core.set_walk_globals(app.walk_permissions.globals());
+        match failure {
+            None => {
+                if app
+                    .error
+                    .as_deref()
+                    .is_some_and(|error| error.starts_with("settings: walk permissions:"))
+                {
+                    app.error = None;
+                }
+            }
+            Some(error) => app.error = Some(format!("settings: walk permissions: {error}")),
+        }
     }
 
-    /// Persist the shared manual-walk pause preference and apply it to the
-    /// current and future slots.
+    /// Submit the shared manual-walk pause preference
+    /// (`SetNavPreference`): the core applies it to the current and future
+    /// slots once it is saved. A refused save shows its reason and the
+    /// popup shows the stored value again.
     fn project_manual_walk_pause(&mut self, app: &mut TuiApp) {
-        self.core
-            .set_pause_script_on_manual_walk_abort(app.pause_script_on_manual_walk_abort);
         if !std::mem::take(&mut app.pause_script_on_manual_walk_abort_dirty) || !self.persist_ui {
             return;
         }
-        match frontend_core::nav_preference(
-            &self.preferences,
+        let pause = app.pause_script_on_manual_walk_abort;
+        let command = OperatorCommand::SetNavPreference(
             frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
-            Some(app.pause_script_on_manual_walk_abort),
-        ) {
+            pause,
+        );
+        match self.submit_with(app, command, Targets::Application) {
             Ok(_) => {
                 if app.error.as_deref().is_some_and(|error| {
                     error.starts_with("settings: pause script on manual movement:")
@@ -1990,25 +2628,41 @@ impl TuiSession {
                 app.error = Some(format!(
                     "settings: pause script on manual movement: {error}"
                 ));
+                app.pause_script_on_manual_walk_abort = self
+                    .core
+                    .nav_preference(frontend_core::NavPreference::PauseScriptOnManualWalkAbort)
+                    .unwrap_or(true);
             }
         }
     }
-    /// Set the global pause policy before binding or arming a TUI live run.
-    pub fn set_pause_script_on_manual_walk_abort(&mut self, enabled: bool) {
-        self.core.set_pause_script_on_manual_walk_abort(enabled);
+
+    /// Set the global pause policy before binding or arming a TUI live run
+    /// (`SetNavPreference`).
+    #[cfg(test)]
+    fn set_pause_script_on_manual_walk_abort(&mut self, enabled: bool) -> Result<(), String> {
+        let command = OperatorCommand::SetNavPreference(
+            frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
+            enabled,
+        );
+        self.submit(command, Targets::Application).map(|_| ())
     }
 
     /// The remembered terrain-bake choice, shared with the panel through
-    /// the process service's preferences.
+    /// the process service's preferences (`SetMapBakeChoice`).
     fn persist_map_bake(&mut self, app: &mut TuiApp) {
-        self.map_bake.set_choice(app.map_bake);
         if !self.persist_ui {
             return;
         }
-        if let Err(e) = persist_map_bake_choice(&self.preferences, app.map_bake) {
-            app.error = Some(format!("settings: map bake: {e}"));
+        let choice = app.map_bake;
+        if let Err(error) = self.submit_with(
+            app,
+            OperatorCommand::SetMapBakeChoice(choice),
+            Targets::Application,
+        ) {
+            app.error = Some(format!("settings: {error}"));
         }
     }
+
     /// Persist changed source settings and service the shared Path controller.
     fn project_quester_paths(&mut self, app: &mut TuiApp) {
         let selected = self.bound().and_then(|profile| profile.game_data());
@@ -2021,14 +2675,16 @@ impl TuiSession {
         selected: Option<Arc<api::game_data::SelectedGameData>>,
     ) {
         if std::mem::take(&mut app.quester_paths_dirty) {
-            let failed = app
-                .quester_paths_controller
-                .apply_changed(
-                    &self.preferences,
-                    &app.quester_paths,
-                    selected.clone(),
-                    self.persist_ui,
-                )
+            self.core.stage_quester_paths(
+                frontend_core::quester_paths::QuesterPathsView::new(
+                    app.quester_paths.enabled(),
+                    app.quester_paths.folder().to_path_buf(),
+                ),
+                self.persist_ui,
+                selected.clone(),
+            );
+            let failed = self
+                .submit_with(app, OperatorCommand::SetQuesterPaths, Targets::Application)
                 .is_err();
             if failed {
                 let enabled = app.quester_paths_controller.settings().enabled();
@@ -2041,25 +2697,49 @@ impl TuiSession {
                 app.quester_paths.set_folder(folder);
             }
         }
-        app.quester_paths_controller.advance(selected);
+        self.core
+            .advance_quester_paths(&mut app.quester_paths_controller, selected);
     }
 
+    /// Reload the Quester Paths (`ReloadQuesterPaths`): the controller's
+    /// notice, shown in the settings popup, says why a reload did not
+    /// start.
     fn start_quester_paths_reload(&mut self, app: &mut TuiApp) {
         let selected = self.bound().and_then(|profile| profile.game_data());
-        app.quester_paths_controller.request_reload(selected);
+        self.core.stage_quester_reload(selected);
+        match self.submit_with(
+            app,
+            OperatorCommand::ReloadQuesterPaths,
+            Targets::Application,
+        ) {
+            Ok(_) => {}
+            Err(_) if app.quester_paths_controller.notice_is_error() => {}
+            Err(error) => app.error = Some(error),
+        }
     }
 
     /// Copy the focused slot's views into the app and poll the runner.
     fn pump(&mut self, app: &mut TuiApp) {
-        self.core
-            .set_capacity_render(frontend_core::RenderPolicyLabel::Headless);
         self.project_walk_globals(app);
         self.project_manual_walk_pause(app);
         self.project_quester_paths(app);
+        // The benchmark's focus follows its run: select the member it
+        // moved to.
+        #[cfg(feature = "memory-profile")]
+        if let Some(index) = self.memory.as_ref().map(|run| run.focus_index()) {
+            app.focused = Some(index);
+            let moved = self
+                .memory
+                .as_ref()
+                .map(|run| run.names()[index].as_str())
+                .filter(|name| self.core.selected() != Some(*name))
+                .map(str::to_owned);
+            if let Some(name) = moved {
+                self.focus(&name);
+            }
+        }
         #[cfg(feature = "memory-profile")]
         if let Some(run) = self.memory.as_mut() {
-            app.focused = Some(run.focus_index());
-            self.core.select(&run.names()[run.focus_index()]);
             match run.poll(&self.core) {
                 Ok(true) => {
                     restore_terminal();
@@ -2131,9 +2811,21 @@ impl TuiSession {
         // A Browse pick is the pending selection of the profile whose
         // heading it replaced.
         if std::mem::take(&mut app.browse_changed) {
-            if let (Some(name), Some(sel)) = (self.last_focused.as_deref(), app.script_sel.as_ref())
-            {
-                self.scripts.set_pending_browse(name, sel.duplicate());
+            let focused = self.last_focused.clone();
+            let selection = app.script_sel.as_ref().map(ScriptChoice::duplicate);
+            if let (Some(name), Some(selection)) = (focused, selection) {
+                self.scripts.stage_browse_pick(selection);
+                if let Err(error) =
+                    self.submit_with(app, OperatorCommand::PickBrowseCard, Targets::Application)
+                {
+                    app.error = Some(error);
+                } else if let Err(error) = self.submit_with(
+                    app,
+                    OperatorCommand::SelectScriptCard,
+                    Targets::Profile(&name),
+                ) {
+                    app.error = Some(error);
+                }
             }
         }
         // The script heading follows the focused profile: reload when the
@@ -2150,7 +2842,7 @@ impl TuiSession {
                 sel.loaded_card()
                     .is_some_and(|(source, _)| source == CardSource::Catalog)
             }) {
-                self.fill_rs2b0t_cards_once();
+                self.fill_rs2b0t_cards_once(app);
             }
             app.script_sel = heading;
             if !app.settings_state.open {
@@ -2161,18 +2853,28 @@ impl TuiSession {
                     .unwrap_or_default();
             }
         }
-        if app.settings_state.open {
-            if let (None, Some(name)) = (app.settings_profile.as_ref(), focused.as_deref()) {
-                // Freshly opened: bind the focused profile and load its row;
-                // later focus changes keep this binding and its buffers.
-                app.settings = self
-                    .core
-                    .profile(name)
-                    .map(|p| p.settings_draft())
-                    .unwrap_or_default();
-                app.settings_title = format!("{} — {name}", crate::settings::TITLE);
-                app.settings_profile = Some(name.to_string());
-                app.settings_dirty = false;
+        let profile_to_bind = if app.settings_state.open && app.settings_profile.is_none() {
+            focused.as_deref().map(str::to_owned)
+        } else {
+            None
+        };
+        if let Some(name) = profile_to_bind {
+            // Freshly opened: bind the focused profile and load its row;
+            // later focus changes keep this binding and its buffers.
+            app.settings = self
+                .core
+                .profile(&name)
+                .map(|p| p.settings_draft())
+                .unwrap_or_default();
+            app.settings_title = format!("{} — {name}", crate::settings::TITLE);
+            app.settings_profile = Some(name.clone());
+            app.settings_dirty = false;
+            if let Err(error) = self.submit_with(
+                app,
+                OperatorCommand::OpenProfileForm,
+                Targets::Profile(&name),
+            ) {
+                app.error = Some(error);
             }
         }
         app.settings_memory = app
@@ -2351,7 +3053,13 @@ impl TuiSession {
         // later popup.
         if !app.settings_state.open && app.settings_profile.take().is_some() {
             app.settings_memory = None;
-            app.settings_save.form_changed();
+            if let Err(error) = self.submit_with(
+                app,
+                OperatorCommand::CloseProfileForm(frontend_core::command::FormClose::Form),
+                Targets::Application,
+            ) {
+                app.error = Some(error);
+            }
         }
         // `Saved <name>.` or the failure shows only on the popup the persist
         // came from. A failed write put the profile back, so that popup
@@ -2508,6 +3216,8 @@ impl TuiSession {
 
     fn ack_background_bots(&mut self, app: &mut TuiApp) {
         if self.persist_ui {
+            self.core
+                .stage_notice(frontend_core::OperatorNotice::BackgroundBots);
             let failure = self
                 .submit_raw(OperatorCommand::AcknowledgeNotice, Targets::Application)
                 .map(|submitted| {
@@ -2590,6 +3300,130 @@ impl TuiSession {
                 None => app.capacity = None,
             }
         }
+    }
+}
+
+/// The handlers of the fleet marks and filter, the log, the map overlay
+/// preference, the Quester Paths notice and Quit: each is a plain submit
+/// over the models the app lends.
+impl TuiSession {
+    /// Mark or unmark `name`'s fleet row (`SetMark`).
+    fn set_mark(&mut self, app: &mut TuiApp, name: &str, on: bool) {
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::SetMark(on), Targets::Profile(name))
+        {
+            app.error = Some(error);
+        }
+    }
+
+    /// Mark these members' fleet rows (`MarkAll`).
+    fn mark_all(&mut self, app: &mut TuiApp, identities: Vec<frontend_core::ProfileIdentity>) {
+        self.core.stage_mark_all(identities);
+        if let Err(error) = self.submit_with(app, OperatorCommand::MarkAll, Targets::Application) {
+            app.error = Some(error);
+        }
+    }
+
+    /// Clear every row mark (`ClearMarks`).
+    fn clear_marks(&mut self, app: &mut TuiApp) {
+        if let Err(error) = self.submit_with(app, OperatorCommand::ClearMarks, Targets::Application)
+        {
+            app.error = Some(error);
+        }
+    }
+
+    /// Edit the fleet filter text and commit it (`SetFleetFilter`); the
+    /// shown rows follow the text.
+    fn set_fleet_filter(&mut self, app: &mut TuiApp, edit: crate::fleet::FilterEdit) {
+        let staged = app.table.filter.staged_mut();
+        match edit {
+            crate::fleet::FilterEdit::Push(c) => staged.push(c),
+            crate::fleet::FilterEdit::Pop => {
+                staged.pop();
+            }
+            crate::fleet::FilterEdit::Clear => staged.clear(),
+        }
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::SetFleetFilter, Targets::Application)
+        {
+            app.error = Some(error);
+        }
+        app.table
+            .sync_with_ids(&app.names, &app.profile_ids, &app.fleet);
+    }
+
+    /// Save the rows the log view shows (`SaveLog`). The write runs off the
+    /// UI thread; the log pane's status line follows it.
+    fn save_log(&mut self, app: &mut TuiApp) {
+        let focused = app.focused_name();
+        let (path, text) = app.log.save_request(focused.as_deref());
+        self.core.stage_log_save(path, text);
+        match self.submit_with(app, OperatorCommand::SaveLog, Targets::Application) {
+            Ok(submitted) => match self.core.log_save(submitted.request()) {
+                Some(ticket) => app.log.saving(ticket),
+                None => app.log.status = Some("save log: the write did not start".into()),
+            },
+            Err(error) => app.log.status = Some(error),
+        }
+    }
+
+    /// Turn the session log file on or off (`SetSessionLog`); the log
+    /// pane's status line names the file the process holds open now.
+    fn set_session_log(&mut self, app: &mut TuiApp, on: bool) {
+        let outcome = self.submit_with(
+            app,
+            OperatorCommand::SetSessionLog(on),
+            Targets::Application,
+        );
+        app.log.status = Some(match outcome {
+            Ok(_) => match frontend_core::log_file::session_log_path() {
+                Some(path) => format!("session file {}", path.display()),
+                None => "session file off".into(),
+            },
+            Err(error) => error,
+        });
+    }
+
+    /// Save the map's special-areas overlay choice (`SetNavPreference`),
+    /// which the panel shares; a refused save shows its reason.
+    fn set_special_areas(&mut self, app: &mut TuiApp, on: bool) {
+        let command =
+            OperatorCommand::SetNavPreference(frontend_core::NavPreference::ShowSpecialAreas, on);
+        match self.submit_with(app, command, Targets::Application) {
+            Ok(_) => {
+                if app
+                    .error
+                    .as_deref()
+                    .is_some_and(|error| error.starts_with("map wilderness:"))
+                {
+                    app.error = None;
+                }
+            }
+            Err(error) => app.error = Some(format!("map wilderness: {error}")),
+        }
+    }
+
+    /// Dismiss the Quester Paths status line (`AcknowledgeNotice`).
+    fn dismiss_paths_notice(&mut self, app: &mut TuiApp) {
+        self.core
+            .stage_notice(frontend_core::OperatorNotice::QuesterPaths);
+        if let Err(error) = self.submit_with(
+            app,
+            OperatorCommand::AcknowledgeNotice,
+            Targets::Application,
+        ) {
+            app.error = Some(error);
+        }
+    }
+
+    /// Quit (`Quit`): every member's slot shuts down and the play closes
+    /// before the terminal is torn down. Nothing loaded is not an error.
+    fn quit(&mut self, app: &mut TuiApp) {
+        match self.submit_raw(OperatorCommand::Quit, Targets::Everyone) {
+            Ok(_) | Err(SubmitError::NoTarget(_)) => {}
+            Err(error) => app.error = Some(error.to_string()),
+        }
+        app.quit = true;
     }
 }
 
@@ -2744,9 +3578,8 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         }
     }
     let mut session = TuiSession::with_launcher(launcher, permit);
-    if frontend_core::log_file::session_log_setting(&session.preferences) {
-        frontend_core::log_file::apply_session_log(true);
-    }
+    // The saved session-file preference: open this process's file at start.
+    frontend_core::log_file::restore_session_log(&session.preferences);
     session.auto_world = args.world;
     session
         .bound()
@@ -2860,11 +3693,10 @@ impl TuiSession {
     /// Create a missing profile (fresh game secret, uid one past the
     /// vault's max, from the 274M base).
     fn create_profile(&mut self, username: &str) -> Result<(), String> {
-        // Startup only (before the terminal loop): waiting on the write
-        // here keeps a failed first-run profile a startup error.
+        self.core
+            .stage_new_profile(username, &frontend_core::live::profile_password(username));
         let submitted = self
-            .core
-            .create_profile_named(username, &frontend_core::live::profile_password(username))
+            .submit_raw(OperatorCommand::CreateProfile, Targets::Application)
             .map_err(|error| format!("profile: {error}"))?;
         if let Some(reason) = self.core.command_failure(submitted.request()) {
             return Err(reason.to_string());
@@ -2929,7 +3761,7 @@ impl Drop for TerminalGuard {
 /// Headless prints proof immediately. Headed holds it until after restore
 /// so the PASS JSON line cannot paint into Ratatui rows.
 fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
-    app.map_bake = session.map_bake.choice();
+    app.map_bake = session.map_desk.bake_gate().choice();
     if enable_raw_mode().is_err() {
         // No controlling terminal: pump the runner without drawing.
         loop {
@@ -2968,12 +3800,17 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
         {
             let _profile_frame = client::profiling::UI_FRAME.start();
             let params_data = session.bound().and_then(|profile| profile.game_data());
+            session.loadouts_opened(&mut app);
             terminal
                 .draw(|frame| {
                     let _profile_draw = client::profiling::UI_DRAW.start();
                     app.draw(frame);
-                    app.draw_loadouts_overlay(frame, &mut session.loadouts);
-                    app.draw_params_overlay(frame, &session.loadouts, params_data.as_deref());
+                    app.draw_loadouts_overlay(frame, &session.loadouts);
+                    app.draw_params_overlay(
+                        frame,
+                        session.loadouts.store(),
+                        params_data.as_deref(),
+                    );
                 })
                 .map_err(|e| e.to_string())?;
         }
@@ -3008,7 +3845,7 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
 /// on the next pump.
 fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
     match action {
-        AppAction::Quit => app.quit = true,
+        AppAction::Quit => session.quit(app),
         AppAction::Focus(name) => session.focus(&name),
         AppAction::MapOpen => {
             session.bind_map_context(app);
@@ -3024,6 +3861,14 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::WalkTile(tile) => session.wasd_walk(app, tile),
         AppAction::MapTeleport(tile) => session.map_teleport(app, tile),
         AppAction::ReloadPaths => session.start_quester_paths_reload(app),
+        AppAction::DismissPathsNotice => session.dismiss_paths_notice(app),
+        AppAction::SetMark(name, on) => session.set_mark(app, &name, on),
+        AppAction::MarkAll(identities) => session.mark_all(app, identities),
+        AppAction::ClearMarks => session.clear_marks(app),
+        AppAction::FleetFilter(edit) => session.set_fleet_filter(app, edit),
+        AppAction::SaveLog => session.save_log(app),
+        AppAction::SetSessionLog(on) => session.set_session_log(app, on),
+        AppAction::MapWilderness(on) => session.set_special_areas(app, on),
         AppAction::Chat(action) => session.chat_send(app, action),
         AppAction::SpawnAll => multibox_key(session, app),
         AppAction::Login => session.login(app),
@@ -3050,7 +3895,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::ScriptUseCatalog => {
             let root = app.rs2b0t_catalog_dir.clone();
             session.rs2b0t_catalog_dir = root.clone();
-            app.error = match session.import_rs2b0t_catalog(&root) {
+            app.error = match session.import_rs2b0t_catalog(app, &root) {
                 Ok(_) => {
                     if session.scripts.load_failure_count() == 0 {
                         None
@@ -3058,7 +3903,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
                         Some(session.scripts.named_failure_output())
                     }
                 }
-                Err(e) => Some(e),
+                Err(error) => Some(error),
             };
         }
         AppAction::ScriptLoad(path) => session.script_load(app, &path),
@@ -3074,26 +3919,72 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::ScriptReloadCancel => session.script_reload_cancel(app),
         AppAction::ScriptSyncPrepare => session.prepare_settings_sync(app),
         AppAction::ScriptSyncApply => session.apply_settings_sync(app),
-        AppAction::ScriptSyncCancel => session.scripts.cancel_settings_sync(),
+        AppAction::ScriptSyncCancel => {
+            if let Err(error) = session.submit_with(
+                app,
+                OperatorCommand::CancelSettingsSync,
+                Targets::Application,
+            ) {
+                app.error = Some(error);
+            }
+        }
         AppAction::ScriptRestartSettings => {
             let root = session.start_catalog_root();
-            if let Err(error) = session
-                .scripts
-                .restart_pending_settings(&mut session.core, root.as_deref())
-            {
+            session.scripts.stage_start_catalog_root(root);
+            if let Err(error) = session.submit_with(
+                app,
+                OperatorCommand::RestartForSettings,
+                Targets::Application,
+            ) {
                 app.error = Some(error);
             }
             session.apply_script_notice(app);
         }
-        AppAction::ScriptRestartLater => session.scripts.dismiss_restart_prompt(),
+        AppAction::ScriptRestartLater => {
+            if let Err(error) = session.submit_with(
+                app,
+                OperatorCommand::DeferSettingsRestart,
+                Targets::Application,
+            ) {
+                app.error = Some(error);
+            }
+        }
         AppAction::AckBackground => session.ack_background_bots(app),
+        AppAction::SettingsDraftEdited(edit) => {
+            match edit {
+                crate::settings::SettingsEdit::RandomEvents(value) => {
+                    *app.settings.random_events_mut() = value;
+                }
+                crate::settings::SettingsEdit::LampSkill(skill) => {
+                    *app.settings.lamp_skill_mut() = skill.into();
+                }
+                crate::settings::SettingsEdit::LampAuto(value) => {
+                    *app.settings.lamp_auto_mut() = value;
+                }
+                crate::settings::SettingsEdit::RandomEventPolicy { event, policy } => {
+                    app.settings.set_random_event_policy(event, policy);
+                }
+                crate::settings::SettingsEdit::Lowmem(value) => {
+                    *app.settings.lowmem_mut() = value;
+                }
+            }
+            if let Err(error) = session.submit_with(
+                app,
+                OperatorCommand::EditProfileDraft(
+                    frontend_core::command::ProfileDraftField::Settings,
+                ),
+                Targets::Application,
+            ) {
+                app.error = Some(error);
+            }
+        }
         AppAction::ProfileImport(action) => session.profile_import(app, action),
         AppAction::ParamsKey(key) => {
             let action = session.params_key(app, key);
             dispatch(session, app, action);
         }
         AppAction::LoadoutsKey(key) => {
-            app.loadouts_on_key(&mut session.loadouts, key);
+            session.loadouts_key(app, key);
         }
         AppAction::MouseCapture(on) => set_mouse_capture(on),
         AppAction::Batch(actions) => {

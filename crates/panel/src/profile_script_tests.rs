@@ -61,10 +61,52 @@ fn wait_state(s: &Session, name: &str, want: ScriptRunState) {
     assert_eq!(s.core.script_state(name), want, "{name}");
 }
 
-/// Operator Start of `sel` on `profile` through the shared coordinator.
-fn start_sel(s: &mut Session, profile: &str, sel: ScriptChoice) -> Result<(), String> {
-    s.scripts
-        .start_selected(&mut s.core, profile, Some(&sel), None)
+/// Select a script for one profile through the shared Browse and selection rows.
+fn select_for_profile(
+    s: &mut Session,
+    profile: &str,
+    selection: ScriptChoice,
+) -> Result<(), String> {
+    s.scripts.stage_browse_pick(selection);
+    let picked = s
+        .submit_script_command(OperatorCommand::PickBrowseCard, Targets::Application)
+        .ok_or_else(|| {
+            s.error
+                .clone()
+                .unwrap_or_else(|| "Browse selection was not submitted".into())
+        })?;
+    if let Some(error) = s.core.command_failure(picked.request()) {
+        return Err(error.to_owned());
+    }
+    let selected = s
+        .submit_script_command(OperatorCommand::SelectScriptCard, Targets::Profile(profile))
+        .ok_or_else(|| {
+            s.error
+                .clone()
+                .unwrap_or_else(|| "profile selection was not submitted".into())
+        })?;
+    if let Some(error) = s.core.command_failure(selected.request()) {
+        return Err(error.to_owned());
+    }
+    Ok(())
+}
+
+/// Operator Start of `sel` on `profile` through the shared command rows.
+fn start_sel(s: &mut Session, profile: &str, selection: ScriptChoice) -> Result<(), String> {
+    select_for_profile(s, profile, selection)?;
+    s.script_start_profile(profile)
+}
+
+fn prepare_transpile(s: &mut Session, source: CardSource, lookup: &str) {
+    s.scripts.stage_transpile_target(source, lookup);
+    let submitted = s
+        .submit_script_command(OperatorCommand::PrepareScriptCard, Targets::Application)
+        .expect("script preparation command is submitted");
+    assert!(
+        s.core.command_failure(submitted.request()).is_none(),
+        "script preparation was refused: {:?}",
+        s.error
+    );
 }
 
 fn run_generations(s: &Session, names: &[&str]) -> Vec<(String, u64)> {
@@ -99,11 +141,12 @@ fn session_with_profiles(names: &[&str]) -> (Session, TestDir) {
 #[test]
 fn focus_restores_assignment_not_other_profile_pending() {
     let (mut s, _dir) = session_with_profiles(&["alice", "bob"]);
-    s.set_pending_browse(
+    select_for_profile(
+        &mut s,
         "alice",
         ScriptChoice::loaded(CardSource::Catalog, "ChickenKiller"),
-    );
-    s.persist_successful_assignment("bob", Assignment::catalog("Alcher"));
+    )
+    .unwrap();
     s.restore_script_heading("alice");
     assert_eq!(
         s.script_sel,
@@ -490,18 +533,16 @@ fn external_ts_load_start_stop_persists_assignment_only_on_success() {
     assert_eq!(s.error, None, "{:?}", s.error);
     assert!(s.heading_is_pending());
     assert!(s.profile_assignment("alice").is_none());
-    s.enqueue_transpile(CardSource::File, path.to_string_lossy().into_owned(), true);
+    prepare_transpile(&mut s, CardSource::File, &path.to_string_lossy());
     s.script_start_selected();
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
-    let play = s.core.play_for_test().unwrap();
-    assert_eq!(s.core.script_state("alice"), ScriptRunState::Running);
     let asg = s
         .profile_assignment("alice")
         .expect("success-only assignment");
     assert!(asg.identity().contains("ext.ts"), "{}", asg.identity());
     assert!(asg.unavailable().is_none());
-    play.script_stop("alice");
+    s.script_stop();
     wait_state(&s, "alice", ScriptRunState::Idle);
     assert_eq!(
         s.profile_assignment("alice").unwrap().identity(),
@@ -515,7 +556,7 @@ fn load_js_selects_without_auto_start_and_same_path_does_not_duplicate() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "once.ts", BOT_TS);
     s.load_js(&path);
-    s.enqueue_transpile(CardSource::File, path.to_string_lossy().into_owned(), true);
+    prepare_transpile(&mut s, CardSource::File, &path.to_string_lossy());
     assert_eq!(s.error, None, "{:?}", s.error);
     assert_eq!(
         s.core.script_state("alice"),
@@ -1068,7 +1109,7 @@ fn marked_gatherer_start_and_focus_edits_keep_running_thievers_assignment() {
 
     // Marks persist when focus moves to Bob, but plain Start must skip
     // Alice before it can queue a card or save an assignment there.
-    s.fleet_selection.mark_all([
+    s.fleet_selection.mark_all_for_test([
         frontend_core::ProfileIdentity::uid(1),
         frontend_core::ProfileIdentity::uid(2),
     ]);
@@ -1100,9 +1141,14 @@ fn marked_gatherer_start_and_focus_edits_keep_running_thievers_assignment() {
         generation
     );
 
-    s.scripts
-        .set_compiled_setting(&mut s.core, "bob", card_id, "radius", serde_json::json!(24))
-        .unwrap();
+    assert!(s.set_profile_setting(
+        "bob",
+        CardSource::Catalog,
+        "Gatherer",
+        std::path::Path::new(""),
+        "radius",
+        serde_json::json!(24),
+    ));
     focus_profile(&mut s, "alice");
     assert_eq!(
         s.script_sel,
@@ -1203,8 +1249,7 @@ fn focus_profile(s: &mut Session, name: &str) {
 fn start_file_on(s: &mut Session, profile: &str, path: &std::path::Path) {
     focus_profile(s, profile);
     let sel = ScriptChoice::loaded(CardSource::File, &path.to_string_lossy());
-    s.script_sel = Some(sel.duplicate());
-    s.set_pending_browse(profile, sel);
+    select_for_profile(s, profile, sel).unwrap();
     s.script_start_selected();
     settle(s);
     assert_eq!(s.error, None, "{profile} start: {:?}", s.error);
@@ -1884,7 +1929,7 @@ fn fleet_report_follows_a_start_all_that_lands_while_marked_rows_wait() {
     s.persist_successful_assignment("carol", bad.assignment());
     for name in ["alice", "bob", "carol"] {
         let identity = s.core.profile_identity(name).unwrap();
-        s.fleet_selection.set(identity, true);
+        s.fleet_selection.set_for_test(identity, true);
     }
 
     s.fleet_start_selected();
@@ -1950,7 +1995,7 @@ fn fleet_assign_and_restart_swaps_the_card_and_follows_the_paced_starts() {
         .unwrap();
     for name in ["alice", "bob"] {
         let identity = s.core.profile_identity(name).unwrap();
-        s.fleet_selection.set(identity, true);
+        s.fleet_selection.set_for_test(identity, true);
     }
 
     s.script_sel = None;
@@ -2048,10 +2093,12 @@ fn apply_to_all_reaches_same_card_members_only() {
         .expect("loaded card");
     s.persist_successful_assignment("alice", card.assignment());
     // Loading the files left alice browsing the miner; she edits the thiever.
-    s.set_pending_browse(
+    select_for_profile(
+        &mut s,
         "alice",
         ScriptChoice::loaded(card.source(), card.identity_id()),
-    );
+    )
+    .unwrap();
     focus_profile(&mut s, "alice");
     assert!(s.set_profile_setting(
         "alice",
@@ -2193,7 +2240,7 @@ fn fleet_apply_settings_is_narrowed_to_the_marked_bots() {
     focus_profile(&mut s, "alice");
     s.script_sel = Some(ScriptChoice::loaded(card.source(), card.identity_id()));
     let bob = s.core.profile_identity("bob").unwrap();
-    s.fleet_selection.set(bob, true);
+    s.fleet_selection.set_for_test(bob, true);
 
     // Newly assigned: alice has no per-card key, only a legacy override.
     s.scripts

@@ -4,7 +4,8 @@
 use std::sync::Mutex;
 
 use dear_imgui_rs::{Io, Key, Ui};
-use frontend_core::surface::{map_image_to_applet, InputEv, InputSender};
+use frontend_core::surface::{map_image_to_applet, InputEv};
+use frontend_core::{GameInputEvent, MapDesk};
 use winit::keyboard::{Key as WinitKey, KeyLocation, NamedKey};
 
 /// Named GameShell `ch` values (arrows 1–4, ASCII controls, space).
@@ -325,31 +326,32 @@ impl KeyboardOwner {
     pub(crate) fn process_ownership(
         &mut self,
         ui: &Ui,
-        tx: Option<&InputSender>,
+        map_desk: &mut MapDesk,
         target: Option<&str>,
     ) {
+        let connected = map_desk.input_connected();
         let changed = self.target.as_deref() != target;
-        if self.held_count != 0 && (changed || tx.is_none() || !game_keyboard_available(ui)) {
+        if self.held_count != 0 && (changed || !connected || !game_keyboard_available(ui)) {
             self.down.fill(false);
             self.held_count = 0;
         }
-        NATIVE_CAPTURE
-            .lock()
-            .expect("native capture")
-            .retain(|&(down, ch)| {
-                if !down && self.down[ch as usize] {
-                    if let Some(tx) = tx {
-                        let _ = tx.send(InputEv::Key { down: false, ch });
-                    }
-                    self.down[ch as usize] = false;
-                    self.held_count -= 1;
-                    false
-                } else {
-                    true
+        let mut queued = NATIVE_CAPTURE.lock().expect("native capture");
+        queued.retain(|&(down, ch)| {
+            if !down && self.down[ch as usize] {
+                if !map_desk
+                    .stage_game_input(GameInputEvent::Captured(InputEv::Key { down: false, ch }))
+                {
+                    return true;
                 }
-            });
+                self.down[ch as usize] = false;
+                self.held_count -= 1;
+                false
+            } else {
+                true
+            }
+        });
 
-        if tx.is_none() {
+        if !connected {
             self.target = None;
         } else if changed {
             self.target = target.map(str::to_owned);
@@ -359,57 +361,59 @@ impl KeyboardOwner {
     /// Only called for a hovered Game Image. New downs/text remain gated by
     /// panel capture and OS focus. Same-frame down/up bursts retain native
     /// event order and the character recorded at the press, not later Shift.
-    pub(crate) fn capture_keys(&mut self, ui: &Ui, tx: Option<&InputSender>) {
-        if !game_keyboard_available(ui) {
+    /// If GameInput fills, the unconsumed native tail stays queued for the
+    /// next frame.
+    pub(crate) fn capture_keys(&mut self, ui: &Ui, map_desk: &mut MapDesk) {
+        if !game_keyboard_available(ui) || !map_desk.input_connected() {
             return;
         }
-        let Some(tx) = tx else {
-            return;
-        };
         let mut queued = NATIVE_CAPTURE.lock().expect("native capture");
-        if queued.is_empty() {
-            return;
-        }
-        for (down, ch) in queued.drain(..) {
-            let held = &mut self.down[ch as usize];
+        let mut consumed = 0;
+        while consumed < queued.len() {
+            let (down, ch) = queued[consumed];
+            let index = ch as usize;
+            let held = self.down[index];
+            if !down && !held {
+                consumed += 1;
+                continue;
+            }
+            if !map_desk.stage_game_input(GameInputEvent::Captured(InputEv::Key { down, ch })) {
+                break;
+            }
             if down {
-                if !*held {
+                if !held {
                     self.held_count += 1;
                 }
-                *held = true;
+                self.down[index] = true;
             } else {
-                if !*held {
-                    continue;
-                }
                 self.held_count -= 1;
-                *held = false;
+                self.down[index] = false;
             }
-            let _ = tx.send(InputEv::Key { down, ch });
+            consumed += 1;
         }
+        queued.drain(..consumed).for_each(drop);
     }
 }
 
 /// Click-through helper: maps a click inside the Game Image (local coords,
-/// Image widget size) to applet coords and enqueues `InputEv::Down`. No-op
-/// when the capture channel has been dropped (capture off) or the point is
-/// outside the Image.
-pub fn maybe_send_click(tx: &Option<InputSender>, lx: f32, ly: f32, w: f32, h: f32) {
-    let Some(tx) = tx else {
+/// Image widget size) to applet coords and stages `InputEv::Down`.
+pub fn maybe_send_click(map_desk: &mut MapDesk, lx: f32, ly: f32, w: f32, h: f32) {
+    if !map_desk.input_connected() {
         return;
-    };
+    }
     let Some((x, y)) = map_image_to_applet(lx, ly, w, h) else {
         return;
     };
-    let _ = tx.send(InputEv::Down { button: 1, x, y });
+    let _ = map_desk.stage_game_input(GameInputEvent::Captured(InputEv::Down { button: 1, x, y }));
 }
 
 /// Stream one hovered capture frame: `Move` first, then `Down` (left=1,
-/// right=2), then `Up`, then keys. No-op when `tx` is `None` (capture off).
+/// right=2), then `Up`, then keys. No-op when capture is off.
 // All capture state arrives flattened from the applet; a param struct would
 // only shuffle names across the one call site.
 #[allow(clippy::too_many_arguments)]
 pub fn stream_capture(
-    tx: &Option<InputSender>,
+    map_desk: &mut MapDesk,
     lx: f32,
     ly: f32,
     w: f32,
@@ -420,23 +424,31 @@ pub fn stream_capture(
     right_up: bool,
     keys: &[(bool, i32)],
 ) {
-    let Some(tx) = tx else {
+    if !map_desk.input_connected() {
         return;
-    };
+    }
     if let Some((x, y)) = map_image_to_applet(lx, ly, w, h) {
-        let _ = tx.send(InputEv::Move { x, y });
+        let _ = map_desk.stage_game_input(GameInputEvent::Captured(InputEv::Move { x, y }));
         if left_down {
-            let _ = tx.send(InputEv::Down { button: 1, x, y });
+            let _ = map_desk.stage_game_input(GameInputEvent::Captured(InputEv::Down {
+                button: 1,
+                x,
+                y,
+            }));
         }
         if right_down {
-            let _ = tx.send(InputEv::Down { button: 2, x, y });
+            let _ = map_desk.stage_game_input(GameInputEvent::Captured(InputEv::Down {
+                button: 2,
+                x,
+                y,
+            }));
         }
     }
     if left_up || right_up {
-        let _ = tx.send(InputEv::Up);
+        let _ = map_desk.stage_game_input(GameInputEvent::Captured(InputEv::Up));
     }
     for &(down, ch) in keys {
-        let _ = tx.send(InputEv::Key { down, ch });
+        let _ = map_desk.stage_game_input(GameInputEvent::Captured(InputEv::Key { down, ch }));
     }
 }
 

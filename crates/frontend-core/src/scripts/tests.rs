@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use super::{
     parse_parameter_text, CardRuntime, CardSource, CatalogError, CompiledCardId, Notice,
-    ParameterCommit, ParameterEditKey, SchemaRef, ScriptChoice, ScriptRunState, Scripts,
-    SettingView,
+    ParameterCommit, ParameterEditKey, SchemaRef, ScriptChoice, ScriptRunState, ScriptStartError,
+    Scripts, SettingView,
 };
 use crate::command::{
     CardKind, CommandBook, CommandFailure, Completion, OperatorCommand, Pending, Stage, Subject,
@@ -374,7 +374,10 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
         .scripts
         .start_profile(&mut f.core, "alice", None)
         .unwrap_err();
-    assert!(start_error.contains("uncommitted"));
+    match start_error {
+        ScriptStartError::Waiting(message) => assert!(message.contains("uncommitted"), "{message}"),
+        other => panic!("expected a waiting start error, got {other:?}"),
+    }
     assert_eq!(f.core.last_operation().map(|report| report.id()), before);
     assert!(
         f.scripts.parameter_edit_blocks_start("alice"),
@@ -775,18 +778,24 @@ fn focused_and_profile_start_wait_for_pending_copy() {
         .scripts
         .start_selected(&mut f.core, "bob", None, None)
         .unwrap_err();
-    assert!(
-        err.contains("blocked") && err.contains("waiting for Apply or Cancel"),
-        "{err}"
-    );
+    match err {
+        ScriptStartError::Waiting(message) => assert!(
+            message.contains("blocked") && message.contains("waiting for Apply or Cancel"),
+            "{message}"
+        ),
+        other => panic!("expected a waiting start error, got {other:?}"),
+    }
     let err = f
         .scripts
         .start_profile(&mut f.core, "bob", None)
         .unwrap_err();
-    assert!(
-        err.contains("blocked") && err.contains("waiting for Apply or Cancel"),
-        "{err}"
-    );
+    match err {
+        ScriptStartError::Waiting(message) => assert!(
+            message.contains("blocked") && message.contains("waiting for Apply or Cancel"),
+            "{message}"
+        ),
+        other => panic!("expected a waiting start error, got {other:?}"),
+    }
     assert_eq!(f.state("bob"), ScriptRunState::Idle);
 
     f.scripts.cancel_settings_sync();
@@ -3498,12 +3507,15 @@ fn assigned_catalog_card_missing_from_loaded_catalog_names_scanned_root() {
         .scripts
         .start_profile(&mut f.core, "alice", Some(&root))
         .expect_err("a card absent from the loaded catalog must be refused");
-    assert!(
-        error.contains(&format!("catalog at {} was scanned", root.display()))
-            && error.contains("MissingBot")
-            && error.contains("missing"),
-        "{error}"
-    );
+    match error {
+        ScriptStartError::Refused(message) => assert!(
+            message.contains(&format!("catalog at {} was scanned", root.display()))
+                && message.contains("MissingBot")
+                && message.contains("missing"),
+            "{message}"
+        ),
+        other => panic!("expected a refused start error, got {other:?}"),
+    }
     assert_eq!(start_accepted(&f, "alice"), 0);
     assert_ne!(f.state("alice"), ScriptRunState::Running);
 }
@@ -4079,7 +4091,12 @@ fn a_deleted_file_card_is_refused_even_when_its_stored_path_matches() {
         .scripts
         .start_profile(&mut f.core, "alice", None)
         .unwrap_err();
-    assert!(error.starts_with("missing file: "), "{error}");
+    match error {
+        ScriptStartError::Refused(message) => {
+            assert!(message.starts_with("missing file: "), "{message}")
+        }
+        other => panic!("expected a refused start error, got {other:?}"),
+    }
     assert_eq!(start_accepted(&f, "alice"), 0);
     assert_ne!(f.state("alice"), ScriptRunState::Running);
 }

@@ -241,14 +241,30 @@ fn with_vault(state: &mut PanelState) -> Option<map_fixture::MapFixture> {
 fn with_marked_bob(state: &mut PanelState) -> Option<map_fixture::MapFixture> {
     add_vault(state);
     let bob = state.session.core.profile_identity("bob").unwrap();
-    state.session.fleet_selection.set(bob, true);
+    state.session.fleet_selection.set_for_test(bob, true);
     state.session.open_window(PanelWindow::Fleet);
     None
 }
 
 fn with_script_section(state: &mut PanelState) -> Option<map_fixture::MapFixture> {
     // A filled catalog: Browse/Load never raise the first-use import prompt.
-    state.session.scripts.mark_catalog_filled();
+    state.session.scripts.stage_catalog_action(
+        frontend_core::scripts::CatalogActionKind::Fill,
+        None,
+        frontend_core::scripts::paths::rs2b0t_path_file(),
+    );
+    let submitted = state
+        .session
+        .submit_script_command(
+            frontend_core::OperatorCommand::ImportCatalog,
+            frontend_core::Targets::Application,
+        )
+        .expect("catalog fill row is submitted");
+    assert!(state
+        .session
+        .core
+        .command_failure(submitted.request())
+        .is_none());
     state
         .session
         .ui

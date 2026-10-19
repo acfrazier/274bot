@@ -134,6 +134,7 @@ impl StartAdmit {
         self.queue.remove(index)
     }
 
+    #[cfg(test)]
     pub fn drain(&mut self) -> Vec<QueuedStart> {
         if self.is_empty() {
             return Vec::new();

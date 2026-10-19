@@ -1,8 +1,9 @@
 //! Persistent ignored LIVE regressions for panel manual movement takeover.
 //!
-//! Input enters through `Session::capture_tx`, the same sender used by the
-//! production panel capture path. The second test exercises both M5's paused
-//! carry and the post-Resume takeover window with the production script APIs.
+//! Input enters through MapDesk's staged `GameInput` command, the same
+//! sender as the production panel capture path. The second test exercises
+//! both M5's paused carry and the post-Resume takeover window with production
+//! script APIs.
 
 use std::collections::HashMap;
 use std::env;
@@ -447,25 +448,44 @@ fn capture(
     .map_err(|error| error.to_string())
 }
 
-fn send_click(session: &Session, button: i32, x: i32, y: i32) -> Result<(), String> {
-    let sender = session
-        .capture_tx
-        .as_ref()
-        .ok_or("production panel capture sender is unavailable")?;
-    if !sender.send(InputEv::Move { x, y }) {
-        return Err("the slot dropped its input channel".into());
-    }
-    if !sender.send(InputEv::Down { button, x, y }) {
-        return Err("the slot dropped its input channel".into());
-    }
-    if sender.send(InputEv::Up) {
+fn stage_capture_event(session: &mut Session, event: InputEv) -> Result<(), String> {
+    if session
+        .map_desk
+        .stage_game_input(frontend_core::GameInputEvent::Captured(event))
+    {
         Ok(())
     } else {
-        Err("the slot dropped its input channel".into())
+        Err("panel input frame is full".into())
     }
 }
 
-fn send_minimap_click(session: &Session) -> Result<(), String> {
+fn submit_capture_frame(session: &mut Session) -> Result<(), String> {
+    let submitted = session
+        .submit(
+            frontend_core::OperatorCommand::GameInput,
+            frontend_core::Targets::Selected,
+        )
+        .ok_or_else(|| {
+            session
+                .error
+                .clone()
+                .unwrap_or_else(|| "panel input submission was refused".into())
+        })?;
+    if let Some(error) = session.core.command_failure(submitted.request()) {
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
+fn send_click(session: &mut Session, button: i32, x: i32, y: i32) -> Result<(), String> {
+    session.map_desk.begin_game_input_frame();
+    stage_capture_event(session, InputEv::Move { x, y })?;
+    stage_capture_event(session, InputEv::Down { button, x, y })?;
+    stage_capture_event(session, InputEv::Up)?;
+    submit_capture_frame(session)
+}
+
+fn send_minimap_click(session: &mut Session) -> Result<(), String> {
     send_click(session, 1, MINIMAP_CLICK.0, MINIMAP_CLICK.1)
 }
 
@@ -605,12 +625,12 @@ fn run_manual_click(pause_owner: bool, recovery: bool, v2: bool) -> Result<(), S
     )?;
     capture(&session, &dir, &stamp, "01-armed", &before)?;
 
-    // Both controls enter via the production capture channel, not a host op.
+    // Both controls enter through the production GameInput command path.
     for (label, button, x, y) in [
         ("02-tab-control", 1, 600, 190),
         ("02-right-click-control", 2, 256, 180),
     ] {
-        send_click(&session, button, x, y)?;
+        send_click(&mut session, button, x, y)?;
         let until = Instant::now() + Duration::from_millis(200);
         while Instant::now() < until {
             session.pump_status();
@@ -679,7 +699,7 @@ fn run_manual_click(pause_owner: bool, recovery: bool, v2: bool) -> Result<(), S
         }
     }
     // With the world menu still open, this off-row click also walks on minimap.
-    send_minimap_click(&session)?;
+    send_minimap_click(&mut session)?;
     if pause_owner {
         let deadline = Instant::now() + TERMINAL_WAIT;
         loop {
@@ -735,13 +755,9 @@ fn hover_frame(session: &mut Session, x: i32, y: i32) -> Result<(), String> {
         .focused_pixels()
         .ok_or("panel CPU frame mailbox")?
         .generation();
-    session
-        .capture_tx
-        .as_ref()
-        .ok_or("panel capture sender")?
-        .send(InputEv::Move { x, y })
-        .then_some(())
-        .ok_or("the slot dropped its input channel")?;
+    session.map_desk.begin_game_input_frame();
+    stage_capture_event(session, InputEv::Move { x, y })?;
+    submit_capture_frame(session)?;
     let deadline = Instant::now() + Duration::from_secs(5);
     while session
         .focused_pixels()
@@ -853,7 +869,7 @@ fn run_scene_target_capture(target: &str) -> Result<(), String> {
         );
         // Right-click freezes the actual model/loc pick. Read the open menu
         // after a server observation, not stale rows from the previous hover.
-        send_click(&session, 2, x, y)?;
+        send_click(&mut session, 2, x, y)?;
         hover_frame(&mut session, x, y)?;
         std::thread::sleep(Duration::from_millis(650));
         session.pump_status();
@@ -903,7 +919,7 @@ fn run_scene_target_capture(target: &str) -> Result<(), String> {
     // These applet coordinates follow the client's 334px viewport placement,
     // including its 21px clamp and 31px first-row baseline.
     let top = (y - 4).min(334 - (count * 15 + 21));
-    send_click(&session, 1, x, top + 4 + 31 + (count - 1 - row) * 15)?;
+    send_click(&mut session, 1, x, top + 4 + 31 + (count - 1 - row) * 15)?;
     let after = wait_for_user_input(&mut session, &name)?;
     assert_correlated_user_input(&before, &after);
     assert_eq!(after["script"]["run_state"], "Running");
@@ -955,7 +971,7 @@ fn run_pause_click_resume() -> Result<(), String> {
     assert_eq!(paused["script"]["terminal_count"], 0);
     capture(&session, &dir, &stamp, "02-paused-carry", &paused)?;
 
-    send_minimap_click(&session)?;
+    send_minimap_click(&mut session)?;
     let deadline = Instant::now() + TERMINAL_WAIT;
     let paused_click = loop {
         session.pump_status();
@@ -1052,7 +1068,7 @@ fn run_pause_click_resume() -> Result<(), String> {
         session.core.script_state(&name),
         frontend_core::scripts::ScriptRunState::Running
     );
-    send_minimap_click(&session)?;
+    send_minimap_click(&mut session)?;
     let after_resume_click = wait_for_user_input(&mut session, &name)?;
     assert_correlated_user_input(&before_resume_click, &after_resume_click);
     capture(
@@ -1235,7 +1251,7 @@ fn run_group_capture() -> Result<(), String> {
             &serde_json::json!({"focused": control, "peer": peer_control}),
         )?;
         println!("group no-click control trial={trial} focused={control} peer={peer_control}");
-        send_click(&session, 1, x, y)?;
+        send_click(&mut session, 1, x, y)?;
         let deadline = Instant::now() + TERMINAL_WAIT;
         let after = loop {
             session.pump_status();
@@ -1382,7 +1398,7 @@ fn run_route_less_resilient(pause_owner: bool) {
         &before,
     )
     .unwrap();
-    send_minimap_click(&session).unwrap();
+    send_minimap_click(&mut session).unwrap();
     if pause_owner {
         let expected_intent = before["nav"]["user_move_intent_seq"]
             .as_u64()
@@ -1498,20 +1514,18 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     let target_uid = session.core.profile(&target).unwrap().uid();
     session
         .fleet_selection
-        .set(frontend_core::ProfileIdentity::uid(target_uid), true);
+        .set_for_test(frontend_core::ProfileIdentity::uid(target_uid), true);
 
     session.select(&source);
     session.script_sel = Some(ScriptChoice::compiled(id));
-    session
-        .scripts
-        .set_compiled_setting(
-            &mut session.core,
-            &source,
-            id,
-            "skill",
-            serde_json::json!("Fishing"),
-        )
-        .unwrap();
+    assert!(session.set_profile_setting(
+        &source,
+        frontend_core::scripts::CardSource::Catalog,
+        "Gatherer",
+        Path::new(""),
+        "skill",
+        serde_json::json!("Fishing"),
+    ));
     session.core.flush_writes();
     session.poll_scripts();
     session.fleet_prepare_apply_settings();
@@ -1584,16 +1598,14 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
 
     session.select(&source);
     session.script_sel = Some(ScriptChoice::compiled(id));
-    session
-        .scripts
-        .set_compiled_setting(
-            &mut session.core,
-            &source,
-            id,
-            "skill",
-            serde_json::json!("Mining"),
-        )
-        .unwrap();
+    assert!(session.set_profile_setting(
+        &source,
+        frontend_core::scripts::CardSource::Catalog,
+        "Gatherer",
+        Path::new(""),
+        "skill",
+        serde_json::json!("Mining"),
+    ));
     session.core.flush_writes();
     session.poll_scripts();
     let source_prompt = session

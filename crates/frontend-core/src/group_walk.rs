@@ -65,6 +65,44 @@ impl WalkInputs {
     }
 }
 
+/// The consumed destination plus routing facts staged by the UI.
+pub(crate) struct StagedMarkedWalk {
+    prepared: Result<(MapContext, MapWalkPlan), ActionError>,
+    destination: Option<Tile>,
+    options: FindOptions,
+}
+
+impl StagedMarkedWalk {
+    pub(crate) fn new(map: &mut WalkMap, context: WalkMapContext, options: FindOptions) -> Self {
+        let destination = map
+            .pending()
+            .map(|selection| selection.reported_destination());
+        let prepared = map
+            .confirm_walk_plan(context, options)
+            .map(|plan| (context.to_host(), plan))
+            .map_err(WalkActionError::into_host);
+        Self {
+            prepared,
+            destination,
+            options,
+        }
+    }
+
+    /// The pending destination as read before it was consumed.
+    pub(crate) fn destination(&self) -> Option<Tile> {
+        self.destination
+    }
+
+    fn with_arms<'a>(self, arms: &'a WalkArms) -> MarkedWalk<'a> {
+        MarkedWalk {
+            prepared: self.prepared,
+            destination: self.destination,
+            options: self.options,
+            arms,
+        }
+    }
+}
+
 /// The consumed destination plus the routing options that produced it.
 pub struct MarkedWalk<'a> {
     /// The consumed map selection with its binding, or why none could be
@@ -78,27 +116,6 @@ pub struct MarkedWalk<'a> {
 }
 
 impl<'a> MarkedWalk<'a> {
-    pub(crate) fn new(
-        map: &mut WalkMap,
-        context: WalkMapContext,
-        options: FindOptions,
-        arms: &'a WalkArms,
-    ) -> Self {
-        let destination = map
-            .pending()
-            .map(|selection| selection.reported_destination());
-        let prepared = map
-            .confirm_walk_plan(context, options)
-            .map(|plan| (context.to_host(), plan))
-            .map_err(WalkActionError::into_host);
-        Self {
-            prepared,
-            destination,
-            options,
-            arms,
-        }
-    }
-
     /// The consumed map selection with its binding, or why none could be built.
     pub fn prepared(&self) -> Result<&(MapContext, MapWalkPlan), &ActionError> {
         self.prepared.as_ref()
@@ -130,7 +147,7 @@ pub fn none_marked() -> BulkReport {
 /// [`MarkedSelection::is_empty`] before they consume the map selection.
 ///
 /// "Done" in the report means the route is armed, not that the bot arrived.
-pub fn walk_marked<Io>(
+pub(crate) fn walk_marked<Io>(
     selection: &MarkedSelection,
     core: &OperatorSession<Io>,
     walk: MarkedWalk<'_>,
@@ -237,15 +254,12 @@ pub fn walk_marked<Io>(
 impl<Io> OperatorSession<Io> {
     /// Consume one map destination and walk every marked profile using its
     /// own observed world state, bank rows, and risk inputs.
-    pub fn confirm_marked_walk(
+    pub(crate) fn confirm_marked_walk(
         &self,
         selection: &MarkedSelection,
-        map: &mut WalkMap,
-        context: WalkMapContext,
-        options: FindOptions,
+        walk: StagedMarkedWalk,
     ) -> BulkReport {
-        let walk = MarkedWalk::new(map, context, options, self.walk_arms());
-        walk_marked(selection, self, walk, |name| {
+        walk_marked(selection, self, walk.with_arms(self.walk_arms()), |name| {
             WalkInputs::new(
                 self.walk_state(Some(name)),
                 self.bank_rows(name),

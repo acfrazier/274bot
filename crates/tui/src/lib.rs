@@ -45,7 +45,7 @@ pub use bin::RunMode;
 pub use chat::{Chat, ChatAction, ChatState, ChatView};
 pub use commands::Command;
 pub use layout::{Pane, Screen, SizeClass};
-pub use loadouts::{LoadoutsKey, LoadoutsPane, LoadoutsState};
+pub use loadouts::{LoadoutsIntent, LoadoutsPane, LoadoutsState};
 pub use map::{Map, MapAction, MapView};
 pub use script_params::{ParamsKey, ParamsPane, ParamsState};
 pub use script_shape::ScriptPane;

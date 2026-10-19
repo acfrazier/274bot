@@ -12,7 +12,7 @@
 //! holds: unlock spawns **one** Client (the focused profile); MultiBox spawns
 //! the rest.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,14 +27,14 @@ use client::render::nav_debug::{
     CORNER_SW, FACE_E, FACE_N, FACE_S, FACE_W,
 };
 use client::sound::output::AudioOut;
-use frontend_core::command::RasterMode;
+use frontend_core::command::{DrawSwitch, RasterMode};
 use frontend_core::frames::{AudioChange, AudioGate};
 use frontend_core::launch::{
     BoundProfile, Passphrase, PlayConfig, PreparationCompletion, ProfileArgs, ProfileClass,
-    ProfileEnv, ProfileLauncher, ProfilePreparation, ProfileTemplate, UnlockError, UnlockStage,
+    ProfileEnv, ProfileLauncher, ProfilePreparation, ProfileTemplate, UnlockStage,
     ValidatedProfile,
 };
-use frontend_core::scripts::{CardSource, Loadouts, SchemaRef, ScriptChoice, ScriptRunState};
+use frontend_core::scripts::{CardSource, LoadoutForm, SchemaRef, ScriptChoice, ScriptRunState};
 use frontend_core::surface::{FrameBuf, InputEv, InputSender, SlotInput};
 use frontend_core::walk_map::{
     select_walk_route_source, RouteProjectionView, WalkMapDemand, WalkMapJobState, WalkMapStage,
@@ -244,7 +244,7 @@ struct PanelSurface<'a> {
     focus: &'a Mutex<crate::focus::Focus>,
     audio: &'a AudioGate<AudioOut>,
     memory_override: Option<bool>,
-    walk_dest: &'a mut Option<Tile>,
+    map_desk: &'a mut frontend_core::MapDesk,
     models: frontend_core::Models<'a>,
 }
 
@@ -287,7 +287,7 @@ impl SlotSurface for PanelSurface<'_> {
 
     fn lifetime_reset(&mut self, _name: &str, walk_was_armed: bool) {
         if walk_was_armed {
-            *self.walk_dest = None;
+            self.map_desk.clear_walk_dest();
         }
     }
 
@@ -296,7 +296,7 @@ impl SlotSurface for PanelSurface<'_> {
     }
 
     fn models(&mut self) -> frontend_core::Models<'_> {
-        self.models.reborrow()
+        self.models.reborrow().with_map(&mut *self.map_desk)
     }
 
     /// The render mirror the slot threads read: the focused member's
@@ -863,9 +863,6 @@ pub struct Session {
     pub core: OperatorSession<SlotIo>,
     /// Last vault/connection error shown in the banner.
     pub error: Option<String>,
-    /// The focused slot's live capture sender; `None` while capture is off,
-    /// so UI send paths no-op.
-    pub capture_tx: Option<InputSender>,
     /// BOT_MAINLAND=1 / host-play --mainland; not a panel checkbox.
     pub mainland: Arc<AtomicBool>,
     /// The log section's filtered view and controls over the shared
@@ -891,10 +888,6 @@ pub struct Session {
     /// Profiles leave prompt, which must come to the front even from a
     /// hidden tab): the named window's next `Begin` takes it once.
     pub window_focus: Option<PanelWindow>,
-    /// The tile the user last picked for WalkTo; `None` until armed. Read
-    /// by [`Session::walk_status_text`] so the status row stays honest even
-    /// when no route could be found.
-    pub walk_dest: Option<Tile>,
     /// WalkTo picker open flag; the picker window lands in Task 10.
     pub walkto_open: bool,
     /// WalkTo-only opt-out, reset when the picker opens; never persisted.
@@ -911,8 +904,12 @@ pub struct Session {
     /// Separate Fleet window and the shared identity-keyed marked rows.
     pub fleet_open: bool,
     pub fleet_selection: frontend_core::MarkedSelection,
-    pub fleet_filter: String,
-    pub fleet_sort: frontend_core::FleetOrder,
+    /// The Fleet window's filter text and row order (staged text; the
+    /// `SetFleetFilter`/`SetFleetSort` commands change what is shown).
+    pub fleet_filter: frontend_core::FleetFilter,
+    /// The draw policy the render mirror (`focus`) follows; changed by
+    /// `SetDraw` only.
+    pub(crate) draw: frontend_core::DrawPolicy,
     /// Reused buffer for the Fleet window's shown-row indices.
     pub(crate) fleet_shown: Vec<usize>,
     /// Reused buffer for the sorted mark universe [`Self::prune_fleet_marks`]
@@ -924,12 +921,12 @@ pub struct Session {
     pub(crate) fleet_report_follows_start: bool,
     /// The Assign & restart confirmation is open (it names the bots).
     pub(crate) fleet_restart_confirm: bool,
+    /// Core-owned map custody: staged actions, selected destination, cache
+    /// demand, bake consent and panel input channel.
+    pub(crate) map_desk: frontend_core::MapDesk,
     /// One application-owned map view/catalogue, never a copy on each bot.
     pub map_model: frontend_core::walk_map::WalkMap,
     pub map_catalogue: Option<Arc<frontend_core::walk_map::WalkCatalogue>>,
-    pub map_demand: Option<frontend_core::walk_map::WalkMapDemandHandle>,
-    /// Consent before a local terrain bake (shared with the TUI).
-    pub map_bake: frontend_core::MapBakeGate,
     pub map_images: Option<Arc<frontend_core::walk_map::WalkReadyImages>>,
     pub observed_map_services: Vec<frontend_core::walk_map::WalkObservedService>,
     map_catalogue_named: bool,
@@ -1013,11 +1010,6 @@ pub struct Session {
     /// Shared script coordination (card library and catalog, assignment,
     /// per-profile parameters, Start/Stop all, reload, Apply to all).
     pub scripts: frontend_core::Scripts,
-    /// Catalog warmup: at most one `ensure_js` per armed frame.
-    pub transpile_queue: VecDeque<(CardSource, String)>,
-    pub(crate) transpile_armed: bool,
-    pub transpile_done: usize,
-    pub transpile_total: usize,
     /// Browse picker open flag (the Scripts window in `app.rs`).
     pub script_browse_open: bool,
     /// Load file browser open flag (the Load window in `app.rs`).
@@ -1051,31 +1043,27 @@ pub struct Session {
     pub(crate) script_param_schema: frontend_core::scripts::OwnedSchema,
     /// Loadouts CRUD window (non-modal).
     pub loadouts_open: bool,
-    /// Selected row in the loadouts list.
-    pub loadouts_sel: usize,
-    /// Working copy of the selected preset. Store/file change only on save.
-    pub loadouts_draft: Option<api::loadout::Loadout>,
-    /// Visible save/error feedback for the editor.
-    pub loadouts_status: String,
     /// Item search box for the active slot or supply row.
     pub loadouts_search: String,
     /// Equipment slot currently picking an item.
-    pub loadouts_search_slot: Option<String>,
+    pub loadouts_search_slot: Option<frontend_core::scripts::WornSlot>,
     /// Supply row currently picking an item.
     pub loadouts_search_supply: Option<usize>,
     /// Weak selected-data/query key for cached loadout search results.
     pub(crate) loadouts_search_cache_key: Option<(
         Option<std::sync::Weak<api::game_data::SelectedGameData>>,
         String,
-        Option<String>,
+        Option<frontend_core::scripts::WornSlot>,
     )>,
     /// Search results and formatted rows stay stable between query/data changes.
     pub(crate) loadouts_search_hits: Vec<api::game_data::ItemSearchHit>,
     pub(crate) loadouts_picker_rows: crate::name_picker::PickerRows,
     /// Per-supply quantity text buffers (stable across frames while editing).
     pub loadouts_qty_bufs: Vec<String>,
-    /// Process-wide equipment/inventory presets.
-    pub loadouts: Loadouts,
+    /// Process-wide equipment/inventory presets: the rows, the selected
+    /// one, its draft and the status line the loadout rows of the command
+    /// seam act on.
+    pub loadouts: LoadoutForm,
     catalog_core_enabled: bool,
     pair_core_enabled: bool,
     pub(super) live_script_stop_wait_started: Option<Instant>,
@@ -1373,7 +1361,7 @@ impl Session {
             .preferences()
             .expect("the session's local state was bound just now");
         let mut ui = crate::ui_state::load(&preferences);
-        let walk_permissions = frontend_core::WalkGlobalsView::read(&preferences);
+        let walk_permissions = core.adopt_operator_preferences();
         let mut quester_paths = frontend_core::QuesterPathsController::default();
         quester_paths.restore(&preferences);
         let quester_paths_folder_edit = quester_paths
@@ -1384,14 +1372,11 @@ impl Session {
         apply_walk_permissions_to_nav(&mut ui.nav, walk_permissions);
         let capture_pref = ui.capture;
         let (sidecar_50_pref, focused_50_pref) = (ui.sidecar_50, ui.focused_50);
-        let map_bake = frontend_core::MapBakeGate::new(ui.map_bake);
-        core.set_walk_globals(walk_permissions.globals());
-        core.set_walk_globals_store(preferences.share());
-        core.set_pause_script_on_manual_walk_abort(ui.nav.pause_script_on_manual_walk_abort);
+        let map_desk = frontend_core::MapDesk::new(ui.map_bake);
 
         // Loaded now through the service. A file it refused leaves the form
         // empty with the reason, which the Loadouts window shows as its status.
-        let loadouts = Loadouts::operator_of(&core);
+        let loadouts = LoadoutForm::operator_of(&core);
         let (scripts, library_error) = frontend_core::Scripts::open_default();
         // A missing library store is a first run; a refused or corrupt one is
         // said out loud (and nothing is saved over a refused one).
@@ -1399,10 +1384,6 @@ impl Session {
             eprintln!("panel: {error}");
             process_log(Level::Error, &error);
         }
-        let loadouts_status = loadouts
-            .load_error()
-            .map(|error| format!("Could not read the loadouts: {error}"))
-            .unwrap_or_default();
         Self {
             focus: Arc::new(Mutex::new(crate::focus::Focus {
                 focused: None,
@@ -1419,7 +1400,6 @@ impl Session {
             })),
             core,
             error: None,
-            capture_tx: None,
             mainland: Arc::new(AtomicBool::new(
                 env::var("BOT_MAINLAND").as_deref() == Ok("1"),
             )),
@@ -1436,11 +1416,15 @@ impl Session {
             profile_import_settled: false,
             import_delete_understood: false,
             profiles_split: [0.4, 0.35],
-            walk_dest: None,
             fleet_open: false,
             fleet_selection: frontend_core::MarkedSelection::default(),
-            fleet_filter: String::new(),
-            fleet_sort: frontend_core::FleetOrder::Name,
+            fleet_filter: frontend_core::FleetFilter::new(frontend_core::FleetOrder::Name),
+            draw: frontend_core::DrawPolicy::new(
+                capture_pref,
+                sidecar_50_pref,
+                focused_50_pref,
+                true,
+            ),
             fleet_shown: Vec::new(),
             fleet_universe: Vec::new(),
             fleet_report: None,
@@ -1452,10 +1436,9 @@ impl Session {
             preferences,
             quester_paths,
             quester_paths_folder_edit,
+            map_desk,
             map_model: frontend_core::walk_map::WalkMap::new(),
             map_catalogue: None,
-            map_demand: None,
-            map_bake,
             map_images: None,
             observed_map_services: Vec::new(),
             map_catalogue_named: false,
@@ -1484,10 +1467,6 @@ impl Session {
             ui,
             script_sel: None,
             scripts,
-            transpile_queue: VecDeque::new(),
-            transpile_armed: false,
-            transpile_done: 0,
-            transpile_total: 0,
             script_browse_open: false,
             script_load_open: false,
             script_load_dir: crate::script_picker::default_load_browse_dir(None),
@@ -1504,9 +1483,6 @@ impl Session {
             script_parameter_filter_id: None,
             script_param_schema: frontend_core::scripts::OwnedSchema::default(),
             loadouts_open: false,
-            loadouts_sel: 0,
-            loadouts_draft: None,
-            loadouts_status,
             loadouts_search: String::new(),
             loadouts_search_slot: None,
             loadouts_search_supply: None,
@@ -1541,11 +1517,10 @@ impl Session {
     pub(crate) fn refresh_walk_permissions(&mut self) {
         // Cheap per frame: the preferences re-read their file at most once a
         // second and answer from what they hold otherwise.
-        self.walk_permissions = frontend_core::WalkGlobalsView::read(&self.preferences);
+        self.walk_permissions = self.core.refresh_walk_globals();
         let view = self.walk_permissions;
         apply_walk_permissions_to_nav(&mut self.ui.nav, view);
         self.route_through_zones = view.danger_this_walk(self.route_through_zones);
-        self.core.set_walk_globals(view.globals());
     }
 
     /// Enable full-core proof only for the dedicated catalog_watch entry.
@@ -1817,15 +1792,19 @@ impl Session {
             self.error = Some("reset vault: unlock / close the session first".into());
             return false;
         }
-        match frontend_core::launch::reset_vault_file(path) {
-            Ok(()) => {
+        self.core.stage_vault_reset(path.to_path_buf());
+        let Some(submitted) = self.submit(OperatorCommand::ResetVault, Targets::Application) else {
+            return false;
+        };
+        match self.core.command_failure(submitted.request()) {
+            None => {
                 self.error = None;
                 self.vault_reset_open = false;
                 self.vault_reset_understood = false;
                 true
             }
-            Err(e) => {
-                self.error = Some(format!("reset vault: {e}"));
+            Some(error) => {
+                self.error = Some(error.to_string());
                 false
             }
         }
@@ -1858,9 +1837,8 @@ impl Session {
                 self.error = None;
                 true
             }
-            Err(error) => {
-                let msg = error.to_string();
-                let prefix = match error.stage() {
+            Err((stage, msg)) => {
+                let prefix = match stage {
                     UnlockStage::Vault => "vault",
                     UnlockStage::Launch => "profile",
                 };
@@ -1876,6 +1854,7 @@ impl Session {
     /// then `login_all`. Slot threads keep using real `Focus` → `set_draw`.
     pub fn live_prepare_null_raster(&mut self) -> Result<(), String> {
         self.persist_ui = false;
+        self.draw.set_persist(false);
         let profiles = frontend_core::live::LiveProfiles::null_raster();
         let path = profiles.panel_vault(274_000_001, true);
         if !self.unlock_at(&path, profiles.passphrase()) {
@@ -1891,7 +1870,7 @@ impl Session {
         self.wall.chooser_open = false;
         self.load("test");
         self.load("test2");
-        self.focus.lock().unwrap().only_render_selected = true;
+        self.set_render_all(false);
         self.select("test");
         self.set_renderer(true);
         self.login_all();
@@ -1902,6 +1881,7 @@ impl Session {
     pub fn prepare_memory(&mut self, run: &frontend_core::bench::BenchRun) -> Result<(), String> {
         use frontend_core::bench::RenderPolicy;
         self.persist_ui = false;
+        self.draw.set_persist(false);
         self.mainland.store(true, Ordering::Relaxed);
         let policy = run.render_policy();
         let stress_wall = matches!(policy, RenderPolicy::Stress50 | RenderPolicy::Stress50Full);
@@ -1964,6 +1944,7 @@ impl Session {
     /// paints every member at 50 fps; otherwise cap-only RAM watch.
     fn live_prepare_stress(&mut self, n: usize, full_rate: bool) -> Result<(), String> {
         self.persist_ui = false;
+        self.draw.set_persist(false);
         let profiles = frontend_core::live::LiveProfiles::stress(n);
         let path = profiles.panel_vault(274_000_100, true);
         // Empty Play first: do not spawn last_focus before s00 focuses.
@@ -1985,10 +1966,7 @@ impl Session {
         self.set_multibox(true);
         self.scatter.store(true, Ordering::Relaxed);
         self.wall.chooser_open = false;
-        {
-            let mut f = self.focus.lock().unwrap();
-            f.only_render_selected = !full_rate;
-        }
+        self.set_render_all(full_rate);
         // Spawn every member onto the wall without applying focus on each
         // load (that would demote/promote raster/mem and join `maininit`
         // on the UI thread — the window never presents). Raster switches
@@ -2032,6 +2010,7 @@ impl Session {
     ) -> Result<(), String> {
         let scenario = scenario.into();
         self.persist_ui = false;
+        self.draw.set_persist(false);
         self.core.live_runner().clear();
         #[cfg(test)]
         {
@@ -2151,7 +2130,7 @@ impl Session {
         }
         self.select(&names[0]);
         self.set_renderer(renderer);
-        self.focus.lock().unwrap().only_render_selected = only_render_selected;
+        self.set_render_all(!only_render_selected);
         self.set_capture(capture);
         self.set_live_full_rate(full_rate);
         self.nav_overlay = Some(from_scenario(&nav, &self.ui.nav));
@@ -2211,9 +2190,15 @@ impl Session {
                 self.stage_live_starts(plan);
             } else if let Some((fixture, stem)) = frontend_core::live::live_file_fixture(card_name)
             {
-                self.scripts
-                    .load_file(&fixture)
-                    .map_err(|error| format!("load {card_name} fixture: {error}"))?;
+                self.scripts.stage_load_file(fixture.clone());
+                let submitted = self
+                    .submit_script_command(OperatorCommand::LoadScriptFile, Targets::Application)
+                    .ok_or_else(|| {
+                        format!("load {card_name} fixture: command was not submitted")
+                    })?;
+                if let Some(error) = self.core.command_failure(submitted.request()) {
+                    return Err(format!("load {card_name} fixture: {error}"));
+                }
                 if self.scripts.card(CardSource::File, &stem).is_none() {
                     return Err(format!("file fixture {card_name} missing after load"));
                 }
@@ -2281,10 +2266,46 @@ impl Session {
 
     /// Empty `Play` (shared cache + FIFO + per-frame hook) then spawn the
     /// first focused profile only. Parked names are started from [`select`].
-    fn start_play(&mut self, path: &Path, pass: &str) -> Result<(), UnlockError> {
+    ///
+    /// The vault opens through `UnlockVault` (or `CreateVault` on first
+    /// run, when no vault file exists yet).
+    fn start_play(&mut self, path: &Path, pass: &str) -> Result<(), (UnlockStage, String)> {
         let hook = self.panel_frame_hook();
         let launch = self.launcher.take_launch().keeping_world_state();
-        self.core.unlock_vault(path, pass, launch, hook)?;
+        let row = if path.is_file() {
+            self.core
+                .stage_vault_unlock(path.to_path_buf(), pass, launch, hook);
+            OperatorCommand::UnlockVault
+        } else {
+            self.core
+                .stage_vault_create(path.to_path_buf(), pass, launch, hook);
+            OperatorCommand::CreateVault
+        };
+        let (core, mut surface) = self.core_and_surface();
+        let submitted = core
+            .submit(row, Targets::Application, &mut surface)
+            .map_err(|error| (UnlockStage::Vault, error.to_string()))?;
+        let failed = self
+            .core
+            .commands()
+            .report(submitted.request())
+            .and_then(|report| report.members().first())
+            .and_then(|member| match member.terminal() {
+                Some(api::identity::Settlement::Failed(failure)) => Some((
+                    match failure {
+                        frontend_core::command::CommandFailure::Failed(_) => UnlockStage::Launch,
+                        _ => UnlockStage::Vault,
+                    },
+                    member
+                        .detail()
+                        .unwrap_or("vault: unlock failed")
+                        .to_string(),
+                )),
+                _ => None,
+            });
+        if let Some(failed) = failed {
+            return Err(failed);
+        }
         crate::picker::set_pack(self.core.nav_world());
         self.statuses.refresh(&self.core);
         Ok(())
@@ -2305,14 +2326,6 @@ impl Session {
     /// Poll slot statuses and append log lines for transitions (slot up,
     /// login errors, ingame, scene changes). Call once per UI frame.
     pub fn pump_status(&mut self) {
-        self.core
-            .set_pause_script_on_manual_walk_abort(self.ui.nav.pause_script_on_manual_walk_abort);
-        let only_selected = self.focus.lock().unwrap().only_render_selected;
-        self.core.set_capacity_render(if only_selected {
-            frontend_core::RenderPolicyLabel::OnlySelected
-        } else {
-            frontend_core::RenderPolicyLabel::RenderAll
-        });
         self.core.advance_removals(Instant::now());
         // Fleet marks follow the profile universe at this sync, not at
         // the Fleet window's draw: a closed window prunes the same.
@@ -2342,6 +2355,7 @@ impl Session {
         // observe of its own), refreshes rows and records transitions; the
         // panel then commits the Starts that settled.
         self.core.poll_host();
+        self.core.poll_map_demand(&mut self.map_desk);
         self.surface_write_failures();
         self.settle_profile_save();
         self.poll_scripts();
@@ -2369,7 +2383,7 @@ impl Session {
             .selected()
             .is_some_and(|name| self.core.walk_route_armed(name));
         if !still_walking {
-            self.walk_dest = None;
+            self.map_desk.clear_walk_dest();
         }
     }
 
@@ -2485,9 +2499,18 @@ impl Session {
         if !self.core.has_play() {
             return Err("No active play session".into());
         }
-        self.core
-            .debug_command(&name, cmd)
-            .map_err(|error| format!("{name}: command refused: {error}"))
+        self.map_desk.stage_debug_command(cmd, None);
+        let submitted = self
+            .submit(OperatorCommand::DebugCommand, Targets::Profile(&name))
+            .ok_or_else(|| {
+                self.error
+                    .clone()
+                    .unwrap_or_else(|| "Debug command submission was refused".into())
+            })?;
+        if let Some(error) = self.core.command_failure(submitted.request()) {
+            return Err(error.to_string());
+        }
+        Ok(())
     }
 
     /// Snapshot every visible profile row with its stable marked-selection
@@ -2509,13 +2532,18 @@ impl Session {
     /// selection stays identity-keyed; the adapter reports marks whose row
     /// disappeared instead of silently dropping them.
     pub(crate) fn send_debug_command_marked_snapshot(
-        &self,
+        &mut self,
         cmd: &str,
         snapshot: Vec<(frontend_core::ProfileIdentity, String)>,
     ) -> frontend_core::MarkedCommandReport {
-        frontend_core::run_marked_command(&self.fleet_selection, snapshot, |name| {
-            self.core.debug_command(name, cmd)
-        })
+        self.map_desk.stage_debug_command(cmd, Some(snapshot));
+        let Some(mut submitted) = self.submit(OperatorCommand::DebugCommand, Targets::Marked)
+        else {
+            return frontend_core::MarkedCommandReport::from_parts(0, Vec::new());
+        };
+        submitted
+            .take_marked()
+            .unwrap_or_else(|| frontend_core::MarkedCommandReport::from_parts(0, Vec::new()))
     }
 
     /// True when the resolved launch profile is Local.
@@ -2558,9 +2586,12 @@ impl Session {
     }
 
     /// Cache the engine's `getvar tutorial` read on the profile.
+    /// Cache the engine's `getvar tutorial` answer as the profile's TutSkip
+    /// state (an owner result the core adopts; the operator's TutSkip is
+    /// `MarkTutorialSkipped`).
     fn cache_tutorial(&mut self, name: &str, skipped: bool) {
-        if let Err(e) = self.core.record_tutorial_state(name, skipped) {
-            self.error = Some(e);
+        if let Err(e) = self.core.adopt_tutorial_reading(name, skipped) {
+            self.error = Some(e.to_string());
         }
     }
 
@@ -2643,16 +2674,33 @@ impl Session {
         if !pending {
             return;
         }
-        let Some(tx) = self.capture_tx.as_ref() else {
+        if !self.map_desk.input_connected() {
             return;
-        };
-        if !self.tutorial_getvar_drained.insert(name.clone()) {
+        }
+        if self.tutorial_getvar_drained.contains(&name) {
             return;
         }
         let (x, y) = Self::GETVAR_DRAIN_CLICK;
-        let _ = tx.send(InputEv::Move { x, y });
-        let _ = tx.send(InputEv::Down { button: 1, x, y });
-        let _ = tx.send(InputEv::Up);
+        let staged = self
+            .map_desk
+            .stage_game_input(frontend_core::GameInputEvent::Captured(InputEv::Move {
+                x,
+                y,
+            }))
+            && self
+                .map_desk
+                .stage_game_input(frontend_core::GameInputEvent::Captured(InputEv::Down {
+                    button: 1,
+                    x,
+                    y,
+                }))
+            && self
+                .map_desk
+                .stage_game_input(frontend_core::GameInputEvent::Captured(InputEv::Up));
+        if !staged {
+            return;
+        }
+        self.tutorial_getvar_drained.insert(name.clone());
         // Rare (once per box) and operator-visible both in the app log and
         // on stderr, so live runs can pin the drain instant against shots.
         slot_log(
@@ -2719,9 +2767,11 @@ impl Session {
         if self.refuse_saving(name) {
             return;
         }
-        let (core, mut surface) = self.core_and_surface();
-        if let Err(error) = core.open_slot(name, &mut surface) {
-            self.error = Some(error);
+        self.core.stage_select_opens_slot();
+        if let Some(submitted) = self.submit(OperatorCommand::Select, Targets::Profile(name)) {
+            if let Some(error) = self.core.command_failure(submitted.request()) {
+                self.error = Some(error.to_string());
+            }
         }
         self.apply_focus(name);
         self.restore_script_heading(name);
@@ -2750,6 +2800,8 @@ impl Session {
     /// Persist "Got it, don't show again" for the background-bots notice.
     pub fn ack_background_bots(&mut self) {
         if self.persist_ui {
+            self.core
+                .stage_notice(frontend_core::OperatorNotice::BackgroundBots);
             let failure = self
                 .submit(OperatorCommand::AcknowledgeNotice, Targets::Application)
                 .map(|submitted| {
@@ -2761,7 +2813,6 @@ impl Session {
                 Some(None) => {
                     self.background_ack_open = false;
                     self.ui.background_bots_ack = true;
-                    crate::ui_state::save(&self.preferences, &self.ui);
                     frontend_core::resources::clear_background_bots_ack_error(&mut self.error);
                 }
                 Some(Some(error)) => self.error = Some(error),
@@ -2813,7 +2864,7 @@ impl Session {
             }
             self.capture_on(name);
         } else {
-            self.capture_tx = None;
+            self.map_desk.set_input_sender(None);
         }
         // Detach before waking the outgoing worker: its first disabled
         // drain releases held input even if the UI has not run ownership.
@@ -2828,43 +2879,45 @@ impl Session {
         }
     }
 
-    /// Renderer checkbox. Writes both the focused checkbox (`Focus.renderer`)
-    /// and `renderer_by[focused]` so per-slot draw policy stays in sync.
-    /// Slot threads apply `set_draw` from the focus in their per-frame hook.
+    /// Renderer checkbox: the focused member's game renderer
+    /// ([`DrawSwitch::GameRenderer`]); the surface mirrors it onto
+    /// `Focus.renderer` and `renderer_by[focused]`, which the slot threads
+    /// read in their per-frame hook, and the core wakes the focused slot.
     pub fn set_renderer(&mut self, on: bool) {
-        let mut focus = self.focus.lock().unwrap();
-        focus.renderer = on;
-        let name = focus.focused.clone();
-        if let Some(name) = &name {
-            focus.renderer_by.insert(name.clone(), on);
-        }
-        drop(focus);
-        // The focused slot's draw state flips with the checkbox; kick it so
-        // a parked thread applies `set_draw` within a frame.
-        if let Some(name) = name {
-            self.core.wake_slot(&name);
-        }
+        self.submit(
+            OperatorCommand::SetDraw(DrawSwitch::GameRenderer, on),
+            Targets::Application,
+        );
     }
 
     /// Sidecar-50 pref: wall/grid members render at 50 fps instead of the
     /// 1 fps watch cadence (a render-cadence knob, not the idle park).
     /// `pump_status` mirrors it onto each slot's frame-loop latch within a
-    /// frame; kick the parked members so the raise is not held up by the
-    /// 1 s watch bound.
+    /// frame; the core wakes the parked members so the raise is not held
+    /// up by the 1 s watch bound, and saves the preference.
     pub fn set_sidecar_50(&mut self, on: bool) {
-        self.focus.lock().unwrap().sidecar_50 = on;
-        self.wake_all_slots();
-        let before = std::mem::replace(&mut self.ui.sidecar_50, on);
-        self.save_pref_change("sidecar_50", before, on);
+        self.submit_draw(DrawSwitch::SidecarFullRate, on);
     }
 
     /// Game-pane 50 fps for whoever is focused. Does not follow that
     /// client onto the rail.
     pub fn set_focused_50(&mut self, on: bool) {
-        self.focus.lock().unwrap().focused_50 = on;
-        self.wake_all_slots();
-        let before = std::mem::replace(&mut self.ui.focused_50, on);
-        self.save_pref_change("focused_50", before, on);
+        self.submit_draw(DrawSwitch::FocusedFullRate, on);
+    }
+
+    /// Submit a saved draw switch and mirror the policy onto the panel's
+    /// preference view.
+    fn submit_draw(&mut self, switch: DrawSwitch, on: bool) {
+        if let Some(submitted) =
+            self.submit(OperatorCommand::SetDraw(switch, on), Targets::Application)
+        {
+            if let Some(error) = self.core.command_failure(submitted.request()) {
+                self.error = Some(error.to_string());
+            }
+        }
+        self.ui.capture = self.draw.capture();
+        self.ui.sidecar_50 = self.draw.sidecar_50();
+        self.ui.focused_50 = self.draw.focused_50();
     }
 
     /// Confirm the render-all warning: wall members draw from now on. With
@@ -2872,35 +2925,39 @@ impl Session {
     /// "only render focused" applies at once. Without it the choice lasts
     /// this launch only.
     pub fn confirm_render_all(&mut self, remember: bool) {
-        self.focus.lock().unwrap().only_render_selected = false;
-        self.wake_all_slots();
+        self.set_render_all(true);
         self.wall.render_all_warn_open = false;
-        if remember {
-            let before = std::mem::replace(&mut self.ui.render_all_warning_ack, true);
-            self.save_pref_change("render_all_warning_ack", before, true);
+        if remember && self.persist_ui {
+            self.core
+                .stage_notice(frontend_core::OperatorNotice::RenderAllWarning);
+            if let Some(submitted) =
+                self.submit(OperatorCommand::AcknowledgeNotice, Targets::Application)
+            {
+                match self.core.command_failure(submitted.request()) {
+                    Some(error) => self.error = Some(error.to_string()),
+                    None => self.ui.render_all_warning_ack = true,
+                }
+            }
+        } else if remember {
+            self.ui.render_all_warning_ack = true;
         }
     }
 
-    /// Write the panel preferences after `key` changed, logging the change.
-    fn save_pref_change(&self, key: &str, before: bool, after: bool) {
-        if !self.persist_ui || before == after {
-            return;
-        }
-        crate::ui_state::save(&self.preferences, &self.ui);
-        frontend_core::log::global().process_line(
-            frontend_core::log::Source::Host,
-            frontend_core::log::Level::Info,
-            &format!("panel preference {key}: {before} -> {after}"),
-        );
+    /// Render every wall member (`all`) or only the focused one: the core
+    /// records the policy (the capacity warning reads it); the panel's
+    /// render mirror follows and every slot is woken.
+    pub(crate) fn set_render_all(&mut self, all: bool) {
+        self.submit(OperatorCommand::SetRenderAll(all), Targets::Application);
+        self.focus.lock().unwrap().only_render_selected = !all;
+        self.core.wake_all_slots();
     }
 
     /// Ephemeral live overlay: every drawing slot at 50 fps, focused
     /// included (the scenario's `full_rate` knob). Not sidecar-50, not
-    /// persisted; raising the frame cadence needs a kick so a parked
-    /// member re-reads it within a frame.
+    /// persisted; the core wakes every slot so a parked member re-reads
+    /// it within a frame.
     pub fn set_live_full_rate(&mut self, on: bool) {
-        self.focus.lock().unwrap().live_full_rate = on;
-        self.wake_all_slots();
+        self.submit_draw(DrawSwitch::LiveFullRate, on);
     }
 
     /// Mirror the sidecar-50 pref onto every slot's frame-cadence latch
@@ -2966,26 +3023,25 @@ impl Session {
         }
     }
 
-    /// Capture checkbox. On: attach a fresh channel and enable the focused
-    /// slot's drain. Off: detach user input; the consumer releases its own
-    /// held keys/buttons even without queued ups or before reattachment.
+    /// Capture checkbox ([`DrawSwitch::CaptureInput`]). On: attach a fresh
+    /// channel and enable the focused slot's drain. Off: detach user input;
+    /// the consumer releases its own held keys/buttons even without queued
+    /// ups or before reattachment.
     pub fn set_capture(&mut self, on: bool) {
-        self.focus.lock().unwrap().capture = on;
-        if self.persist_ui {
-            self.ui.capture = on;
-            crate::ui_state::save(&self.preferences, &self.ui);
-        }
+        self.submit_draw(DrawSwitch::CaptureInput, on);
         let name = self.focused_name();
         if on {
             match name.as_deref() {
                 Some(name) => self.capture_on(name),
-                None => self.capture_tx = None,
+                None => {
+                    self.map_desk.set_input_sender(None);
+                }
             }
         } else {
             self.capture_off();
         }
-        // Capture flips the slot's idle classification (capture → frame
-        // loop); kick it so the change lands within a frame.
+        // The channel is attached after the core woke the slot; kick it
+        // again so the drain change lands within a frame.
         if let Some(name) = name {
             self.core.wake_slot(&name);
         }
@@ -2995,9 +3051,9 @@ impl Session {
         if let Some(slot) = self.core.slot_io(name) {
             let tx = InputSender::connect(&slot.input);
             slot.input.set_enabled(true);
-            self.capture_tx = Some(tx);
+            self.map_desk.set_input_sender(Some(tx));
         } else {
-            self.capture_tx = None;
+            self.map_desk.set_input_sender(None);
         }
     }
 
@@ -3005,7 +3061,7 @@ impl Session {
         if let Some(slot) = self.focused_slot() {
             slot.input.set_enabled(false);
         }
-        self.capture_tx = None;
+        self.map_desk.set_input_sender(None);
     }
 
     /// Test fixture: select `name` in the core and mirror it onto the render
@@ -3035,7 +3091,7 @@ impl Session {
                 focus: &self.focus,
                 audio: &self.audio,
                 memory_override: self.memory_override,
-                walk_dest: &mut self.walk_dest,
+                map_desk: &mut self.map_desk,
                 models: frontend_core::Models::none()
                     .with_scripts(&mut self.scripts)
                     .with_marks(&mut self.fleet_selection)
@@ -3043,7 +3099,9 @@ impl Session {
                     .with_import(&mut self.profile_import)
                     .with_loadouts(&mut self.loadouts)
                     .with_quester(&mut self.quester_paths)
-                    .with_walk_globals(&mut self.walk_permissions),
+                    .with_walk_globals(&mut self.walk_permissions)
+                    .with_fleet_filter(&mut self.fleet_filter)
+                    .with_draw(&mut self.draw),
             },
         )
     }
@@ -3051,7 +3109,7 @@ impl Session {
     /// Issue one operator command through the core's command seam (the
     /// entry point the TUI and the headless driver use). A refused command
     /// shows on the banner.
-    fn submit(
+    pub(crate) fn submit(
         &mut self,
         command: OperatorCommand,
         targets: Targets<'_>,
@@ -3089,18 +3147,15 @@ impl Session {
 
     /// Log in every marked fleet row (loading the ones not loaded yet)
     /// through the panel's slot surface. Focus does not move.
-    pub(crate) fn login_marked_rows(&mut self) -> frontend_core::BulkReport {
-        frontend_core::login_marked(
-            &self.fleet_selection,
-            &mut self.core,
-            &mut PanelSurface {
-                focus: &self.focus,
-                audio: &self.audio,
-                memory_override: self.memory_override,
-                walk_dest: &mut self.walk_dest,
-                models: frontend_core::Models::none(),
-            },
-        )
+    pub(crate) fn login_marked_rows(&mut self) -> Option<String> {
+        self.submit_marked(OperatorCommand::Login)
+    }
+
+    /// Submit `command` for the marked rows (`Targets::Marked`); the
+    /// per-row summary the Fleet window shows.
+    pub(crate) fn submit_marked(&mut self, command: OperatorCommand) -> Option<String> {
+        let mut submitted = self.submit(command, Targets::Marked)?;
+        submitted.take_bulk().map(|report| report.summary())
     }
 
     /// Credentials Log in: clear the logout latch, arm an explicit one-shot
@@ -3115,8 +3170,8 @@ impl Session {
     /// IF logout. The slot stays up and focused; only the login intent
     /// changes.
     pub fn logout(&mut self, name: &str) {
-        self.scripts.cancel_queued_as(name, "logged out");
-        self.scripts.publish_start_places(&mut self.core);
+        self.scripts.stage_cancel_queued("logged out");
+        self.submit(OperatorCommand::CancelQueuedStart, Targets::Profile(name));
         self.apply_script_notice();
         self.submit(OperatorCommand::Logout, Targets::Profile(name));
     }
@@ -3286,8 +3341,8 @@ impl Session {
             return false;
         }
         self.mem_relog_armed = None;
-        self.scripts.cancel_queued_as(&name, "logged out");
-        self.scripts.publish_start_places(&mut self.core);
+        self.scripts.stage_cancel_queued("logged out");
+        self.submit(OperatorCommand::CancelQueuedStart, Targets::Profile(&name));
         self.apply_script_notice();
         self.submit_reporting(OperatorCommand::RelogNow, Targets::Profile(&name));
         true
@@ -3399,21 +3454,45 @@ impl Session {
     /// chooser (credentials Save re-creates it). Returns whether a row was
     /// removed; failures set [`Session::error`].
     pub fn vault_remove(&mut self, name: &str) -> bool {
-        let identity = self.core.profile_identity(name);
-        match self.core.vault_remove(name) {
-            Ok(removed) => {
-                if removed.is_some() {
-                    if let Some(identity) = identity {
-                        self.fleet_selection.remove(identity);
-                    }
-                    self.error = None;
-                }
-                removed.is_some()
-            }
-            Err(error) => {
-                self.error = Some(error);
+        let Some(submitted) = self.submit(OperatorCommand::DeleteProfile, Targets::Profile(name))
+        else {
+            return false;
+        };
+        let terminal = self
+            .core
+            .commands()
+            .report(submitted.request())
+            .and_then(|report| report.members().first())
+            .and_then(|member| member.terminal());
+        match terminal {
+            Some(api::identity::Settlement::Completed(
+                frontend_core::command::Completion::Skipped(
+                    frontend_core::command::SkipReason::ProfileUnavailable,
+                ),
+            )) => false,
+            Some(api::identity::Settlement::Failed(_)) => {
+                self.error = self
+                    .core
+                    .command_failure(submitted.request())
+                    .map(str::to_string);
                 false
             }
+            Some(api::identity::Settlement::Completed(
+                frontend_core::command::Completion::Done,
+            ))
+            | None
+                if submitted.operation().is_some() =>
+            {
+                self.error = None;
+                true
+            }
+            Some(api::identity::Settlement::Completed(
+                frontend_core::command::Completion::Done,
+            )) => {
+                self.error = None;
+                true
+            }
+            _ => false,
         }
     }
 
@@ -3474,8 +3553,28 @@ impl Session {
     /// Discard / Keep editing prompt is staged and MultiBox stays on.
     /// Returns whether the toggle was applied.
     pub fn set_multibox(&mut self, on: bool) -> bool {
-        if self.multibox && !on && self.form_saving() {
-            self.stage_edit_exit(FormLeave::MultiBoxOff, "", "turn MultiBox off");
+        let Some(submitted) = self.submit(OperatorCommand::SetMultiBox(on), Targets::Application)
+        else {
+            return false;
+        };
+        let staged = self
+            .core
+            .commands()
+            .report(submitted.request())
+            .and_then(|report| report.members().first())
+            .and_then(|member| member.terminal())
+            .is_some_and(|terminal| {
+                matches!(
+                    terminal,
+                    api::identity::Settlement::Completed(
+                        frontend_core::command::Completion::Skipped(
+                            frontend_core::command::SkipReason::DecisionStaged
+                        )
+                    )
+                )
+            });
+        if staged {
+            self.request_window_focus(PanelWindow::Profiles);
             self.wall.chooser_open = true;
             return false;
         }
@@ -3487,10 +3586,9 @@ impl Session {
         let turning_off = self.multibox && !on;
         self.multibox = on;
         if on {
-            // Re-seeding adopts every live lifetime even when another member
-            // keeps focus: the core cancels their rail teardown and restores
-            // any retained IO before rebuilding the fleet.
-            self.core.seed_running();
+            // `SetMultiBox(true)` re-seeded the fleet with every live
+            // lifetime (the core cancels their rail teardown and restores
+            // any retained IO) before this presentation step.
             self.wall.on_multibox_on();
             // After seed: if focus is missing or not a wall member, restore
             // last_focus when it is on the wall, else the first member.
@@ -3548,8 +3646,8 @@ impl Session {
     }
 
     fn rail_remove_at(&mut self, name: &str, now: Instant) {
-        self.scripts.cancel_queued_as(name, "removed");
-        self.scripts.publish_start_places(&mut self.core);
+        self.scripts.stage_cancel_queued("removed");
+        self.submit(OperatorCommand::CancelQueuedStart, Targets::Profile(name));
         self.apply_script_notice();
         if self.mem_relog_armed.as_deref() == Some(name) {
             self.mem_relog_armed = None;
@@ -3582,7 +3680,7 @@ impl Session {
             self.select(next);
         } else if cleared {
             self.focus.lock().unwrap().focused = None;
-            self.capture_tx = None;
+            self.map_desk.set_input_sender(None);
             // Last focused slot gone and no neighbour: no remaining drawer
             // will publish, so release the flags sidecar here.
             crate::picker::drop_flags_sidecar();
@@ -3593,89 +3691,100 @@ impl Session {
         let Some(profile) = self.server_profile().map(BoundProfile::share) else {
             return;
         };
-        if self.map_demand.is_none() {
-            match self.map_bake.open_profile(&profile, WalkMapDemand::Images) {
-                Ok(handle) => self.map_demand = Some(handle),
-                Err(error) => {
-                    self.error = Some(error.to_string());
-                    return;
+        if self.map_desk.map_demand().is_none() {
+            self.map_desk
+                .stage_open_demand(profile.share(), WalkMapDemand::Images);
+            self.submit(OperatorCommand::OpenMapDemand, Targets::Application);
+        }
+        self.core.poll_map_demand(&mut self.map_desk);
+        let demand = self.map_desk.map_demand().map(|handle| {
+            (
+                handle.demand(),
+                handle.is_ready(),
+                handle.ready_images().ok().flatten(),
+                handle.ready_catalogue().ok(),
+            )
+        });
+        let Some((kind, ready, images, catalogue)) = demand else {
+            return;
+        };
+        if ready {
+            if self.map_images.is_none() {
+                if let Some(images) = images {
+                    self.map_images = Some(images);
+                } else {
+                    self.map_desk.note_ready_without_terrain(kind);
                 }
             }
-        }
-        if let Some(handle) = &self.map_demand {
-            if handle.is_ready() {
-                if self.map_images.is_none() {
-                    match handle.ready_images() {
-                        Ok(Some(images)) => self.map_images = Some(images),
-                        Ok(None) => self.map_bake.note_ready_without_terrain(handle.demand()),
-                        Err(_) => {}
-                    }
-                }
-                if let Ok(ready) = handle.ready_catalogue() {
+            if let Some(catalogue) = catalogue {
+                self.bind_ready_catalogue(world.clone(), catalogue);
+            }
+        } else if self.map_catalogue.is_none() || !self.map_catalogue_named {
+            // The catalogue publishes before the terrain bake ends; look
+            // for it at a coarse cadence (descriptor + directory probe),
+            // not on every frame of the bake.
+            let now = Instant::now();
+            if self
+                .map_catalogue_probe
+                .is_none_or(|at| now.duration_since(at) >= MAP_CATALOGUE_PROBE)
+            {
+                self.map_catalogue_probe = Some(now);
+                if let Some(ready) = frontend_core::walk_map::peek_walk_catalogue(&profile) {
                     self.bind_ready_catalogue(world.clone(), ready);
-                }
-            } else if self.map_catalogue.is_none() || !self.map_catalogue_named {
-                // The catalogue publishes before the terrain bake ends; look
-                // for it at a coarse cadence (descriptor + directory probe),
-                // not on every frame of the bake.
-                let now = Instant::now();
-                if self
-                    .map_catalogue_probe
-                    .is_none_or(|at| now.duration_since(at) >= MAP_CATALOGUE_PROBE)
-                {
-                    self.map_catalogue_probe = Some(now);
-                    if let Some(ready) = frontend_core::walk_map::peek_walk_catalogue(&profile) {
-                        self.bind_ready_catalogue(world.clone(), ready);
-                    }
                 }
             }
         }
         self.refresh_observed_map_services(world);
     }
 
-    /// Bake now (optionally remembering "always"): the images demand joins
-    /// the open catalogue demand before that one is dropped.
+    /// Bake now (optionally remembering "always") through the command seam.
     pub fn accept_map_bake(&mut self, remember: bool) {
         if remember {
             self.set_map_bake_choice(MapBakeChoice::Always);
         }
-        self.map_bake.accept();
         let Some(profile) = self.server_profile().map(BoundProfile::share) else {
             return;
         };
-        match self.map_bake.open_profile(&profile, WalkMapDemand::Images) {
-            Ok(handle) => self.map_demand = Some(handle),
-            Err(error) => self.error = Some(error.to_string()),
+        self.map_desk.stage_bake_now(profile);
+        if let Some(submitted) = self.submit(OperatorCommand::BakeMapNow, Targets::Application) {
+            if let Some(error) = self.core.command_failure(submitted.request()) {
+                self.error = Some(error.to_string());
+            }
         }
     }
 
-    /// Not now: the open map stays catalogue-only.
+    /// Not now: retain the catalogue-only demand through the command seam.
     pub fn decline_map_bake(&mut self) {
-        self.map_bake.decline();
+        self.submit(OperatorCommand::DeclineMapBake, Targets::Application);
     }
 
     /// Remembered bake choice, persisted with the other panel prefs.
     pub fn set_map_bake_choice(&mut self, choice: MapBakeChoice) {
-        self.map_bake.set_choice(choice);
-        self.ui.map_bake = choice;
-        if self.persist_ui {
-            crate::ui_state::save(&self.preferences, &self.ui);
+        if let Some(submitted) = self.submit(
+            OperatorCommand::SetMapBakeChoice(choice),
+            Targets::Application,
+        ) {
+            match self.core.command_failure(submitted.request()) {
+                Some(error) => self.error = Some(error.to_string()),
+                None => self.ui.map_bake = choice,
+            }
         }
     }
 
     pub fn release_walk_map(&mut self) {
-        self.map_demand = None;
+        if self.map_desk.needs_release() {
+            self.submit(OperatorCommand::ReleaseMapDemand, Targets::Application);
+        }
         self.map_catalogue_probe = None;
         self.map_images = None;
         self.map_catalogue = None;
         self.observed_map_services.clear();
         self.map_catalogue_named = false;
         self.map_model.close();
-        frontend_core::walk_map::reap_walk_map_demand();
     }
 
     pub fn map_bind_status(&self) -> Option<String> {
-        let status = self.map_demand.as_ref()?.status();
+        let status = self.map_desk.map_demand()?.status();
         match status.state() {
             WalkMapJobState::Ready => None,
             WalkMapJobState::Queued => Some(String::from("map queued")),
@@ -3850,37 +3959,45 @@ impl Session {
             .manual_options(self.route_through_zones)
     }
 
-    /// Consume a pending selection once. Missing player/focus is an explicit
-    /// refusal, never an arm stored for a future login.
+    /// Consume the pending map selection through the typed WalkTo row.
     pub fn confirm_picker_walk(&mut self, world: &NavWorld) -> bool {
         let context = self.picker_context(world);
         let options = self.walk_find_options();
         let name = self.focused_name();
-        // A NoPath refusal consumes the map selection, but keeps its destination visible.
-        let pending_destination = self
-            .map_model
-            .pending()
-            .map(|selection| selection.reported_destination());
-        match self
-            .core
-            .confirm_walk(&mut self.map_model, context, name.as_deref(), options)
-        {
-            Ok(destination) => {
-                self.walk_dest = Some(destination);
-                self.route_gen = self.route_gen.wrapping_add(1);
-                self.error = None;
-                true
-            }
-            Err(error) => {
-                if error.kind() == frontend_core::walk_map::WalkActionErrorKind::NoPath {
-                    if let Some(destination) = pending_destination {
-                        self.walk_dest = Some(destination);
-                    }
-                }
-                self.error = Some(error.to_string());
-                false
-            }
+        let origin = name
+            .as_deref()
+            .and_then(|name| self.core.walk_slot_status(name).origin());
+        self.map_desk
+            .stage_walk_to(&mut self.map_model, context, origin, options);
+        let targets = name.as_deref().map_or(Targets::Selected, Targets::Profile);
+        let Some(submitted) = self.submit(OperatorCommand::WalkTo, targets) else {
+            return false;
+        };
+        if let Some(error) = self.core.command_failure(submitted.request()) {
+            self.error = Some(error.to_string());
+            return false;
         }
+        let applied = self
+            .core
+            .commands()
+            .report(submitted.request())
+            .is_some_and(|report| {
+                report.members().iter().any(|member| {
+                    matches!(
+                        member.terminal(),
+                        Some(api::identity::Settlement::Completed(
+                            frontend_core::command::Completion::Done
+                        ))
+                    )
+                })
+            });
+        if applied {
+            self.route_gen = self.route_gen.wrapping_add(1);
+            self.error = None;
+        } else {
+            self.error = Some(String::from("map: WalkTo was not applied"));
+        }
+        applied
     }
 
     fn walk_send_names(&self) -> Vec<String> {
@@ -3965,7 +4082,8 @@ impl Session {
             .filter(|row| row.status.is_eligible())
             .map(|row| row.identity)
             .collect::<Vec<_>>();
-        self.fleet_selection.mark_all(identities);
+        self.core.stage_mark_all(identities);
+        self.submit(OperatorCommand::MarkAll, Targets::Application);
         self.walk_send.sync_walk_label(&self.fleet_selection);
     }
 
@@ -3980,39 +4098,41 @@ impl Session {
     }
 
     pub fn walk_send_none(&mut self) {
-        self.fleet_selection.clear();
+        self.submit(OperatorCommand::ClearMarks, Targets::Application);
         self.walk_send.sync_walk_label(&self.fleet_selection);
     }
 
     /// Mark or unmark the Send list's bot at `index` in the shared set. A bot
     /// that cannot walk stays as it is.
     pub fn set_walk_send_checked(&mut self, index: usize, checked: bool) {
-        if let Some(row) = self.walk_send.rows.get(index) {
-            if row.status.is_eligible() {
-                self.fleet_selection.set(row.identity, checked);
-            }
+        let name = self
+            .walk_send
+            .rows
+            .get(index)
+            .filter(|row| row.status.is_eligible())
+            .map(|row| row.name.clone());
+        if let Some(name) = name {
+            self.submit(OperatorCommand::SetMark(checked), Targets::Profile(&name));
         }
         self.walk_send.sync_walk_label(&self.fleet_selection);
     }
 
-    /// Walk every marked bot to the confirmed destination through the shared
-    /// core operation. Each bot routes from its own published state.
+    /// Walk every marked bot to the confirmed destination through the typed
+    /// GroupWalk row. Each bot routes from its own published state.
     pub fn confirm_picker_group_walk(&mut self, world: &NavWorld) -> bool {
         let context = self.picker_context(world);
         let options = self.walk_find_options();
-        let planned = self
-            .map_model
-            .pending()
-            .map(|selection| selection.reported_destination());
-        let report = self.core.confirm_marked_walk(
-            &self.fleet_selection,
-            &mut self.map_model,
-            context,
-            options,
-        );
+        self.map_desk
+            .stage_group_walk(&mut self.map_model, context, options);
+        let Some(mut submitted) = self.submit(OperatorCommand::GroupWalk, Targets::Marked) else {
+            return false;
+        };
+        let Some(report) = submitted.take_bulk() else {
+            self.error = Some(String::from("map: GroupWalk produced no result"));
+            return false;
+        };
         let walking = report.done_count();
         if walking > 0 {
-            self.walk_dest = planned;
             self.route_gen = self.route_gen.wrapping_add(1);
         }
         self.error = Some(report.summary());
@@ -4022,21 +4142,39 @@ impl Session {
     pub fn confirm_picker_teleport(&mut self, world: &NavWorld) -> bool {
         let context = self.picker_context(world);
         let name = self.focused_name();
-        match self.core.confirm_teleport(
-            &mut self.map_model,
-            context,
-            name.as_deref(),
-            FindOptions::default(),
-        ) {
-            Ok(_) => {
-                self.error = None;
-                true
-            }
-            Err(error) => {
-                self.error = Some(error.to_string());
-                false
-            }
+        let origin = name
+            .as_deref()
+            .and_then(|name| self.core.walk_slot_status(name).origin());
+        self.map_desk
+            .stage_teleport(&mut self.map_model, context, origin, FindOptions::default());
+        let targets = name.as_deref().map_or(Targets::Selected, Targets::Profile);
+        let Some(submitted) = self.submit(OperatorCommand::Teleport, targets) else {
+            return false;
+        };
+        if let Some(error) = self.core.command_failure(submitted.request()) {
+            self.error = Some(error.to_string());
+            return false;
         }
+        let applied = self
+            .core
+            .commands()
+            .report(submitted.request())
+            .is_some_and(|report| {
+                report.members().iter().any(|member| {
+                    matches!(
+                        member.terminal(),
+                        Some(api::identity::Settlement::Completed(
+                            frontend_core::command::Completion::Done
+                        ))
+                    )
+                })
+            });
+        if applied {
+            self.error = None;
+        } else {
+            self.error = Some(String::from("map: Teleport was not applied"));
+        }
+        applied
     }
 
     /// The focused slot's valid observed tile `(x, z, level)`. A disconnected
@@ -4109,9 +4247,14 @@ impl Session {
         after: frontend_core::QuesterPathsView,
     ) -> Result<(), String> {
         let selected = self.selected_game_data();
-        let result = self
-            .quester_paths
-            .apply_changed(&self.preferences, &after, selected, true);
+        self.core.stage_quester_paths(after, true, selected);
+        let result = match self.submit(OperatorCommand::SetQuesterPaths, Targets::Application) {
+            Some(submitted) => match self.core.command_failure(submitted.request()) {
+                Some(error) => Err(error.to_string()),
+                None => Ok(()),
+            },
+            None => Err(self.error.clone().unwrap_or_default()),
+        };
         if result.is_ok() {
             self.quester_paths_folder_edit = self
                 .quester_paths
@@ -4125,7 +4268,10 @@ impl Session {
 
     pub(crate) fn start_quester_paths_reload(&mut self) {
         let selected = self.selected_game_data();
-        self.quester_paths.request_reload(selected);
+        self.core.stage_quester_reload(selected);
+        // A refusal (already running, no profile yet) shows on the Paths
+        // status line the controller keeps.
+        self.submit(OperatorCommand::ReloadQuesterPaths, Targets::Application);
     }
 
     pub(crate) fn poll_quester_paths_reload(&mut self) {
@@ -4137,26 +4283,8 @@ impl Session {
         &mut self,
         selected: Option<Arc<api::game_data::SelectedGameData>>,
     ) {
-        self.quester_paths.advance(selected);
-    }
-
-    /// Observed equipment names/ids for the focused ingame character.
-    /// `None` when no usable character is available.
-    pub fn focused_equipment_items(&self) -> Option<Vec<(String, i32)>> {
-        if !self.focused_ingame() {
-            return None;
-        }
-        let name = self.focused_name()?;
-        self.core.with_slot_snapshot(&name, |snapshot| {
-            snapshot
-                .equipment()
-                .iter()
-                .filter_map(|item| {
-                    let name = item.def.name.as_deref()?.trim();
-                    (!name.is_empty()).then(|| (name.to_string(), item.def.id))
-                })
-                .collect()
-        })
+        self.core
+            .advance_quester_paths(&mut self.quester_paths, selected);
     }
 
     /// The focused slot's script lifecycle state; `Idle` when nothing is
@@ -4266,8 +4394,9 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return;
         };
-        self.scripts.cancel_queued(&name);
-        self.scripts.publish_start_places(&mut self.core);
+        self.scripts.stage_cancel_queued("cancelled");
+        self.submit(OperatorCommand::CancelQueuedStart, Targets::Profile(&name));
+        self.apply_script_notice();
         if self.core.has_play() {
             self.submit(OperatorCommand::StopScript, Targets::Profile(&name));
         }
@@ -4298,7 +4427,7 @@ impl Session {
     /// The status-row walk cell: `"—"` when nothing is queued, else the
     /// queued dest as `"x z level"`.
     pub fn walk_status_text(&self) -> String {
-        match self.walk_dest {
+        match self.map_desk.walk_dest() {
             Some(d) => format!("{} {} {}", d.x, d.z, d.level),
             None => "—".into(),
         }
@@ -4348,7 +4477,11 @@ fn warn_stress50_debug() {
 impl Drop for Session {
     fn drop(&mut self) {
         self.release_walk_map();
-        self.core.close_play();
+        // Window close is Quit: every slot shuts down and the play closes
+        // (joining its workers) before the panel's other fields drop. With
+        // no slot left there is nothing to retire (`NoTarget`).
+        let (core, mut surface) = self.core_and_surface();
+        let _ = core.submit(OperatorCommand::Quit, Targets::Everyone, &mut surface);
         crate::picker::set_pack(None);
     }
 }
@@ -4378,6 +4511,7 @@ mod fleet_hold_tests {
         std::fs::copy(default_frozen_source(), &path).unwrap();
         let mut session = Session::with_instance(frontend_core::launch::InstancePermit::skip());
         session.persist_ui = false;
+        session.draw.set_persist(false);
         session.scripts.use_library_at(
             iso.dir().join("js-scripts.json"),
             iso.dir().join("js-cache"),

@@ -1256,7 +1256,9 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
     let root = fake_rs2b0t_tree(iso.dir(), false);
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("274bot headless");
-    session.import_rs2b0t_catalog(&root).expect("import");
+    session
+        .import_rs2b0t_catalog(&mut app, &root)
+        .expect("import");
     assert!(session.scripts.catalog_work_pending());
     assert!(!iso.home().join(".274bot/rs2b0t-path").exists());
     settle_catalog_work(&mut session, &mut app);
@@ -1709,7 +1711,9 @@ mod bank_fetch_fixtures {
 fn map_walk_options_keep_the_frontend_bank_fetch_permission() {
     let mut app = TuiApp::new("274bot headless");
     app.nav = frontend_core::WalkGlobals::new(false, false, true, true, true);
-    app.nav.set_danger_level(frontend_core::DangerLevel::Always);
+    app.nav = app
+        .nav
+        .with_danger_level(frontend_core::DangerLevel::Always);
     assert!(app.map_find_options().allow_bank_fetch);
 }
 
@@ -1795,6 +1799,7 @@ fn removing_a_walk_slot_twice_logs_one_cancellation() {
     {
         let mut surface = TuiSurface {
             walk_cleared: &mut walk_cleared,
+            map_desk: &mut session.map_desk,
             models: frontend_core::Models::none(),
         };
         session.core.remove(slot, Instant::now(), &mut surface);
@@ -2423,7 +2428,7 @@ fn tui_settings_map_bake_choice_is_the_panel_prefs_key() {
     std::fs::write(&path, r#"{"last_focus":"alice","map_bake":"always"}"#).unwrap();
     let mut session = TuiSession::new(dummy_options());
     assert_eq!(
-        session.map_bake.choice(),
+        session.map_desk.bake_gate().choice(),
         frontend_core::MapBakeChoice::Always,
         "the panel's remembered choice is read at start"
     );
@@ -2432,7 +2437,10 @@ fn tui_settings_map_bake_choice_is_the_panel_prefs_key() {
     app.map_bake_dirty = true;
     session.pump(&mut app);
     assert!(!app.map_bake_dirty);
-    assert_eq!(session.map_bake.choice(), frontend_core::MapBakeChoice::Ask);
+    assert_eq!(
+        session.map_desk.bake_gate().choice(),
+        frontend_core::MapBakeChoice::Ask
+    );
     assert_eq!(
         frontend_core::load_map_bake_choice(&session.preferences),
         frontend_core::MapBakeChoice::Ask
@@ -2466,8 +2474,8 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_service() {
         ..Default::default()
     };
     let enter = settings_key(crossterm::event::KeyCode::Enter);
-    assert!(app.loadouts_on_key(&mut session.loadouts, enter));
-    assert_eq!(app.loadouts_state.status, "Saved.");
+    assert!(session.loadouts_key(&mut app, enter));
+    assert_eq!(session.loadouts.status(), "Saved.");
 
     // Another 274bot process on this home: its own service, same files.
     let root = host_play::local_state::StateRoot::new(
@@ -2491,29 +2499,29 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_service() {
     peer.preferences()
         .set("peer_marker", serde_json::json!({"kept": 7}))
         .unwrap();
-    peer_form.upsert(api::loadout::Loadout::new("peer-row"));
-    peer_form.save().unwrap();
+    peer_form.upsert_for_test(api::loadout::Loadout::new("peer-row"));
+    peer_form.save_for_test().unwrap();
     session.preferences.reload().unwrap();
     assert_eq!(
         session.preferences.value("peer_marker"),
         Some(serde_json::json!({"kept": 7}))
     );
-    session.loadouts.reload().unwrap();
+    session.loadouts.reload_for_test().unwrap();
     assert_eq!(session.loadouts.names(), ["roundtrip", "peer-row"]);
 
     // The TUI's next saves keep the peer's row and preference.
-    app.loadouts_state.sel = 0;
+    session.loadouts.stage_selection(0);
     app.loadouts_state.row = 4;
     app.loadouts_state.name_scratch = "roundtrip".into();
     app.loadouts_state.carry_scratch = "Lobster:6".into();
-    assert!(app.loadouts_on_key(&mut session.loadouts, enter));
-    assert_eq!(app.loadouts_state.status, "Saved.");
+    assert!(session.loadouts_key(&mut app, enter));
+    assert_eq!(session.loadouts.status(), "Saved.");
     app.map_bake = frontend_core::MapBakeChoice::Ask;
     app.map_bake_dirty = true;
     session.pump(&mut app);
     assert_eq!(app.error, None);
     let mut reread = Loadouts::operator(&peer);
-    reread.reload().unwrap();
+    reread.reload_for_test().unwrap();
     assert_eq!(reread.names(), ["roundtrip", "peer-row"]);
     assert_eq!(reread.get("roundtrip").unwrap().carry[0].qty, 6);
     let prefs = peer.preferences();
@@ -2524,6 +2532,172 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_service() {
     );
     assert_eq!(prefs.value("map_bake"), Some(serde_json::json!("ask")));
     let _iso = iso;
+}
+
+/// A loadouts list on its own scratch state root, `rows` saved in it, and
+/// the service behind it (another list over the same service reads what the
+/// first one saved).
+fn seeded_loadouts(
+    label: &str,
+    rows: Vec<api::loadout::Loadout>,
+) -> (Loadouts, Arc<host_play::local_state::LocalStateService>) {
+    let root = host_play::local_state::StateRoot::new(
+        frontend_core::scripts::paths::bot_home().join(format!(".274bot-loadouts-{label}")),
+    );
+    let service = host_play::local_state::LocalStateService::open_process(root);
+    let mut store = Loadouts::operator(&service);
+    for row in rows {
+        store.upsert_for_test(row);
+    }
+    store.save_for_test().unwrap();
+    (store, service)
+}
+
+/// Enter on the popup's `[new]` row creates a loadout, writes it and shows
+/// it selected.
+#[test]
+fn loadouts_popup_adds_a_preset_and_lists_names() {
+    let _iso = IsolatedStores::enter("tui-loadouts-add");
+    let mut session = TuiSession::new(dummy_options());
+    let (store, _service) = seeded_loadouts(
+        "add",
+        vec![api::loadout::Loadout::new("fish").with_carry("net", 1)],
+    );
+    session.loadouts = frontend_core::scripts::LoadoutForm::over(store);
+    let mut app = TuiApp::new("tui");
+    app.loadouts_state = crate::loadouts::LoadoutsState {
+        open: true,
+        row: 5,
+        ..Default::default()
+    };
+    app.loadouts_state.fill(&session.loadouts);
+    assert!(session.loadouts_key(&mut app, settings_key(crossterm::event::KeyCode::Enter)));
+    assert_eq!(session.loadouts.names().len(), 2);
+    assert!(session
+        .loadouts
+        .names()
+        .iter()
+        .any(|name| name.starts_with("loadout")));
+    assert_eq!(session.loadouts.status(), "Saved.");
+    assert_eq!(session.loadouts.selected(), 1, "the new row is selected");
+    assert_eq!(app.loadouts_state.name_scratch, session.loadouts.names()[1]);
+}
+
+/// A text row committed with Enter replaces the selected loadout where it
+/// stands.
+#[test]
+fn apply_scratch_renames_in_place() {
+    let _iso = IsolatedStores::enter("tui-loadouts-rename");
+    let mut session = TuiSession::new(dummy_options());
+    let (store, _service) = seeded_loadouts("rename", vec![api::loadout::Loadout::new("melee")]);
+    session.loadouts = frontend_core::scripts::LoadoutForm::over(store);
+    let mut app = TuiApp::new("tui");
+    app.loadouts_state = crate::loadouts::LoadoutsState {
+        open: true,
+        row: 1,
+        name_scratch: "melee2".into(),
+        ..Default::default()
+    };
+    assert!(session.loadouts_key(&mut app, settings_key(crossterm::event::KeyCode::Enter)));
+    assert_eq!(session.loadouts.loadouts().len(), 1);
+    assert_eq!(session.loadouts.loadouts()[0].name, "melee2");
+    assert_eq!(session.loadouts.selected(), 0);
+    assert_eq!(session.loadouts.status(), "Saved.");
+}
+
+/// Rows are keyed by name in the store: renaming onto another row's name
+/// is refused and both rows stay, in the form and in the file.
+#[test]
+fn renaming_onto_another_loadouts_name_is_refused_and_keeps_both() {
+    let _iso = IsolatedStores::enter("tui-loadouts-collide");
+    let mut session = TuiSession::new(dummy_options());
+    let (store, service) = seeded_loadouts(
+        "collide",
+        vec![
+            api::loadout::Loadout::new("melee").with_carry("Lobster", 8),
+            api::loadout::Loadout::new("range"),
+        ],
+    );
+    session.loadouts = frontend_core::scripts::LoadoutForm::over(store);
+    session.loadouts.stage_selection(1);
+    let mut app = TuiApp::new("tui");
+    app.loadouts_state = crate::loadouts::LoadoutsState {
+        open: true,
+        row: 1,
+        name_scratch: "melee".into(),
+        ..Default::default()
+    };
+    assert!(session.loadouts_key(&mut app, settings_key(crossterm::event::KeyCode::Enter)));
+    assert_eq!(
+        session.loadouts.status(),
+        "A loadout named \"melee\" already exists."
+    );
+    assert_eq!(session.loadouts.names(), ["melee", "range"]);
+    assert!(!session.loadouts.store().is_dirty());
+    let reread = Loadouts::operator(&service);
+    assert_eq!(reread.names(), ["melee", "range"]);
+    assert_eq!(
+        reread.get("melee").unwrap().carry,
+        vec![api::loadout::CarryEntry::new("Lobster", 8)]
+    );
+}
+
+#[test]
+fn invalid_empty_name_does_not_clobber_store() {
+    let _iso = IsolatedStores::enter("tui-loadouts-empty-name");
+    let mut session = TuiSession::new(dummy_options());
+    let (store, _service) = seeded_loadouts(
+        "empty-name",
+        vec![api::loadout::Loadout::new("fish").with_carry("net", 1)],
+    );
+    session.loadouts = frontend_core::scripts::LoadoutForm::over(store);
+    let mut app = TuiApp::new("tui");
+    app.loadouts_state = crate::loadouts::LoadoutsState {
+        open: true,
+        row: 1,
+        name_scratch: " ".into(),
+        ..Default::default()
+    };
+    assert!(session.loadouts_key(&mut app, settings_key(crossterm::event::KeyCode::Enter)));
+    assert_eq!(session.loadouts.loadouts()[0].name, "fish");
+    assert_eq!(session.loadouts.status(), "Name is required.");
+    assert_eq!(app.loadouts_state.name_scratch, " ", "the typed text stays");
+}
+
+/// Opening the popup selects the first loadout and reads its text; Enter on
+/// the `selected` row steps through the loadouts and wraps.
+#[test]
+fn opening_the_loadouts_popup_selects_the_first_row_and_row_zero_cycles() {
+    let _iso = IsolatedStores::enter("tui-loadouts-open");
+    let mut session = TuiSession::new(dummy_options());
+    let (store, _service) = seeded_loadouts(
+        "open",
+        vec![
+            api::loadout::Loadout::new("a"),
+            api::loadout::Loadout::new("b"),
+        ],
+    );
+    session.loadouts = frontend_core::scripts::LoadoutForm::over(store);
+    session.loadouts.stage_selection(1);
+    let mut app = TuiApp::new("tui");
+    app.loadouts_state.reopen();
+    let enter = settings_key(crossterm::event::KeyCode::Enter);
+    // The first look after the open selects the first row and fills the text.
+    assert!(session.loadouts_key(&mut app, settings_key(crossterm::event::KeyCode::Down)));
+    assert_eq!(session.loadouts.selected(), 0);
+    assert_eq!(app.loadouts_state.name_scratch, "a");
+
+    app.loadouts_state.row = 0;
+    assert!(session.loadouts_key(&mut app, enter));
+    assert_eq!(session.loadouts.selected(), 1);
+    assert_eq!(app.loadouts_state.name_scratch, "b");
+    assert!(session.loadouts_key(&mut app, enter));
+    assert_eq!(session.loadouts.selected(), 0, "the selection wraps");
+    assert_eq!(app.loadouts_state.name_scratch, "a");
+
+    // Esc closes the popup; a closed popup takes no key.
+    assert!(session.loadouts_key(&mut app, settings_key(crossterm::event::KeyCode::Esc)));
+    assert!(!session.loadouts_key(&mut app, enter));
 }
 
 #[test]
@@ -2571,6 +2745,163 @@ fn tui_manual_walk_pause_preference_projects_and_reports_persistence() {
         "failed writes must reach the TUI error surface: {:?}",
         app.error
     );
+    let _iso = iso;
+}
+
+/// The settings popup's walk permissions reach the shared preferences
+/// through `SetNavPreference` and `SetDangerLevel`: a grant, the danger
+/// routing level (the middle level cycles to Always) and a notice
+/// acknowledgement.
+#[test]
+fn walk_permission_changes_in_the_settings_popup_are_saved_through_the_commands() {
+    let iso = IsolatedStores::enter("tui-walk-globals-commands");
+    let mut session = TuiSession::new(dummy_options());
+    let mut app = TuiApp::new("tui");
+    app.restore_preferences(session.preferences.share());
+    app.settings_state.open = true;
+    let enter = settings_key(crossterm::event::KeyCode::Enter);
+    app.settings_state.row = 5;
+    assert_eq!(app.on_key(enter), AppAction::None);
+    app.settings_state.row = 8;
+    assert_eq!(app.on_key(enter), AppAction::None);
+    assert_eq!(
+        app.on_key(settings_key(crossterm::event::KeyCode::Char('d'))),
+        AppAction::None
+    );
+    session.pump(&mut app);
+    assert_eq!(app.error, None);
+    let prefs: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
+    assert_eq!(prefs["nav"]["allow_teleports"], true);
+    assert_eq!(prefs["nav"]["allow_danger_zones"], true);
+    assert_eq!(prefs["nav"]["survivable_routing"], false);
+    assert_eq!(prefs["nav"]["script_scope_notice_ack"], true);
+    assert!(app.walk_permissions.globals().allow_teleports());
+    assert_eq!(
+        app.walk_permissions.danger_level(),
+        frontend_core::DangerLevel::Always
+    );
+    assert!(app.walk_permissions.script_scope_notice_ack());
+    let _iso = iso;
+}
+
+/// Quit goes through the `Quit` command: every loaded member's Quit
+/// settles and the play session is closed before the loop ends.
+#[test]
+fn quit_closes_the_play_through_the_quit_command() {
+    let iso = IsolatedStores::enter("tui-quit-command");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    assert!(session.core.has_play());
+    dispatch(&mut session, &mut app, AppAction::Quit);
+    assert!(app.quit, "the event loop ends");
+    assert_eq!(app.error, None);
+    assert!(!session.core.has_play(), "Quit closed the play session");
+}
+
+/// Nothing loaded is not an error when quitting.
+#[test]
+fn quit_with_nothing_loaded_is_not_an_error() {
+    let iso = IsolatedStores::enter("tui-quit-nothing");
+    let mut session = TuiSession::new(dummy_options());
+    let mut app = TuiApp::new("tui");
+    dispatch(&mut session, &mut app, AppAction::Quit);
+    assert!(app.quit);
+    assert_eq!(app.error, None);
+    let _iso = iso;
+}
+
+/// Log in marked and log out marked are the `Login` and `Logout` rows over
+/// the marks: the strip shows the command's per-row report, and a member
+/// that is not marked is not named.
+#[test]
+fn marked_login_and_logout_show_the_report_of_the_command_over_the_marks() {
+    let iso = IsolatedStores::enter("tui-marked-login-logout-command");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    let alice = session.core.profile_identity_or_synthetic("alice");
+    app.table.selection.set_for_test(alice, true);
+
+    dispatch(&mut session, &mut app, AppAction::LoginMarked);
+    let report = app.error.clone().expect("the login report is shown");
+    assert!(report.starts_with("Log in marked: logging in "), "{report}");
+    assert!(!report.contains("bob"), "bob is not marked: {report}");
+
+    dispatch(&mut session, &mut app, AppAction::LogoutMarked);
+    let report = app.error.clone().expect("the logout report is shown");
+    assert!(
+        report.starts_with("Log out marked: logging out "),
+        "{report}"
+    );
+    assert!(!report.contains("bob"), "bob is not marked: {report}");
+}
+
+/// Save log runs through `SaveLog`: the write happens off the UI thread
+/// and the log pane's status follows it to the saved file.
+#[test]
+fn save_log_runs_through_the_command_and_the_pane_follows_the_write() {
+    let iso = IsolatedStores::enter("tui-save-log-command");
+    let mut session = TuiSession::new(dummy_options());
+    let mut app = TuiApp::new("tui");
+    dispatch(&mut session, &mut app, AppAction::SaveLog);
+    assert_eq!(app.log.status.as_deref(), Some("saving…"));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.log.status.as_deref() == Some("saving…") {
+        assert!(Instant::now() < deadline, "the log save did not finish");
+        app.log.refresh(None);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let status = app.log.status.clone().expect("a save status");
+    let saved = status
+        .strip_prefix("saved ")
+        .unwrap_or_else(|| panic!("the save failed: {status}"));
+    assert!(std::path::Path::new(saved).is_file(), "{status}");
+    let _iso = iso;
+}
+
+/// The session-file toggle is saved and applied by `SetSessionLog`, and the
+/// log pane's status names what the process holds open.
+#[test]
+fn session_file_toggle_is_saved_and_applied_through_the_command() {
+    let iso = IsolatedStores::enter("tui-session-log-command");
+    let mut session = TuiSession::new(dummy_options());
+    let mut app = TuiApp::new("tui");
+    dispatch(&mut session, &mut app, AppAction::SetSessionLog(true));
+    assert!(frontend_core::log_file::session_log_setting(
+        &session.preferences
+    ));
+    assert!(frontend_core::log_file::session_log_path().is_some());
+    assert!(
+        app.log.status.as_deref().is_some_and(
+            |status| status.starts_with("session file ") && status != "session file off"
+        ),
+        "{:?}",
+        app.log.status
+    );
+    dispatch(&mut session, &mut app, AppAction::SetSessionLog(false));
+    assert!(!frontend_core::log_file::session_log_setting(
+        &session.preferences
+    ));
+    assert!(frontend_core::log_file::session_log_path().is_none());
+    assert_eq!(app.log.status.as_deref(), Some("session file off"));
+    let _iso = iso;
+}
+
+/// Dismissing the Quester Paths status line is the `AcknowledgeNotice`
+/// command: a refused reload leaves its reason as the notice, dismissing
+/// clears it.
+#[test]
+fn dismissing_the_paths_notice_clears_it_through_the_acknowledge_command() {
+    let iso = IsolatedStores::enter("tui-paths-notice-command");
+    let mut session = TuiSession::new(dummy_options());
+    let mut app = TuiApp::new("tui");
+    app.restore_preferences(session.preferences.share());
+    dispatch(&mut session, &mut app, AppAction::ReloadPaths);
+    assert!(
+        app.quester_paths_controller.notice_is_error(),
+        "no game data is loaded: {:?}",
+        app.quester_paths_controller.notice_text()
+    );
+    dispatch(&mut session, &mut app, AppAction::DismissPathsNotice);
+    assert_eq!(app.quester_paths_controller.notice_text(), None);
     let _iso = iso;
 }
 
@@ -3150,6 +3481,32 @@ fn assign(session: &mut TuiSession, name: &str, card: &LoadedCardSnapshot) {
     ));
     session.core.flush_writes();
 }
+fn save_compiled_setting(
+    session: &mut TuiSession,
+    app: &mut TuiApp,
+    name: &str,
+    card_id: CompiledCardId,
+    field: &str,
+    value: serde_json::Value,
+) {
+    let selection = ScriptChoice::compiled(card_id);
+    session
+        .scripts
+        .stage_setting(Some(name), &selection, field, value);
+    session
+        .submit_with(
+            app,
+            OperatorCommand::SaveScriptSettings(frontend_core::command::CardKind::Native),
+            Targets::Profile(name),
+        )
+        .unwrap();
+}
+
+fn start_assigned_script(session: &mut TuiSession, app: &mut TuiApp, name: &str) {
+    session
+        .submit_with(app, OperatorCommand::StartScript, Targets::Profile(name))
+        .unwrap();
+}
 
 fn focus_member(session: &mut TuiSession, app: &mut TuiApp, name: &str) {
     session.focus(name);
@@ -3174,22 +3531,17 @@ fn restart_required_prompt_is_visible_at_standard_and_compact_sizes() {
         card_id
     ));
     session.core.flush_writes();
-    session
-        .scripts
-        .set_compiled_setting(
-            &mut session.core,
-            "alice",
-            card_id,
-            "skill",
-            serde_json::json!("Fishing"),
-        )
-        .unwrap();
+    save_compiled_setting(
+        &mut session,
+        &mut app,
+        "alice",
+        card_id,
+        "skill",
+        serde_json::json!("Fishing"),
+    );
     session.core.flush_writes();
     session.poll_scripts(&mut app);
-    session
-        .scripts
-        .start_profile(&mut session.core, "alice", None)
-        .unwrap();
+    start_assigned_script(&mut session, &mut app, "alice");
     settle_starts(&mut session, &mut app);
     wait_script_state(
         session.core.play_for_test().unwrap(),
@@ -3197,16 +3549,14 @@ fn restart_required_prompt_is_visible_at_standard_and_compact_sizes() {
         ScriptRunState::Running,
     );
 
-    session
-        .scripts
-        .set_compiled_setting(
-            &mut session.core,
-            "alice",
-            card_id,
-            "skill",
-            serde_json::json!("Mining"),
-        )
-        .unwrap();
+    save_compiled_setting(
+        &mut session,
+        &mut app,
+        "alice",
+        card_id,
+        "skill",
+        serde_json::json!("Mining"),
+    );
     session.core.flush_writes();
     session.poll_scripts(&mut app);
     let prompt = session.scripts.pending_restart_prompt().unwrap();
@@ -3243,7 +3593,9 @@ fn restart_required_prompt_is_visible_at_standard_and_compact_sizes() {
             "{width}x{height}: missing Later action: {text}"
         );
     }
-    session.scripts.dismiss_restart_prompt();
+    session
+        .submit(OperatorCommand::DeferSettingsRestart, Targets::Application)
+        .unwrap();
 }
 
 #[test]
@@ -3267,24 +3619,19 @@ fn restart_settings_modal_redraws_when_targets_shrink_under_the_same_op() {
     }
     session.core.flush_writes();
     for name in ["alice", "bob"] {
-        session
-            .scripts
-            .set_compiled_setting(
-                &mut session.core,
-                name,
-                card_id,
-                "skill",
-                serde_json::json!("Fishing"),
-            )
-            .unwrap();
+        save_compiled_setting(
+            &mut session,
+            &mut app,
+            name,
+            card_id,
+            "skill",
+            serde_json::json!("Fishing"),
+        );
     }
     session.core.flush_writes();
     session.poll_scripts(&mut app);
     for name in ["alice", "bob"] {
-        session
-            .scripts
-            .start_profile(&mut session.core, name, None)
-            .unwrap();
+        start_assigned_script(&mut session, &mut app, name);
     }
     settle_starts(&mut session, &mut app);
     for name in ["alice", "bob"] {
@@ -3294,18 +3641,15 @@ fn restart_settings_modal_redraws_when_targets_shrink_under_the_same_op() {
             ScriptRunState::Running,
         );
     }
-
     for name in ["alice", "bob"] {
-        session
-            .scripts
-            .set_compiled_setting(
-                &mut session.core,
-                name,
-                card_id,
-                "skill",
-                serde_json::json!("Mining"),
-            )
-            .unwrap();
+        save_compiled_setting(
+            &mut session,
+            &mut app,
+            name,
+            card_id,
+            "skill",
+            serde_json::json!("Mining"),
+        );
     }
     session.core.flush_writes();
     session.poll_scripts(&mut app);
@@ -3374,7 +3718,9 @@ fn restart_settings_modal_redraws_when_targets_shrink_under_the_same_op() {
         .collect::<String>();
     assert!(!text.contains("alice"), "modal still names alice: {text}");
     assert!(text.contains("bob"), "{text}");
-    session.scripts.dismiss_restart_prompt();
+    session
+        .submit(OperatorCommand::DeferSettingsRestart, Targets::Application)
+        .unwrap();
 }
 
 /// Live finding (TUI parity): the settings popup closed without explanation
@@ -3494,6 +3840,10 @@ fn open_settings(session: &mut TuiSession, app: &mut TuiApp) {
     session.pump(app);
     assert!(app.settings_state.open, "settings opens");
 }
+fn settings_press(session: &mut TuiSession, app: &mut TuiApp, code: crossterm::event::KeyCode) {
+    let action = app.on_key(settings_key(code));
+    dispatch(session, app, action);
+}
 
 /// `Saved <name>.` shows in the settings popup, in green under its rows,
 /// only once the persist is durable.
@@ -3505,7 +3855,7 @@ fn settings_popup_shows_saved_once_the_write_is_durable() {
     open_settings(&mut session, &mut app);
     let gate = session.core.write_gate();
     let held = gate.lock().unwrap();
-    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    settings_press(&mut session, &mut app, crossterm::event::KeyCode::Enter);
     session.pump(&mut app);
     for (w, h) in SIZES {
         let screen = screen(&mut app, w, h);
@@ -3544,9 +3894,9 @@ fn a_persist_completing_after_close_shows_nothing_in_the_next_popup() {
     open_settings(&mut session, &mut app);
     let gate = session.core.write_gate();
     let held = gate.lock().unwrap();
-    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    settings_press(&mut session, &mut app, crossterm::event::KeyCode::Enter);
     session.pump(&mut app);
-    app.on_key(settings_key(crossterm::event::KeyCode::Esc));
+    settings_press(&mut session, &mut app, crossterm::event::KeyCode::Esc);
     session.pump(&mut app);
     assert!(!app.settings_state.open, "Esc closes the popup");
     focus_member(&mut session, &mut app, "bob");
@@ -3583,7 +3933,7 @@ fn a_late_persist_failure_shows_in_the_popup_it_came_from() {
     open_settings(&mut session, &mut app);
     let gate = session.core.write_gate();
     let held = gate.lock().unwrap();
-    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    settings_press(&mut session, &mut app, crossterm::event::KeyCode::Enter);
     session.pump(&mut app);
     assert!(!app.settings.random_events(), "the popup shows the edit");
 
@@ -3619,7 +3969,7 @@ fn a_late_persist_failure_shows_in_the_popup_it_came_from() {
         "nothing was saved"
     );
 
-    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    settings_press(&mut session, &mut app, crossterm::event::KeyCode::Enter);
     for (w, h) in SIZES {
         let screen = screen(&mut app, w, h);
         assert!(
@@ -3642,9 +3992,9 @@ fn a_persist_failing_after_close_reaches_only_the_message_line() {
     open_settings(&mut session, &mut app);
     let gate = session.core.write_gate();
     let held = gate.lock().unwrap();
-    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    settings_press(&mut session, &mut app, crossterm::event::KeyCode::Enter);
     session.pump(&mut app);
-    app.on_key(settings_key(crossterm::event::KeyCode::Esc));
+    settings_press(&mut session, &mut app, crossterm::event::KeyCode::Esc);
     session.pump(&mut app);
     focus_member(&mut session, &mut app, "bob");
     open_settings(&mut session, &mut app);
@@ -3678,7 +4028,7 @@ fn a_refused_persist_shows_in_the_popup_until_the_next_edit() {
     focus_member(&mut session, &mut app, "alice");
     open_settings(&mut session, &mut app);
     remove_saved_profile(&mut session.core, "alice");
-    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    settings_press(&mut session, &mut app, crossterm::event::KeyCode::Enter);
     session.pump(&mut app);
     for (w, h) in SIZES {
         let screen = screen(&mut app, w, h);
@@ -3698,7 +4048,7 @@ fn a_refused_persist_shows_in_the_popup_until_the_next_edit() {
         );
     }
 
-    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    settings_press(&mut session, &mut app, crossterm::event::KeyCode::Enter);
     for (w, h) in SIZES {
         let screen = screen(&mut app, w, h);
         assert!(
@@ -3838,10 +4188,7 @@ fn tui_params_edit_the_focused_profile_and_apply_to_all_skips_other_cards() {
     assign(&mut session, "alice", &thiever);
     assign(&mut session, "bob", &thiever);
     assign(&mut session, "carol", &miner);
-    session
-        .scripts
-        .start_profile(&mut session.core, "bob", None)
-        .unwrap();
+    start_assigned_script(&mut session, &mut app, "bob");
     settle_starts(&mut session, &mut app);
     wait_script_state(
         session.core.play_for_test().unwrap(),
@@ -3991,16 +4338,18 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
         assign(&mut session, name, &card);
     }
     assign(&mut session, "erin", &other);
+    let selection = ScriptChoice::loaded(CardSource::File, card.identity_id());
+    session.scripts.stage_setting(
+        Some("alice"),
+        &selection,
+        "target",
+        serde_json::json!("Guard"),
+    );
     session
-        .scripts
-        .set_profile_setting(
-            &mut session.core,
-            "alice",
-            CardSource::File,
-            card.name(),
-            card.path(),
-            "target",
-            serde_json::json!("Guard"),
+        .submit_with(
+            &mut app,
+            OperatorCommand::SaveScriptSettings(frontend_core::command::CardKind::Script),
+            Targets::Profile("alice"),
         )
         .unwrap();
     session.core.flush_writes();
@@ -4017,7 +4366,7 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
     // marked.
     for name in ["bob", "carol", "erin"] {
         let id = session.core.profile_identity(name).unwrap();
-        app.table.selection.set(id, true);
+        app.table.selection.set_for_test(id, true);
     }
     assert_eq!(command.availability(&app), Ok(()));
 
@@ -4120,7 +4469,7 @@ fn palette_apply_settings_to_marked_prepare_and_cancel_leave_a_fresh_source_unwr
     focus_member(&mut session, &mut app, "alice");
     app.script_sel = Some(ScriptChoice::loaded(CardSource::File, card.identity_id()));
     let id = session.core.profile_identity("bob").unwrap();
-    app.table.selection.set(id, true);
+    app.table.selection.set_for_test(id, true);
 
     let vault_file = iso.dir().join("vault");
     let rows_before = script_settings_rows(&session);
@@ -4212,7 +4561,9 @@ fn memory_relog_warns_before_cancelling_a_queued_start() {
             .login_latched(),
         "nothing relogs before confirmation"
     );
-    session.scripts.stop_all(&mut session.core);
+    session
+        .submit(OperatorCommand::StopScript, Targets::Everyone)
+        .unwrap();
 }
 
 #[test]
@@ -4419,9 +4770,11 @@ fn fleet_session_filters_marks_shown_and_assigns_marked() {
     let open = app.run_command(crate::commands::Command::FilterFleet);
     dispatch(&mut session, &mut app, open);
     for c in "bob".chars() {
-        app.on_key(settings_key(crossterm::event::KeyCode::Char(c)));
+        let typed = app.on_key(settings_key(crossterm::event::KeyCode::Char(c)));
+        dispatch(&mut session, &mut app, typed);
     }
-    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    let done = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    dispatch(&mut session, &mut app, done);
     let shown: Vec<&str> = app
         .table
         .shown()

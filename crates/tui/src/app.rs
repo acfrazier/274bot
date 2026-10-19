@@ -21,7 +21,9 @@ use ratatui::Frame;
 
 use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
 use frontend_core::quester_paths::QuesterPathsView;
-use frontend_core::scripts::{Loadouts, OwnedSchema, PaintFrame, ScriptChoice, ScriptRunState};
+use frontend_core::scripts::{
+    LoadoutForm, Loadouts, OwnedSchema, PaintFrame, ScriptChoice, ScriptRunState,
+};
 use frontend_core::walk_map::{
     display_walk_name_into, WalkCatalogue, WalkMap, WalkObservedService, WalkSearch, WalkSlotStatus,
 };
@@ -44,7 +46,7 @@ use crate::script_shape::{
     browse_lines, card_selection, rs2b0t_root_has_index, BrowseCard, BrowseLine, ScriptClick,
     ScriptPane,
 };
-use crate::settings::SettingsState;
+use crate::settings::{SettingsEdit, SettingsState};
 use crate::status::StatusPane;
 
 fn default_catalog_browse_dir() -> std::path::PathBuf {
@@ -164,6 +166,24 @@ pub enum AppAction {
     MapTeleport(Tile),
     /// Reload the shared Quester Path registry without starting a Path.
     ReloadPaths,
+    /// Dismiss the Quester Paths status line (`AcknowledgeNotice`).
+    DismissPathsNotice,
+    /// Mark or unmark `name`'s fleet row (`SetMark`): the row selection and
+    /// the Walk-send group checklist.
+    SetMark(String, bool),
+    /// Mark these members' fleet rows (`MarkAll`): every shown row, or the
+    /// eligible Walk-send rows.
+    MarkAll(Vec<frontend_core::ProfileIdentity>),
+    /// Clear every row mark (`ClearMarks`).
+    ClearMarks,
+    /// Edit the fleet filter text and commit it (`SetFleetFilter`).
+    FleetFilter(crate::fleet::FilterEdit),
+    /// Save the rows the log view shows (`SaveLog`).
+    SaveLog,
+    /// Turn the session log file on or off (`SetSessionLog`).
+    SetSessionLog(bool),
+    /// Save the map's special-areas overlay choice (`SetNavPreference`).
+    MapWilderness(bool),
     /// Chat modal advance: Continue / Answer on the focused slot.
     Chat(ChatAction),
     /// MultiBox: load every vault profile and log every member in (after
@@ -236,11 +256,13 @@ pub enum AppAction {
     ScriptLoad(std::path::PathBuf),
     /// Persist the background-bots notice ("Got it, don't show again").
     AckBackground,
+    /// Commit a changed TUI settings draft to the shared form-save model.
+    SettingsDraftEdited(SettingsEdit),
     /// One step of the rs2b0t profile import; the binary owns the flow.
     ProfileImport(crate::profile_import::ImportAction),
     /// A key for the parameters popup: the binary owns the commit path.
     ParamsKey(KeyEvent),
-    /// A key for the loadouts popup: the binary owns the store.
+    /// A key for the loadouts popup: the binary owns the form.
     LoadoutsKey(KeyEvent),
     /// Turn terminal mouse capture on or off (off lets the terminal
     /// select and copy text).
@@ -632,7 +654,6 @@ impl TuiApp {
         self.pause_script_on_manual_walk_abort = frontend_core::nav_preference(
             &preferences,
             frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
-            None,
         )
         .unwrap_or(true);
         self.shared_preferences = Some(preferences.share());
@@ -653,6 +674,13 @@ impl TuiApp {
             ),
             WalkGlobalsView::read,
         );
+        self.adopt_walk_permissions(view);
+    }
+
+    /// Adopt `view`, the durable walk permissions the core just read, into
+    /// every TUI view of them (the edit buffer, the acknowledgements, the
+    /// one-shot zone grant and an open parameters popup).
+    pub(crate) fn adopt_walk_permissions(&mut self, view: WalkGlobalsView) {
         self.walk_permissions = view;
         self.nav = view.globals();
         self.script_scope_notice_ack = view.script_scope_notice_ack();
@@ -669,26 +697,13 @@ impl TuiApp {
         self.shared_preferences.as_ref()
     }
 
-    pub(crate) fn toggle_map_wilderness(&mut self) {
-        let preferences = self
-            .shared_preferences
-            .as_ref()
-            .map(frontend_core::UiPreferences::share);
-        match self.map.toggle_wilderness(preferences.as_ref()) {
-            Ok(()) => {
-                if self
-                    .error
-                    .as_deref()
-                    .is_some_and(|error| error.starts_with("map wilderness:"))
-                {
-                    self.error = None;
-                }
-            }
-            Err(error) => {
-                self.error = Some(format!("map wilderness: {error}"));
-            }
-        }
+    /// Flip the map's special-areas overlay. Saving the choice (shared with
+    /// the panel) is the `SetNavPreference` the returned action submits.
+    pub(crate) fn toggle_map_wilderness(&mut self) -> AppAction {
+        self.map.layers.wilderness = !self.map.layers.wilderness;
+        AppAction::MapWilderness(self.map.layers.wilderness)
     }
+
     /// The header title (profile, server and revision).
     pub fn title(&self) -> &str {
         &self.title
@@ -1045,12 +1060,14 @@ impl TuiApp {
     }
 
     /// Focused ↔ Group. Entering Group with no eligible row selected
-    /// selects every eligible member (shown as `[x]` in the fleet).
-    pub(crate) fn toggle_walk_send_mode(&mut self) {
+    /// selects every eligible member (shown as `[x]` in the fleet): the
+    /// returned `MarkAll` marks them.
+    pub(crate) fn toggle_walk_send_mode(&mut self) -> AppAction {
         self.walk_send.mode = match self.walk_send.mode {
             WalkSendMode::Focused => WalkSendMode::Group,
             WalkSendMode::Group => WalkSendMode::Focused,
         };
+        let mut action = AppAction::None;
         if self.walk_send.mode == WalkSendMode::Group && self.walk_send.checked_count() == 0 {
             let eligible_ids = self
                 .walk_send
@@ -1064,17 +1081,21 @@ impl TuiApp {
                     row.checked = true;
                 }
             }
-            self.table.selection.mark_all(eligible_ids);
+            if !eligible_ids.is_empty() {
+                action = AppAction::MarkAll(eligible_ids);
+            }
         }
         self.walk_send.sync_walk_label();
+        action
     }
 
-    /// Space on the map: select / unselect the selected bot for the group.
-    pub(crate) fn toggle_walk_send_focused(&mut self) {
+    /// Space on the map: select / unselect the selected bot for the group:
+    /// the returned `SetMark` marks or unmarks it.
+    pub(crate) fn toggle_walk_send_focused(&mut self) -> AppAction {
         let Some(focused) = self.focused_name() else {
-            return;
+            return AppAction::None;
         };
-        let identity = self.profile_id_for_name(&focused);
+        let mut action = AppAction::None;
         if let Some(row) = self
             .walk_send
             .rows
@@ -1083,10 +1104,11 @@ impl TuiApp {
         {
             if row.status.is_eligible() {
                 row.checked = !row.checked;
-                self.table.selection.set(identity, row.checked);
+                action = AppAction::SetMark(focused, row.checked);
             }
         }
         self.walk_send.sync_walk_label();
+        action
     }
 
     fn observed_marks(&self) -> Vec<ObservedMark> {
@@ -1190,7 +1212,7 @@ impl TuiApp {
             KeyCode::Char('d') => self.map.layers.dots = !self.map.layers.dots,
             KeyCode::Char('c') => self.map.layers.collision = !self.map.layers.collision,
             KeyCode::Char('r') => self.map.layers.reach = !self.map.layers.reach,
-            KeyCode::Char(' ') => self.toggle_walk_send_focused(),
+            KeyCode::Char(' ') => return self.toggle_walk_send_focused(),
             KeyCode::Char('z') => {
                 self.refresh_walk_permissions();
                 if self.walk_permissions.danger_this_walk(true) {
@@ -1235,22 +1257,6 @@ impl TuiApp {
     pub(crate) fn map_pan_rows(&mut self, rows: i32) {
         let step = ZOOMS[self.map.zoom.min(ZOOMS.len() - 1)] as i32;
         self.map.pan.1 += rows * step;
-    }
-
-    /// Route keys to the loadouts popup when it is open.
-    pub fn loadouts_on_key(&mut self, store: &mut Loadouts, key: KeyEvent) -> bool {
-        if !self.loadouts_state.open {
-            return false;
-        }
-        let mut pane = LoadoutsPane {
-            store,
-            state: &mut self.loadouts_state,
-        };
-        if pane.state.name_scratch.is_empty() && !pane.store.loadouts().is_empty() {
-            pane.sync_scratch_from_selection();
-        }
-        let _ = pane.on_key(key);
-        true
     }
 
     /// Route keys to the params popup when it is open. Edits go through
@@ -1678,18 +1684,20 @@ impl TuiApp {
     }
 
     /// Render the loadouts popup overlay (call after [`Self::draw`]).
-    pub fn draw_loadouts_overlay(&mut self, frame: &mut Frame<'_>, store: &mut Loadouts) {
+    pub fn draw_loadouts_overlay(&mut self, frame: &mut Frame<'_>, form: &LoadoutForm) {
         if !self.loadouts_state.open {
             return;
         }
-        let mut pane = LoadoutsPane {
-            store,
-            state: &mut self.loadouts_state,
-        };
-        if pane.state.name_scratch.is_empty() && !pane.store.loadouts().is_empty() {
-            pane.sync_scratch_from_selection();
+        if self.loadouts_state.name_scratch.is_empty() && !form.loadouts().is_empty() {
+            self.loadouts_state.fill(form);
         }
-        frame.render_widget(pane, frame.area());
+        frame.render_widget(
+            LoadoutsPane {
+                form,
+                state: &self.loadouts_state,
+            },
+            frame.area(),
+        );
     }
 
     /// Render the params popup overlay (call after [`Self::draw`]).

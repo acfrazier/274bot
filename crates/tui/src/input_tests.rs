@@ -4,7 +4,9 @@ use api::snapshot::ChatOptionView;
 use frontend_core::scripts::{CardRuntime, CardSource, ScriptChoice, ScriptRunState};
 
 use crate::app::{AppAction, TuiApp};
+use crate::bin::seam::Seam;
 use crate::commands::Command;
+use crate::fleet::FilterEdit;
 use crate::help::help_rows;
 use crate::layout::{Pane, Screen};
 use crate::overlay::{ConfirmKind, Modal};
@@ -83,22 +85,26 @@ fn the_fleet_cursor_never_changes_the_selected_bot_until_enter() {
 /// selecting the bot.
 #[test]
 fn space_selects_rows_without_selecting_the_bot() {
+    let mut seam = Seam::new();
     let mut app = fleet_app(&["alice", "bob", "carol"]);
     draw(&mut app, 120, 40);
     app.on_key(key(KeyCode::Down));
-    assert_eq!(app.on_key(ch(' ')), AppAction::None);
+    seam.press(&mut app, ch(' '), AppAction::SetMark("bob".into(), true));
     app.on_key(key(KeyCode::Down));
-    assert_eq!(app.on_key(ch(' ')), AppAction::None);
+    seam.press(&mut app, ch(' '), AppAction::SetMark("carol".into(), true));
     assert_eq!(app.focused_name().as_deref(), Some("alice"));
     let all = text(&draw(&mut app, 120, 40));
     assert!(all.contains("selected 2 of 3"), "{all}");
     assert!(all.contains("[x]"), "{all}");
-    assert_eq!(app.on_key(ch(' ')), AppAction::None);
+    seam.press(&mut app, ch(' '), AppAction::SetMark("carol".into(), false));
     assert!(text(&draw(&mut app, 120, 40)).contains("selected 1 of 3"));
 }
 
 #[test]
 fn uid_marks_survive_cursor_moves_and_filter_keys() {
+    // The vault knows the members by these uids, as the production session
+    // does: `SetMark` names a member and the core resolves its identity.
+    let mut seam = Seam::with_profiles(&[("alice", 41), ("bob", 42), ("carol", 43)]);
     let mut app = fleet_app(&["alice", "bob", "carol"]);
     app.profile_ids = [
         frontend_core::ProfileIdentity::uid(41),
@@ -110,9 +116,9 @@ fn uid_marks_survive_cursor_moves_and_filter_keys() {
 
     // Space follows the production fleet_key path, including its identity
     // projection before each key.
-    app.on_key(ch(' '));
+    seam.press(&mut app, ch(' '), AppAction::SetMark("alice".into(), true));
     app.on_key(key(KeyCode::Down));
-    app.on_key(ch(' '));
+    seam.press(&mut app, ch(' '), AppAction::SetMark("bob".into(), true));
     let alice = frontend_core::ProfileIdentity::uid(41);
     let bob = frontend_core::ProfileIdentity::uid(42);
     assert!(app.table.selection.contains(alice));
@@ -121,13 +127,17 @@ fn uid_marks_survive_cursor_moves_and_filter_keys() {
     // A cursor move and a filter character both re-project the table.
     app.on_key(key(KeyCode::Down));
     app.on_key(ch('/'));
-    app.on_key(ch('b'));
+    seam.press(
+        &mut app,
+        ch('b'),
+        AppAction::FleetFilter(FilterEdit::Push('b')),
+    );
     assert!(app.table.selection.contains(alice));
     assert!(app.table.selection.contains(bob));
 
     // The filtered, marked row still toggles off through fleet_key.
     app.on_key(key(KeyCode::Enter));
-    app.on_key(ch(' '));
+    seam.press(&mut app, ch(' '), AppAction::SetMark("bob".into(), false));
     assert!(app.table.selection.contains(alice));
     assert!(!app.table.selection.contains(bob));
 }
@@ -186,23 +196,28 @@ fn pane_letters_act_only_in_their_pane() {
 /// Typing into a text field wins over every global key.
 #[test]
 fn text_fields_take_typing_before_global_keys() {
+    let mut seam = Seam::new();
     let mut app = fleet_app(&["alice", "quinn"]);
     draw(&mut app, 120, 40);
     assert_eq!(app.on_key(ch('/')), AppAction::None);
     for c in "q?:".chars() {
-        assert_eq!(app.on_key(ch(c)), AppAction::None);
+        seam.press(&mut app, ch(c), AppAction::FleetFilter(FilterEdit::Push(c)));
     }
-    assert_eq!(app.table.filter, "q?:");
+    assert_eq!(app.table.filter.text(), "q?:");
     assert!(!app.quit && app.modal.is_none(), "no quit, help or palette");
     assert!(text(&draw(&mut app, 120, 40)).contains("KEYS Fleet filter"));
     for _ in 0..2 {
-        app.on_key(key(KeyCode::Backspace));
+        seam.send(&mut app, key(KeyCode::Backspace));
     }
-    assert_eq!(app.table.filter, "q");
+    assert_eq!(app.table.filter.text(), "q");
     let all = text(&draw(&mut app, 120, 40));
     assert!(all.contains("1/2 shown"), "filter keeps quinn only: {all}");
-    assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::None);
-    assert!(app.table.filter.is_empty() && !app.table.editing);
+    seam.press(
+        &mut app,
+        key(KeyCode::Esc),
+        AppAction::FleetFilter(FilterEdit::Clear),
+    );
+    assert!(app.table.filter.text().is_empty() && !app.table.editing);
 
     // Log search on the Logs tab.
     assert_eq!(app.on_key(key(KeyCode::F(7))), AppAction::None);
@@ -365,7 +380,7 @@ fn marked_bulk_confirms_marked_scope_without_unmarked_churn_loop() {
     let mut app = fleet_app(&["alice", "bob"]);
     app.table
         .selection
-        .set(app.profile_id_for_name("alice"), true);
+        .set_for_test(app.profile_id_for_name("alice"), true);
     assert_eq!(app.run_command(Command::ScriptStartAll), AppAction::None);
     let all = text(&draw(&mut app, 120, 40));
     assert!(
@@ -384,7 +399,7 @@ fn marked_start_confirm_names_the_selected_script_it_will_run() {
     let mut app = fleet_app(&["alice", "bob"]);
     app.table
         .selection
-        .set(app.profile_id_for_name("alice"), true);
+        .set_for_test(app.profile_id_for_name("alice"), true);
     app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
     assert_eq!(app.run_command(Command::ScriptStartAll), AppAction::None);
     let all = text(&draw(&mut app, 120, 40));
@@ -403,7 +418,7 @@ fn marked_login_and_logout_confirm_the_marked_scope_and_run_marked_commands() {
     let mut app = fleet_app(&["alice", "bob", "carol"]);
     app.table
         .selection
-        .set(app.profile_id_for_name("bob"), true);
+        .set_for_test(app.profile_id_for_name("bob"), true);
 
     assert_eq!(app.on_key(ch('m')), AppAction::None);
     let all = text(&draw(&mut app, 120, 40));
@@ -416,7 +431,9 @@ fn marked_login_and_logout_confirm_the_marked_scope_and_run_marked_commands() {
     assert!(all.contains("Log out 1 marked bot"), "{all}");
     assert_eq!(app.on_key(ch('y')), AppAction::LogoutMarked);
 
-    app.table.selection.clear();
+    app.table
+        .selection
+        .set_for_test(app.profile_id_for_name("bob"), false);
     assert_eq!(app.on_key(ch('m')), AppAction::None);
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::SpawnAll);
     assert_eq!(app.on_key(ch('U')), AppAction::None);
@@ -435,7 +452,7 @@ fn marked_assign_commands_need_marks_and_a_script_and_name_both() {
         );
         app.table
             .selection
-            .set(app.profile_id_for_name("alice"), true);
+            .set_for_test(app.profile_id_for_name("alice"), true);
         assert_eq!(
             command.availability(&app),
             Err("browse to pick a script first")
@@ -476,7 +493,7 @@ fn apply_settings_to_marked_names_what_is_missing_and_fits_the_palette() {
     );
     app.table
         .selection
-        .set(app.profile_id_for_name("bob"), true);
+        .set_for_test(app.profile_id_for_name("bob"), true);
     assert_eq!(
         command.availability(&app),
         Err("browse to pick a script first")
@@ -924,7 +941,7 @@ fn restart_confirm_app(count: usize, running: usize) -> (TuiApp, Vec<String>) {
     }
     for name in &names {
         let id = app.profile_id_for_name(name);
-        app.table.selection.set(id, true);
+        app.table.selection.set_for_test(id, true);
     }
     app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
     assert_eq!(
@@ -1041,7 +1058,7 @@ fn restart_confirm_at_40_by_20_shows_both_lists_when_a_name_is_wider_than_the_po
     }
     for name in &names {
         let id = app.profile_id_for_name(name);
-        app.table.selection.set(id, true);
+        app.table.selection.set_for_test(id, true);
     }
     app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
     assert_eq!(
@@ -1085,7 +1102,7 @@ fn palette_scope_text_follows_the_combined_bulk_scope() {
     assert_eq!(Command::ScriptStopAll.scope(&app), "all 3 members");
     for name in ["alice", "bob"] {
         let id = app.profile_id_for_name(name);
-        app.table.selection.set(id, true);
+        app.table.selection.set_for_test(id, true);
     }
     assert_eq!(Command::LoadLoginAll.scope(&app), "2 marked bots");
     assert_eq!(Command::LogoutAll.scope(&app), "2 marked bots");

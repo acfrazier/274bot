@@ -24,8 +24,8 @@ fn session_log_records_the_raised_open_file_limit() {
 
     // What panel-play and tui-play do first, then the user's session log.
     assert!(host_play::fd_limit::raise_at_startup().is_some());
-    let path = frontend_core::log_file::apply_session_log(true).expect("session file");
-    frontend_core::log_file::apply_session_log(false);
+    let path = frontend_core::log_file::apply_session_log_for_test(true).expect("session file");
+    frontend_core::log_file::apply_session_log_for_test(false);
 
     // The writer thread creates and fills the file asynchronously; closing
     // the session lets it drain and exit.
