@@ -23,6 +23,14 @@ fn scratch(test: &str) -> PathBuf {
     dir
 }
 
+/// A driver over the state root `state`. Opening restores the Quest Paths
+/// source into the process-wide registry, so it waits for a test that
+/// owns that source.
+fn open_driver(state: &Path) -> HeadlessDriver {
+    let _source = crate::quester_paths::registry_source_test_lock();
+    HeadlessDriver::open(state, InstancePermit::skip())
+}
+
 /// A real vault file at `dir/vault` holding `names`.
 fn vault_with(dir: &Path, names: &[&str]) -> PathBuf {
     let path = dir.join("vault");
@@ -56,7 +64,7 @@ fn play() -> PlayConfig {
 /// unlocked through `UnlockVault` over a vault holding `names`.
 fn driver_in(dir: &Path, names: &[&str]) -> HeadlessDriver {
     let vault = vault_with(dir, names);
-    let mut d = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip());
+    let mut d = open_driver(&dir.join("state"));
     d.session_mut().set_spawn_workers(false);
     let unlock = d
         .unlock(vault, PASSPHRASE, &play())
@@ -326,7 +334,7 @@ fn preferences_file(d: &HeadlessDriver) -> serde_json::Map<String, serde_json::V
 fn unlock_with_a_wrong_passphrase_is_refused_and_keeps_the_vault() {
     let dir = scratch("unlock-wrong");
     let vault = vault_with(&dir, &["alice"]);
-    let mut d = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip());
+    let mut d = open_driver(&dir.join("state"));
     let wrong = d
         .unlock(vault.clone(), "not-the-passphrase", &play())
         .expect("admitted");
@@ -358,7 +366,7 @@ fn unlock_with_a_wrong_passphrase_is_refused_and_keeps_the_vault() {
 fn create_vault_makes_a_new_vault_file_that_a_new_session_unlocks() {
     let dir = scratch("create-vault");
     let vault = dir.join("new-vault");
-    let mut d = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip());
+    let mut d = open_driver(&dir.join("state"));
     let create = d
         .unlock(vault.clone(), PASSPHRASE, &play())
         .expect("admitted");
@@ -370,7 +378,7 @@ fn create_vault_makes_a_new_vault_file_that_a_new_session_unlocks() {
     assert!(vault.is_file(), "CreateVault wrote the vault file");
     drop(d);
 
-    let mut again = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip());
+    let mut again = open_driver(&dir.join("state"));
     let unlock = again.unlock(vault, PASSPHRASE, &play()).expect("admitted");
     assert_eq!(
         again.report(unlock.request()).map(CommandReport::command),
@@ -383,7 +391,7 @@ fn create_vault_makes_a_new_vault_file_that_a_new_session_unlocks() {
 fn reset_vault_deletes_the_locked_file_and_refuses_while_unlocked() {
     let dir = scratch("reset-vault");
     let vault = vault_with(&dir, &["alice"]);
-    let mut d = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip());
+    let mut d = open_driver(&dir.join("state"));
     d.session_mut().stage_vault_reset(vault.clone());
     let reset = d
         .submit(OperatorCommand::ResetVault, Targets::Application)
@@ -409,7 +417,7 @@ fn reset_vault_deletes_the_locked_file_and_refuses_while_unlocked() {
 #[test]
 fn a_vault_row_with_nothing_staged_is_refused_not_done() {
     let dir = scratch("vault-unstaged");
-    let mut d = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip());
+    let mut d = open_driver(&dir.join("state"));
     let unlock = d
         .submit(OperatorCommand::UnlockVault, Targets::Application)
         .expect("admitted");
@@ -464,7 +472,7 @@ fn preference_rows_write_the_file_and_a_new_session_reads_them_back() {
     assert_eq!(file["session_log_file"], serde_json::Value::Bool(true));
     assert_eq!(file["map_bake"], serde_json::Value::String("always".into()));
     // A new session over the same state root.
-    let again = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip());
+    let again = open_driver(&dir.join("state"));
     assert_eq!(
         again
             .session()
