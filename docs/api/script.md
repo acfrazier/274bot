@@ -1768,7 +1768,6 @@ flight settles false (a deposit loop does nothing).
 NativeApi v2 scripts can use `withdraw-x` with the number of free inventory
 slots, or compatibility `Bank.withdrawLoad(name)`.
 
-
 ## Hard no
 
 No dummy tick-end opcode. No `Arc<World>` on extras. No bot action API in the

@@ -45,12 +45,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   and local bank calculations are owned by Rust.
   Paused bank walks revalidate their saved destination on Resume without
   repeating bank callbacks or extending the operation's active-time limit.
-  Breaking change: NativeApi v2 no longer accepts `withdraw-load` or
-  exposes `withdraw_load_result_seq` and `withdraw_load_result`. Use
-  `withdraw-x` with the number of free slots or compatibility
-  `Bank.withdrawLoad(name)`. The BoneBurier v2 example uses that method.
   Bank-opening log text is shortened at a UTF-8 boundary to fit the prompt
   byte limit, without changing the operation's result.
+- Breaking change: NativeApi v2 no longer accepts `withdraw-load` or exposes
+  `withdraw_load_result_seq` and `withdraw_load_result`. Use `withdraw-x` with
+  the number of free slots or compatibility `Bank.withdrawLoad(name)`. The
+  BoneBurier v2 example uses that method.
 - Scripts no longer have WebCrypto (`crypto.subtle`, `Crypto`, `CryptoKey`,
   `SubtleCrypto`) or the `URL`, `URLSearchParams` and `URLPattern` globals.
   `crypto.randomUUID()` and `crypto.getRandomValues()` still work.
