@@ -7115,6 +7115,7 @@ fn ui_frame(
     let wrote_shots = pump_shots(state);
     pump_record(state);
     state.session.map_desk.begin_game_input_frame();
+    state.session.pump_status();
     #[cfg(feature = "memory-profile")]
     if let Some(run) = state.memory.as_mut() {
         state.session.memory_focus(run);
