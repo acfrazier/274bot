@@ -72,8 +72,9 @@ pub(crate) use fight_field::fight_field_v2_scenario;
 pub(crate) use hold_spot::hold_spot_v2_scenario;
 pub(crate) use jive::{
     jive_chests_scenario, jive_crafting_scenario, jive_demons_scenario,
-    jive_dragons_black_range_scenario, jive_dragons_potion_restock_scenario, jive_dragons_scenario,
-    jive_enchanter_scenario, jive_kbd_scenario,
+    jive_dragons_black_range_scenario, jive_dragons_mixed_food_restock_scenario,
+    jive_dragons_potion_restock_scenario, jive_dragons_scenario, jive_enchanter_scenario,
+    jive_kbd_scenario,
 };
 pub(crate) use leave_lair::leave_lair_v2_scenario;
 pub(crate) use line_of_sight::line_of_sight_v2_scenario;

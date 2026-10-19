@@ -621,6 +621,10 @@ pub(crate) fn green_dragon_bank_scenario() -> Scenario {
         ],
     );
     scenario.settings.deadline = GREEN_DRAGON_BANK_DEADLINE;
+    // A death drops the pack and respawns the bot with its kept items; a
+    // later restock, return and fresh XP would then pass as this trip
+    // (`FIX-024/combat-bank/fixB2` died with eight Lobsters left).
+    scenario.settings.fail_on_death = true;
     for step in &mut scenario.steps {
         match step.name {
             "watch the carried Lobsters run out before the bank trip" => {
