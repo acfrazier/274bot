@@ -34,7 +34,8 @@ use crate::router::{GridLeg, GridRoute, Leg, Route};
 use crate::tile::{chebyshev, Tile};
 use crate::transport::{
     is_dialogue_door_loc, DoorDir, TransportEdge, TransportKind, AL_KHARID_TOLL_LEFT_LOC_ID,
-    AL_KHARID_TOLL_RIGHT_LOC_ID, CELLAR_SHIFT, SHANTAY_HENGE_LOC_ID,
+    AL_KHARID_TOLL_RIGHT_LOC_ID, ARDOUGNE_WILDERNESS_LEVER_LOC_ID, CELLAR_SHIFT,
+    SHANTAY_HENGE_LOC_ID,
 };
 
 mod dialog;

@@ -161,6 +161,13 @@ pub(crate) fn reset_session(runtime: &mut Runtime) -> Result<(), String> {
     Ok(())
 }
 
+/// Frozen `GameMessages.mark()` read from Rust: the native history's own
+/// sequence, the one `sawSince` compares (`saw_since` below). An isolate
+/// without the history has the empty history's mark, 0.
+pub(crate) fn native_mark(scope: &v8::HandleScope) -> f64 {
+    state_for_scope(scope).map_or(0.0, |state| state.history.borrow().local_seq)
+}
+
 fn state_for_scope(scope: &v8::HandleScope) -> Option<Rc<ChatboxState>> {
     scope.get_slot::<Rc<ChatboxState>>().cloned()
 }

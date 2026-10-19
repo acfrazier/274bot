@@ -272,6 +272,10 @@ pub fn settings_inject_map(
 pub struct ScenarioNav {
     pub allow_teleports: bool,
     pub allow_wilderness: bool,
+    /// Let the runner's own Walk/Follow routes cross danger zones, as the
+    /// **Danger routing: Always** Nav setting does for a user's walks
+    /// (`ZoneExempt::all()`). Default false keeps the product default.
+    pub allow_danger_zones: bool,
     pub show_nav_path: bool,
     pub hop_labels: bool,
     pub hop_label_px: i32,
@@ -292,6 +296,7 @@ impl Default for ScenarioNav {
         Self {
             allow_teleports: false,
             allow_wilderness: false,
+            allow_danger_zones: false,
             show_nav_path: false,
             hop_labels: true,
             hop_label_px: 11,
@@ -319,6 +324,7 @@ pub fn nav_test_paints() -> ScenarioNav {
         component_flood: false,
         allow_teleports: false,
         allow_wilderness: false,
+        allow_danger_zones: false,
         engine_speed_ms: None,
     }
 }

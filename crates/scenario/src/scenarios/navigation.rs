@@ -1,6 +1,6 @@
 use super::combat::{BRASS_KEY_ID, RUNE_SCIMITAR_ID};
 use super::pair::{follow_step, nav_kit_steps, tele_step};
-use super::production::{COINS_ID, MAGIC_STAT};
+use super::production::{COINS_ID, HITPOINTS_STAT, MAGIC_STAT};
 use super::shop::{shop_buyout_open_npc_bank, GUNDAI_BANK_APPROACH};
 use crate::*;
 
@@ -945,6 +945,9 @@ const SHANTAY_VARROCK: WorldTile = WorldTile {
     z: 3424,
     level: 0,
 };
+/// Melee and Hitpoints seeded to 99 before the toll tail: combat 113, above
+/// the 84 cap of the Ugthanki zones on the desert route.
+const SHANTAY_TOLL_COMBAT_SKILLS: [&str; 4] = ["attack", "strength", "defence", "hitpoints"];
 
 /// The `nav_shantay` scenario exercises both henge branches with exact
 /// WalkTo arrival: from Irena, it walks to the Shantay bank chest with no
@@ -1034,6 +1037,32 @@ pub(crate) fn nav_shantay_scenario() -> Scenario {
                     budget_ticks: 600,
                 },
             },
+            // The default Danger routing refuses the desert walk for the new
+            // level-3 account: Ugthanki (L42) and Desert Wolves (L27) hunt
+            // (`desert.npc` `huntmode=cowardly`,
+            // `check_nottoostrong=outside_wilderness`) players up to combat
+            // 84 and 54. Seed the account's own melee stats to 99 (combat
+            // 113) so the route the cell exercises is the one the product
+            // admits by default, then drain the level-up dialogs.
+            Step {
+                name: "set melee stats to 99 so the desert hunters ignore the account",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        for skill in SHANTAY_TOLL_COMBAT_SKILLS {
+                            cheat(c, &format!("setstat {skill} 99"));
+                        }
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Stat {
+                        id: HITPOINTS_STAT,
+                        min: 99,
+                    },
+                    budget_ticks: 60,
+                },
+            },
+            drain_setstat_levelups_before_hostile_tele(),
             // ported from rs2b0t e2e/shantay-pass-route-test.ts @2de6bb23:
             // upstream fixture is the desert start with 10 coins only, an empty
             // bank and no pass (`~clearbank` and `~clearinv worn` here). The walk
@@ -1160,12 +1189,15 @@ const BRASS_HUT_APPROACH: WorldTile = WorldTile {
     z: 3448,
     level: 0,
 };
-/// Inside the hut, ladder 1755's surface landing. North of 1804, so a
-/// follow from `BRASS_HUT_APPROACH` has to take the keyed door (not the
-/// cellar ladder).
+/// Inside the hut, the stand south of the cellar ladder. North of 1804, so a
+/// follow from `BRASS_HUT_APPROACH` has to take the keyed door. The ladder
+/// itself (`ladder_cellar` loc 1754, `m48_53.jm2` LOC `0 44 60: 1754 10 3`
+/// = (3116,3452), shape 10) blocks its own tile, so a walk can never end
+/// there; `ladders.rs2` `[oploc1,ladder_cellar]` climbs from the player's
+/// own stand.
 const BRASS_HUT_INSIDE: WorldTile = WorldTile {
     x: 3116,
-    z: 3452,
+    z: 3451,
     level: 0,
 };
 /// Varrock West bank stand HillGiant walks after the hut exit.
@@ -1441,6 +1473,10 @@ pub(crate) const NAV_ROUTES: &[(&str, WorldTile, WorldTile)] = &[
 /// (no `~completequests` dialog pile), then the rs2b0t item kit (knife,
 /// coins) and tele+Follow each borrowed OD pair. Proof is arrival at the
 /// last dest. Teleports off. Auto-run is the host bothost feature.
+/// The routes run with **Danger routing: Always**: Seers → Rock Crabs and
+/// Taverley → Rellekka cross Wolf (L64, `huntmode=cowardly`, aggressive up
+/// to combat 128) and Rock Crab (`check_nottoostrong=off`) zones, which the
+/// default setting refuses at every combat level.
 pub(crate) fn nav_routes_scenario() -> Scenario {
     let last = NAV_ROUTES[NAV_ROUTES.len() - 1].2;
     let mut steps = nav_kit_steps();
@@ -1463,7 +1499,10 @@ pub(crate) fn nav_routes_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: ScenarioNav {
+                allow_danger_zones: true,
+                ..nav_test_paints().with_tick_ms(300)
+            },
             require_mainland_base: true,
             deadline: Duration::from_secs(3600),
             sustains: nav_energy_sustains(),
