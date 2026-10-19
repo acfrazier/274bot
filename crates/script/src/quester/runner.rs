@@ -18,7 +18,7 @@ use crate::native::{
     ScriptFailure, ScriptFlow, ScriptStatus, StatusField, StatusValue, StopReason,
 };
 use crate::preparation::{self, PreparationInput, PreparationKind, PreparedTask};
-use crate::quest_journal::{JournalMachine, JournalRequest};
+use crate::quest_journal::{JournalMachine, JournalRequest, ROOT_289};
 use crate::CompiledId;
 use api::game_data::SelectedGameData;
 use api::identity::{Cancellation, Scope, SlotKey};
@@ -1824,6 +1824,15 @@ impl Quester {
                 return self.wait_for_read(tick, "quest colour unavailable or unknown stage");
             }
             if colour == QuestListStatus::InProgress && !self.path.progress.rules.is_empty() {
+                // A random-event owner can still be closing its Main window when
+                // the step requests progress. Do not begin or close over it.
+                if tick.cx.snapshot().main_modal().is_some_and(|modal| {
+                    modal.value.root != ROOT_289
+                        && (modal.value.root != -1 || !modal.value.texts.is_empty())
+                }) {
+                    return self
+                        .wait_for_journal_read(tick, "journal blocked by an occupied modal");
+                }
                 if self.journal_retry_pending {
                     let closed = tick.cx.snapshot().main_modal().is_some_and(|modal| {
                         modal.value.root == -1 && modal.value.texts.is_empty()
