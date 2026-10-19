@@ -952,6 +952,21 @@ function currentRootExports(indexText) {
     return names;
 }
 
+function typedModuleFamilies(indexText, navFamilies = null) {
+    const source = parseSource(indexText, 'generated-index.d.ts');
+    const modules = new Map();
+    for (const statement of source.statements) {
+        if (!ts.isModuleDeclaration(statement)) continue;
+        const ambientName = nodeName(statement.name, source);
+        const module = ambientName?.startsWith('*') ? ambientName.slice(1) : ambientName;
+        if (!statement.body || !ts.isModuleBlock(statement.body)) fail(`Malformed generated ABI module ${module}`);
+        if (modules.has(module)) fail(`Duplicate typed module family row for ${module}`);
+        const policy = classifyModule(module, navFamilies);
+        modules.set(module, { module, family_id: policy.id, nav_consuming: policy.nav });
+    }
+    return [...modules.values()].sort((a, b) => a.module.localeCompare(b.module));
+}
+
 function moduleSymbolIndex(indexText, registry) {
     const source = parseSource(indexText, 'generated-index.d.ts');
     const registered = new Set(registry.map(entry => entry.module));
@@ -1171,6 +1186,11 @@ function buildArtifacts({
     const frozen = parseSource(frozenIndex, 'packages/rs2b0t-api/index.d.ts');
     const sourceRecords = declarations(frozen, printer);
     const moduleSymbols = moduleSymbolIndex(currentIndex, registry);
+    const typedModules = typedModuleFamilies(currentIndex, navFamilies);
+    const typedModuleNames = new Set(typedModules.map(row => row.module));
+    for (const entry of registry) {
+        if (!typedModuleNames.has(entry.module)) fail(`Served ABI module has no typed declaration: ${entry.module}`);
+    }
     const nameMap = rootNameMaps(rootSource, sourceRecords, registry, moduleSymbols, navFamilies);
     const sourceRuntimeNames = runtimeExports(frozenRuntimeIndex, 'packages/rs2b0t-api/index.js');
     const sourceRecordNames = new Set(sourceRecords.filter(record => record.runtime).map(record => record.name));
@@ -1225,6 +1245,7 @@ function buildArtifacts({
     const callbacks = callbackFamilyRows(callbackSnapshot, nativeFamilyFamilies, navFamilies);
 
     const counts = new Map();
+    for (const row of typedModules) addCounts(counts, row.family_id, navFamilies);
     for (const record of sourceRecords) {
         const row = addCounts(counts, record.family_id, navFamilies);
         row.declarations++;
@@ -1286,6 +1307,7 @@ function buildArtifacts({
         },
         declarations: sourceRecords,
         compatibility_name_maps: nameMap.rows,
+        typed_modules: typedModules,
         overlays: classifiedOverlays,
         callbacks,
         not_impl_debt: debt,
@@ -1299,14 +1321,14 @@ function buildArtifacts({
         base_predecessors: BASE_PREDECESSORS,
         families: familyPredecessors,
     };
-    validateArtifacts(contract, predecessors, navFamilies);
+    validateArtifacts(contract, predecessors, navFamilies, currentIndex);
     return {
         'abi-contract.json': `${JSON.stringify(contract, null, 2)}\n`,
         'family-predecessors.json': `${JSON.stringify(predecessors, null, 2)}\n`,
     };
 }
 
-function validateArtifacts(contract, predecessors, navFamilies = null) {
+function validateArtifacts(contract, predecessors, navFamilies = null, currentIndex = null) {
     if (contract.activation_state !== 'partially-activated' ||
         JSON.stringify(contract.active_families) !== JSON.stringify(ACTIVE_FAMILIES)) {
         fail('Activated families must match the complete family units');
@@ -1316,6 +1338,24 @@ function validateArtifacts(contract, predecessors, navFamilies = null) {
     const checkFamily = (row, where) => {
         if (!row.family_id || !familyIds.has(row.family_id)) fail(`Missing family predecessor classification for ${where}`);
     };
+    if (!Array.isArray(contract.typed_modules)) fail('Missing typed module family inventory');
+    const typedModules = new Map();
+    for (const row of contract.typed_modules) {
+        checkFamily(row, `typed module ${row.module}`);
+        if (typedModules.has(row.module)) fail(`Duplicate typed module family row for ${row.module}`);
+        const policy = classifyModule(row.module, navFamilies);
+        if (row.family_id !== policy.id || row.nav_consuming !== policy.nav) {
+            fail(`Typed module family classification disagrees with policy for ${row.module}`);
+        }
+        typedModules.set(row.module, row);
+    }
+    if (currentIndex !== null) {
+        const expectedModules = typedModuleFamilies(currentIndex, navFamilies);
+        for (const row of expectedModules) {
+            if (!typedModules.has(row.module)) fail(`Missing typed module family row for ${row.module}`);
+        }
+        if (expectedModules.length !== typedModules.size) fail('Unexpected typed module family row');
+    }
     for (const declaration of contract.declarations) {
         checkFamily(declaration, declaration.name);
         for (const member of declaration.members) {
