@@ -60,6 +60,7 @@ pub(crate) fn air_distance_squared(a: WorldTile, b: WorldTile) -> i64 {
     dx * dx + dz * dz
 }
 
+#[cfg(feature = "load")]
 pub(crate) fn nearest_eligible_bank(
     facts: &NamedBankFacts,
     from: WorldTile,
