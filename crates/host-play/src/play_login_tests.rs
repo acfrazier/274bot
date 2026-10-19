@@ -1,4 +1,8 @@
 use super::*;
+#[cfg(unix)]
+use client::client::client::AssetFetchError;
+#[cfg(unix)]
+use client::io::HostGameStream;
 
 const HOST: &str = "world.example";
 const PORT: u16 = 43594;
@@ -1179,6 +1183,230 @@ fn os_partial_seed_eof_maps_to_closed_transport_event() {
 }
 
 #[cfg(unix)]
+struct ResetWriteNetwork {
+    write_errno: Arc<std::sync::Mutex<Option<i32>>>,
+}
+
+#[cfg(unix)]
+struct ResetWriteStream {
+    socket: std::net::TcpStream,
+    binding: client::io::HostStreamIdentity,
+    write_errno: Arc<std::sync::Mutex<Option<i32>>>,
+}
+
+#[cfg(unix)]
+impl client::io::host_network::HostGameStream for ResetWriteStream {
+    fn read(&mut self, dst: &mut [u8]) -> std::io::Result<usize> {
+        use std::io::Read;
+        self.socket.read(dst)
+    }
+
+    fn available(&mut self) -> std::io::Result<usize> {
+        let mut byte = [0; 1];
+        self.socket.peek(&mut byte)
+    }
+
+    fn wait_available(&mut self, need: usize, until: Instant) {
+        while Instant::now() < until {
+            match self.available() {
+                Ok(available) if available >= need => return,
+                Err(_) => return,
+                _ => thread::park_timeout(Duration::from_millis(1)),
+            }
+        }
+    }
+
+    fn write_record(&mut self, record: &[u8]) -> std::io::Result<()> {
+        use std::io::Write;
+        match self.socket.write_all(record) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                *self
+                    .write_errno
+                    .lock()
+                    .expect("reset-write capture mutex is not poisoned") = error.raw_os_error();
+                Err(error)
+            }
+        }
+    }
+
+    fn set_deadline(&mut self, deadline: Option<Instant>) -> std::io::Result<()> {
+        let timeout = deadline.map(|deadline| {
+            deadline
+                .saturating_duration_since(Instant::now())
+                .max(Duration::from_nanos(1))
+        });
+        self.socket.set_read_timeout(timeout)?;
+        self.socket.set_write_timeout(timeout)
+    }
+
+    fn binding_identity(&self) -> client::io::HostStreamIdentity {
+        self.binding.clone()
+    }
+
+    fn attach_cancel(
+        &mut self,
+        cancel: &client::io::client_stream::LoginCancel,
+        attempt: &client::io::HostAttemptIdentity,
+    ) -> std::io::Result<()> {
+        if cancel.is_cancelled() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "test login attempt was cancelled",
+            ));
+        }
+        if attempt.downcast_ref::<u64>().is_none() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "reset-write fixture requires its attempt identity",
+            ));
+        }
+        Ok(())
+    }
+
+    fn rebind(
+        &mut self,
+        attempt: &client::io::HostAttemptIdentity,
+        deadline: Option<Instant>,
+    ) -> std::io::Result<()> {
+        if attempt.downcast_ref::<u64>().is_none() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "reset-write fixture requires its attempt identity",
+            ));
+        }
+        self.set_deadline(deadline)
+    }
+
+    fn close(&mut self, _disposition: client::io::HostCloseDisposition) {
+        let _ = self.socket.shutdown(std::net::Shutdown::Both);
+    }
+
+    fn take_exit_reason(&mut self) -> Option<client::io::HostStreamExit> {
+        None
+    }
+
+    fn seal_login(&mut self) -> std::io::Result<client::io::SealReceipt> {
+        Ok(Box::new(self.binding.clone()))
+    }
+
+    fn commit_login(&mut self, receipt: client::io::SealReceipt) -> std::io::Result<()> {
+        receipt
+            .downcast::<client::io::HostStreamIdentity>()
+            .map(|_| ())
+            .map_err(|_| std::io::Error::other("invalid test stream seal receipt"))
+    }
+}
+
+#[cfg(unix)]
+impl client::io::host_network::HostNetwork for ResetWriteNetwork {
+    fn connect_game(
+        &self,
+        mode: client::Transport,
+        host: &str,
+        port: u16,
+        deadline: Option<Instant>,
+        cancel: Option<&client::io::client_stream::LoginCancel>,
+        attempt: &client::io::HostAttemptIdentity,
+    ) -> std::io::Result<Box<dyn client::io::HostGameStream>> {
+        if mode != client::Transport::Tcp {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "reset-write fixture supports TCP only",
+            ));
+        }
+        if cancel.is_some_and(client::io::client_stream::LoginCancel::is_cancelled) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "test login attempt was cancelled",
+            ));
+        }
+        if attempt.downcast_ref::<u64>().is_none() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "reset-write fixture requires its attempt identity",
+            ));
+        }
+        let mut stream = ResetWriteStream {
+            socket: std::net::TcpStream::connect((host, port))?,
+            binding: client::io::HostStreamIdentity::new(1_u8),
+            write_errno: Arc::clone(&self.write_errno),
+        };
+        stream.set_deadline(deadline)?;
+        Ok(Box::new(stream))
+    }
+
+    fn connect_ondemand(
+        &self,
+        _mode: client::Transport,
+        _host: &str,
+        _port: u16,
+        _resolved: Option<&[std::net::SocketAddr]>,
+        _cancel: Option<&client::io::client_stream::LoginCancel>,
+    ) -> std::io::Result<Box<dyn client::io::HostGameStream>> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "reset-write fixture does not provide OnDemand",
+        ))
+    }
+
+    fn start_cold_fill_lookup(
+        &self,
+        _host: &str,
+        _port: u16,
+    ) -> Result<
+        Box<dyn client::io::host_network::HostLookupTicket>,
+        client::io::host_network::HostLookupFailure,
+    > {
+        Err(client::io::host_network::HostLookupFailure::Unavailable)
+    }
+
+    fn start_http(
+        &self,
+        _mode: client::Transport,
+        _host: &str,
+        _port: u16,
+        _path: &str,
+    ) -> Result<Box<dyn client::io::HostHttpFetch>, AssetFetchError> {
+        Err(AssetFetchError::Connection)
+    }
+
+    fn start_http_resolved(
+        &self,
+        _mode: client::Transport,
+        _host: &str,
+        _addrs: &[std::net::SocketAddr],
+        _path: &str,
+    ) -> Result<Box<dyn client::io::HostHttpFetch>, AssetFetchError> {
+        Err(AssetFetchError::Connection)
+    }
+
+    fn fetch_http_blocking(
+        &self,
+        _mode: client::Transport,
+        _host: &str,
+        _port: u16,
+        _path: &str,
+        _deadline: Option<Instant>,
+        _cancel: Option<&client::io::client_stream::LoginCancel>,
+    ) -> Result<Vec<u8>, AssetFetchError> {
+        Err(AssetFetchError::Connection)
+    }
+
+    fn fetch_http_blocking_resolved(
+        &self,
+        _mode: client::Transport,
+        _host: &str,
+        _addrs: &[std::net::SocketAddr],
+        _path: &str,
+        _deadline: Option<Instant>,
+        _cancel: Option<&client::io::client_stream::LoginCancel>,
+    ) -> Result<Vec<u8>, AssetFetchError> {
+        Err(AssetFetchError::Connection)
+    }
+}
+
+#[cfg(unix)]
 #[test]
 fn os_reset_write_maps_to_write_transport_event() {
     if run_hosted_test_in_child(
@@ -1187,21 +1415,25 @@ fn os_reset_write_maps_to_write_transport_event() {
     ) {
         return;
     }
-    use client::io::client_stream::ClientStream;
+    use client::io::client_stream::{ClientStream, LoginCancel};
     use std::os::fd::AsRawFd;
-    let network = HostedNetworkFixture::start();
+
+    let write_errno = Arc::new(std::sync::Mutex::new(None));
+    client::io::install_host_network(Arc::new(ResetWriteNetwork {
+        write_errno: Arc::clone(&write_errno),
+    }))
+    .expect("install reset-write test network");
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
-    let arm = SlotArm::new(7, true);
     let mut client = tcp_client(port);
-    let prepared = network.prepared_attempt(&arm, port);
-    let cancel = client::io::client_stream::LoginCancel::new();
-    cancel.set_host_attempt_identity(prepared.hook_identity(arm.queue_owner, None));
-    client.set_login_cancel(cancel);
-    client.set_login_deadline(Instant::now() + Duration::from_secs(3));
-    let mut stream = client_adapter::host_network::with_prepared_game_attempt(prepared, || {
-        ClientStream::connect("127.0.0.1", port)
-    })
+    let initial_cancel = LoginCancel::new();
+    initial_cancel.set_host_attempt_identity(client::io::HostAttemptIdentity::new(1_u64));
+    let mut stream = ClientStream::connect_for_cancellable(
+        client::Transport::Tcp,
+        "127.0.0.1",
+        port,
+        &initial_cancel,
+    )
     .unwrap();
     let (accepted, _) = accept_local_with_timeout(&listener).unwrap();
     let linger = libc::linger {
@@ -1226,17 +1458,33 @@ fn os_reset_write_maps_to_write_transport_event() {
     loop {
         match stream.available() {
             Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => break,
-            Ok(0) if Instant::now() < until => thread::yield_now(),
+            Ok(0) if Instant::now() < until => {
+                thread::park_timeout(Duration::from_millis(5));
+            }
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < until =>
+            {
+                thread::park_timeout(Duration::from_millis(5));
+            }
             result => panic!("expected local server reset before the login write: {result:?}"),
         }
     }
     client.stream = Some(stream);
     client.baton = true;
-    let error = run_hosted_client_login(&network, &arm, &mut client, port, true).unwrap_err();
+    let cancel = LoginCancel::new();
+    cancel.set_host_attempt_identity(client::io::HostAttemptIdentity::new(2_u64));
+    client.set_login_cancel(cancel);
+    client.set_login_deadline(Instant::now() + Duration::from_secs(1));
+    let error = client.login("alice", "secret", true).unwrap_err();
     let transport = error.transport.as_ref().expect("login transport error");
-    assert!(
-        transport.errno.is_some(),
-        "the adopted socket's OS error number must survive Client::login: {transport:?}"
+    let write_errno = write_errno
+        .lock()
+        .expect("reset-write capture mutex is not poisoned")
+        .expect("the OS socket write failed");
+    assert_eq!(
+        transport.errno,
+        Some(write_errno),
+        "Client::login must retain the errno returned by the adopted OS socket write"
     );
     let kind = transport.kind;
     assert!(matches!(
