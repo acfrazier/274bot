@@ -1139,3 +1139,175 @@ fn entity_op_calls_expect_synchronously_but_awaits_the_click() {
     assert_eq!(iso.probe("__ok").unwrap(), "retry");
     iso.join();
 }
+
+const LOC_OP: &str = r#"
+import { Reach } from '../../api/walking/Reach.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = null;
+        globalThis.__logs = [];
+        try {
+            globalThis.__ok = await Reach.locOp({
+                name: 'Barrel of flour',
+                id: 7000,
+                op: 'Take From',
+                near: globalThis.__near || { x: 5, z: 5, level: 0 },
+                within: 6,
+                expectMs: 1200,
+                expect: () => globalThis.__ready === true,
+                refused: /guards' permission|something to put the flour in/i,
+                log: (m) => globalThis.__logs.push(String(m)),
+            });
+        } catch (e) {
+            globalThis.__ok = String(e.message || e);
+        }
+    }
+}
+"#;
+
+fn barrel<'a>(actions: &'a [String], x: i32, z: i32, distance: i32) -> SceneEntityInput<'a> {
+    SceneEntityInput {
+        index: 0,
+        id: 7000,
+        name: Some("Barrel of flour"),
+        x,
+        z,
+        level: 0,
+        distance,
+        health: 0,
+        max_health: 0,
+        in_combat: false,
+        animating: false,
+        actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
+        shape: 0,
+        angle: 0,
+    }
+}
+
+#[test]
+fn loc_op_clicks_the_named_loc_then_settles_done_on_expect() {
+    let iso = spawn(LOC_OP);
+    let actions = ["Take From".to_string(), "Examine".to_string()];
+    let locs = [barrel(&actions, 6, 5, 1)];
+    let mut snap = base(stand());
+    snap.locs = &locs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    // The first doors round runs on a later pump than the begin.
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![loc_op(6, 5, "Take From", 7000)],
+        "one click on the exact loc row"
+    );
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Null, "waiting on expect");
+    iso.probe("globalThis.__ready = true").unwrap();
+    snap.tick = 3;
+    post(&iso, &snap);
+    tick(&iso, 3);
+    tick(&iso, 4);
+    tick(&iso, 5);
+    assert_eq!(iso.probe("__ok").unwrap(), "done");
+    assert!(iso.drain_interacts().is_empty(), "no re-click");
+    iso.join();
+}
+
+#[test]
+fn loc_op_refused_message_is_retry_without_a_second_click() {
+    let iso = spawn(LOC_OP);
+    let actions = ["Take From".to_string()];
+    let locs = [barrel(&actions, 6, 5, 1)];
+    let mut snap = base(stand());
+    snap.locs = &locs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    tick(&iso, 2);
+    assert_eq!(iso.drain_interacts(), vec![loc_op(6, 5, "Take From", 7000)]);
+    let lines = [ChatLineInput {
+        seq: 4,
+        text: "You need the Guards' permission to do that.",
+        type_: 0,
+        username: None,
+    }];
+    snap.tick = 3;
+    snap.chat_lines = &lines;
+    post(&iso, &snap);
+    for n in 3..=7 {
+        tick(&iso, n);
+    }
+    assert_eq!(iso.probe("__ok").unwrap(), "retry");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a refused op is not re-clicked"
+    );
+    let logs = iso.probe("__logs.join('|')").unwrap();
+    assert_eq!(
+        logs,
+        "reach: 'Barrel of flour' refused the op \u{2014} not retrying"
+    );
+    iso.join();
+}
+
+#[test]
+fn loc_op_missing_loc_far_from_the_stand_closes_in_instead_of_clicking() {
+    let iso = spawn(LOC_OP);
+    iso.probe("globalThis.__near = { x: 20, z: 20, level: 0 }")
+        .unwrap();
+    let mut snap = base(TileInput {
+        x: 0,
+        z: 0,
+        level: 0,
+    });
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
+    match &iso.drain_interacts()[..] {
+        [InteractReq::WalkNear {
+            x: 20,
+            z: 20,
+            level: 0,
+            radius: 2,
+            ..
+        }] => {}
+        other => panic!("expected the close-in walk-near at radius 2, got {other:?}"),
+    }
+    snap.tick = 2;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(
+        iso.probe("__ok").unwrap(),
+        Value::Null,
+        "the close-in ladder is still walking"
+    );
+    iso.join();
+}
+
+#[test]
+fn loc_op_ignores_a_same_name_loc_without_the_op() {
+    let iso = spawn(LOC_OP);
+    // Present in scene, so no close-in; but it has no 'Take From', so the
+    // find the click rounds use never matches and nothing is clicked.
+    let actions = ["Examine".to_string()];
+    let locs = [barrel(&actions, 6, 5, 1)];
+    let mut snap = base(stand());
+    snap.locs = &locs;
+    post(&iso, &snap);
+    for n in 1..=6 {
+        tick(&iso, n);
+    }
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a loc without the op is never clicked"
+    );
+    iso.join();
+}

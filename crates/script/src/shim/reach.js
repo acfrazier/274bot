@@ -1,4 +1,5 @@
 import { notImpl, proxy, runMachine } from '../../shim/_kernel.js';
+import { GameMessages } from '../chatbox/gameMessages.js';
 import { Sustain } from '../sustain/Sustain.js';
 
 function optionalOpenMs(openMs) {
@@ -50,6 +51,33 @@ export const Reach = proxy('Reach', {
             },
         );
         if (out.kind === 'refused') throw notImpl('Reach.npcDialog', out.reason);
+        return out.kind === 'done' ? out.value : 'retry';
+    },
+    // One `reach-loc-op` await: Rust owns the find, the close-in and
+    // stand walks, the click and the door rounds. `refused(mark)` wraps
+    // the caller's own pattern, so the RegExp never leaves JS.
+    async locOp(opts) {
+        const near = opts && opts.near ? opts.near : {};
+        const out = await runMachine(
+            'reach-loc-op',
+            {
+                name: String(opts && opts.name != null ? opts.name : ''),
+                op: String(opts && opts.op != null ? opts.op : ''),
+                near: { x: near.x, z: near.z, level: near.level ?? 0 },
+                ...(opts && typeof opts.within === 'number' ? { within: opts.within } : {}),
+                ...(opts && typeof opts.id === 'number' ? { id: Math.floor(opts.id) } : {}),
+                expectMs: opts && opts.expectMs != null ? opts.expectMs : 12_000,
+            },
+            {
+                expect: () => opts.expect(),
+                ...(opts && opts.refused !== undefined
+                    ? { refused: (mark) => GameMessages.sawSince(mark, opts.refused) }
+                    : {}),
+                log: opts && typeof opts.log === 'function' ? opts.log : undefined,
+                sustain: () => Sustain.run(),
+            },
+        );
+        if (out.kind === 'refused') throw notImpl('Reach.locOp', out.reason);
         return out.kind === 'done' ? out.value : 'retry';
     },
 });

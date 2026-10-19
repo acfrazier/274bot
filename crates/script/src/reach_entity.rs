@@ -1,11 +1,13 @@
-//! `Reach.entityOp` and the quest `walkWithHops`, ported from frozen
-//! `Reach.ts` (`reachThroughDoors`, `clearBlockingDoor`) and
+//! `Reach.entityOp`, `Reach.locOp` and the quest `walkWithHops`, ported
+//! from frozen `Reach.ts` (`reachThroughDoors`, `clearBlockingDoor`) and
 //! `primitives.ts` (`crossHops`, `hopLadder`) as [`crate::machine`]
-//! families: `reach-entity-op` and `walk-hops`.
+//! families: `reach-entity-op`, `reach-loc-op` and `walk-hops`.
 //!
-//! JavaScript passes the caller's `expect`, the frozen attempt's
-//! `find` → `interact(op)` as one `interact` hook, `find()?.tile()` as
-//! `target`, and `log`. Rust owns the eight-round loop, the scene probe,
+//! For `entityOp` JavaScript passes the caller's `expect`, the frozen
+//! attempt's `find` → `interact(op)` as one `interact` hook,
+//! `find()?.tile()` as `target`, and `log`. For `locOp` it passes the
+//! loc name/op/stand and the caller's `expect`, refusal predicate,
+//! `log` and `sustain`. Rust owns the eight-round loop, the scene probe,
 //! the "I can't reach that" check, opening closed barriers and walking
 //! through open passages, ladder hops and every wait. Game actions are
 //! the native loc and walk ops.
@@ -672,6 +674,440 @@ impl EntityOp {
             .lines
             .push_back(unreachable_line(&self.what, toward));
         Next::Done("unreachable")
+    }
+}
+
+const LOC_EXPECT: usize = 0;
+const LOC_REFUSED: usize = 1;
+const LOC_LOG: usize = 2;
+const LOC_SUSTAIN: usize = 3;
+
+/// Frozen `LOC_SCENE_MS` (`Reach.ts:71`).
+const LOC_SCENE_MS: u64 = 3_000;
+/// Frozen close-in / stand walk bound (`Reach.ts:62, 247`).
+const LOC_WALK_MS: u64 = 90_000;
+/// Frozen close-in and stand `walkResilient` `attempts` (`Reach.ts:62, 247`).
+const LOC_WALK_ATTEMPTS: u32 = 4;
+const LOC_CLOSE_IN_RADIUS: i32 = 2;
+const LOC_STAND_RADIUS: i32 = 1;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LocOpArgs {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    op: String,
+    near: Tile,
+    #[serde(default)]
+    within: Option<f64>,
+    #[serde(default)]
+    id: Option<i32>,
+    #[serde(default)]
+    expect_ms: Option<u64>,
+}
+
+enum LocPhase {
+    /// Frozen `sceneSettled` wait (`Reach.ts:76–82, 244`).
+    SceneSettle,
+    /// Frozen `closeIn` (`Reach.ts:61–68`).
+    CloseIn(Box<Resilient>),
+    /// Frozen stand walk before the op (`Reach.ts:247–251`).
+    WalkStand(Box<Resilient>),
+    Top,
+    Watch,
+    WatchExpect,
+    WatchRefused,
+    AfterExpect,
+    AfterRefused,
+    Clearing { clear: Clear },
+    /// Frozen `delayTicks(1)` before the next round.
+    NextRound,
+}
+
+/// One frozen `Reach.locOp` (`Reach.ts:236–266`): walk to the stand, then
+/// `reachThroughDoors` with retry after a timeout and the caller's refusal
+/// pattern. JavaScript passes the caller's `expect`, a `refused(mark)`
+/// predicate over its own game-message pattern, `log` and `sustain`; Rust
+/// owns the loc find, both walks, the click, the eight rounds and every
+/// wait. Game actions are the native loc and walk ops.
+pub(crate) struct LocOp {
+    phase: LocPhase,
+    name: String,
+    op: String,
+    near: Tile,
+    within: f64,
+    id: Option<i32>,
+    expect_ms: u64,
+    round: u32,
+    mark: i32,
+    logger: Logger,
+    after: Option<Next>,
+    /// `Sustain.run()` already ran for this ladder pass.
+    pumped: bool,
+    /// The pending reply settles a sustain call, not a decision.
+    sustained: bool,
+}
+
+/// Frozen `locOp`'s `find()` (`Reach.ts:238–243`): the nearest posted loc
+/// row with this name, this op among its actions, within reach, and the
+/// exact id when one was given.
+fn find_loc(name: &str, op: &str, within: f64, id: Option<i32>) -> Option<SceneRow> {
+    let want_name = name.trim().to_lowercase();
+    let want_op = op.to_lowercase();
+    nearest(|loc| {
+        f64::from(loc.distance) <= within
+            && id.map_or(true, |id| loc.id == id)
+            && loc
+                .name
+                .as_deref()
+                .is_some_and(|have| have.trim().to_lowercase() == want_name)
+            && ops(loc).any(|have| have.to_lowercase() == want_op)
+    })
+}
+
+impl Family for LocOp {
+    const NAME: &'static str = "reach-loc-op";
+    /// A new reach replaces the one in flight.
+    const EXCLUSIVE: bool = true;
+    const CALLBACKS: &'static [&'static str] = &["expect", "refused", "log", "sustain"];
+    /// Frozen calls `expect()`, the refusal check and `log` without
+    /// `await`; only `await Sustain.run()` inside the walk ladder is
+    /// awaited (`Traversal.ts:130`).
+    const SYNC_HOOKS: &'static [usize] = &[LOC_EXPECT, LOC_REFUSED, LOC_LOG];
+    type Args = LocOpArgs;
+    /// `done`, `retry` or `unreachable`.
+    type Output = &'static str;
+
+    fn begin(args: LocOpArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        let mut reach = Self {
+            // Replaced by `start` before the row runs.
+            phase: LocPhase::Top,
+            name: args.name,
+            op: args.op,
+            near: args.near,
+            within: args.within.unwrap_or(10.0),
+            id: args.id,
+            expect_ms: args.expect_ms.unwrap_or(12_000),
+            round: 0,
+            mark: 0,
+            logger: Logger::default(),
+            after: None,
+            pumped: false,
+            sustained: false,
+        };
+        match reach.start(cx) {
+            Some(status) => Begin::Done(status),
+            None => Begin::Run(reach),
+        }
+    }
+
+    /// A superseded reach stops the walk it armed.
+    fn release(&self) -> Option<InteractReq> {
+        match &self.phase {
+            LocPhase::CloseIn(walk) | LocPhase::WalkStand(walk) => walk.release(),
+            LocPhase::Clearing { clear } => clear.release(),
+            _ => None,
+        }
+    }
+
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<&'static str> {
+        let mut reply = match cx.reply() {
+            Some(Reply::Threw(thrown)) => return Step::Fail(thrown),
+            Some(Reply::Value(value)) => Some(value),
+            None => None,
+        };
+        if std::mem::take(&mut self.logger.writing) || std::mem::take(&mut self.sustained) {
+            reply = None;
+        }
+        loop {
+            if let Some(line) = self.logger.lines.pop_front() {
+                if !cx.has(LOC_LOG) {
+                    continue;
+                }
+                self.logger.writing = true;
+                return Step::Call(Call {
+                    hook: LOC_LOG,
+                    args: vec![json!(line)],
+                });
+            }
+            let walking = matches!(self.phase, LocPhase::CloseIn(_) | LocPhase::WalkStand(_));
+            if walking && !self.pumped && self.after.is_none() && cx.has(LOC_SUSTAIN) {
+                self.pumped = true;
+                self.sustained = true;
+                return Step::Call(Call {
+                    hook: LOC_SUSTAIN,
+                    args: Vec::new(),
+                });
+            }
+            let next = match self.after.take() {
+                Some(next) => next,
+                None => self.advance(reply.take(), cx),
+            };
+            if !self.logger.lines.is_empty() && !matches!(next, Next::Continue) {
+                self.after = Some(next);
+                continue;
+            }
+            match next {
+                Next::Continue => {}
+                Next::Wait => {
+                    self.pumped = false;
+                    return Step::Wait;
+                }
+                Next::Done(status) => return Step::Done(status),
+                Next::Call(hook, args) => return Step::Call(Call { hook, args }),
+            }
+        }
+    }
+}
+
+impl LocOp {
+    fn find(&self) -> Option<SceneRow> {
+        find_loc(&self.name, &self.op, self.within, self.id)
+    }
+
+    /// Frozen `Traversal.walkResilient(near, { radius, attempts: 4,
+    /// timeoutMs: 90_000, log })` (`Reach.ts:62, 247`). `Err` when it ended
+    /// before a walk (arrived, or no posted tile).
+    fn ladder(&self, radius: i32, cx: &mut Cx<'_>) -> Result<Resilient, bool> {
+        Resilient::new(
+            self.near.world(),
+            radius,
+            LOC_WALK_MS,
+            Some(LOC_WALK_ATTEMPTS),
+            false,
+        )
+        .start(cx)
+    }
+
+    /// `Some(status)` when the reach settled before any wait.
+    fn start(&mut self, cx: &mut Cx<'_>) -> Option<&'static str> {
+        if self.find().is_some() {
+            return self.stand(cx);
+        }
+        // Frozen `sceneSettled`: only a stand already reached re-asks the
+        // scene; anything else closes in at once (`Reach.ts:76–82`).
+        let settled_stand = here().is_some_and(|here| {
+            here.level == self.near.level && f64::from(here.cheb(self.near)) <= self.within
+        });
+        if settled_stand {
+            cx.clock().arm(LOC_SCENE_MS);
+            self.phase = LocPhase::SceneSettle;
+            return None;
+        }
+        self.close_in(cx)
+    }
+
+    fn close_in(&mut self, cx: &mut Cx<'_>) -> Option<&'static str> {
+        match self.ladder(LOC_CLOSE_IN_RADIUS, cx) {
+            Ok(walk) => {
+                self.phase = LocPhase::CloseIn(Box::new(walk));
+                None
+            }
+            // `closeIn` is `retry` unless the ladder said unreachable,
+            // which a walk that never started cannot.
+            Err(_) => Some("retry"),
+        }
+    }
+
+    /// The frozen stand walk, then the doors loop (`Reach.ts:247–266`).
+    fn stand(&mut self, cx: &mut Cx<'_>) -> Option<&'static str> {
+        let at_stand = here().is_some_and(|here| {
+            here.level == self.near.level && here.cheb(self.near) <= LOC_STAND_RADIUS
+        });
+        if !at_stand {
+            if let Ok(walk) = self.ladder(LOC_STAND_RADIUS, cx) {
+                self.phase = LocPhase::WalkStand(Box::new(walk));
+                return None;
+            }
+        }
+        self.phase = LocPhase::Top;
+        None
+    }
+
+    fn call(&mut self, phase: LocPhase, hook: usize, args: Vec<Value>) -> Next {
+        self.phase = phase;
+        Next::Call(hook, args)
+    }
+
+    fn advance(&mut self, reply: Option<Value>, cx: &mut Cx<'_>) -> Next {
+        let value = reply.unwrap_or(Value::Null);
+        match std::mem::replace(&mut self.phase, LocPhase::Top) {
+            LocPhase::SceneSettle => {
+                if self.find().is_some() {
+                    if let Some(status) = self.stand(cx) {
+                        return Next::Done(status);
+                    }
+                    return Next::Continue;
+                }
+                if cx.clock().bound_reached() {
+                    if let Some(status) = self.close_in(cx) {
+                        return Next::Done(status);
+                    }
+                    return Next::Continue;
+                }
+                self.phase = LocPhase::SceneSettle;
+                Next::Wait
+            }
+            LocPhase::CloseIn(mut walk) => {
+                let out = walk.step(cx);
+                let unreachable = walk.unreachable();
+                while let Some(line) = walk.pop_log() {
+                    self.logger.lines.push_back(line);
+                }
+                match out {
+                    None => {
+                        self.phase = LocPhase::CloseIn(walk);
+                        Next::Wait
+                    }
+                    Some(false) if unreachable => {
+                        self.logger.lines.push_back(format!(
+                            "reach: hint ({},{},{}) is unreachable",
+                            self.near.x, self.near.z, self.near.level
+                        ));
+                        Next::Done("unreachable")
+                    }
+                    Some(_) => Next::Done("retry"),
+                }
+            }
+            LocPhase::WalkStand(mut walk) => {
+                let out = walk.step(cx);
+                let unreachable = walk.unreachable();
+                while let Some(line) = walk.pop_log() {
+                    self.logger.lines.push_back(line);
+                }
+                match out {
+                    None => {
+                        self.phase = LocPhase::WalkStand(walk);
+                        Next::Wait
+                    }
+                    Some(false) if unreachable => {
+                        self.logger.lines.push_back(format!(
+                            "reach: stand ({},{},{}) unreachable",
+                            self.near.x, self.near.z, self.near.level
+                        ));
+                        Next::Done("unreachable")
+                    }
+                    Some(_) => {
+                        self.phase = LocPhase::Top;
+                        Next::Continue
+                    }
+                }
+            }
+            LocPhase::Top => {
+                if self.round >= DOOR_ATTEMPTS {
+                    return Next::Done("retry");
+                }
+                self.attempt(cx)
+            }
+            LocPhase::Watch => self.call(LocPhase::WatchExpect, LOC_EXPECT, Vec::new()),
+            LocPhase::WatchExpect => {
+                if truthy(&value) || saw_cant_reach(self.mark) || cx.clock().bound_reached() {
+                    return self.call(LocPhase::AfterExpect, LOC_EXPECT, Vec::new());
+                }
+                if cx.has(LOC_REFUSED) {
+                    return self.call(
+                        LocPhase::WatchRefused,
+                        LOC_REFUSED,
+                        vec![json!(self.mark)],
+                    );
+                }
+                self.phase = LocPhase::Watch;
+                Next::Wait
+            }
+            LocPhase::WatchRefused => {
+                if truthy(&value) {
+                    return self.call(LocPhase::AfterExpect, LOC_EXPECT, Vec::new());
+                }
+                self.phase = LocPhase::Watch;
+                Next::Wait
+            }
+            LocPhase::AfterExpect => {
+                if truthy(&value) {
+                    return Next::Done("done");
+                }
+                if cx.has(LOC_REFUSED) {
+                    return self.call(
+                        LocPhase::AfterRefused,
+                        LOC_REFUSED,
+                        vec![json!(self.mark)],
+                    );
+                }
+                self.after_refusal()
+            }
+            LocPhase::AfterRefused => {
+                if truthy(&value) {
+                    // The script said no, and re-sending the same click
+                    // can't change the gate it is keyed on (`Reach.ts:189–191`).
+                    self.logger.lines.push_back(format!(
+                        "reach: '{}' refused the op \u{2014} not retrying",
+                        self.name
+                    ));
+                    return Next::Done("retry");
+                }
+                self.after_refusal()
+            }
+            LocPhase::Clearing { mut clear } => match clear.step(cx, &mut self.logger.lines) {
+                None => {
+                    self.phase = LocPhase::Clearing { clear };
+                    Next::Wait
+                }
+                Some(true) => {
+                    self.round += 1;
+                    Next::Continue
+                }
+                Some(false) => {
+                    self.logger
+                        .lines
+                        .push_back(unreachable_line(&self.name, Some(clear.toward)));
+                    Next::Done("unreachable")
+                }
+            },
+            LocPhase::NextRound => {
+                self.round += 1;
+                Next::Continue
+            }
+        }
+    }
+
+    /// Frozen `mark` + the loc attempt (`Reach.ts:179–186, 252–256`).
+    fn attempt(&mut self, cx: &mut Cx<'_>) -> Next {
+        self.mark = chat_mark();
+        let dispatched = match self.find() {
+            Some(loc) => interact(&loc, &self.op, cx),
+            None => false,
+        };
+        if dispatched {
+            cx.clock().arm(self.expect_ms);
+            self.phase = LocPhase::Watch;
+            return Next::Wait;
+        }
+        // Not dispatched: one tick, then the next round.
+        self.phase = LocPhase::NextRound;
+        Next::Wait
+    }
+
+    /// After the refusal check: a can't-reach clears its door, anything
+    /// else ends the round (`Reach.ts:193–208`).
+    fn after_refusal(&mut self) -> Next {
+        if saw_cant_reach(self.mark) {
+            return match self.find() {
+                Some(loc) => {
+                    self.phase = LocPhase::Clearing {
+                        clear: Clear::new(loc_tile(&loc)),
+                    };
+                    Next::Continue
+                }
+                None => {
+                    self.logger
+                        .lines
+                        .push_back(unreachable_line(&self.name, None));
+                    Next::Done("unreachable")
+                }
+            };
+        }
+        self.phase = LocPhase::NextRound;
+        Next::Wait
     }
 }
 

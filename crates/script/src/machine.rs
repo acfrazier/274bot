@@ -1308,6 +1308,7 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::api_session::ProgressQuery>(),
     entry::<crate::quest_journal::QuestJournal>(),
     entry::<crate::reach_entity::EntityOp>(),
+    entry::<crate::reach_entity::LocOp>(),
     entry::<crate::reach_entity::WalkHops>(),
     entry::<crate::walk::WalkResilient>(),
     entry::<crate::walk::WalkOpening>(),
