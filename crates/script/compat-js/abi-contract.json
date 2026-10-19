@@ -25442,6 +25442,7 @@
   "active_families": [
     "bank",
     "cow",
+    "skills",
     "world-primitives"
   ],
   "family_counts": [
