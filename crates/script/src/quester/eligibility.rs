@@ -70,7 +70,8 @@ fn evaluate_path(
         // Completion is proved by the owned card/guard reader, not a fabricated tab row.
         QuestListStatus::NotStarted
     } else {
-        let Some(status) = tab_status(view, &path.display_name) else {
+        // `display_name` is UI-only; this joins the selected quest identity to the tab row.
+        let Some(status) = super::progress::quest_colour(path, quests, *view) else {
             return blocked(
                 vec![reason(
                     "quest-status",
