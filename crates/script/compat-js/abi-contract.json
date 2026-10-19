@@ -13481,7 +13481,7 @@
       "module": "api/inventory/Inventory.js",
       "selector": "InvItem",
       "reason": "The native initializer supplies all six InvItem fields. Row-backed instances preserve noted, copied actions, synchronous interactions, and host-supported useOn targets.",
-      "runtime": "crates/script/src/load/inventory_v8.rs:116",
+      "runtime": "crates/script/src/shim/inventory.js:15",
       "preserveMembers": true,
       "declaration": "export class InvItem { readonly name: string | null; readonly count: number; readonly id: number; readonly slot: number; readonly noted: boolean; readonly cert: number; constructor(snapshot: import('../../adapter/ClientAdapter.js').InvItemSnapshot); actions(): string[]; interact(action: string): boolean; useOn(target: InvItem | Loc | Npc | import('../grounditems/GroundItems.js').GroundItem | import('../model/Player.js').Player): boolean; }",
       "family_id": "inventory",
