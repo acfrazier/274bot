@@ -31,7 +31,7 @@ export { Inventory, InvItem } from '*api/inventory/Inventory.js';
 export { Skills } from '*api/skills/Skills.js';
 export { Bank, withdrawOp } from '*api/bank/Bank.js';
 export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, NEARBY_BANK_RADIUS, resolveBankOpenRoute, parseBankStrategy, shouldBankNow } from '*api/bank/Banking.js';
-export { bankDistance } from '*api/bank/BankLocations.js';
+export { bankDistance, nearestUsableBank } from '*api/bank/BankLocations.js';
 export { reader } from '*adapter/ClientAdapter.js';
 export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolAttackLevel, toolsNeedingEquip, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool, bestHeldToolNames, surplusHeldToolNames } from '*api/acquisition/Tools.js';
 export { Execution } from '*api/execution/Execution.js';
@@ -119,7 +119,6 @@ export function isFishingBaitPiece(...args: unknown[]): never;
 export function locationOptions(...args: unknown[]): never;
 export function miningLocationLabel(...args: unknown[]): never;
 export function missingFishingGear(...args: unknown[]): never;
-export function nearestUsableBank(...args: unknown[]): never;
 export function parseToolAcquireMode(...args: unknown[]): never;
 export function pickaxeShopOffers(...args: unknown[]): never;
 export function planAxeAcquire(...args: unknown[]): never;
@@ -1186,12 +1185,7 @@ export function parseBankStrategy(label: string): BankStrategy;
  * Shared banking parameters, mixed into a script's own settings schema.
  * @see docs/reference/api-events.md#settings
  */
-export const PERIODIC_BANK_SETTINGS: {
-    "bankStrategy": SettingsSchema["bankStrategy"];
-    "bankEveryItems": SettingsSchema["bankEveryItems"];
-    "bankEveryMinutes": SettingsSchema["bankEveryMinutes"];
-    "bankCommonJunk": SettingsSchema["bankCommonJunk"];
-};
+export const PERIODIC_BANK_SETTINGS: SettingsSchema;
 export const COMMON_BANK_LOOT: string[];
 export const RANDOM_EVENT_CASKET_ID = 405;
 export function matchesCommonBankLoot(name: string, id?: number): boolean;

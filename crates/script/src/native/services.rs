@@ -1,7 +1,7 @@
 //! Native-first capability injection (§26 item 3, §27 §5, §21 §4.2).
 //! This is a borrowed facade over the existing NativeActions/ActionContext,
 //! not a callable fake seat. T1.3 installs it in real owner-controlled contexts.
-use super::abi::{HookCharacterization, HookPath};
+use super::abi::{FrozenPathStatus, HookCharacterization, HookPath};
 use super::seat::{GameplaySeat, SeatAnswer, SeatError};
 use super::{ActionContext, NativeActions};
 use api::identity::{ActiveTime, ExecutionId, Fence, FenceError, RequestId, Scope};
@@ -11,16 +11,27 @@ use api::script_contract::DecisionSequence;
 use api::selected::SelectedPin;
 use api::snapshot::SnapshotView;
 
-/// Closed, source-backed awaited callback point. `HookCharacterization` can
-/// only be constructed by the frozen ABI table; a string cannot mint a point.
+/// Closed, source-backed callback point. A string cannot mint a point;
+/// callers must name one family/member row in the frozen ABI table.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PromptPoint(&'static HookCharacterization);
 impl PromptPoint {
     pub fn from_contract_row(row: &'static HookCharacterization) -> Option<Self> {
-        (row.path() == HookPath::Awaited).then_some(Self(row))
+        (row.frozen_path() == FrozenPathStatus::MatchesFrozenCallForm
+            && matches!(
+                row.path(),
+                HookPath::Awaited | HookPath::CallSync | HookPath::Ask
+            ))
+        .then_some(Self(row))
     }
     pub const fn member(self) -> &'static str {
         self.0.member()
+    }
+    pub const fn path(self) -> HookPath {
+        self.0.path()
+    }
+    pub const fn families(self) -> &'static [&'static str] {
+        self.0.families()
     }
 }
 
@@ -261,4 +272,43 @@ pub enum ServiceError {
     PromptPortUnavailable,
     #[error("native script prompt refused: {0:?}")]
     Seat(SeatError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native::abi::{HookPath, HOOK_CHARACTERIZATIONS};
+
+    #[test]
+    fn prompt_points_admit_only_frozen_hook_paths() {
+        for row in HOOK_CHARACTERIZATIONS {
+            let point = PromptPoint::from_contract_row(row);
+            match (row.frozen_path(), row.path()) {
+                (
+                    FrozenPathStatus::MatchesFrozenCallForm,
+                    HookPath::Awaited | HookPath::CallSync | HookPath::Ask,
+                ) => {
+                    let point = point.unwrap_or_else(|| {
+                        panic!("frozen prompt row {} was refused", row.member())
+                    });
+                    assert_eq!(point.member(), row.member());
+                    assert_eq!(point.path(), row.path());
+                    assert_eq!(point.families(), row.families());
+                }
+                _ => assert!(
+                    point.is_none(),
+                    "unfrozen or unsupported row {} was admitted",
+                    row.member()
+                ),
+            }
+        }
+        for path in [HookPath::Awaited, HookPath::CallSync, HookPath::Ask] {
+            assert!(
+                HOOK_CHARACTERIZATIONS.iter().any(|row| {
+                    PromptPoint::from_contract_row(row).is_some_and(|point| point.path() == path)
+                }),
+                "no frozen PromptPoint row exercises {path:?}"
+            );
+        }
+    }
 }

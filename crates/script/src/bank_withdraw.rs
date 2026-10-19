@@ -8,9 +8,10 @@
 //! frozen order; without one the count is `Inventory.count(name)` read from
 //! the posted backpack. Pack-full is read from the scene.
 
+use crate::bank::compat::js_number;
 use crate::bank::ops::{next_chunk, same_name, Chunk};
-use crate::bank_op::{js_number, BankView, Closing, Op, Sent};
-use crate::machine::{Begin, Call, Cx, Family, Reply, Step, Thrown};
+use crate::bank::request::{BankSeatArgs, BankSeatOperation};
+use crate::machine::{Begin, Call, Cx, Family, NativeBankChild, Reply, Step, Thrown};
 use crate::observed::{self, Scene};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -127,22 +128,22 @@ pub(crate) struct WithdrawTo {
     start: f64,
     round: u32,
     phase: Phase,
-    waiting: Option<crate::bank_op::Awaiting>,
+    waiting: Option<NativeBankChild>,
+    failure: Option<Thrown>,
 }
 
 impl WithdrawTo {
     /// Send the labelled withdraw and wait for it; its result is not read.
     fn withdraw_op(&mut self, label: &'static str, before: f64, cx: &mut Cx<'_>) {
-        let op = Op::Withdraw {
-            name: self.name.clone(),
-            amount: json!(label),
-        };
-        match op.send(false, cx) {
-            Sent::Awaiting(waiting) => {
+        let mut args = BankSeatArgs::new(BankSeatOperation::WithdrawLabel);
+        args.item_name = Some(self.name.clone());
+        args.menu_op = Some(label.into());
+        match NativeBankChild::start(args, &[], cx) {
+            Ok(waiting) => {
                 self.waiting = Some(waiting);
                 self.phase = Phase::AwaitOp { before };
             }
-            Sent::Settled(_) => self.land(before, cx),
+            Err(error) => self.failure = Some(Thrown::new(error)),
         }
     }
 
@@ -165,6 +166,7 @@ impl WithdrawTo {
 
 impl Family for WithdrawTo {
     const NAME: &'static str = "bank_withdraw_to";
+    const SNAPSHOT_SENSITIVE: bool = true;
     const CALLBACKS: &'static [&'static str] = &["count"];
     /// Frozen `countInInv()` is a synchronous call: a returned promise is a
     /// value (`NaN` once it meets a number).
@@ -178,7 +180,7 @@ impl Family for WithdrawTo {
     fn begin(args: WithdrawToArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
         // Another bank op is in flight: as the shim's pending guard, no op
         // of this run could be sent, so nothing is gained.
-        if crate::bank_op::busy() {
+        if crate::machine::bank_transfer_busy() {
             return Begin::Done(json!(0));
         }
         Begin::Run(Self {
@@ -192,11 +194,15 @@ impl Family for WithdrawTo {
             round: 0,
             phase: Phase::Start,
             waiting: None,
+            failure: None,
         })
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
         loop {
+            if let Some(thrown) = self.failure.take() {
+                return Step::Fail(thrown);
+            }
             let phase = self.phase;
             if matches!(phase, Phase::Check) && self.round >= ROUNDS {
                 self.phase = Phase::Finish;
@@ -230,34 +236,34 @@ impl Family for WithdrawTo {
                     match next_chunk(need) {
                         None => self.phase = Phase::Finish,
                         Some(Chunk::Op(label)) => self.withdraw_op(label, before, cx),
+                        Some(Chunk::X(n))
+                            if !n.is_finite() || n.fract() != 0.0 || n > f64::from(i32::MAX) =>
+                        {
+                            if !self.fallback(before, need, cx) {
+                                self.phase = Phase::Finish;
+                            }
+                        }
                         Some(Chunk::X(n)) => {
-                            let op = Op::WithdrawX {
-                                name: self.name.clone(),
-                                count: json!(n),
-                            };
-                            match op.send(false, cx) {
-                                Sent::Awaiting(waiting) => {
+                            let mut args = BankSeatArgs::new(BankSeatOperation::WithdrawDelta);
+                            args.item_name = Some(self.name.clone());
+                            // The same integral i32 bound as the Bank withdraw-X primitive.
+                            args.quantity = Some(n as i64);
+                            match NativeBankChild::start(args, &[], cx) {
+                                Ok(waiting) => {
                                     self.waiting = Some(waiting);
                                     self.phase = Phase::AwaitX { before, need };
                                 }
-                                Sent::Settled(true) => self.phase = Phase::AfterX { before, need },
-                                // Frozen `Bank.withdrawX` answers false with no row or op.
-                                Sent::Settled(false) => {
-                                    if !self.fallback(before, need, cx) {
-                                        self.phase = Phase::Finish;
-                                    }
-                                }
+                                Err(error) => return Step::Fail(Thrown::new(error)),
                             }
                         }
                     }
                 }
                 Phase::AwaitX { before, need } => {
-                    let Some(ok) = self
-                        .waiting
-                        .as_mut()
-                        .and_then(|w| w.poll(&BankView::now(), cx))
-                    else {
-                        return Step::Wait;
+                    let ok = match self.waiting.as_mut().expect("withdraw child").step(cx) {
+                        Step::Wait => return Step::Wait,
+                        Step::Call(call) => return Step::Call(call),
+                        Step::Fail(thrown) => return Step::Fail(thrown),
+                        Step::Done(value) => value == Value::Bool(true),
                     };
                     self.waiting = None;
                     if ok {
@@ -275,13 +281,11 @@ impl Family for WithdrawTo {
                     }
                 }
                 Phase::AwaitOp { before } => {
-                    if self
-                        .waiting
-                        .as_mut()
-                        .and_then(|w| w.poll(&BankView::now(), cx))
-                        .is_none()
-                    {
-                        return Step::Wait;
+                    match self.waiting.as_mut().expect("withdraw child").step(cx) {
+                        Step::Wait => return Step::Wait,
+                        Step::Call(call) => return Step::Call(call),
+                        Step::Fail(thrown) => return Step::Fail(thrown),
+                        Step::Done(_) => {}
                     }
                     self.waiting = None;
                     self.land(before, cx);
@@ -309,7 +313,8 @@ pub(crate) struct CloseConfirmArgs {
 }
 
 enum ClosePhase {
-    Closing(Option<Closing>),
+    Begin,
+    Closing(NativeBankChild),
     /// `delayTicks(1)` after the close, from this posted tick.
     Tick(u64),
     Confirm,
@@ -328,38 +333,51 @@ fn posted_tick() -> u64 {
 
 impl Family for CloseConfirm {
     const NAME: &'static str = "bank_close_confirm";
+    const SNAPSHOT_SENSITIVE: bool = true;
     const CALLBACKS: &'static [&'static str] = &["count"];
     /// Frozen `count()` is a synchronous call.
     const SYNC_HOOKS: &'static [usize] = &[COUNT];
+    const KICK_ON_START: bool = true;
     type Args = CloseConfirmArgs;
     type Output = bool;
 
-    fn begin(args: CloseConfirmArgs, cx: &mut Cx<'_>) -> Begin<Self> {
-        let closing = Closing::begin(&BankView::now(), None, cx);
-        let phase = match closing {
-            Some(closing) => ClosePhase::Closing(Some(closing)),
-            None => ClosePhase::Tick(posted_tick()),
-        };
+    fn begin(args: CloseConfirmArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
         Begin::Run(Self {
             expected: js_number(&args.expected),
             counter: Counter {
                 name: None,
                 asked: false,
             },
-            phase,
+            phase: ClosePhase::Begin,
         })
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
         loop {
             match &mut self.phase {
-                ClosePhase::Closing(closing) => {
-                    match closing.as_ref().and_then(|c| c.poll(&BankView::now(), cx)) {
-                        None => return Step::Wait,
-                        Some(false) => return Step::Done(false),
-                        Some(true) => self.phase = ClosePhase::Tick(posted_tick()),
-                    }
+                ClosePhase::Begin => {
+                    self.phase =
+                        if observed::with(|scene| scene.since_login().bank_open().unwrap_or(false))
+                        {
+                            match NativeBankChild::start(
+                                BankSeatArgs::new(BankSeatOperation::Close),
+                                &[],
+                                cx,
+                            ) {
+                                Ok(closing) => ClosePhase::Closing(closing),
+                                Err(error) => return Step::Fail(Thrown::new(error)),
+                            }
+                        } else {
+                            ClosePhase::Tick(posted_tick())
+                        };
                 }
+                ClosePhase::Closing(closing) => match closing.step(cx) {
+                    Step::Wait => return Step::Wait,
+                    Step::Call(call) => return Step::Call(call),
+                    Step::Fail(thrown) => return Step::Fail(thrown),
+                    Step::Done(Value::Bool(true)) => self.phase = ClosePhase::Tick(posted_tick()),
+                    Step::Done(_) => return Step::Done(false),
+                },
                 ClosePhase::Tick(from) => {
                     if posted_tick() <= *from {
                         return Step::Wait;
@@ -384,212 +402,5 @@ impl Family for CloseConfirm {
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::load::callback_v8::HeldCallback;
-    use crate::machine::{self, Called, Js, Outcome, Pending, Reply, Started, Take};
-    use crate::observed::{ItemRow, Ops};
-    use crate::shim::InteractReq;
-    use std::rc::Rc;
-
-    /// Without a `count` hook the run reads `Inventory.count` itself.
-    struct NoJs;
-
-    impl Js for NoJs {
-        fn queue_len(&mut self) -> usize {
-            0
-        }
-
-        fn call(&mut self, _hook: Option<&HeldCallback>, _args: &[Value]) -> Called {
-            panic!("no count hook was passed");
-        }
-
-        fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
-            panic!("no count hook was passed");
-        }
-
-        fn claimed(&mut self) -> bool {
-            false
-        }
-    }
-
-    fn row(name: &str, count: i32, ops: &[&str]) -> ItemRow {
-        ItemRow {
-            id: 379,
-            count,
-            name: Some(Rc::from(name)),
-            ops: ops.iter().map(|op| Rc::from(*op)).collect::<Ops>(),
-            ..ItemRow::default()
-        }
-    }
-
-    /// An open bank holding 100 lobsters with `ops`, a pack holding `held`
-    /// lobsters plus `filler` other rows, and the op result seq.
-    fn post(tick: u64, ops: &[&str], held: i32, filler: usize, seq: u64) {
-        let mut inv: Vec<ItemRow> = (0..filler).map(|_| row("Bones", 1, &[])).collect();
-        if held > 0 {
-            inv.push(row("Lobster", held, &[]));
-        }
-        let bank = vec![row("Lobster", 100, ops)];
-        observed::post(tick, |post| {
-            post.session(true)
-                .bank_open(true)
-                .bank_loaded(true)
-                .bank_generation(3)
-                .bank_op_result_seq(seq)
-                .bank_op_result(true)
-                .withdraw_x_result_seq(seq)
-                .withdraw_x_result(true)
-                .inv_size(28)
-                .inv(inv)
-                .bank(bank);
-        });
-    }
-
-    fn start(target: i32) -> Started {
-        machine::on_reset();
-        machine::start(
-            WithdrawTo::NAME,
-            json!({ "name": "Lobster", "target": target }),
-            Vec::new(),
-            0,
-        )
-    }
-
-    fn tick() -> Vec<InteractReq> {
-        machine::step(&mut NoJs);
-        machine::merge_ops(Vec::new())
-    }
-
-    fn running(started: Started) -> machine::Handle {
-        match started {
-            Started::Running(handle) => handle,
-            other => panic!("expected a running row, got {other:?}"),
-        }
-    }
-
-    const LADDER: [&str; 4] = ["Withdraw-1", "Withdraw-5", "Withdraw-10", "Withdraw-X"];
-
-    /// Frozen `!Inventory.isFull()` ends the loop before any withdraw.
-    #[test]
-    fn a_full_pack_withdraws_nothing() {
-        observed::on_reset();
-        post(1, &LADDER, 2, 27, 0);
-        let handle = running(start(22));
-        assert!(tick().is_empty(), "a full pack sends no withdraw");
-        assert_eq!(
-            machine::take(handle),
-            Take::Settled(Outcome::Done(json!(0.0)))
-        );
-    }
-
-    /// A labelled withdraw that never lands ends the loop at the frozen
-    /// 2.5 s bound, with no second withdraw.
-    #[test]
-    fn a_withdraw_that_never_lands_ends_at_the_land_bound() {
-        observed::on_reset();
-        post(1, &LADDER, 0, 0, 0);
-        let handle = running(start(4));
-        assert_eq!(
-            tick(),
-            vec![InteractReq::Withdraw {
-                name: "Lobster".into(),
-                action: "Withdraw-1".into(),
-            }]
-        );
-        post(2, &LADDER, 0, 0, 1);
-        assert!(
-            tick().is_empty(),
-            "the result is in; the pack has not grown"
-        );
-        assert_eq!(machine::take(handle), Take::Pending, "inside the bound");
-        machine::tests::expire_deadlines();
-        assert!(tick().is_empty(), "the lapsed bound sends nothing more");
-        assert_eq!(
-            machine::take(handle),
-            Take::Settled(Outcome::Done(json!(0.0)))
-        );
-    }
-
-    /// The Withdraw-X chunk is frozen `withdrawX`, now the shared kernel:
-    /// a bank row without an X op is served by its fixed ladder (native
-    /// wins), clicking Withdraw-10 until the whole chunk has landed.
-    #[test]
-    fn a_fixed_only_row_serves_the_withdraw_x_chunk_by_the_ladder() {
-        let fixed = ["Withdraw-1", "Withdraw-5", "Withdraw-10"];
-        let ten = InteractReq::WithdrawX {
-            name: "Lobster".into(),
-            count: 10,
-            bank_item_id: 379,
-            lands_as_id: 379,
-            action: "Withdraw-10".into(),
-            bank_generation: 3,
-        };
-        observed::on_reset();
-        post(1, &fixed, 2, 0, 0);
-        let handle = running(start(22));
-        assert_eq!(tick(), vec![ten.clone()]);
-        post(2, &fixed, 12, 0, 1);
-        assert_eq!(
-            tick(),
-            vec![ten],
-            "one landed click is not the 20 the chunk asked for"
-        );
-        post(3, &fixed, 22, 0, 2);
-        assert!(tick().is_empty());
-        assert_eq!(
-            machine::take(handle),
-            Take::Settled(Outcome::Done(json!(20.0)))
-        );
-    }
-
-    /// Characterization (T2.2): the frozen chunk ladder at the family seam.
-    /// Need 7 is Withdraw-5 then Withdraw-1 twice, never Withdraw-X/7, and
-    /// the run settles with the gained count.
-    #[test]
-    fn a_need_of_seven_clicks_five_then_one_then_one() {
-        let withdraw = |action: &str| InteractReq::Withdraw {
-            name: "Lobster".into(),
-            action: action.into(),
-        };
-        observed::on_reset();
-        post(1, &LADDER, 0, 0, 0);
-        let handle = running(start(7));
-        assert_eq!(tick(), vec![withdraw("Withdraw-5")]);
-        post(2, &LADDER, 5, 0, 1);
-        assert_eq!(tick(), vec![withdraw("Withdraw-1")]);
-        post(3, &LADDER, 6, 0, 2);
-        assert_eq!(tick(), vec![withdraw("Withdraw-1")]);
-        post(4, &LADDER, 7, 0, 3);
-        assert!(tick().is_empty());
-        assert_eq!(
-            machine::take(handle),
-            Take::Settled(Outcome::Done(json!(7.0)))
-        );
-    }
-
-    /// Characterization (T2.2): one transfer at a time. While another bank
-    /// transfer family is live, `bank_withdraw_to` settles with zero
-    /// gained and emits nothing.
-    #[test]
-    fn withdraw_to_settles_zero_while_a_deposit_is_live() {
-        observed::on_reset();
-        post(1, &LADDER, 0, 0, 0);
-        machine::on_reset();
-        let deposit = machine::start("bank_deposit", json!({ "all": true }), Vec::new(), 0);
-        assert!(matches!(deposit, Started::Running(_)), "{deposit:?}");
-        assert!(crate::bank_op::busy());
-        let started = machine::start(
-            WithdrawTo::NAME,
-            json!({ "name": "Lobster", "target": 7 }),
-            Vec::new(),
-            0,
-        );
-        assert_eq!(started, Started::Settled(Outcome::Done(json!(0))));
-        assert!(machine::merge_ops(Vec::new()).is_empty());
     }
 }

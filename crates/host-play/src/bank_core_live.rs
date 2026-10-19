@@ -25,6 +25,11 @@
 //! - **L-except** (60 s): compat host `Bank.depositAllExcept(['Coins'])`
 //!   with coins, bones and a tinderbox held banks the junk and keeps the
 //!   coins.
+//! - **L-seat-pick** (60 s): compat `nearestBankReachable` selects Draynor
+//!   through the native worker in under 5 s and keeps the held tinderbox.
+//! - **L-seat-gather-loop** (90 s): a compat loot-count bank trigger deposits
+//!   bones, keeps coins and the tinderbox, and runs one awaited after-deposit
+//!   callback that withdraws 7 coins through the same native bank seat.
 //!
 //! The compat cells run a frozen-API Load script that opens the booth
 //! itself; the cell decides from the posted snapshot after the script's
@@ -351,6 +356,7 @@ impl Script for WithdrawCell {
                         },
                         options: script::native::WalkOptions::default(),
                         explicit: Some(Arc::clone(&self.bank_name)),
+                        allow_air_fallback: false,
                     };
                     match tick.actions.begin::<Select>(args, &mut tick.cx) {
                         Ok(handle) => self.select = Some(handle),
@@ -1000,6 +1006,8 @@ fn compat_script(body: &str) -> String {
         r#"
 import {{ Bank }} from '../../api/bank/Bank.js';
 import {{ Inventory }} from '../../api/inventory/Inventory.js';
+import {{ Banking, depositMatcher, parseBankStrategy, shouldBankNow }} from '../../api/bank/Banking.js';
+import {{ nearestBankReachable }} from '../../api/bank/BankLocations.js';
 export default class BankCoreCell extends LoopingBot {{
     async loop() {{
         if (globalThis.__did) return;
@@ -1368,6 +1376,98 @@ fn live_bank_core_compat_deposit_all_except_at_draynor() {
                 Err(format!(
                     "held (coins, bones, tinderbox)={held:?} banked={banked:?}"
                 ))
+            }
+        },
+    });
+}
+
+#[test]
+#[ignore = "requires LIVE=1, GATHERER_NAV_PACK/GATHERER_ENGINE_DIR/GATHERER_CATALOG_ROOT/BOT_CACHE_DIR/CLIENT_UNPACK_DIR/LIVE_EVIDENCE_DIR and a local 289 engine"]
+fn live_bank_core_compat_bank_pick_at_draynor() {
+    run_compat_cell(&CompatSpec {
+        label: "l-seat-pick",
+        uid: 274_279_106,
+        bound: Duration::from_secs(60),
+        seed: &["give tinderbox 1"],
+        seed_ready: |snapshot| has(snapshot, TINDERBOX, 1),
+        watch: &[TINDERBOX],
+        body: "
+        const started = Date.now();
+        const bank = await nearestBankReachable({ x: 3092, z: 3243, level: 0 });
+        cell.pickMs = Date.now() - started;
+        cell.bank = bank && { name: bank.name, x: bank.tile.x, z: bank.tile.z, level: bank.tile.level };",
+        verdict: |answer, posted| {
+            answered_true(answer, "ready")?;
+            let bank = &answer["bank"];
+            if bank["name"].as_str().is_some_and(|name| name.contains("Draynor"))
+                && bank["level"] == serde_json::json!(0)
+                && answer["pickMs"].as_u64().is_some_and(|elapsed| elapsed < 5_000)
+                && posted.bank_open
+                && posted.held(TINDERBOX) == 1
+            {
+                Ok(())
+            } else {
+                Err(format!("reachable bank pick did not settle from the worker: {answer}; {posted:?}"))
+            }
+        },
+    });
+}
+
+#[test]
+#[ignore = "requires LIVE=1, GATHERER_NAV_PACK/GATHERER_ENGINE_DIR/GATHERER_CATALOG_ROOT/BOT_CACHE_DIR/CLIENT_UNPACK_DIR/LIVE_EVIDENCE_DIR and a local 289 engine"]
+fn live_bank_core_compat_gathering_bank_loop_at_draynor() {
+    run_compat_cell(&CompatSpec {
+        label: "l-seat-gather-loop",
+        uid: 274_279_107,
+        bound: Duration::from_secs(90),
+        seed: &[
+            "give coins 100",
+            "give bones 3",
+            "give tinderbox 1",
+            WITHDRAW_SEED,
+        ],
+        seed_ready: |snapshot| {
+            has(snapshot, COINS, 100) && has(snapshot, BONES, 3) && has(snapshot, TINDERBOX, 1)
+        },
+        watch: &[COINS, BONES, TINDERBOX],
+        body: "
+        cell.trigger = shouldBankNow(parseBankStrategy('Loot count'), {
+            lootCount: Inventory.count('Bones'), itemsThreshold: 3,
+            minutesSinceLastBank: 0, minutesThreshold: 10,
+        });
+        cell.after = 0;
+        cell.log = [];
+        cell.trip = cell.trigger && await Banking.bankNearest({
+            deposit: depositMatcher(name => name === 'Bones', false),
+            commonJunk: false,
+            log: message => cell.log.push(message),
+            afterDeposit: async () => {
+                cell.after++;
+                cell.withdraw = await Bank.withdrawX('Coins', 7);
+            },
+        });",
+        verdict: |answer, posted| {
+            answered_true(answer, "trigger")?;
+            answered_true(answer, "trip")?;
+            answered_true(answer, "withdraw")?;
+            let held = (
+                posted.held(COINS),
+                posted.held(BONES),
+                posted.held(TINDERBOX),
+            );
+            let banked = (
+                posted.banked(COINS),
+                posted.banked(BONES),
+                posted.banked(TINDERBOX),
+            );
+            if answer["after"] == serde_json::json!(1)
+                && held == (107, 0, 1)
+                && banked == (Some(43), Some(3), Some(0))
+                && posted.bank_open
+            {
+                Ok(())
+            } else {
+                Err(format!("gathering bank loop answer={answer}; held={held:?}; banked={banked:?}; {posted:?}"))
             }
         },
     });

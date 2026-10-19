@@ -359,7 +359,7 @@ export interface NativeSnapshot {
   bank_side: ItemRow[];
   bank_open: boolean;
   bank_loaded: boolean;
-  /** Pass this into withdraw-load / withdraw-x. A changed generation is stale, not exhaustion. */
+  /** Pass this into withdraw-load or withdraw-x. A changed generation is stale, not exhaustion. */
   bank_generation: number;
   /** Open bank item packet generation; -1 while closed. Not an action session identity. */
   bank_snapshot_generation: number;
@@ -461,8 +461,8 @@ export type NativeOp =
   | { op: 'set-note-mode'; on: boolean}
   | { op: 'deposit'; name: string}
   | { op: 'withdraw'; name: string; action: string}
-  | { op: 'withdraw-load'; name: string; bank_generation: number}
   | { op: 'withdraw-x'; name: string; count: number; bank_item_id: number; lands_as_id: number; action: string; bank_generation: number}
+  | { op: 'withdraw-load'; name: string; bank_generation: number}
   | { op: 'puzzle-move'; id: number; slot: number; component: number; generation: number}
   | { op: 'walk'; x: number; z: number; level: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; request_id?: number}
   | { op: 'walk-near'; x: number; z: number; level: number; radius: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; request_id?: number}

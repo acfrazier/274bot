@@ -3,6 +3,8 @@
 use script::isolate_fb::ItemRowInput;
 use script::{LoadIsolate, LoadShape, SettingDef};
 
+#[path = "common/bank_slot.rs"]
+mod bank_slot;
 mod common;
 
 const LOADOUT_PROBE: &str = r#"
@@ -219,57 +221,78 @@ export default class T extends LoopingBot {
     assert!(stale.drain_interacts().is_empty());
     stale.join();
 
-    let ready = LoadIsolate::spawn_with_game_data(
-        src.to_string(),
+    let mut ready = bank_slot::BankSlot::new(
+        src,
         LoadShape::CompatClass,
-        vec![],
-        api::game_data::for_revision(client::io::ClientRevision::R274).unwrap(),
-    )
-    .unwrap();
-    ready.post_loadouts(&[Loadout::new("melee")
+        None,
+        std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+    );
+    ready.slot.post_loadouts(&[Loadout::new("melee")
         .with_slot("righthand", "Rune scimitar")
         .with_carry("Lobster", 10)]);
-    ready.post_settings_bag(&bag);
+    ready.slot.post_settings_bag(&bag);
     // Rust reads the bank rows from the posted scene: post them, not a JS
     // snapshot object.
     let held_ops: [String; 0] = [];
     let bank_ops = ["Withdraw 10".to_string(), "Withdraw X".to_string()];
-    let row = |name, count, id, ops| ItemRowInput {
+    let row = |name, count, id, ops, component_id| ItemRowInput {
         name: Some(name),
         count,
         id,
         ops,
         noted: false,
         cert: -1,
-        component_id: 0,
-        slot: -1,
+        component_id,
+        slot: 0,
     };
-    let inv = [row("Rune scimitar", 1, 1333, &held_ops[..])];
-    let bank_rows = [row("Lobster", 40, 379, &bank_ops[..])];
+    let inv = [row("Rune scimitar", 1, 1333, &held_ops[..], 3214)];
+    let bank_rows = [row("Lobster", 40, 379, &bank_ops[..], 700)];
     let mut snap = common::ingame_snapshot();
     snap.bank_open = true;
     snap.bank_loaded = true;
     snap.bank_generation = 4;
     snap.inv = &inv;
     snap.bank = &bank_rows;
-    common::post_snapshot_input(&ready, &snap);
-    ready.on_game_tick(1);
+    let native = script::isolate_fb::NativeFactsInput {
+        bank_snapshot_generation: Some(4),
+        ..Default::default()
+    };
+    ready.post_snapshot(&snap, native);
+    ready.tick_posted(1);
     assert_eq!(ready.probe("__queued").unwrap(), true);
-    let reqs = ready.drain_interacts();
+    assert_eq!(ready.probe("__qty").unwrap(), 10);
+    let (_, reqs, _) = ready.slot.drain_host_interacts();
+    let mut actions = Vec::new();
+    for tick in 2..=4 {
+        snap.tick = tick;
+        ready.tick_from_input(tick, &snap, native);
+        actions.extend(
+            ready
+                .take_actions()
+                .into_iter()
+                .map(|action| match action.effect {
+                    script::native::HostEffect::Interaction(request) => request,
+                    _ => panic!("loadout provision emitted a non-interaction native effect"),
+                }),
+        );
+        if !actions.is_empty() {
+            break;
+        }
+    }
     assert!(
-        reqs.iter().any(|r| matches!(
-            r,
-            script::shim::InteractReq::WithdrawX { name, count, .. }
-                if name == "Lobster" && *count == 10
+        actions.iter().any(|request| matches!(
+            request,
+            script::shim::InteractReq::WithdrawX { name, count, action, .. }
+                if name == "Lobster" && *count == 10 && action == "Withdraw 10"
         )),
-        "fresh bank must withdraw the loadout quantity: {reqs:?}"
+        "fresh bank must withdraw the loadout quantity (10): {actions:?}"
     );
     assert!(
         reqs.iter().any(|r| matches!(
-            r,
+            &r.req,
             script::shim::InteractReq::Wear { name } if name == "Rune scimitar"
         )),
         "wear must use righthand, not a queued success: {reqs:?}"
     );
-    ready.join();
+    ready.stop();
 }

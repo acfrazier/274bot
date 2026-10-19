@@ -495,8 +495,6 @@ fn projected_npc_boxes_follow_the_live_clients_bounded_npc_list() {
         false,
         0,
         false,
-        0,
-        false,
         None,
         PostedWalkOutcome::default(),
         PostedInspect::default(),
@@ -4894,8 +4892,6 @@ fn encode_walk_snapshot(tick: u64, here: (i32, i32, i32), outcome: PostedWalkOut
         false,
         0,
         false,
-        0,
-        false,
         None,
         outcome,
         PostedInspect::default(),
@@ -8793,15 +8789,149 @@ fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
     script::observed::on_reset();
 }
 
-/// P-dispatch end to end: two bank-side rows share a name (a noted row
-/// first, then the item). Compat `Bank.deposit(name, 'Deposit-1')` in the
-/// isolate presses the first such row by id, slot and component, and the
-/// host dispatches exactly that row's Deposit-1: no name re-find, never an
-/// All on the other id.
+fn t23_bank_start_compat_slot(scripts: &ScriptWall, name: &str, source: &str) {
+    let slot = script_slot_or_insert(scripts, name);
+    let mut slot = slot.lock().unwrap();
+    let game_data =
+        api::game_data::for_revision(api::selected::ClientRevision::R289).expect("R289 game data");
+    slot.start_load_with_settings_and_game_data(
+        source.to_string(),
+        script::LoadShape::CompatClass,
+        None,
+        vec![],
+        &[],
+        Some(Arc::clone(&game_data)),
+        Arc::new(api::named_banks::NamedBankFacts::empty()),
+    )
+    .expect("compat bank slot starts");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match slot.poll_start() {
+            script::slot::StartPoll::Settled(script::slot::StartOutcome::Ready) => break,
+            script::slot::StartPoll::Pending => {
+                assert!(Instant::now() < deadline, "compat bank start stalled");
+            }
+            other => panic!("compat bank start failed: {other:?}"),
+        }
+        std::thread::yield_now();
+    }
+    assert!(
+        slot.compiled_game_data()
+            .is_some_and(|selected| Arc::ptr_eq(&selected, &game_data)),
+        "a plain bank Load retains its selected data before any API card starts"
+    );
+    slot.on_is_up(true);
+    let session = api::identity::SessionKey::first(
+        slot.slot_key_for_test().expect("bound compatibility slot"),
+    );
+    slot.align_seat_session(Some(session));
+    assert_eq!(slot.state(), script::slot::RunState::Running);
+}
+
+/// Drive the regular host observer. No-edge calls carry fresh family evidence
+/// without advancing the game's tick or its interaction budget.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "this test adapter preserves the host observer boundary while pumping same-tick native seat frames"
+)]
+fn t23_bank_observe(
+    client: &mut Client,
+    name: &str,
+    up: bool,
+    tick_edge: bool,
+    tick: u64,
+    here: Option<(i32, i32, i32)>,
+    inv: Option<&[(i32, i32)]>,
+    state: Option<WorldState>,
+    snapshot: Option<&GameSnapshot>,
+    names: Option<&api::obj_names::ObjNames>,
+    scripts: &ScriptWall,
+    cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    world: &Option<Arc<NavWorld>>,
+    hold: bool,
+    ours: bool,
+    frames: usize,
+) -> bool {
+    let mut wrote = false;
+    for frame in 0..frames {
+        wrote |= super::script_observe_cached_with_channels(
+            client,
+            name,
+            up,
+            tick_edge && frame == 0,
+            !tick_edge || frame != 0,
+            tick,
+            here,
+            inv,
+            state.clone(),
+            snapshot,
+            None,
+            None,
+            names,
+            scripts,
+            cheats,
+            navs,
+            world,
+            hold,
+            false,
+            ours,
+            None,
+            None,
+            None,
+            None,
+            None,
+            super::script_channels::BrokerWorld::Local,
+            None,
+            None,
+            None,
+        )
+        .wrote;
+        script_slot(scripts, name)
+            .expect("bank fixture slot")
+            .lock()
+            .unwrap()
+            .probe("true")
+            .expect("join the bank seat's snapshot-only continuation");
+    }
+    wrote
+}
+
+fn t23_bank_assert_button_packet(
+    client: &Client,
+    start: usize,
+    checkpoint: Box<api::interact::PacketCheckpoint>,
+    opcode: u8,
+    id: i32,
+    slot: i32,
+    component: i32,
+) {
+    let mut packets = Vec::new();
+    assert!(api::interact::Driver::trace_packets(
+        client,
+        *checkpoint,
+        &mut |packet_opcode| packets.push(packet_opcode),
+    ));
+    assert_eq!(packets, [opcode]);
+    assert_eq!(client.out.pos - start, 7, "one inventory-button packet");
+    assert_eq!(
+        &client.out.data()[start + 1..client.out.pos],
+        &[
+            (id >> 8) as u8,
+            id as u8,
+            (slot >> 8) as u8,
+            slot as u8,
+            (component >> 8) as u8,
+            component as u8,
+        ],
+        "the packet retains item id, slot, and component identity"
+    );
+}
+
 #[test]
 fn compat_labelled_deposit_dispatches_the_selected_same_name_side_row() {
     use client::config::ObjType;
-    use client::io::ServerProt289;
+    use client::io::{ClientProt289, ServerProt289};
     let mut c = bank_client_289();
     // A real (loopback) stream so `Interactions` sees an attached client.
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -8838,20 +8968,7 @@ fn compat_labelled_deposit_dispatches_the_selected_same_name_side_row() {
         .map(|item| (item.def.id, item.slot))
         .collect();
     assert_eq!(side, vec![(334, 0), (333, 1)], "two same-name side rows");
-    let (bytes, _) = script_snapshot_fb(
-        None,
-        false,
-        1,
-        None,
-        true,
-        None,
-        Some(&snap),
-        None,
-        None,
-        false,
-        false,
-        false,
-    );
+    let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
@@ -8862,26 +8979,100 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso =
-        script::LoadIsolate::spawn(src.into(), script::LoadShape::CompatClass, vec![]).unwrap();
-    iso.post_snapshot(bytes);
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(iso.probe("__ok").unwrap(), true);
-    let reqs = iso.drain_interacts();
-    let pressed = inv_button_req(334, 0, 701, 1, snap.bank_session_generation());
-    assert_eq!(
-        reqs,
-        vec![pressed.clone()],
-        "the selected row and its label"
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let (navs, world) = empty_nav();
+    t23_bank_start_compat_slot(&scripts, "alice", src);
+    let checkpoint = api::interact::Driver::packet_checkpoint(&c).unwrap();
+    let before = c.out.pos;
+    t23_bank_observe(
+        &mut c,
+        "alice",
+        true,
+        true,
+        1,
+        Some((3205, 3205, 0)),
+        None,
+        None,
+        Some(&snap),
+        Some(&names),
+        &scripts,
+        &cheats,
+        &navs,
+        &world,
+        false,
+        false,
+        8,
     );
-    iso.join();
-    let rec = dispatch_inv_button(&snap, pressed);
-    assert_eq!(
-        rec.menus,
-        vec![(0, MiniMenuAction::INV_BUTTON1, 334, 0, 701)],
-        "the host presses that exact row, not the other trout"
+    script_slot(&scripts, "alice")
+        .unwrap()
+        .lock()
+        .unwrap()
+        .probe("true")
+        .expect("compat loop queues the selected deposit");
+    t23_bank_observe(
+        &mut c,
+        "alice",
+        true,
+        false,
+        1,
+        Some((3205, 3205, 0)),
+        None,
+        None,
+        Some(&snap),
+        Some(&names),
+        &scripts,
+        &cheats,
+        &navs,
+        &world,
+        false,
+        false,
+        8,
     );
+    t23_bank_observe(
+        &mut c,
+        "alice",
+        true,
+        false,
+        1,
+        Some((3205, 3205, 0)),
+        None,
+        None,
+        Some(&snap),
+        Some(&names),
+        &scripts,
+        &cheats,
+        &navs,
+        &world,
+        false,
+        false,
+        8,
+    );
+    assert_eq!(
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("globalThis.__ok")
+            .unwrap(),
+        true,
+        "the isolate receives the accepted native interaction receipt"
+    );
+    t23_bank_assert_button_packet(
+        &c,
+        before,
+        checkpoint,
+        ClientProt289::INV_BUTTON1.id as u8,
+        334,
+        0,
+        701,
+    );
+    script_slot(&scripts, "alice")
+        .unwrap()
+        .lock()
+        .unwrap()
+        .stop();
 }
 
 /// Task 7 — the shim's interact requests dispatch through the slot
@@ -9389,8 +9580,6 @@ export default class T extends LoopingBot {
     async loop() {
         if (!globalThis.__started) {
             globalThis.__started = true;
-            globalThis.__clock = 0;
-            globalThis.performance.now = () => globalThis.__clock;
             globalThis.__posted_result = await Bank.withdrawX('Knife', 7);
             return;
         }
@@ -9401,11 +9590,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    script_slot_or_insert(&scripts, "alice")
-        .lock()
-        .unwrap()
-        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
-        .expect("withdraw-X isolate starts");
+    t23_bank_start_compat_slot(&scripts, "alice", source);
 
     let mut c = bank_fetch_client();
     // The pack is the explicit posted inventory below: the isolate settles
@@ -9423,10 +9608,12 @@ export default class T extends LoopingBot {
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
     assert!(snap.bank_loaded());
+    let bank_session = snap.bank_session_generation();
     let empty_inv: [(i32, i32); 0] = [];
 
     let before_x = c.out.pos;
-    script_observe(
+    let checkpoint_x = api::interact::Driver::packet_checkpoint(&c).unwrap();
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
@@ -9443,6 +9630,7 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
     script_slot(&scripts, "alice")
         .unwrap()
@@ -9450,7 +9638,7 @@ export default class T extends LoopingBot {
         .unwrap()
         .probe("true")
         .expect("isolate finishes the queued tick");
-    script_observe(
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
@@ -9467,40 +9655,27 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
-    let pending = script_slot(&scripts, "alice")
-        .unwrap()
-        .lock()
-        .unwrap()
-        .pending_withdraw_x();
-    assert!(
-        c.out.pos > before_x,
-        "the X menu action reaches the driver; pending={pending:?}"
+    t23_bank_assert_button_packet(
+        &c,
+        before_x,
+        checkpoint_x,
+        client::io::ClientProt::INV_BUTTON5.id as u8,
+        2,
+        0,
+        601,
     );
-    assert!(
-        script_slot(&scripts, "alice")
-            .unwrap()
-            .lock()
-            .unwrap()
-            .pending_withdraw_x()
-            .is_some(),
-        "a successful X action arms one host-owned continuation"
-    );
-    script_slot(&scripts, "alice")
-        .unwrap()
-        .lock()
-        .unwrap()
-        .probe("globalThis.__clock = 9001")
-        .expect("advance the isolate clock beyond the former JS timeout");
+    assert!(c.out.pos > before_x, "the X menu action reaches the driver");
 
     snap.rebuild(&c);
     let before_wait = c.out.pos;
-    script_observe(
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
-        true,
-        2,
+        false,
+        1,
         Some((3205, 3205, 0)),
         Some(&empty_inv),
         None,
@@ -9512,6 +9687,7 @@ export default class T extends LoopingBot {
         &world,
         true,
         false,
+        8,
     );
     assert_eq!(
         c.out.pos, before_wait,
@@ -9528,12 +9704,12 @@ export default class T extends LoopingBot {
         "the held frame cannot consume the pending JavaScript result"
     );
 
-    script_observe(
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
-        true,
-        2,
+        false,
+        1,
         Some((3205, 3205, 0)),
         Some(&empty_inv),
         None,
@@ -9545,6 +9721,7 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
     assert_eq!(
         script_slot(&scripts, "alice")
@@ -9556,23 +9733,17 @@ export default class T extends LoopingBot {
         "undefined",
         "resume without host outcome keeps the promise pending"
     );
-    assert!(script_slot(&scripts, "alice")
-        .unwrap()
-        .lock()
-        .unwrap()
-        .pending_withdraw_x()
-        .is_some());
-
     c.apply_p_countdialog();
     c.bump_gens(ServerProt::P_COUNTDIALOG);
     snap.rebuild(&c);
     let before_count = c.out.pos;
-    script_observe(
+    let checkpoint_count = api::interact::Driver::packet_checkpoint(&c).unwrap();
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
-        true,
-        3,
+        false,
+        1,
         Some((3205, 3205, 0)),
         Some(&empty_inv),
         None,
@@ -9584,29 +9755,69 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
     assert!(
         c.out.pos > before_count,
         "the matching posted dialog authorizes one amount response"
     );
-    assert!(matches!(
+    let mut count_packets = Vec::new();
+    assert!(api::interact::Driver::trace_packets(
+        &c,
+        *checkpoint_count,
+        &mut |opcode| count_packets.push(opcode),
+    ));
+    assert_eq!(
+        count_packets,
+        [client::io::ClientProt::RESUME_P_COUNTDIALOG.id as u8]
+    );
+    assert_eq!(
+        c.out.pos - before_count,
+        5,
+        "the native withdraw-X sends one exact count packet"
+    );
+    assert_eq!(
+        &c.out.data()[before_count + 1..c.out.pos],
+        &7i32.to_be_bytes(),
+        "the typed action's amount reaches the client"
+    );
+    assert_eq!(
         script_slot(&scripts, "alice")
             .unwrap()
             .lock()
             .unwrap()
-            .pending_withdraw_x()
-            .map(|pending| pending.phase),
-        Some(script::slot::PendingWithdrawXPhase::Settlement)
-    ));
+            .probe("typeof globalThis.__posted_result")
+            .unwrap(),
+        "undefined",
+        "the dialog response does not fabricate the withdrawal result"
+    );
 
     let posted_inv = [(2, 7)];
+    c.set_iface_mut(
+        500,
+        IfTypeMut {
+            link_obj_type: Some(vec![3, 0]),
+            link_obj_number: Some(vec![7, 0]),
+            ..Default::default()
+        },
+    );
+    c.set_iface_mut(
+        601,
+        IfTypeMut {
+            link_obj_type: Some(vec![3, 0]),
+            link_obj_number: Some(vec![13, 0]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
     snap.rebuild(&c);
-    script_observe(
+    assert_eq!(snap.bank_session_generation(), bank_session);
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
-        true,
-        4,
+        false,
+        1,
         Some((3205, 3205, 0)),
         Some(&posted_inv),
         None,
@@ -9618,6 +9829,7 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
     let result = script_slot(&scripts, "alice")
         .unwrap()
@@ -9626,28 +9838,16 @@ export default class T extends LoopingBot {
         .probe("globalThis.__posted_result")
         .expect("posted inventory resolves the promise");
     assert_eq!(result, true);
-    assert!(
-        script_slot(&scripts, "alice")
-            .unwrap()
-            .lock()
-            .unwrap()
-            .pending_withdraw_x()
-            .is_none(),
-        "the posted outcome consumes the operation exactly once"
-    );
 
-    c.dialog_input_open = false;
-    c.bump_gens(ServerProt::P_COUNTDIALOG);
-    snap.rebuild(&c);
-    // Tick 5 may drain the fixed request in this observe or leave it for the
-    // following no-edge observe; measure across both valid schedules.
+    // A real loop tick starts the second request after the first result.
+    let checkpoint_fixed = api::interact::Driver::packet_checkpoint(&c).unwrap();
     let before_fixed = c.out.pos;
-    script_observe(
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
         true,
-        5,
+        2,
         Some((3205, 3205, 0)),
         Some(&posted_inv),
         None,
@@ -9659,6 +9859,7 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
     script_slot(&scripts, "alice")
         .unwrap()
@@ -9666,12 +9867,12 @@ export default class T extends LoopingBot {
         .unwrap()
         .probe("true")
         .expect("the next loop queues the noted fixed withdraw");
-    script_observe(
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
         false,
-        5,
+        2,
         Some((3205, 3205, 0)),
         Some(&posted_inv),
         None,
@@ -9683,26 +9884,45 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
     assert!(c.out.pos > before_fixed, "the fixed Withdraw 5 is sent");
-    assert!(matches!(
-        script_slot(&scripts, "alice")
-            .unwrap()
-            .lock()
-            .unwrap()
-            .pending_withdraw_x()
-            .map(|pending| pending.phase),
-        Some(script::slot::PendingWithdrawXPhase::Settlement)
-    ));
+    t23_bank_assert_button_packet(
+        &c,
+        before_fixed,
+        checkpoint_fixed,
+        client::io::ClientProt::INV_BUTTON2.id as u8,
+        2,
+        0,
+        601,
+    );
 
     let posted_noted = [(2, 7), (3, 5)];
+    c.set_iface_mut(
+        500,
+        IfTypeMut {
+            link_obj_type: Some(vec![3, 4, 0]),
+            link_obj_number: Some(vec![7, 5, 0]),
+            ..Default::default()
+        },
+    );
+    c.set_iface_mut(
+        601,
+        IfTypeMut {
+            link_obj_type: Some(vec![3, 0]),
+            link_obj_number: Some(vec![8, 0]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
     snap.rebuild(&c);
-    script_observe(
+    assert_eq!(snap.bank_session_generation(), bank_session);
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
-        true,
-        6,
+        false,
+        2,
         Some((3205, 3205, 0)),
         Some(&posted_noted),
         None,
@@ -9714,6 +9934,7 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
     let noted_result = script_slot(&scripts, "alice")
         .unwrap()
@@ -9947,11 +10168,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    script_slot_or_insert(&scripts, "alice")
-        .lock()
-        .unwrap()
-        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
-        .expect("deposit isolate starts");
+    t23_bank_start_compat_slot(&scripts, "alice", source);
 
     let mut c = bank_fetch_client();
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
@@ -9959,8 +10176,10 @@ export default class T extends LoopingBot {
     snap.rebuild(&c);
     let bank_session = snap.bank_session_generation();
     let posted_inv = [(1, 3)];
+    let checkpoint_deposit = api::interact::Driver::packet_checkpoint(&c).unwrap();
+    let before_send = c.out.pos;
 
-    script_observe(
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
@@ -9977,6 +10196,7 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
     script_slot(&scripts, "alice")
         .unwrap()
@@ -9984,8 +10204,7 @@ export default class T extends LoopingBot {
         .unwrap()
         .probe("true")
         .unwrap();
-    let before_send = c.out.pos;
-    script_observe(
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
@@ -10002,16 +10221,17 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
     assert!(c.out.pos > before_send, "Deposit-All reaches the driver");
-    assert!(
-        script_slot(&scripts, "alice")
-            .unwrap()
-            .lock()
-            .unwrap()
-            .pending_bank_op()
-            .is_none(),
-        "the exact-row press arms no host-owned name op"
+    t23_bank_assert_button_packet(
+        &c,
+        before_send,
+        checkpoint_deposit,
+        client::io::ClientProt::INV_BUTTON1.id as u8,
+        1,
+        0,
+        701,
     );
     assert_eq!(
         script_slot(&scripts, "alice")
@@ -10038,12 +10258,12 @@ export default class T extends LoopingBot {
         "settlement removed the side row"
     );
     let empty_side_observed_at = Instant::now();
-    script_observe(
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
-        true,
-        2,
+        false,
+        1,
         Some((3205, 3205, 0)),
         Some(&[]),
         None,
@@ -10055,26 +10275,20 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
-    assert!(script_slot(&scripts, "alice")
-        .unwrap()
-        .lock()
-        .unwrap()
-        .pending_bank_op()
-        .is_none());
-    // The pressed id left the pack and the side posted empty with its root
-    // up: the deposit settles without the 1.2 s not-ready wait. Drive ticks
-    // until the script observes it rather than assuming one isolate schedule.
+    // Fresh packet evidence settles the deposit. Snapshot-only host frames
+    // resume the isolate without advancing a game tick.
     let before_withdraw = c.out.pos;
+    let checkpoint_withdraw = api::interact::Driver::packet_checkpoint(&c).unwrap();
     let deadline = empty_side_observed_at + Duration::from_secs(10);
-    let mut next_tick = 3;
     loop {
-        script_observe(
+        t23_bank_observe(
             &mut c,
             "alice",
             true,
-            true,
-            next_tick,
+            false,
+            1,
             Some((3205, 3205, 0)),
             Some(&[]),
             None,
@@ -10086,8 +10300,8 @@ export default class T extends LoopingBot {
             &world,
             false,
             false,
+            8,
         );
-        next_tick += 1;
         let deposit_done = script_slot(&scripts, "alice")
             .unwrap()
             .lock()
@@ -10103,7 +10317,7 @@ export default class T extends LoopingBot {
             Instant::now() < deadline,
             "deposit did not finish after the empty-side deadline"
         );
-        thread::sleep(Duration::from_millis(10));
+        thread::yield_now();
     }
     assert_eq!(
         script_slot(&scripts, "alice")
@@ -10120,14 +10334,14 @@ export default class T extends LoopingBot {
         settle_elapsed < Duration::from_secs(3),
         "deposit settlement exceeded the end-to-end 3 s bound: {settle_elapsed:?}"
     );
-    // The tick that settles the deposit may already drain the following
-    // withdrawal. A no-edge observe drains it when the isolate lost that race.
-    script_observe(
+    // Deposit settlement and its snapshot wait used only snapshot frames.
+    // A separate withdrawal gets the next observed game tick's event budget.
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
-        false,
-        next_tick - 1,
+        true,
+        2,
         Some((3205, 3205, 0)),
         Some(&[]),
         None,
@@ -10139,29 +10353,50 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
     assert!(
         c.out.pos > before_withdraw,
         "Withdraw-All reaches the driver"
     );
-    assert!(matches!(
-        script_slot(&scripts, "alice")
-            .unwrap()
-            .lock()
-            .unwrap()
-            .pending_bank_op()
-            .map(|pending| pending.kind),
-        Some(script::slot::PendingBankOpKind::Withdraw)
-    ));
+    t23_bank_assert_button_packet(
+        &c,
+        before_withdraw,
+        checkpoint_withdraw,
+        client::io::ClientProt::INV_BUTTON4.id as u8,
+        2,
+        0,
+        601,
+    );
+    let posted_withdrawn = [(2, 20)];
+    c.set_iface_mut(
+        500,
+        IfTypeMut {
+            link_obj_type: Some(vec![3, 0]),
+            link_obj_number: Some(vec![20, 0]),
+            ..Default::default()
+        },
+    );
+    c.set_iface_mut(
+        601,
+        IfTypeMut {
+            link_obj_type: Some(vec![0, 0]),
+            link_obj_number: Some(vec![0, 0]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    snap.rebuild(&c);
+    assert_eq!(snap.bank_session_generation(), bank_session);
 
-    script_observe(
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
-        true,
-        next_tick,
+        false,
+        2,
         Some((3205, 3205, 0)),
-        Some(&[(2, 20)]),
+        Some(&posted_withdrawn),
         None,
         Some(&snap),
         Some(&names),
@@ -10171,6 +10406,7 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
     assert_eq!(
         script_slot(&scripts, "alice")
@@ -10204,24 +10440,23 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    script_slot_or_insert(&scripts, "alice")
-        .lock()
-        .unwrap()
-        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
-        .expect("withdraw-X isolate starts");
+    t23_bank_start_compat_slot(&scripts, "alice", source);
     let mut c = bank_fetch_client();
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
+    let posted_inv = [(1, 3)];
+    let checkpoint = api::interact::Driver::packet_checkpoint(&c).unwrap();
+    let before_send = c.out.pos;
 
-    script_observe(
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
         true,
         1,
         Some((3205, 3205, 0)),
-        Some(&[]),
+        Some(&posted_inv),
         None,
         Some(&snap),
         Some(&names),
@@ -10231,6 +10466,7 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
     script_slot(&scripts, "alice")
         .unwrap()
@@ -10238,15 +10474,14 @@ export default class T extends LoopingBot {
         .unwrap()
         .probe("true")
         .unwrap();
-    let before_send = c.out.pos;
-    script_observe(
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
         false,
         1,
         Some((3205, 3205, 0)),
-        Some(&[]),
+        Some(&posted_inv),
         None,
         Some(&snap),
         Some(&names),
@@ -10256,29 +10491,29 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
     assert!(c.out.pos > before_send, "Withdraw X reaches the driver");
-    let before_ack = {
-        let slot = script_slot(&scripts, "alice").unwrap();
-        let slot = slot.lock().unwrap();
-        assert_eq!(
-            slot.pending_bank_op().map(|pending| pending.kind),
-            Some(script::slot::PendingBankOpKind::WithdrawXAction),
-            "the raw X action arms the open-only acknowledgment"
-        );
-        slot.bank_op_result()
-    };
+    t23_bank_assert_button_packet(
+        &c,
+        before_send,
+        checkpoint,
+        client::io::ClientProt::INV_BUTTON5.id as u8,
+        2,
+        0,
+        601,
+    );
 
     // The bank is still open and the inventory still holds no Knife:
     // the accepted action alone acknowledges the wait.
-    script_observe(
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
-        true,
-        2,
+        false,
+        1,
         Some((3205, 3205, 0)),
-        Some(&[]),
+        Some(&posted_inv),
         None,
         Some(&snap),
         Some(&names),
@@ -10288,15 +10523,10 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
     let slot = script_slot(&scripts, "alice").unwrap();
     let slot = slot.lock().unwrap();
-    assert!(slot.pending_bank_op().is_none(), "the acknowledgment lands");
-    assert_eq!(
-        slot.bank_op_result(),
-        (before_ack.0.wrapping_add(1), true),
-        "sent open-only X acknowledges true with unchanged inventory"
-    );
     assert_eq!(
         slot.probe("globalThis.__withdraw_result").unwrap(),
         true,
@@ -10322,24 +10552,24 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    script_slot_or_insert(&scripts, "alice")
-        .lock()
-        .unwrap()
-        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
-        .expect("withdraw-X isolate starts");
+    t23_bank_start_compat_slot(&scripts, "alice", source);
     let mut c = bank_fetch_client();
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
+    let bank_session = snap.bank_session_generation();
+    let posted_inv = [(1, 3)];
+    let checkpoint = api::interact::Driver::packet_checkpoint(&c).unwrap();
+    let before_send = c.out.pos;
 
-    script_observe(
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
         true,
         1,
         Some((3205, 3205, 0)),
-        Some(&[]),
+        Some(&posted_inv),
         None,
         Some(&snap),
         Some(&names),
@@ -10349,6 +10579,7 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        1,
     );
     script_slot(&scripts, "alice")
         .unwrap()
@@ -10356,14 +10587,55 @@ export default class T extends LoopingBot {
         .unwrap()
         .probe("true")
         .unwrap();
-    script_observe(
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while c.out.pos == before_send {
+        t23_bank_observe(
+            &mut c,
+            "alice",
+            true,
+            false,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&posted_inv),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+            1,
+        );
+        assert!(
+            Instant::now() < deadline,
+            "the raw X action never dispatched"
+        );
+        thread::yield_now();
+    }
+    t23_bank_assert_button_packet(
+        &c,
+        before_send,
+        checkpoint,
+        client::io::ClientProt::INV_BUTTON5.id as u8,
+        2,
+        0,
+        601,
+    );
+    // The session ended before the acknowledgment pass.
+    c.main_modal_id = -1;
+    c.bump_gens(ServerProt::IF_OPENMAIN);
+    snap.rebuild(&c);
+    assert_ne!(snap.bank_session_generation(), bank_session);
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
         false,
         1,
         Some((3205, 3205, 0)),
-        Some(&[]),
+        Some(&posted_inv),
         None,
         Some(&snap),
         Some(&names),
@@ -10373,45 +10645,13 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
-    );
-    let before_ack = {
-        let slot = script_slot(&scripts, "alice").unwrap();
-        let slot = slot.lock().unwrap();
-        assert_eq!(
-            slot.pending_bank_op().map(|pending| pending.kind),
-            Some(script::slot::PendingBankOpKind::WithdrawXAction)
-        );
-        slot.bank_op_result()
-    };
-
-    // The session ended before the acknowledgment pass.
-    c.main_modal_id = -1;
-    c.bump_gens(ServerProt::IF_OPENMAIN);
-    snap.rebuild(&c);
-    script_observe(
-        &mut c,
-        "alice",
-        true,
-        true,
-        2,
-        Some((3205, 3205, 0)),
-        Some(&[]),
-        None,
-        Some(&snap),
-        Some(&names),
-        &scripts,
-        &cheats,
-        &navs,
-        &world,
-        false,
-        false,
+        8,
     );
     let slot = script_slot(&scripts, "alice").unwrap();
     let slot = slot.lock().unwrap();
-    assert!(slot.pending_bank_op().is_none());
     assert_eq!(
-        slot.bank_op_result(),
-        (before_ack.0.wrapping_add(1), false),
+        slot.probe("globalThis.__withdraw_result").unwrap(),
+        false,
         "a closed session never acknowledges the raw X action"
     );
 }
@@ -11798,24 +12038,23 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    script_slot_or_insert(&scripts, "alice")
-        .lock()
-        .unwrap()
-        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
-        .unwrap();
+    t23_bank_start_compat_slot(&scripts, "alice", source);
     let mut c = bank_fetch_client();
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
+    let posted_inv = [(1, 3)];
+    let checkpoint = api::interact::Driver::packet_checkpoint(&c).unwrap();
+    let before = c.out.pos;
 
-    script_observe(
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
         true,
         1,
         Some((3205, 3205, 0)),
-        Some(&[]),
+        Some(&posted_inv),
         None,
         Some(&snap),
         Some(&names),
@@ -11825,6 +12064,7 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
     script_slot(&scripts, "alice")
         .unwrap()
@@ -11832,14 +12072,14 @@ export default class T extends LoopingBot {
         .unwrap()
         .probe("true")
         .unwrap();
-    script_observe(
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
         false,
         1,
         Some((3205, 3205, 0)),
-        Some(&[]),
+        Some(&posted_inv),
         None,
         Some(&snap),
         Some(&names),
@@ -11849,15 +12089,16 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
-    script_observe(
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
-        true,
-        2,
+        false,
+        1,
         Some((3205, 3205, 0)),
-        Some(&[]),
+        Some(&posted_inv),
         None,
         Some(&snap),
         Some(&names),
@@ -11867,7 +12108,16 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
+    let mut packets = Vec::new();
+    assert!(api::interact::Driver::trace_packets(
+        &c,
+        *checkpoint,
+        &mut |opcode| packets.push(opcode),
+    ));
+    assert!(packets.is_empty(), "unsupported actions send no packet");
+    assert_eq!(c.out.pos, before);
     assert_eq!(
         script_slot(&scripts, "alice")
             .unwrap()
@@ -11876,131 +12126,6 @@ export default class T extends LoopingBot {
             .probe("globalThis.__withdraw_result")
             .unwrap(),
         false
-    );
-}
-
-#[test]
-fn withdraw_load_composes_all_send_and_observed_fill_result() {
-    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
-    let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    let (navs, world) = empty_nav();
-    let source = r#"
-import { Bank } from '../../api/bank/Bank.js';
-export default class T extends LoopingBot {
-    async loop() {
-        if (globalThis.__did) return;
-        globalThis.__did = true;
-        globalThis.__fill_result = await Bank.withdrawLoad('Knife');
-    }
-}
-"#;
-    script_slot_or_insert(&scripts, "alice")
-        .lock()
-        .unwrap()
-        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
-        .expect("withdraw-load isolate starts");
-
-    let mut c = bank_fetch_client();
-    let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
-    let mut snap = GameSnapshot::new();
-    snap.rebuild(&c);
-    let before_inv = [(1, 3)];
-
-    script_observe(
-        &mut c,
-        "alice",
-        true,
-        true,
-        1,
-        Some((3205, 3205, 0)),
-        Some(&before_inv),
-        None,
-        Some(&snap),
-        Some(&names),
-        &scripts,
-        &cheats,
-        &navs,
-        &world,
-        false,
-        false,
-    );
-    script_slot(&scripts, "alice")
-        .unwrap()
-        .lock()
-        .unwrap()
-        .probe("true")
-        .unwrap();
-    let before_send = c.out.pos;
-    script_observe(
-        &mut c,
-        "alice",
-        true,
-        false,
-        1,
-        Some((3205, 3205, 0)),
-        Some(&before_inv),
-        None,
-        Some(&snap),
-        Some(&names),
-        &scripts,
-        &cheats,
-        &navs,
-        &world,
-        false,
-        false,
-    );
-    assert!(c.out.pos > before_send, "Withdraw-All reaches the driver");
-    assert!(
-        script_slot(&scripts, "alice")
-            .unwrap()
-            .lock()
-            .unwrap()
-            .pending_withdraw_x()
-            .is_none(),
-        "the exact-row All press arms no host-owned fill"
-    );
-    assert_eq!(
-        script_slot(&scripts, "alice")
-            .unwrap()
-            .lock()
-            .unwrap()
-            .probe("typeof globalThis.__fill_result")
-            .unwrap(),
-        "undefined",
-        "the press is not the load"
-    );
-
-    // Frozen `withdrawLoad`'s posted observation: the row's bank count is 0.
-    let mut empty_bank = Packet::new(vec![2, 89, 0, 0]);
-    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_bank);
-    snap.rebuild(&c);
-    script_observe(
-        &mut c,
-        "alice",
-        true,
-        true,
-        2,
-        Some((3205, 3205, 0)),
-        Some(&[(1, 3), (2, 20)]),
-        None,
-        Some(&snap),
-        Some(&names),
-        &scripts,
-        &cheats,
-        &navs,
-        &world,
-        false,
-        false,
-    );
-    assert_eq!(
-        script_slot(&scripts, "alice")
-            .unwrap()
-            .lock()
-            .unwrap()
-            .probe("globalThis.__fill_result")
-            .unwrap(),
-        true
     );
 }
 
@@ -12106,25 +12231,22 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    script_slot_or_insert(&scripts, "alice")
-        .lock()
-        .unwrap()
-        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
-        .expect("withdraw-X isolate starts");
+    t23_bank_start_compat_slot(&scripts, "alice", source);
 
     let mut c = bank_fetch_client();
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
+    let posted_inv = [(1, 3)];
     let generation = snap.bank_session_generation();
-    script_observe(
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
         true,
         1,
         Some((3205, 3205, 0)),
-        Some(&[]),
+        Some(&posted_inv),
         None,
         Some(&snap),
         Some(&names),
@@ -12134,6 +12256,7 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        1,
     );
     script_slot(&scripts, "alice")
         .unwrap()
@@ -12151,14 +12274,15 @@ export default class T extends LoopingBot {
         "the host rejection is not explained by a changed bank session"
     );
     let before = c.out.pos;
-    script_observe(
+    let checkpoint = api::interact::Driver::packet_checkpoint(&c).unwrap();
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
         false,
         1,
         Some((3205, 3205, 0)),
-        Some(&[]),
+        Some(&posted_inv),
         None,
         Some(&snap),
         Some(&names),
@@ -12168,17 +12292,25 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
     assert_eq!(c.out.pos, before, "the vanished op sends nothing");
+    let mut packets = Vec::new();
+    assert!(api::interact::Driver::trace_packets(
+        &c,
+        *checkpoint,
+        &mut |opcode| packets.push(opcode),
+    ));
+    assert!(packets.is_empty(), "the disappeared row sends no packet");
 
-    script_observe(
+    t23_bank_observe(
         &mut c,
         "alice",
         true,
-        true,
-        2,
+        false,
+        1,
         Some((3205, 3205, 0)),
-        Some(&[]),
+        Some(&posted_inv),
         None,
         Some(&snap),
         Some(&names),
@@ -12188,6 +12320,7 @@ export default class T extends LoopingBot {
         &world,
         false,
         false,
+        8,
     );
     let result = script_slot(&scripts, "alice")
         .unwrap()
@@ -18151,8 +18284,6 @@ fn script_snapshot_crops_shared_canlight_from_profile_plane() {
         false,
         0,
         false,
-        0,
-        false,
         Some(bits.as_slice()),
         PostedWalkOutcome::default(),
         PostedInspect::default(),
@@ -18187,8 +18318,6 @@ fn script_snapshot_crops_shared_canlight_from_profile_plane() {
         None,
         false,
         false,
-        false,
-        0,
         false,
         0,
         false,
@@ -21146,12 +21275,35 @@ fn assert_tick_fix_evidence_wake(evidence: TickFixEvidence) {
             "globalThis.__rs2b0t_host.snapshot.route_inspect_refused_id === 23"
         }
         TickFixEvidence::BankSelection => {
-            "globalThis.__rs2b0t_host.snapshot.bank_selection?.request_id === 42"
+            "globalThis.__rs2b0t_host.snapshot.bank_selection?.request_id > 0 && globalThis.__bankSelectionResult?.name === 'Varrock East'"
         }
         TickFixEvidence::Stat => "Skills.xp('attack') === 100",
         TickFixEvidence::Chat => "GameMessages.sawSince(0, /tickfix chat/)",
     };
-    let mut rig = ReconnectRig::with_source(
+    let bank_selection = matches!(evidence, TickFixEvidence::BankSelection);
+    let source = if bank_selection {
+        format!(
+            r#"
+import {{ Execution }} from '../../api/execution/Execution.js';
+import {{ nearestBankReachable }} from '../../api/bank/BankLocations.js';
+export default class T extends LoopingBot {{
+    async loop() {{
+        globalThis.__loops = (globalThis.__loops || 0) + 1;
+        if (!globalThis.__bankSelectionTask) {{
+            globalThis.__bankSelectionTask =
+                nearestBankReachable({{ x: 3245, z: 3419, level: 0 }}).then((bank) => {{
+                    globalThis.__bankSelectionResult = bank;
+                }});
+        }}
+        await Execution.delayUntil(() => {condition}, 60000);
+        globalThis.__settledTick = globalThis.__rs2b0t_host.snapshot.tick;
+        await Execution.delayTicks(1);
+        globalThis.__later = true;
+    }}
+}}
+"#
+        )
+    } else {
         format!(
             r#"
 import {{ Execution }} from '../../api/execution/Execution.js';
@@ -21167,11 +21319,50 @@ export default class T extends LoopingBot {{
     }}
 }}
 "#
-        ),
-        open_world(64, 64),
-        (3, 3, 0),
-    );
-    rig.frame(1, true);
+        )
+    };
+    let world = if bank_selection {
+        let open = open_world_at(3170, 3370, 128, 128);
+        // Outside the four-tile shortcut, this packed booth requires the
+        // regular host observer to consume an asynchronous work completion.
+        NavWorld::from_parts(
+            open.collision,
+            open.graph,
+            vec![nav::pack::BankStand {
+                name: "Bank booth".into(),
+                tile: WorldTile {
+                    x: 3253,
+                    z: 3419,
+                    level: 0,
+                },
+                access: nav::pack::BankAccess::Booth { op: 2 },
+            }],
+        )
+    } else {
+        open_world(64, 64)
+    };
+    let here = if bank_selection {
+        (3245, 3419, 0)
+    } else {
+        (3, 3, 0)
+    };
+    let mut rig = if bank_selection {
+        ReconnectRig::t23_bank_wake_with_source(source, world, here)
+    } else {
+        ReconnectRig::with_source(source, world, here)
+    };
+    if bank_selection {
+        rig.client.map_build_base_x = here.0 - 5;
+        rig.client.map_build_base_z = here.1 - 5;
+        rig.client.main_modal_id = -1;
+        rig.client.gens.iface = rig.client.gens.iface.wrapping_add(1);
+        rig.snap.rebuild(&rig.client);
+    }
+    if bank_selection {
+        rig.t23_bank_frame(1, true);
+    } else {
+        rig.frame(1, true);
+    }
     let mut dirty = host::DirtyFamilies::default();
     match evidence {
         TickFixEvidence::RouteInspect => {
@@ -21179,14 +21370,7 @@ export default class T extends LoopingBot {{
             navs.entry("alice".into()).or_default().inspect.refused[0] = 23;
         }
         TickFixEvidence::BankSelection => {
-            let mut navs = rig.navs.lock().unwrap();
-            navs.entry("alice".into()).or_default().bank_pick.posted =
-                script::isolate_fb::BankSelectionInput {
-                    generation: 1,
-                    request_id: 42,
-                    bank_index: 0,
-                    kind: 1,
-                };
+            t23_bank_wake_wait_for_bank_selection(&mut rig, 1);
         }
         TickFixEvidence::Stat => {
             rig.client.stat_xp[0] = 100;
@@ -21223,6 +21407,50 @@ export default class T extends LoopingBot {{
         true
     );
     rig.slot().lock().unwrap().stop();
+}
+
+fn t23_bank_wake_wait_for_bank_selection(rig: &mut ReconnectRig, tick: u64) {
+    let expected_index = i32::try_from(
+        rig.world
+            .as_ref()
+            .expect("bank selection world")
+            .named_bank_facts()
+            .expect("bound selected bank facts")
+            .banks()
+            .iter()
+            .position(|bank| bank.name == "Varrock East")
+            .expect("selected facts contain Varrock East"),
+    )
+    .expect("bank index fits its wire field");
+    assert!(
+        wait_settled(|| {
+            let selection_published =
+                rig.slot().lock().unwrap().bank_selection_input().request_id != 0;
+            // Pending work has no dirty scene family. Its typed completion
+            // must itself wake the native seat before its publication can
+            // trigger the script-facing snapshot frame.
+            rig.frame_dirty(tick, false, selection_published);
+            let slot = rig.slot();
+            let slot = slot.lock().unwrap();
+            let selection = slot.bank_selection_input();
+            let snapshot = slot
+                .probe("globalThis.__rs2b0t_host.snapshot.bank_selection")
+                .unwrap();
+            let selected_name = slot
+                .probe("globalThis.__bankSelectionResult?.name")
+                .unwrap();
+            let settled_tick = slot.probe("globalThis.__settledTick ?? 0").unwrap();
+            let published_kind = selection.kind == script::native_bank::PickKind::Reachable as u8;
+            selection.request_id != 0
+                && selection.generation != 0
+                && selection.bank_index == expected_index
+                && published_kind
+                && snapshot["request_id"].as_u64() == Some(selection.request_id)
+                && selected_name.as_str() == Some("Varrock East")
+                && settled_tick.as_u64() == Some(tick)
+        }),
+        "the typed bank-selection receipt must publish from snapshot-only frames",
+    );
 }
 
 #[test]
@@ -21451,6 +21679,72 @@ impl ReconnectRig {
             broker,
             channels,
             ready_session: std::cell::Cell::new(ready_session),
+        }
+    }
+    fn t23_bank_wake_with_source(source: String, world: NavWorld, here: (i32, i32, i32)) -> Self {
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
+            .expect("selected R289 game data");
+        world
+            .bind_named_bank_facts(&selected)
+            .expect("bind selected named-bank facts");
+        let named_banks = Arc::clone(world.named_bank_facts().expect("selected named-bank facts"));
+
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let slot = script_slot_or_insert(&scripts, "alice");
+        let ready_session = {
+            let mut slot = slot.lock().unwrap();
+            slot.start_load_with_settings_and_game_data(
+                source,
+                script::LoadShape::CompatClass,
+                None,
+                vec![],
+                &[],
+                Some(selected),
+                named_banks,
+            )
+            .expect("start bank-wake Load slot");
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                match slot.poll_start() {
+                    script::StartPoll::Settled(script::StartOutcome::Ready) => break,
+                    script::StartPoll::Pending => {
+                        assert!(Instant::now() < deadline, "bank-wake Load start stalled");
+                        thread::yield_now();
+                    }
+                    other => panic!("bank-wake Load start failed: {other:?}"),
+                }
+            }
+            slot.on_is_up(true);
+            let session = api::identity::SessionKey::first(
+                slot.slot_key_for_test().expect("bound bank-wake slot key"),
+            );
+            slot.align_seat_session(Some(session));
+            session
+        };
+
+        let client = bank_client();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&client);
+        let broker = script_channels::ChannelBroker::default();
+        let channels = broker.slot("alice");
+        Self {
+            scripts,
+            cheats: Arc::new(Mutex::new(HashMap::new())),
+            wires: Arc::new(Mutex::new(HashMap::new())),
+            navs: Arc::new(Mutex::new(HashMap::new())),
+            world: Some(Arc::new(world)),
+            client,
+            snap,
+            here,
+            broker,
+            channels,
+            ready_session: std::cell::Cell::new(ready_session),
+        }
+    }
+    fn t23_bank_frame(&mut self, tick: u64, tick_edge: bool) {
+        self.frame_dirty(tick, tick_edge, !tick_edge);
+        for _ in 0..7 {
+            self.frame_dirty(tick, false, true);
         }
     }
 
@@ -22207,24 +22501,181 @@ fn a_paused_recovery_resumes_its_walk_instead_of_restarting() {
     rig.slot().lock().unwrap().stop();
 }
 
-/// A one-shot id-0 owner: the bank-access booth walk.
+/// A typed I-seat walk is cancelled on Pause and re-walked once on Resume.
 #[test]
 fn a_paused_bank_access_booth_walk_resumes() {
-    let mut rig = ReconnectRig::with_source(
+    let mut rig = ReconnectRig::t23_bank_wake_with_source(
         once_src(
             "import { Bank } from '../../api/bank/Bank.js';",
             "Bank.openNearestAccess({ name: 'Bank booth', op: 'Use-quickly' })",
         ),
         open_world_at(3190, 3190, 64, 64),
-        (3230, 3205, 0),
+        (3205, 3205, 0),
     );
-    // The bank is closed: the booth is found in the scene, away from here.
+    // Keep the booth in the raw scene but away from the actual LocalPlayer.
+    rig.client.world.del_wall(0, 5, 6);
+    let booth_typecode = 0x4000_0000 + (2213 << 14) + 1 + (2 << 7);
+    rig.client
+        .world
+        .set_wall(0, 10, 6, 0, 0, 0, booth_typecode, 10, 0, 0, 0, 0);
     rig.client.main_modal_id = -1;
-    rig.snap = GameSnapshot::new();
+    rig.client.gens.iface = rig.client.gens.iface.wrapping_add(1);
     rig.snap.rebuild(&rig.client);
     assert_eq!(rig.snap.bank_component_id(), -1, "the bank is closed");
-    pause_resume_resends(&mut rig, 1);
-    assert_eq!(rig.walks()[0].0, 0, "an id-0 walk");
+
+    rig.t23_bank_frame(1, true);
+    assert!(
+        rig.wait_for_route_work(10_000, || {
+            let navs = rig.navs.lock().unwrap();
+            navs.get("alice").is_some_and(|bot| {
+                bot.native_walk.as_ref().is_some_and(|owner| owner.live())
+                    && bot.has_route()
+                    && bot.route_request_id
+                        == bot
+                            .native_walk
+                            .as_ref()
+                            .expect("live typed walk owner")
+                            .request_id()
+                            .get()
+            })
+        }),
+        "the bank seat's typed walk must dispatch and arm its owned route",
+    );
+    let (first_walk_request_id, first_run, target, session) = {
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        let owner = bot.native_walk.as_ref().expect("typed bank walk owner");
+        assert_eq!(bot.walk_request_id, owner.request_id().get());
+        let target = bot.requested_route.as_ref().expect("typed route target").0;
+        (
+            owner.request_id().get(),
+            owner.run(),
+            target,
+            rig.ready_session.get(),
+        )
+    };
+    let runtime_generation = rig.slot().lock().unwrap().runtime_generation();
+    assert!(
+        rig.walks().is_empty(),
+        "no legacy ScriptAct walk is emitted"
+    );
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .probe("[globalThis.__did, globalThis.__rs_ok]")
+            .unwrap(),
+        serde_json::json!([true, null]),
+        "the original bank-seat request remains pending"
+    );
+
+    rig.operator_pause();
+    assert_eq!(
+        rig.slot().lock().unwrap().state(),
+        script::RunState::Paused,
+        "Pause freezes the running bank seat"
+    );
+    assert_eq!(
+        rig.ready_session.get(),
+        session,
+        "Pause keeps the seat session"
+    );
+    assert_eq!(
+        rig.slot().lock().unwrap().runtime_generation(),
+        runtime_generation,
+        "Pause keeps the same admitted bank request"
+    );
+    assert_eq!(rig.armed(), (0, None), "Pause ends the native follow");
+    let paused_route_generation = {
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        let (owner, end) = bot.native_end.as_ref().expect("typed walk end receipt");
+        assert_eq!(owner.request_id().get(), first_walk_request_id);
+        assert_eq!(owner.run(), first_run);
+        assert_eq!(*end, script::native::WalkEnd::Cancelled);
+        assert!(bot.native_walk.is_none());
+        assert!(bot.carried_walk.is_none());
+        bot.route_generation
+    };
+    rig.frame_dirty(2, false, true);
+    {
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        assert_eq!(bot.route_generation, paused_route_generation);
+        assert_eq!(bot.walk_request_id, 0, "Pause sends no walk");
+        assert!(bot.native_walk.is_none());
+        assert!(bot.requested_route.is_none());
+    }
+    assert!(rig.walks().is_empty(), "nothing is emitted while paused");
+
+    rig.resume();
+    assert_eq!(
+        rig.slot().lock().unwrap().state(),
+        script::RunState::Running,
+        "Resume continues the same bank seat"
+    );
+    assert_eq!(
+        rig.ready_session.get(),
+        session,
+        "Resume keeps the seat session"
+    );
+    assert_eq!(
+        rig.slot().lock().unwrap().runtime_generation(),
+        runtime_generation,
+        "Resume does not start a replacement bank request"
+    );
+    rig.t23_bank_frame(3, true);
+    assert!(
+        wait_settled(|| {
+            rig.frame_dirty(3, false, true);
+            let navs = rig.navs.lock().unwrap();
+            navs.get("alice").is_some_and(|bot| {
+                bot.native_walk.as_ref().is_some_and(|owner| {
+                    owner.live()
+                        && owner.run() == first_run
+                        && bot.has_route()
+                        && bot.walk_request_id == owner.request_id().get()
+                        && bot.route_request_id == owner.request_id().get()
+                        && bot
+                            .requested_route
+                            .as_ref()
+                            .is_some_and(|requested| requested.0 == target)
+                })
+            })
+        }),
+        "Resume re-walks once for the same bank-seat owner and target",
+    );
+    let resumed_walk_request_id = {
+        let navs = rig.navs.lock().unwrap();
+        navs["alice"]
+            .native_walk
+            .as_ref()
+            .expect("resumed typed walk owner")
+            .request_id()
+            .get()
+    };
+    rig.frame_dirty(3, false, true);
+    {
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        let owner = bot.native_walk.as_ref().expect("one resumed typed walk");
+        assert_eq!(owner.request_id().get(), resumed_walk_request_id);
+        assert_eq!(owner.run(), first_run);
+        assert_eq!(
+            bot.requested_route.as_ref().expect("resumed target").0,
+            target
+        );
+    }
+    assert!(rig.walks().is_empty(), "Resume adds no legacy walk");
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .probe("[globalThis.__did, globalThis.__rs_ok]")
+            .unwrap(),
+        serde_json::json!([true, null]),
+        "one resumed native walk keeps the original bank-seat result pending"
+    );
     rig.slot().lock().unwrap().stop();
 }
 
@@ -24896,8 +25347,6 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
             false,
             0,
             false,
-            0,
-            false,
             None,
             Default::default(),
             Default::default(),
@@ -25145,8 +25594,6 @@ export function tick(api) {
             None,
             false,
             false,
-            false,
-            0,
             false,
             0,
             false,

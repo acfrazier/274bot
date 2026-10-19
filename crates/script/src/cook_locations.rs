@@ -173,7 +173,7 @@ pub(crate) fn resolve<C, E>(
             continue;
         }
         let distance =
-            crate::bank_select::air_distance_squared(from, banks[location.bank].air_tile());
+            crate::native_bank::air_distance_squared(from, banks[location.bank].air_tile());
         if best.is_none_or(|(_, best)| distance < best) {
             best = Some((index, distance));
         }

@@ -17,9 +17,10 @@
 //!   ([`crate::bank::ops::next_chunk`]), `null` or `{ kind, count }` /
 //!   `{ kind, op }`.
 //! - `__rs2b0t_withdraw_op(ops, amount)`: frozen `withdrawOp`
-//!   ([`crate::bank_op::withdraw_op`]), the matching op label or `null`.
+//!   ([`crate::bank::compat::withdraw_op`]), the matching op label or `null`.
 
 use super::callback_v8::{self as cb, Callback, JsResult};
+use crate::bank::ops::same_name;
 use crate::periodic_bank::{
     minutes_since_last_bank, parse_bank_strategy, should_bank_now, suppressed,
 };
@@ -75,6 +76,14 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
         runtime,
         "__rs2b0t_bank_sort_is_unmatched",
         bank_sort_is_unmatched,
+    )?;
+    cb::install(runtime, "__rs2b0t_bank_snapshot", bank_snapshot)?;
+    cb::install(runtime, "__rs2b0t_deposit_matcher", deposit_matcher)?;
+    cb::install(runtime, "__rs2b0t_deposit_all_except", deposit_all_except)?;
+    cb::install(
+        runtime,
+        "__rs2b0t_periodic_bank_settings",
+        periodic_bank_settings,
     )
 }
 
@@ -86,7 +95,7 @@ fn withdraw_op<'s>(
     args: v8::FunctionCallbackArguments<'s>,
     rv: v8::ReturnValue,
 ) {
-    use crate::bank_op::{withdraw_op, WithdrawAmount};
+    use crate::bank::compat::{withdraw_op, WithdrawAmount};
     let result = (|| {
         let amount = args.get(1);
         let amount = amount
@@ -654,4 +663,290 @@ fn contains_word_after(name: &str, fragment: &str) -> bool {
 fn contains_sword_not_fish(name: &str) -> bool {
     name.match_indices("sword")
         .any(|(start, matched)| !name[start + matched.len()..].starts_with("fish"))
+}
+fn bank_snapshot<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| -> JsResult<'s, v8::Local<'s, v8::Value>> {
+        let operation = args.get(0);
+        if !operation.is_string() {
+            return Err(cb::type_error(
+                scope,
+                "bank snapshot operation must be a string",
+            ));
+        }
+        let operation = operation.to_rust_string_lossy(scope);
+        let name = if operation == "count" {
+            let name = args.get(1);
+            if !name.is_string() {
+                return Err(cb::type_error(scope, "bank count name must be a string"));
+            }
+            Some(name.to_rust_string_lossy(scope))
+        } else {
+            None
+        };
+        let wanted_id = if operation == "countById" {
+            let id = args.get(1);
+            if id.is_number() {
+                id.number_value(scope).unwrap_or(f64::NAN)
+            } else {
+                f64::NAN
+            }
+        } else {
+            f64::NAN
+        };
+
+        crate::observed::with(|scene| {
+            let latest = scene.latest();
+            let rows = latest.bank().map_or(&[][..], Vec::as_slice);
+            match operation.as_str() {
+                "isOpen" => Ok(v8::Boolean::new(scope, latest.bank_open().unwrap_or(false)).into()),
+                "loaded" => Ok(v8::Boolean::new(scope, !rows.is_empty()).into()),
+                "ready" => Ok(v8::Boolean::new(
+                    scope,
+                    latest.bank_open().unwrap_or(false)
+                        && (latest.bank_loaded().unwrap_or(false) || !rows.is_empty()),
+                )
+                .into()),
+                "snapshotReady" => {
+                    Ok(v8::Boolean::new(scope, latest.bank_loaded().unwrap_or(false)).into())
+                }
+                "snapshotGeneration" => {
+                    let generation = latest.bank_snapshot_generation().unwrap_or(-1);
+                    Ok(cb::num(
+                        scope,
+                        if generation >= 0 {
+                            generation as f64
+                        } else {
+                            -1.0
+                        },
+                    ))
+                }
+                "items" => bank_items(scope, rows),
+                "count" => {
+                    // The public reduction starts at positive zero, even with no matches.
+                    let name = name.as_deref().unwrap_or_default();
+                    let total: f64 = rows
+                        .iter()
+                        .filter_map(|row| {
+                            row.name
+                                .as_deref()
+                                .filter(|actual| same_name(actual, name))
+                                .map(|_| row.count)
+                        })
+                        .fold(0.0, |total, count| total + f64::from(count));
+                    Ok(cb::num(scope, total))
+                }
+                "countById" => {
+                    if rows.is_empty() {
+                        return Ok(cb::num(scope, 0.0));
+                    }
+                    if !rows.iter().any(|row| row.id != 0) {
+                        return Err(cb::not_impl(scope, "Bank.countById"));
+                    }
+                    let total: f64 = rows
+                        .iter()
+                        .filter(|row| f64::from(row.id) == wanted_id)
+                        .fold(0.0, |total, row| total + f64::from(row.count));
+                    Ok(cb::num(scope, total))
+                }
+                _ => Err(cb::type_error(scope, "unknown bank snapshot query")),
+            }
+        })
+    })();
+    cb::finish(scope, rv, result);
+}
+
+fn bank_items<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    rows: &[crate::observed::ItemRow],
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let items = v8::Array::new(scope, 0);
+    for (index, row) in rows.iter().enumerate() {
+        let index = u32::try_from(index)
+            .map_err(|_| cb::type_error(scope, "bank items exceed the V8 array limit"))?;
+        let ops = v8::Array::new(scope, 0);
+        for (op_index, op) in row.ops.iter().enumerate() {
+            let op_index = u32::try_from(op_index)
+                .map_err(|_| cb::type_error(scope, "bank ops exceed the V8 array limit"))?;
+            let label = cb::string(scope, op);
+            if !cb::catching(scope, |s| ops.set_index(s, op_index, label))? {
+                return Err(cb::type_error(scope, "could not materialize bank item ops"));
+            }
+        }
+        let name = match row.name.as_deref() {
+            Some(name) => cb::string(scope, name),
+            None => v8::null(scope).into(),
+        };
+        let count = cb::num(scope, f64::from(row.count));
+        let id = cb::num(scope, f64::from(row.id));
+        let slot = cb::num(scope, f64::from(row.slot.unwrap_or(-1)));
+        let component_id = cb::num(scope, f64::from(row.component_id.unwrap_or(-1)));
+        let noted = v8::Boolean::new(scope, row.noted).into();
+        let cert = cb::num(scope, f64::from(row.cert));
+        let item = cb::object(
+            scope,
+            &[
+                ("name", name),
+                ("count", count),
+                ("id", id),
+                ("slot", slot),
+                ("comId", component_id),
+                ("ops", ops.into()),
+                ("noted", noted),
+                ("cert", cert),
+            ],
+        )?;
+        if !cb::catching(scope, |s| items.set_index(s, index, item))? {
+            return Err(cb::type_error(scope, "could not materialize bank items"));
+        }
+    }
+    Ok(items.into())
+}
+
+fn deposit_matcher<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| -> JsResult<'s, v8::Local<'s, v8::Value>> {
+        let own = args.get(0);
+        if !own.is_function() {
+            let message = v8::String::new(scope, "not impl: depositMatcher: requires a function")
+                .unwrap_or_else(|| v8::String::empty(scope));
+            return Err(cb::Throw::Value(v8::Exception::error(scope, message)));
+        }
+        let include_common = cb::truthy(scope, args.get(1));
+        let include_common = v8::Boolean::new(scope, include_common).into();
+        let common = args.get(2);
+        let data = cb::object(
+            scope,
+            &[
+                ("own", own),
+                ("includeCommon", include_common),
+                ("common", common),
+            ],
+        )?;
+        let Some(function) = v8::Function::builder(deposit_matcher_predicate)
+            .data(data)
+            .build(scope)
+        else {
+            return Err(cb::type_error(
+                scope,
+                "could not create bank deposit matcher",
+            ));
+        };
+        Ok(function.into())
+    })();
+    cb::finish(scope, rv, result);
+}
+
+fn deposit_matcher_predicate<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| -> JsResult<'s, v8::Local<'s, v8::Value>> {
+        let data = args.data();
+        let own = cb::get(scope, data, "own")?;
+        let own = Callback::plain(scope, own, "own");
+        let name = args.get(0);
+        let own_result = own.call(scope, &[name])?;
+        if cb::truthy(scope, own_result) {
+            return Ok(own_result);
+        }
+
+        let include_common = cb::get(scope, data, "includeCommon")?;
+        if !cb::truthy(scope, include_common) {
+            return Ok(v8::Boolean::new(scope, false).into());
+        }
+        let common = cb::get(scope, data, "common")?;
+        Callback::plain(scope, common, "matchesCommonBankLoot").call(scope, &[name, args.get(1)])
+    })();
+    cb::finish(scope, rv, result);
+}
+
+fn deposit_all_except<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| -> JsResult<'s, v8::Local<'s, v8::Value>> {
+        let keep = args.get(0);
+        let keep = if cb::truthy(scope, keep) {
+            keep
+        } else {
+            v8::Array::new(scope, 0).into()
+        };
+        let global = scope.get_current_context().global(scope);
+        let array = cb::get(scope, global.into(), "Array")?;
+        let from = cb::get(scope, array, "from")?;
+        let array = cb::call(scope, from, array, &[keep], "Array.from")?;
+        let mapper = v8::Function::new(scope, lower_string)
+            .ok_or_else(|| cb::type_error(scope, "could not create bank matcher mapper"))?;
+        let mapped = cb::call_method(scope, array, "map", &[mapper.into()], "Array.from(...).map")?;
+        let set_constructor = cb::get(scope, global.into(), "Set")?;
+        let set = cb::construct(scope, set_constructor, &[mapped], "Set")?;
+        let data = cb::object(scope, &[("set", set)])?;
+        let Some(function) = v8::Function::builder(deposit_all_except_predicate)
+            .data(data)
+            .build(scope)
+        else {
+            return Err(cb::type_error(
+                scope,
+                "could not create bank deposit-except matcher",
+            ));
+        };
+        Ok(function.into())
+    })();
+    cb::finish(scope, rv, result);
+}
+
+fn lower_string<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| -> JsResult<'s, v8::Local<'s, v8::Value>> {
+        let global = scope.get_current_context().global(scope);
+        let string = cb::get(scope, global.into(), "String")?;
+        let undefined = v8::undefined(scope).into();
+        let value = cb::call(scope, string, undefined, &[args.get(0)], "String")?;
+        cb::call_method(scope, value, "toLowerCase", &[], "String(...).toLowerCase")
+    })();
+    cb::finish(scope, rv, result);
+}
+
+fn deposit_all_except_predicate<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| -> JsResult<'s, v8::Local<'s, v8::Value>> {
+        let name = args.get(0);
+        let length = cb::get(scope, name, "length")?;
+        let zero = cb::num(scope, 0.0);
+        if !cb::gt(scope, length, zero)? {
+            return Ok(v8::Boolean::new(scope, false).into());
+        }
+        let set = cb::get(scope, args.data(), "set")?;
+        let has = cb::get(scope, set, "has")?;
+        let lowered = cb::call_method(scope, name, "toLowerCase", &[], "name.toLowerCase")?;
+        let matched = cb::call(scope, has, set, &[lowered], "set.has")?;
+        let matched = cb::truthy(scope, matched);
+        Ok(v8::Boolean::new(scope, !matched).into())
+    })();
+    cb::finish(scope, rv, result);
+}
+
+fn periodic_bank_settings<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    _args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = rustyscript::deno_core::serde_v8::to_v8(scope, &crate::bank::PERIODIC_SETTINGS)
+        .map_err(|error| cb::type_error(scope, &format!("periodic bank settings: {error}")));
+    cb::finish(scope, rv, result);
 }

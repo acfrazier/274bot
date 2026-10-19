@@ -11,8 +11,20 @@ use script::hunt_bank::{
 };
 use script::hunt_fight::Tile;
 use script::isolate_fb::{encode_snapshot, ItemRowInput, Snapshot, SnapshotInput, TileInput};
-use script::{LoadIsolate, LoadShape};
+use script::LoadShape;
 use serde_json::{json, Value};
+
+#[path = "common/bank_slot.rs"]
+mod bank_slot;
+
+fn bank_slot(source: &str) -> bank_slot::BankSlot {
+    bank_slot::BankSlot::new(
+        source,
+        LoadShape::NativeTick,
+        None,
+        std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+    )
+}
 
 fn reset() {
     hunt_bank::on_reset();
@@ -594,35 +606,180 @@ export async function tick(api) {
   }, {}, { leave: async () => { globalThis.__leaves += 1; return false; } });
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let mut slot = bank_slot(src);
     for tick in 1..=2 {
-        iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(
+        slot.tick_from_input(
             tick,
-            TileInput {
-                x: 1,
-                z: 1,
-                level: 0,
-            },
-        )));
-        iso.on_game_tick(tick);
+            &empty_snapshot(
+                tick,
+                TileInput {
+                    x: 1,
+                    z: 1,
+                    level: 0,
+                },
+            ),
+            script::isolate_fb::NativeFactsInput::default(),
+        );
     }
     // Inside the lair, the caller's own leave runs; a failed leave ends
     // the trip false without walking to the bank.
-    assert_eq!(iso.probe("globalThis.__leaves").unwrap(), json!(1));
+    assert_eq!(slot.probe("globalThis.__leaves").unwrap(), json!(1));
     assert_eq!(
-        iso.probe("globalThis.__done").unwrap(),
+        slot.probe("globalThis.__done").unwrap(),
         json!({ "kind": "done", "value": false })
     );
     assert!(
-        !iso.drain_interacts()
+        !slot
+            .take_actions()
             .iter()
-            .any(|req| matches!(req, script::shim::InteractReq::WalkNear { .. })),
+            .any(|action| matches!(action.effect, script::native::HostEffect::Walk { .. })),
         "no bank walk after a failed leave"
     );
-    iso.join();
+    let (_, legacy, _) = slot.slot.drain_host_interacts();
+    assert!(!legacy
+        .iter()
+        .any(|row| matches!(row.req, script::shim::InteractReq::WalkNear { .. })));
+    slot.stop();
 }
 
-fn empty_snapshot(tick: u64, here: TileInput) -> SnapshotInput<'static> {
+#[test]
+fn v2_bank_run_uses_the_native_bank_open_child_and_bounds_a_rejected_dispatch() {
+    use api::quest_progress::EvidenceStamp;
+    use script::isolate_fb::{NativeFactsInput, ReachViewInput, SceneEntityInput};
+    use script::native::{HostEffect, InteractionReceipt};
+
+    let source = r#"
+export const apiVersion = 2;
+let started = false;
+export async function tick(api) {
+    if (started) return;
+    started = true;
+    globalThis.__done = await api.bankRun({
+        key: 'heroes-blue',
+        keyItem: null,
+        boxes: [],
+        bank: { x: 80, z: 80, level: 0 },
+        style: 'range',
+    }, {}, {});
+}
+"#;
+    let actions = vec!["Use-quickly".to_owned()];
+    let booths = [SceneEntityInput {
+        index: 2213,
+        id: 2213,
+        name: Some("Bank booth"),
+        x: 80,
+        z: 81,
+        level: 0,
+        distance: 1,
+        health: -1,
+        max_health: -1,
+        in_combat: false,
+        animating: false,
+        actions: &actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
+        shape: 10,
+        angle: 0,
+    }];
+    let booth_tiles = [TileInput {
+        x: 80,
+        z: 81,
+        level: 0,
+    }];
+    let mut snapshot = empty_snapshot(
+        1,
+        TileInput {
+            x: 80,
+            z: 80,
+            level: 0,
+        },
+    );
+    snapshot.booths = &booth_tiles;
+    snapshot.locs = &booths;
+    snapshot.reach = ReachViewInput {
+        available: true,
+        base_x: 76,
+        base_z: 76,
+        level: 0,
+        width: 8,
+        height: 8,
+        walkable: &[u32::MAX; 2],
+        reachable: &[u32::MAX; 2],
+        reachable_adj: &[u32::MAX; 2],
+        exact_rank: &[0; 64],
+        adjacent_rank: &[0; 64],
+        step: &[u8::MAX; 64],
+        canlight: &[0; 2],
+        stamp: 1,
+    };
+    let mut slot = bank_slot(source);
+    let mut sent = None;
+    for tick in 1..=8 {
+        snapshot.tick = tick;
+        slot.tick_from_input(tick, &snapshot, NativeFactsInput::default());
+        let mut actions = slot.take_actions();
+        if !actions.is_empty() {
+            assert_eq!(actions.len(), 1, "one native booth attempt");
+            sent = Some((actions.pop().unwrap(), tick));
+            break;
+        }
+    }
+    let (action, tick) = sent.expect("Hunt bank-open must reach the native seat");
+    assert!(matches!(
+        action.effect,
+        HostEffect::Interaction(script::shim::InteractReq::OpenBooth { id: 2213, .. })
+    ));
+    assert_eq!(
+        slot.probe("typeof globalThis.__done").unwrap(),
+        json!("undefined")
+    );
+    let authority = action.authority();
+    slot.slot.complete_native_interaction(
+        &authority,
+        InteractionReceipt {
+            request_id: action.request_id.get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick,
+                sequence: tick,
+            },
+            accepted: false,
+            chat_since: 0,
+        },
+    );
+    // The frozen one-shot booth path observes freshness for five seconds even
+    // when the host rejects its click. Exercise that real active-time bound.
+    std::thread::sleep(std::time::Duration::from_millis(5_100));
+    for next in tick + 1..=tick + 8 {
+        snapshot.tick = next;
+        slot.tick_from_input(next, &snapshot, NativeFactsInput::default());
+        assert!(
+            slot.take_actions().is_empty(),
+            "a failed opener is not retried"
+        );
+        if slot
+            .probe("typeof globalThis.__done !== 'undefined'")
+            .unwrap()
+            == json!(true)
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        slot.probe("globalThis.__done").unwrap(),
+        json!({ "kind": "done", "value": false })
+    );
+    slot.stop();
+}
+
+fn empty_snapshot<'a>(tick: u64, here: TileInput) -> SnapshotInput<'a> {
     SnapshotInput {
         tick,
         here: Some(here),
@@ -641,8 +798,6 @@ fn empty_snapshot(tick: u64, here: TileInput) -> SnapshotInput<'static> {
         count_dialog_open: false,
         withdraw_x_result_seq: 0,
         withdraw_x_result: false,
-        withdraw_load_result_seq: 0,
-        withdraw_load_result: false,
         bank_op_result_seq: 0,
         bank_op_result: false,
         hold: false,

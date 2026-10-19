@@ -770,6 +770,166 @@ impl<'a> ::flatbuffers::Verifiable for SeatPhase {
 }
 
 impl ::flatbuffers::SimpleToVerifyInSlice for SeatPhase {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_BANK_SEAT_OPERATION: u8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_BANK_SEAT_OPERATION: u8 = 20;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_BANK_SEAT_OPERATION: [BankSeatOperation; 21] = [
+  BankSeatOperation::None,
+  BankSeatOperation::OpenBooth,
+  BankSeatOperation::OpenNearest,
+  BankSeatOperation::OpenNearestWorld,
+  BankSeatOperation::OpenObject,
+  BankSeatOperation::OpenNpc,
+  BankSeatOperation::OpenAccess,
+  BankSeatOperation::Open,
+  BankSeatOperation::Select,
+  BankSeatOperation::DepositLabel,
+  BankSeatOperation::WithdrawLabel,
+  BankSeatOperation::WithdrawDelta,
+  BankSeatOperation::WithdrawLoad,
+  BankSeatOperation::DepositAll,
+  BankSeatOperation::DepositKeep,
+  BankSeatOperation::DepositMatch,
+  BankSeatOperation::SetNoteMode,
+  BankSeatOperation::Close,
+  BankSeatOperation::WaitReady,
+  BankSeatOperation::WaitSnapshotAfter,
+  BankSeatOperation::BankNearest,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct BankSeatOperation(pub u8);
+#[allow(non_upper_case_globals)]
+impl BankSeatOperation {
+  pub const None: Self = Self(0);
+  pub const OpenBooth: Self = Self(1);
+  pub const OpenNearest: Self = Self(2);
+  pub const OpenNearestWorld: Self = Self(3);
+  pub const OpenObject: Self = Self(4);
+  pub const OpenNpc: Self = Self(5);
+  pub const OpenAccess: Self = Self(6);
+  pub const Open: Self = Self(7);
+  pub const Select: Self = Self(8);
+  pub const DepositLabel: Self = Self(9);
+  pub const WithdrawLabel: Self = Self(10);
+  pub const WithdrawDelta: Self = Self(11);
+  pub const WithdrawLoad: Self = Self(12);
+  pub const DepositAll: Self = Self(13);
+  pub const DepositKeep: Self = Self(14);
+  pub const DepositMatch: Self = Self(15);
+  pub const SetNoteMode: Self = Self(16);
+  pub const Close: Self = Self(17);
+  pub const WaitReady: Self = Self(18);
+  pub const WaitSnapshotAfter: Self = Self(19);
+  pub const BankNearest: Self = Self(20);
+
+  pub const ENUM_MIN: u8 = 0;
+  pub const ENUM_MAX: u8 = 20;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::None,
+    Self::OpenBooth,
+    Self::OpenNearest,
+    Self::OpenNearestWorld,
+    Self::OpenObject,
+    Self::OpenNpc,
+    Self::OpenAccess,
+    Self::Open,
+    Self::Select,
+    Self::DepositLabel,
+    Self::WithdrawLabel,
+    Self::WithdrawDelta,
+    Self::WithdrawLoad,
+    Self::DepositAll,
+    Self::DepositKeep,
+    Self::DepositMatch,
+    Self::SetNoteMode,
+    Self::Close,
+    Self::WaitReady,
+    Self::WaitSnapshotAfter,
+    Self::BankNearest,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::None => Some("None"),
+      Self::OpenBooth => Some("OpenBooth"),
+      Self::OpenNearest => Some("OpenNearest"),
+      Self::OpenNearestWorld => Some("OpenNearestWorld"),
+      Self::OpenObject => Some("OpenObject"),
+      Self::OpenNpc => Some("OpenNpc"),
+      Self::OpenAccess => Some("OpenAccess"),
+      Self::Open => Some("Open"),
+      Self::Select => Some("Select"),
+      Self::DepositLabel => Some("DepositLabel"),
+      Self::WithdrawLabel => Some("WithdrawLabel"),
+      Self::WithdrawDelta => Some("WithdrawDelta"),
+      Self::WithdrawLoad => Some("WithdrawLoad"),
+      Self::DepositAll => Some("DepositAll"),
+      Self::DepositKeep => Some("DepositKeep"),
+      Self::DepositMatch => Some("DepositMatch"),
+      Self::SetNoteMode => Some("SetNoteMode"),
+      Self::Close => Some("Close"),
+      Self::WaitReady => Some("WaitReady"),
+      Self::WaitSnapshotAfter => Some("WaitSnapshotAfter"),
+      Self::BankNearest => Some("BankNearest"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for BankSeatOperation {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for BankSeatOperation {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<u8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for BankSeatOperation {
+    type Output = BankSeatOperation;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<u8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for BankSeatOperation {
+  type Scalar = u8;
+  #[inline]
+  fn to_little_endian(self) -> u8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: u8) -> Self {
+    let b = u8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for BankSeatOperation {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    u8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for BankSeatOperation {}
 pub enum TileOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -9854,6 +10014,917 @@ impl ::core::fmt::Debug for CombatFight<'_> {
       ds.finish()
   }
 }
+pub enum BankSeatObjectAccessOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct BankSeatObjectAccess<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for BankSeatObjectAccess<'a> {
+  type Inner = BankSeatObjectAccess<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> BankSeatObjectAccess<'a> {
+  pub const VT_NAME: ::flatbuffers::VOffsetT = 4;
+  pub const VT_OP: ::flatbuffers::VOffsetT = 6;
+  pub const VT_OPEN_FIRST_NAME: ::flatbuffers::VOffsetT = 8;
+  pub const VT_OPEN_FIRST_OP: ::flatbuffers::VOffsetT = 10;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    BankSeatObjectAccess { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args BankSeatObjectAccessArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<BankSeatObjectAccess<'bldr>> {
+    let mut builder = BankSeatObjectAccessBuilder::new(_fbb);
+    if let Some(x) = args.open_first_op { builder.add_open_first_op(x); }
+    if let Some(x) = args.open_first_name { builder.add_open_first_name(x); }
+    if let Some(x) = args.op { builder.add_op(x); }
+    if let Some(x) = args.name { builder.add_name(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn name(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(BankSeatObjectAccess::VT_NAME, None)}
+  }
+  #[inline]
+  pub fn op(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(BankSeatObjectAccess::VT_OP, None)}
+  }
+  #[inline]
+  pub fn open_first_name(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(BankSeatObjectAccess::VT_OPEN_FIRST_NAME, None)}
+  }
+  #[inline]
+  pub fn open_first_op(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(BankSeatObjectAccess::VT_OPEN_FIRST_OP, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for BankSeatObjectAccess<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("name", Self::VT_NAME, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("op", Self::VT_OP, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("open_first_name", Self::VT_OPEN_FIRST_NAME, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("open_first_op", Self::VT_OPEN_FIRST_OP, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct BankSeatObjectAccessArgs<'a> {
+    pub name: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub op: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub open_first_name: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub open_first_op: Option<::flatbuffers::WIPOffset<&'a str>>,
+}
+impl<'a> Default for BankSeatObjectAccessArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    BankSeatObjectAccessArgs {
+      name: None,
+      op: None,
+      open_first_name: None,
+      open_first_op: None,
+    }
+  }
+}
+
+pub struct BankSeatObjectAccessBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> BankSeatObjectAccessBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_name(&mut self, name: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(BankSeatObjectAccess::VT_NAME, name);
+  }
+  #[inline]
+  pub fn add_op(&mut self, op: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(BankSeatObjectAccess::VT_OP, op);
+  }
+  #[inline]
+  pub fn add_open_first_name(&mut self, open_first_name: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(BankSeatObjectAccess::VT_OPEN_FIRST_NAME, open_first_name);
+  }
+  #[inline]
+  pub fn add_open_first_op(&mut self, open_first_op: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(BankSeatObjectAccess::VT_OPEN_FIRST_OP, open_first_op);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> BankSeatObjectAccessBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    BankSeatObjectAccessBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<BankSeatObjectAccess<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for BankSeatObjectAccess<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("BankSeatObjectAccess");
+      ds.field("name", &self.name());
+      ds.field("op", &self.op());
+      ds.field("open_first_name", &self.open_first_name());
+      ds.field("open_first_op", &self.open_first_op());
+      ds.finish()
+  }
+}
+pub enum BankSeatNpcAccessOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct BankSeatNpcAccess<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for BankSeatNpcAccess<'a> {
+  type Inner = BankSeatNpcAccess<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> BankSeatNpcAccess<'a> {
+  pub const VT_NAME: ::flatbuffers::VOffsetT = 4;
+  pub const VT_OP: ::flatbuffers::VOffsetT = 6;
+  pub const VT_CHOOSE: ::flatbuffers::VOffsetT = 8;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    BankSeatNpcAccess { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args BankSeatNpcAccessArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<BankSeatNpcAccess<'bldr>> {
+    let mut builder = BankSeatNpcAccessBuilder::new(_fbb);
+    if let Some(x) = args.choose { builder.add_choose(x); }
+    if let Some(x) = args.op { builder.add_op(x); }
+    if let Some(x) = args.name { builder.add_name(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn name(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(BankSeatNpcAccess::VT_NAME, None)}
+  }
+  #[inline]
+  pub fn op(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(BankSeatNpcAccess::VT_OP, None)}
+  }
+  #[inline]
+  pub fn choose(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(BankSeatNpcAccess::VT_CHOOSE, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for BankSeatNpcAccess<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("name", Self::VT_NAME, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("op", Self::VT_OP, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("choose", Self::VT_CHOOSE, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct BankSeatNpcAccessArgs<'a> {
+    pub name: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub op: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub choose: Option<::flatbuffers::WIPOffset<&'a str>>,
+}
+impl<'a> Default for BankSeatNpcAccessArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    BankSeatNpcAccessArgs {
+      name: None,
+      op: None,
+      choose: None,
+    }
+  }
+}
+
+pub struct BankSeatNpcAccessBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> BankSeatNpcAccessBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_name(&mut self, name: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(BankSeatNpcAccess::VT_NAME, name);
+  }
+  #[inline]
+  pub fn add_op(&mut self, op: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(BankSeatNpcAccess::VT_OP, op);
+  }
+  #[inline]
+  pub fn add_choose(&mut self, choose: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(BankSeatNpcAccess::VT_CHOOSE, choose);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> BankSeatNpcAccessBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    BankSeatNpcAccessBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<BankSeatNpcAccess<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for BankSeatNpcAccess<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("BankSeatNpcAccess");
+      ds.field("name", &self.name());
+      ds.field("op", &self.op());
+      ds.field("choose", &self.choose());
+      ds.finish()
+  }
+}
+pub enum BankSeatDestinationOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct BankSeatDestination<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for BankSeatDestination<'a> {
+  type Inner = BankSeatDestination<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> BankSeatDestination<'a> {
+  pub const VT_TILE: ::flatbuffers::VOffsetT = 4;
+  pub const VT_OBJECT_ACCESS: ::flatbuffers::VOffsetT = 6;
+  pub const VT_NPC_ACCESS: ::flatbuffers::VOffsetT = 8;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    BankSeatDestination { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args BankSeatDestinationArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<BankSeatDestination<'bldr>> {
+    let mut builder = BankSeatDestinationBuilder::new(_fbb);
+    if let Some(x) = args.npc_access { builder.add_npc_access(x); }
+    if let Some(x) = args.object_access { builder.add_object_access(x); }
+    if let Some(x) = args.tile { builder.add_tile(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn tile(&self) -> Option<Tile<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<Tile>>(BankSeatDestination::VT_TILE, None)}
+  }
+  #[inline]
+  pub fn object_access(&self) -> Option<BankSeatObjectAccess<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<BankSeatObjectAccess>>(BankSeatDestination::VT_OBJECT_ACCESS, None)}
+  }
+  #[inline]
+  pub fn npc_access(&self) -> Option<BankSeatNpcAccess<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<BankSeatNpcAccess>>(BankSeatDestination::VT_NPC_ACCESS, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for BankSeatDestination<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<Tile>>("tile", Self::VT_TILE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<BankSeatObjectAccess>>("object_access", Self::VT_OBJECT_ACCESS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<BankSeatNpcAccess>>("npc_access", Self::VT_NPC_ACCESS, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct BankSeatDestinationArgs<'a> {
+    pub tile: Option<::flatbuffers::WIPOffset<Tile<'a>>>,
+    pub object_access: Option<::flatbuffers::WIPOffset<BankSeatObjectAccess<'a>>>,
+    pub npc_access: Option<::flatbuffers::WIPOffset<BankSeatNpcAccess<'a>>>,
+}
+impl<'a> Default for BankSeatDestinationArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    BankSeatDestinationArgs {
+      tile: None,
+      object_access: None,
+      npc_access: None,
+    }
+  }
+}
+
+pub struct BankSeatDestinationBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> BankSeatDestinationBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_tile(&mut self, tile: ::flatbuffers::WIPOffset<Tile<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<Tile>>(BankSeatDestination::VT_TILE, tile);
+  }
+  #[inline]
+  pub fn add_object_access(&mut self, object_access: ::flatbuffers::WIPOffset<BankSeatObjectAccess<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<BankSeatObjectAccess>>(BankSeatDestination::VT_OBJECT_ACCESS, object_access);
+  }
+  #[inline]
+  pub fn add_npc_access(&mut self, npc_access: ::flatbuffers::WIPOffset<BankSeatNpcAccess<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<BankSeatNpcAccess>>(BankSeatDestination::VT_NPC_ACCESS, npc_access);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> BankSeatDestinationBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    BankSeatDestinationBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<BankSeatDestination<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for BankSeatDestination<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("BankSeatDestination");
+      ds.field("tile", &self.tile());
+      ds.field("object_access", &self.object_access());
+      ds.field("npc_access", &self.npc_access());
+      ds.finish()
+  }
+}
+pub enum BankSeatArgsOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct BankSeatArgs<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for BankSeatArgs<'a> {
+  type Inner = BankSeatArgs<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> BankSeatArgs<'a> {
+  pub const VT_OPERATION: ::flatbuffers::VOffsetT = 4;
+  pub const VT_ITEM_ID: ::flatbuffers::VOffsetT = 6;
+  pub const VT_ITEM_NAME: ::flatbuffers::VOffsetT = 8;
+  pub const VT_MENU_OP: ::flatbuffers::VOffsetT = 10;
+  pub const VT_QUANTITY: ::flatbuffers::VOffsetT = 12;
+  pub const VT_LANDS_AS_ID: ::flatbuffers::VOffsetT = 14;
+  pub const VT_STAND: ::flatbuffers::VOffsetT = 16;
+  pub const VT_DESTINATION: ::flatbuffers::VOffsetT = 18;
+  pub const VT_OBJECT_ACCESS: ::flatbuffers::VOffsetT = 20;
+  pub const VT_NPC_ACCESS: ::flatbuffers::VOffsetT = 22;
+  pub const VT_FALLBACK_ACCESS: ::flatbuffers::VOffsetT = 24;
+  pub const VT_RETURN_TO: ::flatbuffers::VOffsetT = 26;
+  pub const VT_KEEP_NAMES: ::flatbuffers::VOffsetT = 28;
+  pub const VT_TIMEOUT_MS: ::flatbuffers::VOffsetT = 30;
+  pub const VT_BASELINE_GENERATION: ::flatbuffers::VOffsetT = 32;
+  pub const VT_PREFER_NEARBY: ::flatbuffers::VOffsetT = 34;
+  pub const VT_NEARBY_RADIUS: ::flatbuffers::VOffsetT = 36;
+  pub const VT_OBSTACLES: ::flatbuffers::VOffsetT = 38;
+  pub const VT_ALLOW_WILDERNESS: ::flatbuffers::VOffsetT = 40;
+  pub const VT_USE_MAGE_BANK: ::flatbuffers::VOffsetT = 42;
+  pub const VT_USE_ZANARIS_BANK: ::flatbuffers::VOffsetT = 44;
+  pub const VT_NOTE_MODE: ::flatbuffers::VOffsetT = 46;
+  pub const VT_DEPOSIT_ALL: ::flatbuffers::VOffsetT = 48;
+  pub const VT_COMMON_JUNK: ::flatbuffers::VOffsetT = 50;
+  pub const VT_HOOKS_PRESENT: ::flatbuffers::VOffsetT = 52;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    BankSeatArgs { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args BankSeatArgsArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<BankSeatArgs<'bldr>> {
+    let mut builder = BankSeatArgsBuilder::new(_fbb);
+    if let Some(x) = args.nearby_radius { builder.add_nearby_radius(x); }
+    if let Some(x) = args.baseline_generation { builder.add_baseline_generation(x); }
+    if let Some(x) = args.timeout_ms { builder.add_timeout_ms(x); }
+    if let Some(x) = args.quantity { builder.add_quantity(x); }
+    builder.add_hooks_present(args.hooks_present);
+    if let Some(x) = args.obstacles { builder.add_obstacles(x); }
+    if let Some(x) = args.keep_names { builder.add_keep_names(x); }
+    if let Some(x) = args.return_to { builder.add_return_to(x); }
+    if let Some(x) = args.fallback_access { builder.add_fallback_access(x); }
+    if let Some(x) = args.npc_access { builder.add_npc_access(x); }
+    if let Some(x) = args.object_access { builder.add_object_access(x); }
+    if let Some(x) = args.destination { builder.add_destination(x); }
+    if let Some(x) = args.stand { builder.add_stand(x); }
+    if let Some(x) = args.lands_as_id { builder.add_lands_as_id(x); }
+    if let Some(x) = args.menu_op { builder.add_menu_op(x); }
+    if let Some(x) = args.item_name { builder.add_item_name(x); }
+    if let Some(x) = args.item_id { builder.add_item_id(x); }
+    builder.add_common_junk(args.common_junk);
+    builder.add_deposit_all(args.deposit_all);
+    builder.add_note_mode(args.note_mode);
+    if let Some(x) = args.use_zanaris_bank { builder.add_use_zanaris_bank(x); }
+    if let Some(x) = args.use_mage_bank { builder.add_use_mage_bank(x); }
+    builder.add_allow_wilderness(args.allow_wilderness);
+    if let Some(x) = args.prefer_nearby { builder.add_prefer_nearby(x); }
+    builder.add_operation(args.operation);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn operation(&self) -> BankSeatOperation {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<BankSeatOperation>(BankSeatArgs::VT_OPERATION, Some(BankSeatOperation::None)).unwrap()}
+  }
+  #[inline]
+  pub fn item_id(&self) -> Option<i32> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(BankSeatArgs::VT_ITEM_ID, None)}
+  }
+  #[inline]
+  pub fn item_name(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(BankSeatArgs::VT_ITEM_NAME, None)}
+  }
+  #[inline]
+  pub fn menu_op(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(BankSeatArgs::VT_MENU_OP, None)}
+  }
+  #[inline]
+  pub fn quantity(&self) -> Option<i64> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i64>(BankSeatArgs::VT_QUANTITY, None)}
+  }
+  #[inline]
+  pub fn lands_as_id(&self) -> Option<i32> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(BankSeatArgs::VT_LANDS_AS_ID, None)}
+  }
+  #[inline]
+  pub fn stand(&self) -> Option<Tile<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<Tile>>(BankSeatArgs::VT_STAND, None)}
+  }
+  #[inline]
+  pub fn destination(&self) -> Option<BankSeatDestination<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<BankSeatDestination>>(BankSeatArgs::VT_DESTINATION, None)}
+  }
+  #[inline]
+  pub fn object_access(&self) -> Option<BankSeatObjectAccess<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<BankSeatObjectAccess>>(BankSeatArgs::VT_OBJECT_ACCESS, None)}
+  }
+  #[inline]
+  pub fn npc_access(&self) -> Option<BankSeatNpcAccess<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<BankSeatNpcAccess>>(BankSeatArgs::VT_NPC_ACCESS, None)}
+  }
+  #[inline]
+  pub fn fallback_access(&self) -> Option<BankSeatObjectAccess<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<BankSeatObjectAccess>>(BankSeatArgs::VT_FALLBACK_ACCESS, None)}
+  }
+  #[inline]
+  pub fn return_to(&self) -> Option<Tile<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<Tile>>(BankSeatArgs::VT_RETURN_TO, None)}
+  }
+  #[inline]
+  pub fn keep_names(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>(BankSeatArgs::VT_KEEP_NAMES, None)}
+  }
+  #[inline]
+  pub fn timeout_ms(&self) -> Option<f64> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<f64>(BankSeatArgs::VT_TIMEOUT_MS, None)}
+  }
+  #[inline]
+  pub fn baseline_generation(&self) -> Option<f64> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<f64>(BankSeatArgs::VT_BASELINE_GENERATION, None)}
+  }
+  #[inline]
+  pub fn prefer_nearby(&self) -> Option<bool> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(BankSeatArgs::VT_PREFER_NEARBY, None)}
+  }
+  #[inline]
+  pub fn nearby_radius(&self) -> Option<f64> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<f64>(BankSeatArgs::VT_NEARBY_RADIUS, None)}
+  }
+  #[inline]
+  pub fn obstacles(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>(BankSeatArgs::VT_OBSTACLES, None)}
+  }
+  #[inline]
+  pub fn allow_wilderness(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(BankSeatArgs::VT_ALLOW_WILDERNESS, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn use_mage_bank(&self) -> Option<bool> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(BankSeatArgs::VT_USE_MAGE_BANK, None)}
+  }
+  #[inline]
+  pub fn use_zanaris_bank(&self) -> Option<bool> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(BankSeatArgs::VT_USE_ZANARIS_BANK, None)}
+  }
+  #[inline]
+  pub fn note_mode(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(BankSeatArgs::VT_NOTE_MODE, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn deposit_all(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(BankSeatArgs::VT_DEPOSIT_ALL, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn common_junk(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(BankSeatArgs::VT_COMMON_JUNK, Some(true)).unwrap()}
+  }
+  #[inline]
+  pub fn hooks_present(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(BankSeatArgs::VT_HOOKS_PRESENT, Some(0)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for BankSeatArgs<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<BankSeatOperation>("operation", Self::VT_OPERATION, false)?
+     .visit_field::<i32>("item_id", Self::VT_ITEM_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("item_name", Self::VT_ITEM_NAME, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("menu_op", Self::VT_MENU_OP, false)?
+     .visit_field::<i64>("quantity", Self::VT_QUANTITY, false)?
+     .visit_field::<i32>("lands_as_id", Self::VT_LANDS_AS_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<Tile>>("stand", Self::VT_STAND, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<BankSeatDestination>>("destination", Self::VT_DESTINATION, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<BankSeatObjectAccess>>("object_access", Self::VT_OBJECT_ACCESS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<BankSeatNpcAccess>>("npc_access", Self::VT_NPC_ACCESS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<BankSeatObjectAccess>>("fallback_access", Self::VT_FALLBACK_ACCESS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<Tile>>("return_to", Self::VT_RETURN_TO, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<&'_ str>>>>("keep_names", Self::VT_KEEP_NAMES, false)?
+     .visit_field::<f64>("timeout_ms", Self::VT_TIMEOUT_MS, false)?
+     .visit_field::<f64>("baseline_generation", Self::VT_BASELINE_GENERATION, false)?
+     .visit_field::<bool>("prefer_nearby", Self::VT_PREFER_NEARBY, false)?
+     .visit_field::<f64>("nearby_radius", Self::VT_NEARBY_RADIUS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<&'_ str>>>>("obstacles", Self::VT_OBSTACLES, false)?
+     .visit_field::<bool>("allow_wilderness", Self::VT_ALLOW_WILDERNESS, false)?
+     .visit_field::<bool>("use_mage_bank", Self::VT_USE_MAGE_BANK, false)?
+     .visit_field::<bool>("use_zanaris_bank", Self::VT_USE_ZANARIS_BANK, false)?
+     .visit_field::<bool>("note_mode", Self::VT_NOTE_MODE, false)?
+     .visit_field::<bool>("deposit_all", Self::VT_DEPOSIT_ALL, false)?
+     .visit_field::<bool>("common_junk", Self::VT_COMMON_JUNK, false)?
+     .visit_field::<u32>("hooks_present", Self::VT_HOOKS_PRESENT, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct BankSeatArgsArgs<'a> {
+    pub operation: BankSeatOperation,
+    pub item_id: Option<i32>,
+    pub item_name: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub menu_op: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub quantity: Option<i64>,
+    pub lands_as_id: Option<i32>,
+    pub stand: Option<::flatbuffers::WIPOffset<Tile<'a>>>,
+    pub destination: Option<::flatbuffers::WIPOffset<BankSeatDestination<'a>>>,
+    pub object_access: Option<::flatbuffers::WIPOffset<BankSeatObjectAccess<'a>>>,
+    pub npc_access: Option<::flatbuffers::WIPOffset<BankSeatNpcAccess<'a>>>,
+    pub fallback_access: Option<::flatbuffers::WIPOffset<BankSeatObjectAccess<'a>>>,
+    pub return_to: Option<::flatbuffers::WIPOffset<Tile<'a>>>,
+    pub keep_names: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>,
+    pub timeout_ms: Option<f64>,
+    pub baseline_generation: Option<f64>,
+    pub prefer_nearby: Option<bool>,
+    pub nearby_radius: Option<f64>,
+    pub obstacles: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>,
+    pub allow_wilderness: bool,
+    pub use_mage_bank: Option<bool>,
+    pub use_zanaris_bank: Option<bool>,
+    pub note_mode: bool,
+    pub deposit_all: bool,
+    pub common_junk: bool,
+    pub hooks_present: u32,
+}
+impl<'a> Default for BankSeatArgsArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    BankSeatArgsArgs {
+      operation: BankSeatOperation::None,
+      item_id: None,
+      item_name: None,
+      menu_op: None,
+      quantity: None,
+      lands_as_id: None,
+      stand: None,
+      destination: None,
+      object_access: None,
+      npc_access: None,
+      fallback_access: None,
+      return_to: None,
+      keep_names: None,
+      timeout_ms: None,
+      baseline_generation: None,
+      prefer_nearby: None,
+      nearby_radius: None,
+      obstacles: None,
+      allow_wilderness: false,
+      use_mage_bank: None,
+      use_zanaris_bank: None,
+      note_mode: false,
+      deposit_all: false,
+      common_junk: true,
+      hooks_present: 0,
+    }
+  }
+}
+
+pub struct BankSeatArgsBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> BankSeatArgsBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_operation(&mut self, operation: BankSeatOperation) {
+    self.fbb_.push_slot::<BankSeatOperation>(BankSeatArgs::VT_OPERATION, operation, BankSeatOperation::None);
+  }
+  #[inline]
+  pub fn add_item_id(&mut self, item_id: i32) {
+    self.fbb_.push_slot_always::<i32>(BankSeatArgs::VT_ITEM_ID, item_id);
+  }
+  #[inline]
+  pub fn add_item_name(&mut self, item_name: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(BankSeatArgs::VT_ITEM_NAME, item_name);
+  }
+  #[inline]
+  pub fn add_menu_op(&mut self, menu_op: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(BankSeatArgs::VT_MENU_OP, menu_op);
+  }
+  #[inline]
+  pub fn add_quantity(&mut self, quantity: i64) {
+    self.fbb_.push_slot_always::<i64>(BankSeatArgs::VT_QUANTITY, quantity);
+  }
+  #[inline]
+  pub fn add_lands_as_id(&mut self, lands_as_id: i32) {
+    self.fbb_.push_slot_always::<i32>(BankSeatArgs::VT_LANDS_AS_ID, lands_as_id);
+  }
+  #[inline]
+  pub fn add_stand(&mut self, stand: ::flatbuffers::WIPOffset<Tile<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<Tile>>(BankSeatArgs::VT_STAND, stand);
+  }
+  #[inline]
+  pub fn add_destination(&mut self, destination: ::flatbuffers::WIPOffset<BankSeatDestination<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<BankSeatDestination>>(BankSeatArgs::VT_DESTINATION, destination);
+  }
+  #[inline]
+  pub fn add_object_access(&mut self, object_access: ::flatbuffers::WIPOffset<BankSeatObjectAccess<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<BankSeatObjectAccess>>(BankSeatArgs::VT_OBJECT_ACCESS, object_access);
+  }
+  #[inline]
+  pub fn add_npc_access(&mut self, npc_access: ::flatbuffers::WIPOffset<BankSeatNpcAccess<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<BankSeatNpcAccess>>(BankSeatArgs::VT_NPC_ACCESS, npc_access);
+  }
+  #[inline]
+  pub fn add_fallback_access(&mut self, fallback_access: ::flatbuffers::WIPOffset<BankSeatObjectAccess<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<BankSeatObjectAccess>>(BankSeatArgs::VT_FALLBACK_ACCESS, fallback_access);
+  }
+  #[inline]
+  pub fn add_return_to(&mut self, return_to: ::flatbuffers::WIPOffset<Tile<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<Tile>>(BankSeatArgs::VT_RETURN_TO, return_to);
+  }
+  #[inline]
+  pub fn add_keep_names(&mut self, keep_names: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<&'b  str>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(BankSeatArgs::VT_KEEP_NAMES, keep_names);
+  }
+  #[inline]
+  pub fn add_timeout_ms(&mut self, timeout_ms: f64) {
+    self.fbb_.push_slot_always::<f64>(BankSeatArgs::VT_TIMEOUT_MS, timeout_ms);
+  }
+  #[inline]
+  pub fn add_baseline_generation(&mut self, baseline_generation: f64) {
+    self.fbb_.push_slot_always::<f64>(BankSeatArgs::VT_BASELINE_GENERATION, baseline_generation);
+  }
+  #[inline]
+  pub fn add_prefer_nearby(&mut self, prefer_nearby: bool) {
+    self.fbb_.push_slot_always::<bool>(BankSeatArgs::VT_PREFER_NEARBY, prefer_nearby);
+  }
+  #[inline]
+  pub fn add_nearby_radius(&mut self, nearby_radius: f64) {
+    self.fbb_.push_slot_always::<f64>(BankSeatArgs::VT_NEARBY_RADIUS, nearby_radius);
+  }
+  #[inline]
+  pub fn add_obstacles(&mut self, obstacles: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<&'b  str>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(BankSeatArgs::VT_OBSTACLES, obstacles);
+  }
+  #[inline]
+  pub fn add_allow_wilderness(&mut self, allow_wilderness: bool) {
+    self.fbb_.push_slot::<bool>(BankSeatArgs::VT_ALLOW_WILDERNESS, allow_wilderness, false);
+  }
+  #[inline]
+  pub fn add_use_mage_bank(&mut self, use_mage_bank: bool) {
+    self.fbb_.push_slot_always::<bool>(BankSeatArgs::VT_USE_MAGE_BANK, use_mage_bank);
+  }
+  #[inline]
+  pub fn add_use_zanaris_bank(&mut self, use_zanaris_bank: bool) {
+    self.fbb_.push_slot_always::<bool>(BankSeatArgs::VT_USE_ZANARIS_BANK, use_zanaris_bank);
+  }
+  #[inline]
+  pub fn add_note_mode(&mut self, note_mode: bool) {
+    self.fbb_.push_slot::<bool>(BankSeatArgs::VT_NOTE_MODE, note_mode, false);
+  }
+  #[inline]
+  pub fn add_deposit_all(&mut self, deposit_all: bool) {
+    self.fbb_.push_slot::<bool>(BankSeatArgs::VT_DEPOSIT_ALL, deposit_all, false);
+  }
+  #[inline]
+  pub fn add_common_junk(&mut self, common_junk: bool) {
+    self.fbb_.push_slot::<bool>(BankSeatArgs::VT_COMMON_JUNK, common_junk, true);
+  }
+  #[inline]
+  pub fn add_hooks_present(&mut self, hooks_present: u32) {
+    self.fbb_.push_slot::<u32>(BankSeatArgs::VT_HOOKS_PRESENT, hooks_present, 0);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> BankSeatArgsBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    BankSeatArgsBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<BankSeatArgs<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for BankSeatArgs<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("BankSeatArgs");
+      ds.field("operation", &self.operation());
+      ds.field("item_id", &self.item_id());
+      ds.field("item_name", &self.item_name());
+      ds.field("menu_op", &self.menu_op());
+      ds.field("quantity", &self.quantity());
+      ds.field("lands_as_id", &self.lands_as_id());
+      ds.field("stand", &self.stand());
+      ds.field("destination", &self.destination());
+      ds.field("object_access", &self.object_access());
+      ds.field("npc_access", &self.npc_access());
+      ds.field("fallback_access", &self.fallback_access());
+      ds.field("return_to", &self.return_to());
+      ds.field("keep_names", &self.keep_names());
+      ds.field("timeout_ms", &self.timeout_ms());
+      ds.field("baseline_generation", &self.baseline_generation());
+      ds.field("prefer_nearby", &self.prefer_nearby());
+      ds.field("nearby_radius", &self.nearby_radius());
+      ds.field("obstacles", &self.obstacles());
+      ds.field("allow_wilderness", &self.allow_wilderness());
+      ds.field("use_mage_bank", &self.use_mage_bank());
+      ds.field("use_zanaris_bank", &self.use_zanaris_bank());
+      ds.field("note_mode", &self.note_mode());
+      ds.field("deposit_all", &self.deposit_all());
+      ds.field("common_junk", &self.common_junk());
+      ds.field("hooks_present", &self.hooks_present());
+      ds.finish()
+  }
+}
 pub enum SeatArgsOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -9873,6 +10944,7 @@ impl<'a> SeatArgs<'a> {
   pub const VT_GATHER_SETTINGS: ::flatbuffers::VOffsetT = 4;
   pub const VT_COMBAT: ::flatbuffers::VOffsetT = 6;
   pub const VT_PROGRESS_NAME: ::flatbuffers::VOffsetT = 8;
+  pub const VT_BANK: ::flatbuffers::VOffsetT = 10;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -9884,6 +10956,7 @@ impl<'a> SeatArgs<'a> {
     args: &'args SeatArgsArgs<'args>
   ) -> ::flatbuffers::WIPOffset<SeatArgs<'bldr>> {
     let mut builder = SeatArgsBuilder::new(_fbb);
+    if let Some(x) = args.bank { builder.add_bank(x); }
     if let Some(x) = args.progress_name { builder.add_progress_name(x); }
     if let Some(x) = args.combat { builder.add_combat(x); }
     if let Some(x) = args.gather_settings { builder.add_gather_settings(x); }
@@ -9912,6 +10985,13 @@ impl<'a> SeatArgs<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(SeatArgs::VT_PROGRESS_NAME, None)}
   }
+  #[inline]
+  pub fn bank(&self) -> Option<BankSeatArgs<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<BankSeatArgs>>(SeatArgs::VT_BANK, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for SeatArgs<'_> {
@@ -9923,6 +11003,7 @@ impl ::flatbuffers::Verifiable for SeatArgs<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SettingRow>>>>("gather_settings", Self::VT_GATHER_SETTINGS, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<CombatFight>>("combat", Self::VT_COMBAT, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("progress_name", Self::VT_PROGRESS_NAME, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<BankSeatArgs>>("bank", Self::VT_BANK, false)?
      .finish();
     Ok(())
   }
@@ -9931,6 +11012,7 @@ pub struct SeatArgsArgs<'a> {
     pub gather_settings: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SettingRow<'a>>>>>,
     pub combat: Option<::flatbuffers::WIPOffset<CombatFight<'a>>>,
     pub progress_name: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub bank: Option<::flatbuffers::WIPOffset<BankSeatArgs<'a>>>,
 }
 impl<'a> Default for SeatArgsArgs<'a> {
   #[inline]
@@ -9939,6 +11021,7 @@ impl<'a> Default for SeatArgsArgs<'a> {
       gather_settings: None,
       combat: None,
       progress_name: None,
+      bank: None,
     }
   }
 }
@@ -9961,6 +11044,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SeatArgsBuilder<'a, 'b, A> {
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(SeatArgs::VT_PROGRESS_NAME, progress_name);
   }
   #[inline]
+  pub fn add_bank(&mut self, bank: ::flatbuffers::WIPOffset<BankSeatArgs<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<BankSeatArgs>>(SeatArgs::VT_BANK, bank);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SeatArgsBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SeatArgsBuilder {
@@ -9981,6 +11068,7 @@ impl ::core::fmt::Debug for SeatArgs<'_> {
       ds.field("gather_settings", &self.gather_settings());
       ds.field("combat", &self.combat());
       ds.field("progress_name", &self.progress_name());
+      ds.field("bank", &self.bank());
       ds.finish()
   }
 }
@@ -11139,8 +12227,6 @@ impl<'a> Interact<'a> {
   pub const VT_AVOID: ::flatbuffers::VOffsetT = 60;
   pub const VT_INSPECT_ACK_SEQ: ::flatbuffers::VOffsetT = 62;
   pub const VT_INSPECT_ACK_GENERATION: ::flatbuffers::VOffsetT = 64;
-  pub const VT_USE_MAGE_BANK: ::flatbuffers::VOffsetT = 66;
-  pub const VT_USE_ZANARIS_BANK: ::flatbuffers::VOffsetT = 68;
   pub const VT_CHANNEL_ID: ::flatbuffers::VOffsetT = 70;
   pub const VT_DATA: ::flatbuffers::VOffsetT = 72;
   pub const VT_SEQ: ::flatbuffers::VOffsetT = 74;
@@ -11206,8 +12292,6 @@ impl<'a> Interact<'a> {
     builder.add_run_energy_kind(args.run_energy_kind);
     builder.add_run_auto_kind(args.run_auto_kind);
     builder.add_run_policy_clear(args.run_policy_clear);
-    builder.add_use_zanaris_bank(args.use_zanaris_bank);
-    builder.add_use_mage_bank(args.use_mage_bank);
     builder.add_allow_teleports(args.allow_teleports);
     builder.add_allow_bank_fetch(args.allow_bank_fetch);
     builder.add_allow_wilderness(args.allow_wilderness);
@@ -11433,20 +12517,6 @@ impl<'a> Interact<'a> {
     unsafe { self._tab.get::<u64>(Interact::VT_INSPECT_ACK_GENERATION, Some(0)).unwrap()}
   }
   #[inline]
-  pub fn use_mage_bank(&self) -> bool {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<bool>(Interact::VT_USE_MAGE_BANK, Some(false)).unwrap()}
-  }
-  #[inline]
-  pub fn use_zanaris_bank(&self) -> bool {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<bool>(Interact::VT_USE_ZANARIS_BANK, Some(false)).unwrap()}
-  }
-  #[inline]
   pub fn channel_id(&self) -> u64 {
     // Safety:
     // Created from valid Table for this object
@@ -11576,8 +12646,6 @@ impl ::flatbuffers::Verifiable for Interact<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<AvoidRect>>>>("avoid", Self::VT_AVOID, false)?
      .visit_field::<u64>("inspect_ack_seq", Self::VT_INSPECT_ACK_SEQ, false)?
      .visit_field::<u64>("inspect_ack_generation", Self::VT_INSPECT_ACK_GENERATION, false)?
-     .visit_field::<bool>("use_mage_bank", Self::VT_USE_MAGE_BANK, false)?
-     .visit_field::<bool>("use_zanaris_bank", Self::VT_USE_ZANARIS_BANK, false)?
      .visit_field::<u64>("channel_id", Self::VT_CHANNEL_ID, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, u8>>>("data", Self::VT_DATA, false)?
      .visit_field::<u64>("seq", Self::VT_SEQ, false)?
@@ -11627,8 +12695,6 @@ pub struct InteractArgs<'a> {
     pub avoid: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<AvoidRect<'a>>>>>,
     pub inspect_ack_seq: u64,
     pub inspect_ack_generation: u64,
-    pub use_mage_bank: bool,
-    pub use_zanaris_bank: bool,
     pub channel_id: u64,
     pub data: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, u8>>>,
     pub seq: u64,
@@ -11678,8 +12744,6 @@ impl<'a> Default for InteractArgs<'a> {
       avoid: None,
       inspect_ack_seq: 0,
       inspect_ack_generation: 0,
-      use_mage_bank: false,
-      use_zanaris_bank: false,
       channel_id: 0,
       data: None,
       seq: 0,
@@ -11827,14 +12891,6 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> InteractBuilder<'a, 'b, A> {
     self.fbb_.push_slot::<u64>(Interact::VT_INSPECT_ACK_GENERATION, inspect_ack_generation, 0);
   }
   #[inline]
-  pub fn add_use_mage_bank(&mut self, use_mage_bank: bool) {
-    self.fbb_.push_slot::<bool>(Interact::VT_USE_MAGE_BANK, use_mage_bank, false);
-  }
-  #[inline]
-  pub fn add_use_zanaris_bank(&mut self, use_zanaris_bank: bool) {
-    self.fbb_.push_slot::<bool>(Interact::VT_USE_ZANARIS_BANK, use_zanaris_bank, false);
-  }
-  #[inline]
   pub fn add_channel_id(&mut self, channel_id: u64) {
     self.fbb_.push_slot::<u64>(Interact::VT_CHANNEL_ID, channel_id, 0);
   }
@@ -11935,8 +12991,6 @@ impl ::core::fmt::Debug for Interact<'_> {
       ds.field("avoid", &self.avoid());
       ds.field("inspect_ack_seq", &self.inspect_ack_seq());
       ds.field("inspect_ack_generation", &self.inspect_ack_generation());
-      ds.field("use_mage_bank", &self.use_mage_bank());
-      ds.field("use_zanaris_bank", &self.use_zanaris_bank());
       ds.field("channel_id", &self.channel_id());
       ds.field("data", &self.data());
       ds.field("seq", &self.seq());

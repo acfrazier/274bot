@@ -44,33 +44,14 @@ export function shouldBankNow(strategy, state) {
 }
 
 export function depositMatcher(own, includeCommon) {
-    if (typeof own !== 'function') throw notImpl('depositMatcher', 'requires a function');
-    return (name, id = -1) => own(name) || (!!includeCommon && matchesCommonBankLoot(name, id));
+    return globalThis.__rs2b0t_deposit_matcher(own, includeCommon, matchesCommonBankLoot);
 }
 
 export function depositAllExcept(keep) {
-    const set = new Set(Array.from(keep || []).map((s) => String(s).toLowerCase()));
-    return (name) => name.length > 0 && !set.has(name.toLowerCase());
+    return globalThis.__rs2b0t_deposit_all_except(keep);
 }
 
-const BANK_STRATEGY_OPTIONS = ['Off', 'Loot count', 'Time', 'Either'];
-
-export const PERIODIC_BANK_SETTINGS = {
-    bankStrategy: {
-        type: 'string',
-        default: 'Off',
-        options: BANK_STRATEGY_OPTIONS,
-        label: 'Periodic bank',
-        help: 'save accumulated loot so a death does not lose it all',
-    },
-    bankEveryItems: { type: 'number', default: 15, min: 1, max: 27, label: 'Bank at N loot items' },
-    bankEveryMinutes: { type: 'number', default: 10, min: 1, max: 120, label: 'Bank every N minutes' },
-    bankCommonJunk: {
-        type: 'boolean',
-        default: true,
-        label: 'Also bank gems/fruit/beer/kebabs/caskets',
-    },
-};
+export const PERIODIC_BANK_SETTINGS = globalThis.__rs2b0t_periodic_bank_settings();
 
 export function parseBankStrategy(label) {
     return globalThis.__rs2b0t_periodic_bank_rules('parseBankStrategy', label);

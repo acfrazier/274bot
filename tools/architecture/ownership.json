@@ -2875,6 +2875,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/bank/compat.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/bank/npc.rs",
       "owner": "T2"
     },
@@ -2887,11 +2891,19 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/bank_access.rs",
+      "path": "crates/script/src/bank/prompt_args_tests.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/bank_deposit.rs",
+      "path": "crates/script/src/bank/request.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/bank/seat_open.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/bank/seat_transfer.rs",
       "owner": "T2"
     },
     {
@@ -2899,23 +2911,11 @@
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/bank_op.rs",
-      "owner": "T2"
-    },
-    {
-      "path": "crates/script/src/bank_open.rs",
-      "owner": "T2"
-    },
-    {
       "path": "crates/script/src/bank_select.rs",
       "owner": "T2"
     },
     {
       "path": "crates/script/src/bank_withdraw.rs",
-      "owner": "T2"
-    },
-    {
-      "path": "crates/script/src/banking_open.rs",
       "owner": "T2"
     },
     {
@@ -4443,6 +4443,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/script/src/slot/bank.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/script/src/slot/combat.rs",
       "owner": "T1"
     },
@@ -4571,6 +4575,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/tests/bank_v2_load.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/tests/bank_withdraw_op.rs",
       "owner": "T2"
     },
@@ -4652,6 +4660,10 @@
     },
     {
       "path": "crates/script/tests/combat_style_contract.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/common/bank_slot.rs",
       "owner": "T2"
     },
     {

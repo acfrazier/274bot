@@ -48,6 +48,7 @@ pub(super) fn native_pick_action(
     banks: Vec<NamedBank>,
     from: WorldTile,
     explicit: Option<&str>,
+    allow_air_fallback: bool,
 ) -> (script::SlotScript, script::native::HostAction) {
     use script::native::{ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow};
     use script::native_bank::{Select, SelectArgs};
@@ -77,6 +78,7 @@ pub(super) fn native_pick_action(
                 preferences: BankPreferences::default(),
                 options: script::native::WalkOptions::default(),
                 explicit: explicit.map(Arc::from),
+                allow_air_fallback,
             }),
             handle: None,
         }),
@@ -138,6 +140,7 @@ pub(super) fn request(
     let native = native.map(|native| NativePickContext {
         authority: native.authority,
         evidence: native.evidence,
+        allow_air_fallback: native.request.allow_air_fallback,
     });
     super::make_bank_pick_request(
         request_id,
@@ -231,6 +234,7 @@ pub fn measures_captured_native_bank_pick_cpu() {
         world.named_bank_facts().unwrap().banks().to_vec(),
         from,
         Some(explicit),
+        false,
     );
     let authority = action.authority();
     let script::native::HostEffect::BankPick(native_request) = action.effect else {

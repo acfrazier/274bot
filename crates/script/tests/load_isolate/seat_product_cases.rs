@@ -2,7 +2,7 @@ use super::*;
 use api::script_contract::{AbortReason, CallbackCancelReason, ChildOrigin};
 use script::api_progress::ProgressPage;
 use script::isolate_fb::{
-    BankSelectionInput, NativeFactsInput, SeatLiveDetails, SeatPageInput, SeatStartArgs,
+    NativeFactsInput, SeatLiveDetails, SeatPageInput, SeatResultValue, SeatStartArgs,
     SeatStartInput, TileInput,
 };
 use script::load::QueuedSeatBatch;
@@ -79,6 +79,23 @@ fn post_test_tick(
     let _ = iso.probe("true").expect("posted product tick completes");
 }
 
+fn post_test_snapshot_with_native(
+    iso: &LoadIsolate,
+    snapshot: &mut script::isolate_fb::SnapshotInput<'_>,
+    tick: u64,
+    evidence_sequence: u64,
+    native: NativeFactsInput<'_>,
+) {
+    snapshot.tick = tick;
+    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
+        snapshot, native,
+    ));
+    iso.on_snapshot_change_at(tick, 0, evidence_sequence);
+    let _ = iso
+        .probe("true")
+        .expect("posted owner-bound product snapshot completes");
+}
+
 fn seat_reqs(
     batches: &[QueuedSeatBatch],
 ) -> impl Iterator<Item = &script::isolate_fb::SeatInteractDecoded> {
@@ -87,6 +104,16 @@ fn seat_reqs(
 
 fn seat_starts(batches: &[QueuedSeatBatch]) -> impl Iterator<Item = &SeatStartInput> {
     batches.iter().flat_map(|batch| batch.batch.starts.iter())
+}
+
+fn assert_bank_start_operation(start: &SeatStartInput, operation: &str) {
+    let SeatStartArgs::Bank(args) = &start.args else {
+        panic!("bank starts require typed bank arguments: {:?}", start.args);
+    };
+    assert!(
+        format!("{args:?}").contains(&format!("operation: {operation},")),
+        "expected bank operation {operation}, got {args:?}"
+    );
 }
 
 #[test]
@@ -164,7 +191,10 @@ export function tick(api) {
     snapshot.bank_loaded = true;
     snapshot.bank_generation = 1;
 
+    // These protocol, lineage, and async-context fixtures acknowledge host pages explicitly.
+    // Bank execution behavior is covered separately by the BankSlot fixtures.
     let mut batches = Vec::new();
+    let mut bank_open_id = None;
     for tick in 1..=12 {
         if tick >= 4 {
             snapshot.here = Some(TileInput {
@@ -174,7 +204,69 @@ export function tick(api) {
             });
         }
         post_test_tick(&iso, &mut snapshot, tick);
-        batches.extend(iso.drain_seat_batches());
+        let tick_batches = iso.drain_seat_batches();
+        if bank_open_id.is_none() {
+            if let Some(start) =
+                seat_starts(&tick_batches).find(|start| start.kind == NativeKind::BankPlan)
+            {
+                assert_bank_start_operation(start, "Open");
+                bank_open_id = Some(start.id);
+            }
+        }
+        batches.extend(tick_batches);
+
+        if tick == 3 {
+            // Host protocol pages carry admission and completion at this same
+            // observed tick; snapshot-only pumps keep the walk's tick-4 arrival.
+            let id = bank_open_id.expect("Banking.open starts before tick 3");
+            let live = [root_seat_entry(id, NativeKind::BankPlan)];
+            let details = [SeatLiveDetails {
+                id,
+                phase: script::native::NativePhase::Waiting,
+                prompt: None,
+            }];
+            let live_page = SeatPageInput::new(&live, &[], &details, 0).unwrap();
+            post_test_snapshot_with_native(
+                &iso,
+                &mut snapshot,
+                tick,
+                1,
+                NativeFactsInput {
+                    seat_page: Some(live_page),
+                    ..NativeFactsInput::default()
+                },
+            );
+
+            let terminal = [SeatResult {
+                id,
+                seq: 1,
+                outcome: SeatTerminal::Done,
+                prior_parent: None,
+                session: Some(id),
+                authority_revoked: false,
+            }];
+            let value = serde_json::Value::Bool(true);
+            let encoded_value = script::channel::encode(&value).unwrap();
+            let values = [SeatResultValue {
+                id,
+                value: &encoded_value,
+            }];
+            let terminal_page = SeatPageInput::new(&[], &terminal, &[], 0)
+                .unwrap()
+                .with_result_values(&values)
+                .unwrap();
+            post_test_snapshot_with_native(
+                &iso,
+                &mut snapshot,
+                tick,
+                2,
+                NativeFactsInput {
+                    seat_page: Some(terminal_page),
+                    ..NativeFactsInput::default()
+                },
+            );
+            batches.extend(iso.drain_seat_batches());
+        }
         if iso.probe("globalThis.__rootDone").unwrap() == true {
             break;
         }
@@ -194,6 +286,10 @@ export function tick(api) {
         "leave-context"
     );
     assert_eq!(iso.probe("globalThis.__siteUnchanged").unwrap(), true);
+    let bank_open = seat_starts(&batches)
+        .find(|start| start.kind == NativeKind::BankPlan)
+        .expect("Banking.open starts a typed bank seat");
+    assert_bank_start_operation(bank_open, "Open");
     let order = iso.probe("globalThis.__leaveOrder").unwrap();
     let order = order.as_array().unwrap();
     let position = |name: &str| order.iter().position(|item| item == name).unwrap();
@@ -411,10 +507,77 @@ export function tick(api) {
     snapshot.bank_open = true;
     snapshot.bank_loaded = true;
     snapshot.bank_generation = 1;
+    // This protocol and async-context fixture acknowledges host pages explicitly.
+    // Bank execution behavior is covered separately by the BankSlot fixtures.
     let mut batches = Vec::new();
-    for tick in 1..=4 {
-        post_test_tick(&iso, &mut snapshot, tick);
-        batches.extend(iso.drain_seat_batches());
+    let mut bank_open_id = None;
+    let mut bank_live = false;
+    let mut next_terminal_seq = 1;
+    for tick in 1..=8 {
+        if let Some(id) = bank_open_id {
+            if !bank_live {
+                let live = [root_seat_entry(id, NativeKind::BankPlan)];
+                let details = [SeatLiveDetails {
+                    id,
+                    phase: script::native::NativePhase::Waiting,
+                    prompt: None,
+                }];
+                let seat_page = SeatPageInput::new(&live, &[], &details, 0).unwrap();
+                post_test_tick_with_native(
+                    &iso,
+                    &mut snapshot,
+                    tick,
+                    NativeFactsInput {
+                        seat_page: Some(seat_page),
+                        ..NativeFactsInput::default()
+                    },
+                );
+                bank_live = true;
+            } else {
+                let terminal = [SeatResult {
+                    id,
+                    seq: next_terminal_seq,
+                    outcome: SeatTerminal::Done,
+                    prior_parent: None,
+                    session: Some(id),
+                    authority_revoked: false,
+                }];
+                let value = serde_json::Value::Bool(true);
+                let encoded_value = script::channel::encode(&value).unwrap();
+                let values = [SeatResultValue {
+                    id,
+                    value: &encoded_value,
+                }];
+                let seat_page = SeatPageInput::new(&[], &terminal, &[], 0)
+                    .unwrap()
+                    .with_result_values(&values)
+                    .unwrap();
+                post_test_tick_with_native(
+                    &iso,
+                    &mut snapshot,
+                    tick,
+                    NativeFactsInput {
+                        seat_page: Some(seat_page),
+                        ..NativeFactsInput::default()
+                    },
+                );
+                bank_open_id = None;
+                bank_live = false;
+                next_terminal_seq += 1;
+            }
+        } else {
+            post_test_tick(&iso, &mut snapshot, tick);
+        }
+        let tick_batches = iso.drain_seat_batches();
+        if bank_open_id.is_none() {
+            if let Some(start) =
+                seat_starts(&tick_batches).find(|start| start.kind == NativeKind::BankPlan)
+            {
+                assert_bank_start_operation(start, "Open");
+                bank_open_id = Some(start.id);
+            }
+        }
+        batches.extend(tick_batches);
     }
 
     assert_eq!(
@@ -605,6 +768,7 @@ export function tick(api) {
             .find(|start| start.kind == NativeKind::BankNearest)
             .expect("Banking.bankNearest starts a real typed Capability child");
         assert_eq!(child.parent, Some(parent_id));
+        assert_bank_start_operation(child, "BankNearest");
         child.id
     };
 
@@ -710,14 +874,12 @@ export function tick(api) {
     post_test_tick(&iso, &mut snapshot, 1);
     batches.extend(iso.drain_seat_batches());
 
-    let select = seat_reqs(&batches)
-        .find_map(|row| match &row.request {
-            InteractReq::SelectBank { request_id, .. } => Some((*request_id, row)),
-            _ => None,
-        })
-        .expect("bankNearestReachable emits a real SelectBank product request");
-    assert!(select.1.lineage.is_none());
-    assert!(select.1.mirror_owner.is_some());
+    let bank = seat_starts(&batches)
+        .find(|start| start.kind == NativeKind::BankPlan)
+        .expect("bankNearestReachable starts a typed bank Select seat");
+    assert_eq!(bank.parent, None);
+    assert_bank_start_operation(bank, "Select");
+    let bank_id = bank.id;
     let progress = seat_starts(&batches)
         .find(|start| start.kind == NativeKind::QuestProgress)
         .expect("questProgress is carried as its typed native family start");
@@ -730,22 +892,24 @@ export function tick(api) {
     );
     let progress_id = progress.id;
     let progress_token = progress_id.get();
-    assert!(select.0 > 0);
 
-    let live = [root_seat_entry(progress_id, NativeKind::QuestProgress)];
-    let details = [root_seat_details(progress_id)];
+    let live = [
+        root_seat_entry(bank_id, NativeKind::BankPlan),
+        root_seat_entry(progress_id, NativeKind::QuestProgress),
+    ];
+    let bank_details = SeatLiveDetails {
+        id: bank_id,
+        phase: script::native::NativePhase::Waiting,
+        prompt: None,
+    };
+    let progress_details = root_seat_details(progress_id);
+    let details = [bank_details, progress_details];
     let live_page = SeatPageInput::new(&live, &[], &details, 0).unwrap();
     post_test_tick_with_native(
         &iso,
         &mut snapshot,
         2,
         NativeFactsInput {
-            bank_selection: BankSelectionInput {
-                request_id: select.0,
-                generation: 1,
-                bank_index: 0,
-                kind: 2,
-            },
             seat_page: Some(live_page),
             ..NativeFactsInput::default()
         },
@@ -757,15 +921,34 @@ export function tick(api) {
         token: progress_token,
         reason: Arc::from("unknown-path"),
     };
-    let terminal = [SeatResult {
-        id: progress_id,
-        seq: 1,
-        outcome: SeatTerminal::Failed,
-        prior_parent: None,
-        session: Some(progress_id),
-        authority_revoked: false,
+    let terminal = [
+        SeatResult {
+            id: bank_id,
+            seq: 1,
+            outcome: SeatTerminal::Done,
+            prior_parent: None,
+            session: Some(bank_id),
+            authority_revoked: false,
+        },
+        SeatResult {
+            id: progress_id,
+            seq: 2,
+            outcome: SeatTerminal::Failed,
+            prior_parent: None,
+            session: Some(progress_id),
+            authority_revoked: false,
+        },
+    ];
+    let bank_value_json = serde_json::Value::Null;
+    let bank_value_bytes = script::channel::encode(&bank_value_json).unwrap();
+    let bank_value = [SeatResultValue {
+        id: bank_id,
+        value: &bank_value_bytes,
     }];
-    let terminal_page = SeatPageInput::new(&[], &terminal, &[], 0).unwrap();
+    let terminal_page = SeatPageInput::new(&[], &terminal, &[], 0)
+        .unwrap()
+        .with_result_values(&bank_value)
+        .unwrap();
     post_test_tick_with_native(
         &iso,
         &mut snapshot,
@@ -786,7 +969,7 @@ export function tick(api) {
     assert_eq!(values[1]["kind"], "done");
     assert_eq!(values[1]["value"]["end"], "refused");
     assert_eq!(values[1]["value"]["reason"], "unknown-path");
-    assert_eq!(batches.last().unwrap().batch.consumed_terminal_seq, 1);
+    assert_eq!(batches.last().unwrap().batch.consumed_terminal_seq, 2);
     iso.join();
 }
 
@@ -891,6 +1074,7 @@ export default class T extends LoopingBot {
         Some(hunt_id),
         "local Walk is a mirror, not a seat parent"
     );
+    assert_bank_start_operation(bank, "BankNearest");
     let bank_id = bank.id;
     let (walk_id, mirror_owner) = seat_reqs(&batches)
         .find_map(|row| match &row.request {
@@ -1034,6 +1218,7 @@ export function tick() {
         child.parent, None,
         "an in-isolate parent cannot invent a seat ancestor"
     );
+    assert_bank_start_operation(child, "BankNearest");
     let child_id = child.id;
     let live = [root_seat_entry(child_id, NativeKind::BankNearest)];
     let details = [root_seat_details(child_id)];
