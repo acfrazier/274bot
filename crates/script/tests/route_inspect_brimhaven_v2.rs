@@ -54,8 +54,6 @@ fn live_like_snapshot(tick: u64, here: TileInput) -> SnapshotInput<'static> {
         hold: false,
         ours: false,
         npcs: &[],
-        withdraw_load_result_seq: 0,
-        withdraw_load_result: false,
         bank_op_result_seq: 0,
         bank_op_result: false,
         locs: &[],

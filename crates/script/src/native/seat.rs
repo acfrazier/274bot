@@ -5,9 +5,9 @@ use api::identity::{RequestId, RequestNamespace};
 use api::script_contract::{
     dispatch_disposition, AbortReason, AdmissionWitness, AuthorityBoundary, AuthorityStatus,
     CallbackCancelReason, CapturedAuthority, ChildOrigin, DecisionSequence, DispatchDisposition,
-    EmissionClass, EmissionProof, Refusal, RequestClass, RequestStamp, HOOK_CHARGE,
-    MAX_ENCODED_GAMEPLAY, MAX_INTERACT_REQS, MAX_LINEAGE_DEPTH, MAX_LIVE, MAX_LIVE_LEAVES,
-    MAX_RESULTS, MAX_ROOTS, MAX_WALK_RELEASES, REVOKED_RING,
+    EmissionClass, EmissionProof, Refusal, RequestClass, RequestStamp, MAX_ENCODED_GAMEPLAY,
+    MAX_INTERACT_REQS, MAX_LINEAGE_DEPTH, MAX_LIVE, MAX_LIVE_LEAVES, MAX_RESULTS, MAX_ROOTS,
+    MAX_WALK_RELEASES, REVOKED_RING,
 };
 use api::selected::RunKey;
 use std::collections::VecDeque;
@@ -902,7 +902,7 @@ impl<R> GameplaySeat<R> {
         if self.stopped {
             return Err(SeatError::InvalidAuthority);
         }
-        if args.len() > HOOK_CHARGE {
+        if args.len() > api::script_contract::PROMPT_ARGS_MAX_BYTES {
             return Err(SeatError::PromptTooLarge);
         }
         if self.answers.iter().any(|answer| answer.id == id) {

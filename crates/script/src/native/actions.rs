@@ -68,6 +68,7 @@ impl ActionContext<'_> {
 
     /// A seat continuation keeps its owned arguments until admission can spend
     /// a transition. This check does not consume or renew the slot's budget.
+    #[cfg(feature = "load")]
     pub(crate) fn may_begin_this_tick(&self) -> bool {
         self.may_continue_this_tick() && self.budget.transition_available()
     }
@@ -670,6 +671,47 @@ impl NativeActions {
         }
     }
 
+    /// Resume a retained request cursor after a kept session boundary.
+    /// The caller selects the request from the closed reconnect-policy table;
+    /// interrupted sub-operations and non-kept resets must not call this.
+    #[cfg(feature = "load")]
+    pub(crate) fn resume_kept<M: NativeMachine>(
+        &mut self,
+        kind: super::request::NativeKind,
+        handle: &mut ActionHandle<M>,
+        cx: &mut ActionContext<'_>,
+    ) -> Result<(), ActionError> {
+        if kind.policy().reconnect() != api::script_contract::ReconnectPolicy::Resume {
+            return Err(ActionError::Stale);
+        }
+        let previous = handle.owner.run;
+        let run = cx.run();
+        if handle.owner.live()
+            || previous.slot != run.slot
+            || previous.run != run.run
+            || previous.session == run.session
+            || handle.machine.get_mut().is_none()
+        {
+            return Err(ActionError::Stale);
+        }
+        if !cx.eligible {
+            return Err(ActionError::Held);
+        }
+        let ledger = cx.ledger.get_or_insert_with(Default::default);
+        if ledger.owner.as_ref().is_some_and(|owner| owner.live()) {
+            return Err(ActionError::Busy);
+        }
+        if !cx.budget.transition() {
+            return Err(ActionError::BudgetExhausted);
+        }
+        ledger.revoke_foreground();
+        let owner = Owner::new(run, ledger.next_id()?);
+        ledger.owner = Some(Arc::clone(&owner));
+        cx.action_id = owner.id.get();
+        handle.owner = owner;
+        Ok(())
+    }
+
     pub fn poll<M: NativeMachine>(
         &mut self,
         handle: &ActionHandle<M>,
@@ -1232,6 +1274,79 @@ mod tests {
             eligible: true,
         };
         f(&mut cx)
+    }
+
+    #[cfg(feature = "load")]
+    #[test]
+    fn kept_resume_preserves_cursor_revokes_old_authority_and_spends_transition() {
+        use crate::native::request::NativeKind;
+
+        struct Cursor(u8);
+        impl NativeMachine for Cursor {
+            type Args = ();
+            type Output = ();
+            fn begin(_: (), cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+                cx.emit_disposal(drop_request(0))?;
+                Ok(Self(0))
+            }
+            fn poll(&mut self, _: &mut ActionContext<'_>) -> Poll<Result<(), ActionError>> {
+                self.0 += 1;
+                Poll::Pending
+            }
+        }
+
+        let mut actions = NativeActions { _private: () };
+        let mut ledger = None;
+        let (mut handle, old) = with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let handle = actions.begin::<Cursor>((), cx).unwrap();
+            assert!(actions.poll(&handle, cx).is_pending());
+            let old = cx.ledger.as_ref().unwrap().outbox[0].authority();
+            (handle, old)
+        });
+        assert_eq!(handle.inspect(|cursor| cursor.0), Some(1));
+        ledger.as_mut().unwrap().revoke();
+        assert!(!old.live(), "old queued effects lose dispatch authority");
+
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            cx.evidence.run.session = 2;
+            assert_eq!(
+                actions.resume_kept(NativeKind::QuestProgress, &mut handle, cx),
+                Err(ActionError::Stale),
+                "the closed Carry row cannot use Resume"
+            );
+            for _ in 0..32 {
+                assert!(cx.budget.transition());
+            }
+            assert_eq!(
+                actions.resume_kept(NativeKind::BankPlan, &mut handle, cx),
+                Err(ActionError::BudgetExhausted)
+            );
+            assert!(!handle.owner.live());
+            cx.budget.observe(2);
+            cx.evidence.tick = 2;
+            actions
+                .resume_kept(NativeKind::BankPlan, &mut handle, cx)
+                .unwrap();
+            assert_eq!(handle.owner.run.session, 2);
+            assert!(handle.owner.live());
+            assert!(!old.live());
+            assert!(
+                cx.ledger.as_ref().unwrap().outbox.is_empty(),
+                "no verb is replayed"
+            );
+            let mut remaining = 0;
+            while cx.budget.transition() {
+                remaining += 1;
+            }
+            assert_eq!(remaining, 31, "owner renewal spends one transition");
+        });
+        assert_eq!(handle.inspect(|cursor| cursor.0), Some(1));
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            cx.evidence.run.session = 2;
+            assert!(actions.poll(&handle, cx).is_pending());
+            assert!(cx.ledger.as_ref().unwrap().outbox.is_empty());
+        });
+        assert_eq!(handle.inspect(|cursor| cursor.0), Some(2));
     }
 
     fn drop_request(slot: i32) -> InteractReq {

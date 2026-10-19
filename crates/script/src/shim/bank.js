@@ -143,11 +143,15 @@ export const Bank = new Proxy(
                 return false;
             }
             const ms = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 5000;
-            const out = await runMachine('bank_wait', {
-                kind: 'snapshot-after',
-                timeout_ms: ms,
-                baseline_generation: baseline,
-            });
+            const out = await runMachine(
+                'bank_wait',
+                {
+                    kind: 'snapshot-after',
+                    timeout_ms: ms,
+                    baseline_generation: baseline,
+                },
+                {},
+            );
             return out.kind === 'done' && out.value === true;
         },
         countById(id) {

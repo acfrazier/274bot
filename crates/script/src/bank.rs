@@ -10,12 +10,12 @@ pub mod request;
 
 #[cfg(feature = "load")]
 pub(crate) mod compat;
+#[cfg(test)]
+mod prompt_args_tests;
 #[cfg(feature = "load")]
 pub(crate) mod seat_open;
 #[cfg(feature = "load")]
 pub(crate) mod seat_transfer;
-#[cfg(test)]
-mod prompt_args_tests;
 
 pub use crate::native_bank::{
     AccessKind, BankPickReceipt, BankPickRequest, BankStandAccess, Close, Deposit, DepositArgs,

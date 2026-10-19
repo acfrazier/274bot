@@ -982,3 +982,37 @@ fn native_prompt_custody_freezes_on_hold_survives_kept_reconnect_and_clears_on_r
     assert!(seat.take_answer(id(1)).is_none());
     assert!(seat.live().is_empty());
 }
+
+#[test]
+fn native_prompt_arguments_have_a_retained_byte_bound_separate_from_handle_charge() {
+    let mut seat = GameplaySeat::<u32>::new(run());
+    start(&mut seat, 1, None, NativeKind::BankPlan);
+    let point = PromptPoint::from_contract_row(
+        crate::native::abi::HOOK_CHARACTERIZATIONS
+            .iter()
+            .find(|row| row.families().contains(&"bank_deposit") && row.member() == "match")
+            .expect("frozen bank matcher row"),
+    )
+    .expect("characterized synchronous prompt");
+    let args = vec![7; api::script_contract::PROMPT_ARGS_MAX_BYTES];
+    assert!(args.len() > api::script_contract::HOOK_CHARGE);
+    assert_eq!(
+        seat.prompt_with_details(id(1), point, &args),
+        Ok(DecisionSequence::FIRST)
+    );
+    assert_eq!(seat.prompt_payload(id(1)).unwrap().args, args);
+    assert_eq!(
+        seat.decide_with_answer(id(1), DecisionSequence::FIRST, Vec::new()),
+        SeatDecisionStatus::Consumed
+    );
+    seat.take_answer(id(1)).unwrap();
+    assert_eq!(
+        seat.prompt_with_details(
+            id(1),
+            point,
+            &vec![0; api::script_contract::PROMPT_ARGS_MAX_BYTES + 1]
+        ),
+        Err(SeatError::PromptTooLarge)
+    );
+    assert!(seat.prompt_payload(id(1)).is_none());
+}

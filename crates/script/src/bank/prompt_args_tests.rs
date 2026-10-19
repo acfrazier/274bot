@@ -179,7 +179,10 @@ fn bank_prompt_argument_census_fits_contract_bound() {
     for name in ["Banker", "Gundai"] {
         let line = format!("no '{name}' in the scene to bank with");
         let len = assert_fits("npc log (catalog banker)", &[json!(line)]);
-        assert!(len < 49, "catalog banker {name:?} is shorter than the census");
+        assert!(
+            len < 49,
+            "catalog banker {name:?} is shorter than the census"
+        );
         max = max.max(len);
     }
 
@@ -234,7 +237,9 @@ fn bank_prompt_argument_census_fits_contract_bound() {
     max = max.max(len);
     let len = assert_fits(
         "dialogue-without-open log",
-        &[json!("bank: object dialogue completed without opening the bank")],
+        &[json!(
+            "bank: object dialogue completed without opening the bank"
+        )],
     );
     assert_eq!(len, 62, "dialogue-without-open census");
     max = max.max(len);

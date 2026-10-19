@@ -9,7 +9,7 @@ export { Inventory, InvItem } from '../../api/inventory/Inventory.js';
 export { Skills } from '../../api/skills/Skills.js';
 export { Bank, withdrawOp } from '../../api/bank/Bank.js';
 export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, NEARBY_BANK_RADIUS, resolveBankOpenRoute, parseBankStrategy, shouldBankNow } from '../../api/bank/Banking.js';
-export { bankDistance } from '../../api/bank/BankLocations.js';
+export { bankDistance, nearestUsableBank } from '../../api/bank/BankLocations.js';
 export { reader } from '../../adapter/ClientAdapter.js';
 export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolAttackLevel, toolsNeedingEquip, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool, bestHeldToolNames, surplusHeldToolNames } from '../../api/acquisition/Tools.js';
 export { Execution } from '../../api/execution/Execution.js';
@@ -113,7 +113,6 @@ export function isFishingBaitPiece() { throw notImpl('isFishingBaitPiece'); }
 export function locationOptions() { throw notImpl('locationOptions'); }
 export function miningLocationLabel() { throw notImpl('miningLocationLabel'); }
 export function missingFishingGear() { throw notImpl('missingFishingGear'); }
-export function nearestUsableBank() { throw notImpl('nearestUsableBank'); }
 export function parseToolAcquireMode() { throw notImpl('parseToolAcquireMode'); }
 export function pickaxeShopOffers() { throw notImpl('pickaxeShopOffers'); }
 export function planAxeAcquire() { throw notImpl('planAxeAcquire'); }

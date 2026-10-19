@@ -486,6 +486,8 @@ export default class T extends LoopingBot {
             count: Bank.count('Knife'),
             by_id: Bank.countById(2),
             held: Inventory.count('Knife'),
+            empty_name_is_positive_zero: Object.is(Bank.count('Absent'), 0),
+            empty_id_is_positive_zero: Object.is(Bank.countById(999), 0),
         };
     }
 }
@@ -553,13 +555,19 @@ export default class T extends LoopingBot {
     let open = observe(true);
     assert_eq!(
         open,
-        serde_json::json!({ "items": 1, "count": 20, "by_id": 20, "held": 0 }),
+        serde_json::json!({
+            "items": 1, "count": 20, "by_id": 20, "held": 0,
+            "empty_name_is_positive_zero": true, "empty_id_is_positive_zero": true,
+        }),
         "control: the open bank is read"
     );
     let closed = observe(false);
     assert_eq!(
         closed,
-        serde_json::json!({ "items": 0, "count": 0, "by_id": 0, "held": 0 }),
+        serde_json::json!({
+            "items": 0, "count": 0, "by_id": 0, "held": 0,
+            "empty_name_is_positive_zero": true, "empty_id_is_positive_zero": true,
+        }),
         "a closed bank reads empty whatever the memory holds"
     );
 }

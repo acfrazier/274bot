@@ -142,7 +142,7 @@ fn set_bank_field<'s>(
     value: v8::Local<'s, v8::Value>,
 ) -> callback_v8::JsResult<'s, ()> {
     let name = callback_v8::string(scope, key);
-    let set = callback_v8::catching(scope, |s| row.set(s, name.into(), value))?;
+    let set = callback_v8::catching(scope, |s| row.set(s, name, value))?;
     if !set {
         return Err(callback_v8::type_error(
             scope,
@@ -232,11 +232,7 @@ fn locked_at<'s>(
 ) {
     let result = (|| {
         let tile = origin(scope, args.get(0))?;
-        bank_value_v8(
-            scope,
-            args.get(1),
-            bank_select::locked_bank_at(tile),
-        )
+        bank_value_v8(scope, args.get(1), bank_select::locked_bank_at(tile))
     })();
     callback_v8::finish(scope, rv, result);
 }
@@ -358,15 +354,11 @@ fn usable<'s>(
         let mut best = None;
         let mut distance = i64::MAX;
         for bank in bank_select::banks() {
-            let candidate = bank_value_v8(
-                scope,
-                tile_constructor,
-                bank_select::bank_value(&bank),
-            )?;
+            let candidate = bank_value_v8(scope, tile_constructor, bank_select::bank_value(&bank))?;
             let accepted = predicate.call(scope, &[candidate])?;
             if accepted.boolean_value(scope) {
                 let candidate_distance =
-                    bank_select::air_distance_squared(from, bank.air_tile());
+                    crate::native_bank::air_distance_squared(from, bank.air_tile());
                 if candidate_distance < distance {
                     distance = candidate_distance;
                     best = Some(bank);
@@ -374,11 +366,7 @@ fn usable<'s>(
             }
         }
         match best {
-            Some(bank) => bank_value_v8(
-                scope,
-                tile_constructor,
-                bank_select::bank_value(&bank),
-            ),
+            Some(bank) => bank_value_v8(scope, tile_constructor, bank_select::bank_value(&bank)),
             None => Ok(v8::null(scope).into()),
         }
     })();

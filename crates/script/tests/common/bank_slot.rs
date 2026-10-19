@@ -10,6 +10,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use api::identity::{SessionKey, SlotKey};
 use api::interact::Driver;
 use api::named_banks::NamedBankFacts;
 use api::prot::Out;
@@ -74,6 +75,7 @@ impl Driver for NullDriver {
 
 pub struct BankSlot {
     pub slot: SlotScript,
+    session: SessionKey,
     native_snapshot: GameSnapshot,
     native_reach: Option<api::query::ReachQueryView>,
     held: bool,
@@ -112,9 +114,12 @@ impl BankSlot {
             std::thread::yield_now();
         }
         slot.on_is_up(true);
+        let session = SessionKey::first(SlotKey::from_incarnation(1).expect("bound fixture slot"));
+        slot.align_seat_session(Some(session));
         assert_eq!(slot.state(), RunState::Running);
         Self {
             slot,
+            session,
             native_snapshot: GameSnapshot::new(),
             native_reach: None,
             held: false,
@@ -130,10 +135,10 @@ impl BankSlot {
         self.post_snapshot_bytes(bytes, input, native);
     }
 
-    fn with_slot_bank_selection(
+    fn with_slot_bank_selection<'a>(
         &self,
-        mut native: NativeFactsInput<'_>,
-    ) -> NativeFactsInput<'_> {
+        mut native: NativeFactsInput<'a>,
+    ) -> NativeFactsInput<'a> {
         native.bank_selection = self.slot.bank_selection_input();
         native
     }
@@ -164,6 +169,19 @@ impl BankSlot {
         self.native_snapshot = snapshot;
     }
 
+    /// Carry seat pages after one tick without replacing its native observation.
+    pub fn tick_posted_with_frames(
+        &mut self,
+        tick: u64,
+        input: &SnapshotInput<'_>,
+        native: NativeFactsInput<'_>,
+    ) {
+        let snapshot = std::mem::replace(&mut self.native_snapshot, GameSnapshot::new());
+        self.run_game_tick(tick, &snapshot);
+        self.pump_snapshot_changes(tick, input, native, &snapshot);
+        self.native_snapshot = snapshot;
+    }
+
     /// Publish the script-facing page, then run against the caller's native snapshot.
     pub fn tick(
         &mut self,
@@ -186,10 +204,7 @@ impl BankSlot {
         native: NativeFactsInput<'_>,
     ) {
         self.post_snapshot(input, native);
-        let snapshot = std::mem::replace(&mut self.native_snapshot, GameSnapshot::new());
-        self.run_game_tick(tick, &snapshot);
-        self.pump_snapshot_changes(tick, input, native, &snapshot);
-        self.native_snapshot = snapshot;
+        self.tick_posted_with_frames(tick, input, native);
     }
     /// Run snapshot-only work with the same native frame context as a game tick.
     pub fn snapshot_change(
@@ -309,6 +324,24 @@ impl BankSlot {
     pub fn reset_session_work(&mut self) {
         self.slot.reset_session_work();
         self.slot.on_is_up(true);
+        self.session = self
+            .session
+            .next()
+            .expect("fixture session epoch available");
+        self.slot.align_seat_session(Some(self.session));
+        self.native_snapshot = GameSnapshot::new();
+        self.native_reach = None;
+        self.held = false;
+    }
+
+    pub fn reconnect_session_work(&mut self) {
+        self.slot.reconnect_session_work();
+        self.slot.on_is_up(true);
+        self.session = self
+            .session
+            .next()
+            .expect("fixture session epoch available");
+        self.slot.align_seat_session(Some(self.session));
         self.native_snapshot = GameSnapshot::new();
         self.native_reach = None;
         self.held = false;

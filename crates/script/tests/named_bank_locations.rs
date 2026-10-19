@@ -6,17 +6,15 @@ mod bank_slot;
 use bank_slot::BankSlot;
 
 use api::named_banks::{NamedBank, NamedBankFacts, BANK_CATALOG};
-use api::snapshot::WorldTile;
 use api::quest_progress::EvidenceStamp;
+use api::snapshot::WorldTile;
 use nav::named_banks::resolve;
 use script::bank::{AccessKind, BankPickReceipt, BankStandAccess, PickKind, SelectedBank};
-use script::native::{
-    HostEffect, InteractionReceipt, WalkEnd, WalkReceipt,
-};
-use script::shim::InteractReq;
 use script::isolate_fb::{
     NativeFactsInput, QuestStatusInput, ReachViewInput, SnapshotInput, StatInput, TileInput,
 };
+use script::native::{HostEffect, InteractionReceipt, WalkEnd, WalkReceipt};
+use script::shim::InteractReq;
 use script::LoadShape;
 
 fn base_snapshot<'a>() -> SnapshotInput<'a> {
@@ -100,12 +98,7 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
 }
 
 fn spawn(src: &str, facts: NamedBankFacts) -> BankSlot {
-    BankSlot::new(
-        src,
-        LoadShape::CompatClass,
-        None,
-        Arc::new(facts),
-    )
+    BankSlot::new(src, LoadShape::CompatClass, None, Arc::new(facts))
 }
 
 const PROBE: &str = r#"
@@ -279,7 +272,7 @@ export default class T extends LoopingBot {{
             .position(|bank| bank.name == "Shilo Village")
             .unwrap();
         let index_u16 = u16::try_from(index).unwrap();
-        let bank = facts.banks()[index].clone();
+        let bank = facts.banks()[index];
         let stand = bank.tile;
         let teller = WorldTile {
             x: stand.x + 1,
@@ -311,7 +304,7 @@ export default class T extends LoopingBot {{
         assert_eq!(actions.len(), 1, "{call}: expected native bank pick");
         let pick = actions.pop().unwrap();
         let HostEffect::BankPick(request) = &pick.effect else {
-            panic!("{call}: expected native bank pick, got {:?}", pick.effect);
+            panic!("{call}: expected native bank pick");
         };
         assert!(
             request.eligible.contains(&index_u16),
@@ -369,7 +362,7 @@ export default class T extends LoopingBot {{
         assert_eq!(actions.len(), 1, "{call}: expected walk to selected access");
         let walk = actions.pop().unwrap();
         let HostEffect::Walk(request) = &walk.effect else {
-            panic!("{call}: expected native walk, got {:?}", walk.effect);
+            panic!("{call}: expected native walk");
         };
         assert_eq!((request.target, request.radius), (stand, 4));
         let walk_authority = walk.authority();
@@ -443,11 +436,14 @@ export default class T extends LoopingBot {{
         let mut actions = slot.take_actions();
         assert_eq!(actions.len(), 1, "{call}: expected teller interaction");
         let interaction = actions.pop().unwrap();
-        assert!(matches!(
-            &interaction.effect,
-            HostEffect::Interaction(InteractReq::Npc { name, action, index })
-                if name == "Banker" && action == "Bank" && *index == Some(42)
-        ), "{call}: NPC access must not wait for a booth");
+        assert!(
+            matches!(
+                &interaction.effect,
+                HostEffect::Interaction(InteractReq::Npc { name, action, index })
+                    if name == "Banker" && action == "Bank" && *index == Some(42)
+            ),
+            "{call}: NPC access must not wait for a booth"
+        );
         let interaction_authority = interaction.authority();
         slot.slot.complete_native_interaction(
             &interaction_authority,
@@ -475,7 +471,10 @@ export default class T extends LoopingBot {{
             slot.take_actions().is_empty(),
             "absent npcAccess.choose must not select an unrelated first option"
         );
-        assert_eq!(slot.probe("[__ok,__after]").unwrap(), serde_json::json!([null, 0]));
+        assert_eq!(
+            slot.probe("[__ok,__after]").unwrap(),
+            serde_json::json!([null, 0])
+        );
 
         snapshot.tick = 6;
         snapshot.chat_open = false;
@@ -485,8 +484,14 @@ export default class T extends LoopingBot {{
         native.side_modal_id = Some(700);
         native.bank_snapshot_generation = Some(0);
         slot.tick_from_input(6, &snapshot, native);
-        assert!(slot.take_actions().is_empty(), "{call}: open bank is not loaded yet");
-        assert_eq!(slot.probe("[__ok,__after]").unwrap(), serde_json::json!([null, 0]));
+        assert!(
+            slot.take_actions().is_empty(),
+            "{call}: open bank is not loaded yet"
+        );
+        assert_eq!(
+            slot.probe("[__ok,__after]").unwrap(),
+            serde_json::json!([null, 0])
+        );
 
         snapshot.bank_loaded = true;
         let side = [ItemRowInput {
@@ -502,7 +507,7 @@ export default class T extends LoopingBot {{
         snapshot.bank_side = &side;
         native.bank_snapshot_generation = Some(1);
         for tick in 7..=9 {
-            snapshot.tick = tick as i32;
+            snapshot.tick = tick;
             slot.tick_from_input(tick, &snapshot, native);
             assert!(
                 slot.take_actions().is_empty(),

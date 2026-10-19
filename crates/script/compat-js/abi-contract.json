@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "endpoint": "T2.1",
-  "activation_state": "not-activated",
+  "activation_state": "partially-activated",
   "frozen_source": {
     "repository": "https://github.com/rs2b2t/rs2b0t.git",
     "revision": "2de6bb2397ceb9ffd05f2354f67dde328e324531",
@@ -9832,6 +9832,19 @@
       "mapping_kind": "re-export"
     },
     {
+      "public_name": "nearestUsableBank",
+      "source_name": "nearestUsableBank",
+      "module": "api/bank/BankLocations.js",
+      "family_id": "bank",
+      "shim": "bank_locations.js",
+      "nav_consuming": true,
+      "source_modules": [
+        "api/bank/BankLocations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
       "public_name": "reader",
       "source_name": "reader",
       "module": "adapter/ClientAdapter.js",
@@ -11566,19 +11579,6 @@
       "mapping_kind": "direct-function"
     },
     {
-      "public_name": "nearestUsableBank",
-      "source_name": "nearestUsableBank",
-      "module": null,
-      "shim": null,
-      "source_modules": [
-        "api/bank/BankLocations.js"
-      ],
-      "family_id": "bank",
-      "nav_consuming": true,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
       "public_name": "parseToolAcquireMode",
       "source_name": "parseToolAcquireMode",
       "module": null,
@@ -12280,7 +12280,7 @@
       "selector": "Bank.depositAllExcept",
       "add": true,
       "reason": "Native deposit machine accepts iterable or array-like keep names and resolves without a boolean result.",
-      "runtime": "crates/script/src/shim/bank.js:86",
+      "runtime": "crates/script/src/shim/bank.js:68",
       "declaration": "depositAllExcept(keep?: Iterable<string> | ArrayLike<string>): Promise<void>;",
       "family_id": "bank",
       "nav_consuming": true
@@ -12291,7 +12291,7 @@
       "selector": "Bank.openNearestWorld",
       "add": true,
       "reason": "Host exposes a zero-argument world-bank opener absent from the frozen Bank object.",
-      "runtime": "crates/script/src/shim/bank.js:135",
+      "runtime": "crates/script/src/shim/bank.js:117",
       "declaration": "openNearestWorld(): Promise<boolean>;",
       "family_id": "bank",
       "nav_consuming": true
@@ -12301,7 +12301,7 @@
       "module": "api/bank/Banking.js",
       "selector": "Banking.bankNearest",
       "reason": "The native facade defaults opts and only invokes deposit when it is a callback; a missing deposit policy is valid.",
-      "runtime": "crates/script/src/shim/banking.js:129",
+      "runtime": "crates/script/src/shim/banking.js:110",
       "declaration": "bankNearest(opts?: { deposit?: (name: string) => boolean; commonJunk?: boolean; destination?: BankDestination; returnTo?: WorldTile; boothName?: string; boothOp?: string; afterDeposit?: () => void | Promise<void>; log?: (msg: string) => void }): Promise<boolean>;",
       "family_id": "bank",
       "nav_consuming": true
@@ -12903,7 +12903,7 @@
       "selector": "purgePackAtBank",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: the multi-step bank transaction is not implemented.",
-      "runtime": "crates/script/src/shim/banking.js:160",
+      "runtime": "crates/script/src/shim/banking.js:141",
       "async": true,
       "family_id": "bank",
       "nav_consuming": true
@@ -12914,7 +12914,7 @@
       "selector": "withdrawCoins",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: the multi-step bank transaction is not implemented.",
-      "runtime": "crates/script/src/shim/banking.js:164",
+      "runtime": "crates/script/src/shim/banking.js:145",
       "async": true,
       "family_id": "bank",
       "nav_consuming": true
@@ -12925,7 +12925,7 @@
       "selector": "bankPace",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: randomized pacing is not carried into native compatibility.",
-      "runtime": "crates/script/src/shim/banking.js:168",
+      "runtime": "crates/script/src/shim/banking.js:149",
       "async": true,
       "family_id": "bank",
       "nav_consuming": true
@@ -12936,7 +12936,7 @@
       "selector": "bankPaceTicks",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: randomized pacing is not carried into native compatibility.",
-      "runtime": "crates/script/src/shim/banking.js:172",
+      "runtime": "crates/script/src/shim/banking.js:153",
       "async": false,
       "family_id": "bank",
       "nav_consuming": true
@@ -13178,7 +13178,7 @@
       "selector": "nearestWalkableBank",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: caller-owned walk-cost callbacks are not handled by the native bank selector.",
-      "runtime": "crates/script/src/shim/bank_locations.js:68",
+      "runtime": "crates/script/src/shim/bank_locations.js:61",
       "async": false,
       "family_id": "bank",
       "nav_consuming": true
@@ -13189,7 +13189,7 @@
       "selector": "nearestWalkableBankAsync",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: caller-owned async walk-cost callbacks are not handled by the native bank selector.",
-      "runtime": "crates/script/src/shim/bank_locations.js:72",
+      "runtime": "crates/script/src/shim/bank_locations.js:65",
       "async": true,
       "family_id": "bank",
       "nav_consuming": true
@@ -13200,7 +13200,7 @@
       "selector": "bankCostForFinder",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: the PathFinder callback wrapper is not exposed by the native bank selector.",
-      "runtime": "crates/script/src/shim/bank_locations.js:76",
+      "runtime": "crates/script/src/shim/bank_locations.js:69",
       "async": false,
       "family_id": "bank",
       "nav_consuming": true
@@ -13211,7 +13211,7 @@
       "selector": "bankCostForNavigator",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: the Navigator callback wrapper is not exposed by the native bank selector.",
-      "runtime": "crates/script/src/shim/bank_locations.js:80",
+      "runtime": "crates/script/src/shim/bank_locations.js:73",
       "async": false,
       "family_id": "bank",
       "nav_consuming": true
@@ -14994,7 +14994,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts:298,313; $S/periodic_bank.rs:268-282,384-410,474-493"
+      "evidence": "$TS/api/bank/Banking.ts:298,313; $TS/api/tasks/PeriodicBank.ts:15,48; $S/slot/bank.rs"
     },
     {
       "family_id": "tasks",
@@ -15011,7 +15011,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts:298,313; $S/periodic_bank.rs:268-282,384-410,474-493"
+      "evidence": "$TS/api/bank/Banking.ts:298,313; $TS/api/tasks/PeriodicBank.ts:15,48; $S/slot/bank.rs"
     },
     {
       "family_id": "tasks",
@@ -15045,7 +15045,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:331; $TS/api/bank/bankRules.ts:103-105; $S/bank_deposit.rs:458-462"
+      "evidence": "$TS/api/bank/Bank.ts:322-334; $TS/api/bank/bankRules.ts:103-105; $S/bank/seat_transfer.rs"
     },
     {
       "family_id": "bank",
@@ -15062,7 +15062,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/bankRules.ts:103-105; $S/periodic_bank.rs:385-410,474-493"
+      "evidence": "$TS/api/bank/Banking.ts:291-313; $TS/api/bank/bankRules.ts:103-105; $S/bank/seat_transfer.rs"
     },
     {
       "family_id": "tasks",
@@ -15079,7 +15079,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/bankRules.ts:103-105; $S/periodic_bank.rs:385-410,474-493"
+      "evidence": "$TS/api/bank/Banking.ts:291-313; $TS/api/bank/bankRules.ts:103-105; $S/bank/seat_transfer.rs"
     },
     {
       "family_id": "thieving",
@@ -15164,7 +15164,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/tasks/PeriodicBank.ts:49-51; $S/periodic_bank.rs:486-493,518-524,529-536"
+      "evidence": "$TS/api/tasks/PeriodicBank.ts:16,49; $S/periodic_bank.rs"
     },
     {
       "family_id": "tasks",
@@ -15181,7 +15181,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/periodic_bank.rs:486-493,525-532"
+      "evidence": "$TS/api/tasks/PeriodicBank.ts:17,50; $S/periodic_bank.rs"
     },
     {
       "family_id": "tasks",
@@ -15198,7 +15198,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/periodic_bank.rs:486-493,533-537"
+      "evidence": "$TS/api/tasks/PeriodicBank.ts:18,51; $S/periodic_bank.rs"
     },
     {
       "family_id": "walking",
@@ -15402,7 +15402,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/periodic_bank.rs:474-493,512-517"
+      "evidence": "$TS/api/tasks/PeriodicBank.ts:19,45; $S/periodic_bank.rs"
     },
     {
       "family_id": "tasks",
@@ -15419,7 +15419,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -15436,7 +15436,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -15453,7 +15453,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -15470,7 +15470,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -15487,7 +15487,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -15504,7 +15504,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "quests",
@@ -15521,7 +15521,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -15538,7 +15538,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -15555,7 +15555,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -15572,7 +15572,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -15589,7 +15589,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -15606,7 +15606,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "tasks",
@@ -15623,7 +15623,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "quests",
@@ -15640,7 +15640,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -15657,7 +15657,24 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/periodic_bank.rs:380-410"
+      "evidence": "$TS/api/bank/Banking.ts:299-307; $S/slot/bank.rs; $S/bank/seat_open.rs"
+    },
+    {
+      "family_id": "bank",
+      "native_family": "bank_wait",
+      "member": "log",
+      "call_site": "Bank.waitReady synchronous item-snapshot notification",
+      "path": "call-sync",
+      "value": "ignored",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site; CALLS_PER_TICK=256 per row per tick",
+      "cadence": "One invocation per reached synchronous call site; sites may be reached repeatedly.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/bank/Bank.ts:86-94; $S/shim/bank.js; $S/bank/seat_transfer.rs"
     },
     {
       "family_id": "trade",
@@ -22869,7 +22886,7 @@
       "selector": "purgePackAtBank",
       "module": "api/bank/Banking.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/banking.js:160",
+      "source": "crates/script/src/shim/banking.js:141",
       "reason": "Unconditional not-impl: the multi-step bank transaction is not implemented.",
       "overlay_id": "not-impl:api/bank/Banking.js:purgePackAtBank"
     },
@@ -22879,7 +22896,7 @@
       "selector": "withdrawCoins",
       "module": "api/bank/Banking.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/banking.js:164",
+      "source": "crates/script/src/shim/banking.js:145",
       "reason": "Unconditional not-impl: the multi-step bank transaction is not implemented.",
       "overlay_id": "not-impl:api/bank/Banking.js:withdrawCoins"
     },
@@ -22889,7 +22906,7 @@
       "selector": "bankPace",
       "module": "api/bank/Banking.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/banking.js:168",
+      "source": "crates/script/src/shim/banking.js:149",
       "reason": "Unconditional not-impl: randomized pacing is not carried into native compatibility.",
       "overlay_id": "not-impl:api/bank/Banking.js:bankPace"
     },
@@ -22899,7 +22916,7 @@
       "selector": "bankPaceTicks",
       "module": "api/bank/Banking.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/banking.js:172",
+      "source": "crates/script/src/shim/banking.js:153",
       "reason": "Unconditional not-impl: randomized pacing is not carried into native compatibility.",
       "overlay_id": "not-impl:api/bank/Banking.js:bankPaceTicks"
     },
@@ -23119,7 +23136,7 @@
       "selector": "nearestWalkableBank",
       "module": "api/bank/BankLocations.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/bank_locations.js:68",
+      "source": "crates/script/src/shim/bank_locations.js:61",
       "reason": "Unconditional not-impl: caller-owned walk-cost callbacks are not handled by the native bank selector.",
       "overlay_id": "not-impl:api/bank/BankLocations.js:nearestWalkableBank"
     },
@@ -23129,7 +23146,7 @@
       "selector": "nearestWalkableBankAsync",
       "module": "api/bank/BankLocations.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/bank_locations.js:72",
+      "source": "crates/script/src/shim/bank_locations.js:65",
       "reason": "Unconditional not-impl: caller-owned async walk-cost callbacks are not handled by the native bank selector.",
       "overlay_id": "not-impl:api/bank/BankLocations.js:nearestWalkableBankAsync"
     },
@@ -23139,7 +23156,7 @@
       "selector": "bankCostForFinder",
       "module": "api/bank/BankLocations.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/bank_locations.js:76",
+      "source": "crates/script/src/shim/bank_locations.js:69",
       "reason": "Unconditional not-impl: the PathFinder callback wrapper is not exposed by the native bank selector.",
       "overlay_id": "not-impl:api/bank/BankLocations.js:bankCostForFinder"
     },
@@ -23149,7 +23166,7 @@
       "selector": "bankCostForNavigator",
       "module": "api/bank/BankLocations.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/bank_locations.js:80",
+      "source": "crates/script/src/shim/bank_locations.js:73",
       "reason": "Unconditional not-impl: the Navigator callback wrapper is not exposed by the native bank selector.",
       "overlay_id": "not-impl:api/bank/BankLocations.js:bankCostForNavigator"
     },
@@ -24678,15 +24695,6 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "bank",
-      "member": "nearestUsableBank",
-      "selector": "nearestUsableBank",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "acquisition",
       "member": "parseToolAcquireMode",
       "selector": "parseToolAcquireMode",
@@ -24849,7 +24857,9 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     }
   ],
-  "active_families": [],
+  "active_families": [
+    "bank"
+  ],
   "family_counts": [
     {
       "family_id": "acquisition",
@@ -24872,8 +24882,8 @@
       "aliases": 2,
       "type_aliases": 2,
       "name_aliases": 0,
-      "callbacks": 9,
-      "not_impl_debt": 11
+      "callbacks": 10,
+      "not_impl_debt": 10
     },
     {
       "family_id": "bot",

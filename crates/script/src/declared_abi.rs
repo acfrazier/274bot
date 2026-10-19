@@ -460,8 +460,8 @@ const REEXPORTS: &[Reexport] = &[
         line: "export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, NEARBY_BANK_RADIUS, resolveBankOpenRoute, parseBankStrategy, shouldBankNow } from '../../api/bank/Banking.js';",
     },
     Reexport {
-        names: &["bankDistance"],
-        line: "export { bankDistance } from '../../api/bank/BankLocations.js';",
+        names: &["bankDistance", "nearestUsableBank"],
+        line: "export { bankDistance, nearestUsableBank } from '../../api/bank/BankLocations.js';",
     },
     Reexport {
         names: &["reader"],

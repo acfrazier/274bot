@@ -62,15 +62,18 @@ Generated types live in `crates/script/host-js/index.d.ts` (`NativeApi`,
 - `snapshot.bank_selection` — latest select-only completion, with request
   identity, generation, bank and `near` / `reachable` / `fallback` / `none`
   disposition. Only the completion carrying the caller's `request_id` settles
-  it; an empty (`kind 0`) post reads as `null`. Stop, reset and replacement requests reject stale results.
+  it; an empty (`kind 0`) post reads as `null`. Stop, reset and replacement
+  requests reject stale results. Rust publishes the typed native-seat
+  completion here; this field does not run another selection.
 
-Do not import rs2b0t modules or touch `__rs2b0t_host`. Unsupported
-`request` ops throw `not impl: request.<op>`.
+Bank operations can use the public `Bank` module over the native seat.
+Use `NativeApi` for the other operations below. Never touch `__rs2b0t_host`.
+Unsupported `request` ops throw `not impl: request.<op>`.
 
 ### Supported requests
 
 `held`, `open-booth`, `open-stand`, `close`, `set-note-mode`, `deposit`,
-`withdraw`, `withdraw-load`, `withdraw-x`, `walk`, `walk-near`,
+`withdraw`, `withdraw-x`, `walk`, `walk-near`,
 `walk-nearest-bank`, `inspect-route`, `puzzle-move`.
 
 Completion is the next snapshots' seq/result fields, not a Promise.
@@ -85,8 +88,10 @@ Completion is the next snapshots' seq/result fields, not a Promise.
   (`false` for any of them). `true` requires the matched row's bank-side
   count to drop within the bounded deposit window.
 
-- Pass `snapshot.bank_generation` into `withdraw-load` / `withdraw-x`. A
-  changed generation is stale, not bank exhaustion.
+- Pass `snapshot.bank_generation` into `withdraw-x`. A changed generation
+  is stale, not bank exhaustion. The retired `request({ op: 'withdraw-load' })`
+  is not supported. Use the awaited public `Bank.withdrawLoad(name)` instead;
+  Rust reads and fences the current bank session without a generation echo.
 - `puzzle-move` clicks one piece of the posted board. It takes the posted
   row's own `id`, `slot` and `component` plus
   `snapshot.puzzle_board_generation`. The host re-resolves that exact row on
@@ -173,14 +178,15 @@ random handling and recovery stay in Rust.
 author-facing example. `bone_burier_v2.js` is the checked-in normal-build
 JavaScript form with the same logic and loadable v2 export declarations; it is
 not a second implementation. Either file can be loaded as a NativeApi v2 card.
-The example uses only the public `NativeApi` surface and demonstrates the
-intended synchronous, snapshot-polled shape:
+The example uses the public `NativeApi` surface and `Bank.withdrawLoad`
+over the native seat. Bury, open, close, and walk progress is snapshot-polled;
+the bank load is awaited and remains single-flight across NativeTicks:
 
 - `SETTINGS.boneName` selects the unnoted inventory and bank item while
   unrelated inventory is left untouched;
-- a supported nearby bank is opened, the current `bank_generation` is passed
-  to `withdraw-load`, the bank is closed, and inventory change is observed
-  before the next bury request;
+- a supported nearby bank is opened, `Bank.withdrawLoad` fills the inventory,
+  the bank is closed, and inventory change is observed before the next bury
+  request;
 - a loaded/current bank row with no matching unnoted supply is a clean,
   confirmed exhaustion stop, while missing, stale, or unloaded contents are
   unavailable (never exhaustion);

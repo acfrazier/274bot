@@ -30,6 +30,23 @@ pub fn encode(value: &Value) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+/// Encode a borrowed callback argument list in the same bounded clone format.
+/// The list's values stay with the native continuation, rather than being cloned.
+#[cfg(any(feature = "load", test))]
+pub(crate) fn encode_arguments(values: &[Value]) -> Result<Vec<u8>, String> {
+    if values.len() > MAX_COLLECTION {
+        return Err("callback argument list exceeds 128 entries".into());
+    }
+    let mut out = Vec::with_capacity(256);
+    out.push(ARRAY);
+    put_len(values.len(), &mut out);
+    let mut nodes = 1;
+    for value in values {
+        encode_value(value, 1, &mut nodes, &mut out)?;
+    }
+    Ok(out)
+}
+
 fn encode_value(
     value: &Value,
     depth: usize,
@@ -207,6 +224,16 @@ impl Cursor<'_> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn borrowed_callback_arguments_use_the_existing_array_wire() {
+        let values = [json!("Lobster"), json!(379.0), json!({ "ready": true })];
+        let encoded = encode_arguments(&values).unwrap();
+        assert_eq!(encoded, encode(&json!(values)).unwrap());
+        assert_eq!(decode(&encoded).unwrap(), json!(values));
+        assert!(encode_arguments(&vec![Value::Null; MAX_COLLECTION + 1]).is_err());
+        assert!(encode_arguments(&[json!("x".repeat(MAX_STRING_BYTES + 1))]).is_err());
+    }
 
     #[test]
     fn jive_member_and_release_round_trip() {

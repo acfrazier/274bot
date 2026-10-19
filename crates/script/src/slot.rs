@@ -2009,7 +2009,12 @@ impl SlotScript {
     pub fn compiled_game_data(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
         let selected = self.compiled.as_ref().map(|run| Arc::clone(&run.selected));
         #[cfg(feature = "load")]
-        let selected = selected.or_else(|| self.api_game_data());
+        let selected = selected.or_else(|| self.api_game_data()).or_else(|| {
+            self.load_identity
+                .as_ref()
+                .and_then(|identity| identity.game_data.as_ref())
+                .map(Arc::clone)
+        });
         selected
     }
 

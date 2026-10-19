@@ -165,7 +165,6 @@ impl SlotScript {
         (self.withdraw_x_result_seq, self.withdraw_x_result)
     }
 
-
     pub fn pending_bank_op(&self) -> Option<PendingBankOp> {
         self.pending_bank_op
     }
@@ -207,5 +206,4 @@ impl SlotScript {
         self.withdraw_x_result_seq = self.withdraw_x_result_seq.wrapping_add(1);
         self.withdraw_x_result = result;
     }
-
 }

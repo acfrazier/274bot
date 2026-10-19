@@ -12,7 +12,8 @@ use crate::bank::request::{
 };
 use crate::bank::seat_transfer::{TransferAnswer, TransferCall, TransferHooks};
 use crate::native::{
-    ActionContext, ActionError, NativeMachine, WalkAllow, WalkBit, WalkOptions, WalkRequest,
+    ActionContext, ActionError, NativeMachine, WalkAllow, WalkBit, WalkEnd, WalkOptions,
+    WalkRequest,
 };
 use crate::native_bank::{BankSelector, PickKind, Select, SelectArgs, SelectedBank};
 use crate::shim::InteractReq;
@@ -24,7 +25,6 @@ use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::time::Duration;
 
-const OPEN_TIMEOUT: Duration = Duration::from_millis(BANK_READY_MS);
 const READY_TIMEOUT_MS: u64 = 4_000;
 const NEAR_WALK_TIMEOUT_MS: u64 = 15_000;
 const WORLD_WALK_TIMEOUT_MS: u64 = 120_000;
@@ -60,6 +60,10 @@ pub struct Opening {
     log_enabled: bool,
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "the bounded bank row keeps its opening phases inline instead of allocating a nested box per opening"
+)]
 enum Core {
     Immediate(OpeningValue),
     Booth(BoothOpen),
@@ -117,6 +121,7 @@ impl NativeMachine for Opening {
                     preferences,
                     args.request.stand,
                     args.request.allow_wilderness,
+                    true,
                     cx,
                 )? {
                     Some(select) => Core::Select(select),
@@ -297,6 +302,41 @@ fn walk_request(
     build_walk_request(cx.evidence(), target, radius, options)
 }
 
+/// Pause ends the host follow; a kept relog revokes its old session.
+/// The retained bank cursor revalidates that destination under fresh request
+/// authority without resetting its phase's active-time deadline.
+struct OpeningWalk {
+    request_id: u64,
+    session: u64,
+}
+
+impl OpeningWalk {
+    fn new(cx: &ActionContext<'_>, request_id: u64) -> Self {
+        Self {
+            request_id,
+            session: cx.run().session,
+        }
+    }
+
+    fn resume(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        target: WorldTile,
+        radius: i32,
+        options: WalkOptions,
+    ) -> Result<(), ActionError> {
+        if self.session != cx.run().session
+            || cx
+                .walk_receipt(self.request_id)
+                .is_some_and(|receipt| receipt.end == WalkEnd::Cancelled)
+        {
+            let request_id = cx.walk(walk_request(cx, target, radius, options))?;
+            *self = Self::new(cx, request_id);
+        }
+        Ok(())
+    }
+}
+
 fn build_walk_request(
     required_after: api::quest_progress::EvidenceStamp,
     target: WorldTile,
@@ -365,7 +405,12 @@ fn walk_arrived(cx: &ActionContext<'_>, target: WorldTile, radius: i32) -> bool 
     let Some(here) = snapshot.here() else {
         return false;
     };
-    snapshot.walk_arrived(here.value, target, radius)
+    // Frozen bank walks use anchor arrival even when reach is unknown.
+    // A booth click still needs the separate live operation-approach check.
+    let unavailable = api::query::ReachQueryView::unavailable();
+    api::query::is_arrived(here.value, target, radius, || {
+        snapshot.reach().map_or(&unavailable, |reach| reach.value)
+    })
 }
 
 fn lower_eq(left: &str, right: &str) -> bool {
@@ -670,6 +715,7 @@ enum AfterContinue {
 enum ObjectPhase {
     Start,
     BoothWalk {
+        walk: OpeningWalk,
         target: WorldTile,
         deadline: TimeBound,
     },
@@ -700,6 +746,7 @@ enum ObjectPhase {
         loc: AccessLoc,
     },
     NearWalk {
+        walk: OpeningWalk,
         attempt: u32,
         loc: AccessLoc,
         target: WorldTile,
@@ -791,8 +838,9 @@ impl ObjectOpen {
                             continue;
                         }
                         match cx.walk(walk_request(cx, booth.tile, 1, access_walk_options())) {
-                            Ok(_) => {
+                            Ok(request_id) => {
                                 self.phase = ObjectPhase::BoothWalk {
+                                    walk: OpeningWalk::new(cx, request_id),
                                     target: booth.tile,
                                     deadline: TimeBound::new(cx, WALK_BOUND_MS),
                                 };
@@ -813,7 +861,11 @@ impl ObjectOpen {
                         self.phase = object_start_phase(&self.args, false, target_present);
                     }
                 }
-                ObjectPhase::BoothWalk { target, deadline } => {
+                ObjectPhase::BoothWalk {
+                    mut walk,
+                    target,
+                    deadline,
+                } => {
                     if walk_arrived(cx, target, 1) {
                         self.phase = ObjectPhase::Booth(Box::new(BoothOpen::new(
                             BoothMode::Booth,
@@ -823,7 +875,16 @@ impl ObjectOpen {
                     } else if deadline.reached(cx) {
                         return Poll::Ready(Ok(false));
                     } else {
-                        self.phase = ObjectPhase::BoothWalk { target, deadline };
+                        if let Err(error) = walk.resume(cx, target, 1, access_walk_options()) {
+                            if error != ActionError::BudgetExhausted {
+                                return Poll::Ready(Err(error));
+                            }
+                        }
+                        self.phase = ObjectPhase::BoothWalk {
+                            walk,
+                            target,
+                            deadline,
+                        };
                         return Poll::Pending;
                     }
                 }
@@ -1026,11 +1087,12 @@ impl ObjectOpen {
                         ),
                     };
                     match cx.walk(walk_request(cx, target, 1, access_walk_options())) {
-                        Ok(_) => {
+                        Ok(request_id) => {
                             let deadline = TimeBound::new(cx, NEAR_WALK_TIMEOUT_MS);
                             self.queue_log(
                                 line,
                                 ObjectPhase::NearWalk {
+                                    walk: OpeningWalk::new(cx, request_id),
                                     attempt,
                                     loc,
                                     target,
@@ -1051,6 +1113,7 @@ impl ObjectOpen {
                     }
                 }
                 ObjectPhase::NearWalk {
+                    mut walk,
                     attempt,
                     loc,
                     target,
@@ -1059,7 +1122,13 @@ impl ObjectOpen {
                     if walk_arrived(cx, target, 1) || deadline.reached(cx) {
                         self.retry_beside(attempt, Some(loc), cx);
                     } else {
+                        if let Err(error) = walk.resume(cx, target, 1, access_walk_options()) {
+                            if error != ActionError::BudgetExhausted {
+                                return Poll::Ready(Err(error));
+                            }
+                        }
                         self.phase = ObjectPhase::NearWalk {
+                            walk,
                             attempt,
                             loc,
                             target,
@@ -1341,6 +1410,7 @@ struct BoothOpen {
     phase: BoothPhase,
     selected: Option<BoothSelection>,
     last_approach_dest: Option<WorldTile>,
+    walk: Option<OpeningWalk>,
     open_generation: u64,
 }
 
@@ -1361,6 +1431,7 @@ impl BoothOpen {
             phase: BoothPhase::Begin,
             selected: None,
             last_approach_dest: None,
+            walk: None,
             open_generation: u64::MAX,
         }
     }
@@ -1392,7 +1463,8 @@ impl BoothOpen {
                         if !bank_near(current_tile(cx), stand, 1) {
                             let walk = cx.walk(walk_request(cx, stand, 1, access_walk_options()));
                             match walk {
-                                Ok(_) => {
+                                Ok(request_id) => {
+                                    self.walk = Some(OpeningWalk::new(cx, request_id));
                                     self.phase = BoothPhase::WaitStand {
                                         deadline: TimeBound::new(cx, WALK_BOUND_MS),
                                     };
@@ -1445,6 +1517,18 @@ impl BoothOpen {
                     if deadline.reached(cx) {
                         return Poll::Ready(Ok(false));
                     }
+                    if let Some(walk) = self.walk.as_mut() {
+                        if let Err(error) = walk.resume(
+                            cx,
+                            self.stand.expect("stand walk"),
+                            1,
+                            access_walk_options(),
+                        ) {
+                            if error != ActionError::BudgetExhausted {
+                                return Poll::Ready(Err(error));
+                            }
+                        }
+                    }
                     self.phase = BoothPhase::WaitStand { deadline };
                     return Poll::Pending;
                 }
@@ -1478,10 +1562,6 @@ impl BoothOpen {
                         BoothApproach::Walk(destination) => {
                             if deadline.reached(cx) {
                                 return Poll::Ready(Ok(false));
-                            }
-                            if self.last_approach_dest == Some(destination) {
-                                self.phase = BoothPhase::WaitSelected { deadline };
-                                return Poll::Pending;
                             }
                             match self.start_approach(cx, destination, deadline) {
                                 Poll::Pending => return Poll::Pending,
@@ -1617,11 +1697,19 @@ impl BoothOpen {
         deadline: TimeBound,
     ) -> Poll<Result<bool, ActionError>> {
         if self.last_approach_dest == Some(destination) {
+            if let Some(walk) = self.walk.as_mut() {
+                if let Err(error) = walk.resume(cx, destination, 0, access_walk_options()) {
+                    if error != ActionError::BudgetExhausted {
+                        return Poll::Ready(Err(error));
+                    }
+                }
+            }
             self.phase = BoothPhase::WaitSelected { deadline };
             return Poll::Pending;
         }
         match cx.walk(walk_request(cx, destination, 0, access_walk_options())) {
-            Ok(_) => {
+            Ok(request_id) => {
+                self.walk = Some(OpeningWalk::new(cx, request_id));
                 self.last_approach_dest = Some(destination);
                 self.phase = BoothPhase::WaitSelected { deadline };
                 Poll::Pending
@@ -1654,11 +1742,7 @@ impl BoothOpen {
     }
 }
 
-fn nearest_use_quickly<'a>(
-    rows: &'a [LocView],
-    here: WorldTile,
-    level: i32,
-) -> Option<&'a LocView> {
+fn nearest_use_quickly(rows: &[LocView], here: WorldTile, level: i32) -> Option<&LocView> {
     rows.iter()
         .filter(|row| {
             row.tile.level == level
@@ -1718,7 +1802,11 @@ struct SelectionResult {
 fn no_candidate_selection() -> SelectedBank {
     SelectedBank {
         bank_index: u16::MAX,
-        access_tile: WorldTile { x: 0, z: 0, level: 0 },
+        access_tile: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
         kind: PickKind::NoCandidate,
         access: None,
     }
@@ -1769,7 +1857,7 @@ impl AccessSpec {
 }
 
 struct WorldWalk {
-    request_id: u64,
+    follow: OpeningWalk,
     target: WorldTile,
     radius: i32,
     deadline: TimeBound,
@@ -1867,7 +1955,7 @@ impl BankingOpen {
                     match cx.walk(walk_request(cx, target, radius, world_walk_options())) {
                         Ok(request_id) => {
                             self.phase = BankingPhase::Walk(WorldWalk {
-                                request_id,
+                                follow: OpeningWalk::new(cx, request_id),
                                 target,
                                 radius,
                                 deadline: TimeBound::new(cx, WORLD_WALK_TIMEOUT_MS),
@@ -1889,16 +1977,28 @@ impl BankingOpen {
                         }
                     }
                 }
-                BankingPhase::Walk(walk) => {
+                BankingPhase::Walk(mut walk) => {
+                    let terminal = walk.follow.session == cx.run().session
+                        && cx
+                            .walk_receipt(walk.follow.request_id)
+                            .is_some_and(|receipt| receipt.end != WalkEnd::Cancelled);
                     if walk_arrived(cx, walk.target, walk.radius)
-                        || cx.walk_receipt(walk.request_id).is_some()
+                        || terminal
                         || walk.deadline.reached(cx)
                     {
                         if walk.deadline.reached(cx) {
-                            cx.cancel_request(walk.request_id);
+                            cx.cancel_request(walk.follow.request_id);
                         }
                         self.open_target(walk.next);
                         continue;
+                    }
+                    if let Err(error) =
+                        walk.follow
+                            .resume(cx, walk.target, walk.radius, world_walk_options())
+                    {
+                        if error != ActionError::BudgetExhausted {
+                            return Poll::Ready(Err(error));
+                        }
                     }
                     self.phase = BankingPhase::Walk(walk);
                     return Poll::Pending;
@@ -1999,7 +2099,14 @@ impl BankingOpen {
                 WorldTarget::Access(Some(AccessSpec::from_wire(&destination))),
             );
         } else if let Some(from) = here {
-            match SelectorCore::begin(Arc::clone(facts), self.preferences, Some(from), true, cx)? {
+            match SelectorCore::begin(
+                Arc::clone(facts),
+                self.preferences,
+                Some(from),
+                true,
+                false,
+                cx,
+            )? {
                 Some(select) => self.phase = BankingPhase::Select(select),
                 None => self.phase = BankingPhase::Access(self.default_access()),
             }
@@ -2072,43 +2179,32 @@ fn nearest_eligible_bank(
     let snapshot = cx.snapshot();
     let stats = snapshot.stats().map_or(&[][..], |rows| rows.value);
     let quests = snapshot.quest_statuses().map_or(&[][..], |rows| rows.value);
-    eligible_air_fallback(facts, preferences, stats, quests, from).map(|(_, bank)| bank)
+    nearest_eligible_bank_from_rows(facts, preferences, stats, quests, from)
 }
 
-fn eligible_air_fallback(
+fn nearest_eligible_bank_from_rows(
     facts: &Arc<NamedBankFacts>,
     preferences: BankPreferences,
     stats: &[api::snapshot::StatView],
     quests: &[api::snapshot::QuestStatusView],
     from: WorldTile,
-) -> Option<(u16, NamedBank)> {
+) -> Option<NamedBank> {
     BankSelector::new(Arc::clone(facts), preferences)
         .eligible_indices(stats, quests)
         .into_iter()
-        .filter_map(|index| {
-            facts
-                .banks()
-                .get(usize::from(index))
-                .copied()
-                .map(|bank| (index, bank))
-        })
-        .min_by_key(|(_, bank)| air_distance_squared(from, bank.air_tile()))
+        .filter_map(|index| facts.banks().get(usize::from(index)).copied())
+        .min_by_key(|bank| air_distance_squared(from, bank.air_tile()))
 }
 
 fn air_distance_squared(a: WorldTile, b: WorldTile) -> u128 {
-    let dx = (i64::from(a.x) - i64::from(b.x)).unsigned_abs() as u128;
-    let dz = (i64::from(a.z) - i64::from(b.z)).unsigned_abs() as u128;
+    let dx = u128::from((i64::from(a.x) - i64::from(b.x)).unsigned_abs());
+    let dz = u128::from((i64::from(a.z) - i64::from(b.z)).unsigned_abs());
     dx.saturating_mul(dx).saturating_add(dz.saturating_mul(dz))
 }
 
 struct SelectorCore {
     machine: Select,
     facts: Arc<NamedBankFacts>,
-    from: WorldTile,
-    preferences: BankPreferences,
-    options: WalkOptions,
-    fallback: Option<(u16, NamedBank)>,
-    started: Duration,
 }
 
 impl SelectorCore {
@@ -2117,15 +2213,12 @@ impl SelectorCore {
         preferences: BankPreferences,
         start: Option<WorldTile>,
         allow_wilderness: bool,
+        allow_air_fallback: bool,
         cx: &mut ActionContext<'_>,
     ) -> Result<Option<Self>, ActionError> {
         let Some(from) = start.or_else(|| current_tile(cx)) else {
             return Ok(None);
         };
-        let snapshot = cx.snapshot();
-        let stats = snapshot.stats().map_or(&[][..], |rows| rows.value);
-        let quests = snapshot.quest_statuses().map_or(&[][..], |rows| rows.value);
-        let fallback = eligible_air_fallback(&facts, preferences, stats, quests, from);
         let options = WalkOptions {
             allow_teleports: WalkBit::Forbid,
             allow_wilderness: if allow_wilderness {
@@ -2142,81 +2235,21 @@ impl SelectorCore {
                 preferences,
                 options,
                 explicit: None,
+                allow_air_fallback,
             },
             cx,
         )?;
-        Ok(Some(Self {
-            machine,
-            facts,
-            from,
-            preferences,
-            options,
-            fallback,
-            started: cx.active_now(),
-        }))
+        Ok(Some(Self { machine, facts }))
     }
 
     fn poll(
         &mut self,
         cx: &mut ActionContext<'_>,
     ) -> Poll<Result<Option<SelectionResult>, ActionError>> {
-        match self.machine.poll(cx) {
-            Poll::Ready(Err(ActionError::BudgetExhausted)) => {
-                let retry = Select::begin(
-                    SelectArgs {
-                        facts: Arc::clone(&self.facts),
-                        from: self.from,
-                        preferences: self.preferences,
-                        options: self.options,
-                        explicit: None,
-                    },
-                    cx,
-                );
-                match retry {
-                    Ok(machine) => {
-                        self.machine = machine;
-                        match fallback_selection(self.started, cx.active_now(), self.fallback) {
-                            Some(fallback) => Poll::Ready(Ok(fallback)),
-                            None => Poll::Pending,
-                        }
-                    }
-                    Err(error) => Poll::Ready(Err(error)),
-                }
-            }
-            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
-            Poll::Ready(Ok(selected)) => Poll::Ready(Ok(selected_bank(&self.facts, selected))),
-            Poll::Pending => match fallback_selection(self.started, cx.active_now(), self.fallback)
-            {
-                Some(fallback) => Poll::Ready(Ok(fallback)),
-                None => Poll::Pending,
-            },
-        }
+        self.machine
+            .poll(cx)
+            .map(|result| result.map(|selected| selected_bank(&self.facts, selected)))
     }
-}
-
-fn fallback_due(started: Duration, now: Duration) -> bool {
-    now.saturating_sub(started) >= OPEN_TIMEOUT
-}
-fn fallback_selection(
-    started: Duration,
-    now: Duration,
-    fallback: Option<(u16, NamedBank)>,
-) -> Option<Option<SelectionResult>> {
-    fallback_due(started, now).then(|| {
-        fallback.map(|(bank_index, bank)| {
-            let tile = bank.air_tile();
-            SelectionResult {
-                bank,
-                tile,
-                selected: SelectedBank {
-                    bank_index,
-                    access_tile: tile,
-                    kind: PickKind::AirFallback,
-                    access: None,
-                },
-            }
-        })
-    })
 }
 
 fn selected_bank(facts: &NamedBankFacts, selected: SelectedBank) -> Option<SelectionResult> {
@@ -2256,42 +2289,14 @@ mod tests {
     }
 
     #[test]
-    fn captured_eligible_air_fallback_waits_until_five_seconds() {
-        let fallback = NamedBank::new("captured", tile(1, 1));
-        let facts = Arc::new(NamedBankFacts::from_banks(vec![fallback]));
-        let eligible = eligible_air_fallback(
-            &facts,
-            BankPreferences {
-                use_mage_bank: false,
-                use_zanaris_bank: false,
-            },
-            &[],
-            &[],
-            tile(0, 0),
-        );
-        assert_eq!(eligible.map(|bank| bank.name), Some("captured"));
-        assert!(
-            fallback_selection(Duration::ZERO, Duration::from_millis(4_999), Some(fallback),)
-                .is_none()
-        );
-        let selected =
-            fallback_selection(Duration::ZERO, Duration::from_millis(5_000), Some(fallback))
-                .flatten()
-                .unwrap();
-        assert_eq!(selected.bank.name, "captured");
-        assert_eq!(selected.tile, fallback.air_tile());
-        assert_eq!(air_distance_squared(tile(0, 0), fallback.air_tile()), 2);
-    }
-
-    #[test]
-    fn selector_preferences_gate_the_closer_mage_arena_fallback() {
+    fn banking_open_preferences_gate_the_closer_mage_arena_choice() {
         let mage = catalog_bank("Mage Arena");
         let public = NamedBank::new("Public", tile(mage.air_tile().x + 1, mage.air_tile().z));
         let facts = Arc::new(NamedBankFacts::from_banks(vec![public, mage]));
         let stats = [];
         let quests = [];
         let from = mage.air_tile();
-        let ordinary_bank = eligible_air_fallback(
+        let ordinary_bank = nearest_eligible_bank_from_rows(
             &facts,
             BankPreferences {
                 use_mage_bank: false,
@@ -2301,7 +2306,7 @@ mod tests {
             &quests,
             from,
         );
-        let opted_bank = eligible_air_fallback(
+        let opted_bank = nearest_eligible_bank_from_rows(
             &facts,
             BankPreferences {
                 use_mage_bank: true,
@@ -2313,27 +2318,6 @@ mod tests {
         );
         assert_eq!(ordinary_bank.map(|bank| bank.name), Some("Public"));
         assert_eq!(opted_bank.map(|bank| bank.name), Some("Mage Arena"));
-    }
-
-    #[test]
-    fn fallback_selection_uses_captured_bank_without_restarting_walk() {
-        let fallback = NamedBank::new("Public", tile(3, 4));
-        let started = Duration::from_secs(2);
-        assert!(fallback_selection(
-            started,
-            started + Duration::from_millis(4_999),
-            Some(fallback),
-        )
-        .is_none());
-        let selected = fallback_selection(
-            started,
-            started + Duration::from_millis(5_000),
-            Some(fallback),
-        )
-        .flatten()
-        .unwrap();
-        assert_eq!(selected.bank.name, "Public");
-        assert_eq!(selected.tile, fallback.air_tile());
     }
 
     #[test]
