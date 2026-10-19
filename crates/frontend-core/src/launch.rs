@@ -210,7 +210,7 @@ impl ProfileArgs {
             .map(host_play::parse_revision)
             .transpose()
             .map(|revision| revision.map(|revision| revision.as_i32() as u16))
-            .map_err(ProfileError::Arguments)
+            .map_err(|error| ProfileError(ProfileFault::Arguments(error)))
     }
 
     /// Cache directory selected for offline map-bundle tooling.
@@ -252,7 +252,7 @@ pub fn parse_profile_args(
 ) -> Result<(ProfileArgs, Vec<String>), ProfileError> {
     host_play::parse_profile_args(args)
         .map(|(options, rest)| (ProfileArgs(options), rest))
-        .map_err(ProfileError::Arguments)
+        .map_err(|error| ProfileError(ProfileFault::Arguments(error)))
 }
 
 /// The ambient inputs (environment, home) a profile resolves against,
@@ -340,7 +340,7 @@ impl BoundProfile {
     pub fn require_bot_operation(&self) -> Result<(), ProfileError> {
         self.0
             .require_bot_operation()
-            .map_err(ProfileError::BotOperationRefused)
+            .map_err(|error| ProfileError(ProfileFault::BotOperationRefused(error)))
     }
 
     /// The vault this profile keeps its accounts in.
@@ -404,7 +404,9 @@ impl BoundProfile {
     /// The opt-in debug command catalogue of this profile.
     #[cfg(feature = "debug-catalog")]
     pub fn debug_catalog(&self) -> Result<Arc<api::debug_commands::DebugCatalog>, ProfileError> {
-        self.0.debug_catalog().map_err(ProfileError::DebugCatalog)
+        self.0
+            .debug_catalog()
+            .map_err(|error| ProfileError(ProfileFault::DebugCatalog(error)))
     }
 
     /// The world numbers of the profile's public world list, for profiles
@@ -616,10 +618,16 @@ impl SubmitError {
     }
 }
 
-/// Why a server-profile operation failed. The `String` variants carry the
-/// operator-facing sentence the lower layer (`host-play`) reports.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ProfileError {
+/// Why a server-profile operation failed: a fixed sentence, or the
+/// operator-facing sentence the lower layer (`host-play`) reports. Callers
+/// show it; the cause stays private.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error(transparent)]
+pub struct ProfileError(ProfileFault);
+
+/// The cause of a [`ProfileError`].
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+enum ProfileFault {
     /// A profile is already bound; the revision cannot change.
     #[error("server profile is already bound; restart to change revision")]
     AlreadyBound,
@@ -654,27 +662,40 @@ pub enum ProfileError {
     #[error("{0}")]
     BotOperationRefused(String),
     /// The profile's debug command catalogue is unavailable.
+    #[cfg(feature = "debug-catalog")]
     #[error("{0}")]
     DebugCatalog(String),
 }
 
 impl ProfileError {
+    /// The session is not bound to a server profile.
+    pub fn not_bound() -> Self {
+        Self(ProfileFault::NotBound)
+    }
+
+    /// A preparation that failed with `sentence` (tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn prepare_failed_for_test(sentence: String) -> Self {
+        Self(ProfileFault::Prepare(sentence))
+    }
+
     /// Heap bytes the carried message owns.
     #[cfg(any(test, feature = "test-support"))]
     fn owned_bytes(&self) -> usize {
-        match self {
-            Self::Arguments(message)
-            | Self::Resolve(message)
-            | Self::Prepare(message)
-            | Self::Worker(message)
-            | Self::BotOperationRefused(message)
-            | Self::DebugCatalog(message) => message.capacity(),
-            Self::AlreadyBound
-            | Self::NotConfigured
-            | Self::NoEnvironment
-            | Self::NotPrepared
-            | Self::NotBound
-            | Self::ValidationMismatch => 0,
+        match &self.0 {
+            ProfileFault::Arguments(message)
+            | ProfileFault::Resolve(message)
+            | ProfileFault::Prepare(message)
+            | ProfileFault::Worker(message)
+            | ProfileFault::BotOperationRefused(message) => message.capacity(),
+            #[cfg(feature = "debug-catalog")]
+            ProfileFault::DebugCatalog(message) => message.capacity(),
+            ProfileFault::AlreadyBound
+            | ProfileFault::NotConfigured
+            | ProfileFault::NoEnvironment
+            | ProfileFault::NotPrepared
+            | ProfileFault::NotBound
+            | ProfileFault::ValidationMismatch => 0,
         }
     }
 }
@@ -821,7 +842,7 @@ impl PreparationJob {
     pub fn join(self) -> Result<ProfileTemplate, ProfileError> {
         self.task
             .join()
-            .map_err(|error| ProfileError::Worker(error.to_string()))
+            .map_err(|error| ProfileError(ProfileFault::Worker(error.to_string())))
             .and_then(|result| result)
             .map(ProfileTemplate)
     }
@@ -878,7 +899,7 @@ impl ValidationPending {
             move |_| {
                 template
                     .validate_for_play_with_progress(&observer)
-                    .map_err(ProfileError::Prepare)
+                    .map_err(|error| ProfileError(ProfileFault::Prepare(error)))
             },
         )
         .map_err(submit_error)?;
@@ -916,7 +937,7 @@ impl ValidationJob {
     pub fn join(self) -> Result<ValidatedProfile, ProfileError> {
         self.task
             .join()
-            .map_err(|error| ProfileError::Worker(error.to_string()))
+            .map_err(|error| ProfileError(ProfileFault::Worker(error.to_string())))
             .and_then(|result| result)
             .map(ValidatedProfile)
     }
@@ -976,7 +997,7 @@ impl PreparationSteps {
                     }
                 }
                 Err(error) => Step::Complete {
-                    output: Err(ProfileError::Resolve(error)),
+                    output: Err(ProfileError(ProfileFault::Resolve(error))),
                     completed: 0,
                     total: None,
                 },
@@ -990,7 +1011,7 @@ impl PreparationSteps {
                 Step::Continue { completed, total }
             }
             host_play::TemplateStep::Complete(output) => Step::Complete {
-                output: output.map_err(ProfileError::Prepare),
+                output: output.map_err(|error| ProfileError(ProfileFault::Prepare(error))),
                 completed: 1,
                 total: Some(1),
             },
@@ -1055,7 +1076,7 @@ impl ProfileLauncher {
         environment: ProfileEnv,
     ) -> Result<(), ProfileError> {
         if self.bound.is_some() {
-            return Err(ProfileError::AlreadyBound);
+            return Err(ProfileError(ProfileFault::AlreadyBound));
         }
         self.args = Some(args);
         self.environment = Some(environment);
@@ -1150,15 +1171,15 @@ impl ProfileLauncher {
     /// (the profile's own or default revision applies).
     pub fn bind_with(&mut self, saved_revision: Option<u16>) -> Result<(), ProfileError> {
         if self.bound.is_some() {
-            return Err(ProfileError::AlreadyBound);
+            return Err(ProfileError(ProfileFault::AlreadyBound));
         }
         let (options, environment) = self.inputs()?;
         let template = options
             .0
             .resolve_with_env(saved_revision, &environment.0)
-            .map_err(ProfileError::Resolve)?
+            .map_err(|error| ProfileError(ProfileFault::Resolve(error)))?
             .prepare_template()
-            .map_err(ProfileError::Prepare)?;
+            .map_err(|error| ProfileError(ProfileFault::Prepare(error)))?;
         self.install(ProfileTemplate(template));
         Ok(())
     }
@@ -1168,16 +1189,16 @@ impl ProfileLauncher {
         self.template
             .as_ref()
             .map(ProfileTemplate::share)
-            .ok_or(ProfileError::NotPrepared)
+            .ok_or(ProfileError(ProfileFault::NotPrepared))
     }
 
     /// Keep a validation of the active template for the next launch.
     pub fn install_validated(&mut self, validated: ValidatedProfile) -> Result<(), ProfileError> {
         let Some(template) = self.template.as_ref() else {
-            return Err(ProfileError::NotPrepared);
+            return Err(ProfileError(ProfileFault::NotPrepared));
         };
         if !validated.is_for(template) {
-            return Err(ProfileError::ValidationMismatch);
+            return Err(ProfileError(ProfileFault::ValidationMismatch));
         }
         self.validated = Some(validated);
         Ok(())
@@ -1214,11 +1235,14 @@ impl ProfileLauncher {
 
     /// The configured production inputs, or why they are missing.
     fn inputs(&self) -> Result<(&ProfileArgs, &ProfileEnv), ProfileError> {
-        let args = self.args.as_ref().ok_or(ProfileError::NotConfigured)?;
+        let args = self
+            .args
+            .as_ref()
+            .ok_or(ProfileError(ProfileFault::NotConfigured))?;
         let environment = self
             .environment
             .as_ref()
-            .ok_or(ProfileError::NoEnvironment)?;
+            .ok_or(ProfileError(ProfileFault::NoEnvironment))?;
         Ok((args, environment))
     }
 
@@ -1228,7 +1252,7 @@ impl ProfileLauncher {
         options
             .0
             .resolve_with_env(Some(saved_revision), &environment.0)
-            .map_err(ProfileError::Resolve)
+            .map_err(|error| ProfileError(ProfileFault::Resolve(error)))
     }
 
     /// The server label: the bound profile's, else the configured one at
@@ -1446,15 +1470,12 @@ pub fn removed_passphrase_flag_error(program: &str) -> String {
     host_play::passphrase::removed_flag_error(program)
 }
 
-/// Why reading the vault passphrase failed.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum PassphraseError {
-    /// The passphrase could not be asked for or read (no terminal, closed or
-    /// unreadable input, a refused new passphrase); the sentence is the one
-    /// `host-play` reports.
-    #[error("{0}")]
-    Unavailable(String),
-}
+/// Why reading the vault passphrase failed: it could not be asked for or
+/// read (no terminal, closed or unreadable input, a refused new
+/// passphrase). The sentence is the one `host-play` reports.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
+pub struct PassphraseError(String);
 
 /// Read the vault passphrase for `program`: prompted on a terminal, else
 /// read from stdin when `from_stdin`. `vault_exists` chooses the unlock or
@@ -1470,7 +1491,7 @@ pub fn obtain_passphrase(
         host_play::passphrase::Purpose::for_vault(vault_exists),
     )
     .map(Passphrase::from_secret)
-    .map_err(PassphraseError::Unavailable)
+    .map_err(PassphraseError)
 }
 
 /// Warn once on stderr when the legacy passphrase environment variable is

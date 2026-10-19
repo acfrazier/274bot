@@ -960,6 +960,12 @@ impl<Io> OperatorSession<Io> {
         }
     }
 
+    /// The manual-movement pause this session runs with now (tests).
+    #[cfg(test)]
+    pub(crate) fn running_pause_script_on_manual_walk_abort(&self) -> bool {
+        self.pause_script_on_manual_walk_abort
+    }
+
     /// Publish grants before or after Play installation.
     pub(crate) fn set_walk_globals(&mut self, globals: crate::walk_permissions::WalkGlobals) {
         self.walk_globals = globals;
@@ -1213,7 +1219,7 @@ impl<Io> OperatorSession<Io> {
     /// login. The host's focus follows (the preferred login owner), and both
     /// the outgoing and incoming slots are woken so a parked worker re-reads
     /// its draw state within a frame.
-    pub fn select(&mut self, name: &str) -> Selection {
+    pub(crate) fn select(&mut self, name: &str) -> Selection {
         if self.selected.as_deref() == Some(name) || self.profile_saving(name) {
             return Selection::Unchanged;
         }
@@ -1376,8 +1382,10 @@ impl<Io> OperatorSession<Io> {
 
     /// Add `name` to the fleet and bring its worker up. Login intent follows
     /// the profile's auto-login unless the logout latch blocks it. Returns
-    /// whether the name was newly added.
-    pub fn load<S: SlotSurface<Io = Io>>(
+    /// whether the name was newly added. Tests; operators submit
+    /// [`OperatorCommand::Load`].
+    #[cfg(test)]
+    pub(crate) fn load<S: SlotSurface<Io = Io>>(
         &mut self,
         name: &str,
         surface: &mut S,
@@ -1460,7 +1468,11 @@ impl<Io> OperatorSession<Io> {
     /// Log in one member: cancel its removal, clear its latch, and arm an
     /// explicit one-shot handshake. A finished worker is reaped and a
     /// terminal lifetime recreated with its retained IO.
-    pub fn login<S: SlotSurface<Io = Io>>(&mut self, name: &str, surface: &mut S) -> OperationId {
+    pub(crate) fn login<S: SlotSurface<Io = Io>>(
+        &mut self,
+        name: &str,
+        surface: &mut S,
+    ) -> OperationId {
         let op = self.operations.open(ActionKind::Login);
         self.cancel_removal(name);
         self.fleet.clear_latch(name);
@@ -1555,7 +1567,9 @@ impl<Io> OperatorSession<Io> {
     /// Log out one member: latch it so auto-login is blocked until Log in,
     /// then arm a clean logout. The slot stays up; only intent changes. A
     /// queued or connecting worker cancels its handshake at the next check.
-    pub fn logout(&mut self, name: &str) -> OperationId {
+    /// Tests; operators submit [`OperatorCommand::Logout`].
+    #[cfg(test)]
+    pub(crate) fn logout(&mut self, name: &str) -> OperationId {
         let op = self.operations.open(ActionKind::Logout);
         self.logout_member(op, name);
         if let Some(play) = self.play.as_ref() {
@@ -2426,7 +2440,7 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// Pause `name`'s script, or resume it when paused.
-    pub fn toggle_pause(&mut self, name: &str) -> OperationId {
+    pub(crate) fn toggle_pause(&mut self, name: &str) -> OperationId {
         let paused = self
             .play
             .as_ref()
@@ -2451,7 +2465,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Stop `name`'s script (teardown hook, instance dropped). Settles when
     /// the host reports the slot idle, including while offline.
-    pub fn stop_script(&mut self, name: &str) -> OperationId {
+    pub(crate) fn stop_script(&mut self, name: &str) -> OperationId {
         let op = self.operations.open(ActionKind::ScriptStop);
         match self.play.as_ref() {
             Some(play) => {
@@ -2498,7 +2512,7 @@ impl<Io> OperatorSession<Io> {
     /// successful write applies `mirror` to a running slot and a failed one
     /// restores the durable value (unless a newer write is queued) and is
     /// reported through [`Self::take_write_failures`] prefixed by `label`.
-    pub fn save_profile(
+    pub(crate) fn save_profile(
         &mut self,
         profile: Profile,
         mirror: ArmMirror,

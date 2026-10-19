@@ -246,6 +246,13 @@ impl<Io> OperatorSession<Io> {
         view
     }
 
+    /// The walk view a queued Nav or danger write adopted when it settled
+    /// since the last call, for the headless driver's lent model (the
+    /// panel and the TUI re-read the durable view each frame).
+    pub(crate) fn take_settled_walk_globals(&mut self) -> Option<WalkGlobalsView> {
+        self.commands.take_settled_walk_globals()
+    }
+
     /// A handle on the running write of the SaveLog command `request`, for
     /// the front end's status line ([`crate::log::SaveTicket::poll`]).
     pub fn log_save(&self, request: RequestId) -> Option<crate::log::SaveTicket> {
@@ -336,7 +343,9 @@ impl<Io> OperatorSession<Io> {
     /// The terminal of a preference write that did not fail: `Done` with
     /// `effect` applied when it is durable; when the bounded wait ended
     /// with it still queued, the member stays pending and settles from
-    /// the writer's terminal ([`Self::settle_pref_writes`]).
+    /// the writer's terminal ([`Self::settle_pref_writes`]). Either way
+    /// this is now the newest command for its setting, so an older queued
+    /// write of that setting no longer applies its value when it settles.
     fn after_write(
         &mut self,
         request: RequestId,
@@ -344,6 +353,9 @@ impl<Io> OperatorSession<Io> {
         what: &'static str,
         effect: PrefEffect,
     ) -> Applied {
+        for older in self.commands.pref_writes().iter_mut() {
+            older.effect = older.effect.superseded_by(effect);
+        }
         match write {
             Update::Durable => {
                 self.apply_pref_effect(effect);
@@ -362,18 +374,20 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// What a durable preference write changes in this session beyond the
-    /// file (the effects that need no lent model).
-    fn apply_pref_effect(&mut self, effect: PrefEffect) {
+    /// file (the effects that need no lent model). Returns the walk view a
+    /// walk effect adopted.
+    fn apply_pref_effect(&mut self, effect: PrefEffect) -> Option<WalkGlobalsView> {
         match effect {
-            PrefEffect::None => {}
+            PrefEffect::None => None,
             PrefEffect::Walk(pause) => {
                 if let Some(on) = pause {
                     self.set_pause_script_on_manual_walk_abort(on);
                 }
-                self.refresh_walk_globals();
+                Some(self.refresh_walk_globals())
             }
             PrefEffect::SessionLog(on) => {
                 crate::log_file::apply_session_log(on);
+                None
             }
         }
     }
@@ -393,7 +407,9 @@ impl<Io> OperatorSession<Io> {
             let watch = self.commands.pref_writes().swap_remove(index);
             let (terminal, detail) = match outcome {
                 Ok(()) => {
-                    self.apply_pref_effect(watch.effect);
+                    if let Some(view) = self.apply_pref_effect(watch.effect) {
+                        self.commands.settle_walk_globals(view);
+                    }
                     (Settlement::Completed(Completion::Done), None)
                 }
                 Err(error) => (
@@ -706,6 +722,21 @@ pub(super) enum PrefEffect {
     Walk(Option<bool>),
     /// Open or close the session file.
     SessionLog(bool),
+}
+
+impl PrefEffect {
+    /// This queued effect once `newer`, a later command's effect, was
+    /// accepted: the value it would set for the same setting is dropped,
+    /// so the newest command for a setting wins. Re-adopting the durable
+    /// walk globals stays, because it reads the file and not a captured
+    /// value.
+    fn superseded_by(self, newer: Self) -> Self {
+        match (self, newer) {
+            (Self::Walk(Some(_)), Self::Walk(Some(_))) => Self::Walk(None),
+            (Self::SessionLog(_), Self::SessionLog(_)) => Self::None,
+            (effect, _) => effect,
+        }
+    }
 }
 
 /// A preference command whose write is still queued on the writer

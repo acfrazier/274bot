@@ -48,14 +48,19 @@ impl BenchConfig {
     pub fn from_env() -> Result<Option<Self>, BenchError> {
         host_play::memory::Config::from_env()
             .map(|config| config.map(|c| Self(Box::new(c))))
-            .map_err(BenchError::Config)
+            .map_err(|error| BenchError(BenchStep::Config(error)))
     }
 }
 
-/// Why a benchmark step failed. Each variant carries the sentence
-/// `host-play` reports for that step.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum BenchError {
+/// Why a benchmark step failed: the sentence `host-play` reports for that
+/// step. Callers show it; the step stays private.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error(transparent)]
+pub struct BenchError(BenchStep);
+
+/// The benchmark step that failed, with `host-play`'s sentence.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+enum BenchStep {
     /// The `BOT_MEMORY_*` environment is invalid.
     #[error("{0}")]
     Config(String),
@@ -75,7 +80,8 @@ pub enum BenchError {
 
 /// Refuse a benchmark run against a profile that is not a live local one.
 pub fn require_live_benchmark(class: ProfileClass) -> Result<(), BenchError> {
-    host_play::memory::require_live_benchmark(class.to_host()).map_err(BenchError::LiveRequired)
+    host_play::memory::require_live_benchmark(class.to_host())
+        .map_err(|error| BenchError(BenchStep::LiveRequired(error)))
 }
 
 /// One benchmark run: its temporary vault, minted names and render policy.
@@ -86,7 +92,7 @@ impl BenchRun {
     pub fn prepare(config: BenchConfig, frontend: &'static str) -> Result<Self, BenchError> {
         host_play::memory::Run::prepare_unseeded(*config.0, frontend)
             .map(|run| Self(Box::new(run)))
-            .map_err(BenchError::Prepare)
+            .map_err(|error| BenchError(BenchStep::Prepare(error)))
     }
 
     /// The run's minted profile names.
@@ -122,14 +128,17 @@ impl BenchRun {
                 obj_names: core.obj_names(),
                 map_members: core.map_members(),
             })
-            .map_err(BenchError::SeedNav)
+            .map_err(|error| BenchError(BenchStep::SeedNav(error)))
     }
 
     /// Advance the run against `core`'s play session: `Ok(true)` once the
     /// observation completed; without a play session nothing happens.
     pub fn poll<Io>(&mut self, core: &OperatorSession<Io>) -> Result<bool, BenchError> {
         match core.play() {
-            Some(play) => self.0.poll(play).map_err(BenchError::Run),
+            Some(play) => self
+                .0
+                .poll(play)
+                .map_err(|error| BenchError(BenchStep::Run(error))),
             None => Ok(false),
         }
     }

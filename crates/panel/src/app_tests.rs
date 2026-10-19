@@ -899,9 +899,11 @@ fn preparation_failure_clears_progress_with_partial_session_state_absent() {
     let generation = state.session.profile_generation();
     let job = PreparationJob::settled_for_test(
         generation,
-        Err(frontend_core::launch::ProfileError::Prepare(
-            "fixture preparation failed".into(),
-        )),
+        Err(
+            frontend_core::launch::ProfileError::prepare_failed_for_test(
+                "fixture preparation failed".into(),
+            ),
+        ),
         ProgressView::steps(ProgressStage::CheckingGameFiles, 3, 8),
     );
     let deadline = Instant::now() + Duration::from_secs(60);

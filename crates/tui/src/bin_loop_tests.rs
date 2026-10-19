@@ -86,7 +86,9 @@ fn session_with_alice() -> (TuiSession, Arc<SlotArm>) {
     play.attach_arm("alice", Arc::clone(&arm));
     session.core.set_play(Some(play));
     session.core.fleet_mut().add("alice");
-    session.core.select("alice");
+    session
+        .submit(OperatorCommand::Select, Targets::Profile("alice"))
+        .expect("select");
     (session, arm)
 }
 
@@ -201,3 +203,85 @@ fn iteration_settles_a_preference_write(mode: Loop) {
 }
 
 scenario!(preference_write, iteration_settles_a_preference_write);
+
+/// The 289 game data a bound profile selects, prepared on the shared
+/// worker as a profile bind does.
+fn selected_game_data() -> Arc<api::game_data::SelectedGameData> {
+    api::selected::FamilyPreparation::run(|_| {
+        api::game_data::for_revision(api::selected::ClientRevision::R289)
+            .expect("selected 289 game data")
+    })
+    .expect("spawn selected data worker")
+    .join()
+    .expect("selected data worker")
+}
+
+/// Hang guard for the reload worker; the pass condition is the command's
+/// own terminal.
+const RELOAD_HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// Every iteration advances a Quester Paths reload (T3.3 r5, review
+/// finding 9), before the headed iteration draws: the iteration that
+/// settles the reload draws the settings popup with the reload finished.
+/// An iteration that stops advancing it never settles it; one that
+/// advances it after the draw shows the finished reload as running.
+fn iteration_settles_a_quester_paths_reload(mode: Loop) {
+    let _iso = IsolatedStores::enter("tui-loop-quester-paths");
+    let _paths = crate::bin::seam::lock_quester_paths_test_state();
+    let (session, _arm) = session_with_alice();
+    let mut rig = Rig::new(mode, session);
+    rig.app.settings_state.open = true;
+    // The popup scrolls to the selected row: Reload Paths.
+    rig.app.settings_state.row = 14;
+    rig.session
+        .core
+        .stage_quester_reload(Some(selected_game_data()));
+    let request = rig
+        .session
+        .submit_with(
+            &mut rig.app,
+            OperatorCommand::ReloadQuesterPaths,
+            Targets::Application,
+        )
+        .expect("the reload is admitted")
+        .request();
+    assert!(
+        rig.app.quester_paths_controller.is_running(),
+        "the reload runs on the shared worker"
+    );
+    let start = std::time::Instant::now();
+    while !rig
+        .session
+        .core
+        .commands()
+        .report(request)
+        .and_then(|report| report.member(frontend_core::command::Subject::Application))
+        .is_some_and(|member| member.terminal().is_some())
+    {
+        assert!(
+            start.elapsed() < RELOAD_HANG_GUARD,
+            "no iteration settled the Path reload before the hang guard"
+        );
+        assert_eq!(rig.iterate(), None);
+        std::thread::yield_now();
+    }
+    assert!(!rig.app.quester_paths_controller.is_running());
+    assert!(rig.app.quester_paths_controller.notice_text().is_some());
+    if matches!(mode, Loop::Headed) {
+        let screen = rig.screen();
+        assert!(
+            screen.contains(frontend_core::quester_paths::RELOAD_PATHS_LABEL),
+            "the popup shows Reload Paths:\n{screen}"
+        );
+        assert!(
+            !screen.contains("(reloading…)"),
+            "the iteration that settled the reload drew it as running:\n{screen}"
+        );
+    }
+    frontend_core::test_support::scripts::reset_quester_registry();
+}
+
+scenario!(
+    quester_paths_reload,
+    iteration_settles_a_quester_paths_reload
+);

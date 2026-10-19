@@ -324,6 +324,10 @@ pub(super) struct CommandDesk {
     /// Preference commands whose write is still queued on the
     /// local-state writer thread.
     pref_writes: Vec<super::prefs::PrefWriteWatch>,
+    /// The walk view a queued Nav or danger write adopted when it
+    /// settled, for a front end that does not re-read it each frame (the
+    /// headless driver) to take into its lent model.
+    settled_walk_globals: Option<crate::walk_permissions::WalkGlobalsView>,
     /// The Quester Paths settings (and whether to write them) the next
     /// SetQuesterPaths applies.
     quester_paths: Option<(crate::quester_paths::QuesterPathsView, bool)>,
@@ -378,6 +382,16 @@ impl CommandDesk {
 
     pub(super) fn pref_writes(&mut self) -> &mut Vec<super::prefs::PrefWriteWatch> {
         &mut self.pref_writes
+    }
+
+    pub(super) fn settle_walk_globals(&mut self, view: crate::walk_permissions::WalkGlobalsView) {
+        self.settled_walk_globals = Some(view);
+    }
+
+    pub(super) fn take_settled_walk_globals(
+        &mut self,
+    ) -> Option<crate::walk_permissions::WalkGlobalsView> {
+        self.settled_walk_globals.take()
     }
 
     pub(super) fn stage_quester_paths(
@@ -480,6 +494,19 @@ impl<Io> OperatorSession<Io> {
             super::ArmMirror::none(),
             "profile",
         ));
+    }
+
+    /// Stage `profile` as the write the next [`OperatorCommand::SaveProfile`]
+    /// commits, `mirror` applied to a running slot when it is durable
+    /// (tests: the profile form stages this for the panel).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn stage_profile_save_for_test(
+        &mut self,
+        profile: vault::Profile,
+        mirror: super::ArmMirror,
+        label: &'static str,
+    ) {
+        self.stage_profile_write(StagedProfileWrite::new(profile, None, false, mirror, label));
     }
 
     /// Stage the guardian edit the next [`OperatorCommand::SetGuardian`]

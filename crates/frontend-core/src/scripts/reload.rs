@@ -531,9 +531,15 @@ enum TranspileJob {
     },
 }
 
-/// Why preparing one card's JavaScript failed.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum TranspileError {
+/// Why preparing one card's JavaScript failed. Callers show the sentence;
+/// the cause stays private.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error(transparent)]
+pub struct TranspileError(TranspileFault);
+
+/// The cause of a [`TranspileError`].
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+enum TranspileFault {
     /// The card could not be snapshotted, prepared or committed; the
     /// sentence is the one the script layer reports.
     #[error("{0}")]
@@ -782,7 +788,7 @@ impl Scripts {
         let snapshot = Arc::new(
             self.js
                 .card_preparation_snapshot(source, lookup, None)
-                .map_err(TranspileError::Preparation)?
+                .map_err(|error| TranspileError(TranspileFault::Preparation(error)))?
                 .force_prepare()
                 .cache_even_if_unloadable(),
         );
@@ -889,7 +895,7 @@ impl Scripts {
             if self.async_work.transpile_result.is_some()
                 && !self.transpile_pending_for(TranspileClient::LiveSetup)
             {
-                return Err(TranspileError::ResultUncollected);
+                return Err(TranspileError(TranspileFault::ResultUncollected));
             }
             std::thread::yield_now();
         }
@@ -901,7 +907,7 @@ impl Scripts {
                 return result;
             }
             if !self.transpile_pending_for(TranspileClient::LiveSetup) {
-                return Err(TranspileError::NoResult);
+                return Err(TranspileError(TranspileFault::NoResult));
             }
             std::thread::yield_now();
         }
@@ -1192,7 +1198,7 @@ impl Scripts {
                     client,
                     source,
                     lookup,
-                    result: Err(TranspileError::Worker(error.to_string())),
+                    result: Err(TranspileError(TranspileFault::Worker(error.to_string()))),
                 });
                 return;
             }
@@ -1231,7 +1237,7 @@ impl Scripts {
                     client,
                     source,
                     lookup,
-                    result: Err(TranspileError::Worker(error.to_string())),
+                    result: Err(TranspileError(TranspileFault::Worker(error.to_string()))),
                 });
             }
         }
@@ -1278,12 +1284,12 @@ impl Scripts {
         let result = match task.join() {
             Ok(Ok(script::load::CardPreparationOutcome::Prepared(prepared))) => {
                 if !self.card_snapshot_current(source, &lookup, &snapshot) {
-                    Err(TranspileError::CardChanged)
+                    Err(TranspileError(TranspileFault::CardChanged))
                 } else {
                     self.js
                         .commit_prepared(prepared)
                         .map(|_| ())
-                        .map_err(TranspileError::Preparation)
+                        .map_err(|error| TranspileError(TranspileFault::Preparation(error)))
                 }
             }
             Ok(Ok(script::load::CardPreparationOutcome::Unchanged)) => {
@@ -1292,18 +1298,18 @@ impl Scripts {
                 {
                     Ok(())
                 } else {
-                    Err(TranspileError::NoJavaScript)
+                    Err(TranspileError(TranspileFault::NoJavaScript))
                 }
             }
             Ok(Ok(script::load::CardPreparationOutcome::Failed { error, failure })) => {
                 self.js.record_failure(failure);
-                Err(TranspileError::Preparation(error))
+                Err(TranspileError(TranspileFault::Preparation(error)))
             }
             Ok(Ok(script::load::CardPreparationOutcome::Confirmed)) => {
-                Err(TranspileError::UnexpectedConfirmation)
+                Err(TranspileError(TranspileFault::UnexpectedConfirmation))
             }
-            Ok(Err(error)) => Err(TranspileError::Preparation(error)),
-            Err(error) => Err(TranspileError::Worker(error.to_string())),
+            Ok(Err(error)) => Err(TranspileError(TranspileFault::Preparation(error))),
+            Err(error) => Err(TranspileError(TranspileFault::Worker(error.to_string()))),
         };
         if let Err(error) = &result {
             self.show(format!("transpile {lookup}: {error}"));

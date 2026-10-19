@@ -464,9 +464,11 @@ fn profile_preparation_failure_keeps_vault_play_and_slots_absent() {
     assert_eq!(
         session.finish_profile_preparation(
             generation,
-            Err(frontend_core::launch::ProfileError::Prepare(
-                "cache changed".into()
-            ))
+            Err(
+                frontend_core::launch::ProfileError::prepare_failed_for_test(
+                    "cache changed".into()
+                )
+            )
         ),
         PreparationCompletion::Failed
     );
@@ -928,9 +930,9 @@ fn unbound_and_failed_profile_bind_hide_local_debug_capabilities() {
     assert_eq!(
         session.finish_profile_preparation(
             generation,
-            Err(frontend_core::launch::ProfileError::Prepare(
-                "bind refused".into()
-            ))
+            Err(
+                frontend_core::launch::ProfileError::prepare_failed_for_test("bind refused".into())
+            )
         ),
         PreparationCompletion::Failed
     );

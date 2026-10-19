@@ -17,7 +17,8 @@ use std::time::{Duration, Instant};
 
 use dear_imgui_rs::{sys, ConfigFlags, Context, FramePrepareOptions, MouseButton};
 use dear_imgui_wgpu as imgui_wgpu;
-use frontend_core::scripts::ScriptRunState;
+use frontend_core::command::Subject;
+use frontend_core::scripts::{CompiledCardId, ScriptChoice, ScriptRunState};
 use frontend_core::surface::{FrameBuf, InputEv, InputProbe, InputSender, SlotInput};
 use frontend_core::test_support::session::install_vault;
 use frontend_core::test_support::{FixtureProfile, IsolatedStores, VaultFixture};
@@ -598,6 +599,85 @@ scenario!(
     live_decision_sees_status,
     live_decision_sees_the_status_published_this_frame
 );
+
+/// The 289 game data a bound profile selects, prepared on the shared
+/// worker as a profile bind does.
+fn selected_game_data() -> Arc<api::game_data::SelectedGameData> {
+    api::selected::FamilyPreparation::run(|_| {
+        api::game_data::for_revision(api::selected::ClientRevision::R289)
+            .expect("selected 289 game data")
+    })
+    .expect("spawn selected data worker")
+    .join()
+    .expect("selected data worker")
+}
+
+/// What the Quest Paths notice says while a reload is still running.
+const PATHS_RUNNING: [&str; 2] = [
+    "Reloading quest Paths…",
+    "Reload Paths queued until background capacity is available.",
+];
+
+/// Property 2, Quester Paths (T3.3 r5, review finding 9): a Path reload
+/// settles through frames alone, and the frame advances it before the
+/// Quest Paths section decides what to show. The frame that settles the
+/// reload therefore draws its result, never the reload as still running:
+/// a frame that stops advancing the reload never settles it, and one that
+/// advances it after the drawing draws the running notice.
+fn frames_settle_a_quester_paths_reload(drive: Drive) {
+    let (mut session, _dir) = session_with_play("frame-quester-paths", &["alice"]);
+    session.script_prefs_open = true;
+    session.script_sel = Some(ScriptChoice::compiled(CompiledCardId::QUESTER));
+    let Some(mut rig) = Rig::new(drive, session) else {
+        return;
+    };
+    rig.session()
+        .core
+        .stage_quester_reload(Some(selected_game_data()));
+    let request = rig
+        .session()
+        .submit(OperatorCommand::ReloadQuesterPaths, Targets::Application)
+        .expect("the reload is admitted")
+        .request();
+    assert!(
+        rig.session().quester_paths.is_running(),
+        "the reload runs on the shared worker"
+    );
+    let settled = |rig: &mut Rig| {
+        rig.session()
+            .core
+            .commands()
+            .report(request)
+            .and_then(|report| report.member(Subject::Application))
+            .is_some_and(|member| member.terminal().is_some())
+    };
+    rig.frames_until("the Path reload", settled);
+    assert!(!rig.session().quester_paths.is_running());
+    let notice = rig
+        .session()
+        .quester_paths
+        .notice_text()
+        .expect("the reload reports its result")
+        .to_owned();
+    assert!(!PATHS_RUNNING.contains(&notice.as_str()), "{notice}");
+    if rig.gpu.is_some() {
+        assert!(
+            rig.text.contains(&notice),
+            "the frame that settled the reload draws its result:\n{}",
+            rig.text
+        );
+        for running in PATHS_RUNNING {
+            assert!(
+                !rig.text.contains(running),
+                "the frame that settled the reload drew it as running:\n{}",
+                rig.text
+            );
+        }
+    }
+    frontend_core::test_support::scripts::reset_quester_registry();
+}
+
+scenario!(quester_paths_reload, frames_settle_a_quester_paths_reload);
 
 /// Property 4: input staging is reset before capture, the captured events
 /// are submitted once after collection, and a later empty frame does not

@@ -75,7 +75,6 @@ const STARTUP: &str = "startup wiring of a store path or adapter; no operator de
 const ACCESSOR: &str = "accessor exposing an owned model (T3.1 accessor migration), not a decision";
 const PATH_READ: &str = "resolves an operator file location; no state change";
 const SETTINGS_KIND: &str = "the card kind of the selection decides the row";
-const WRITER: &str = "the durable writer's entry: the caller's mirror and label name the row (credentials → SaveProfile / SetWorld, tutorial → MarkTutorialSkipped, render prefs → SetRaster)";
 const RELEASE_BUNDLE: &str =
     "release packaging of the shipped map bundle; no interactive operator decision";
 
@@ -609,9 +608,6 @@ const CORE: &[(&str, Decision)] = &[
         Excluded(PROJECTION),
     ),
     ("session.rs::OperatorSession::take_settled_starts", Excluded(RESULT)),
-    ("session.rs::OperatorSession::select", Row(C::Select)),
-    ("session.rs::OperatorSession::load", Row(C::Load)),
-    ("session.rs::OperatorSession::login", Row(C::Login)),
     // session/map.rs: the map desk stages row inputs and adopts owner results.
     ("session/map.rs::MapDesk::clear_walk_dest", Excluded(PROJECTION)),
     (
@@ -655,7 +651,6 @@ const CORE: &[(&str, Decision)] = &[
     ),
     ("driver.rs::HeadlessDriver::submit", Rows(&OperatorCommand::ALL, SEAM_ROWS)),
     ("driver.rs::HeadlessDriver::poll", Excluded(PUMP)),
-    ("session.rs::OperatorSession::logout", Row(C::Logout)),
     ("session.rs::OperatorSession::poll", Excluded(PUMP)),
     ("session.rs::OperatorSession::poll_at", Excluded(PUMP)),
     ("session.rs::OperatorSession::poll_host", Excluded(PUMP)),
@@ -664,26 +659,6 @@ const CORE: &[(&str, Decision)] = &[
         Excluded("projection publication: queue places into the fleet rows"),
     ),
     ("session.rs::OperatorSession::advance_removals", Excluded(PUMP)),
-    (
-        "session.rs::OperatorSession::toggle_pause",
-        Rows(
-            &[C::PauseScript, C::ResumeScript],
-            "the run's state selects the row",
-        ),
-    ),
-    ("session.rs::OperatorSession::stop_script", Row(C::StopScript)),
-    (
-        "session.rs::OperatorSession::save_profile",
-        Rows(
-            &[
-                C::SaveProfile,
-                C::SetWorld(WorldChoice::Automatic),
-                C::MarkTutorialSkipped,
-                C::SetRaster(RasterMode::Gpu),
-            ],
-            WRITER,
-        ),
-    ),
     ("session.rs::OperatorSession::take_write_failures", Excluded(RESULT)),
     ("session.rs::OperatorSession::take_settled_saves", Excluded(RESULT)),
     ("session.rs::OperatorSession::take_settings_writes", Excluded(RESULT)),

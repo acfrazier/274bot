@@ -7,7 +7,7 @@ use std::net::{SocketAddr, TcpListener};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
-use frontend_core::{ArmMirror, HeadlessSurface, OperatorSession};
+use frontend_core::{ArmMirror, HeadlessSurface, OperatorCommand, OperatorSession, Targets};
 use host_play::{InstancePermit, PlayOptions};
 use vault::{Profile, ProfileSettings, Vault};
 
@@ -107,7 +107,12 @@ fn a_parked_worker_logs_in_with_the_password_saved_after_it_spawned() {
     s.set_bypass_asset_startup(true);
     s.start_for_test(vault, play);
     let mut surface = HeadlessSurface::new();
-    s.load("alice", &mut surface);
+    s.submit(
+        OperatorCommand::Load,
+        Targets::Profile("alice"),
+        &mut surface,
+    )
+    .unwrap();
     let arm = s.play_for_test().unwrap().arm("alice").unwrap();
     assert!(!arm.wants_login(), "the worker is parked");
     let mut edited = s.durable_profile("alice").unwrap().clone();
@@ -119,9 +124,16 @@ fn a_parked_worker_logs_in_with_the_password_saved_after_it_spawned() {
     let aside = path.with_extension("aside");
     std::fs::rename(&path, &aside).unwrap();
     std::fs::create_dir(&path).unwrap();
+    s.stage_profile_save_for_test(edited.clone(), ArmMirror::remember(None), "credentials");
     let op = s
-        .save_profile(edited.clone(), ArmMirror::remember(None), "credentials")
-        .unwrap();
+        .submit(
+            OperatorCommand::SaveProfile,
+            Targets::Profile("alice"),
+            &mut surface,
+        )
+        .unwrap()
+        .operation()
+        .expect("the save opens an operation");
     s.flush_writes();
     std::fs::remove_dir(&path).unwrap();
     std::fs::rename(&aside, &path).unwrap();
@@ -130,23 +142,48 @@ fn a_parked_worker_logs_in_with_the_password_saved_after_it_spawned() {
         Some(o) if o.is_failed()
     ));
     let since = Instant::now();
-    s.login("alice", &mut surface);
+    s.submit(
+        OperatorCommand::Login,
+        Targets::Profile("alice"),
+        &mut surface,
+    )
+    .unwrap();
     assert_eq!(handshakes_after(&handshakes, since), ["old-pass"]);
-    s.logout("alice");
+    s.submit(
+        OperatorCommand::Logout,
+        Targets::Profile("alice"),
+        &mut surface,
+    )
+    .unwrap();
 
     // A successful save reaches the same worker's next handshake.
-    s.save_profile(edited, ArmMirror::remember(None), "credentials")
-        .unwrap();
+    s.stage_profile_save_for_test(edited, ArmMirror::remember(None), "credentials");
+    s.submit(
+        OperatorCommand::SaveProfile,
+        Targets::Profile("alice"),
+        &mut surface,
+    )
+    .unwrap();
     s.flush_writes();
     let since = Instant::now();
-    s.login("alice", &mut surface);
+    s.submit(
+        OperatorCommand::Login,
+        Targets::Profile("alice"),
+        &mut surface,
+    )
+    .unwrap();
     let seen = handshakes_after(&handshakes, since);
     assert!(!seen.is_empty());
     assert!(
         seen.iter().all(|p| p == "new-pass"),
         "every handshake after the save uses it: {seen:?}"
     );
-    s.logout("alice");
+    s.submit(
+        OperatorCommand::Logout,
+        Targets::Profile("alice"),
+        &mut surface,
+    )
+    .unwrap();
     if let Some(play) = s.play_mut_for_test() {
         play.stop_slot("alice");
     }
