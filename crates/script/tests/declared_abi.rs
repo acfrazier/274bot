@@ -639,6 +639,7 @@ fn t2_1_abi_contract_covers_exports_families_and_visible_debt() {
         contract["active_families"],
         serde_json::json!([
             "bank",
+            "chatbox",
             "cooking",
             "cow",
             "gathering",
