@@ -518,6 +518,124 @@ GameMessages.firstSince(0);
     }
 }
 
+function checkEntityDeclarations(index, scratch) {
+    const declarations = path.join(scratch, 'compat-entity-index.d.ts');
+    const probe = path.join(scratch, 'entity-admission.ts');
+    fs.writeFileSync(declarations, index);
+    fs.writeFileSync(probe, `
+import {
+    EntityQuery, GroundItem, GroundItems, Loc, Locs, Npc, Npcs, Player, Players,
+} from '@rs2b0t/api';
+import EntityQueryModule from '*api/query/Query.js';
+import { matchesEntityName } from '*api/query/Query.js';
+import { talkOp } from '*api/npcs/Npcs.js';
+import { Npc as ModelNpc } from '*api/model/Npc.js';
+import { Loc as ModelLoc } from '*api/model/Loc.js';
+import { Player as ModelPlayer } from '*api/model/Player.js';
+import type {
+    GroundItemSnapshot, LocSnapshot, NpcSnapshot, PlayerSnapshot,
+} from '*adapter/ClientAdapter.js';
+import Tile from '*geometry/Tile.js';
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
+type Assert<T extends true> = T;
+
+const partialNpc = new Npc({ name: 'Goblin' });
+const partialLoc = new Loc({ name: 'Tree' });
+const partialPlayer = new Player({ name: 'Player' });
+const partialGroundItem = new GroundItem({ name: 'Coin' });
+const npcId: number | undefined = partialNpc.id;
+const npcHealth: number | null | undefined = partialNpc.health;
+const locId: number | undefined = partialLoc.id;
+const playerIndex: number | undefined = partialPlayer.index;
+const groundItemId: number | undefined = partialGroundItem.id;
+const groundItemCount: number = partialGroundItem.count;
+const npcTile: Tile = partialNpc.tile();
+const npcNetworkOrigin: Tile = partialNpc.networkOrigin();
+const locInteracted: boolean = partialLoc.interact('Chop down');
+const playerInteracted: boolean = partialPlayer.interact('Follow');
+const groundItemInteracted: boolean = partialGroundItem.interact('Take');
+const matchedName: boolean = matchesEntityName(null, 'Goblin');
+const talkAction: string | null = talkOp(['Talk-to', 'Attack']);
+
+type _NpcId = Assert<Equal<typeof partialNpc.id, number | undefined>>;
+type _NpcHealth = Assert<Equal<typeof partialNpc.health, number | null | undefined>>;
+type _LocId = Assert<Equal<typeof partialLoc.id, number | undefined>>;
+type _PlayerIndex = Assert<Equal<typeof partialPlayer.index, number | undefined>>;
+type _GroundItemId = Assert<Equal<typeof partialGroundItem.id, number | undefined>>;
+type _GroundItemCount = Assert<Equal<typeof partialGroundItem.count, number>>;
+
+declare const npcRows: readonly NpcSnapshot[];
+declare const locRows: readonly LocSnapshot[];
+declare const playerRows: readonly PlayerSnapshot[];
+declare const groundItemRows: readonly GroundItemSnapshot[];
+const npcQuery: EntityQuery<Npc> = EntityQuery.fromSnapshots(() => npcRows, row => new Npc(row));
+const moduleNpcQuery: EntityQueryModule<Npc> =
+    EntityQueryModule.fromSnapshots(() => npcRows, row => new Npc(row));
+const rootNpcQuery: EntityQuery<Npc> = moduleNpcQuery;
+const locQuery: EntityQuery<Loc> = Locs.query();
+const playerQuery: EntityQuery<Player> = Players.query();
+const groundItemQuery: EntityQuery<GroundItem> = GroundItems.query();
+const npcResults: Npc[] = npcQuery.name('Goblin').action('Talk-to')
+    .within(4).withinOf({ x: 3200, z: 3200, level: 0 }, 5)
+    .where(npc => npc.valid()).results();
+const insideQuery: EntityQuery<Npc> = npcQuery.inside({
+    minX: 3190, maxX: 3210, minZ: 3190, maxZ: 3210,
+});
+const preferredNpc: Npc | null = npcQuery.nearestPreferLocal(4);
+const firstNpc: Npc | null = npcQuery.first();
+const nearestNpc: Npc | null = npcQuery.nearest();
+const hasNpc: boolean = npcQuery.exists();
+const npcCount: number = npcQuery.count();
+const forEachMatchResult: void = npcQuery.forEachMatch(npc => npc.targetsMe());
+const allNpcs: Npc[] = Npcs.all();
+const nearestNpcs: Npc[] = Npcs.nearest(2);
+const allPlayers: Player[] = Players.all();
+const locSnapshot: LocSnapshot = locRows[0];
+const playerSnapshot: PlayerSnapshot = playerRows[0];
+const groundItemSnapshot: GroundItemSnapshot = groundItemRows[0];
+
+const modelNpc: ModelNpc<NpcSnapshot> = new ModelNpc<NpcSnapshot>(npcRows[0]);
+const rootNpc: Npc<NpcSnapshot> = modelNpc;
+const modelLoc: ModelLoc<LocSnapshot> = new ModelLoc<LocSnapshot>(locRows[0]);
+const rootLoc: Loc<LocSnapshot> = modelLoc;
+const modelPlayer: ModelPlayer<PlayerSnapshot> = new ModelPlayer<PlayerSnapshot>(playerRows[0]);
+const rootPlayer: Player<PlayerSnapshot> = modelPlayer;
+type _NpcAlias = Assert<Equal<Npc<NpcSnapshot>, ModelNpc<NpcSnapshot>>>;
+type _LocAlias = Assert<Equal<Loc<LocSnapshot>, ModelLoc<LocSnapshot>>>;
+type _PlayerAlias = Assert<Equal<Player<PlayerSnapshot>, ModelPlayer<PlayerSnapshot>>>;
+
+// @ts-expect-error EntityQuery.inside requires all four rectangle bounds.
+npcQuery.inside({ minX: 3190, maxX: 3210, minZ: 3190 });
+// @ts-expect-error nearestPreferLocal requires an explicit preference radius.
+npcQuery.nearestPreferLocal();
+// @ts-expect-error Unsupported entity fields do not receive synthetic declarations.
+partialNpc.serverOwned;
+// @ts-expect-error Native entity health is not a string.
+const invalidHealth: string = partialNpc.health;
+// @ts-expect-error Name filters require strings.
+npcQuery.name(7);
+// @ts-expect-error Interaction actions require strings.
+partialNpc.interact(7);
+// @ts-expect-error Partial entity ids remain numeric when supplied.
+new Npc({ id: 'not a number' });
+`);
+    const program = ts.createProgram([declarations, probe], {
+        target: ts.ScriptTarget.ESNext,
+        module: ts.ModuleKind.ESNext,
+        moduleResolution: ts.ModuleResolutionKind.Bundler,
+        lib: ['lib.esnext.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts'],
+        strict: true,
+        skipLibCheck: true,
+        noEmit: true,
+        types: [],
+    });
+    const diagnostics = ts.getPreEmitDiagnostics(program);
+    if (diagnostics.length) {
+        throw new Error(`Entity declaration check failed:\n${diagnostics.map(d => ts.flattenDiagnosticMessageText(d.messageText, '\n')).join('\n')}`);
+    }
+}
+
 async function main() {
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), '274bot-dts-'));
     try {
@@ -585,6 +703,7 @@ async function main() {
         let index = header + `declare module '@rs2b0t/api' {\n${define ? define.declaration : ''}\n${barrel}\n}\n`;
         for (const m of modules.sort((a,b) => a.module.localeCompare(b.module))) index += `\ndeclare module '*${m.module}' {\n${m.body}\n}\n`;
         checkPaintDeclarations(index, scratch);
+        checkEntityDeclarations(index, scratch);
         const shimSources = Object.fromEntries(registry.map(entry => [
             entry.shim,
             fs.readFileSync(path.join(crate, 'src/shim', entry.shim), 'utf8'),

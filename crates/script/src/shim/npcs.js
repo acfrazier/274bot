@@ -8,40 +8,40 @@ export class Npc {
     }
 
     get name() {
-        return globalThis.__rs2b0t_entities_v8('npc.name', this);
+        return globalThis.__rs2b0t_entities_v8(20 /* npc.name */, this);
     }
 
     get id() {
-        return globalThis.__rs2b0t_entities_v8('npc.id', this);
+        return globalThis.__rs2b0t_entities_v8(21 /* npc.id */, this);
     }
 
     get index() {
-        return globalThis.__rs2b0t_entities_v8('npc.index', this);
+        return globalThis.__rs2b0t_entities_v8(22 /* npc.index */, this);
     }
 
     get inCombat() {
-        return globalThis.__rs2b0t_entities_v8('npc.inCombat', this);
+        return globalThis.__rs2b0t_entities_v8(23 /* npc.inCombat */, this);
     }
 
     get health() {
-        return globalThis.__rs2b0t_entities_v8('npc.health', this);
+        return globalThis.__rs2b0t_entities_v8(24 /* npc.health */, this);
     }
 
     get level() {
-        return globalThis.__rs2b0t_entities_v8('npc.level', this);
+        return globalThis.__rs2b0t_entities_v8(25 /* npc.level */, this);
     }
 
     get size() {
-        return globalThis.__rs2b0t_entities_v8('npc.size', this);
+        return globalThis.__rs2b0t_entities_v8(26 /* npc.size */, this);
     }
 
     networkOrigin() {
-        return globalThis.__rs2b0t_entities_v8('npc.networkOrigin', this, Tile);
+        return globalThis.__rs2b0t_entities_v8(27 /* npc.networkOrigin */, this, Tile);
     }
 
     networkTile() {
         // Frozen Npc.ts:55-57 maps a missing network tile to tile().
-        return globalThis.__rs2b0t_entities_v8('npc.networkTile', this, Tile);
+        return globalThis.__rs2b0t_entities_v8(28 /* npc.networkTile */, this, Tile);
     }
 
     /**
@@ -49,31 +49,31 @@ export class Npc {
      * not merely when `Game.inCombat()` is true.
      */
     targetsMe() {
-        return globalThis.__rs2b0t_entities_v8('npc.targetsMe', this, snap);
+        return globalThis.__rs2b0t_entities_v8(29 /* npc.targetsMe */, this, snap);
     }
 
     targetsAnotherPlayer() {
-        return globalThis.__rs2b0t_entities_v8('npc.targetsAnotherPlayer', this, snap);
+        return globalThis.__rs2b0t_entities_v8(30 /* npc.targetsAnotherPlayer */, this, snap);
     }
 
     tile() {
-        return globalThis.__rs2b0t_entities_v8('npc.tile', this, Tile);
+        return globalThis.__rs2b0t_entities_v8(31 /* npc.tile */, this, Tile);
     }
 
     distance() {
-        return globalThis.__rs2b0t_entities_v8('npc.distance', this);
+        return globalThis.__rs2b0t_entities_v8(32 /* npc.distance */, this);
     }
 
     actions() {
-        return globalThis.__rs2b0t_entities_v8('npc.actions', this);
+        return globalThis.__rs2b0t_entities_v8(33 /* npc.actions */, this);
     }
 
     valid() {
-        return globalThis.__rs2b0t_entities_v8('npc.valid', this, snap);
+        return globalThis.__rs2b0t_entities_v8(34 /* npc.valid */, this, snap);
     }
 
     interact(action) {
-        return globalThis.__rs2b0t_entities_v8('npc.interact', this, action, queue);
+        return globalThis.__rs2b0t_entities_v8(35 /* npc.interact */, this, action, queue);
     }
 }
 
@@ -85,13 +85,13 @@ export const Npcs = proxy('Npcs', {
         );
     },
     all() {
-        return globalThis.__rs2b0t_entities_v8('entities.all', snap, 'npcs', Npc);
+        return globalThis.__rs2b0t_entities_v8(5 /* entities.all */, snap, 0, Npc);
     },
     nearest(count = 1) {
-        return globalThis.__rs2b0t_entities_v8('npcs.nearest', Npcs, count);
+        return globalThis.__rs2b0t_entities_v8(6 /* npcs.nearest */, Npcs, count);
     },
 });
 
 export function talkOp(actions) {
-    return globalThis.__rs2b0t_entities_v8('talkOp', actions);
+    return globalThis.__rs2b0t_entities_v8(4 /* talkOp */, actions);
 }

@@ -641,6 +641,7 @@ fn t2_1_abi_contract_covers_exports_families_and_visible_debt() {
             "bank",
             "cooking",
             "cow",
+            "entities",
             "gathering",
             "runecrafting",
             "skills",
@@ -649,6 +650,14 @@ fn t2_1_abi_contract_covers_exports_families_and_visible_debt() {
     );
 
     let family_rows = graph["families"].as_array().expect("family rows");
+    let entities = family_rows
+        .iter()
+        .find(|row| row["family_id"] == "entities")
+        .expect("entity family row");
+    assert_eq!(entities["activation_state"], "activated");
+    assert_eq!(entities["counts"]["declarations"], serde_json::json!(11));
+    assert_eq!(entities["counts"]["members"], serde_json::json!(58));
+    assert_eq!(entities["counts"]["not_impl_debt"], serde_json::json!(0));
     let family_ids: std::collections::HashSet<&str> = family_rows
         .iter()
         .map(|row| row["family_id"].as_str().expect("family id"))

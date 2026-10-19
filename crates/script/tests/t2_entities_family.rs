@@ -394,8 +394,8 @@ export default class QueryBot extends LoopingBot {
             (row) => row,
         ).results();
         const actionPositions = [
-            globalThis.__rs2b0t_entities_v8('opIndex', [null, 'hidden', 'Attack'], 'attack'),
-            globalThis.__rs2b0t_entities_v8('presentOps', [null, false, 'hidden', 'Attack']),
+            globalThis.__rs2b0t_entities_v8(2 /* opIndex */, [null, 'hidden', 'Attack'], 'attack'),
+            globalThis.__rs2b0t_entities_v8(1 /* presentOps */, [null, false, 'hidden', 'Attack']),
         ];
 
         const order = [];

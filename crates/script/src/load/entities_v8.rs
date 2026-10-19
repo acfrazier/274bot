@@ -25,192 +25,74 @@ fn dispatch<'s>(
     scope: &mut v8::HandleScope<'s>,
     args: &v8::FunctionCallbackArguments<'s>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let op = args.get(0);
-    if is_op(scope, op, "entitySnapView") {
-        return entity_snap_view(scope, args.get(1));
+    let operation = args.get(0);
+    if !operation.is_int32() {
+        return Err(cb::type_error(scope, "invalid entity operation"));
     }
-    if is_op(scope, op, "presentOps") {
-        return present_ops(scope, args.get(1));
+    match operation.int32_value(scope) {
+        Some(0) => entity_snap_view(scope, args.get(1)),
+        Some(1) => present_ops(scope, args.get(1)),
+        Some(2) => {
+            let index = op_index_value(scope, args.get(1), args.get(2))?;
+            Ok(cb::num(scope, index))
+        }
+        Some(3) => matches_entity_name(scope, args.get(1), args.get(2)),
+        Some(4) => talk_op(scope, args.get(1)),
+        Some(5) => entities_all(scope, args.get(1), args.get(2), args.get(3)),
+        Some(6) => npcs_nearest(scope, args.get(1), args.get(2)),
+        Some(7) => query_name(scope, args.get(1), args.get(2)),
+        Some(8) => query_action(scope, args.get(1), args.get(2)),
+        Some(9) => query_within(scope, args.get(1), args.get(2)),
+        Some(10) => query_within_of(scope, args.get(1), args.get(2), args.get(3)),
+        Some(11) => query_inside(scope, args.get(1), args.get(2)),
+        Some(12) => push_filter(scope, args.get(1), "entityFilters", args.get(2)),
+        Some(13) => query_for_each_match(scope, args.get(1), args.get(2)),
+        Some(14) => query_results(scope, args.get(1)),
+        Some(15) => query_nearest(scope, args.get(1)),
+        Some(16) => query_first(scope, args.get(1)),
+        Some(17) => query_exists(scope, args.get(1)),
+        Some(18) => query_count(scope, args.get(1)),
+        Some(19) => query_nearest_prefer_local(scope, args.get(1), args.get(2)),
+        Some(20) => entity_name(scope, args.get(1)),
+        Some(21) => entity_snap_field(scope, args.get(1), "id"),
+        Some(22) => entity_snap_field(scope, args.get(1), "index"),
+        Some(23) => entity_boolean_field(scope, args.get(1), "in_combat"),
+        Some(24) => entity_snap_field(scope, args.get(1), "health"),
+        Some(25) => npc_level(scope, args.get(1)),
+        Some(26) => npc_size(scope, args.get(1)),
+        Some(27) => npc_network_origin(scope, args.get(1), args.get(2)),
+        Some(28) => npc_network_tile(scope, args.get(1), args.get(2)),
+        Some(29) => entity_targets_me(scope, args.get(1), args.get(2)),
+        Some(30) => npc_targets_another_player(scope, args.get(1), args.get(2)),
+        Some(31) => entity_tile(scope, args.get(1), args.get(2)),
+        Some(32) => entity_distance(scope, args.get(1)),
+        Some(33) => entity_actions(scope, args.get(1)),
+        Some(34) => npc_valid(scope, args.get(1), args.get(2)),
+        Some(35) => npc_interact(scope, args.get(1), args.get(2), args.get(3)),
+        Some(36) => entity_name(scope, args.get(1)),
+        Some(37) => entity_snap_field(scope, args.get(1), "id"),
+        Some(38) => entity_tile(scope, args.get(1), args.get(2)),
+        Some(39) => entity_distance(scope, args.get(1)),
+        Some(40) => entity_actions(scope, args.get(1)),
+        Some(41) => loc_interact(scope, args.get(1), args.get(2), args.get(3)),
+        Some(42) => entity_name(scope, args.get(1)),
+        Some(43) => entity_snap_field(scope, args.get(1), "index"),
+        Some(44) => entity_boolean_field(scope, args.get(1), "in_combat"),
+        Some(45) => player_combat_level(scope, args.get(1)),
+        Some(46) => entity_targets_me(scope, args.get(1), args.get(2)),
+        Some(47) => entity_tile(scope, args.get(1), args.get(2)),
+        Some(48) => entity_distance(scope, args.get(1)),
+        Some(49) => entity_actions(scope, args.get(1)),
+        Some(50) => player_interact(scope, args.get(1), args.get(2), args.get(3)),
+        Some(51) => entity_name(scope, args.get(1)),
+        Some(52) => entity_snap_field(scope, args.get(1), "id"),
+        Some(53) => ground_item_count(scope, args.get(1)),
+        Some(54) => entity_tile(scope, args.get(1), args.get(2)),
+        Some(55) => entity_distance(scope, args.get(1)),
+        Some(56) => entity_actions(scope, args.get(1)),
+        Some(57) => ground_item_interact(scope, args.get(1), args.get(2), args.get(3)),
+        _ => Err(cb::not_impl(scope, "entity binding")),
     }
-    if is_op(scope, op, "opIndex") {
-        let index = op_index_value(scope, args.get(1), args.get(2))?;
-        return Ok(cb::num(scope, index));
-    }
-    if is_op(scope, op, "matchesEntityName") {
-        return matches_entity_name(scope, args.get(1), args.get(2));
-    }
-    if is_op(scope, op, "talkOp") {
-        return talk_op(scope, args.get(1));
-    }
-    if is_op(scope, op, "entities.all") {
-        return entities_all(scope, args.get(1), args.get(2), args.get(3));
-    }
-    if is_op(scope, op, "npcs.nearest") {
-        return npcs_nearest(scope, args.get(1), args.get(2));
-    }
-    if is_op(scope, op, "query.name") {
-        return query_name(scope, args.get(1), args.get(2));
-    }
-    if is_op(scope, op, "query.action") {
-        return query_action(scope, args.get(1), args.get(2));
-    }
-    if is_op(scope, op, "query.within") {
-        return query_within(scope, args.get(1), args.get(2));
-    }
-    if is_op(scope, op, "query.withinOf") {
-        return query_within_of(scope, args.get(1), args.get(2), args.get(3));
-    }
-    if is_op(scope, op, "query.inside") {
-        return query_inside(scope, args.get(1), args.get(2));
-    }
-    if is_op(scope, op, "query.where") {
-        return push_filter(scope, args.get(1), "entityFilters", args.get(2));
-    }
-    if is_op(scope, op, "query.forEachMatch") {
-        return query_for_each_match(scope, args.get(1), args.get(2));
-    }
-    if is_op(scope, op, "query.results") {
-        return query_results(scope, args.get(1));
-    }
-    if is_op(scope, op, "query.nearest") {
-        return query_nearest(scope, args.get(1));
-    }
-    if is_op(scope, op, "query.first") {
-        return query_first(scope, args.get(1));
-    }
-    if is_op(scope, op, "query.exists") {
-        return query_exists(scope, args.get(1));
-    }
-    if is_op(scope, op, "query.count") {
-        return query_count(scope, args.get(1));
-    }
-    if is_op(scope, op, "query.nearestPreferLocal") {
-        return query_nearest_prefer_local(scope, args.get(1), args.get(2));
-    }
-
-    if is_op(scope, op, "npc.name") {
-        return entity_name(scope, args.get(1));
-    }
-    if is_op(scope, op, "npc.id") {
-        return entity_snap_field(scope, args.get(1), "id");
-    }
-    if is_op(scope, op, "npc.index") {
-        return entity_snap_field(scope, args.get(1), "index");
-    }
-    if is_op(scope, op, "npc.inCombat") {
-        return entity_boolean_field(scope, args.get(1), "in_combat");
-    }
-    if is_op(scope, op, "npc.health") {
-        return entity_snap_field(scope, args.get(1), "health");
-    }
-    if is_op(scope, op, "npc.level") {
-        return npc_level(scope, args.get(1));
-    }
-    if is_op(scope, op, "npc.size") {
-        return npc_size(scope, args.get(1));
-    }
-    if is_op(scope, op, "npc.networkOrigin") {
-        return npc_network_origin(scope, args.get(1), args.get(2));
-    }
-    if is_op(scope, op, "npc.networkTile") {
-        return npc_network_tile(scope, args.get(1), args.get(2));
-    }
-    if is_op(scope, op, "npc.targetsMe") {
-        return entity_targets_me(scope, args.get(1), args.get(2));
-    }
-    if is_op(scope, op, "npc.targetsAnotherPlayer") {
-        return npc_targets_another_player(scope, args.get(1), args.get(2));
-    }
-    if is_op(scope, op, "npc.tile") {
-        return entity_tile(scope, args.get(1), args.get(2));
-    }
-    if is_op(scope, op, "npc.distance") {
-        return entity_distance(scope, args.get(1));
-    }
-    if is_op(scope, op, "npc.actions") {
-        return entity_actions(scope, args.get(1));
-    }
-    if is_op(scope, op, "npc.valid") {
-        return npc_valid(scope, args.get(1), args.get(2));
-    }
-    if is_op(scope, op, "npc.interact") {
-        return npc_interact(scope, args.get(1), args.get(2), args.get(3));
-    }
-
-    if is_op(scope, op, "loc.name") {
-        return entity_name(scope, args.get(1));
-    }
-    if is_op(scope, op, "loc.id") {
-        return entity_snap_field(scope, args.get(1), "id");
-    }
-    if is_op(scope, op, "loc.tile") {
-        return entity_tile(scope, args.get(1), args.get(2));
-    }
-    if is_op(scope, op, "loc.distance") {
-        return entity_distance(scope, args.get(1));
-    }
-    if is_op(scope, op, "loc.actions") {
-        return entity_actions(scope, args.get(1));
-    }
-    if is_op(scope, op, "loc.interact") {
-        return loc_interact(scope, args.get(1), args.get(2), args.get(3));
-    }
-
-    if is_op(scope, op, "player.name") {
-        return entity_name(scope, args.get(1));
-    }
-    if is_op(scope, op, "player.index") {
-        return entity_snap_field(scope, args.get(1), "index");
-    }
-    if is_op(scope, op, "player.inCombat") {
-        return entity_boolean_field(scope, args.get(1), "in_combat");
-    }
-    if is_op(scope, op, "player.combatLevel") {
-        return player_combat_level(scope, args.get(1));
-    }
-    if is_op(scope, op, "player.targetsMe") {
-        return entity_targets_me(scope, args.get(1), args.get(2));
-    }
-    if is_op(scope, op, "player.tile") {
-        return entity_tile(scope, args.get(1), args.get(2));
-    }
-    if is_op(scope, op, "player.distance") {
-        return entity_distance(scope, args.get(1));
-    }
-    if is_op(scope, op, "player.actions") {
-        return entity_actions(scope, args.get(1));
-    }
-    if is_op(scope, op, "player.interact") {
-        return player_interact(scope, args.get(1), args.get(2), args.get(3));
-    }
-
-    if is_op(scope, op, "grounditem.name") {
-        return entity_name(scope, args.get(1));
-    }
-    if is_op(scope, op, "grounditem.id") {
-        return entity_snap_field(scope, args.get(1), "id");
-    }
-    if is_op(scope, op, "grounditem.count") {
-        return ground_item_count(scope, args.get(1));
-    }
-    if is_op(scope, op, "grounditem.tile") {
-        return entity_tile(scope, args.get(1), args.get(2));
-    }
-    if is_op(scope, op, "grounditem.distance") {
-        return entity_distance(scope, args.get(1));
-    }
-    if is_op(scope, op, "grounditem.actions") {
-        return entity_actions(scope, args.get(1));
-    }
-    if is_op(scope, op, "grounditem.interact") {
-        return ground_item_interact(scope, args.get(1), args.get(2), args.get(3));
-    }
-
-    Err(cb::not_impl(scope, "entity binding"))
-}
-
-fn is_op(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>, expected: &str) -> bool {
-    v8::String::new(scope, expected).is_some_and(|expected| value.strict_equals(expected.into()))
 }
 
 fn boolean<'s>(scope: &mut v8::HandleScope<'s>, value: bool) -> v8::Local<'s, v8::Value> {
@@ -506,13 +388,13 @@ fn entities_all<'s>(
     collection: v8::Local<'s, v8::Value>,
     constructor: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let snapshot = cb::call(scope, snap_fn, undefined(scope), &[], "snap")?;
-    let key = if is_op(scope, collection, "npcs") {
-        "npcs"
-    } else if is_op(scope, collection, "players") {
-        "players"
-    } else {
-        return Err(cb::not_impl(scope, "entity collection"));
+    if !collection.is_int32() {
+        return Err(cb::type_error(scope, "invalid entity collection"));
+    }
+    let key = match collection.int32_value(scope) {
+        Some(0) => "npcs",
+        Some(1) => "players",
+        _ => return Err(cb::not_impl(scope, "entity collection")),
     };
     let rows = cb::get(scope, snapshot, key)?;
     let rows = if cb::truthy(scope, rows) {
@@ -1621,7 +1503,7 @@ mod tests {
     use rustyscript::RuntimeOptions;
 
     const QUERY_SETUP: &str = r#"
-const call = (operation, ...args) => __rs2b0t_entities_v8(operation, ...args);
+const call = (opcode, ...args) => __rs2b0t_entities_v8(opcode, ...args);
 const rows = [
     { name: 'Goblin', x: 3201, z: 3201, level: 0, distance: 1, actions: ['Attack'] },
 ];
@@ -1633,10 +1515,10 @@ class EntityQuery {
         this.entityFilters = [];
     }
     forEachMatch(seen) {
-        return call('query.forEachMatch', this, seen);
+        return call(13, this, seen);
     }
     count() {
-        return call('query.count', this);
+        return call(18, this);
     }
 }
 const query = new EntityQuery();

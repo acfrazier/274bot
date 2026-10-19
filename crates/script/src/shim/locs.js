@@ -8,27 +8,27 @@ export class Loc {
     }
 
     get name() {
-        return globalThis.__rs2b0t_entities_v8('loc.name', this);
+        return globalThis.__rs2b0t_entities_v8(36 /* loc.name */, this);
     }
 
     get id() {
-        return globalThis.__rs2b0t_entities_v8('loc.id', this);
+        return globalThis.__rs2b0t_entities_v8(37 /* loc.id */, this);
     }
 
     tile() {
-        return globalThis.__rs2b0t_entities_v8('loc.tile', this, Tile);
+        return globalThis.__rs2b0t_entities_v8(38 /* loc.tile */, this, Tile);
     }
 
     distance() {
-        return globalThis.__rs2b0t_entities_v8('loc.distance', this);
+        return globalThis.__rs2b0t_entities_v8(39 /* loc.distance */, this);
     }
 
     actions() {
-        return globalThis.__rs2b0t_entities_v8('loc.actions', this);
+        return globalThis.__rs2b0t_entities_v8(40 /* loc.actions */, this);
     }
 
     interact(action) {
-        return globalThis.__rs2b0t_entities_v8('loc.interact', this, action, queue);
+        return globalThis.__rs2b0t_entities_v8(41 /* loc.interact */, this, action, queue);
     }
 }
 

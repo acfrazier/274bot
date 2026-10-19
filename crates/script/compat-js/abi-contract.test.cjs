@@ -52,7 +52,7 @@ test('the generated ABI contract and family graph are complete', () => {
 
 test('module-only families have explicit non-nav predecessor rows without activation credit', () => {
     assert.equal(predecessors.families.length, 41);
-    assert.equal(predecessors.families.filter(row => row.activation_state === 'not-activated').length, 34);
+    assert.equal(predecessors.families.filter(row => row.activation_state === 'not-activated').length, 33);
     for (const [familyId, modules] of [
         ['magic', ['api/magic/Autocast.js']],
         ['prayer', ['api/prayer/Prayer.js']],
@@ -119,9 +119,9 @@ test('typed module classification rejects duplicate and incorrect family rows', 
     assert.throws(() => validateArtifacts(incorrect, predecessors, navFamilies), /Typed module family classification disagrees/);
 });
 
-test('only complete bank, cooking, cow, gathering, runecrafting, skills and world-primitives families are activated', () => {
+test('only complete bank, cooking, cow, entities, gathering, runecrafting, skills and world-primitives families are activated', () => {
     assert.equal(contract.activation_state, 'partially-activated');
-    assert.deepEqual(contract.active_families, ['bank', 'cooking', 'cow', 'gathering', 'runecrafting', 'skills', 'world-primitives']);
+    assert.deepEqual(contract.active_families, ['bank', 'cooking', 'cow', 'entities', 'gathering', 'runecrafting', 'skills', 'world-primitives']);
     for (const family of predecessors.families) {
         assert.equal(
             family.activation_state,
@@ -131,6 +131,23 @@ test('only complete bank, cooking, cow, gathering, runecrafting, skills and worl
     }
     assert.ok(!contract.not_impl_debt.some(row => row.selector === 'nearestUsableBank'));
     assert.equal(nativeFamilyFamilies.get('bank_wait'), 'bank');
+});
+test('the entity family is completely activated with both query refusal debts removed', () => {
+    const family = predecessors.families.find(row => row.family_id === 'entities');
+    assert.ok(family);
+    assert.equal(family.activation_state, 'activated');
+    assert.deepEqual(family.counts, {
+        declarations: 11,
+        members: 58,
+        overloads: 0,
+        aliases: 1,
+        callbacks: 0,
+        type_aliases: 0,
+        name_aliases: 1,
+        not_impl_debt: 0,
+    });
+    assert.ok(!contract.not_impl_debt.some(row =>
+        row.selector === 'EntityQuery.inside' || row.selector === 'EntityQuery.nearestPreferLocal'));
 });
 
 test('an activated family cannot lose its complete-unit graph state', () => {
@@ -267,7 +284,7 @@ test('types follow the family their ABI describes', () => {
 });
 
 test('refusal debt is unique and names each missing notImplValue export', () => {
-    assert.equal(contract.not_impl_debt.length, 204);
+    assert.equal(contract.not_impl_debt.length, 202);
     const selectors = contract.not_impl_debt.map(row => row.selector);
     assert.equal(new Set(selectors).size, selectors.length);
     for (const selector of [

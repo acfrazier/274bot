@@ -8,19 +8,19 @@ export class Player {
     }
 
     get name() {
-        return globalThis.__rs2b0t_entities_v8('player.name', this);
+        return globalThis.__rs2b0t_entities_v8(42 /* player.name */, this);
     }
 
     get index() {
-        return globalThis.__rs2b0t_entities_v8('player.index', this);
+        return globalThis.__rs2b0t_entities_v8(43 /* player.index */, this);
     }
 
     get inCombat() {
-        return globalThis.__rs2b0t_entities_v8('player.inCombat', this);
+        return globalThis.__rs2b0t_entities_v8(44 /* player.inCombat */, this);
     }
 
     get combatLevel() {
-        return globalThis.__rs2b0t_entities_v8('player.combatLevel', this);
+        return globalThis.__rs2b0t_entities_v8(45 /* player.combatLevel */, this);
     }
 
     /**
@@ -28,23 +28,23 @@ export class Player {
      * not merely when `Game.inCombat()` is true.
      */
     targetsMe() {
-        return globalThis.__rs2b0t_entities_v8('player.targetsMe', this, snap);
+        return globalThis.__rs2b0t_entities_v8(46 /* player.targetsMe */, this, snap);
     }
 
     tile() {
-        return globalThis.__rs2b0t_entities_v8('player.tile', this, Tile);
+        return globalThis.__rs2b0t_entities_v8(47 /* player.tile */, this, Tile);
     }
 
     distance() {
-        return globalThis.__rs2b0t_entities_v8('player.distance', this);
+        return globalThis.__rs2b0t_entities_v8(48 /* player.distance */, this);
     }
 
     actions() {
-        return globalThis.__rs2b0t_entities_v8('player.actions', this);
+        return globalThis.__rs2b0t_entities_v8(49 /* player.actions */, this);
     }
 
     interact(action) {
-        return globalThis.__rs2b0t_entities_v8('player.interact', this, action, queue);
+        return globalThis.__rs2b0t_entities_v8(50 /* player.interact */, this, action, queue);
     }
 }
 
@@ -56,6 +56,6 @@ export const Players = proxy('Players', {
         );
     },
     all() {
-        return globalThis.__rs2b0t_entities_v8('entities.all', snap, 'players', Player);
+        return globalThis.__rs2b0t_entities_v8(5 /* entities.all */, snap, 1, Player);
     },
 });
