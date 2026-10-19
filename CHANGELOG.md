@@ -325,6 +325,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   the total for each, instead of listing every name.
 - Render-all draws up to 128 clients at once. A client past that shows
   "renderer refused: render head cap of 128 is full" in its own tile.
+- Clients without a drawn view retain less render scratch memory. Hiding a view
+  releases that scratch, and showing it again keeps the same game connection.
 
 ### TUI
 
