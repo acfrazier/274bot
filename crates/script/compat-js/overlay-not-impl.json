@@ -226,24 +226,6 @@
   }
 ,
   {
-    "id": "not-impl:api/inventory/Inventory.js:backpackSnapshots",
-    "module": "api/inventory/Inventory.js",
-    "selector": "backpackSnapshots",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: bank-side backpack snapshots are not exposed by the native inventory adapter.",
-    "runtime": "crates/script/src/shim/inventory.js:19",
-    "async": false
-  },
-  {
-    "id": "not-impl:api/inventory/Inventory.js:backpackCapacity",
-    "module": "api/inventory/Inventory.js",
-    "selector": "backpackCapacity",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: bank-side backpack capacity is not exposed by the native inventory adapter.",
-    "runtime": "crates/script/src/shim/inventory.js:23",
-    "async": false
-  },
-  {
     "id": "not-impl:api/trade/drivePartnerTrade.js:stableClosedPoll",
     "module": "api/trade/drivePartnerTrade.js",
     "selector": "stableClosedPoll",
