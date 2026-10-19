@@ -280,17 +280,22 @@ fn bound_named_bank_facts_override_fallbacks_and_keep_destination_identity() {
     let data = selected_data();
     let banks = bound_banks();
     let expected = [
-        xyz(bank_tile(&banks, "Al Kharid")),
+        [3269, 3167, 0], // Al Kharid is the fixed compatibility constant.
         xyz(bank_tile(&banks, "Draynor")),
         xyz(bank_tile(&banks, "Falador East")),
         xyz(bank_tile(&banks, "Ardougne West")),
     ];
+    assert_ne!(
+        xyz(bank_tile(&banks, "Al Kharid")),
+        expected[0],
+        "the fixture must prove that Al Kharid ignores a different bound stand"
+    );
     let isolate = load(Some(data), banks.clone());
 
     assert_eq!(
         probe(&isolate, "__cow.bankConstants.map(__cow.xyz)"),
         serde_json::json!(expected),
-        "public bank constants must use the bound named-bank tiles"
+        "Al Kharid stays fixed while the three destination banks use bound facts"
     );
     assert_eq!(
         probe(
