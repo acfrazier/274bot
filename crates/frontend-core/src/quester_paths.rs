@@ -499,6 +499,15 @@ fn compile_error_message(error: &script::quester::compile::CompileError) -> Stri
     )
 }
 
+/// Serializes the crate's tests that set the process-wide quester folder
+/// source (directly, or by restoring a controller from preferences).
+#[cfg(test)]
+pub(crate) fn registry_source_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{QuesterPathsView, ReloadPaths};
@@ -639,6 +648,7 @@ mod tests {
 
     #[test]
     fn async_reload_retries_temporary_full_and_publishes_edited_folder_files() {
+        let _source = super::registry_source_test_lock();
         let store = TempStore::new();
         let folder = store.dir().join("paths");
         std::fs::create_dir_all(&folder).unwrap();
