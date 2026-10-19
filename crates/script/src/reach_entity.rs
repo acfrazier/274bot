@@ -720,7 +720,9 @@ enum LocPhase {
     WatchRefused,
     AfterExpect,
     AfterRefused,
-    Clearing { clear: Clear },
+    Clearing {
+        clear: Clear,
+    },
     /// Frozen `delayTicks(1)` before the next round.
     NextRound,
 }
@@ -757,7 +759,7 @@ fn find_loc(name: &str, op: &str, within: f64, id: Option<i32>) -> Option<SceneR
     let want_op = op.to_lowercase();
     nearest(|loc| {
         f64::from(loc.distance) <= within
-            && id.map_or(true, |id| loc.id == id)
+            && id.is_none_or(|id| loc.id == id)
             && loc
                 .name
                 .as_deref()
@@ -1006,11 +1008,7 @@ impl LocOp {
                     return self.call(LocPhase::AfterExpect, LOC_EXPECT, Vec::new());
                 }
                 if cx.has(LOC_REFUSED) {
-                    return self.call(
-                        LocPhase::WatchRefused,
-                        LOC_REFUSED,
-                        vec![json!(self.mark)],
-                    );
+                    return self.call(LocPhase::WatchRefused, LOC_REFUSED, vec![json!(self.mark)]);
                 }
                 self.phase = LocPhase::Watch;
                 Next::Wait
@@ -1027,11 +1025,7 @@ impl LocOp {
                     return Next::Done("done");
                 }
                 if cx.has(LOC_REFUSED) {
-                    return self.call(
-                        LocPhase::AfterRefused,
-                        LOC_REFUSED,
-                        vec![json!(self.mark)],
-                    );
+                    return self.call(LocPhase::AfterRefused, LOC_REFUSED, vec![json!(self.mark)]);
                 }
                 self.after_refusal()
             }
