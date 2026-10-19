@@ -73,17 +73,25 @@ pub(crate) fn hill_giant_scenario() -> Scenario {
         agility: 0,
     })
 }
+/// HillGiant's default loot list (`HillGiant.ts:35` `DEFAULT_LOOT`): the
+/// trip-ending drop is whichever of these the card takes first. Big bones are
+/// the Giant's guaranteed death drop (`giant.rs2` adds `npc_param(death_drop)`
+/// before the random table) and a Limpwurt root lands on the same tile on
+/// random 76..86 of 128 (`giant.rs2:51-52`); `LootCorpse` takes the
+/// `nearest()` of the two, so either can fill the one loot slot.
+const HILL_GIANT_TRIP_LOOT: [i32; 2] = [BIG_BONES_ID, LIMPWURT_ROOT_ID];
 /// HillGiant's always-on trip end (`lootSlots=1`): one looted Giant drop ends
 /// the trip, Varrock West banks it and withdraws trout back, then the pit
 /// fight resumes.
 ///
-/// The looted Big bones are watched in the pack before the deposit, so each
-/// leg has its own ordinary 150-dirty watch. Big bones are the Giant's
-/// guaranteed death drop (`giant.rs2` adds `npc_param(death_drop)` before the
-/// random table). One watch from the first Strength hit to the deposit had
-/// to cover the rest of a 35-HP kill and the whole trip: Engine A 2026-10-19
-/// (`FIX-024/combat-bank/diagA3`) measured 118 dirties from the first hit to
-/// the looted bones and 113 more to the Varrock West deposit, 231 in total.
+/// The looted drop is watched in the pack before the deposit, so each leg has
+/// its own ordinary 150-dirty watch. One watch from the first Strength hit to
+/// the deposit had to cover the rest of a 35-HP kill and the whole trip:
+/// Engine A 2026-10-19 (`FIX-024/combat-bank/diagA3`) measured 118 dirties
+/// from the first hit to the looted bones and 113 more to the Varrock West
+/// deposit, 231 in total. Both watches accept the card's whole loot class:
+/// `r3a-hill_giant_bank` took the Limpwurt root first and carried it to the
+/// Varrock West booth, which a Big-bones-only watch failed.
 pub(crate) fn hill_giant_bank_scenario() -> Scenario {
     combat_bank_scenario(
         "hill_giant_bank",
@@ -103,16 +111,16 @@ pub(crate) fn hill_giant_bank_scenario() -> Scenario {
         12,
         &[
             (
-                "watch looted Big bones in pack before the bank trip",
-                Proof::ItemId {
-                    id: BIG_BONES_ID,
+                "watch the first looted Giant drop in pack before the bank trip",
+                Proof::ItemIdAny {
+                    ids: &HILL_GIANT_TRIP_LOOT,
                     count: 1,
                 },
             ),
             (
-                "watch the trip's Big bones enter a fresh Varrock West bank",
-                Proof::BankItemId {
-                    id: BIG_BONES_ID,
+                "watch the trip's looted drop enter a fresh Varrock West bank",
+                Proof::BankItemIdAny {
+                    ids: &HILL_GIANT_TRIP_LOOT,
                     count: 1,
                 },
             ),

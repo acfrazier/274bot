@@ -3751,24 +3751,24 @@ fn hill_giant_loot_deposit_arms_deposit_only_after_combat_loot() {
             }
         })
         .unwrap();
-    // The full cycle watches the looted Big bones before the deposit, so the
-    // kill and the Varrock West trip each get the ordinary watch instead of
-    // one watch from the first hit to the deposit.
-    assert_eq!(
-        full_watch[full_xp + 1],
-        Proof::ItemId {
-            id: BIG_BONES_ID,
-            count: 1,
-        },
-        "full-cycle cell watches the looted Big bones after first XP"
+    // The full cycle watches the first looted drop of HillGiant's default loot
+    // list (Big bones or Limpwurt root) before the deposit, so the kill and
+    // the Varrock West trip each get the ordinary watch instead of one watch
+    // from the first hit to the deposit, and neither waits for one drop.
+    let trip_loot = [BIG_BONES_ID, LIMPWURT_ROOT_ID];
+    assert!(
+        matches!(
+            full_watch[full_xp + 1],
+            Proof::ItemIdAny { ids, count: 1 } if ids == trip_loot
+        ),
+        "full-cycle cell watches the first looted drop after first XP"
     );
-    assert_eq!(
-        full_watch[full_xp + 2],
-        Proof::BankItemId {
-            id: BIG_BONES_ID,
-            count: 1,
-        },
-        "full-cycle cell arms the bank deposit at the looted Big bones"
+    assert!(
+        matches!(
+            full_watch[full_xp + 2],
+            Proof::BankItemIdAny { ids, count: 1 } if ids == trip_loot
+        ),
+        "full-cycle cell arms the bank deposit at the looted drop"
     );
     for offset in [1, 2] {
         assert_eq!(
@@ -13055,6 +13055,7 @@ fn jive_cells_are_registered_with_cards_and_loadouts() {
         ("jive_dragons", "JiveDragons", true),
         ("jive_dragons_black_range", "JiveDragons", true),
         ("jive_dragons_potion_restock", "JiveDragons", true),
+        ("jive_dragons_mixed_food_restock", "JiveDragons", true),
         ("jive_demons", "JiveDemons", true),
         ("jive_kbd", "JiveKBD", true),
     ];
