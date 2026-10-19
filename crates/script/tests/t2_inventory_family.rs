@@ -228,13 +228,6 @@ globalThis.__inventoryRootIdentity = {
     Equipment: Root.Equipment === Equipment,
     backpackSnapshots: Root.backpackSnapshots === backpackSnapshots,
     backpackCapacity: Root.backpackCapacity === backpackCapacity,
-    matchesAny: Root.matchesAny === matchesAny,
-    countMatching: Root.countMatching === countMatching,
-    slotsMatching: Root.slotsMatching === slotsMatching,
-    shouldBank: Root.shouldBank === shouldBank,
-    shouldRestock: Root.shouldRestock === shouldRestock,
-    shouldEat: Root.shouldEat === shouldEat,
-    shouldPanic: Root.shouldPanic === shouldPanic,
 };
 globalThis.__inventoryRootRead = () => ({
     names: Root.backpackSnapshots().map(row => row.name),
@@ -242,7 +235,15 @@ globalThis.__inventoryRootRead = () => ({
     inventoryCount: Root.Inventory.count('apple'),
 });
 
-export default class T extends LoopingBot { loop() {} }
+export default class T extends LoopingBot {
+    loop() {
+        const work = globalThis.__inventoryWork;
+        if (work) {
+            globalThis.__inventoryWork = null;
+            globalThis.__inventoryWorkResult = work();
+        }
+    }
+}
 "#;
 
 fn row<'a>(
@@ -279,6 +280,13 @@ fn post(iso: &LoadIsolate, snapshot: &SnapshotInput<'_>, side_modal_id: Option<i
     iso.post_snapshot(encode_snapshot_with_native(snapshot, native));
     iso.on_game_tick(snapshot.tick);
     let _ = iso.probe("true").unwrap();
+}
+
+fn schedule_work(iso: &LoadIsolate, expression: &str) {
+    iso.probe(&format!(
+        "globalThis.__inventoryWork = () => ({expression}); true"
+    ))
+    .unwrap();
 }
 
 fn as_use_on(
@@ -486,7 +494,10 @@ fn use_on_preserves_item_identity_and_each_supported_target_kind() {
     snapshot.inv = &inventory;
     post(&iso, &snapshot, None);
 
-    let result = iso.probe("__useTargets()").unwrap();
+    schedule_work(&iso, "__useTargets()");
+    snapshot.tick = 2;
+    post(&iso, &snapshot, None);
+    let result = iso.probe("__inventoryWorkResult").unwrap();
     assert_eq!(result["interactResult"], json!(true));
     assert_eq!(
         result["result"],
@@ -595,9 +606,9 @@ fn equipment_waits_keep_queue_order_and_public_method_overrides() {
     snapshot.tick = 1;
     snapshot.inv = &inventory;
     snapshot.equipment = &empty;
+    schedule_work(&iso, "__startEquip('Apple')");
     post(&iso, &snapshot, None);
 
-    iso.probe("__startEquip('Apple')").unwrap();
     assert!(
         matches!(iso.drain_interacts().as_slice(), [InteractReq::Wear { name }] if name == "Apple")
     );
@@ -609,31 +620,36 @@ fn equipment_waits_keep_queue_order_and_public_method_overrides() {
     post(&iso, &snapshot, None);
     assert_eq!(iso.probe("__equipResult").unwrap(), json!(true));
 
-    iso.probe("__runFastEquipment()").unwrap();
-    let _ = iso.probe("true").unwrap();
+    schedule_work(&iso, "__runFastEquipment()");
+    snapshot.tick = 3;
+    post(&iso, &snapshot, None);
     assert_eq!(iso.probe("__alreadyEquipped").unwrap(), json!(true));
     assert_eq!(iso.probe("__missingEquip").unwrap(), json!(false));
     assert_eq!(iso.probe("__missingUnequip").unwrap(), json!(true));
     assert!(iso.drain_interacts().is_empty());
 
-    iso.probe("__startUnequip('Apple')").unwrap();
+    schedule_work(&iso, "__startUnequip('Apple')");
+    snapshot.tick = 4;
+    post(&iso, &snapshot, None);
     assert!(
         matches!(iso.drain_interacts().as_slice(), [InteractReq::Unequip { name }] if name == "Apple")
     );
     assert_eq!(iso.probe("__unequipResult").unwrap(), json!("pending"));
-    snapshot.tick = 3;
+    snapshot.tick = 5;
     snapshot.equipment = &empty;
     post(&iso, &snapshot, None);
     assert_eq!(iso.probe("__unequipResult").unwrap(), json!(true));
 
-    iso.probe("__overrideEquipmentOrder()").unwrap();
-    let _ = iso.probe("true").unwrap();
+    schedule_work(&iso, "__overrideEquipmentOrder()");
+    snapshot.tick = 6;
+    post(&iso, &snapshot, None);
     assert_eq!(
         iso.probe("__overrideEquip").unwrap(),
         json!({ "value": true, "calls": ["contains"], "stringCalls": 0 })
     );
-    iso.probe("__overrideInventoryFirstOrder()").unwrap();
-    let _ = iso.probe("true").unwrap();
+    schedule_work(&iso, "__overrideInventoryFirstOrder()");
+    snapshot.tick = 7;
+    post(&iso, &snapshot, None);
     assert_eq!(
         iso.probe("__overrideFirst").unwrap(),
         json!({ "value": false, "calls": ["contains", "first"], "stringCalls": 0 })
