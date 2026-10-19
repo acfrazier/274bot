@@ -1,11 +1,7 @@
-import { entitySnapView, notImpl, planarDistanceTo } from '../../shim/_kernel.js';
 
 /** Case-insensitive trim compare of posted entity names. */
 export function matchesEntityName(actual, configured) {
-    if (actual == null || configured == null) {
-        return false;
-    }
-    return String(actual).trim().toLowerCase() === String(configured).trim().toLowerCase();
+    return globalThis.__rs2b0t_entities_v8(3 /* matchesEntityName */, actual, configured);
 }
 
 export default class EntityQuery {
@@ -21,94 +17,55 @@ export default class EntityQuery {
     }
 
     name(...names) {
-        const wanted = names.map((n) => n.trim().toLowerCase());
-        this.snapFilters.push(
-            (s) => s.name !== null && wanted.includes(String(s.name).trim().toLowerCase()),
-        );
-        return this;
+        return globalThis.__rs2b0t_entities_v8(7 /* query.name */, this, names);
     }
 
     action(action) {
-        const wanted = String(action).toLowerCase();
-        this.snapFilters.push((s) =>
-            (s.ops || []).some((a) => a != null && a !== 'hidden' && String(a).toLowerCase() === wanted),
-        );
-        return this;
+        return globalThis.__rs2b0t_entities_v8(8 /* query.action */, this, action);
     }
 
     within(dist) {
-        this.snapFilters.push((s) => s.distance <= dist);
-        return this;
+        return globalThis.__rs2b0t_entities_v8(9 /* query.within */, this, dist);
     }
 
     withinOf(origin, dist) {
-        const r = Math.max(0, Math.floor(dist));
-        this.snapFilters.push((s) => planarDistanceTo(s.tile, origin) <= r);
-        return this;
+        return globalThis.__rs2b0t_entities_v8(10 /* query.withinOf */, this, origin, dist);
     }
 
     where(pred) {
-        this.entityFilters.push(pred);
-        return this;
+        return globalThis.__rs2b0t_entities_v8(12 /* query.where */, this, pred);
     }
 
     /** Every match in supply order; `seen` true stops the walk. */
     forEachMatch(seen) {
-        for (const raw of this.supplySnaps()) {
-            const s = entitySnapView(raw);
-            if (!s) continue;
-            if (this.snapFilters.length > 0 && !this.snapFilters.every((f) => f(s))) continue;
-            const e = this.wrap(raw);
-            if (this.entityFilters.length > 0 && !this.entityFilters.every((f) => f(e))) continue;
-            if (seen(e)) return;
-        }
+        return globalThis.__rs2b0t_entities_v8(13 /* query.forEachMatch */, this, seen);
     }
 
     results() {
-        const out = [];
-        this.forEachMatch((e) => {
-            out.push(e);
-            return false;
-        });
-        return out;
+        return globalThis.__rs2b0t_entities_v8(14 /* query.results */, this);
     }
 
     nearest() {
-        let best = null;
-        this.forEachMatch((e) => {
-            if (!best || e.distance() < best.distance()) best = e;
-            return false;
-        });
-        return best;
+        return globalThis.__rs2b0t_entities_v8(15 /* query.nearest */, this);
     }
 
     first() {
-        let hit = null;
-        this.forEachMatch((e) => {
-            hit = e;
-            return true;
-        });
-        return hit;
+        return globalThis.__rs2b0t_entities_v8(16 /* query.first */, this);
     }
 
     exists() {
-        return this.first() !== null;
+        return globalThis.__rs2b0t_entities_v8(17 /* query.exists */, this);
     }
 
     count() {
-        let n = 0;
-        this.forEachMatch(() => {
-            n += 1;
-            return false;
-        });
-        return n;
+        return globalThis.__rs2b0t_entities_v8(18 /* query.count */, this);
     }
 
     inside(_area) {
-        throw notImpl('EntityQuery.inside');
+        return globalThis.__rs2b0t_entities_v8(11 /* query.inside */, this, _area);
     }
 
     nearestPreferLocal(_preferRadius) {
-        throw notImpl('EntityQuery.nearestPreferLocal');
+        return globalThis.__rs2b0t_entities_v8(19 /* query.nearestPreferLocal */, this, _preferRadius);
     }
 }
