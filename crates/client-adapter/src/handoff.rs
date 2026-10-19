@@ -382,10 +382,14 @@ impl<T: Send> HandoffCell<T> {
     /// charge until their worker has stopped and retirement was acknowledged.
     pub fn can_admit(&self) -> bool {
         let state = self.state.lock().unwrap();
-        !state.worker_stopped && state.next_transfer_seq.is_some()
+        !state.worker_stopped
+            && state.next_transfer_seq.is_some()
             && state.attempt.as_ref().is_none_or(|attempt| {
-                matches!(attempt.phase, HandoffPhase::Accepted | HandoffPhase::Released)
-                    && !attempt.worker_active && attempt.retirement.acknowledged()
+                matches!(
+                    attempt.phase,
+                    HandoffPhase::Accepted | HandoffPhase::Released
+                ) && !attempt.worker_active
+                    && attempt.retirement.acknowledged()
             })
     }
 
@@ -532,9 +536,7 @@ impl<T: Send> HandoffCell<T> {
     /// Stop future claims and revoke the currently owned pre-accept attempt
     /// in one handoff-lock transition. A running native call keeps its resource
     /// until it returns; shutdown never waits for it.
-    pub fn stop_and_revoke_current(
-        &self,
-    ) -> io::Result<Option<Arc<QueueReleaseProof>>> {
+    pub fn stop_and_revoke_current(&self) -> io::Result<Option<Arc<QueueReleaseProof>>> {
         self.revoke_matching(None, RevocationReason::Shutdown, true)
     }
 
@@ -559,7 +561,8 @@ impl<T: Send> HandoffCell<T> {
                 }
                 return Ok(None);
             };
-            if key.is_some_and(|key| attempt.key != key) || attempt.phase == HandoffPhase::Accepted {
+            if key.is_some_and(|key| attempt.key != key) || attempt.phase == HandoffPhase::Accepted
+            {
                 drop(state);
                 if notify_worker {
                     self.worker_wake.notify_all();
@@ -683,11 +686,7 @@ impl<T: Send> HandoffCell<T> {
                         .saturating_duration_since(Instant::now())
                         .min(MAX_HANDOFF_WAIT)
                 });
-            state = self
-                .worker_wake
-                .wait_timeout(state, timeout)
-                .unwrap()
-                .0;
+            state = self.worker_wake.wait_timeout(state, timeout).unwrap().0;
         }
     }
 
@@ -700,11 +699,7 @@ impl<T: Send> HandoffCell<T> {
     /// `work`; discard that value and call `worker_claim` before another native
     /// call. `Revoked` leaves the resource with the worker until it is dropped
     /// or otherwise released through the completion path.
-    pub fn worker_yield(
-        &self,
-        work: &mut WorkerWork<'_, T>,
-        call: NativeCall,
-    ) -> WorkerYield {
+    pub fn worker_yield(&self, work: &mut WorkerWork<'_, T>, call: NativeCall) -> WorkerYield {
         if !std::ptr::eq(self, work.cell) {
             return WorkerYield::Stale;
         }
@@ -786,11 +781,7 @@ impl<T: Send> HandoffCell<T> {
                         .saturating_duration_since(Instant::now())
                         .min(MAX_HANDOFF_WAIT)
                 });
-            state = self
-                .worker_wake
-                .wait_timeout(state, timeout)
-                .unwrap()
-                .0;
+            state = self.worker_wake.wait_timeout(state, timeout).unwrap().0;
             proof_wake = false;
             requeued = false;
             let result = {
@@ -803,8 +794,7 @@ impl<T: Send> HandoffCell<T> {
                 }
                 let now = Instant::now();
                 let reason = attempt.revocation_due(now).or_else(|| {
-                    (attempt.phase == HandoffPhase::Released)
-                        .then_some(RevocationReason::Cancelled)
+                    (attempt.phase == HandoffPhase::Released).then_some(RevocationReason::Cancelled)
                 });
                 if let Some(reason) = reason {
                     proof_wake = attempt.issue_release_proof(reason, now).is_some();
@@ -1079,10 +1069,13 @@ impl<T: Send> Drop for HandoffCell<T> {
         if attempt.phase != HandoffPhase::Accepted {
             let _ = self.reactor_waker.wake();
         }
-        let resource = attempt.pending.take().or_else(|| match attempt.returned.take() {
-            Some(WorkerOutcome::Success(resource)) => Some(resource),
-            Some(WorkerOutcome::Failure(_)) | None => None,
-        });
+        let resource = attempt
+            .pending
+            .take()
+            .or_else(|| match attempt.returned.take() {
+                Some(WorkerOutcome::Success(resource)) => Some(resource),
+                Some(WorkerOutcome::Failure(_)) | None => None,
+            });
         if let Some(resource) = resource {
             drop(resource);
             attempt.retirement.ack();
@@ -1275,7 +1268,10 @@ mod tests {
 
         let accepted = cell.take_return(key).unwrap();
         assert!(retirement.acknowledged());
-        assert!(matches!(accepted.outcome, WorkerOutcome::Failure(WorkerFailure::Handshake)));
+        assert!(matches!(
+            accepted.outcome,
+            WorkerOutcome::Failure(WorkerFailure::Handshake)
+        ));
         assert!(accepted.retirement.acknowledged());
         cell.finish_accept(key).unwrap();
         assert_eq!(drops.load(Ordering::SeqCst), 1);
@@ -1310,14 +1306,20 @@ mod tests {
             // K-handoff is still held. Publication blocks on K until Condvar
             // atomically releases it into sleep, then notifies the waiter.
             gate.0.wait();
-            assert!(matches!(cell.state.try_lock(), Err(TryLockError::WouldBlock)));
+            assert!(matches!(
+                cell.state.try_lock(),
+                Err(TryLockError::WouldBlock)
+            ));
             gate.1.wait();
             assert!(cell.publish_ready(key, ReadyDirection::Read));
             assert_eq!(worker.join().unwrap(), WorkerFinish::Returned);
         });
 
         let accepted = cell.take_return(key).unwrap();
-        assert!(matches!(accepted.outcome, WorkerOutcome::Failure(WorkerFailure::Handshake)));
+        assert!(matches!(
+            accepted.outcome,
+            WorkerOutcome::Failure(WorkerFailure::Handshake)
+        ));
         cell.finish_accept(key).unwrap();
         assert_eq!(drops.load(Ordering::SeqCst), 1);
     }
@@ -1389,7 +1391,10 @@ mod tests {
             WorkerFinish::Revoked
         );
         assert!(retirement.acknowledged());
-        assert!(matches!(cell.take_return(key), Err(TakeReturnError::Revoked(_))));
+        assert!(matches!(
+            cell.take_return(key),
+            Err(TakeReturnError::Revoked(_))
+        ));
         assert_eq!(drops.load(Ordering::SeqCst), 1);
     }
 
@@ -1483,7 +1488,10 @@ mod tests {
         assert!(retirement.acknowledged());
         assert_eq!(drops.load(Ordering::SeqCst), 1);
         assert!(cell.worker_claim().is_none());
-        assert!(matches!(cell.take_return(key), Err(TakeReturnError::Revoked(_))));
+        assert!(matches!(
+            cell.take_return(key),
+            Err(TakeReturnError::Revoked(_))
+        ));
     }
 
     #[test]
@@ -1501,12 +1509,18 @@ mod tests {
         );
         let work = cell.worker_claim().unwrap();
 
-        let published = cell.revoke(key, RevocationReason::Deadline).unwrap().unwrap();
+        let published = cell
+            .revoke(key, RevocationReason::Deadline)
+            .unwrap()
+            .unwrap();
         assert!(Arc::ptr_eq(&proof, &published));
         assert_eq!(published.identity(), key.identity.binding);
         assert_eq!(published.transfer_seq(), key.transfer_seq);
         assert!(published.snapshot().is_some());
-        assert!(cell.revoke(key, RevocationReason::Cancelled).unwrap().is_none());
+        assert!(cell
+            .revoke(key, RevocationReason::Cancelled)
+            .unwrap()
+            .is_none());
         assert_eq!(drops.load(Ordering::SeqCst), 0);
         assert!(!retirement.acknowledged());
         assert_eq!(cell.phase(), HandoffPhase::Released);
@@ -1516,7 +1530,10 @@ mod tests {
         assert_eq!(cell.worker_success(work).unwrap(), WorkerFinish::Revoked);
         assert_eq!(drops.load(Ordering::SeqCst), 1);
         assert!(retirement.acknowledged());
-        assert!(matches!(cell.take_return(key), Err(TakeReturnError::Revoked(_))));
+        assert!(matches!(
+            cell.take_return(key),
+            Err(TakeReturnError::Revoked(_))
+        ));
     }
 
     #[test]
@@ -1535,7 +1552,8 @@ mod tests {
         let first_work = cell.worker_claim().unwrap();
         cell.revoke(first_key, RevocationReason::Cancelled).unwrap();
         assert_eq!(
-            cell.worker_failure(first_work, WorkerFailure::Shutdown).unwrap(),
+            cell.worker_failure(first_work, WorkerFailure::Shutdown)
+                .unwrap(),
             WorkerFinish::Revoked
         );
 
@@ -1552,7 +1570,7 @@ mod tests {
         assert!(!second_retirement.acknowledged());
         assert!(!first_retirement.ack());
         assert!(!second_retirement.acknowledged());
-        assert_eq!(cell.publish_ready(first_key, ReadyDirection::Read), false);
+        assert!(!cell.publish_ready(first_key, ReadyDirection::Read));
         assert!(cell.publish_ready(second_key, ReadyDirection::Read));
     }
 
@@ -1581,7 +1599,9 @@ mod tests {
                 Tracked(Arc::clone(&first_drops)),
             )
             .unwrap();
-        handoff.revoke(first_key, RevocationReason::Shutdown).unwrap();
+        handoff
+            .revoke(first_key, RevocationReason::Shutdown)
+            .unwrap();
         assert_eq!(handoff.next_transfer_seq(), Some(2));
         assert_eq!(first_drops.load(Ordering::SeqCst), 1);
 

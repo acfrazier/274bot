@@ -827,7 +827,8 @@ fn run_cell() -> Result<(), String> {
             % i32::MAX as u128) as i32,
         settings: ProfileSettings::default(),
     };
-    play.try_spawn_slot(account_profile, None, None, None)?;
+    play.try_spawn_slot(account_profile, None, None, None)
+        .map_err(|error| error.to_string())?;
     play.focus(&account);
 
     let prep_deadline = Instant::now() + PREP_DEADLINE;

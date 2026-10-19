@@ -595,6 +595,7 @@ fn a_failed_asset_host_is_looked_up_once_in_each_preparation() {
     let driver = start_network_service();
     let root = TempRoot::new("failed-asset");
     let packs = packs();
+    let (observer, attempts) = attempt_counter();
     let stepped_selection = wss_selection(
         &root,
         &packs,

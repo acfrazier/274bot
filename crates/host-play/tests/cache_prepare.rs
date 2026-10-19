@@ -18,11 +18,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use client::io::Packet;
+use client_adapter::service::NetworkService;
 use host_play::cache::CacheAvailability;
 use host_play::profile::{ProfileEnvironment, ProfileSelection};
 use host_play::progress::ProfileProgressObserver;
 use host_play::{ProfileOptions, SharedClientTemplate};
-use client_adapter::service::NetworkService;
 
 /// Update-server checksum slots 1-8 (`title`=1 .. `sounds`=8), the order the
 /// `/crc` body uses.

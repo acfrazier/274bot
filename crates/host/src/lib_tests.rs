@@ -50,29 +50,22 @@ fn cfg() -> ClientConfig {
     }
 }
 
-/// Wait on the stream's shared Park for committed inbound bytes or terminal
-/// state. This observes ring readiness without exposing or polling a socket
-/// handle, and works whether publication preceded or followed the wait arm.
-fn wait_stream_available(stream: &client::io::ClientStream, minimum: i32) {
-    let park = stream.park();
-    let outcome = park.wait(
-        Instant::now() + Duration::from_secs(2),
-        Instant::now,
-        || false,
-        || false,
-        || false,
-        || match stream.available() {
-            Ok(bytes) if bytes >= minimum => Some(Ok(bytes)),
-            Err(error) => Some(Err(error.kind())),
-            _ => None,
-        },
-        false,
-        None,
-    );
-    match outcome {
-        ParkOutcome::Ready(Ok(bytes)) if bytes >= minimum => {}
-        ParkOutcome::Ready(Err(error)) => panic!("stream became terminal: {error:?}"),
-        other => panic!("stream did not reach {minimum} bytes: {other:?}"),
+/// Wait for bytes or terminal state on the test stream. Its nonblocking
+/// `available()` probe is sampled at a bounded interval instead of polling
+/// continuously or relying on the removed stream Park.
+fn wait_stream_available(stream: &mut client::io::ClientStream, minimum: i32) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let now = Instant::now();
+        if now >= deadline {
+            panic!("stream did not reach {minimum} bytes");
+        }
+        match stream.available() {
+            Ok(bytes) if bytes >= minimum => return,
+            Ok(_) => {}
+            Err(error) => panic!("stream became terminal: {error:?}"),
+        }
+        std::thread::sleep(Duration::from_millis(10).min(deadline - now));
     }
 }
 
@@ -275,6 +268,11 @@ fn reconnect_grant(client: &mut Client) {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     client.config.port = listener.local_addr().unwrap().port();
+    client.stream = Some(
+        client::io::ClientStream::connect_tcp_for_test("127.0.0.1", client.config.port)
+            .expect("test loopback socket"),
+    );
+    client.baton = true;
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         stream
@@ -1131,8 +1129,10 @@ fn host_owned_session_does_not_emit_automatic_idle_request() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let mut client = Client::new_with_revision(cfg(), revision);
-        client.stream =
-            Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+        client.stream = Some(
+            client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+                .unwrap(),
+        );
         let (_server, _) = listener.accept().unwrap();
         client.ingame = true;
         client.error_loading = false;
@@ -1240,8 +1240,10 @@ fn draw_off_logout_edge_constructs_no_renderer_and_publishes_no_frame() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let mut client = Client::new_with_revision(cfg(), client::client::ClientRevision::R289);
-    client.stream =
-        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    client.stream = Some(
+        client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+            .unwrap(),
+    );
     let (_server, _) = listener.accept().unwrap();
     client.ingame = true;
     client.scene_state = 2;
@@ -1632,13 +1634,15 @@ fn observe_sees_packets_applied_in_the_same_frame() {
         Arc::new(vec![]),
         Vec::new(),
     );
-    c.stream =
-        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    c.stream = Some(
+        client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+            .unwrap(),
+    );
     let (mut server, _) = listener.accept().unwrap();
     c.ingame = true;
     c.ptype = -1;
     server.write_all(&[89, 0, 10]).unwrap();
-    wait_stream_available(c.stream.as_ref().unwrap(), 3);
+    wait_stream_available(c.stream.as_mut().unwrap(), 3);
     let observed = AtomicBool::new(false);
     let mut reboot = 0;
     Host::run_client(
@@ -1678,8 +1682,10 @@ fn idle_observe_wire_reaches_socket_on_the_next_frame_without_parking() {
         Arc::new(vec![]),
         Vec::new(),
     );
-    c.stream =
-        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    c.stream = Some(
+        client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+            .unwrap(),
+    );
     let (mut server, _) = listener.accept().unwrap();
     server
         .set_read_timeout(Some(Duration::from_secs(2)))
@@ -2285,7 +2291,8 @@ fn idle_slot_parks_between_packets_and_wakes_on_one() {
             Vec::new(),
         );
         let stream =
-            client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+            client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+                .unwrap();
         c.stream = Some(stream);
         c.ingame = true;
         // The login handshake leaves the packet decoder mid-frame
@@ -2753,7 +2760,7 @@ fn park_wakes_for_websocket_buffered_bytes() {
         Vec::new(),
     );
     let mut stream = connect_ws_plain("127.0.0.1", address.port()).unwrap();
-    wait_stream_available(&stream, 7);
+    wait_stream_available(&mut stream, 7);
     let mut first_five = [0; 5];
     stream.read_bytes(&mut first_five, 0, 5).unwrap();
     assert_eq!(first_five, [1, 2, 3, 4, 5]);
@@ -2761,14 +2768,14 @@ fn park_wakes_for_websocket_buffered_bytes() {
     c.stream = Some(stream);
     let mut control_epoch = 0_u64;
     let wake = park(
-        &c,
+        &mut c,
         None,
         &mut control_epoch,
         true,
         Duration::from_millis(30),
     );
     let suppressed = park(
-        &c,
+        &mut c,
         None,
         &mut control_epoch,
         false,
@@ -2802,18 +2809,20 @@ fn park_prefers_socket_when_control_and_socket_both_ready() {
         Arc::new(vec![]),
         Vec::new(),
     );
-    let stream = client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+    let stream =
+        client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+            .unwrap();
     c.stream = Some(stream);
     let (mut server, _) = listener.accept().unwrap();
     let (wake, park_end) = crate::slot_io::wake_channel();
 
     server.write_all(&[1]).unwrap();
-    wait_stream_available(c.stream.as_ref().unwrap(), 1);
+    wait_stream_available(c.stream.as_mut().unwrap(), 1);
     let mut control_epoch = 0_u64;
     wake.wake();
     assert_eq!(
         park(
-            &c,
+            &mut c,
             Some(&park_end),
             &mut control_epoch,
             true,
@@ -2872,41 +2881,83 @@ fn park_rechecks_inbound_after_arming() {
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let stream = client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+    let mut stream =
+        client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+            .unwrap();
     let (mut server, _) = listener.accept().unwrap();
-    let park = stream.park();
+    let park = Arc::new(client_adapter::park::Park::new());
+    let inbound_ready = Arc::new(AtomicBool::new(false));
     let (checked_tx, checked_rx) = std::sync::mpsc::sync_channel(1);
-    let waiting = thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let mut checked = false;
-        park.wait(
-            deadline,
-            Instant::now,
-            || false,
-            || false,
-            || false,
-            || match stream.available() {
-                Ok(bytes) if bytes != 0 => Some(ParkWake::Socket),
-                Err(_) => Some(ParkWake::Socket),
-                _ => {
-                    if !checked {
-                        checked = true;
-                        checked_tx.send(()).unwrap();
+    let waiting = {
+        let park = Arc::clone(&park);
+        let inbound_ready = Arc::clone(&inbound_ready);
+        thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut checked = false;
+            park.wait(
+                deadline,
+                Instant::now,
+                || false,
+                || false,
+                || false,
+                || {
+                    if inbound_ready.load(Ordering::Acquire) {
+                        Some(ParkWake::Socket)
+                    } else {
+                        if !checked {
+                            checked = true;
+                            checked_tx.send(()).unwrap();
+                        }
+                        None
                     }
-                    None
-                }
-            },
-            false,
-            None,
-        )
-    });
+                },
+                false,
+                None,
+            )
+        })
+    };
     checked_rx
         .recv_timeout(Duration::from_secs(2))
         .expect("waiter must recheck before inbound publication");
     server.write_all(&[1]).unwrap();
+
+    // The test connector has no transport reactor to publish socket
+    // readiness to the host Park. Bridge the genuine loopback event using
+    // its bounded, nonblocking availability probe; the Park predicate only
+    // observes the atomically-published readiness flag.
+    let socket_ready = {
+        let park = Arc::clone(&park);
+        let inbound_ready = Arc::clone(&inbound_ready);
+        thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let result = loop {
+                let now = Instant::now();
+                if now >= deadline {
+                    break Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "loopback bytes did not become available",
+                    ));
+                }
+                match stream.available() {
+                    Ok(bytes) if bytes > 0 => break Ok(bytes),
+                    Err(error) => break Err(error),
+                    Ok(_) => {
+                        thread::sleep(Duration::from_millis(10).min(deadline - now));
+                    }
+                }
+            };
+            inbound_ready.store(true, Ordering::Release);
+            park.publish();
+            result
+        })
+    };
     assert_eq!(
         waiting.join().unwrap(),
         ParkOutcome::Ready(ParkWake::Socket)
+    );
+    assert!(
+        socket_ready.join().unwrap().expect("inbound socket bytes") > 0,
+        "the Park recheck must correspond to bytes on the loopback stream"
     );
 }
 
@@ -2924,20 +2975,22 @@ fn park_suppresses_stalled_stream_readiness_until_control_or_timeout() {
         Arc::new(vec![]),
         Vec::new(),
     );
-    let stream = client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+    let stream =
+        client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+            .unwrap();
     c.stream = Some(stream);
     let (mut server, _) = listener.accept().unwrap();
     let (wake, park_end) = crate::slot_io::wake_channel();
 
     server.write_all(&[1]).unwrap();
-    wait_stream_available(c.stream.as_ref().unwrap(), 1);
+    wait_stream_available(c.stream.as_mut().unwrap(), 1);
     let mut control_epoch = 0_u64;
     // Ring data is ready, but the stalled partial-packet path suppresses
     // inbound readiness. Without a kick, this wait times out rather than spins.
     let start = Instant::now();
     assert_eq!(
         park(
-            &c,
+            &mut c,
             Some(&park_end),
             &mut control_epoch,
             false,
@@ -2949,7 +3002,7 @@ fn park_suppresses_stalled_stream_readiness_until_control_or_timeout() {
     wake.wake();
     assert_eq!(
         park(
-            &c,
+            &mut c,
             Some(&park_end),
             &mut control_epoch,
             false,
@@ -2962,7 +3015,7 @@ fn park_suppresses_stalled_stream_readiness_until_control_or_timeout() {
 
 #[test]
 fn park_without_game_stream_uses_control_park_timeout() {
-    let c = prepare_client(
+    let mut c = prepare_client(
         cfg(),
         1,
         Arc::new(Cache::default()),
@@ -2974,7 +3027,7 @@ fn park_without_game_stream_uses_control_park_timeout() {
     let start = Instant::now();
     assert_eq!(
         park(
-            &c,
+            &mut c,
             Some(&ctl),
             &mut control_epoch,
             true,
@@ -3005,7 +3058,8 @@ fn client_frame_kicks_guardian_after_drain() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("local addr");
     let stream =
-        client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).expect("connect");
+        client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+            .expect("connect");
     std::mem::forget(listener);
     c.stream = Some(stream);
     c.ingame = true;
@@ -3069,7 +3123,8 @@ fn lamp_auto_live_mirror_reaches_guardian_without_respawn() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("local addr");
     let stream =
-        client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).expect("connect");
+        client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+            .expect("connect");
     std::mem::forget(listener);
     c.stream = Some(stream);
     ingame_scene2(&mut c);

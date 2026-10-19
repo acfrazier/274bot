@@ -1,10 +1,10 @@
 //! `host-play` CLI: resolve and bind one immutable server profile, load its
 //! shared client template, then unlock the selected vault and run its accounts.
 
-use std::thread;
-use std::time::{Duration, Instant};
 use std::env;
 use std::process::ExitCode;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use host_play::passphrase::{self, Purpose};
 use host_play::{

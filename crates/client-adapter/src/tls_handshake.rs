@@ -58,7 +58,9 @@ pub struct GameTlsTicket {
 
 impl std::fmt::Debug for GameTlsTicket {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GameTlsTicket").field("id", &self.waiter.id).finish()
+        f.debug_struct("GameTlsTicket")
+            .field("id", &self.waiter.id)
+            .finish()
     }
 }
 
@@ -68,14 +70,21 @@ pub enum GameTlsWait {
     Ready,
     Deadline,
     Cancelled,
-    InsufficientRemainingTime { remaining: Duration, minimum: Duration },
+    InsufficientRemainingTime {
+        remaining: Duration,
+        minimum: Duration,
+    },
 }
 
 impl GameTlsTicket {
-    pub fn deadline(&self) -> Instant { self.waiter.deadline }
+    pub fn deadline(&self) -> Instant {
+        self.waiter.deadline
+    }
 
     pub fn poll(&self, now: Instant) -> GameTlsWait {
-        if self.waiter.token.is_cancelled() || self.waiter.state.load(Ordering::Acquire) == CANCELLED {
+        if self.waiter.token.is_cancelled()
+            || self.waiter.state.load(Ordering::Acquire) == CANCELLED
+        {
             return GameTlsWait::Cancelled;
         }
         let state = self.waiter.state.load(Ordering::Acquire);
@@ -86,7 +95,8 @@ impl GameTlsTicket {
             let remaining = self.waiter.deadline.duration_since(now);
             return if remaining < MIN_WSS_START_REMAINING {
                 GameTlsWait::InsufficientRemainingTime {
-                    remaining, minimum: MIN_WSS_START_REMAINING,
+                    remaining,
+                    minimum: MIN_WSS_START_REMAINING,
                 }
             } else {
                 GameTlsWait::Ready
@@ -106,8 +116,10 @@ impl GameTlsTicket {
     /// later WSS demand can progress. `poll` remains an atomic-only predicate.
     pub fn release_for_insufficient_time(&self) {
         let mut admission = self.lane.admission.lock().unwrap();
-        if admission.granted.as_ref().is_some_and(|granted|
-            Arc::ptr_eq(granted, &self.waiter))
+        if admission
+            .granted
+            .as_ref()
+            .is_some_and(|granted| Arc::ptr_eq(granted, &self.waiter))
         {
             admission.granted = None;
             self.waiter.state.store(INELIGIBLE, Ordering::Release);
@@ -119,8 +131,7 @@ impl GameTlsTicket {
     /// Post-K1 submission must not reapply the five-second *admission*
     /// floor: it only verifies that this exact grant remains owned.
     pub fn reserved(&self) -> bool {
-        self.waiter.state.load(Ordering::Acquire) == GRANTED
-            && !self.waiter.token.is_cancelled()
+        self.waiter.state.load(Ordering::Acquire) == GRANTED && !self.waiter.token.is_cancelled()
     }
 
     pub fn matches_token(&self, token: &CancelToken) -> bool {
@@ -131,12 +142,16 @@ impl GameTlsTicket {
 impl Drop for GameTlsTicket {
     fn drop(&mut self) {
         let mut admission = self.lane.admission.lock().unwrap();
-        if admission.granted.as_ref().is_some_and(|granted|
-            Arc::ptr_eq(granted, &self.waiter))
+        if admission
+            .granted
+            .as_ref()
+            .is_some_and(|granted| Arc::ptr_eq(granted, &self.waiter))
         {
             admission.granted = None;
         } else {
-            admission.pending.retain(|pending| !Arc::ptr_eq(pending, &self.waiter));
+            admission
+                .pending
+                .retain(|pending| !Arc::ptr_eq(pending, &self.waiter));
         }
         drop(admission);
         self.lane.notify_capacity();
@@ -185,7 +200,10 @@ impl StartupConfig {
     }
 
     fn publish(&self, result: Result<Arc<ClientConfig>, ()>) {
-        let mut current = self.result.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut current = self
+            .result
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if current.is_none() {
             *current = Some(result);
             drop(current);
@@ -194,9 +212,15 @@ impl StartupConfig {
     }
 
     fn wait(&self) -> Option<Arc<ClientConfig>> {
-        let mut current = self.result.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut current = self
+            .result
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         while current.is_none() {
-            current = self.ready.wait(current).unwrap_or_else(std::sync::PoisonError::into_inner);
+            current = self
+                .ready
+                .wait(current)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
         current
             .as_ref()
@@ -240,8 +264,23 @@ impl GameTlsLane {
         })
     }
 
+    /// Construct a fresh platform-verifier generation on the actual worker
+    /// with fixture roots, rather than prebuilding it on the test owner.
+    #[cfg(feature = "test-support")]
+    pub fn start_with_test_roots(
+        reactor_waker: Arc<Waker>,
+        health: Arc<ReactorHealth>,
+        roots: Vec<rustls::pki_types::CertificateDer<'static>>,
+    ) -> io::Result<Arc<Self>> {
+        Self::start_with_builder(reactor_waker, health, move || {
+            build_test_client_config_with_roots(&roots)
+        })
+    }
+
     fn start_with_builder<F>(
-        reactor_waker: Arc<Waker>, health: Arc<ReactorHealth>, build_config: F,
+        reactor_waker: Arc<Waker>,
+        health: Arc<ReactorHealth>,
+        build_config: F,
     ) -> io::Result<Arc<Self>>
     where
         F: FnOnce() -> Result<Arc<ClientConfig>, TlsError> + Send + 'static,
@@ -270,9 +309,11 @@ impl GameTlsLane {
         drop(worker);
 
         Ok(Arc::new(Self {
-            cell, startup,
+            cell,
+            startup,
             admission: Mutex::new(CapacityAdmission {
-                next_id: 1, ..CapacityAdmission::default()
+                next_id: 1,
+                ..CapacityAdmission::default()
             }),
         }))
     }
@@ -297,44 +338,72 @@ impl GameTlsLane {
         token: CancelToken,
     ) -> io::Result<GameTlsTicket> {
         if self.config().is_none() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "game TLS verifier unavailable"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "game TLS verifier unavailable",
+            ));
         }
         if !Arc::ptr_eq(&park, token.park()) {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "WSS waiter park mismatch"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "WSS waiter park mismatch",
+            ));
         }
         let waiter = {
             let mut admission = self.admission.lock().unwrap();
             if admission.closed {
-                return Err(io::Error::new(io::ErrorKind::NotConnected, "game TLS lane shut down"));
+                return Err(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "game TLS lane shut down",
+                ));
             }
-            if admission.pending.len() + usize::from(admission.granted.is_some()) >= MAX_GAME_TLS_WAITERS {
-                return Err(io::Error::new(io::ErrorKind::WouldBlock, "game TLS waiter capacity exhausted"));
+            if admission.pending.len() + usize::from(admission.granted.is_some())
+                >= MAX_GAME_TLS_WAITERS
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "game TLS waiter capacity exhausted",
+                ));
             }
             let id = admission.next_id;
-            admission.next_id = id.checked_add(1).ok_or_else(||
-                io::Error::other("game TLS waiter identity exhausted"))?;
+            admission.next_id = id
+                .checked_add(1)
+                .ok_or_else(|| io::Error::other("game TLS waiter identity exhausted"))?;
             let waiter = Arc::new(CapacityWaiter {
-                id, park, token, deadline, state: AtomicU8::new(WAITING),
+                id,
+                park,
+                token,
+                deadline,
+                state: AtomicU8::new(WAITING),
             });
             admission.pending.push_back(Arc::clone(&waiter));
             waiter
         };
         self.notify_capacity();
-        Ok(GameTlsTicket { lane: Arc::clone(self), waiter })
+        Ok(GameTlsTicket {
+            lane: Arc::clone(self),
+            waiter,
+        })
     }
 
     /// Publish a wake after handoff acceptance or actual worker-owned close.
     /// Never hold the admission mutex while taking the handoff mutex or K2.
     pub fn notify_capacity(&self) {
-        if self.admission.lock().unwrap().pending.is_empty() { return; }
+        if self.admission.lock().unwrap().pending.is_empty() {
+            return;
+        }
         let available = self.cell.can_admit();
         let now = Instant::now();
         let mut wake = Vec::new();
         {
             let mut admission = self.admission.lock().unwrap();
-            if admission.closed { return; }
+            if admission.closed {
+                return;
+            }
             while admission.granted.is_none() {
-                let Some(front) = admission.pending.front() else { break; };
+                let Some(front) = admission.pending.front() else {
+                    break;
+                };
                 let state = if front.token.is_cancelled() {
                     CANCELLED
                 } else if now >= front.deadline {
@@ -370,7 +439,9 @@ impl GameTlsLane {
         let wake = {
             let mut admission = self.admission.lock().unwrap();
             admission.closed = true;
-            let mut wake = Vec::with_capacity(admission.pending.len() + usize::from(admission.granted.is_some()));
+            let mut wake = Vec::with_capacity(
+                admission.pending.len() + usize::from(admission.granted.is_some()),
+            );
             for waiter in admission.pending.drain(..) {
                 waiter.state.store(CANCELLED, Ordering::Release);
                 wake.push(Arc::clone(&waiter.park));
@@ -381,7 +452,9 @@ impl GameTlsLane {
             }
             wake
         };
-        for park in wake { park.publish(); }
+        for park in wake {
+            park.publish();
+        }
         revoked.map(|_| ())
     }
 }
@@ -424,7 +497,8 @@ pub fn build_test_client_config_with_roots(
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let versions = [&rustls::version::TLS13, &rustls::version::TLS12];
     let verifier = rustls_platform_verifier::Verifier::new_with_extra_roots(
-        roots.iter().cloned(), Arc::clone(&provider),
+        roots.iter().cloned(),
+        Arc::clone(&provider),
     )?;
     let config = ClientConfig::builder_with_provider(provider)
         .with_protocol_versions(&versions)?
@@ -448,10 +522,7 @@ enum DriveResult {
     Continue,
 }
 
-fn handshake_worker(
-    cell: Arc<HandoffCell<GameTlsResource>>,
-    config: Option<Arc<ClientConfig>>,
-) {
+fn handshake_worker(cell: Arc<HandoffCell<GameTlsResource>>, config: Option<Arc<ClientConfig>>) {
     let mut deferred_failure = None;
     while let Some(mut work) = cell.worker_claim() {
         if let Some(failure) = deferred_failure.take() {
@@ -493,8 +564,8 @@ fn initialize_connection(
         return Ok(());
     }
 
-    let server_name = ServerName::try_from(resource.host.clone())
-        .map_err(|_| WorkerFailure::Verification)?;
+    let server_name =
+        ServerName::try_from(resource.host.clone()).map_err(|_| WorkerFailure::Verification)?;
     let mut connection = ClientConnection::new(Arc::clone(config), server_name)
         .map_err(|error| classify_tls_error(&error))?;
     connection.set_buffer_limit(Some(RUSTLS_BUFFER_LIMIT));
@@ -534,10 +605,7 @@ fn drive_handshake(
             || output_bytes >= MAX_ENCRYPTED_OUTPUT_PER_TURN
             || operations + next_operation_cost > MAX_OPERATIONS_PER_TURN
         {
-            return from_worker_yield(
-                cell.worker_yield(work, NativeCall::SyntheticBudget),
-                None,
-            );
+            return from_worker_yield(cell.worker_yield(work, NativeCall::SyntheticBudget), None);
         }
 
         if wants_write {
@@ -692,17 +760,19 @@ mod capacity_tests {
         let poll = Poll::new().unwrap();
         let waker = Arc::new(Waker::new(poll.registry(), Token(0)).unwrap());
         let startup = Arc::new(StartupConfig::new());
-        let config = ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-            .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
-            .unwrap()
-            .with_root_certificates(rustls::RootCertStore::empty())
-            .with_no_client_auth();
+        let config =
+            ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+                .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
+                .unwrap()
+                .with_root_certificates(rustls::RootCertStore::empty())
+                .with_no_client_auth();
         startup.publish(Ok(Arc::new(config)));
         Arc::new(GameTlsLane {
             cell: Arc::new(HandoffCell::new(waker)),
             startup,
             admission: Mutex::new(CapacityAdmission {
-                next_id: 1, ..CapacityAdmission::default()
+                next_id: 1,
+                ..CapacityAdmission::default()
             }),
         })
     }
@@ -757,10 +827,11 @@ mod capacity_tests {
         let poll = Poll::new().unwrap();
         let waker = Arc::new(Waker::new(poll.registry(), Token(1)).unwrap());
         let health = Arc::new(ReactorHealth::new(Instant::now()));
-        let lane = GameTlsLane::start_with_builder(waker, Arc::clone(&health), || panic!("injected worker panic"))
-            .unwrap();
+        let lane = GameTlsLane::start_with_builder(waker, Arc::clone(&health), || {
+            panic!("injected worker panic")
+        })
+        .unwrap();
         assert!(lane.config().is_none());
         assert_eq!(health.loss(), Some(ReactorLoss::Panicked));
     }
-
 }

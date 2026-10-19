@@ -1544,6 +1544,13 @@ fn response_15_reconnect(c: &mut Client) {
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     c.config.port = listener.local_addr().unwrap().port();
+    // Exercise the real response-15 wire path on a local test-only socket
+    // without enabling the standalone native connector in product builds.
+    c.stream = Some(
+        client::io::client_stream::ClientStream::connect_tcp_for_test("127.0.0.1", c.config.port)
+            .unwrap(),
+    );
+    c.baton = true;
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         stream

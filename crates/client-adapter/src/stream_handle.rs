@@ -73,7 +73,10 @@ impl ConnectionHandle {
             || self.shared.binding() != identity.binding
             || self.shared.is_closed()
         {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "stale connection binding"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "stale connection binding",
+            ));
         }
         self.enabled = true;
         Ok(())
@@ -94,10 +97,15 @@ impl ConnectionHandle {
         token: CancelToken,
         stronger_terminal: Option<Arc<AtomicBool>>,
     ) -> io::Result<()> {
-        if self.enabled || next.connection != self.binding.connection
-            || self.shared.binding() != next.binding || self.shared.is_closed()
+        if self.enabled
+            || next.connection != self.binding.connection
+            || self.shared.binding() != next.binding
+            || self.shared.is_closed()
         {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "rebind not confirmed"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "rebind not confirmed",
+            ));
         }
         self.binding = next;
         self.deadline = Some(deadline);
@@ -112,7 +120,10 @@ impl ConnectionHandle {
     /// this only after its K4 commit and deadline detachment.
     pub fn commit_session(&mut self, identity: BindingId) -> io::Result<()> {
         if identity != self.binding || !self.enabled || !self.shared.commit_session(identity) {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "session commit rejected"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "session commit rejected",
+            ));
         }
         self.deadline = None;
         self.token = None;
@@ -148,7 +159,10 @@ impl ConnectionHandle {
             return Ok(0);
         }
         if !self.enabled {
-            return Err(io::Error::new(io::ErrorKind::NotConnected, "binding unconfirmed"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "binding unconfirmed",
+            ));
         }
         let len = self.shared.inbound.len();
         if len > 0 {
@@ -173,8 +187,12 @@ impl ConnectionHandle {
         if self.closed_locally {
             return Ok(());
         }
-        let end = off.checked_add(len).filter(|end| *end <= buf.len())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "read extent outside buffer"))?;
+        let end = off
+            .checked_add(len)
+            .filter(|end| *end <= buf.len())
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "read extent outside buffer")
+            })?;
         let mut cursor = off;
         while cursor < end {
             let n = self.read_some(&mut buf[cursor..end])?;
@@ -191,19 +209,30 @@ impl ConnectionHandle {
             return Ok(0);
         }
         if !self.enabled {
-            return Err(io::Error::new(io::ErrorKind::NotConnected, "binding unconfirmed"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "binding unconfirmed",
+            ));
         }
         if self.session_authority {
             if self.health.loss().is_some() {
-                return Err(io::Error::new(io::ErrorKind::ConnectionAborted, "game transport unavailable"));
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionAborted,
+                    "game transport unavailable",
+                ));
             }
             let read = self.shared.take_inbound(dest);
             if read > 0 {
-                let _ = self.shared.control.resume_read(self.binding.binding, &self.bus);
+                let _ = self
+                    .shared
+                    .control
+                    .resume_read(self.binding.binding, &self.bus);
                 return Ok(read);
             }
         }
-        let deadline = self.deadline.unwrap_or_else(|| Instant::now() + READ_TIMEOUT);
+        let deadline = self
+            .deadline
+            .unwrap_or_else(|| Instant::now() + READ_TIMEOUT);
         let token = self.token.as_ref();
         let stronger = self.stronger_terminal.as_ref();
         let shared = &self.shared;
@@ -214,7 +243,7 @@ impl ConnectionHandle {
             || stronger.is_some_and(|state| state.load(Ordering::Acquire)),
             || token.is_some_and(CancelToken::is_cancelled),
             || {
-                if shared.inbound.len() > 0 {
+                if !shared.inbound.is_empty() {
                     let read = shared.take_inbound(dest);
                     return Some(ReadResult::Bytes(read));
                 }
@@ -229,9 +258,24 @@ impl ConnectionHandle {
                 Ok(read)
             }
             ParkOutcome::Ready(ReadResult::End) => Ok(0),
-            ParkOutcome::Unavailable => Err(io::Error::new(io::ErrorKind::ConnectionAborted, "game transport unavailable")),
-            ParkOutcome::SelectedIntent | ParkOutcome::Revoked => Err(io::Error::new(io::ErrorKind::ConnectionAborted, "login attempt revoked")),
-            ParkOutcome::Deadline => Err(io::Error::new(io::ErrorKind::TimedOut, "read deadline passed")),
+            ParkOutcome::Unavailable => Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "game transport unavailable",
+            )),
+            ParkOutcome::SelectedIntent | ParkOutcome::Revoked => Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "login attempt revoked",
+            )),
+            ParkOutcome::Deadline => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                if self.session_authority {
+                    "read deadline passed"
+                } else {
+                    // Keep the fork client's established login diagnostic;
+                    // hosted transport does not change the public error.
+                    "login handshake deadline passed"
+                },
+            )),
         }
     }
 
@@ -243,7 +287,10 @@ impl ConnectionHandle {
             return Ok(());
         }
         if !self.enabled || (!self.session_authority && self.deadline.is_none()) {
-            return Err(io::Error::new(io::ErrorKind::NotConnected, "binding not authorized"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "binding not authorized",
+            ));
         }
         let record = &record[..len.min(record.len())];
         if record.is_empty() {
@@ -251,19 +298,30 @@ impl ConnectionHandle {
         }
         if self.session_authority {
             if self.health.loss().is_some() {
-                return Err(io::Error::new(io::ErrorKind::ConnectionAborted, "game transport unavailable"));
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionAborted,
+                    "game transport unavailable",
+                ));
             }
             return match self.shared.append_record(self.binding, record, &self.bus) {
                 AppendResult::Accepted => Ok(()),
                 AppendResult::AcceptedWakeFailed(error) => Err(error),
-                AppendResult::Refused(AppendRefusal::Backpressured) => Err(io::ErrorKind::WouldBlock.into()),
-                AppendResult::Refused(reason) => Err(io::Error::new(io::ErrorKind::NotConnected, format!("record refused: {reason:?}"))),
+                AppendResult::Refused(AppendRefusal::Backpressured) => {
+                    Err(io::ErrorKind::WouldBlock.into())
+                }
+                AppendResult::Refused(reason) => Err(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    format!("record refused: {reason:?}"),
+                )),
             };
         }
         let deadline = self.deadline.expect("uncommitted session cannot write");
         let token = self.token.as_ref();
         let stronger = self.stronger_terminal.as_ref();
-        let binding = WriterBinding { connection: self.binding.connection, binding: self.binding.binding };
+        let binding = WriterBinding {
+            connection: self.binding.connection,
+            binding: self.binding.binding,
+        };
         let mut refusal = None;
         let outcome = self.shared.control.park.wait(
             deadline,
@@ -285,13 +343,25 @@ impl ConnectionHandle {
         match outcome {
             ParkOutcome::Ready(()) => {
                 if let Some(reason) = refusal {
-                    return Err(io::Error::new(io::ErrorKind::NotConnected, format!("record refused: {reason:?}")));
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotConnected,
+                        format!("record refused: {reason:?}"),
+                    ));
                 }
                 self.shared.kick_record(self.binding, &self.bus)
             }
-            ParkOutcome::Unavailable => Err(io::Error::new(io::ErrorKind::ConnectionAborted, "game transport unavailable")),
-            ParkOutcome::SelectedIntent | ParkOutcome::Revoked => Err(io::Error::new(io::ErrorKind::ConnectionAborted, "login attempt revoked")),
-            ParkOutcome::Deadline => Err(io::Error::new(io::ErrorKind::TimedOut, "write deadline passed")),
+            ParkOutcome::Unavailable => Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "game transport unavailable",
+            )),
+            ParkOutcome::SelectedIntent | ParkOutcome::Revoked => Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "login attempt revoked",
+            )),
+            ParkOutcome::Deadline => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "login handshake deadline passed",
+            )),
         }
     }
 
@@ -313,7 +383,10 @@ impl ConnectionHandle {
             return;
         }
         let _ = self.shared.control.post_close(
-            CloseCommand { binding: self.binding, reason },
+            CloseCommand {
+                binding: self.binding,
+                reason,
+            },
             &self.bus,
         );
     }

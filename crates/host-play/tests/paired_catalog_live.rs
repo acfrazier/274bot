@@ -1169,13 +1169,15 @@ fn run_cell(case: PairCase) -> Result<(), String> {
         None,
         None,
         None,
-    )?;
+    )
+    .map_err(|error| error.to_string())?;
     play.try_spawn_slot(
         mint_profile(&names[1], &credentials[1].1, 1)?,
         None,
         None,
         None,
-    )?;
+    )
+    .map_err(|error| error.to_string())?;
 
     let mut phase = 0_u8;
     let mut deadline = Instant::now() + Duration::from_secs(PREP_DEADLINE_SECS);

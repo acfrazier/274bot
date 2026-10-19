@@ -33,8 +33,8 @@ fn cfg() -> ClientConfig {
 fn scene_client() -> Client {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("local addr");
-    let stream = ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
-        .expect("connect");
+    let stream =
+        ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port()).expect("connect");
     // Keep the listener alive so the connect stays established.
     std::mem::forget(listener);
     let mut c = Client::new(cfg());

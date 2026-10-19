@@ -6,13 +6,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use client_adapter::cancel::{AttemptRetire, CancelSource, CancelToken};
-use client_adapter::control::BindingId;
-use client_adapter::handoff::QueueReleaseProof;
-use client_adapter::health::ReactorHealth;
-use client_adapter::host_network::{with_prepared_game_attempt, PreparedGameAttempt};
-use client_adapter::park::{Park, ParkOutcome};
-use client_adapter::tls_handshake::{GameTlsTicket, GameTlsWait, MIN_WSS_START_REMAINING};
 use api::host_log;
 use api::hostlog::{Category, Level};
 use api::identity::{Deadline, Event, Scope, SessionKey, SlotKeyMinter};
@@ -25,6 +18,14 @@ use client::client::{Client, LoginError};
 use client::config::IfType;
 use client::io::client_stream::LoginCancel;
 use client::io::host_network::{HostAttemptIdentity, SealReceipt};
+use client_adapter::cancel::{AttemptRetire, CancelSource, CancelToken};
+#[cfg(test)]
+use client_adapter::control::BindingId;
+use client_adapter::handoff::QueueReleaseProof;
+use client_adapter::health::ReactorHealth;
+use client_adapter::host_network::{with_prepared_game_attempt, PreparedGameAttempt};
+use client_adapter::park::{Park, ParkOutcome};
+use client_adapter::tls_handshake::{GameTlsTicket, GameTlsWait, MIN_WSS_START_REMAINING};
 use host::login_queue::{AdmitBlocker, LoginBackoff, LoginQueue, Permit, QueueAttemptId, QueuePos};
 use parking_lot::Mutex as QueueMutex;
 use vault::{Profile, RandomEventPolicy};
@@ -276,7 +277,12 @@ impl<'a> K4CancelGuard<'a> {
             .flatten()
             .filter(|cancel| !cancel.is_cancelled())
             .cloned();
-        Self { lifecycle, pending, pending_prequeue }
+        Self {
+            lifecycle,
+            pending,
+            pending_prequeue,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -385,6 +391,8 @@ pub struct SlotArm {
     park: Arc<Park>,
     /// Monotonic cancellation generations for this slot's attempts.
     cancel_source: CancelSource,
+    /// Intent mailbox, session gate and in-flight handshake under one K4 lock.
+    lifecycle: parking_lot::Mutex<SlotLifecycle>,
     key_fetch_cancel: parking_lot::Mutex<Option<LoginCancel>>,
     /// Only isolated lock-order tests watch token state; another thread may
     /// legitimately fire a previously collected token while this arm is locked.
@@ -450,6 +458,7 @@ impl SlotArm {
                 missed_session_ends: 0,
                 last_queue: None,
                 prequeue_cancel: None,
+                attempt: None,
                 promotion_pending: None,
                 attempt_generation: None,
                 unexpected_logout_times: [None; UNEXPECTED_LOGOUT_THRESHOLD],
@@ -490,7 +499,10 @@ impl SlotArm {
     fn publish_key_fetch_cancel(&self, cancel: &LoginCancel) -> bool {
         let lifecycle = self.lifecycle.lock();
         let mut active = self.key_fetch_cancel.lock();
-        assert!(active.is_none(), "one slot owns at most one login-key fetch");
+        assert!(
+            active.is_none(),
+            "one slot owns at most one login-key fetch"
+        );
         *active = Some(cancel.clone());
         drop(active);
         drop(lifecycle);
@@ -1241,7 +1253,6 @@ impl SlotArm {
         lifecycle.slot_event(SessionEventOut::HandshakeAborted { reason });
     }
 
-
     /// Phase R preflight under K4. The exact token remains published while
     /// the reactor seals this generation outside K4.
     pub(super) fn may_seal_after_q(
@@ -1270,6 +1281,7 @@ impl SlotArm {
 
     /// Phase C publishes session authority under K4. The receipt is committed
     /// by the reactor only after this lock has been released.
+    #[allow(clippy::too_many_arguments)] // command identity, cancellation and Q/R/C receipt remain explicit
     fn finish_attempt_after_q(
         &self,
         command: IntentCommand,
@@ -1283,7 +1295,7 @@ impl SlotArm {
     ) -> AttemptDisposition {
         let mut lifecycle = self.lifecycle.lock();
         if lifecycle.attempt_generation != Some(generation) {
-            return AttemptDisposition::Aborted;
+            return AttemptDisposition::Aborted(AbortedAttempt::Cancelled);
         }
         lifecycle.attempt = None;
         lifecycle.attempt_generation = None;
@@ -1304,17 +1316,16 @@ impl SlotArm {
                 lifecycle.slot_event(SessionEventOut::HandshakeAborted {
                     reason: AbortedAttempt::Cancelled,
                 });
-                return AttemptDisposition::Aborted;
+                return AttemptDisposition::Aborted(AbortedAttempt::Cancelled);
             }
             if !queue_accepted || expired {
-                lifecycle.slot_event(SessionEventOut::HandshakeAborted {
-                    reason: if expired {
-                        AbortedAttempt::Deadline
-                    } else {
-                        AbortedAttempt::Cancelled
-                    },
-                });
-                return AttemptDisposition::Aborted;
+                let reason = if expired {
+                    AbortedAttempt::Deadline
+                } else {
+                    AbortedAttempt::Cancelled
+                };
+                lifecycle.slot_event(SessionEventOut::HandshakeAborted { reason });
+                return AttemptDisposition::Aborted(reason);
             }
             if let Err(error) = result {
                 if let Some(transport) = error.transport.as_ref() {
@@ -1335,25 +1346,25 @@ impl SlotArm {
             lifecycle.slot_event(SessionEventOut::HandshakeAborted {
                 reason: AbortedAttempt::LateSuccess,
             });
-            return AttemptDisposition::Aborted;
+            return AttemptDisposition::Aborted(AbortedAttempt::LateSuccess);
         }
         if cancelled || !owned {
             lifecycle.slot_event(SessionEventOut::HandshakeAborted {
                 reason: AbortedAttempt::Cancelled,
             });
-            return AttemptDisposition::Aborted;
+            return AttemptDisposition::Aborted(AbortedAttempt::Cancelled);
         }
         if expired {
             lifecycle.slot_event(SessionEventOut::HandshakeAborted {
                 reason: AbortedAttempt::LateSuccess,
             });
-            return AttemptDisposition::Aborted;
+            return AttemptDisposition::Aborted(AbortedAttempt::LateSuccess);
         }
         if !promotion_pending {
             lifecycle.slot_event(SessionEventOut::HandshakeAborted {
                 reason: AbortedAttempt::Cancelled,
             });
-            return AttemptDisposition::Aborted;
+            return AttemptDisposition::Aborted(AbortedAttempt::Cancelled);
         }
 
         let receipt = match seal {
@@ -1362,7 +1373,9 @@ impl SlotArm {
                 lifecycle.slot_event(SessionEventOut::HandshakeAborted {
                     reason: AbortedAttempt::Transport(TransportFailure::Closed),
                 });
-                return AttemptDisposition::Aborted;
+                return AttemptDisposition::Aborted(AbortedAttempt::Transport(
+                    TransportFailure::Closed,
+                ));
             }
         };
         let kind = if lifecycle.mailbox.reconnects() {
@@ -1578,10 +1591,7 @@ impl SlotArm {
             lifecycle.slot_event(SessionEventOut::IntentApplied {
                 generation: receipt.generation(),
             });
-            (
-                lifecycle.attempt.clone(),
-                lifecycle.prequeue_cancel.take(),
-            )
+            (lifecycle.attempt.clone(), lifecycle.prequeue_cancel.take())
         };
         if let Some(cancel) = cancel {
             cancel.cancel();
@@ -1720,13 +1730,8 @@ impl QueueAttemptCells {
     }
 }
 
+#[cfg(test)]
 impl LoginAttemptReturn<(), LoginError> {
-    #[cfg(test)]
-    pub(crate) fn accepted(&self) -> bool {
-        self.accepted
-    }
-
-    #[cfg(test)]
     pub(crate) fn result(&self) -> &Result<(), LoginError> {
         &self.result
     }
@@ -1734,25 +1739,15 @@ impl LoginAttemptReturn<(), LoginError> {
 
 #[cfg(test)]
 impl<T, E> LoginAttemptReturn<T, E> {
-    pub(crate) fn test_identity(&self) -> QueueAttemptId {
-        self.identity
-    }
-
     pub(crate) fn acknowledge_after_physical_release(&self, now: Instant) -> bool {
-        assert!(
-            self.retirement.ack(),
-            "test physical release ack is unique"
-        );
-        self.queue.lock().acknowledge_retirement(
-            self.identity,
-            &self.retirement,
-            now,
-        )
+        assert!(self.retirement.ack(), "test physical release ack is unique");
+        self.queue
+            .lock()
+            .acknowledge_retirement(self.identity, &self.retirement, now)
     }
     pub(crate) fn test_result(&self) -> &Result<T, E> {
         &self.result
     }
-
     pub(crate) fn into_test_result(self) -> Result<T, E> {
         self.result
     }
@@ -1773,13 +1768,13 @@ pub(super) struct LoginAttemptReturn<T, E> {
 enum AttemptDisposition {
     Promoted(SealReceipt),
     CurrentFailure,
-    Aborted,
+    Aborted(AbortedAttempt),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SlotLoginOutcome {
     Promoted,
-    Aborted,
+    Aborted(AbortedAttempt),
     CommittedSessionExit(SessionEndCause),
 }
 
@@ -2061,20 +2056,16 @@ impl GrantedReservation {
         let result = login(prepared.take(), deadline, login_cancel.clone());
         let hold = server_hold(&result);
         let now = Instant::now();
-        let returned = self
-            .queue
-            .lock()
-            .return_attempt(cells.identity, now, hold);
+        let returned = self.queue.lock().return_attempt(cells.identity, now, hold);
         self.state = ReservationState::Resolved;
         for effect in returned.cancels {
             effect.cancel();
         }
         if cells.retirement.acknowledged() {
-            let _ = self.queue.lock().acknowledge_retirement(
-                cells.identity,
-                &cells.retirement,
-                now,
-            );
+            let _ =
+                self.queue
+                    .lock()
+                    .acknowledge_retirement(cells.identity, &cells.retirement, now);
         }
         if !returned.accepted {
             host_log!(
@@ -2135,7 +2126,6 @@ pub(super) fn server_hold<T>(
     }
 }
 
-
 /// The one login call before queue return. Success remains a candidate until
 /// `finish_after_q` performs R and publishes C under K4; adapter commit follows unlocked.
 pub(super) struct SlotLogin<'a> {
@@ -2187,8 +2177,7 @@ impl SlotLogin<'_> {
                 &outcome.cancel,
                 generation,
                 outcome.accepted,
-            )
-        {
+            ) {
             Some(self.client.seal_host_login())
         } else {
             None
@@ -2226,13 +2215,14 @@ impl SlotLogin<'_> {
                     .result
                     .expect_err("current failure has a login error"))
             }
-            AttemptDisposition::Aborted => {
+            AttemptDisposition::Aborted(reason) => {
                 abort_login_transport(self.client);
                 acknowledge_retired_attempt(&outcome);
-                Ok(SlotLoginOutcome::Aborted)
+                Ok(SlotLoginOutcome::Aborted(reason))
             }
         }
     }
+}
 fn acknowledge_committed_session_retirement<T, E>(outcome: &LoginAttemptReturn<T, E>) {
     let _ = outcome.retirement.ack();
     acknowledge_retired_attempt(outcome);
@@ -2445,19 +2435,14 @@ pub(super) fn configure_slot_world(
         return Ok(());
     }
     let fetch_cancel = LoginCancel::new();
-    let modulus = public_worlds::modulus_for(
-        world,
-        refresh,
-        &wait_cancel,
-        |host, port| {
-            Client::fetch_login_modulus_for_cancellable(
-                client::Transport::Wss,
-                host,
-                port,
-                &fetch_cancel,
-            )
-        },
-    );
+    let modulus = public_worlds::modulus_for(world, refresh, &wait_cancel, |host, port| {
+        Client::fetch_login_modulus_for_cancellable(
+            client::Transport::Wss,
+            host,
+            port,
+            &fetch_cancel,
+        )
+    });
     arm.clear_key_fetch_cancel();
     if wait_cancel.is_cancelled() || arm.stop.load(Ordering::Acquire) {
         return Ok(());
@@ -2752,7 +2737,6 @@ fn enqueue_queue_place_with_defer(
     }
 }
 
-
 /// Drop one slot owner's login-FIFO place and always clear this slot's
 /// published `k of n`.
 pub(super) fn drop_queue_place(
@@ -2878,6 +2862,7 @@ fn wss_wait_for_deadline_or_cancel(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // park, slot authorization and frame observation must stay borrowed
 fn wss_wait_for_ready(
     ticket: &GameTlsTicket,
     park: &Park,
@@ -2902,9 +2887,11 @@ fn wss_wait_for_ready(
             GameTlsWait::InsufficientRemainingTime { .. } => {
                 ticket.release_for_insufficient_time();
                 return Err(wss_wait_for_deadline_or_cancel(
-                    ticket, park,
+                    ticket,
+                    park,
                     || !wss_authorization_is_current(arm, identity, command, world_generation),
-                    network_health, Some(frames),
+                    network_health,
+                    Some(frames),
                 ));
             }
             GameTlsWait::Waiting => {}
@@ -2918,8 +2905,10 @@ fn wss_wait_for_ready(
             wake_at,
             Instant::now,
             || network_health.loss().is_some(),
-            || arm.stop.load(Ordering::Acquire)
-                || matches!(ticket.poll(Instant::now()), GameTlsWait::Cancelled),
+            || {
+                arm.stop.load(Ordering::Acquire)
+                    || matches!(ticket.poll(Instant::now()), GameTlsWait::Cancelled)
+            },
             || matches!(ticket.poll(Instant::now()), GameTlsWait::Cancelled),
             || match ticket.poll(Instant::now()) {
                 GameTlsWait::Waiting => None,
@@ -2940,9 +2929,11 @@ fn wss_wait_for_ready(
             ParkOutcome::Ready(GameTlsWait::InsufficientRemainingTime { .. }) => {
                 ticket.release_for_insufficient_time();
                 return Err(wss_wait_for_deadline_or_cancel(
-                    ticket, park,
+                    ticket,
+                    park,
                     || !wss_authorization_is_current(arm, identity, command, world_generation),
-                    network_health, Some(frames),
+                    network_health,
+                    Some(frames),
                 ));
             }
             ParkOutcome::Ready(GameTlsWait::Deadline) => return Err(PermitWait::Deadline),
@@ -3012,14 +3003,7 @@ pub(super) fn wait_for_wss_permit(
         return PermitWait::Unavailable;
     }
     let deferred_until = not_before();
-    enqueue_queue_place_with_defer(
-        queue,
-        statuses,
-        username,
-        uid,
-        arm,
-        deferred_until,
-    );
+    enqueue_queue_place_with_defer(queue, statuses, username, uid, arm, deferred_until);
     #[cfg(test)]
     arm.panic_after_queue_for_test();
     let mut demand = WssPermitDemand {
@@ -3042,12 +3026,12 @@ pub(super) fn wait_for_wss_permit(
     )
 }
 
-
 /// Block until the already-enqueued slot owner receives a handshake permit,
 /// mirroring the queue position onto the slot's status row while it waits
 /// and keeping the logged-out title live through `frames`.
 /// Withdrawal is observed before every poll, so a dropped place is never
 /// recreated by this waiter.
+#[cfg(test)]
 pub(super) fn wait_for_permit(
     queue: &SharedLoginQueue,
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
@@ -3069,7 +3053,14 @@ pub(super) fn wait_for_permit_with_cancel(
     frames: &mut WaitFrames<'_>,
 ) -> PermitWait {
     wait_for_permit_inner(
-        queue, statuses, username, uid, arm, frames, Some(cancel), None,
+        queue,
+        statuses,
+        username,
+        uid,
+        arm,
+        frames,
+        Some(cancel),
+        None,
     )
 }
 
@@ -3100,8 +3091,7 @@ fn wait_for_permit_inner(
         .as_deref()
         .map_or_else(|| arm.world_generation(), |demand| demand.world_generation);
     let replaced = || {
-        arm.uid.load(Ordering::Relaxed) != identity
-            || arm.world_generation() != world_generation
+        arm.uid.load(Ordering::Relaxed) != identity || arm.world_generation() != world_generation
     };
     loop {
         if let Some(demand) = wss.as_deref() {
@@ -3118,7 +3108,10 @@ fn wait_for_permit_inner(
                 drop_queue_place(queue, statuses, username, arm.queue_owner);
                 return PermitWait::Unavailable;
             }
-            let ticket = demand.ticket.as_ref().expect("WSS demand retains its ticket");
+            let ticket = demand
+                .ticket
+                .as_ref()
+                .expect("WSS demand retains its ticket");
             match ticket.poll(Instant::now()) {
                 GameTlsWait::Ready => {}
                 GameTlsWait::InsufficientRemainingTime { .. } => {
@@ -3127,9 +3120,14 @@ fn wait_for_permit_inner(
                     return wss_wait_for_deadline_or_cancel(
                         ticket,
                         &demand.park,
-                        || !wss_authorization_is_current(
-                            arm, demand.identity, demand.command, demand.world_generation,
-                        ),
+                        || {
+                            !wss_authorization_is_current(
+                                arm,
+                                demand.identity,
+                                demand.command,
+                                demand.world_generation,
+                            )
+                        },
                         &demand.network_health,
                         Some(frames),
                     );
@@ -3217,7 +3215,10 @@ fn wait_for_permit_inner(
                         drop_queue_place(queue, statuses, username, arm.queue_owner);
                         return PermitWait::Unavailable;
                     }
-                    let ticket = demand.ticket.as_ref().expect("WSS demand retains its ticket");
+                    let ticket = demand
+                        .ticket
+                        .as_ref()
+                        .expect("WSS demand retains its ticket");
                     match ticket.poll(Instant::now()) {
                         GameTlsWait::Ready => {
                             permit.tls_ticket = demand.ticket.take();
@@ -3232,9 +3233,14 @@ fn wait_for_permit_inner(
                             return wss_wait_for_deadline_or_cancel(
                                 ticket,
                                 &demand.park,
-                                || !wss_authorization_is_current(
-                                    arm, demand.identity, demand.command, demand.world_generation,
-                                ),
+                                || {
+                                    !wss_authorization_is_current(
+                                        arm,
+                                        demand.identity,
+                                        demand.command,
+                                        demand.world_generation,
+                                    )
+                                },
                                 &demand.network_health,
                                 Some(frames),
                             );

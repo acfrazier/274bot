@@ -11,10 +11,10 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::health::{ReactorHealth, ReactorLoss};
+use client::io::client_stream::LoginCancel;
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection};
-use client::io::client_stream::LoginCancel;
-use crate::health::{ReactorHealth, ReactorLoss};
 
 const WORKER_STACK_BYTES: usize = 2 * 1024 * 1024;
 const MAX_WAITING_FETCHES: usize = 1024;
@@ -89,6 +89,9 @@ enum Phase {
     Handshaking,
 }
 
+// Keep the worker's completed TLS connection inline: boxing every successful
+// HTTPS handshake would add an allocation solely to shrink this short-lived enum.
+#[allow(clippy::large_enum_variant)]
 enum Outcome {
     Success(EstablishedTls),
     Failure,
@@ -117,7 +120,8 @@ pub(crate) struct HttpsTicket {
 impl HttpsLane {
     /// Start the fixed `net-https-handshake` worker with a 2 MiB stack.
     pub fn start(
-        config: Option<Arc<ClientConfig>>, health: Arc<ReactorHealth>,
+        config: Option<Arc<ClientConfig>>,
+        health: Arc<ReactorHealth>,
     ) -> io::Result<Arc<Self>> {
         let inner = Arc::new(Inner {
             config,
@@ -136,9 +140,11 @@ impl HttpsLane {
             .name("net-https-handshake".to_owned())
             .stack_size(WORKER_STACK_BYTES)
             .spawn(move || {
-                if std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
+                if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     worker_loop(worker_inner)
-                )).is_err() {
+                }))
+                .is_err()
+                {
                     health.latch(ReactorLoss::Panicked);
                     HttpsLane { inner: panic_inner }.shutdown();
                 }
@@ -339,10 +345,7 @@ impl HttpsTicket {
     ///
     /// A terminal result published before its phase deadline remains valid even
     /// when this owner observes it after `until`.
-    pub(crate) fn wait_step(
-        &mut self,
-        until: Instant,
-    ) -> Result<Option<EstablishedTls>, ()> {
+    pub(crate) fn wait_step(&mut self, until: Instant) -> Result<Option<EstablishedTls>, ()> {
         loop {
             if let Some(established) = self.try_take()? {
                 return Ok(Some(established));
@@ -361,9 +364,7 @@ impl HttpsTicket {
                 continue;
             }
             let phase_wait = cell.phase_deadline.saturating_duration_since(now);
-            let phase_wait = if phase_wait.is_zero()
-                && is_nonfinal_connect(cell)
-            {
+            let phase_wait = if phase_wait.is_zero() && is_nonfinal_connect(cell) {
                 CONNECT_TRANSITION_RECHECK
             } else {
                 phase_wait
@@ -741,7 +742,9 @@ fn begin_handshake_phase(inner: &Inner, identity: u64, started: Instant) -> Opti
     if !cell.owner_alive || cell.outcome.is_some() {
         return None;
     }
-    let deadline = started.checked_add(cell.limits.handshake).unwrap_or(started);
+    let deadline = started
+        .checked_add(cell.limits.handshake)
+        .unwrap_or(started);
     cell.phase = Phase::Handshaking;
     cell.phase_started = started;
     cell.phase_deadline = deadline;
@@ -950,7 +953,9 @@ fn close_socket(socket: TcpStream) {
 }
 
 fn lock_state(mutex: &Mutex<State>) -> MutexGuard<'_, State> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(test)]
@@ -1043,7 +1048,11 @@ mod tests {
 
     #[test]
     fn published_result_frees_lane_before_owner_take() {
-        let lane = HttpsLane::start(Some(test_client_config()), Arc::new(ReactorHealth::new(Instant::now()))).unwrap();
+        let lane = HttpsLane::start(
+            Some(test_client_config()),
+            Arc::new(ReactorHealth::new(Instant::now())),
+        )
+        .unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server_config = test_server_config();
@@ -1072,7 +1081,11 @@ mod tests {
 
     #[test]
     fn owner_drop_closes_a_published_socket() {
-        let lane = HttpsLane::start(Some(test_client_config()), Arc::new(ReactorHealth::new(Instant::now()))).unwrap();
+        let lane = HttpsLane::start(
+            Some(test_client_config()),
+            Arc::new(ReactorHealth::new(Instant::now())),
+        )
+        .unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server_config = test_server_config();
@@ -1095,7 +1108,11 @@ mod tests {
 
     #[test]
     fn queue_deadline_expires_without_waiting_for_active_handshake() {
-        let lane = HttpsLane::start(Some(test_client_config()), Arc::new(ReactorHealth::new(Instant::now()))).unwrap();
+        let lane = HttpsLane::start(
+            Some(test_client_config()),
+            Arc::new(ReactorHealth::new(Instant::now())),
+        )
+        .unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let (accepted_tx, accepted_rx) = mpsc::channel();

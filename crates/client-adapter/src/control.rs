@@ -42,10 +42,15 @@ pub struct ConnectCommand {
     /// reactor's actual worker submission. Plain TCP never carries a ticket.
     pub tls_ticket: Option<crate::tls_handshake::GameTlsTicket>,
 }
+// ConnectCommand owns the transport ticket and cancellation state. Boxing it
+// would add a heap allocation to command submission, so retain the inline form.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum PrimaryCommand {
     Connect(ConnectCommand),
-    Seal { binding: BindingId },
+    Seal {
+        binding: BindingId,
+    },
     Rebind {
         expected: BindingId,
         next: BindingId,
@@ -68,12 +73,25 @@ pub enum RejectedCommand {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum PrimaryReply {
-    Connected { binding: BindingId },
+    Connected {
+        binding: BindingId,
+    },
     /// The original OS failure kind remains available to the login Connect stage.
-    ConnectFailed { binding: BindingId, kind: io::ErrorKind },
-    Sealed { binding: BindingId, confirmed_at: Instant },
-    Rebound { binding: BindingId },
-    Rejected { binding: BindingId, reason: RejectedCommand },
+    ConnectFailed {
+        binding: BindingId,
+        kind: io::ErrorKind,
+    },
+    Sealed {
+        binding: BindingId,
+        confirmed_at: Instant,
+    },
+    Rebound {
+        binding: BindingId,
+    },
+    Rejected {
+        binding: BindingId,
+        reason: RejectedCommand,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -139,8 +157,16 @@ impl ControlCells {
         })
     }
 
-    pub fn post_primary(&self, command: PrimaryCommand, bus: &CommandBus) -> Result<(), SubmitError> {
-        if self.primary_busy.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
+    pub fn post_primary(
+        &self,
+        command: PrimaryCommand,
+        bus: &CommandBus,
+    ) -> Result<(), SubmitError> {
+        if self
+            .primary_busy
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
             return Err(if self.primary_reply.lock().unwrap().is_some() {
                 SubmitError::ReplyOccupied
             } else {
@@ -148,7 +174,8 @@ impl ControlCells {
             });
         }
         *self.primary.lock().unwrap() = Some(command);
-        bus.schedule(self.id, &self.queued).map_err(SubmitError::Wake)
+        bus.schedule(self.id, &self.queued)
+            .map_err(SubmitError::Wake)
     }
 
     /// Dedicated close cell remains available while Seal is in flight.
@@ -172,7 +199,8 @@ impl ControlCells {
             }
             *pending = Some(command);
         }
-        bus.schedule(self.id, &self.queued).map_err(SubmitError::Wake)
+        bus.schedule(self.id, &self.queued)
+            .map_err(SubmitError::Wake)
     }
 
     pub fn binding(&self) -> u64 {
@@ -188,13 +216,15 @@ impl ControlCells {
     /// extra commands. A stale flag cannot act on the next binding.
     pub fn resume_read(&self, binding_generation: u64, bus: &CommandBus) -> io::Result<()> {
         assert_ne!(binding_generation, 0);
-        self.resume_read.store(binding_generation, Ordering::Release);
+        self.resume_read
+            .store(binding_generation, Ordering::Release);
         bus.schedule(self.id, &self.queued)
     }
 
     pub fn kick_output(&self, binding_generation: u64, bus: &CommandBus) -> io::Result<()> {
         assert_ne!(binding_generation, 0);
-        self.output_kick.store(binding_generation, Ordering::Release);
+        self.output_kick
+            .store(binding_generation, Ordering::Release);
         bus.schedule(self.id, &self.queued)
     }
 
@@ -278,7 +308,10 @@ pub struct CommandBus {
 
 impl CommandBus {
     pub fn new(waker: Arc<Waker>) -> Self {
-        Self { queue: Mutex::new(VecDeque::with_capacity(MAX_CONNECTIONS)), waker }
+        Self {
+            queue: Mutex::new(VecDeque::with_capacity(MAX_CONNECTIONS)),
+            waker,
+        }
     }
     /// Wake the owner for shutdown or another service-level transition.
     pub fn wake(&self) -> io::Result<()> {
@@ -295,14 +328,16 @@ impl CommandBus {
                 let mut queue = self.queue.lock().unwrap();
                 // Each live connection owns exactly one bit. A bit can enter
                 // the FIFO only once until the reactor clears it after pop.
-                assert!(queue.len() < MAX_CONNECTIONS, "connection cap protects command FIFO");
+                assert!(
+                    queue.len() < MAX_CONNECTIONS,
+                    "connection cap protects command FIFO"
+                );
                 queue.push_back(id);
             }
             self.waker.wake()?;
         }
         Ok(())
     }
-
 
     /// Reactor pop by ID when the connection registry is separate. The caller
     /// must clear the corresponding cell's bit *before* taking its commands.
@@ -326,7 +361,12 @@ mod tests {
     }
 
     fn binding(attempt: u64) -> BindingId {
-        BindingId { incarnation: 1, connection: 2, binding: attempt, attempt }
+        BindingId {
+            incarnation: 1,
+            connection: 2,
+            binding: attempt,
+            attempt,
+        }
     }
 
     #[test]
@@ -334,22 +374,38 @@ mod tests {
         let bus = bus();
         let park = Arc::new(Park::new());
         let cell = ControlCells::new(2, park);
-        cell.post_primary(PrimaryCommand::Seal { binding: binding(3) }, &bus).unwrap();
-        cell.post_close(
-            CloseCommand { binding: binding(3), reason: CloseReason::Abort },
+        cell.post_primary(
+            PrimaryCommand::Seal {
+                binding: binding(3),
+            },
             &bus,
-        ).unwrap();
+        )
+        .unwrap();
+        cell.post_close(
+            CloseCommand {
+                binding: binding(3),
+                reason: CloseReason::Abort,
+            },
+            &bus,
+        )
+        .unwrap();
         assert_eq!(bus.pop_id(), Some(2));
         bus.mark_taken(&cell);
         assert_eq!(bus.pop_id(), None, "coalesced commands have one FIFO entry");
         assert_eq!(cell.take_close().unwrap().reason, CloseReason::Abort);
-        assert!(matches!(cell.take_primary(), Some(PrimaryCommand::Seal { .. })));
+        assert!(matches!(
+            cell.take_primary(),
+            Some(PrimaryCommand::Seal { .. })
+        ));
         cell.publish_primary(PrimaryReply::Rejected {
             binding: binding(3),
             reason: RejectedCommand::Closed,
         });
         cell.publish_closed(binding(3));
-        assert!(matches!(cell.take_primary_reply(), Some(PrimaryReply::Rejected { .. })));
+        assert!(matches!(
+            cell.take_primary_reply(),
+            Some(PrimaryReply::Rejected { .. })
+        ));
         assert_eq!(cell.take_closed(), Some(binding(3)));
     }
 
@@ -357,21 +413,52 @@ mod tests {
     fn primary_remains_reserved_after_reactor_takes_it_until_slot_consumes_reply() {
         let bus = bus();
         let cell = ControlCells::new(2, Arc::new(Park::new()));
-        cell.post_primary(PrimaryCommand::Seal { binding: binding(3) }, &bus).unwrap();
+        cell.post_primary(
+            PrimaryCommand::Seal {
+                binding: binding(3),
+            },
+            &bus,
+        )
+        .unwrap();
         assert_eq!(bus.pop_id(), Some(2));
         bus.mark_taken(&cell);
-        assert!(matches!(cell.take_primary(), Some(PrimaryCommand::Seal { .. })));
         assert!(matches!(
-            cell.post_primary(PrimaryCommand::Seal { binding: binding(4) }, &bus),
+            cell.take_primary(),
+            Some(PrimaryCommand::Seal { .. })
+        ));
+        assert!(matches!(
+            cell.post_primary(
+                PrimaryCommand::Seal {
+                    binding: binding(4)
+                },
+                &bus
+            ),
             Err(SubmitError::PrimaryOccupied),
         ));
-        cell.publish_primary(PrimaryReply::Sealed { binding: binding(3), confirmed_at: Instant::now() });
+        cell.publish_primary(PrimaryReply::Sealed {
+            binding: binding(3),
+            confirmed_at: Instant::now(),
+        });
         assert!(matches!(
-            cell.post_primary(PrimaryCommand::Seal { binding: binding(4) }, &bus),
+            cell.post_primary(
+                PrimaryCommand::Seal {
+                    binding: binding(4)
+                },
+                &bus
+            ),
             Err(SubmitError::ReplyOccupied),
         ));
-        assert!(matches!(cell.take_primary_reply(), Some(PrimaryReply::Sealed { .. })));
-        cell.post_primary(PrimaryCommand::Seal { binding: binding(4) }, &bus).unwrap();
+        assert!(matches!(
+            cell.take_primary_reply(),
+            Some(PrimaryReply::Sealed { .. })
+        ));
+        cell.post_primary(
+            PrimaryCommand::Seal {
+                binding: binding(4),
+            },
+            &bus,
+        )
+        .unwrap();
     }
 
     #[test]

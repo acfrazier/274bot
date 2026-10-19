@@ -46,7 +46,7 @@ const IO_TIMEOUT: Duration = Duration::from_secs(4);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(8);
 const POLL_SLICE: Duration = Duration::from_millis(25);
 const MAX_TLS_RECORD: usize = 18_432;
-const BACKPRESSURE_GAME_RECORD: [u8; 2_048] = [0x5a; 2_048];
+const BACKPRESSURE_GAME_RECORD: [u8; 512] = [0x5a; 512];
 const MAX_BACKPRESSURE_RECORDS: usize = 8_192;
 const TLS12_SUITE: CipherSuite = CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256;
 const TLS13_SUITE: CipherSuite = CipherSuite::TLS13_AES_128_GCM_SHA256;
@@ -180,12 +180,17 @@ struct ControlServer {
 
 impl ControlServer {
     fn spawn(config: Arc<ServerConfig>) -> Self {
+        Self::spawn_with_receive_buffer(config, None)
+    }
+
+    fn spawn_with_receive_buffer(config: Arc<ServerConfig>, receive_buffer: Option<usize>) -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local TLS server");
         let address = listener.local_addr().expect("read local TLS address");
         let (command_tx, command_rx) = mpsc::channel();
         let (handshake_tx, handshake_rx) = mpsc::sync_channel(1);
-        let server =
-            thread::spawn(move || serve_control_server(listener, config, command_rx, handshake_tx));
+        let server = thread::spawn(move || {
+            serve_control_server(listener, config, command_rx, handshake_tx, receive_buffer)
+        });
         Self {
             address,
             commands: command_tx,
@@ -417,8 +422,12 @@ fn serve_control_server(
     config: Arc<ServerConfig>,
     commands: Receiver<ServerCommand>,
     handshake_tx: SyncSender<HandshakeInfo>,
+    receive_buffer: Option<usize>,
 ) -> io::Result<()> {
     let (mut socket, _) = listener.accept()?;
+    if let Some(size) = receive_buffer {
+        socket2::SockRef::from(&socket).set_recv_buffer_size(size)?;
+    }
     socket.set_read_timeout(Some(IO_TIMEOUT))?;
     socket.set_write_timeout(Some(IO_TIMEOUT))?;
     socket.set_nodelay(true)?;
@@ -539,7 +548,11 @@ struct LaneAttempt {
 }
 
 impl LaneAttempt {
-    fn start(address: std::net::SocketAddr, config: Arc<ClientConfig>) -> Self {
+    fn start_with_send_buffer(
+        address: std::net::SocketAddr,
+        config: Arc<ClientConfig>,
+        send_buffer: Option<usize>,
+    ) -> Self {
         let poll = Poll::new().expect("create local TLS poller");
         let waker =
             Arc::new(Waker::new(poll.registry(), WAKER_TOKEN).expect("create handoff waker"));
@@ -576,12 +589,17 @@ impl LaneAttempt {
         let retirement = Arc::new(AttemptRetire::new(token.generation()));
 
         let socket = TcpStream::connect(address).expect("connect to local rustls server");
+        if let Some(size) = send_buffer {
+            socket2::SockRef::from(&socket)
+                .set_send_buffer_size(size)
+                .expect("bound the backpressure test client send buffer");
+        }
         socket.set_nodelay(true).expect("set local TCP_NODELAY");
         socket
             .set_nonblocking(true)
             .expect("make handshake socket nonblocking");
         let probe_poll = Poll::new().expect("create socket readiness probe poller");
-        let mut probe_socket = mio::net::TcpStream::from_std(
+        let probe_socket = mio::net::TcpStream::from_std(
             socket
                 .try_clone()
                 .expect("clone local socket for independent readiness probing"),
@@ -719,7 +737,15 @@ fn connect_wss(
     server: &ControlServer,
     config: Arc<ClientConfig>,
 ) -> (LaneAttempt, WssEndpoint, HandshakeInfo) {
-    let mut attempt = LaneAttempt::start(server.address, config);
+    connect_wss_with_send_buffer(server, config, None)
+}
+
+fn connect_wss_with_send_buffer(
+    server: &ControlServer,
+    config: Arc<ClientConfig>,
+    send_buffer: Option<usize>,
+) -> (LaneAttempt, WssEndpoint, HandshakeInfo) {
+    let mut attempt = LaneAttempt::start_with_send_buffer(server.address, config, send_buffer);
     let accepted = attempt.wait_for_return();
     let info = server.handshake();
     assert!(
@@ -1024,9 +1050,13 @@ fn g2_m2_authenticated_tls_close_notify_is_distinct_from_excessive_request() {
 fn g2_m3_authenticated_requested_key_update_waits_for_real_writable_recovery() {
     let pki = TestPki::new();
     let client_config = pki.client_config();
-    let server = ControlServer::spawn(configure_tls13(pki.identity.duplicate()));
+    let server = ControlServer::spawn_with_receive_buffer(
+        configure_tls13(pki.identity.duplicate()),
+        Some(4 * 1024),
+    );
     let sibling_server = ControlServer::spawn(configure_tls13(pki.identity.duplicate()));
-    let (mut attempt, mut endpoint, handshake) = connect_wss(&server, Arc::clone(&client_config));
+    let (mut attempt, mut endpoint, handshake) =
+        connect_wss_with_send_buffer(&server, Arc::clone(&client_config), Some(16 * 1024));
     assert_negotiated(&handshake, ProtocolVersion::TLSv1_3, TLS13_SUITE);
     let (mut sibling_attempt, mut sibling_endpoint, sibling_handshake) =
         connect_wss(&sibling_server, client_config);
@@ -1079,34 +1109,50 @@ fn g2_m3_authenticated_requested_key_update_waits_for_real_writable_recovery() {
         buffered_game_records += 1;
     }
     assert!(buffered_game_records > 0);
-    assert!(
-        !attempt
-            .socket_is_writable()
-            .expect("confirm the client socket remains backpressured")
-    );
-    // Force one more real WSS/TLS write while the duplicate descriptor says
-    // the OS socket is not writable and the server is not draining its queue.
-    attempt
-        .shared
-        .publish_record(attempt.binding, &BACKPRESSURE_GAME_RECORD)
-        .expect("publish one final game record at socket backpressure");
-    endpoint.kick_output();
-    let blocked_turn = endpoint
-        .drive()
-        .expect("attempt a real encrypted game write at backpressure");
-    endpoint
-        .apply_interest(attempt.poll.registry())
-        .expect("apply WSS interest after blocked game write");
-    assert_eq!(blocked_turn.stop, TcpStop::Quiescent);
-    assert_eq!(blocked_turn.read_bytes, 0);
-    assert_eq!(blocked_turn.written_bytes, BACKPRESSURE_GAME_RECORD.len());
-    assert!(!blocked_turn.write_ready);
-    assert!(attempt.shared.outbound.is_empty());
-    assert!(
-        !attempt
-            .socket_is_writable()
-            .expect("confirm the game write did not restore socket writability")
-    );
+    assert!(!attempt
+        .socket_is_writable()
+        .expect("confirm the client socket remains backpressured"));
+    // EPOLLOUT can turn false before send(2) actually returns EAGAIN. Keep
+    // sending complete authenticated WSS game records until the TLS writer
+    // retains encrypted output after a real socket WouldBlock; a tiny
+    // KeyUpdate response must not fit into the misleading EPOLLOUT gap.
+    let mut after_probe_records = 0usize;
+    while !endpoint.tls_output_blocked_for_test() {
+        assert!(
+            after_probe_records < MAX_BACKPRESSURE_RECORDS,
+            "the socket never refused a real encrypted game write"
+        );
+        attempt
+            .shared
+            .publish_record(attempt.binding, &BACKPRESSURE_GAME_RECORD)
+            .expect("publish a game record while the peer is not draining");
+        endpoint.kick_output();
+        let mut blocked_turn = endpoint
+            .drive()
+            .expect("attempt a real encrypted game write at backpressure");
+        endpoint
+            .apply_interest(attempt.poll.registry())
+            .expect("apply WSS interest after a game write");
+        for _ in 0..8 {
+            if blocked_turn.stop != TcpStop::LocalWork {
+                break;
+            }
+            blocked_turn = endpoint.drive().expect("drain local game work");
+            endpoint
+                .apply_interest(attempt.poll.registry())
+                .expect("apply WSS interest after local game work");
+        }
+        assert_eq!(blocked_turn.stop, TcpStop::Quiescent);
+        assert_eq!(blocked_turn.read_bytes, 0);
+        assert_eq!(blocked_turn.written_bytes, BACKPRESSURE_GAME_RECORD.len());
+        assert!(!blocked_turn.write_ready);
+        assert!(attempt.shared.outbound.is_empty());
+        after_probe_records += 1;
+    }
+    assert!(after_probe_records > 0);
+    assert!(!attempt
+        .socket_is_writable()
+        .expect("confirm the game write did not restore socket writability"));
     let bytes_out_before = attempt.shared.bytes_out();
 
     // Rustls processes the authenticated request while the socket cannot
@@ -1121,9 +1167,8 @@ fn g2_m3_authenticated_requested_key_update_waits_for_real_writable_recovery() {
     assert_eq!(attempt.shared.bytes_in(), bytes_in_before);
     assert!(attempt.shared.inbound.is_empty());
     assert!(
-        !attempt
-            .socket_is_writable()
-            .expect("the request reply remains blocked before peer reads")
+        endpoint.tls_output_blocked_for_test(),
+        "authenticated KeyUpdate reply must remain queued after the real TLS write WouldBlock"
     );
 
     // B progresses independently while A waits for the socket to become
@@ -1133,11 +1178,7 @@ fn g2_m3_authenticated_requested_key_update_waits_for_real_writable_recovery() {
         ContentType::ApplicationData,
         &server_binary_frame(sibling_game),
     );
-    take_game_payload(
-        &mut sibling_attempt,
-        &mut sibling_endpoint,
-        sibling_game,
-    );
+    take_game_payload(&mut sibling_attempt, &mut sibling_endpoint, sibling_game);
 
     let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
     let mut observed_game_records = 0usize;
@@ -1147,7 +1188,7 @@ fn g2_m3_authenticated_requested_key_update_waits_for_real_writable_recovery() {
         let remaining = deadline.saturating_duration_since(Instant::now());
         assert!(
             !remaining.is_zero(),
-            "timed out waiting for writable KeyUpdate reply"
+            "timed out waiting for writable KeyUpdate reply after {observed_game_records} game records and {writable_events} writable events"
         );
         let pending_read = server.begin_read_client_record(remaining.min(IO_TIMEOUT));
         let mut read_one_record = false;
@@ -1169,7 +1210,9 @@ fn g2_m3_authenticated_requested_key_update_waits_for_real_writable_recovery() {
                 Ok(Ok(None)) => {
                     panic!("server timed out before receiving the KeyUpdate reply")
                 }
-                Ok(Err(error)) => panic!("server could not decrypt client output: {error}"),
+                Ok(Err(error)) => panic!(
+                    "server could not decrypt client output: {error}; observed game records {observed_game_records}, writable events {writable_events}"
+                ),
                 Err(mpsc::TryRecvError::Disconnected) => {
                     panic!("server read task ended before the KeyUpdate reply")
                 }
@@ -1195,12 +1238,28 @@ fn g2_m3_authenticated_requested_key_update_waits_for_real_writable_recovery() {
                             endpoint.on_event(false, true, Instant::now()),
                             WssStep::Ready
                         ));
-                        let turn = endpoint
+                        let mut turn = endpoint
                             .drive()
                             .expect("flush queued TLS control output on writable readiness");
                         endpoint
                             .apply_interest(attempt.poll.registry())
                             .expect("apply WSS interest after writable recovery");
+                        for _ in 0..8 {
+                            if turn.stop != TcpStop::LocalWork {
+                                break;
+                            }
+                            turn = endpoint
+                                .drive()
+                                .expect("finish locally runnable TLS ciphertext flush");
+                            endpoint
+                                .apply_interest(attempt.poll.registry())
+                                .expect("apply WSS interest after a local flush");
+                        }
+                        assert_ne!(
+                            turn.stop,
+                            TcpStop::LocalWork,
+                            "the bounded local TLS work must settle before another OS event"
+                        );
                         assert_eq!(turn.read_bytes, 0);
                         assert_eq!(attempt.shared.bytes_out(), bytes_out_before);
                         assert_eq!(attempt.shared.bytes_in(), bytes_in_before);
@@ -1262,9 +1321,7 @@ fn g2_m3_authenticated_idle_requested_key_update_emits_exact_reply() {
         if turn.stop != TcpStop::LocalWork {
             break;
         }
-        turn = endpoint
-            .drive()
-            .expect("finish local WSS idle drain");
+        turn = endpoint.drive().expect("finish local WSS idle drain");
         endpoint
             .apply_interest(attempt.poll.registry())
             .expect("apply WSS interest after idle continuation");

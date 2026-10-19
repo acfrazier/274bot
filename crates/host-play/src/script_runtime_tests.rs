@@ -439,7 +439,9 @@ impl api::interact::Driver for MenuRec {
 fn attached_client() -> Client {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let stream = client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+    let stream =
+        client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+            .unwrap();
     std::mem::forget(listener);
     let mut c = Client::new(ClientConfig {
         host: "127.0.0.1".into(),

@@ -455,15 +455,10 @@ impl Play {
         let process_start = script::work_admission::process_incarnation();
         let transport_health = process_start.ok().map(|incarnation| {
             super::transport_health::ServiceHealth::new(
-                incarnation, api::identity::ProcessOrigin::at(std::time::Instant::now()),
+                incarnation,
+                api::identity::ProcessOrigin::at(std::time::Instant::now()),
             )
         });
-        // Play borrows the running process service. Only the composition
-        // starts it (before cache preparation); an unstarted service is a
-        // typed refusal at the first network admission, not construction.
-        let network = client_adapter::service::NetworkService::current_started().ok();
-        let transport = network.as_ref().map(|service| Arc::clone(service.reactor()));
-        let resolver = network.as_ref().map(|service| Arc::clone(service.resolver()));
         Play {
             statuses: Arc::new(Mutex::new(Vec::new())),
             auto_world: None,
@@ -500,8 +495,6 @@ impl Play {
             capacity: Arc::new(host::CapacityMonitor::new()),
             process_start,
             transport_health,
-            transport,
-            resolver,
             _headless_composition_driver: None,
             local_state,
         }
@@ -596,7 +589,8 @@ where
     play.per_frame = Arc::new(per_frame);
     for profile in profiles {
         let (input, mailbox) = per_slot(&profile.username);
-        play.try_spawn_slot(profile, input, mailbox, None)?;
+        play.try_spawn_slot(profile, input, mailbox, None)
+            .map_err(|error| error.to_string())?;
     }
     Ok(play)
 }
@@ -613,7 +607,11 @@ pub fn run_with_profile(
     let template = SharedClientTemplate::load(Arc::clone(&options.profile))?;
     let validated = template.validate_for_play()?;
     let mut play = run_prepared_template(
-        validated, options.mainland, profiles, |_| (None, None), |_, _, _| {},
+        validated,
+        options.mainland,
+        profiles,
+        |_| (None, None),
+        |_, _, _| {},
     )?;
     play._headless_composition_driver = Some(driver);
     Ok(play)

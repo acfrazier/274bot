@@ -102,11 +102,18 @@ impl IoBudget {
 pub struct Budgeted<S> {
     inner: S,
     budget: IoBudget,
+    #[cfg(test)]
+    refuse_next_socket_write: bool,
 }
 
 impl<S> Budgeted<S> {
     pub fn new(inner: S) -> Self {
-        Self { inner, budget: IoBudget::default() }
+        Self {
+            inner,
+            budget: IoBudget::default(),
+            #[cfg(test)]
+            refuse_next_socket_write: false,
+        }
     }
 
     pub fn inner(&self) -> &S {
@@ -127,6 +134,13 @@ impl<S> Budgeted<S> {
 
     pub fn reset_turn(&mut self) {
         self.budget.reset();
+    }
+
+    /// Model one kernel EWOULDBLOCK while leaving the real socket and every
+    /// TLS/WS buffer untouched; a later writable event retries the same bytes.
+    #[cfg(test)]
+    pub(crate) fn refuse_one_socket_write_for_test(&mut self) {
+        self.refuse_next_socket_write = true;
     }
 }
 
@@ -158,6 +172,11 @@ impl<S: Write> Write for Budgeted<S> {
             return Ok(0);
         }
         let limit = self.budget.write_extent(buf.len())?;
+        #[cfg(test)]
+        if std::mem::take(&mut self.refuse_next_socket_write) {
+            self.budget.write_stop = StopReason::SocketWouldBlock;
+            return Err(io::ErrorKind::WouldBlock.into());
+        }
         match self.inner.write(&buf[..limit]) {
             Ok(n) => {
                 self.budget.write_bytes += n;
@@ -206,17 +225,25 @@ mod tests {
             Ok(buf.len())
         }
 
-        fn flush(&mut self) -> io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
     }
 
     #[test]
     fn synthetic_budget_retains_local_eligibility() {
-        let mut io = Budgeted::new(Drip { bytes: 0, blocked: false });
+        let mut io = Budgeted::new(Drip {
+            bytes: 0,
+            blocked: false,
+        });
         let mut buf = [0; 4];
         for _ in 0..TURN_IO_ATTEMPTS {
             assert_eq!(io.read(&mut buf).unwrap(), 1);
         }
-        assert_eq!(io.read(&mut buf).unwrap_err().kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(
+            io.read(&mut buf).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
         assert_eq!(io.budget().read_stop(), StopReason::Budget);
         io.reset_turn();
         assert_eq!(io.read(&mut buf).unwrap(), 1);
@@ -224,14 +251,23 @@ mod tests {
 
     #[test]
     fn real_block_and_byte_budget_have_different_reasons() {
-        let mut io = Budgeted::new(Drip { bytes: 0, blocked: true });
+        let mut io = Budgeted::new(Drip {
+            bytes: 0,
+            blocked: true,
+        });
         let mut byte = [0];
-        assert_eq!(io.read(&mut byte).unwrap_err().kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(
+            io.read(&mut byte).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
         assert_eq!(io.budget().read_stop(), StopReason::SocketWouldBlock);
         io.inner_mut().blocked = false;
         let packet = [3; TURN_BYTE_LIMIT + 1];
         assert_eq!(io.write(&packet).unwrap(), TURN_BYTE_LIMIT);
-        assert_eq!(io.write(&packet).unwrap_err().kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(
+            io.write(&packet).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
         assert_eq!(io.budget().write_stop(), StopReason::Budget);
         assert_eq!(io.budget().write_bytes(), TURN_BYTE_LIMIT);
     }

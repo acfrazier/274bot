@@ -254,8 +254,10 @@ fn process_incarnation_is_stable_without_constructing_work_service() {
     assert_eq!(process_incarnation(), Ok(first));
     // This tests the draw path without touching SHARED_WORK; the separate
     // worker initializer obtains this exact cached value on first demand.
-    assert_eq!(WorkService::draw_incarnation_with(|_| Err(WorkStartError::OsRandom)),
-        Err(WorkStartError::OsRandom));
+    assert_eq!(
+        WorkService::draw_incarnation_with(|_| Err(WorkStartError::OsRandom)),
+        Err(WorkStartError::OsRandom)
+    );
 }
 
 #[test]
@@ -267,7 +269,8 @@ fn injected_zero_draw_retries_and_os_failure_remains_typed() {
             bytes[0] = 3;
         }
         Ok(())
-    }).unwrap();
+    })
+    .unwrap();
     assert_eq!(draws, 2);
     assert_eq!(name.start_nonce().get(), 3);
     assert_eq!(

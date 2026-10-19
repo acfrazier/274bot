@@ -172,7 +172,9 @@ fn debug_catalog_commands_and_host_reply_log() {
     wait_for(&play, &state, "Item", |s| s.coins == coins + 17);
     let air_runes = state.lock().air_runes;
     send("~giverunes", &[]);
-    wait_for(&play, &state, "Item content", |s| s.air_runes == air_runes + 1000);
+    wait_for(&play, &state, "Item content", |s| {
+        s.air_runes == air_runes + 1000
+    });
     send("getcoord", &[]);
     let until = Instant::now() + Duration::from_secs(30);
     loop {

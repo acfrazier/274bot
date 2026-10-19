@@ -13,14 +13,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use client::io::{JagFile, Packet};
 use client::unpack::{self, FetchEndpoint, SnapshotPreparation};
 use client::Transport;
-use rustls::client::danger::{
-    HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
-};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::client::WebPkiServerVerifier;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, RootCertStore, SignatureScheme};
@@ -155,6 +153,10 @@ impl HeldVerifierGate {
         *self.released.lock().unwrap() = true;
         self.changed.notify_all();
     }
+
+    fn is_held(&self) -> bool {
+        self.entered.load(Ordering::Acquire) && !*self.released.lock().unwrap()
+    }
 }
 
 #[derive(Debug)]
@@ -177,13 +179,8 @@ impl ServerCertVerifier for HeldServerCertVerifier {
                 "test verifier gate timed out before maintenance released it".into(),
             ));
         }
-        self.delegate.verify_server_cert(
-            end_entity,
-            intermediates,
-            server_name,
-            ocsp_response,
-            now,
-        )
+        self.delegate
+            .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
     }
 
     fn verify_tls12_signature(
@@ -241,7 +238,11 @@ impl UpdateServer {
                 }
             })
         };
-        Self { port, stop, accept: Some(accept) }
+        Self {
+            port,
+            stop,
+            accept: Some(accept),
+        }
     }
 }
 
@@ -295,7 +296,10 @@ fn serve(
             .map(Vec::as_slice)
     };
     let Some(response) = response else {
-        let _ = write!(stream, "HTTP/1.0 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+        let _ = write!(
+            stream,
+            "HTTP/1.0 404 Not Found\r\nContent-Length: 0\r\n\r\n"
+        );
         return;
     };
     let _ = write!(
@@ -333,8 +337,9 @@ fn maintenance_continues_while_the_update_tls_verifier_is_held() {
         delegate,
         gate: Arc::clone(&gate),
     });
-    let tls_config = client_adapter::tls_handshake::build_test_client_config_with_verifier(verifier)
-        .expect("build held-verifier client TLS config");
+    let tls_config =
+        client_adapter::tls_handshake::build_test_client_config_with_verifier(verifier)
+            .expect("build held-verifier client TLS config");
     client_adapter::service::NetworkService::install_test_tls_config(tls_config)
         .expect("install held-verifier test TLS config before service start");
     let driver = client_adapter::service::NetworkService::start_composition()
@@ -364,10 +369,16 @@ fn maintenance_continues_while_the_update_tls_verifier_is_held() {
         None,
         |now| {
             let health = driver.maintain(now);
-            assert_eq!(health.reactor, None, "reactor remains healthy during TLS verification");
-            assert_eq!(health.resolver, None, "resolver remains healthy during TLS verification");
+            assert_eq!(
+                health.reactor, None,
+                "reactor remains healthy during TLS verification"
+            );
+            assert_eq!(
+                health.resolver, None,
+                "resolver remains healthy during TLS verification"
+            );
             maintenance_calls += 1;
-            if gate.entered.load(Ordering::Acquire) {
+            if gate.is_held() {
                 held_calls += 1;
                 if held_calls == 4 {
                     gate.release();
@@ -376,8 +387,26 @@ fn maintenance_continues_while_the_update_tls_verifier_is_held() {
         },
     );
 
-    assert!(gate.entered.load(Ordering::Acquire), "the HTTPS lane invoked the verifier");
-    assert_eq!(held_calls, 4, "four bounded host-maintenance turns occurred while verification was held");
+    assert!(
+        gate.entered.load(Ordering::Acquire),
+        "the HTTPS lane invoked the verifier"
+    );
+    assert_eq!(
+        held_calls, 4,
+        "four bounded host-maintenance turns occurred while verification was held"
+    );
     assert!(maintenance_calls >= held_calls);
-    assert!(matches!(&*prepared, SnapshotPreparation::Ready { .. }), "cold fill completed after verifier release: {prepared:?}");
+    assert_eq!(
+        std::fs::read(cache_dir.join("sounds")).expect("held HTTPS pack fetched after release"),
+        packs["sounds"],
+        "the HTTPS lane completes its real pack fetch after the held verifier resumes"
+    );
+    assert!(
+        matches!(
+            &*prepared,
+            SnapshotPreparation::Unavailable { reason }
+                if reason.contains("no update-server entry source is available")
+        ),
+        "the test supplies the HTTPS pack endpoint, not the separate OnDemand entry source: {prepared:?}"
+    );
 }

@@ -38,14 +38,16 @@ fn run_hosted_test_in_child(test_name: &str, marker: &str) -> bool {
     if std::env::var_os(marker).is_some() {
         return false;
     }
+    let exact_name = format!("play_login::{test_name}");
     let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
-        .args(["--exact", test_name, "--nocapture", "--test-threads=1"])
+        .args(["--exact", &exact_name, "--nocapture", "--test-threads=1"])
         .env(marker, "1")
         .output()
         .expect("start isolated hosted login test");
     assert!(
-        output.status.success(),
-        "isolated hosted login test {test_name} failed\nstdout:\n{}\nstderr:\n{}",
+        output.status.success()
+            && String::from_utf8_lossy(&output.stdout).contains("running 1 test\n"),
+        "isolated hosted login test {exact_name} failed or ran zero tests\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -106,9 +108,10 @@ impl HostedNetworkFixture {
         client: &mut Client,
         command: IntentCommand,
         world_generation: u64,
-        backoff: &LoginBackoff,
         after_return: impl FnOnce(&Client),
     ) -> Option<LoginAttemptReturn<(), LoginError>> {
+        let backoff = LoginBackoff::new();
+        let backoff_ref = &backoff;
         let prepared = self.prepared_attempt(arm, client.config.port);
         permit.attempt(
             prepared,
@@ -125,12 +128,12 @@ impl HostedNetworkFixture {
                     username: "alice",
                     password: "secret",
                     reconnect: false,
-                    backoff,
+                    backoff: backoff_ref,
                 }
                 .run(deadline, cancel, after_return)
                 .0
             },
-            |result| server_hold(result, backoff),
+            |result| server_hold(result, &backoff),
         )
     }
 }
@@ -535,9 +538,13 @@ fn cancelling_after_queue_start_before_connect_does_not_open_socket() {
         |_| None,
     );
     let outcome = result.expect("started attempt returns exact Q facts");
+    assert!(
+        outcome.acknowledge_after_physical_release(Instant::now()),
+        "synthetic attempt opened no socket, so its physical release is immediate"
+    );
     assert!(matches!(
         finish_test_login(&arm, &mut client, command, world, outcome),
-        Ok(SlotLoginOutcome::Aborted)
+        Ok(SlotLoginOutcome::Aborted(AbortedAttempt::Cancelled))
     ));
     assert!(listener.accept().is_err(), "cancelled attempt connected");
     assert_eq!(
@@ -624,7 +631,6 @@ fn logout_interrupts_blocked_login_read_and_closes_before_retirement_ack() {
     let (command, world) = capture_login_authorization(&arm, false).unwrap();
     let mut permit = granted_for_arm(&queue, &arm, 7);
     let mut client = tcp_client(port);
-    let backoff = LoginBackoff::new();
     let poster = {
         let arm = Arc::clone(&arm);
         thread::spawn(move || {
@@ -634,19 +640,11 @@ fn logout_interrupts_blocked_login_read_and_closes_before_retirement_ack() {
     };
     let began = Instant::now();
     let result = network
-        .run_login(
-            &mut permit,
-            &arm,
-            &mut client,
-            command,
-            world,
-            &backoff,
-            |_| {},
-        )
+        .run_login(&mut permit, &arm, &mut client, command, world, |_| {})
         .expect("started attempt returns exact Q facts");
     assert!(matches!(
         finish_test_login(&arm, &mut client, command, world, result),
-        Ok(SlotLoginOutcome::Aborted)
+        Ok(SlotLoginOutcome::Aborted(AbortedAttempt::Cancelled))
     ));
     assert_eq!(eof_rx.recv_timeout(Duration::from_secs(60)).unwrap(), 0);
     poster.join().unwrap();
@@ -843,22 +841,15 @@ fn response_sixteen_after_logout_keeps_server_hold() {
     let mut permit = granted_for_arm(&queue, &arm, 7);
     let command = arm.login_command(false).unwrap();
     let world = arm.world_generation();
-    let backoff = LoginBackoff::new();
     let mut client = tcp_client(port);
     let outcome = network
-        .run_login(
-            &mut permit,
-            &arm,
-            &mut client,
-            command,
-            world,
-            &backoff,
-            |_| arm.request_logout(),
-        )
+        .run_login(&mut permit, &arm, &mut client, command, world, |_| {
+            arm.request_logout()
+        })
         .expect("started attempt returns exact Q facts");
     assert!(matches!(
         finish_test_login(&arm, &mut client, command, world, outcome),
-        Ok(SlotLoginOutcome::Aborted)
+        Ok(SlotLoginOutcome::Aborted(AbortedAttempt::Cancelled))
     ));
     server.join().unwrap();
     let mut q = queue.lock();
@@ -910,17 +901,8 @@ fn refused_client_stream_closes_before_queue_retirement() {
         let world = arm.world_generation();
         let mut client = tcp_client(port);
         client.set_external_reconnect_owner(true);
-        let backoff = LoginBackoff::new();
         let outcome = network
-            .run_login(
-                &mut permit,
-                &arm,
-                &mut client,
-                command,
-                world,
-                &backoff,
-                |_| {},
-            )
+            .run_login(&mut permit, &arm, &mut client, command, world, |_| {})
             .expect("started attempt returns exact Q facts");
         assert!(matches!(
             outcome.result(),
@@ -929,10 +911,16 @@ fn refused_client_stream_closes_before_queue_retirement() {
         {
             let mut q = queue.lock();
             q.enqueue_owner(99, 8);
-            assert_eq!(
-                q.head_blocker(99, Instant::now()),
-                Some(AdmitBlocker::Retiring),
-                "return Q retains the flight until the client stream is closed"
+            assert!(
+                matches!(
+                    q.head_blocker(99, Instant::now()),
+                    Some(
+                        AdmitBlocker::Retiring
+                            | AdmitBlocker::Spacing { .. }
+                            | AdmitBlocker::ServerHold { .. }
+                    )
+                ),
+                "Q cannot grant the next owner: the socket still retires, or an early close leaves ordinary spacing/server hold"
             );
         }
         let error = finish_test_login(&arm, &mut client, command, world, outcome).unwrap_err();
@@ -984,24 +972,15 @@ fn cancelled_late_success_logs_out_and_closes_real_socket_before_retirement() {
     let command = arm.login_command(false).unwrap();
     let world = arm.world_generation();
     let mut client = tcp_client(port);
-    let backoff = LoginBackoff::new();
     let outcome = network
-        .run_login(
-            &mut permit,
-            &arm,
-            &mut client,
-            command,
-            world,
-            &backoff,
-            |returned| {
-                assert!(returned.ingame && returned.has_stream());
-                arm.request_logout();
-            },
-        )
+        .run_login(&mut permit, &arm, &mut client, command, world, |returned| {
+            assert!(returned.ingame && returned.has_stream());
+            arm.request_logout();
+        })
         .expect("started attempt returns exact Q facts");
     assert!(matches!(
         finish_test_login(&arm, &mut client, command, world, outcome),
-        Ok(SlotLoginOutcome::Aborted)
+        Ok(SlotLoginOutcome::Aborted(AbortedAttempt::Cancelled))
     ));
     assert_eq!(
         eof_rx.recv_timeout(Duration::from_secs(3)).unwrap(),
@@ -1157,10 +1136,18 @@ fn os_connect_refusal_maps_to_connect_transport_event() {
 fn os_partial_seed_timeout_maps_to_read_transport_event() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let error = run_os_read_seed(listener, Some(Duration::from_millis(150)));
+    let kind = error.kind();
+    assert!(
+        matches!(
+            kind,
+            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+        ),
+        "a blocking timed read must expire rather than fail for another reason: {error}"
+    );
     assert_transport_event(
         os_transport_error(client::client::LoginStage::ReadSeed, error),
         client::client::LoginStage::ReadSeed,
-        std::io::ErrorKind::TimedOut,
+        kind,
         TransportFailure::Read,
     );
 }
@@ -1358,6 +1345,7 @@ fn clean_exit_paces_from_exit_not_old_handshake_and_release_then_admits() {
     assert!(return_and_release_queue_attempt(
         &mut queue, &second, retry, None
     ));
+    on_login_success(&arm, command);
     assert!(arm.session_online());
     assert!(arm.clean_release_admission_at(HOST, PORT, retry).is_none());
     assert_eq!(
@@ -1879,19 +1867,30 @@ fn queue_expiry_cancellation_fires_only_after_k1_unlock() {
         q.enqueue_owner(arm.queue_owner, 7);
     }
     arm.assert_cancel_order.store(true, Ordering::Relaxed);
-    let mut retired = false;
+    let mut physically_released = false;
     let wait = wait_for_permit(&queue, &statuses, "alice", 7, &arm, &mut || {
-        if !retired {
+        if !physically_released {
             assert!(cells.cancel().is_cancelled());
             cells.mark_physical_release();
+            physically_released = true;
             let mut q = queue.lock();
-            retired = cells.acknowledge_after_physical_release(&mut q, Instant::now());
+            assert!(
+                !cells.acknowledge_after_physical_release(&mut q, Instant::now()),
+                "an early physical ack must preserve the flight until Phase Q"
+            );
         }
         Duration::from_millis(1)
     });
     assert!(matches!(wait, PermitWait::Granted(_)));
-    assert!(retired);
+    assert!(physically_released);
     assert!(cells.cancel().is_cancelled());
+    let returned_at = Instant::now();
+    let mut q = queue.lock();
+    assert!(
+        !q.return_attempt(cells.identity(), returned_at, None)
+            .accepted
+    );
+    assert!(cells.acknowledge_after_physical_release(&mut q, returned_at));
 }
 
 #[test]

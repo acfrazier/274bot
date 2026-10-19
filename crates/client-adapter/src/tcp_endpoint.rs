@@ -84,7 +84,10 @@ impl TcpEndpoint {
             || shared.control.id != binding.connection
             || cancel.generation() != retire.generation()
         {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid TCP attempt identity"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid TCP attempt identity",
+            ));
         }
         Ok(Self {
             binding,
@@ -120,7 +123,11 @@ impl TcpEndpoint {
             return TcpStep::Failed(error);
         }
         if self.socket.is_some() {
-            return if self.connecting { TcpStep::Connecting } else { TcpStep::Ready };
+            return if self.connecting {
+                TcpStep::Connecting
+            } else {
+                TcpStep::Ready
+            };
         }
         let Some(address) = self.addresses.get(self.next_address) else {
             return TcpStep::Failed(self.last_error.take().unwrap_or_else(|| {
@@ -134,7 +141,11 @@ impl TcpEndpoint {
                     return self.address_failure(error);
                 }
                 let token = Token(self.binding.connection as usize);
-                match registry.register(&mut socket, token, Interest::READABLE.add(Interest::WRITABLE)) {
+                match registry.register(
+                    &mut socket,
+                    token,
+                    Interest::READABLE.add(Interest::WRITABLE),
+                ) {
                     Ok(()) => {
                         self.socket = Some(Budgeted::new(socket));
                         self.connecting = true;
@@ -183,7 +194,10 @@ impl TcpEndpoint {
         if !readable && !writable {
             return TcpStep::Connecting;
         }
-        let socket = self.socket.as_mut().expect("connecting owns the registered socket");
+        let socket = self
+            .socket
+            .as_mut()
+            .expect("connecting owns the registered socket");
         let error = match socket.inner().take_error() {
             Ok(Some(error)) => Some(error),
             Ok(None) => match socket.inner().peer_addr() {
@@ -232,7 +246,10 @@ impl TcpEndpoint {
     /// socket on a slot or TLS-handshake worker thread.
     pub fn drive(&mut self) -> io::Result<TcpTurnResult> {
         self.clean_rebind = false;
-        assert!(self.is_connected(), "cannot drive an unfinished TCP connect");
+        assert!(
+            self.is_connected(),
+            "cannot drive an unfinished TCP connect"
+        );
         let socket = self.socket.as_mut().expect("connected socket");
         socket.reset_turn();
         let result = self.turn.drive(
@@ -241,7 +258,10 @@ impl TcpEndpoint {
             &self.shared.outbound,
             &self.shared.records,
             &self.shared.control.park,
-            WriterBinding { connection: self.binding.connection, binding: self.binding.binding },
+            WriterBinding {
+                connection: self.binding.connection,
+                binding: self.binding.binding,
+            },
         )?;
         self.read_suspended = self.shared.inbound.free() == 0;
         Ok(result)
@@ -252,11 +272,11 @@ impl TcpEndpoint {
     /// The second result requests writable readiness rather than local spin.
     pub fn flush_for_close(&mut self) -> io::Result<(bool, bool)> {
         self.turn.suppress_read_for_rebind();
-        if self.shared.outbound.len() == 0 && self.shared.records.front().is_none() {
+        if self.shared.outbound.is_empty() && self.shared.records.front().is_none() {
             return Ok((true, false));
         }
         let turn = self.drive()?;
-        let finished = self.shared.outbound.len() == 0 && self.shared.records.front().is_none();
+        let finished = self.shared.outbound.is_empty() && self.shared.records.front().is_none();
         Ok((finished, !finished && turn.write_ready))
     }
 
@@ -297,26 +317,29 @@ impl TcpEndpoint {
         if !self.is_connected() || self.shared.is_closed() {
             return Ok(RebindBoundary::PeerClosed);
         }
-        if !self.shared.rebind_disabled()
-            || self.shared.session_binding() != self.binding.binding
-        {
+        if !self.shared.rebind_disabled() || self.shared.session_binding() != self.binding.binding {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "old session was not quiesced for Rebind",
             ));
         }
-        if self.shared.outbound.len() != 0 || self.shared.records.front().is_some() {
+        if !self.shared.outbound.is_empty() || self.shared.records.front().is_some() {
             self.turn.suppress_read_for_rebind();
             let turn = self.drive()?;
             if turn.stop == super::tcp::TcpStop::PeerClosed {
                 return Ok(RebindBoundary::PeerClosed);
             }
-            if self.shared.outbound.len() != 0 && !turn.write_ready {
+            if !self.shared.outbound.is_empty() && !turn.write_ready {
                 return Ok(RebindBoundary::WaitWritable);
             }
             return Ok(RebindBoundary::Pending);
         }
-        if self.shared.inbound.consume_with(|span| Ok(span.len().min(TURN_BYTE_LIMIT)))? != 0 {
+        if self
+            .shared
+            .inbound
+            .consume_with(|span| Ok(span.len().min(TURN_BYTE_LIMIT)))?
+            != 0
+        {
             return Ok(RebindBoundary::Pending);
         }
         let socket = self.socket.as_mut().expect("connected socket");
@@ -374,8 +397,8 @@ impl TcpEndpoint {
             || self.cancel.is_some()
             || !self.shared.rebind_disabled()
             || self.shared.session_binding() != expected.binding
-            || self.shared.inbound.len() != 0
-            || self.shared.outbound.len() != 0
+            || !self.shared.inbound.is_empty()
+            || !self.shared.outbound.is_empty()
             || self.shared.records.front().is_some()
         {
             return Err(RejectedCommand::DirtyReceiveBoundary);
@@ -436,14 +459,19 @@ impl TcpEndpoint {
 
     fn revoked(&self, now: Instant) -> Option<io::Error> {
         if self.cancel.as_ref().is_some_and(CancelToken::is_cancelled) {
-            Some(io::Error::new(io::ErrorKind::ConnectionAborted, "game attempt cancelled"))
+            Some(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "game attempt cancelled",
+            ))
         } else if self.deadline.is_some_and(|deadline| now >= deadline) {
-            Some(io::Error::new(io::ErrorKind::TimedOut, "game login deadline passed"))
+            Some(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "game login deadline passed",
+            ))
         } else {
             None
         }
     }
-
 }
 impl Drop for TcpEndpoint {
     fn drop(&mut self) {
@@ -457,16 +485,23 @@ impl Drop for TcpEndpoint {
 
 #[cfg(test)]
 mod tests {
-    use std::net::SocketAddr;
-    use super::*;
     use super::super::cancel::CancelSource;
     use super::super::park::Park;
+    use super::*;
+    use std::net::SocketAddr;
     use std::net::TcpListener;
     use std::time::Duration;
 
     fn connected(
         deadline: Instant,
-    ) -> (TcpEndpoint, std::net::TcpStream, mio::Poll, Arc<SharedConnection>, CancelSource, Arc<AttemptRetire>) {
+    ) -> (
+        TcpEndpoint,
+        std::net::TcpStream,
+        mio::Poll,
+        Arc<SharedConnection>,
+        CancelSource,
+        Arc<AttemptRetire>,
+    ) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let socket = std::net::TcpStream::connect(address).unwrap();
@@ -475,19 +510,34 @@ mod tests {
         let mut socket = TcpStream::from_std(socket);
         let poll = mio::Poll::new().unwrap();
         poll.registry()
-            .register(&mut socket, Token(1), Interest::READABLE.add(Interest::WRITABLE))
+            .register(
+                &mut socket,
+                Token(1),
+                Interest::READABLE.add(Interest::WRITABLE),
+            )
             .unwrap();
         let park = Arc::new(Park::new());
         let source = CancelSource::new(Arc::clone(&park));
         let token = source.child().unwrap();
         let retire = Arc::new(AttemptRetire::new(token.generation()));
         let shared = SharedConnection::new(1, park);
-        let binding = BindingId { incarnation: 1, connection: 1, binding: 1, attempt: 1 };
+        let binding = BindingId {
+            incarnation: 1,
+            connection: 1,
+            binding: 1,
+            attempt: 1,
+        };
         let mut addresses = ResolvedAddresses::new();
         assert!(addresses.push(address));
         let mut endpoint = TcpEndpoint::new(
-            binding, addresses, Arc::clone(&shared), token, Some(deadline), Arc::clone(&retire),
-        ).unwrap();
+            binding,
+            addresses,
+            Arc::clone(&shared),
+            token,
+            Some(deadline),
+            Arc::clone(&retire),
+        )
+        .unwrap();
         endpoint.socket = Some(Budgeted::new(socket));
         endpoint.connecting = false;
         shared.accept_binding(binding);
@@ -501,40 +551,72 @@ mod tests {
         let (mut endpoint, _server, poll, shared, _source, retire) = connected(deadline);
         let id = endpoint.binding();
         let old = endpoint.cancel.as_ref().unwrap().clone();
-        assert_eq!(endpoint.seal(id, deadline - Duration::from_nanos(1)), Ok(deadline - Duration::from_nanos(1)));
+        assert_eq!(
+            endpoint.seal(id, deadline - Duration::from_nanos(1)),
+            Ok(deadline - Duration::from_nanos(1))
+        );
         old.cancel();
-        assert!(matches!(endpoint.on_event(poll.registry(), false, false, deadline), TcpStep::Ready));
+        assert!(matches!(
+            endpoint.on_event(poll.registry(), false, false, deadline),
+            TcpStep::Ready
+        ));
         assert!(!shared.commit_session(BindingId { binding: 2, ..id }));
         assert!(shared.commit_session(id));
-        assert!(!retire.acknowledged(), "Phase R does not acknowledge physical retirement");
+        assert!(
+            !retire.acknowledged(),
+            "Phase R does not acknowledge physical retirement"
+        );
         assert!(retire.ack(), "Phase C acknowledges after the K4 commit");
         endpoint.close(poll.registry());
         assert_eq!(retire.ack_count(), 1);
 
         let (mut late, _server, poll, _shared, _source, _retire) = connected(deadline);
-        assert_eq!(late.seal(late.binding(), deadline), Err(RejectedCommand::Deadline));
+        assert_eq!(
+            late.seal(late.binding(), deadline),
+            Err(RejectedCommand::Deadline)
+        );
         late.cancel.as_ref().unwrap().cancel();
-        assert_eq!(late.seal(late.binding(), deadline), Err(RejectedCommand::Revoked));
+        assert_eq!(
+            late.seal(late.binding(), deadline),
+            Err(RejectedCommand::Revoked)
+        );
         late.close(poll.registry());
     }
 
     #[test]
     fn adopted_tcp_binding_disposes_old_ring_before_a_new_hello() {
         let now = Instant::now();
-        let (mut endpoint, _server, poll, shared, source, retire) = connected(now + Duration::from_secs(5));
+        let (mut endpoint, _server, poll, shared, source, retire) =
+            connected(now + Duration::from_secs(5));
         let old = endpoint.binding();
         endpoint.seal(old, now).unwrap();
         assert!(shared.commit_session(old));
         assert!(retire.ack());
         assert!(shared.inbound.push_all(b"old-session"));
         shared.disable_for_rebind();
-        assert_eq!(endpoint.drain_for_rebind().unwrap(), RebindBoundary::Pending);
+        assert_eq!(
+            endpoint.drain_for_rebind().unwrap(),
+            RebindBoundary::Pending
+        );
         assert_eq!(shared.inbound.len(), 0);
         assert_eq!(endpoint.drain_for_rebind().unwrap(), RebindBoundary::Clean);
         let token = source.child().unwrap();
         let next_retire = Arc::new(AttemptRetire::new(token.generation()));
-        let next = BindingId { binding: 2, attempt: 2, ..old };
-        endpoint.rebind(old, next, now + Duration::from_secs(10), now, token, Arc::clone(&next_retire)).unwrap();
+        let next = BindingId {
+            binding: 2,
+            attempt: 2,
+            ..old
+        };
+        endpoint
+            .rebind(
+                old,
+                next,
+                now + Duration::from_secs(10),
+                now,
+                token,
+                Arc::clone(&next_retire),
+            )
+            .unwrap();
         assert_eq!(shared.binding(), 2);
         assert_eq!(shared.session_binding(), 0);
         assert_eq!(shared.inbound.len(), 0);
@@ -556,11 +638,20 @@ mod tests {
         let source = CancelSource::new(Arc::clone(&park));
         let token = source.child().unwrap();
         let retire = Arc::new(AttemptRetire::new(token.generation()));
-        let binding = BindingId { incarnation: 1, connection: 1, binding: 1, attempt: 1 };
+        let binding = BindingId {
+            incarnation: 1,
+            connection: 1,
+            binding: 1,
+            attempt: 1,
+        };
         let shared = SharedConnection::new(1, park);
-        let mut endpoint = TcpEndpoint::new(binding, addresses, shared, token, None, Arc::clone(&retire)).unwrap();
+        let mut endpoint =
+            TcpEndpoint::new(binding, addresses, shared, token, None, Arc::clone(&retire)).unwrap();
         let poll = mio::Poll::new().unwrap();
-        assert!(matches!(endpoint.begin_step(poll.registry(), Instant::now()), TcpStep::Connecting | TcpStep::Retry));
+        assert!(matches!(
+            endpoint.begin_step(poll.registry(), Instant::now()),
+            TcpStep::Connecting | TcpStep::Retry
+        ));
         assert!(!retire.acknowledged());
         endpoint.close(poll.registry());
         assert!(retire.acknowledged());
@@ -575,10 +666,25 @@ mod tests {
         let token = source.child().unwrap();
         let retire = Arc::new(AttemptRetire::new(token.generation()));
         let shared = SharedConnection::new(1, park);
-        let binding = BindingId { incarnation: 1, connection: 1, binding: 1, attempt: 1 };
-        let mut endpoint = TcpEndpoint::new(binding, addresses, shared, token, Some(Instant::now()), retire).unwrap();
+        let binding = BindingId {
+            incarnation: 1,
+            connection: 1,
+            binding: 1,
+            attempt: 1,
+        };
+        let mut endpoint = TcpEndpoint::new(
+            binding,
+            addresses,
+            shared,
+            token,
+            Some(Instant::now()),
+            retire,
+        )
+        .unwrap();
         let poll = mio::Poll::new().unwrap();
-        assert!(matches!(endpoint.begin_step(poll.registry(), Instant::now()), TcpStep::Failed(error) if error.kind() == io::ErrorKind::TimedOut));
+        assert!(
+            matches!(endpoint.begin_step(poll.registry(), Instant::now()), TcpStep::Failed(error) if error.kind() == io::ErrorKind::TimedOut)
+        );
         assert!(endpoint.socket.is_none());
     }
 }

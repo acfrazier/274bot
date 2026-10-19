@@ -97,7 +97,6 @@ fn live_channel_ladder_client_wall() {
     println!("PASS: channel_ladder n={n} rss={rss}");
 }
 
-
 // keep parse_rss unit tests below the live test
 
 #[test]

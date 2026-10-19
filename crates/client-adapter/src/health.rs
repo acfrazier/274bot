@@ -4,7 +4,7 @@
 //! their elapsed time is never interpreted as reactor loss. An actual reactor
 //! stall, start failure, or panic latches permanently until process restart.
 
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 pub const REACTOR_POLL_MAX: Duration = Duration::from_millis(100);
@@ -90,12 +90,9 @@ impl ReactorHealth {
     /// Called only for OS thread-start failure or an uncaught fixed service
     /// worker/reactor panic; returned construction errors stay connection-local.
     pub fn latch(&self, cause: ReactorLoss) {
-        let _ = self.latched.compare_exchange(
-            0,
-            cause.code(),
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
+        let _ = self
+            .latched
+            .compare_exchange(0, cause.code(), Ordering::AcqRel, Ordering::Acquire);
     }
 
     pub fn loss(&self) -> Option<ReactorLoss> {
@@ -112,10 +109,19 @@ mod tests {
         let base = Instant::now();
         let health = ReactorHealth::new(base);
         health.progress(base);
-        assert_eq!(health.maintain(base + REACTOR_STALL_LIMIT - Duration::from_nanos(1)), None);
-        assert_eq!(health.maintain(base + REACTOR_STALL_LIMIT), Some(ReactorLoss::ProgressLost));
+        assert_eq!(
+            health.maintain(base + REACTOR_STALL_LIMIT - Duration::from_nanos(1)),
+            None
+        );
+        assert_eq!(
+            health.maintain(base + REACTOR_STALL_LIMIT),
+            Some(ReactorLoss::ProgressLost)
+        );
         health.progress(base + REACTOR_STALL_LIMIT + Duration::from_secs(20));
-        assert_eq!(health.maintain(base + Duration::from_secs(30)), Some(ReactorLoss::ProgressLost));
+        assert_eq!(
+            health.maintain(base + Duration::from_secs(30)),
+            Some(ReactorLoss::ProgressLost)
+        );
     }
 
     #[test]
@@ -124,7 +130,10 @@ mod tests {
         let health = ReactorHealth::new(base);
         health.latch(ReactorLoss::StartFailed);
         health.latch(ReactorLoss::Panicked);
-        assert_eq!(health.maintain(base + Duration::from_secs(900)), Some(ReactorLoss::StartFailed));
+        assert_eq!(
+            health.maintain(base + Duration::from_secs(900)),
+            Some(ReactorLoss::StartFailed)
+        );
         let other = ReactorHealth::new(base);
         other.latch(ReactorLoss::Panicked);
         assert_eq!(other.maintain(base), Some(ReactorLoss::Panicked));

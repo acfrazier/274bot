@@ -16,14 +16,15 @@ use std::time::{Duration, Instant};
 
 use api::lifecycle::{AbortedAttempt, SessionEventOut, TransportFailure};
 use client::util::JString;
+use host_play::profile::ProfileEnvironment;
 use host_play::{
     run_with_template, LaunchProfile, LaunchTransport, LaunchWorld, LoginKey, Play, ProfileClass,
     ProfileOptions, Servers, SharedClientTemplate, SlotArm,
 };
-use host_play::profile::ProfileEnvironment;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::{CipherSuite, ProtocolVersion, ServerConfig, ServerConnection};
+use tungstenite::handshake::derive_accept_key;
 use vault::{Profile, ProfileSettings, Vault};
 
 const STARTUP_BOUND: Duration = Duration::from_secs(8);
@@ -48,15 +49,18 @@ struct LocalWssServer {
 }
 
 impl LocalWssServer {
-    fn spawn(config: Arc<ServerConfig>, bind_host: &str) -> Self {
-        let listener =
-            TcpListener::bind((bind_host, 0)).expect("bind local WSS fixture address");
+    fn spawn(config: Arc<ServerConfig>, bind_host: &str, expect_wrong_host: bool) -> Self {
+        let listener = TcpListener::bind((bind_host, 0)).expect("bind local WSS fixture address");
         let address = listener
             .local_addr()
             .expect("read local WSS fixture address");
         let (result_tx, result_rx) = mpsc::sync_channel(1);
         let server_thread = thread::spawn(move || {
-            let _ = result_tx.send(serve_one_wss_connection(listener, config));
+            let _ = result_tx.send(serve_one_wss_connection(
+                listener,
+                config,
+                expect_wrong_host,
+            ));
         });
         Self {
             address,
@@ -104,58 +108,83 @@ impl Drop for LocalWssServer {
 fn serve_one_wss_connection(
     listener: TcpListener,
     config: Arc<ServerConfig>,
+    expect_wrong_host: bool,
 ) -> io::Result<ServerObservation> {
-    let (mut socket, _) = listener.accept()?;
-    socket.set_nodelay(true)?;
-    socket.set_read_timeout(Some(SOCKET_BOUND))?;
-    socket.set_write_timeout(Some(SOCKET_BOUND))?;
+    let mut fetched_login_key = false;
+    let mut wrong_host_failures = 0;
+    loop {
+        let (mut socket, _) = listener.accept()?;
+        socket.set_nodelay(true)?;
+        socket.set_read_timeout(Some(SOCKET_BOUND))?;
+        socket.set_write_timeout(Some(SOCKET_BOUND))?;
 
-    let mut connection = ServerConnection::new(config)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let tls_error = loop {
-        if !connection.is_handshaking() {
-            break None;
+        let mut connection = ServerConnection::new(Arc::clone(&config))
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let tls_error = loop {
+            if !connection.is_handshaking() {
+                break None;
+            }
+            if let Err(error) = connection.complete_io(&mut socket) {
+                break Some(error.to_string());
+            }
+        };
+        let mut observation = ServerObservation {
+            server_name: connection.server_name().map(str::to_owned),
+            protocol: connection.protocol_version(),
+            suite: connection
+                .negotiated_cipher_suite()
+                .map(|negotiated| negotiated.suite()),
+            tls_error,
+            upgrade_request: None,
+            hello: None,
+            websocket_upgrade_complete: false,
+        };
+        if observation.tls_error.is_some() {
+            if expect_wrong_host && wrong_host_failures == 0 {
+                wrong_host_failures += 1;
+                continue;
+            }
+            return Ok(observation);
         }
-        if let Err(error) = connection.complete_io(&mut socket) {
-            break Some(error.to_string());
+
+        let mut tls = rustls::StreamOwned::new(connection, socket);
+        let request = read_http_head(&mut tls)?;
+        let request = String::from_utf8(request)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        if request.starts_with("GET /client/client.js HTTP/1.0\r\n") {
+            if fetched_login_key {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "the product fetched its login modulus more than once",
+                ));
+            }
+            fetched_login_key = true;
+            let body = format!("const loginKey = '{}';", client::PROD_LOGIN_RSAN);
+            write!(
+                tls,
+                "HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )?;
+            tls.flush()?;
+            continue;
         }
-    };
-    let mut observation = ServerObservation {
-        server_name: connection.server_name().map(str::to_owned),
-        protocol: connection.protocol_version(),
-        suite: connection
-            .negotiated_cipher_suite()
-            .map(|negotiated| negotiated.suite()),
-        tls_error,
-        upgrade_request: None,
-        hello: None,
-        websocket_upgrade_complete: false,
-    };
-    if observation.tls_error.is_some() {
+        let key = header_value(&request, "Sec-WebSocket-Key")
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing WebSocket key"))?;
+        let accept = derive_accept_key(key.as_bytes());
+        write!(
+            tls,
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\nSec-WebSocket-Protocol: binary\r\n\r\n"
+        )?;
+        tls.flush()?;
+
+        // The product emits its game hello only after accepting the 101.
+        let hello = read_client_binary_frame(&mut tls)?;
+        observation.upgrade_request = Some(request);
+        observation.hello = Some(hello);
+        observation.websocket_upgrade_complete = true;
         return Ok(observation);
     }
-
-    let mut tls = rustls::StreamOwned::new(connection, socket);
-    let request = read_http_head(&mut tls)?;
-    let request = String::from_utf8(request)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let key = header_value(&request, "Sec-WebSocket-Key")
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing WebSocket key"))?;
-    let accept = websocket_accept_key(key);
-    write!(
-        tls,
-        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\nSec-WebSocket-Protocol: binary\r\n\r\n"
-    )?;
-    tls.flush()?;
-
-    // A binary game frame is emitted only after the product's WebSocket
-    // handshake validator accepts the 101 response.
-    let hello = read_client_binary_frame(&mut tls)?;
-    observation.upgrade_request = Some(request);
-    observation.hello = Some(hello);
-    observation.websocket_upgrade_complete = true;
-    Ok(observation)
 }
 
 fn read_http_head(reader: &mut impl Read) -> io::Result<Vec<u8>> {
@@ -228,103 +257,7 @@ fn read_client_binary_frame(reader: &mut impl Read) -> io::Result<Vec<u8>> {
     Ok(payload)
 }
 
-fn websocket_accept_key(key: &str) -> String {
-    let mut input = Vec::with_capacity(key.len() + 36);
-    input.extend_from_slice(key.as_bytes());
-    input.extend_from_slice(b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
-    base64_encode(&sha1_digest(&input))
-}
-
-fn sha1_digest(message: &[u8]) -> [u8; 20] {
-    let bit_length = (message.len() as u64).wrapping_mul(8);
-    let padded_length = (message.len() + 9).div_ceil(64) * 64;
-    let mut padded = vec![0u8; padded_length];
-    padded[..message.len()].copy_from_slice(message);
-    padded[message.len()] = 0x80;
-    padded[padded_length - 8..].copy_from_slice(&bit_length.to_be_bytes());
-
-    let mut state = [
-        0x6745_2301u32,
-        0xefcd_ab89,
-        0x98ba_dcfe,
-        0x1032_5476,
-        0xc3d2_e1f0,
-    ];
-    for block in padded.chunks_exact(64) {
-        let mut words = [0u32; 80];
-        for (index, word) in block.chunks_exact(4).enumerate() {
-            words[index] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
-        }
-        for index in 16..80 {
-            words[index] = (words[index - 3]
-                ^ words[index - 8]
-                ^ words[index - 14]
-                ^ words[index - 16])
-                .rotate_left(1);
-        }
-
-        let [mut a, mut b, mut c, mut d, mut e] = state;
-        for (index, word) in words.into_iter().enumerate() {
-            let (function, constant) = match index {
-                0..=19 => ((b & c) | (!b & d), 0x5a82_7999),
-                20..=39 => (b ^ c ^ d, 0x6ed9_eba1),
-                40..=59 => ((b & c) | (b & d) | (c & d), 0x8f1b_bcdc),
-                _ => (b ^ c ^ d, 0xca62_c1d6),
-            };
-            let next = a
-                .rotate_left(5)
-                .wrapping_add(function)
-                .wrapping_add(e)
-                .wrapping_add(constant)
-                .wrapping_add(word);
-            e = d;
-            d = c;
-            c = b.rotate_left(30);
-            b = a;
-            a = next;
-        }
-        state[0] = state[0].wrapping_add(a);
-        state[1] = state[1].wrapping_add(b);
-        state[2] = state[2].wrapping_add(c);
-        state[3] = state[3].wrapping_add(d);
-        state[4] = state[4].wrapping_add(e);
-    }
-
-    let mut digest = [0u8; 20];
-    for (index, word) in state.into_iter().enumerate() {
-        digest[index * 4..index * 4 + 4].copy_from_slice(&word.to_be_bytes());
-    }
-    digest
-}
-
-fn base64_encode(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let first = u32::from(chunk[0]);
-        let second = chunk.get(1).copied().map(u32::from).unwrap_or(0);
-        let third = chunk.get(2).copied().map(u32::from).unwrap_or(0);
-        encoded.push(ALPHABET[((first >> 2) & 0x3f) as usize] as char);
-        encoded.push(ALPHABET[(((first & 0x03) << 4) | (second >> 4)) as usize] as char);
-        if chunk.len() > 1 {
-            encoded.push(ALPHABET[(((second & 0x0f) << 2) | (third >> 6)) as usize] as char);
-        } else {
-            encoded.push('=');
-        }
-        if chunk.len() > 2 {
-            encoded.push(ALPHABET[(third & 0x3f) as usize] as char);
-        } else {
-            encoded.push('=');
-        }
-    }
-    encoded
-}
-
-fn pinned_server_config(
-    protocol: ProtocolVersion,
-    suite: CipherSuite,
-) -> Arc<ServerConfig> {
+fn pinned_server_config(protocol: ProtocolVersion, suite: CipherSuite) -> Arc<ServerConfig> {
     let certificate = CertificateDer::from_pem_slice(include_bytes!(
         "../../../vendor/fr-client-rust/crates/client/tests/fixtures/tls/localhost.pem"
     ))
@@ -403,7 +336,7 @@ impl StartupFixture {
                 launch_profile("wss-startup-tls13", "localhost", tls13_port, "vault-tls13"),
                 launch_profile(
                     "wss-startup-wrong-host",
-                    "127.0.0.1",
+                    "127.0.0.2",
                     wrong_host_port,
                     "vault-wrong-host",
                 ),
@@ -421,12 +354,7 @@ impl StartupFixture {
         Self { root, home, cache }
     }
 
-    fn template(
-        &self,
-        profile_name: &str,
-        host: &str,
-        port: u16,
-    ) -> Arc<SharedClientTemplate> {
+    fn template(&self, profile_name: &str, host: &str, port: u16) -> Arc<SharedClientTemplate> {
         let options = ProfileOptions {
             profile: Some(profile_name.to_owned()),
             revision: Some("289".into()),
@@ -465,12 +393,11 @@ impl StartupFixture {
     fn account(&self, vault_name: &str, username: &str, uid: i32) -> Profile {
         let path = self.home.join(".274bot").join(vault_name);
         {
-            let mut vault =
-                Vault::create(&path, VAULT_PASSPHRASE).expect("create fixture vault");
+            let mut vault = Vault::create(&path, VAULT_PASSPHRASE).expect("create fixture vault");
             vault
                 .upsert(Profile {
                     username: username.to_owned(),
-                    password: format!("{username}-password"),
+                    password: format!("{username}-password").into(),
                     uid,
                     settings: ProfileSettings::default(),
                 })
@@ -554,11 +481,11 @@ fn wait_for_server_observation(
                 .try_observation()
                 .unwrap_or_else(|error| panic!("{error}"));
         }
-        if let Some(observation) = observation.take() {
+        if let Some(received) = observation.take() {
             if !require_connect_refusal || connect_refusal {
-                return (observation, connect_refusal);
+                return (received, connect_refusal);
             }
-            observation = Some(observation);
+            observation = Some(received);
         }
         assert!(
             Instant::now() < deadline,
@@ -589,15 +516,12 @@ fn run_product_attempt(
     expect_connect_refusal: bool,
 ) -> (ServerObservation, bool) {
     let username = account.username.clone();
-    let mut play = run_with_template(
-        template,
-        false,
-        Vec::new(),
-        |_| (None, None),
-        |_, _, _| {},
-    )
-    .expect("start product Play composition");
+    let mut play = run_with_template(template, false, Vec::new(), |_| (None, None), |_, _, _| {})
+        .expect("start product Play composition");
     let arm = SlotArm::new(account.uid, true);
+    // The fixture has a frozen cache but no asset update server: skip only
+    // maininit asset loading, not Play login, TLS handoff, or WSS game I/O.
+    arm.bypass_asset_startup_for_test();
     let deadline = Instant::now() + STARTUP_BOUND;
     play.spawn_slot(account, None, None, Some(Arc::clone(&arm)));
     assert!(
@@ -607,13 +531,8 @@ fn run_product_attempt(
         "the real product Play slot was spawned"
     );
 
-    let (observation, connect_refusal) = wait_for_server_observation(
-        &play,
-        &arm,
-        &server,
-        expect_connect_refusal,
-        deadline,
-    );
+    let (observation, connect_refusal) =
+        wait_for_server_observation(&play, &arm, &server, expect_connect_refusal, deadline);
     stop_slot_bounded(&mut play, &username, deadline);
     server.finish();
     (observation, connect_refusal)
@@ -625,21 +544,12 @@ fn expected_game_hello(username: &str) -> [u8; 2] {
 
 #[test]
 fn product_play_wss_startup_negotiates_tls_versions_sends_hello_and_rejects_wrong_host() {
-    // RFC 6455's published vector guards the small fixture-only handshake
-    // encoder without adding a protocol dependency to host-play.
-    assert_eq!(
-        websocket_accept_key("dGhlIHNhbXBsZSBub25jZQ=="),
-        "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
-    );
-
     let root = CertificateDer::from_pem_slice(include_bytes!(
         "../../../vendor/fr-client-rust/crates/client/tests/fixtures/tls/ca.pem"
     ))
     .expect("parse checked-in test CA");
-    let client_config = client_adapter::tls_handshake::build_test_client_config_with_roots(&[
-        root,
-    ])
-    .expect("build platform-verifying test client with the fixture CA");
+    let client_config = client_adapter::tls_handshake::build_test_client_config_with_roots(&[root])
+        .expect("build platform-verifying test client with the fixture CA");
     client_adapter::service::NetworkService::install_test_tls_config(client_config)
         .expect("install test TLS config before starting the process service");
     let _fixture_driver = client_adapter::service::NetworkService::start_composition()
@@ -651,14 +561,23 @@ fn product_play_wss_startup_negotiates_tls_versions_sends_hello_and_rejects_wron
             CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
         ),
         "localhost",
+        false,
     );
     let tls13_server = LocalWssServer::spawn(
-        pinned_server_config(ProtocolVersion::TLSv1_3, CipherSuite::TLS13_AES_128_GCM_SHA256),
+        pinned_server_config(
+            ProtocolVersion::TLSv1_3,
+            CipherSuite::TLS13_AES_128_GCM_SHA256,
+        ),
         "localhost",
+        false,
     );
     let wrong_host_server = LocalWssServer::spawn(
-        pinned_server_config(ProtocolVersion::TLSv1_3, CipherSuite::TLS13_AES_128_GCM_SHA256),
-        "127.0.0.1",
+        pinned_server_config(
+            ProtocolVersion::TLSv1_3,
+            CipherSuite::TLS13_AES_128_GCM_SHA256,
+        ),
+        "127.0.0.2",
+        true,
     );
 
     let tls12_port = tls12_server.port();
@@ -671,22 +590,24 @@ fn product_play_wss_startup_negotiates_tls_versions_sends_hello_and_rejects_wron
     let tls12_template = fixture.template("wss-startup-tls12", "localhost", tls12_port);
     let tls13_template = fixture.template("wss-startup-tls13", "localhost", tls13_port);
     let wrong_host_template =
-        fixture.template("wss-startup-wrong-host", "127.0.0.1", wrong_host_port);
+        fixture.template("wss-startup-wrong-host", "127.0.0.2", wrong_host_port);
 
-    let (tls12, _) = run_product_attempt(
-        tls12_template,
-        tls12_account.clone(),
-        tls12_server,
-        false,
+    let (tls12, _) =
+        run_product_attempt(tls12_template, tls12_account.clone(), tls12_server, false);
+    assert!(
+        tls12.tls_error.is_none(),
+        "TLS 1.2 server handshake succeeds"
     );
-    assert!(tls12.tls_error.is_none(), "TLS 1.2 server handshake succeeds");
     assert_eq!(tls12.server_name.as_deref(), Some("localhost"));
     assert_eq!(tls12.protocol, Some(ProtocolVersion::TLSv1_2));
     assert_eq!(
         tls12.suite,
         Some(CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256)
     );
-    assert!(tls12.websocket_upgrade_complete, "product completed WSS upgrade");
+    assert!(
+        tls12.websocket_upgrade_complete,
+        "product completed WSS upgrade"
+    );
     let tls12_request = tls12
         .upgrade_request
         .as_deref()
@@ -709,13 +630,12 @@ fn product_play_wss_startup_negotiates_tls_versions_sends_hello_and_rejects_wron
         "exact initial game hello follows the real product WebSocket upgrade"
     );
 
-    let (tls13, _) = run_product_attempt(
-        tls13_template,
-        tls13_account.clone(),
-        tls13_server,
-        false,
+    let (tls13, _) =
+        run_product_attempt(tls13_template, tls13_account.clone(), tls13_server, false);
+    assert!(
+        tls13.tls_error.is_none(),
+        "TLS 1.3 server handshake succeeds"
     );
-    assert!(tls13.tls_error.is_none(), "TLS 1.3 server handshake succeeds");
     assert_eq!(tls13.server_name.as_deref(), Some("localhost"));
     assert_eq!(tls13.protocol, Some(ProtocolVersion::TLSv1_3));
     assert_eq!(tls13.suite, Some(CipherSuite::TLS13_AES_128_GCM_SHA256));
@@ -751,10 +671,24 @@ fn product_play_wss_startup_negotiates_tls_versions_sends_hello_and_rejects_wron
         wrong_host_server,
         true,
     );
-    assert!(typed_refusal, "wrong-host TLS refusal is published as typed Connect");
-    assert!(wrong_host.tls_error.is_some(), "wrong hostname is rejected in TLS");
-    assert_eq!(wrong_host.server_name, None, "IP endpoint does not send DNS SNI");
-    assert!(wrong_host.upgrade_request.is_none(), "wrong host never upgrades WebSocket");
-    assert!(wrong_host.hello.is_none(), "wrong host never sends a game hello");
+    assert!(
+        typed_refusal,
+        "wrong-host TLS refusal is published as typed Connect"
+    );
+    assert!(
+        wrong_host.tls_error.is_some(),
+        "wrong hostname is rejected in TLS"
+    );
+    assert_eq!(
+        wrong_host.server_name, None,
+        "IP endpoint does not send DNS SNI"
+    );
+    assert!(
+        wrong_host.upgrade_request.is_none(),
+        "wrong host never upgrades WebSocket"
+    );
+    assert!(
+        wrong_host.hello.is_none(),
+        "wrong host never sends a game hello"
+    );
 }
-

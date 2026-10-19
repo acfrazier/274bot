@@ -12,9 +12,12 @@ use mio::{Events, Poll, Token, Waker};
 
 use super::cancel::{AttemptRetire, CancelToken};
 use super::control::{
-    BindingId, CloseCommand, CloseReason, CommandBus, ConnectCommand, PrimaryCommand,
-    SubmitError,
-    PrimaryReply, RejectedCommand,
+    BindingId, CloseCommand, CloseReason, CommandBus, ConnectCommand, PrimaryCommand, PrimaryReply,
+    RejectedCommand, SubmitError,
+};
+use super::handoff::{
+    HandoffIdentity, HandoffKey, HandoffPhase, QueueReleaseProof, ReadyDirection, RevocationReason,
+    TakeReturnError, WorkerFailure, WorkerOutcome,
 };
 use super::health::{ReactorHealth, ReactorLoss, REACTOR_POLL_MAX};
 use super::ledger::{ConnectionCharge, ResourceLedger, MAX_CONNECTIONS};
@@ -23,10 +26,6 @@ use super::shared::SharedConnection;
 use super::tcp::TcpStop;
 use super::tcp_endpoint::{RebindBoundary, TcpEndpoint, TcpStep};
 use super::tls_handshake::{GameTlsLane, GameTlsResource, GameTlsTicket};
-use super::handoff::{
-    HandoffIdentity, HandoffKey, HandoffPhase, QueueReleaseProof, ReadyDirection,
-    RevocationReason, TakeReturnError, WorkerFailure, WorkerOutcome,
-};
 use super::ws_endpoint::{WssEndpoint, WssStep};
 use client::Transport;
 
@@ -74,7 +73,11 @@ impl Registered {
     }
 
     fn get(&self, id: u64) -> Option<Arc<Registration>> {
-        self.entries.get(index(id))?.as_ref().filter(|entry| entry.id == id).cloned()
+        self.entries
+            .get(index(id))?
+            .as_ref()
+            .filter(|entry| entry.id == id)
+            .cloned()
     }
 
     fn remove(&mut self, id: u64) -> Option<Arc<Registration>> {
@@ -117,9 +120,11 @@ impl TransportService {
     }
 
     pub fn start() -> io::Result<Arc<Self>> {
-        let incarnation = NEXT_INCARNATION.fetch_update(
-            Ordering::Relaxed, Ordering::Relaxed, |next| next.checked_add(1),
-        ).map_err(|_| io::Error::new(io::ErrorKind::Other, "transport incarnation exhausted"))?;
+        let incarnation = NEXT_INCARNATION
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                next.checked_add(1)
+            })
+            .map_err(|_| io::Error::other("transport incarnation exhausted"))?;
         let poll = Poll::new()?;
         let waker = Arc::new(Waker::new(poll.registry(), WAKE_TOKEN)?);
         let registry = Arc::new(Mutex::new(Registered::new()));
@@ -129,20 +134,35 @@ impl TransportService {
         let shutdown = Arc::new(AtomicBool::new(false));
         let tls_lane = Arc::new(Mutex::new(None));
         let reactor = Reactor::new(
-            poll, Arc::clone(&registry), Arc::clone(&bus), Arc::clone(&ledger),
-            Arc::clone(&health), Arc::clone(&shutdown), Arc::clone(&tls_lane),
+            poll,
+            Arc::clone(&registry),
+            Arc::clone(&bus),
+            Arc::clone(&ledger),
+            Arc::clone(&health),
+            Arc::clone(&shutdown),
+            Arc::clone(&tls_lane),
         );
         let service = Arc::new(Self {
-            incarnation, registry, bus, ledger, health: Arc::clone(&health),
-            loss_notified: AtomicBool::new(false), next_id: AtomicU64::new(1),
-            shutdown, tls_lane, worker: Mutex::new(None),
+            incarnation,
+            registry,
+            bus,
+            ledger,
+            health: Arc::clone(&health),
+            loss_notified: AtomicBool::new(false),
+            next_id: AtomicU64::new(1),
+            shutdown,
+            tls_lane,
+            worker: Mutex::new(None),
         });
-        match thread::Builder::new().name("net-reactor".to_owned()).spawn(move || {
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| reactor.run()));
-            if outcome.is_err() {
-                health.latch(ReactorLoss::Panicked);
-            }
-        }) {
+        match thread::Builder::new()
+            .name("net-reactor".to_owned())
+            .spawn(move || {
+                let outcome =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| reactor.run()));
+                if outcome.is_err() {
+                    health.latch(ReactorLoss::Panicked);
+                }
+            }) {
             Ok(worker) => *service.worker.lock().unwrap() = Some(worker),
             Err(_) => service.health.latch(ReactorLoss::StartFailed),
         }
@@ -169,7 +189,8 @@ impl TransportService {
             for slot in 0..MAX_CONNECTIONS {
                 let park = {
                     self.registry.lock().unwrap().entries[slot]
-                        .as_ref().map(|entry| Arc::clone(&entry.shared.control.park))
+                        .as_ref()
+                        .map(|entry| Arc::clone(&entry.shared.control.park))
                 };
                 if let Some(park) = park {
                     park.publish();
@@ -178,7 +199,6 @@ impl TransportService {
         }
         Some(loss)
     }
-
 
     /// Install the fixed handshake owner before the host hook can admit TCP.
     pub fn install_tls_lane(&self, lane: Arc<GameTlsLane>) {
@@ -191,9 +211,11 @@ impl TransportService {
     /// Reserve the immutable transfer sequence before the FIFO's physical
     /// WSS attempt starts; the handoff cell checks it again on submission.
     pub fn tls_transfer_seq(&self) -> io::Result<u64> {
-        let lane = self.tls_lane.lock().unwrap().clone()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "game TLS worker unavailable"))?;
-        lane.cell().next_transfer_seq()
+        let lane = self.tls_lane.lock().unwrap().clone().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotConnected, "game TLS worker unavailable")
+        })?;
+        lane.cell()
+            .next_transfer_seq()
             .ok_or_else(|| io::Error::other("game TLS transfer sequence exhausted"))
     }
 
@@ -201,19 +223,28 @@ impl TransportService {
     /// admission. The ticket retains exclusive lane eligibility through the
     /// actual reactor handoff, not merely through a capacity observation.
     pub fn game_tls_waiter(
-        &self, park: Arc<Park>, deadline: Instant, token: CancelToken,
+        &self,
+        park: Arc<Park>,
+        deadline: Instant,
+        token: CancelToken,
     ) -> io::Result<GameTlsTicket> {
         if self.shutdown.load(Ordering::Acquire) || self.health.loss().is_some() {
-            return Err(io::Error::new(io::ErrorKind::NotConnected, "game TLS service unavailable"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "game TLS service unavailable",
+            ));
         }
-        let lane = self.tls_lane.lock().unwrap().clone()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "game TLS worker unavailable"))?;
+        let lane = self.tls_lane.lock().unwrap().clone().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotConnected, "game TLS worker unavailable")
+        })?;
         lane.waiter(park, deadline, token)
     }
 
-
     pub fn owns_tls_ticket(&self, ticket: &GameTlsTicket) -> bool {
-        self.tls_lane.lock().unwrap().as_ref()
+        self.tls_lane
+            .lock()
+            .unwrap()
+            .as_ref()
             .is_some_and(|lane| lane.owns_ticket(ticket))
     }
 
@@ -229,23 +260,39 @@ impl TransportService {
 
     /// Reservation allocates the fixed rings and both command/reply cells.
     /// A failed charge or exhausted ID creates no half-registered connection.
-    pub fn reserve(&self, park: Arc<Park>, attempt_generation: u64) -> io::Result<(BindingId, Arc<SharedConnection>)> {
+    pub fn reserve(
+        &self,
+        park: Arc<Park>,
+        attempt_generation: u64,
+    ) -> io::Result<(BindingId, Arc<SharedConnection>)> {
         if attempt_generation == 0 {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "zero attempt generation"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "zero attempt generation",
+            ));
         }
         if self.health.loss().is_some() || self.shutdown.load(Ordering::Acquire) {
-            return Err(io::Error::new(io::ErrorKind::ConnectionAborted, "game reactor unavailable"));
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "game reactor unavailable",
+            ));
         }
-        let known_bytes = SharedConnection::known_struct_bytes() + std::mem::size_of::<Registration>();
-        let charge = self.ledger.admit_connection(known_bytes)
+        let known_bytes =
+            SharedConnection::known_struct_bytes() + std::mem::size_of::<Registration>();
+        let charge = self
+            .ledger
+            .admit_connection(known_bytes)
             .map_err(|_| io::Error::new(io::ErrorKind::WouldBlock, "game connection cap"))?;
         let mut registry = self.registry.lock().unwrap();
         for _ in 0..MAX_CONNECTIONS {
-            let id = self.next_id.fetch_update(
-                Ordering::Relaxed, Ordering::Relaxed, |next| next.checked_add(1),
-            ).map_err(|_| io::Error::new(io::ErrorKind::Other, "game connection identity exhausted"))?;
+            let id = self
+                .next_id
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                    next.checked_add(1)
+                })
+                .map_err(|_| io::Error::other("game connection identity exhausted"))?;
             if usize::try_from(id).is_err() {
-                return Err(io::Error::new(io::ErrorKind::Other, "game connection identity exhausted"));
+                return Err(io::Error::other("game connection identity exhausted"));
             }
             let slot = &mut registry.entries[index(id)];
             if slot.is_some() {
@@ -253,16 +300,24 @@ impl TransportService {
             }
             let shared = SharedConnection::new(id, park);
             let binding = BindingId {
-                incarnation: self.incarnation, connection: id, binding: 1,
+                incarnation: self.incarnation,
+                connection: id,
+                binding: 1,
                 attempt: attempt_generation,
             };
             *slot = Some(Arc::new(Registration {
-                id, initial: binding, shared: Arc::clone(&shared),
-                submitted: AtomicBool::new(false), charge: Mutex::new(Some(charge)),
+                id,
+                initial: binding,
+                shared: Arc::clone(&shared),
+                submitted: AtomicBool::new(false),
+                charge: Mutex::new(Some(charge)),
             }));
             return Ok((binding, shared));
         }
-        Err(io::Error::new(io::ErrorKind::WouldBlock, "game connection slots exhausted"))
+        Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "game connection slots exhausted",
+        ))
     }
 
     /// Mint a new attempt on an already committed socket. No new connection,
@@ -279,24 +334,41 @@ impl TransportService {
             || self.shutdown.load(Ordering::Acquire)
             || self.health.loss().is_some()
         {
-            return Err(io::Error::new(io::ErrorKind::ConnectionAborted, "old binding unavailable"));
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "old binding unavailable",
+            ));
         }
-        let entry = self.registry.lock().unwrap().get(expected.connection)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "old connection not registered"))?;
+        let entry = self
+            .registry
+            .lock()
+            .unwrap()
+            .get(expected.connection)
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotConnected, "old connection not registered")
+            })?;
         if entry.shared.is_closed()
             || entry.shared.binding() != expected.binding
             || entry.shared.session_binding() != expected.binding
         {
-            return Err(io::Error::new(io::ErrorKind::NotConnected, "old session not committed"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "old session not committed",
+            ));
         }
-        let generation = expected.binding.checked_add(1)
+        let generation = expected
+            .binding
+            .checked_add(1)
             .ok_or_else(|| io::Error::other("binding generation exhausted"))?;
-        Ok((BindingId {
-            incarnation: self.incarnation,
-            connection: expected.connection,
-            binding: generation,
-            attempt: attempt_generation,
-        }, Arc::clone(&entry.shared)))
+        Ok((
+            BindingId {
+                incarnation: self.incarnation,
+                connection: expected.connection,
+                binding: generation,
+                attempt: attempt_generation,
+            },
+            Arc::clone(&entry.shared),
+        ))
     }
 
     /// The service accepts each physical Connect exactly once. A failed
@@ -314,14 +386,20 @@ impl TransportService {
             || command.cancel.generation() != command.retire.generation()
             || match command.transport {
                 Transport::Tcp => command.queue_release.is_some() || command.tls_ticket.is_some(),
-                Transport::Wss => command.deadline.is_none()
-                    || command.queue_release.as_ref().is_none_or(|proof|
-                        proof.identity() != command.binding || proof.transfer_seq() == 0)
-                    || command.tls_ticket.as_ref().is_none_or(|ticket|
-                        !ticket.reserved()
-                            || !ticket.matches_token(&command.cancel)
-                            || !self.owns_tls_ticket(ticket)
-                            || command.deadline.is_none_or(|deadline| deadline > ticket.deadline())),
+                Transport::Wss => {
+                    command.deadline.is_none()
+                        || command.queue_release.as_ref().is_none_or(|proof| {
+                            proof.identity() != command.binding || proof.transfer_seq() == 0
+                        })
+                        || command.tls_ticket.as_ref().is_none_or(|ticket| {
+                            !ticket.reserved()
+                                || !ticket.matches_token(&command.cancel)
+                                || !self.owns_tls_ticket(ticket)
+                                || command
+                                    .deadline
+                                    .is_none_or(|deadline| deadline > ticket.deadline())
+                        })
+                }
             }
         {
             return Err(SubmitError::StaleIdentity);
@@ -338,7 +416,10 @@ impl TransportService {
         }
         // Publish while registry removal is excluded. A simultaneous Close
         // rejects this exact pending Connect before it can drop custody.
-        let result = registration.shared.control.post_primary(PrimaryCommand::Connect(command), &self.bus);
+        let result = registration
+            .shared
+            .control
+            .post_primary(PrimaryCommand::Connect(command), &self.bus);
         if !matches!(&result, Ok(()) | Err(SubmitError::Wake(_))) {
             registration.submitted.store(false, Ordering::Release);
         }
@@ -368,7 +449,11 @@ impl TransportService {
         {
             return Err(SubmitError::StaleIdentity);
         }
-        let entry = self.registry.lock().unwrap().get(expected.connection)
+        let entry = self
+            .registry
+            .lock()
+            .unwrap()
+            .get(expected.connection)
             .ok_or(SubmitError::StaleIdentity)?;
         if entry.shared.binding() != expected.binding
             || entry.shared.session_binding() != expected.binding
@@ -376,20 +461,33 @@ impl TransportService {
         {
             return Err(SubmitError::StaleIdentity);
         }
-        entry.shared.control.post_primary(PrimaryCommand::Rebind {
-            expected, next, deadline, cancel, retire,
-        }, &self.bus)
+        entry.shared.control.post_primary(
+            PrimaryCommand::Rebind {
+                expected,
+                next,
+                deadline,
+                cancel,
+                retire,
+            },
+            &self.bus,
+        )
     }
 
     /// An unused reservation has no socket. Release it before abandoning the
     /// queue grant. A submitted Connect must instead finish through reactor
     /// close/retirement, even when its slot loses interest.
     pub fn abandon_unused(&self, binding: BindingId) -> bool {
-        if binding.incarnation != self.incarnation { return false; }
+        if binding.incarnation != self.incarnation {
+            return false;
+        }
         let registration = {
             let mut registry = self.registry.lock().unwrap();
-            let Some(registration) = registry.get(binding.connection) else { return false; };
-            if registration.initial != binding || registration.submitted.swap(true, Ordering::AcqRel) {
+            let Some(registration) = registry.get(binding.connection) else {
+                return false;
+            };
+            if registration.initial != binding
+                || registration.submitted.swap(true, Ordering::AcqRel)
+            {
                 return false;
             }
             registry.remove(binding.connection)
@@ -453,7 +551,7 @@ impl Endpoint {
         match self {
             Self::Tcp(endpoint) => endpoint.resume_read(),
             Self::Wss(endpoint) => endpoint.resume_read(),
-            Self::InitialTls(_) => {},
+            Self::InitialTls(_) => {}
         }
     }
 
@@ -461,7 +559,7 @@ impl Endpoint {
         match self {
             Self::Tcp(endpoint) => endpoint.kick_output(),
             Self::Wss(endpoint) => endpoint.kick_output(),
-            Self::InitialTls(_) => {},
+            Self::InitialTls(_) => {}
         }
     }
 
@@ -493,7 +591,10 @@ impl Endpoint {
         match self {
             Self::Tcp(endpoint) => endpoint.drive(),
             Self::Wss(endpoint) => endpoint.drive(),
-            Self::InitialTls(_) => Err(io::Error::new(io::ErrorKind::WouldBlock, "initial TLS owns socket")),
+            Self::InitialTls(_) => Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "initial TLS owns socket",
+            )),
         }
     }
 
@@ -507,8 +608,13 @@ impl Endpoint {
 
     #[allow(clippy::too_many_arguments)]
     fn rebind(
-        &mut self, expected: BindingId, next: BindingId, deadline: Instant,
-        now: Instant, token: CancelToken, retire: Arc<AttemptRetire>,
+        &mut self,
+        expected: BindingId,
+        next: BindingId,
+        deadline: Instant,
+        now: Instant,
+        token: CancelToken,
+        retire: Arc<AttemptRetire>,
     ) -> Result<(), RejectedCommand> {
         match self {
             Self::Tcp(endpoint) => endpoint.rebind(expected, next, deadline, now, token, retire),
@@ -578,16 +684,28 @@ struct Reactor {
 
 impl Reactor {
     fn new(
-        poll: Poll, registry: Arc<Mutex<Registered>>, bus: Arc<CommandBus>,
-        ledger: Arc<ResourceLedger>, health: Arc<ReactorHealth>, shutdown: Arc<AtomicBool>,
+        poll: Poll,
+        registry: Arc<Mutex<Registered>>,
+        bus: Arc<CommandBus>,
+        ledger: Arc<ResourceLedger>,
+        health: Arc<ReactorHealth>,
+        shutdown: Arc<AtomicBool>,
         tls_lane: Arc<Mutex<Option<Arc<GameTlsLane>>>>,
     ) -> Self {
         let mut live = Vec::with_capacity(MAX_CONNECTIONS);
         live.resize_with(MAX_CONNECTIONS, || None);
         Self {
-            poll, events: Events::with_capacity(MAX_CONNECTIONS + 1),
-            ready: Vec::with_capacity(MAX_CONNECTIONS), registry, bus, ledger,
-            health, shutdown, tls_lane, live, active: Vec::with_capacity(MAX_CONNECTIONS),
+            poll,
+            events: Events::with_capacity(MAX_CONNECTIONS + 1),
+            ready: Vec::with_capacity(MAX_CONNECTIONS),
+            registry,
+            bus,
+            ledger,
+            health,
+            shutdown,
+            tls_lane,
+            live,
+            active: Vec::with_capacity(MAX_CONNECTIONS),
             local: VecDeque::with_capacity(MAX_CONNECTIONS),
         }
     }
@@ -618,7 +736,11 @@ impl Reactor {
                         return ConnectProgress::Failed(io::ErrorKind::WouldBlock);
                     }
                     let flight = live.tls.as_mut().expect("WSS has a TLS flight");
-                    if flight.ticket.as_ref().is_none_or(|ticket| !ticket.reserved()) {
+                    if flight
+                        .ticket
+                        .as_ref()
+                        .is_none_or(|ticket| !ticket.reserved())
+                    {
                         return ConnectProgress::Failed(io::ErrorKind::ConnectionAborted);
                     }
                     let key = HandoffKey {
@@ -629,15 +751,20 @@ impl Reactor {
                         transfer_seq: flight.proof.transfer_seq(),
                     };
                     let old = std::mem::replace(&mut live.endpoint, Endpoint::InitialTls(key));
-                    let Endpoint::Tcp(old) = old else { unreachable!("connected TCP endpoint") };
+                    let Endpoint::Tcp(old) = old else {
+                        unreachable!("connected TCP endpoint")
+                    };
                     let (socket, retire) = old.take_registered();
                     let charge = live.registration.take_charge();
-                    let resource = GameTlsResource::new(
-                        socket, std::mem::take(&mut flight.host), charge,
-                    );
+                    let resource =
+                        GameTlsResource::new(socket, std::mem::take(&mut flight.host), charge);
                     match lane.cell().submit(
-                        key, Arc::clone(&flight.proof), flight.token.clone(),
-                        Arc::clone(&retire), flight.deadline, resource,
+                        key,
+                        Arc::clone(&flight.proof),
+                        flight.token.clone(),
+                        Arc::clone(&retire),
+                        flight.deadline,
+                        resource,
                     ) {
                         Ok(_) => {
                             // The socket was registered before the worker
@@ -674,8 +801,9 @@ impl Reactor {
                                     super::shared::StreamExitReason::Tls(format!("{failure:?}")),
                                 );
                                 let kind = match failure {
-                                    WorkerFailure::Verification | WorkerFailure::Handshake =>
-                                        io::ErrorKind::InvalidData,
+                                    WorkerFailure::Verification | WorkerFailure::Handshake => {
+                                        io::ErrorKind::InvalidData
+                                    }
                                     _ => io::ErrorKind::ConnectionAborted,
                                 };
                                 ConnectProgress::Failed(kind)
@@ -696,16 +824,23 @@ impl Reactor {
                                     authority.push_str(&flight.port.to_string());
                                 }
                                 match WssEndpoint::new(
-                                    key.identity.binding, &authority, resource.socket, connection,
-                                    Arc::clone(&live.registration.shared), flight.token.clone(),
-                                    Some(flight.deadline), accepted.retirement,
+                                    key.identity.binding,
+                                    &authority,
+                                    resource.socket,
+                                    connection,
+                                    Arc::clone(&live.registration.shared),
+                                    flight.token.clone(),
+                                    Some(flight.deadline),
+                                    accepted.retirement,
                                 ) {
                                     Ok(mut endpoint) => {
                                         let interest = endpoint.apply_interest(registry);
                                         live.endpoint = Endpoint::Wss(endpoint);
                                         let finished = lane.cell().finish_accept(key);
                                         if interest.is_err() || finished.is_err() {
-                                            ConnectProgress::Failed(io::ErrorKind::ConnectionAborted)
+                                            ConnectProgress::Failed(
+                                                io::ErrorKind::ConnectionAborted,
+                                            )
                                         } else {
                                             ConnectProgress::Local
                                         }
@@ -738,16 +873,21 @@ impl Reactor {
     /// A worker completion wakes the shared Mio waker, not a per-connection
     /// event. Schedule its exact pending binding on the next reactor turn.
     fn enqueue_tls_return(&mut self) {
-        let Some(lane) = self.tls_lane.lock().unwrap().clone() else { return; };
+        let Some(lane) = self.tls_lane.lock().unwrap().clone() else {
+            return;
+        };
         lane.notify_capacity();
-        if !matches!(lane.cell().phase(), HandoffPhase::Returned | HandoffPhase::Released) {
+        if !matches!(
+            lane.cell().phase(),
+            HandoffPhase::Returned | HandoffPhase::Released
+        ) {
             return;
         }
         for pos in 0..self.active.len() {
             let id = self.active[pos];
-            if self.live[index(id)].as_ref().is_some_and(|live|
-                live.registration.id == id && matches!(&live.endpoint, Endpoint::InitialTls(_)))
-            {
+            if self.live[index(id)].as_ref().is_some_and(|live| {
+                live.registration.id == id && matches!(&live.endpoint, Endpoint::InitialTls(_))
+            }) {
                 self.enqueue(id);
                 break;
             }
@@ -761,7 +901,11 @@ impl Reactor {
             self.scan_deadlines(Instant::now());
             self.enqueue_tls_return();
             self.drive_local();
-            let timeout = if self.local.is_empty() { REACTOR_POLL_MAX } else { Duration::ZERO };
+            let timeout = if self.local.is_empty() {
+                REACTOR_POLL_MAX
+            } else {
+                Duration::ZERO
+            };
             self.health.progress(Instant::now());
             if let Err(error) = self.poll.poll(&mut self.events, Some(timeout)) {
                 if error.kind() != io::ErrorKind::Interrupted {
@@ -786,12 +930,19 @@ impl Reactor {
             }
             for pos in 0..self.ready.len() {
                 let (id, readable, writable) = self.ready[pos];
-                let Some(live) = self.live.get_mut(index(id)).and_then(Option::as_mut) else { continue; };
-                if live.registration.id != id { continue; }
+                let Some(live) = self.live.get_mut(index(id)).and_then(Option::as_mut) else {
+                    continue;
+                };
+                if live.registration.id != id {
+                    continue;
+                }
                 let was_connected = live.connected_reply;
                 let step = match &mut live.endpoint {
                     Endpoint::Tcp(endpoint) => match endpoint.on_event(
-                        self.poll.registry(), readable, writable, Instant::now(),
+                        self.poll.registry(),
+                        readable,
+                        writable,
+                        Instant::now(),
                     ) {
                         TcpStep::Retry | TcpStep::Ready => EventStep::Local,
                         TcpStep::Connecting => EventStep::Wait,
@@ -800,8 +951,12 @@ impl Reactor {
                     Endpoint::InitialTls(key) => {
                         let lane = self.tls_lane.lock().unwrap().clone();
                         if let Some(lane) = lane {
-                            if readable { lane.cell().publish_ready(*key, ReadyDirection::Read); }
-                            if writable { lane.cell().publish_ready(*key, ReadyDirection::Write); }
+                            if readable {
+                                lane.cell().publish_ready(*key, ReadyDirection::Read);
+                            }
+                            if writable {
+                                lane.cell().publish_ready(*key, ReadyDirection::Write);
+                            }
                         }
                         EventStep::Wait
                     }
@@ -813,21 +968,26 @@ impl Reactor {
                                 WssStep::Ready | WssStep::Progress => EventStep::Local,
                                 WssStep::Wait => EventStep::Wait,
                                 WssStep::Failed(error) => EventStep::Failed(error),
-                            }
+                            },
                         }
                     }
                 };
                 match step {
                     EventStep::Local => self.enqueue(id),
-                    EventStep::Wait => {},
+                    EventStep::Wait => {}
                     EventStep::Failed(error) => {
-                        let failure = (!was_connected).then(|| (
-                            Arc::clone(&live.registration.shared),
-                            live.endpoint.binding(), error.kind(),
-                        ));
+                        let failure = (!was_connected).then(|| {
+                            (
+                                Arc::clone(&live.registration.shared),
+                                live.endpoint.binding(),
+                                error.kind(),
+                            )
+                        });
                         self.close(id, None);
                         if let Some((shared, binding, kind)) = failure {
-                            shared.control.publish_primary(PrimaryReply::ConnectFailed { binding, kind });
+                            shared
+                                .control
+                                .publish_primary(PrimaryReply::ConnectFailed { binding, kind });
                         }
                     }
                 }
@@ -838,14 +998,22 @@ impl Reactor {
 
     fn process_commands(&mut self) {
         for _ in 0..MAX_CONNECTIONS {
-            let Some(id) = self.bus.pop_id() else { break; };
-            let Some(registration) = self.registry.lock().unwrap().get(id) else { continue; };
+            let Some(id) = self.bus.pop_id() else {
+                break;
+            };
+            let Some(registration) = self.registry.lock().unwrap().get(id) else {
+                continue;
+            };
             let control = &registration.shared.control;
             self.bus.mark_taken(control);
             if let Some(close) = control.take_close() {
                 if self.handle_close(id, close) {
                     if let Some(command) = control.take_primary() {
-                        Self::reject_command(&registration.shared, command, RejectedCommand::Closed);
+                        Self::reject_command(
+                            &registration.shared,
+                            command,
+                            RejectedCommand::Closed,
+                        );
                     }
                     continue;
                 }
@@ -856,7 +1024,10 @@ impl Reactor {
             let resume = control.take_resume_read();
             let output = control.take_output_kick();
             let mut schedule = false;
-            if let Some(live) = self.live[index(id)].as_mut().filter(|live| live.registration.id == id) {
+            if let Some(live) = self.live[index(id)]
+                .as_mut()
+                .filter(|live| live.registration.id == id)
+            {
                 if resume == live.endpoint.binding().binding && live.graceful_by.is_none() {
                     live.endpoint.resume_read();
                     schedule = true;
@@ -867,13 +1038,16 @@ impl Reactor {
                 }
             }
             if schedule {
-                let interest_failed = self.live[index(id)].as_mut()
+                let interest_failed = self.live[index(id)]
+                    .as_mut()
                     .filter(|live| live.registration.id == id)
                     .and_then(|live| match &mut live.endpoint {
-                        Endpoint::Wss(endpoint) =>
-                            Some(endpoint.apply_interest(self.poll.registry()).is_err()),
+                        Endpoint::Wss(endpoint) => {
+                            Some(endpoint.apply_interest(self.poll.registry()).is_err())
+                        }
                         _ => None,
-                    }).unwrap_or(false);
+                    })
+                    .unwrap_or(false);
                 if interest_failed {
                     self.close(id, None);
                 } else {
@@ -888,34 +1062,71 @@ impl Reactor {
         match command {
             PrimaryCommand::Connect(connect) => {
                 if self.live[index(id)].is_some() || connect.binding.connection != id {
-                    Self::reject_command(&registration.shared, PrimaryCommand::Connect(connect), RejectedCommand::StaleIdentity);
+                    Self::reject_command(
+                        &registration.shared,
+                        PrimaryCommand::Connect(connect),
+                        RejectedCommand::StaleIdentity,
+                    );
                     return;
                 }
                 let ConnectCommand {
-                    binding, transport, host, port, addresses, cancel, deadline, retire,
-                    queue_release, tls_ticket,
+                    binding,
+                    transport,
+                    host,
+                    port,
+                    addresses,
+                    cancel,
+                    deadline,
+                    retire,
+                    queue_release,
+                    tls_ticket,
                 } = connect;
                 let tls = match (transport, deadline, queue_release, tls_ticket) {
                     (Transport::Tcp, _, None, None) => None,
-                    (Transport::Wss, Some(deadline), Some(proof), Some(ticket)) =>
-                        Some(TlsFlight { host, port, token: cancel.clone(), deadline, proof, ticket: Some(ticket) }),
+                    (Transport::Wss, Some(deadline), Some(proof), Some(ticket)) => {
+                        Some(TlsFlight {
+                            host,
+                            port,
+                            token: cancel.clone(),
+                            deadline,
+                            proof,
+                            ticket: Some(ticket),
+                        })
+                    }
                     _ => {
                         retire.ack();
                         registration.release_charge();
                         registration.shared.publish_closed();
-                        registration.shared.control.publish_primary(PrimaryReply::Rejected {
-                            binding, reason: RejectedCommand::StaleIdentity,
-                        });
+                        registration
+                            .shared
+                            .control
+                            .publish_primary(PrimaryReply::Rejected {
+                                binding,
+                                reason: RejectedCommand::StaleIdentity,
+                            });
                         let _ = self.registry.lock().unwrap().remove(id);
                         return;
                     }
                 };
-                match TcpEndpoint::new(binding, addresses, Arc::clone(&registration.shared), cancel, deadline, Arc::clone(&retire)) {
+                match TcpEndpoint::new(
+                    binding,
+                    addresses,
+                    Arc::clone(&registration.shared),
+                    cancel,
+                    deadline,
+                    Arc::clone(&retire),
+                ) {
                     Ok(endpoint) => {
                         self.active.push(id);
                         self.live[index(id)] = Some(Live {
-                            registration, endpoint: Endpoint::Tcp(endpoint), connected_reply: false, queued: false,
-                            rebind: None, graceful_by: None, close_ack: None, tls,
+                            registration,
+                            endpoint: Endpoint::Tcp(endpoint),
+                            connected_reply: false,
+                            queued: false,
+                            rebind: None,
+                            graceful_by: None,
+                            close_ack: None,
+                            tls,
                         });
                         self.enqueue(id);
                     }
@@ -923,58 +1134,113 @@ impl Reactor {
                         retire.ack();
                         registration.release_charge();
                         registration.shared.publish_closed();
-                        registration.shared.control.publish_primary(
-                            PrimaryReply::ConnectFailed { binding, kind: error.kind() },
-                        );
+                        registration
+                            .shared
+                            .control
+                            .publish_primary(PrimaryReply::ConnectFailed {
+                                binding,
+                                kind: error.kind(),
+                            });
                         let _ = self.registry.lock().unwrap().remove(id);
                     }
                 }
             }
             PrimaryCommand::Seal { binding } => {
-                let Some(live) = self.live[index(id)].as_mut().filter(|live| live.registration.id == id) else {
-                    registration.shared.control.publish_primary(PrimaryReply::Rejected { binding, reason: RejectedCommand::Closed });
+                let Some(live) = self.live[index(id)]
+                    .as_mut()
+                    .filter(|live| live.registration.id == id)
+                else {
+                    registration
+                        .shared
+                        .control
+                        .publish_primary(PrimaryReply::Rejected {
+                            binding,
+                            reason: RejectedCommand::Closed,
+                        });
                     return;
                 };
                 let reply = match live.endpoint.seal(binding, Instant::now()) {
-                    Ok(confirmed_at) => PrimaryReply::Sealed { binding, confirmed_at },
+                    Ok(confirmed_at) => PrimaryReply::Sealed {
+                        binding,
+                        confirmed_at,
+                    },
                     Err(reason) => PrimaryReply::Rejected { binding, reason },
                 };
                 registration.shared.control.publish_primary(reply);
             }
-            PrimaryCommand::Rebind { expected, next, deadline, cancel, retire } => {
-                let Some(live) = self.live[index(id)].as_mut().filter(|live| live.registration.id == id) else {
+            PrimaryCommand::Rebind {
+                expected,
+                next,
+                deadline,
+                cancel,
+                retire,
+            } => {
+                let Some(live) = self.live[index(id)]
+                    .as_mut()
+                    .filter(|live| live.registration.id == id)
+                else {
                     retire.ack();
-                    registration.shared.control.publish_primary(PrimaryReply::Rejected { binding: next, reason: RejectedCommand::Closed });
+                    registration
+                        .shared
+                        .control
+                        .publish_primary(PrimaryReply::Rejected {
+                            binding: next,
+                            reason: RejectedCommand::Closed,
+                        });
                     return;
                 };
                 if matches!(&live.endpoint, Endpoint::InitialTls(_)) {
                     retire.ack();
-                    registration.shared.control.publish_primary(PrimaryReply::Rejected {
-                        binding: next, reason: RejectedCommand::WorkerOwned,
-                    });
+                    registration
+                        .shared
+                        .control
+                        .publish_primary(PrimaryReply::Rejected {
+                            binding: next,
+                            reason: RejectedCommand::WorkerOwned,
+                        });
                     return;
                 }
                 if !live.connected_reply {
                     retire.ack();
-                    registration.shared.control.publish_primary(PrimaryReply::Rejected {
-                        binding: next, reason: RejectedCommand::StaleIdentity,
-                    });
+                    registration
+                        .shared
+                        .control
+                        .publish_primary(PrimaryReply::Rejected {
+                            binding: next,
+                            reason: RejectedCommand::StaleIdentity,
+                        });
                     return;
                 }
                 if expected != live.endpoint.binding() || live.rebind.is_some() {
                     retire.ack();
-                    registration.shared.control.publish_primary(PrimaryReply::Rejected { binding: next, reason: RejectedCommand::StaleIdentity });
+                    registration
+                        .shared
+                        .control
+                        .publish_primary(PrimaryReply::Rejected {
+                            binding: next,
+                            reason: RejectedCommand::StaleIdentity,
+                        });
                     return;
                 }
-                live.rebind = Some(RebindPending { expected, next, deadline, token: cancel, retire });
+                live.rebind = Some(RebindPending {
+                    expected,
+                    next,
+                    deadline,
+                    token: cancel,
+                    retire,
+                });
                 self.enqueue(id);
             }
         }
     }
 
     fn handle_close(&mut self, id: u64, command: CloseCommand) -> bool {
-        let Some(registration) = self.registry.lock().unwrap().get(id) else { return false; };
-        let current = self.live[index(id)].as_ref().filter(|live| live.registration.id == id)
+        let Some(registration) = self.registry.lock().unwrap().get(id) else {
+            return false;
+        };
+        let current = self.live[index(id)]
+            .as_ref()
+            .filter(|live| live.registration.id == id)
             .is_some_and(|live| live.endpoint.binding() == command.binding);
         if !current && self.live[index(id)].is_some() {
             return false;
@@ -1000,7 +1266,8 @@ impl Reactor {
         if let Some(pos) = self.active.iter().position(|&active| active == id) {
             self.active.swap_remove(pos);
         }
-        let live = self.live[index(id)].as_ref()
+        let live = self.live[index(id)]
+            .as_ref()
             .is_some_and(|live| live.registration.id == id)
             .then(|| self.live[index(id)].take())
             .flatten();
@@ -1012,21 +1279,34 @@ impl Reactor {
             close_ack = close_ack.or(live.close_ack);
             if let Some(rebind) = live.rebind.take() {
                 rebind.retire.ack();
-                live.registration.shared.control.publish_primary(PrimaryReply::Rejected {
-                    binding: rebind.next, reason: RejectedCommand::Closed,
-                });
+                live.registration
+                    .shared
+                    .control
+                    .publish_primary(PrimaryReply::Rejected {
+                        binding: rebind.next,
+                        reason: RejectedCommand::Closed,
+                    });
             }
             let reason = if self.shutdown.load(Ordering::Acquire) {
                 RevocationReason::Shutdown
-            } else if live.tls.as_ref().is_some_and(|flight| flight.token.is_cancelled()) {
+            } else if live
+                .tls
+                .as_ref()
+                .is_some_and(|flight| flight.token.is_cancelled())
+            {
                 RevocationReason::Cancelled
-            } else if live.tls.as_ref().is_some_and(|flight| Instant::now() >= flight.deadline) {
+            } else if live
+                .tls
+                .as_ref()
+                .is_some_and(|flight| Instant::now() >= flight.deadline)
+            {
                 RevocationReason::Deadline
             } else {
                 RevocationReason::Cancelled
             };
             let lane = self.tls_lane.lock().unwrap().clone();
-            live.endpoint.close(self.poll.registry(), lane.as_deref(), reason);
+            live.endpoint
+                .close(self.poll.registry(), lane.as_deref(), reason);
         } else if let Some(registration) = self.registry.lock().unwrap().get(id) {
             registration.shared.publish_closed();
         }
@@ -1046,26 +1326,42 @@ impl Reactor {
         let mut pos = 0;
         while pos < self.active.len() {
             let id = self.active[pos];
-            let live = self.live[index(id)].as_ref().expect("active ID has a connection");
-            let attempt_failure = live.endpoint.attempt_failure(now).or_else(|| live.tls.as_ref().and_then(|flight| {
-                if flight.token.is_cancelled() {
-                    Some(io::ErrorKind::Interrupted)
-                } else if now >= flight.deadline {
-                    Some(io::ErrorKind::TimedOut)
-                } else {
-                    None
-                }
-            }));
+            let live = self.live[index(id)]
+                .as_ref()
+                .expect("active ID has a connection");
+            let attempt_failure = live.endpoint.attempt_failure(now).or_else(|| {
+                live.tls.as_ref().and_then(|flight| {
+                    if flight.token.is_cancelled() {
+                        Some(io::ErrorKind::Interrupted)
+                    } else if now >= flight.deadline {
+                        Some(io::ErrorKind::TimedOut)
+                    } else {
+                        None
+                    }
+                })
+            });
             if attempt_failure.is_some() || live.graceful_by.is_some_and(|by| now >= by) {
-                let failure = attempt_failure.filter(|_| !live.connected_reply).map(|kind| (
-                    Arc::clone(&live.registration.shared), live.endpoint.binding(), kind,
-                ));
+                let failure = attempt_failure
+                    .filter(|_| !live.connected_reply)
+                    .map(|kind| {
+                        (
+                            Arc::clone(&live.registration.shared),
+                            live.endpoint.binding(),
+                            kind,
+                        )
+                    });
                 self.close(id, None);
                 if let Some((shared, binding, kind)) = failure {
-                    shared.control.publish_primary(PrimaryReply::ConnectFailed { binding, kind });
+                    shared
+                        .control
+                        .publish_primary(PrimaryReply::ConnectFailed { binding, kind });
                 }
             } else {
-                if live.rebind.as_ref().is_some_and(|rebind| rebind.token.is_cancelled() || now >= rebind.deadline) {
+                if live
+                    .rebind
+                    .as_ref()
+                    .is_some_and(|rebind| rebind.token.is_cancelled() || now >= rebind.deadline)
+                {
                     self.enqueue(id);
                 }
                 pos += 1;
@@ -1076,9 +1372,16 @@ impl Reactor {
     fn drive_local(&mut self) {
         let round = self.local.len();
         for _ in 0..round {
-            let Some(id) = self.local.pop_front() else { break; };
+            let Some(id) = self.local.pop_front() else {
+                break;
+            };
             self.ledger.dequeue_local_work();
-            let Some(live) = self.live[index(id)].as_mut().filter(|live| live.registration.id == id) else { continue; };
+            let Some(live) = self.live[index(id)]
+                .as_mut()
+                .filter(|live| live.registration.id == id)
+            else {
+                continue;
+            };
             live.queued = false;
             let mut failed_connect = None;
             let outcome = if !live.connected_reply {
@@ -1087,17 +1390,24 @@ impl Reactor {
                     ConnectProgress::Connected => {
                         live.connected_reply = true;
                         live.tls = None;
-                        live.registration.shared.accept_binding(live.endpoint.binding());
-                        live.registration.shared.control.publish_primary(
-                            PrimaryReply::Connected { binding: live.endpoint.binding() },
-                        );
+                        live.registration
+                            .shared
+                            .accept_binding(live.endpoint.binding());
+                        live.registration
+                            .shared
+                            .control
+                            .publish_primary(PrimaryReply::Connected {
+                                binding: live.endpoint.binding(),
+                            });
                         TurnOutcome::Local
                     }
                     ConnectProgress::Local => TurnOutcome::Local,
                     ConnectProgress::Wait => TurnOutcome::Wait,
                     ConnectProgress::Failed(kind) => {
                         failed_connect = Some((
-                            Arc::clone(&live.registration.shared), live.endpoint.binding(), kind,
+                            Arc::clone(&live.registration.shared),
+                            live.endpoint.binding(),
+                            kind,
                         ));
                         TurnOutcome::Close
                     }
@@ -1133,11 +1443,13 @@ impl Reactor {
             };
             match outcome {
                 TurnOutcome::Local => self.enqueue(id),
-                TurnOutcome::Wait => {},
+                TurnOutcome::Wait => {}
                 TurnOutcome::Close => {
                     self.close(id, None);
                     if let Some((shared, binding, kind)) = failed_connect {
-                        shared.control.publish_primary(PrimaryReply::ConnectFailed { binding, kind });
+                        shared
+                            .control
+                            .publish_primary(PrimaryReply::ConnectFailed { binding, kind });
                     }
                 }
             }
@@ -1148,13 +1460,23 @@ impl Reactor {
     fn drive_rebind(live: &mut Live) -> TurnOutcome {
         let pending = live.rebind.as_ref().expect("rebind command retained");
         let now = Instant::now();
-        let failure = if pending.token.is_cancelled() { Some(RejectedCommand::Revoked) }
-            else if now >= pending.deadline { Some(RejectedCommand::Deadline) }
-            else { None };
+        let failure = if pending.token.is_cancelled() {
+            Some(RejectedCommand::Revoked)
+        } else if now >= pending.deadline {
+            Some(RejectedCommand::Deadline)
+        } else {
+            None
+        };
         if let Some(reason) = failure {
             let pending = live.rebind.take().unwrap();
             pending.retire.ack();
-            live.registration.shared.control.publish_primary(PrimaryReply::Rejected { binding: pending.next, reason });
+            live.registration
+                .shared
+                .control
+                .publish_primary(PrimaryReply::Rejected {
+                    binding: pending.next,
+                    reason,
+                });
             return TurnOutcome::Wait;
         }
         match live.endpoint.drain_for_rebind() {
@@ -1163,13 +1485,22 @@ impl Reactor {
             Ok(RebindBoundary::Clean) => {
                 let pending = live.rebind.take().unwrap();
                 let reply = match live.endpoint.rebind(
-                    pending.expected, pending.next, pending.deadline, Instant::now(),
-                    pending.token, Arc::clone(&pending.retire),
+                    pending.expected,
+                    pending.next,
+                    pending.deadline,
+                    Instant::now(),
+                    pending.token,
+                    Arc::clone(&pending.retire),
                 ) {
-                    Ok(()) => PrimaryReply::Rebound { binding: pending.next },
+                    Ok(()) => PrimaryReply::Rebound {
+                        binding: pending.next,
+                    },
                     Err(reason) => {
                         pending.retire.ack();
-                        PrimaryReply::Rejected { binding: pending.next, reason }
+                        PrimaryReply::Rejected {
+                            binding: pending.next,
+                            reason,
+                        }
                     }
                 };
                 live.registration.shared.control.publish_primary(reply);
@@ -1180,8 +1511,15 @@ impl Reactor {
     }
 
     fn enqueue(&mut self, id: u64) {
-        let Some(live) = self.live[index(id)].as_mut().filter(|live| live.registration.id == id) else { return; };
-        if live.queued { return; }
+        let Some(live) = self.live[index(id)]
+            .as_mut()
+            .filter(|live| live.registration.id == id)
+        else {
+            return;
+        };
+        if live.queued {
+            return;
+        }
         if self.ledger.enqueue_local_work().is_err() {
             self.health.latch(ReactorLoss::ProgressLost);
             return;
@@ -1192,11 +1530,19 @@ impl Reactor {
 
     fn reject_command(shared: &SharedConnection, command: PrimaryCommand, reason: RejectedCommand) {
         let binding = match command {
-            PrimaryCommand::Connect(connect) => { connect.retire.ack(); connect.binding }
+            PrimaryCommand::Connect(connect) => {
+                connect.retire.ack();
+                connect.binding
+            }
             PrimaryCommand::Seal { binding } => binding,
-            PrimaryCommand::Rebind { next, retire, .. } => { retire.ack(); next }
+            PrimaryCommand::Rebind { next, retire, .. } => {
+                retire.ack();
+                next
+            }
         };
-        shared.control.publish_primary(PrimaryReply::Rejected { binding, reason });
+        shared
+            .control
+            .publish_primary(PrimaryReply::Rejected { binding, reason });
     }
 }
 
@@ -1213,7 +1559,11 @@ impl Drop for Reactor {
                 let rebind = live.rebind.take();
                 let close_ack = live.close_ack;
                 let lane = self.tls_lane.lock().unwrap().clone();
-                live.endpoint.close(self.poll.registry(), lane.as_deref(), RevocationReason::Shutdown);
+                live.endpoint.close(
+                    self.poll.registry(),
+                    lane.as_deref(),
+                    RevocationReason::Shutdown,
+                );
                 let registration = { self.registry.lock().unwrap().entries[slot].take() };
                 if let Some(registration) = registration {
                     if let Some(command) = shared.control.take_primary() {
@@ -1224,15 +1574,22 @@ impl Drop for Reactor {
                 if let Some(rebind) = rebind {
                     rebind.retire.ack();
                     shared.control.publish_primary(PrimaryReply::Rejected {
-                        binding: rebind.next, reason: RejectedCommand::Unavailable,
+                        binding: rebind.next,
+                        reason: RejectedCommand::Unavailable,
                     });
                 } else if pending_connect && !shared.control.has_primary_reply() {
                     shared.control.publish_primary(PrimaryReply::Rejected {
-                        binding, reason: RejectedCommand::Unavailable,
+                        binding,
+                        reason: RejectedCommand::Unavailable,
                     });
                 }
-                let close_ack = close_ack.or_else(|| shared.control.take_close()
-                    .filter(|close| close.binding == binding).map(|close| close.binding));
+                let close_ack = close_ack.or_else(|| {
+                    shared
+                        .control
+                        .take_close()
+                        .filter(|close| close.binding == binding)
+                        .map(|close| close.binding)
+                });
                 if let Some(close_ack) = close_ack {
                     if !shared.control.has_close_reply() {
                         shared.control.publish_closed(close_ack);
@@ -1247,12 +1604,18 @@ impl Drop for Reactor {
             let registration = { self.registry.lock().unwrap().entries[slot].take() };
             if let Some(registration) = registration {
                 if let Some(command) = registration.shared.control.take_primary() {
-                    Self::reject_command(&registration.shared, command, RejectedCommand::Unavailable);
+                    Self::reject_command(
+                        &registration.shared,
+                        command,
+                        RejectedCommand::Unavailable,
+                    );
                 }
                 registration.release_charge();
                 registration.shared.publish_closed();
                 if let Some(close) = registration.shared.control.take_close() {
-                    if close.binding == registration.initial && !registration.shared.control.has_close_reply() {
+                    if close.binding == registration.initial
+                        && !registration.shared.control.has_close_reply()
+                    {
                         registration.shared.control.publish_closed(close.binding);
                     }
                 }
@@ -1263,10 +1626,10 @@ impl Drop for Reactor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::net::TcpListener;
     use super::super::cancel::CancelSource;
     use super::super::park::ParkOutcome;
+    use super::*;
+    use std::net::TcpListener;
 
     #[test]
     fn unused_reservation_releases_connection_charge_without_a_socket() {
@@ -1283,38 +1646,72 @@ mod tests {
     fn close_before_connect_dispatch_rejects_and_retires_the_accepted_command() {
         let poll = Poll::new().unwrap();
         let registry = Arc::new(Mutex::new(Registered::new()));
-        let bus = Arc::new(CommandBus::new(Arc::new(Waker::new(poll.registry(), WAKE_TOKEN).unwrap())));
+        let bus = Arc::new(CommandBus::new(Arc::new(
+            Waker::new(poll.registry(), WAKE_TOKEN).unwrap(),
+        )));
         let ledger = ResourceLedger::new();
         let health = Arc::new(ReactorHealth::new(Instant::now()));
         let shutdown = Arc::new(AtomicBool::new(false));
         let tls_lane = Arc::new(Mutex::new(None));
         let mut reactor = Reactor::new(
-            poll, Arc::clone(&registry), Arc::clone(&bus), Arc::clone(&ledger),
-            Arc::clone(&health), Arc::clone(&shutdown), Arc::clone(&tls_lane),
+            poll,
+            Arc::clone(&registry),
+            Arc::clone(&bus),
+            Arc::clone(&ledger),
+            Arc::clone(&health),
+            Arc::clone(&shutdown),
+            Arc::clone(&tls_lane),
         );
         let service = TransportService {
-            incarnation: 77, registry, bus, ledger, health,
-            loss_notified: AtomicBool::new(false), next_id: AtomicU64::new(1),
-            shutdown, tls_lane, worker: Mutex::new(None),
+            incarnation: 77,
+            registry,
+            bus,
+            ledger,
+            health,
+            loss_notified: AtomicBool::new(false),
+            next_id: AtomicU64::new(1),
+            shutdown,
+            tls_lane,
+            worker: Mutex::new(None),
         };
         let park = Arc::new(Park::new());
         let token = CancelSource::new(Arc::clone(&park)).child().unwrap();
         let (binding, shared) = service.reserve(park, token.generation()).unwrap();
         let retire = Arc::new(AttemptRetire::new(token.generation()));
-        shared.control.post_close(
-            CloseCommand { binding, reason: CloseReason::Cancelled }, &service.bus(),
-        ).unwrap();
+        shared
+            .control
+            .post_close(
+                CloseCommand {
+                    binding,
+                    reason: CloseReason::Cancelled,
+                },
+                &service.bus(),
+            )
+            .unwrap();
         let mut addresses = super::super::resolver::ResolvedAddresses::new();
         assert!(addresses.push("127.0.0.1:9".parse().unwrap()));
-        service.submit_connect(ConnectCommand {
-            binding, transport: Transport::Tcp, host: String::new(), port: 9, addresses,
-            deadline: Some(Instant::now() + Duration::from_secs(2)),
-            cancel: token, retire: Arc::clone(&retire), queue_release: None, tls_ticket: None,
-        }).unwrap();
+        service
+            .submit_connect(ConnectCommand {
+                binding,
+                transport: Transport::Tcp,
+                host: String::new(),
+                port: 9,
+                addresses,
+                deadline: Some(Instant::now() + Duration::from_secs(2)),
+                cancel: token,
+                retire: Arc::clone(&retire),
+                queue_release: None,
+                tls_ticket: None,
+            })
+            .unwrap();
         reactor.process_commands();
-        assert_eq!(shared.control.take_primary_reply(), Some(PrimaryReply::Rejected {
-            binding, reason: RejectedCommand::Closed,
-        }));
+        assert_eq!(
+            shared.control.take_primary_reply(),
+            Some(PrimaryReply::Rejected {
+                binding,
+                reason: RejectedCommand::Closed,
+            })
+        );
         assert_eq!(shared.control.take_closed(), Some(binding));
         assert_eq!(retire.ack_count(), 1);
         assert_eq!(service.ledger().snapshot().connections, 0);
@@ -1324,19 +1721,33 @@ mod tests {
     fn reactor_exit_releases_unconsumed_connect_and_its_charge() {
         let poll = Poll::new().unwrap();
         let registry = Arc::new(Mutex::new(Registered::new()));
-        let bus = Arc::new(CommandBus::new(Arc::new(Waker::new(poll.registry(), WAKE_TOKEN).unwrap())));
+        let bus = Arc::new(CommandBus::new(Arc::new(
+            Waker::new(poll.registry(), WAKE_TOKEN).unwrap(),
+        )));
         let ledger = ResourceLedger::new();
         let health = Arc::new(ReactorHealth::new(Instant::now()));
         let shutdown = Arc::new(AtomicBool::new(false));
         let tls_lane = Arc::new(Mutex::new(None));
         let reactor = Reactor::new(
-            poll, Arc::clone(&registry), Arc::clone(&bus), Arc::clone(&ledger),
-            Arc::clone(&health), Arc::clone(&shutdown), Arc::clone(&tls_lane),
+            poll,
+            Arc::clone(&registry),
+            Arc::clone(&bus),
+            Arc::clone(&ledger),
+            Arc::clone(&health),
+            Arc::clone(&shutdown),
+            Arc::clone(&tls_lane),
         );
         let service = TransportService {
-            incarnation: 79, registry, bus, ledger, health,
-            loss_notified: AtomicBool::new(false), next_id: AtomicU64::new(1),
-            shutdown, tls_lane, worker: Mutex::new(None),
+            incarnation: 79,
+            registry,
+            bus,
+            ledger,
+            health,
+            loss_notified: AtomicBool::new(false),
+            next_id: AtomicU64::new(1),
+            shutdown,
+            tls_lane,
+            worker: Mutex::new(None),
         };
         let park = Arc::new(Park::new());
         let token = CancelSource::new(Arc::clone(&park)).child().unwrap();
@@ -1344,15 +1755,28 @@ mod tests {
         let retire = Arc::new(AttemptRetire::new(token.generation()));
         let mut addresses = super::super::resolver::ResolvedAddresses::new();
         assert!(addresses.push("127.0.0.1:9".parse().unwrap()));
-        service.submit_connect(ConnectCommand {
-            binding, transport: Transport::Tcp, host: String::new(), port: 9, addresses,
-            deadline: Some(Instant::now() + Duration::from_secs(2)),
-            cancel: token, retire: Arc::clone(&retire), queue_release: None, tls_ticket: None,
-        }).unwrap();
+        service
+            .submit_connect(ConnectCommand {
+                binding,
+                transport: Transport::Tcp,
+                host: String::new(),
+                port: 9,
+                addresses,
+                deadline: Some(Instant::now() + Duration::from_secs(2)),
+                cancel: token,
+                retire: Arc::clone(&retire),
+                queue_release: None,
+                tls_ticket: None,
+            })
+            .unwrap();
         drop(reactor);
-        assert_eq!(shared.control.take_primary_reply(), Some(PrimaryReply::Rejected {
-            binding, reason: RejectedCommand::Unavailable,
-        }));
+        assert_eq!(
+            shared.control.take_primary_reply(),
+            Some(PrimaryReply::Rejected {
+                binding,
+                reason: RejectedCommand::Unavailable,
+            })
+        );
         assert_eq!(retire.ack_count(), 1);
         assert!(shared.is_closed());
         assert_eq!(service.ledger().snapshot().connections, 0);
@@ -1362,19 +1786,33 @@ mod tests {
     fn revoked_connect_retires_once_without_opening_a_socket() {
         let poll = Poll::new().unwrap();
         let registry = Arc::new(Mutex::new(Registered::new()));
-        let bus = Arc::new(CommandBus::new(Arc::new(Waker::new(poll.registry(), WAKE_TOKEN).unwrap())));
+        let bus = Arc::new(CommandBus::new(Arc::new(
+            Waker::new(poll.registry(), WAKE_TOKEN).unwrap(),
+        )));
         let ledger = ResourceLedger::new();
         let health = Arc::new(ReactorHealth::new(Instant::now()));
         let shutdown = Arc::new(AtomicBool::new(false));
         let tls_lane = Arc::new(Mutex::new(None));
         let mut reactor = Reactor::new(
-            poll, Arc::clone(&registry), Arc::clone(&bus), Arc::clone(&ledger),
-            Arc::clone(&health), Arc::clone(&shutdown), Arc::clone(&tls_lane),
+            poll,
+            Arc::clone(&registry),
+            Arc::clone(&bus),
+            Arc::clone(&ledger),
+            Arc::clone(&health),
+            Arc::clone(&shutdown),
+            Arc::clone(&tls_lane),
         );
         let service = TransportService {
-            incarnation: 78, registry, bus, ledger, health,
-            loss_notified: AtomicBool::new(false), next_id: AtomicU64::new(1),
-            shutdown, tls_lane, worker: Mutex::new(None),
+            incarnation: 78,
+            registry,
+            bus,
+            ledger,
+            health,
+            loss_notified: AtomicBool::new(false),
+            next_id: AtomicU64::new(1),
+            shutdown,
+            tls_lane,
+            worker: Mutex::new(None),
         };
         let park = Arc::new(Park::new());
         let source = CancelSource::new(Arc::clone(&park));
@@ -1383,17 +1821,30 @@ mod tests {
         let retire = Arc::new(AttemptRetire::new(token.generation()));
         let mut addresses = super::super::resolver::ResolvedAddresses::new();
         assert!(addresses.push("127.0.0.1:9".parse().unwrap()));
-        service.submit_connect(ConnectCommand {
-            binding, transport: Transport::Tcp, host: String::new(), port: 9, addresses,
-            deadline: Some(Instant::now() + Duration::from_secs(2)),
-            cancel: token, retire: Arc::clone(&retire), queue_release: None, tls_ticket: None,
-        }).unwrap();
+        service
+            .submit_connect(ConnectCommand {
+                binding,
+                transport: Transport::Tcp,
+                host: String::new(),
+                port: 9,
+                addresses,
+                deadline: Some(Instant::now() + Duration::from_secs(2)),
+                cancel: token,
+                retire: Arc::clone(&retire),
+                queue_release: None,
+                tls_ticket: None,
+            })
+            .unwrap();
         source.cancel();
         reactor.process_commands();
         reactor.drive_local();
-        assert_eq!(shared.control.take_primary_reply(), Some(PrimaryReply::ConnectFailed {
-            binding, kind: io::ErrorKind::ConnectionAborted,
-        }));
+        assert_eq!(
+            shared.control.take_primary_reply(),
+            Some(PrimaryReply::ConnectFailed {
+                binding,
+                kind: io::ErrorKind::ConnectionAborted,
+            })
+        );
         assert!(shared.is_closed());
         assert_eq!(retire.ack_count(), 1);
         assert_eq!(service.ledger().snapshot().connections, 0);
@@ -1406,27 +1857,62 @@ mod tests {
         let park = Arc::new(Park::new());
         let source = CancelSource::new(Arc::clone(&park));
         let token = source.child().unwrap();
-        let (binding, shared) = service.reserve(Arc::clone(&park), token.generation()).unwrap();
+        let (binding, shared) = service
+            .reserve(Arc::clone(&park), token.generation())
+            .unwrap();
         let retire = Arc::new(AttemptRetire::new(token.generation()));
         let mut addresses = super::super::resolver::ResolvedAddresses::new();
         assert!(addresses.push(listener.local_addr().unwrap()));
         let deadline = Instant::now() + Duration::from_secs(2);
-        service.submit_connect(ConnectCommand {
-            binding, transport: Transport::Tcp, host: String::new(), port: listener.local_addr().unwrap().port(), addresses,
-            deadline: Some(deadline), cancel: token, retire: Arc::clone(&retire),
-            queue_release: None, tls_ticket: None,
-        }).unwrap();
+        service
+            .submit_connect(ConnectCommand {
+                binding,
+                transport: Transport::Tcp,
+                host: String::new(),
+                port: listener.local_addr().unwrap().port(),
+                addresses,
+                deadline: Some(deadline),
+                cancel: token,
+                retire: Arc::clone(&retire),
+                queue_release: None,
+                tls_ticket: None,
+            })
+            .unwrap();
         let connected = park.wait(
-            deadline, Instant::now, || service.health().loss().is_some(),
-            || false, || false, || shared.control.has_primary_reply().then_some(()), false, None,
+            deadline,
+            Instant::now,
+            || service.health().loss().is_some(),
+            || false,
+            || false,
+            || shared.control.has_primary_reply().then_some(()),
+            false,
+            None,
         );
         assert_eq!(connected, ParkOutcome::Ready(()));
-        assert_eq!(shared.control.take_primary_reply(), Some(PrimaryReply::Connected { binding }));
+        assert_eq!(
+            shared.control.take_primary_reply(),
+            Some(PrimaryReply::Connected { binding })
+        );
         assert!(!retire.acknowledged());
-        shared.control.post_close(CloseCommand { binding, reason: CloseReason::Abort }, &service.bus()).unwrap();
+        shared
+            .control
+            .post_close(
+                CloseCommand {
+                    binding,
+                    reason: CloseReason::Abort,
+                },
+                &service.bus(),
+            )
+            .unwrap();
         let closed = park.wait(
-            deadline, Instant::now, || service.health().loss().is_some(),
-            || false, || false, || shared.control.has_close_reply().then_some(()), false, None,
+            deadline,
+            Instant::now,
+            || service.health().loss().is_some(),
+            || false,
+            || false,
+            || shared.control.has_close_reply().then_some(()),
+            false,
+            None,
         );
         assert_eq!(closed, ParkOutcome::Ready(()));
         assert_eq!(shared.control.take_closed(), Some(binding));

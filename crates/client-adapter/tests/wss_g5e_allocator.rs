@@ -19,7 +19,7 @@ use std::io::{self, Read, Write};
 use std::mem::MaybeUninit;
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::Arc;
 use std::thread;
@@ -153,8 +153,7 @@ static EVENT_COUNT: AtomicUsize = AtomicUsize::new(0);
 static EVENT_OVERFLOW: AtomicBool = AtomicBool::new(false);
 static CURRENT_REQUESTED_BYTES: AtomicUsize = AtomicUsize::new(0);
 static ACTIVE_PHASE: AtomicU8 = AtomicU8::new(NO_PHASE);
-static PHASE_PEAKS: [AtomicUsize; Phase::COUNT] =
-    [const { AtomicUsize::new(0) }; Phase::COUNT];
+static PHASE_PEAKS: [AtomicUsize; Phase::COUNT] = [const { AtomicUsize::new(0) }; Phase::COUNT];
 static NEXT_THREAD_ID: AtomicU64 = AtomicU64::new(1);
 
 thread_local! {
@@ -344,11 +343,7 @@ fn signed_delta(value: usize, reference: usize) -> i128 {
     value as i128 - reference as i128
 }
 
-fn snapshot(
-    phase: Phase,
-    reference_current: usize,
-    reference_rss: Option<u64>,
-) -> PhaseSnapshot {
+fn snapshot(phase: Phase, reference_current: usize, reference_rss: Option<u64>) -> PhaseSnapshot {
     let current = CURRENT_REQUESTED_BYTES.load(Ordering::Acquire);
     let peak = PHASE_PEAKS[phase.index()].load(Ordering::Acquire);
     let rss = process_peak_rss_bytes();
@@ -433,7 +428,10 @@ fn server_start(
     let mut request_len = 0;
     loop {
         if request_len == request.len() {
-            return Err(io_error(io::ErrorKind::InvalidData, "WSS request header too large"));
+            return Err(io_error(
+                io::ErrorKind::InvalidData,
+                "WSS request header too large",
+            ));
         }
         tls.read_exact(&mut request[request_len..request_len + 1])?;
         request_len += 1;
@@ -468,7 +466,10 @@ fn server_start(
     let data_result = read_and_check_client_binary(&mut tls);
     data_read
         .send(data_result.as_ref().map(|_| ()).map_err(|_| {
-            io_error(io::ErrorKind::InvalidData, "client binary frame differed from fixture")
+            io_error(
+                io::ErrorKind::InvalidData,
+                "client binary frame differed from fixture",
+            )
         }))
         .map_err(|_| io_error(io::ErrorKind::BrokenPipe, "driver dropped binary result"))?;
     data_result?;
@@ -648,10 +649,10 @@ fn make_tls_configs() -> (Arc<ClientConfig>, Arc<ServerConfig>) {
 
 fn thread_net_delta(phase: Phase, thread_id: u64, event_count: usize) -> i128 {
     let mut delta = 0i128;
-    for index in 0..event_count.min(EVENTS.len()) {
+    for slot in EVENTS.iter().take(event_count.min(EVENTS.len())) {
         // SAFETY: a complete allocator event was written to each retained
-        // index, and measurement has stopped before receipt generation.
-        let event = unsafe { *EVENTS[index].0.get() };
+        // slot, and measurement has stopped before receipt generation.
+        let event = unsafe { *slot.0.get() };
         if event.phase == phase as u8 && event.thread_id == thread_id && event.succeeded {
             let event_delta = match event.operation {
                 1 | 2 => event.new_requested_bytes as i128,
@@ -667,10 +668,10 @@ fn thread_net_delta(phase: Phase, thread_id: u64, event_count: usize) -> i128 {
 
 fn phase_event_count(phase: Phase, event_count: usize) -> usize {
     let mut count = 0;
-    for index in 0..event_count.min(EVENTS.len()) {
+    for slot in EVENTS.iter().take(event_count.min(EVENTS.len())) {
         // SAFETY: a complete allocator event was written to each retained
-        // index, and measurement has stopped before receipt generation.
-        let event = unsafe { *EVENTS[index].0.get() };
+        // slot, and measurement has stopped before receipt generation.
+        let event = unsafe { *slot.0.get() };
         if event.phase == phase as u8 {
             count += 1;
         }
@@ -728,12 +729,7 @@ fn write_snapshot(
 fn make_receipt(
     baseline_current: usize,
     baseline_rss: Option<u64>,
-    setup: PhaseSnapshot,
-    connected: PhaseSnapshot,
-    idle: PhaseSnapshot,
-    read_write: PhaseSnapshot,
-    shutdown: PhaseSnapshot,
-    retired: PhaseSnapshot,
+    snapshots: [PhaseSnapshot; 6],
     driver_thread: u64,
     fixture_thread: u64,
 ) -> String {
@@ -742,7 +738,6 @@ fn make_receipt(
         !EVENT_OVERFLOW.load(Ordering::Acquire) && event_count <= EVENTS.len(),
         "bounded allocator event recorder overflowed; refusing incomplete receipt"
     );
-    let snapshots = [setup, connected, idle, read_write, shutdown, retired];
     let rss_available = baseline_rss.is_some()
         && snapshots
             .iter()
@@ -789,10 +784,10 @@ fn make_receipt(
     output.push_str("  ],\n  \"scoped_allocation_events\": {\n    \"event_count\": ");
     write!(output, "{event_count}").expect("write event count");
     output.push_str(",\n    \"events\": [\n");
-    for index in 0..event_count {
-        // SAFETY: all indices below `event_count` were written by unique
-        // reservations, and all fixture threads have stopped before this read.
-        let event = unsafe { *EVENTS[index].0.get() };
+    for (index, slot) in EVENTS.iter().take(event_count).enumerate() {
+        // SAFETY: all retained slots were written by unique reservations,
+        // and all fixture threads have stopped before this read.
+        let event = unsafe { *slot.0.get() };
         write!(
             output,
             "      {{\"phase\":\"{}\",\"operation\":\"{}\",\"thread_id\":{},\"requested_alignment_bytes\":{},\"old_requested_bytes\":{},\"new_requested_bytes\":{},\"succeeded\":{},\"process_live_requested_bytes_after\":{}}}",
@@ -818,7 +813,9 @@ fn make_receipt(
     output.push_str(",\"static_storage_bytes\":");
     write!(output, "{}", std::mem::size_of_val(&EVENTS)).expect("write recorder storage size");
     output.push_str("},\n");
-    output.push_str("  \"source_known_reservations\": {\n    \"measured\": false,\n    \"components_bytes\": {");
+    output.push_str(
+        "  \"source_known_reservations\": {\n    \"measured\": false,\n    \"components_bytes\": {",
+    );
     for (index, (name, bytes)) in RESERVATIONS.iter().enumerate() {
         if index != 0 {
             output.push(',');
@@ -894,7 +891,8 @@ fn one_local_wss_connection_emits_scoped_allocator_receipt() {
     let mut tls = ClientConnection::new(Arc::clone(&client_config), server_name)
         .expect("create local-root TLS client");
     while tls.is_handshaking() {
-        tls.complete_io(&mut socket).expect("complete client TLS handshake");
+        tls.complete_io(&mut socket)
+            .expect("complete client TLS handshake");
     }
     let tls_stream = rustls::StreamOwned::new(tls, socket);
     let uri = format!("wss://localhost:{}/", address.port());
@@ -905,11 +903,7 @@ fn one_local_wss_connection_emits_scoped_allocator_receipt() {
     ready_rx
         .recv_timeout(IO_TIMEOUT)
         .expect("fixture completed WSS upgrade response");
-    let connected = snapshot(
-        Phase::WssConnectAndUpgrade,
-        baseline_current,
-        baseline_rss,
-    );
+    let connected = snapshot(Phase::WssConnectAndUpgrade, baseline_current, baseline_rss);
 
     begin_phase(Phase::EstablishedIdle);
     let idle = snapshot(Phase::EstablishedIdle, baseline_current, baseline_rss);
@@ -929,11 +923,7 @@ fn one_local_wss_connection_emits_scoped_allocator_receipt() {
         .recv_timeout(IO_TIMEOUT)
         .expect("fixture observed client WebSocket frame")
         .expect("fixture verified client binary frame");
-    let read_write = snapshot(
-        Phase::FragmentedReadWrite,
-        baseline_current,
-        baseline_rss,
-    );
+    let read_write = snapshot(Phase::FragmentedReadWrite, baseline_current, baseline_rss);
 
     begin_phase(Phase::Shutdown);
     command_tx
@@ -963,10 +953,8 @@ fn one_local_wss_connection_emits_scoped_allocator_receipt() {
     retired.sample_name = "after_client_websocket_drop";
     ACTIVE_PHASE.store(NO_PHASE, Ordering::Release);
 
-    assert!(
-        connected.current_requested_bytes > baseline_current,
-        "successful WSS connection must retain some requested allocations"
-    );
+    // The fixture worker may free baseline setup allocations during connect;
+    // a positive process-wide net is not a valid per-WSS allocation oracle.
     assert!(
         connected.peak_requested_bytes >= connected.current_requested_bytes,
         "connection phase must include a live-requested high-water"
@@ -976,7 +964,10 @@ fn one_local_wss_connection_emits_scoped_allocator_receipt() {
         "fragmented read/write phase must include a live-requested high-water"
     );
     let measured_event_count = EVENT_COUNT.load(Ordering::Acquire);
-    assert!(measured_event_count > 0, "scoped allocator recorded no layouts");
+    assert!(
+        measured_event_count > 0,
+        "scoped allocator recorded no layouts"
+    );
     assert!(
         phase_event_count(Phase::WssConnectAndUpgrade, measured_event_count) > 0,
         "WSS connection phase recorded no allocator events"
@@ -994,12 +985,7 @@ fn one_local_wss_connection_emits_scoped_allocator_receipt() {
     let receipt = make_receipt(
         baseline_current,
         baseline_rss,
-        setup,
-        connected,
-        idle,
-        read_write,
-        shutdown,
-        retired,
+        [setup, connected, idle, read_write, shutdown, retired],
         driver_thread,
         fixture_thread_id,
     );
@@ -1008,10 +994,7 @@ fn one_local_wss_connection_emits_scoped_allocator_receipt() {
         .create_new(true)
         .open(&output_path)
         .unwrap_or_else(|error| {
-            panic!(
-                "create G5-E receipt at {}: {error}",
-                output_path.display()
-            )
+            panic!("create G5-E receipt at {}: {error}", output_path.display())
         });
     file.write_all(receipt.as_bytes())
         .expect("write complete G5-E JSON receipt");

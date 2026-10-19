@@ -44,7 +44,6 @@ fn network_driver() -> &'static MaintenanceDriver {
     &NETWORK_DRIVER
 }
 
-
 /// A throwaway encrypted vault holding `user`/`pass` profiles with stable
 /// distinct uids. The engine auto-registers unknown accounts. Accepts
 /// `&str` or `String` entries (live twins mint per-run usernames).

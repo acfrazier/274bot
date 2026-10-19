@@ -15,6 +15,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - A hosted login keeps its prepared endpoint, cancellation identity and
   queue retirement bound through the final session commit. Embedded callers
   start the network composition explicitly and retain its maintenance driver.
+- A fast TCP login refusal remains a current queue result even if the reactor
+  closes the socket before the slot returns; clean-logout code 5 still follows
+  the five-second release cadence.
+- Hosted login timeouts retain the client's "login handshake deadline
+  passed" status; a sibling login waits for the exact socket retirement
+  before the ordinary start spacing permits it.
+- Cold-fill preparation reuses one bounded host lookup for each asset or game
+  host and preserves the failed hostname when skipping worlds that share it.
+  A slow lookup is reported from its actual resolver worker interval rather
+  than blocking a bot's preparation step.
+- Host-issued count-dialog, close-modal and door-step packets now reserve the
+  entire frame before consuming the outbound cipher; a full buffer refuses
+  instead of sending a partial request.
 
 ### Toolchain
 

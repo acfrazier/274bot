@@ -32,9 +32,7 @@ use rcgen::{
     BasicConstraints, Certificate, CertificateParams, ExtendedKeyUsagePurpose, IsCa, KeyPair,
     KeyUsagePurpose,
 };
-use rustls::client::danger::{
-    HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
-};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
 use rustls::{
     CipherSuite, ClientConfig, DigitallySignedStruct, Error as RustlsError, ProtocolVersion,
@@ -123,10 +121,7 @@ struct VerifierAudit {
 impl VerifierAudit {
     fn record_call(&self) {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        let name = thread::current()
-            .name()
-            .unwrap_or("<unnamed>")
-            .to_owned();
+        let name = thread::current().name().unwrap_or("<unnamed>").to_owned();
         self.worker_names
             .lock()
             .expect("lock verifier worker audit")
@@ -145,9 +140,7 @@ impl VerifierAudit {
             .expect("lock verifier worker audit");
         assert_eq!(worker_names.len(), expected);
         assert!(
-            worker_names
-                .iter()
-                .all(|name| name == "net-tls-handshake"),
+            worker_names.iter().all(|name| name == "net-tls-handshake"),
             "certificate verification must run on the game TLS worker: {worker_names:?}"
         );
     }
@@ -852,8 +845,11 @@ fn g2_m1_m3_m4_m7_real_worker_and_wss_endpoint_negotiate_and_exchange_tls_record
         ProtocolVersion::TLSv1_2,
         CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
     ));
-    let mut tls12_attempt =
-        LaneAttempt::start(tls12_server.address, "localhost", Arc::clone(&counted_config));
+    let mut tls12_attempt = LaneAttempt::start(
+        tls12_server.address,
+        "localhost",
+        Arc::clone(&counted_config),
+    );
     let tls12_accepted = tls12_attempt.wait_for_return();
     verifier_audit.assert_game_worker_calls(1);
     let tls12_info = tls12_server.handshake();
@@ -894,8 +890,11 @@ fn g2_m1_m3_m4_m7_real_worker_and_wss_endpoint_negotiate_and_exchange_tls_record
         ProtocolVersion::TLSv1_3,
         CipherSuite::TLS13_AES_128_GCM_SHA256,
     ));
-    let mut tls13_attempt =
-        LaneAttempt::start(tls13_server.address, "localhost", Arc::clone(&counted_config));
+    let mut tls13_attempt = LaneAttempt::start(
+        tls13_server.address,
+        "localhost",
+        Arc::clone(&counted_config),
+    );
     let tls13_accepted = tls13_attempt.wait_for_return();
     verifier_audit.assert_game_worker_calls(2);
     let tls13_info = tls13_server.handshake();

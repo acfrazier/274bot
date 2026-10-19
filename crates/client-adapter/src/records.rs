@@ -78,6 +78,10 @@ impl RecordQueue {
         let head = self.head.load(Ordering::Acquire);
         tail.wrapping_sub(head) as usize
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 #[cfg(test)]

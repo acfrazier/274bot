@@ -655,7 +655,8 @@ fn ingame_scene(c: &mut Client) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("local addr");
     let stream =
-        client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).expect("connect");
+        client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+            .expect("connect");
     std::mem::forget(listener);
     c.stream = Some(stream);
     c.ingame = true;

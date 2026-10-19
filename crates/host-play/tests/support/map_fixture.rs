@@ -18,10 +18,13 @@ static NEXT: AtomicU64 = AtomicU64::new(0);
 pub struct MapFixture {
     pub root: PathBuf,
     pub template: Arc<SharedClientTemplate>,
+    _network_driver: client_adapter::service::MaintenanceDriver,
 }
 
 impl MapFixture {
     pub fn new(world: &NavWorld, profile: &str) -> Self {
+        let network_driver = client_adapter::service::NetworkService::start_composition()
+            .expect("map fixture starts its network composition");
         let root = std::env::temp_dir().join(format!(
             "274bot-map-actions-{}-{}",
             std::process::id(),
@@ -119,7 +122,11 @@ impl MapFixture {
         .bind()
         .unwrap();
         let template = SharedClientTemplate::load(profile).unwrap();
-        Self { root, template }
+        Self {
+            root,
+            template,
+            _network_driver: network_driver,
+        }
     }
 
     pub fn play(&self, origin: Tile) -> Play {

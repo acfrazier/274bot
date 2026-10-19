@@ -250,6 +250,11 @@ fn response_15_reconnect(c: &mut client::client::Client) {
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     c.config.port = listener.local_addr().unwrap().port();
+    // Reconnect's response-15 path reuses a client-owned socket. Bypass only
+    // the host connector in this protocol fixture, not the login wire path.
+    c.stream =
+        Some(client::io::ClientStream::connect_tcp_for_test("127.0.0.1", c.config.port).unwrap());
+    c.baton = true;
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         stream
@@ -912,6 +917,8 @@ ScriptRegistry.register({ name: 'NatureCrafter', create: () => new NatureCrafter
 
 #[test]
 fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
+    let _network_driver = client_adapter::service::NetworkService::start_composition()
+        .expect("TUI fixture starts its network composition");
     for revision in [274_u16, 289] {
         let (root, cache, manifest) = checked_fixture(revision);
         let args = parse_args_from([
@@ -1681,7 +1688,8 @@ mod bank_fetch_fixtures {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let stream =
-            client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+            client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+                .unwrap();
         std::mem::forget(listener);
         let mut c = host::prepare_client(
             ClientConfig {

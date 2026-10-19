@@ -9,14 +9,16 @@ use std::net::Shutdown;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
+#[cfg(feature = "test-support")]
+use super::soak_observer::{self, SoakDirection};
 use mio::net::TcpStream;
 use mio::{Interest, Registry};
 use rustls::ClientConnection;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::error::Error as WsError;
 use tungstenite::handshake::client::{generate_request, Response};
-use tungstenite::handshake::machine::{HandshakeMachine, RoundResult, StageResult};
 use tungstenite::handshake::derive_accept_key;
+use tungstenite::handshake::machine::{HandshakeMachine, RoundResult, StageResult};
 use tungstenite::protocol::{Role, WebSocket, WebSocketConfig};
 use tungstenite::Message;
 
@@ -24,11 +26,11 @@ use super::budget::{Budgeted, StopReason, TURN_BYTE_LIMIT, TURN_IO_ATTEMPTS};
 use super::cancel::{AttemptRetire, CancelToken};
 use super::control::{BindingId, RejectedCommand};
 use super::park::WriterBinding;
+use super::ring::{OUT_RING_BYTES, WS_MESSAGE_LIMIT};
 use super::shared::{SharedConnection, StreamExitReason};
 use super::tcp::{TcpStop, TcpTurnResult};
 use super::tcp_endpoint::RebindBoundary;
 use super::ws_frames::{admit_message, admit_pending, FrameFault, WsReceive};
-use super::ring::{OUT_RING_BYTES, WS_MESSAGE_LIMIT};
 
 const TLS_OUTPUT_PAUSE: usize = 64 * 1024;
 const TLS_OUTPUT_CEILING: usize = 128 * 1024;
@@ -103,7 +105,7 @@ impl std::error::Error for TlsFailure {}
 /// protocol error, so an Arc keeps the *same* stream available to the reactor
 /// for deregistration and physical retirement; all access remains reactor-only.
 #[derive(Debug)]
-struct TlsIo {
+pub(super) struct TlsIo {
     socket: Budgeted<TcpStream>,
     conn: ClientConnection,
     budget: TlsTurnBudget,
@@ -133,7 +135,15 @@ impl TlsIo {
     }
 
     fn pending_output(&self) -> usize {
-        self.pending_tls_output.saturating_add(self.unmeasured_tls_output)
+        self.pending_tls_output
+            .saturating_add(self.unmeasured_tls_output)
+    }
+    #[cfg(feature = "test-support")]
+    pub(super) fn soak_ledger_snapshot(&self) -> (Option<usize>, bool) {
+        (
+            (self.unmeasured_tls_output == 0).then_some(self.pending_tls_output),
+            self.established,
+        )
     }
 
     fn wants_write(&self) -> bool {
@@ -144,7 +154,6 @@ impl TlsIo {
         self.conn.wants_read()
     }
 
-
     fn process_packets(&mut self) -> io::Result<()> {
         self.budget.rustls_operations += 1;
         let state = self.conn.process_new_packets().map_err(tls_io_error)?;
@@ -152,7 +161,9 @@ impl TlsIo {
         self.unmeasured_tls_output = 0;
         self.peer_tls_closed = state.peer_has_closed();
         if self.pending_tls_output > TLS_OUTPUT_CEILING {
-            return Err(tls_capacity_error("TLS pending output exceeded the 128 KiB WSS ceiling"));
+            return Err(tls_capacity_error(
+                "TLS pending output exceeded the 128 KiB WSS ceiling",
+            ));
         }
         if self.established && self.conn.is_handshaking() {
             return Err(tls_failure_io_error(
@@ -166,12 +177,15 @@ impl TlsIo {
     fn process_input(&mut self) -> io::Result<()> {
         self.process_packets()?;
         self.budget.rustls_operations += 1;
-        self.conn.writer().write(&[])?;
+        let written = self.conn.writer().write(&[])?;
+        debug_assert_eq!(written, 0, "an empty TLS write must not consume app bytes");
         if self.pending_output() >= TLS_OUTPUT_PAUSE {
             if self.conn.wants_write() {
                 self.unmeasured_tls_output = TLS_CONTROL_OUTPUT_RESERVE;
                 if self.pending_output() > TLS_OUTPUT_CEILING {
-                    return Err(tls_capacity_error("TLS pending output exceeded the 128 KiB WSS ceiling"));
+                    return Err(tls_capacity_error(
+                        "TLS pending output exceeded the 128 KiB WSS ceiling",
+                    ));
                 }
             }
             return Ok(());
@@ -257,7 +271,9 @@ impl TlsIo {
         }
         let pending_output = self.pending_output();
         if pending_output > TLS_OUTPUT_CEILING {
-            return Err(tls_capacity_error("TLS pending output exceeded the 128 KiB WSS ceiling"));
+            return Err(tls_capacity_error(
+                "TLS pending output exceeded the 128 KiB WSS ceiling",
+            ));
         }
         if pending_output >= TLS_OUTPUT_PAUSE {
             self.budget.write_stop = WorkStop::HighWater;
@@ -274,8 +290,9 @@ impl TlsIo {
         }
         // Leave one maximum TLS record plus overhead for automatic control
         // output so a large WebSocket write cannot exceed the aggregate cap.
-        let output_allowance =
-            TLS_OUTPUT_CEILING.saturating_sub(pending_output).saturating_sub(TLS_CONTROL_OUTPUT_RESERVE);
+        let output_allowance = TLS_OUTPUT_CEILING
+            .saturating_sub(pending_output)
+            .saturating_sub(TLS_CONTROL_OUTPUT_RESERVE);
         if output_allowance == 0 {
             self.budget.write_stop = WorkStop::HighWater;
             return Err(io::ErrorKind::WouldBlock.into());
@@ -316,7 +333,8 @@ impl TlsIo {
                 Ok(written) => {
                     let known = written.min(self.pending_tls_output);
                     self.pending_tls_output -= known;
-                    self.unmeasured_tls_output = self.unmeasured_tls_output.saturating_sub(written - known);
+                    self.unmeasured_tls_output =
+                        self.unmeasured_tls_output.saturating_sub(written - known);
                     self.budget.write_stop = WorkStop::Returned;
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -345,7 +363,9 @@ struct TlsStreamHandle(Arc<Mutex<TlsIo>>);
 
 impl TlsStreamHandle {
     fn lock(&self) -> MutexGuard<'_, TlsIo> {
-        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -375,6 +395,8 @@ enum UpgradeState {
 #[derive(Debug)]
 pub struct WssEndpoint {
     binding: BindingId,
+    #[cfg(feature = "test-support")]
+    local_port: Option<u16>,
     io: Option<Arc<Mutex<TlsIo>>>,
     upgrade: Option<UpgradeState>,
     setup_error: Option<io::Error>,
@@ -406,6 +428,9 @@ impl WssEndpoint {
     /// Begin the nonblocking HTTP upgrade over the transferred TLS connection.
     /// `host` is the URI authority (including a non-default port, if any).
     /// The socket remains the original registered Mio socket.
+    // The handoff keeps all eight independently owned inputs; avoid allocating
+    // a temporary argument bundle on every WSS transfer only for lint shape.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         binding: BindingId,
         host: &str,
@@ -416,8 +441,12 @@ impl WssEndpoint {
         deadline: Option<Instant>,
         retire: Arc<AttemptRetire>,
     ) -> io::Result<Self> {
+        #[cfg(feature = "test-support")]
+        let local_port = socket.local_addr().ok().map(|address| address.port());
         let mut endpoint = Self {
             binding,
+            #[cfg(feature = "test-support")]
+            local_port,
             io: Some(Arc::new(Mutex::new(TlsIo::new(socket, conn)))),
             upgrade: None,
             setup_error: None,
@@ -451,7 +480,10 @@ impl WssEndpoint {
             || binding.attempt == 0
             || usize::try_from(binding.connection).is_err()
             || endpoint.shared.control.id != binding.connection
-            || endpoint.cancel.as_ref().is_none_or(|token| token.generation() != endpoint.retire.generation());
+            || endpoint
+                .cancel
+                .as_ref()
+                .is_none_or(|token| token.generation() != endpoint.retire.generation());
         if invalid_identity {
             endpoint.setup_error = Some(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -486,9 +518,12 @@ impl WssEndpoint {
             }
             Err(error) => endpoint.setup_error = Some(error),
         }
+        #[cfg(feature = "test-support")]
+        if let Some(tls) = endpoint.io.as_ref() {
+            soak_observer::register_wss_ledger(binding, endpoint.local_port, tls, &endpoint.shared);
+        }
         Ok(endpoint)
     }
-
 
     pub fn binding(&self) -> BindingId {
         self.binding
@@ -500,12 +535,24 @@ impl WssEndpoint {
         self.websocket.is_some()
     }
 
+    /// Read-only integration-test witness: the last TLS flush reached a real
+    /// socket WouldBlock and retained encrypted output for writable recovery.
+    #[cfg(feature = "test-support")]
+    pub fn tls_output_blocked_for_test(&self) -> bool {
+        self.with_tls(|tls| {
+            tls.budget.write_stop == WorkStop::SocketWouldBlock && tls.conn.wants_write()
+        })
+    }
+
     fn desired_interest(&self) -> Option<Interest> {
         if self.setup_error.is_some() {
             return None;
         }
         let read = if self.is_connected() {
-            !self.tls_read_paused && !self.read_suspended && !self.peer_closed && !self.shared.rebind_disabled()
+            !self.tls_read_paused
+                && !self.read_suspended
+                && !self.peer_closed
+                && !self.shared.rebind_disabled()
         } else {
             !self.tls_read_paused
         };
@@ -560,7 +607,11 @@ impl WssEndpoint {
     /// For an established endpoint this only records the readiness hint; the
     /// reactor invokes `drive` for its one fair session turn.
     pub fn on_event(&mut self, readable: bool, writable: bool, now: Instant) -> WssStep {
-        if readable && !self.tls_read_paused && !self.read_suspended && !self.shared.rebind_disabled() {
+        if readable
+            && !self.tls_read_paused
+            && !self.read_suspended
+            && !self.shared.rebind_disabled()
+        {
             self.read_local = true;
             self.clean_rebind = false;
         }
@@ -623,7 +674,10 @@ impl WssEndpoint {
     /// tungstenite may retain additional plaintext or frames privately.
     pub fn drive(&mut self) -> io::Result<TcpTurnResult> {
         if !self.is_connected() {
-            return Err(io::Error::new(io::ErrorKind::NotConnected, "WSS upgrade is not complete"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "WSS upgrade is not complete",
+            ));
         }
         self.clean_rebind = false;
         self.with_tls_mut(TlsIo::reset_turn);
@@ -651,6 +705,15 @@ impl WssEndpoint {
             let result = self.websocket.as_mut().expect("connected WSS").read();
             match result {
                 Ok(message) => {
+                    #[cfg(feature = "test-support")]
+                    if let Message::Binary(payload) = &message {
+                        soak_observer::observe(
+                            self.binding,
+                            self.local_port,
+                            SoakDirection::Inbound,
+                            payload,
+                        );
+                    }
                     returned_message = true;
                     self.read_local = true;
                     if matches!(&message, Message::Ping(_) | Message::Close(_)) {
@@ -676,7 +739,11 @@ impl WssEndpoint {
                                 self.peer_closed = true;
                                 self.read_suspended = true;
                                 self.read_local = false;
-                                self.shared.publish_exit_reason(StreamExitReason::WebSocketClose { code, reason });
+                                self.shared
+                                    .publish_exit_reason(StreamExitReason::WebSocketClose {
+                                        code,
+                                        reason,
+                                    });
                             }
                             Err(fault) => read_error = Some(frame_fault_error(fault)),
                         }
@@ -705,15 +772,15 @@ impl WssEndpoint {
             }
         }
         if may_read && !returned_message {
-            let (plain, wire) = self.with_tls(|tls| {
-                (tls.budget.plaintext_read, tls.socket.budget().read_bytes())
-            });
+            let (plain, wire) =
+                self.with_tls(|tls| (tls.budget.plaintext_read, tls.socket.budget().read_bytes()));
             if plain != 0 || wire != 0 {
                 self.boundary_dirty = true;
             }
         }
         if let Some((before_plain, before_wire)) = rebind_read_before {
-            let (plain, wire) = self.with_tls(|tls| (tls.budget.plaintext_read, tls.socket.budget().read_bytes()));
+            let (plain, wire) =
+                self.with_tls(|tls| (tls.budget.plaintext_read, tls.socket.budget().read_bytes()));
             if plain != before_plain || wire != before_wire {
                 self.boundary_dirty = true;
             }
@@ -730,21 +797,36 @@ impl WssEndpoint {
         {
             if let Some(length) = self.shared.records.front().map(usize::from) {
                 if length == 0 || length > OUT_RING_BYTES || length > WS_MESSAGE_LIMIT {
-                    let error = io::Error::new(io::ErrorKind::InvalidData, "invalid WSS record length");
+                    let error =
+                        io::Error::new(io::ErrorKind::InvalidData, "invalid WSS record length");
                     self.publish_error(&error);
                     return Err(error);
                 }
                 let mut bytes = Vec::new();
-                bytes.try_reserve_exact(length).map_err(|error| {
-                    io::Error::new(io::ErrorKind::OutOfMemory, error)
-                })?;
+                bytes
+                    .try_reserve_exact(length)
+                    .map_err(|error| io::Error::new(io::ErrorKind::OutOfMemory, error))?;
                 bytes.resize(length, 0);
                 if self.shared.outbound.pop(&mut bytes) != length {
-                    let error = io::Error::new(io::ErrorKind::InvalidData, "WSS record bytes are incomplete");
+                    let error = io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "WSS record bytes are incomplete",
+                    );
                     self.publish_error(&error);
                     return Err(error);
                 }
-                let result = self.websocket.as_mut().expect("connected WSS").write(Message::Binary(bytes));
+                #[cfg(feature = "test-support")]
+                soak_observer::observe(
+                    self.binding,
+                    self.local_port,
+                    SoakDirection::Outbound,
+                    &bytes,
+                );
+                let result = self
+                    .websocket
+                    .as_mut()
+                    .expect("connected WSS")
+                    .write(Message::Binary(bytes));
                 match result {
                     Ok(()) => {
                         self.shared.records.pop_front();
@@ -767,7 +849,10 @@ impl WssEndpoint {
                         self.ws_write_pending = true;
                     }
                     Err(WsError::WriteBufferFull(_)) => {
-                        let error = io::Error::new(io::ErrorKind::OutOfMemory, "bounded WSS output buffer is full");
+                        let error = io::Error::new(
+                            io::ErrorKind::OutOfMemory,
+                            "bounded WSS output buffer is full",
+                        );
                         self.publish_error(&error);
                         return Err(error);
                     }
@@ -782,7 +867,8 @@ impl WssEndpoint {
 
         // Flush after every tungstenite read attempt, including WouldBlock.
         // TLS KeyUpdate output remains eligible without another readable edge.
-        let need_flush = may_read || self.ws_write_pending || self.with_tls(|tls| tls.wants_write());
+        let need_flush =
+            may_read || self.ws_write_pending || self.with_tls(|tls| tls.wants_write());
         if need_flush {
             if let Err(error) = self.flush_websocket() {
                 self.publish_error(&error);
@@ -794,11 +880,18 @@ impl WssEndpoint {
             return Err(error);
         }
         let (read_stop, write_stop, pending_output, wants_write) = self.with_tls(|tls| {
-            (tls.budget.read_stop, tls.budget.write_stop, tls.pending_output(), tls.wants_write())
+            (
+                tls.budget.read_stop,
+                tls.budget.write_stop,
+                tls.pending_output(),
+                tls.wants_write(),
+            )
         });
         if !matches!(read_stop, WorkStop::HighWater) {
-            if matches!(read_stop, WorkStop::SocketWouldBlock | WorkStop::Budget | WorkStop::Closed)
-                || (read_stop == WorkStop::Returned && returned_message)
+            if matches!(
+                read_stop,
+                WorkStop::SocketWouldBlock | WorkStop::Budget | WorkStop::Closed
+            ) || (read_stop == WorkStop::Returned && returned_message)
             {
                 self.tls_read_paused = false;
             }
@@ -825,7 +918,8 @@ impl WssEndpoint {
             self.read_local = true;
             self.tls_read_paused = false;
         }
-        let output_pending = self.ws_write_pending || wants_write || self.shared.records.front().is_some();
+        let output_pending =
+            self.ws_write_pending || wants_write || self.shared.records.front().is_some();
         match write_stop {
             WorkStop::SocketWouldBlock => self.write_local = false,
             WorkStop::Budget => self.write_local = true,
@@ -839,13 +933,20 @@ impl WssEndpoint {
                 }
             }
         }
-        if pending_output >= TLS_OUTPUT_PAUSE && wants_write && write_stop == WorkStop::SocketWouldBlock {
+        if pending_output >= TLS_OUTPUT_PAUSE
+            && wants_write
+            && write_stop == WorkStop::SocketWouldBlock
+        {
             self.write_local = false;
         }
 
         let stop = if self.peer_closed {
             if self.ws_write_pending || wants_write {
-                if write_stop == WorkStop::SocketWouldBlock { TcpStop::Quiescent } else { TcpStop::LocalWork }
+                if write_stop == WorkStop::SocketWouldBlock {
+                    TcpStop::Quiescent
+                } else {
+                    TcpStop::LocalWork
+                }
             } else {
                 TcpStop::PeerClosed
             }
@@ -864,13 +965,16 @@ impl WssEndpoint {
     pub fn flush_for_close(&mut self) -> io::Result<(bool, bool)> {
         self.read_suspended = true;
         self.read_local = false;
-        if self.shared.outbound.len() != 0 || self.shared.records.front().is_some() || self.ws_write_pending {
+        if !self.shared.outbound.is_empty()
+            || self.shared.records.front().is_some()
+            || self.ws_write_pending
+        {
             self.write_local = true;
             let turn = self.drive()?;
             if turn.stop == TcpStop::PeerClosed {
                 return Ok((true, false));
             }
-            let records_drained = self.shared.outbound.len() == 0
+            let records_drained = self.shared.outbound.is_empty()
                 && self.shared.records.front().is_none()
                 && !self.ws_write_pending;
             return Ok((false, records_drained || turn.write_ready));
@@ -915,9 +1019,9 @@ impl WssEndpoint {
         }
 
         if !self.close_notify_sent {
-            if !self.with_tls(|tls| {
-                tls.budget.rustls_operations.saturating_add(1) <= TURN_IO_ATTEMPTS
-            }) {
+            if !self
+                .with_tls(|tls| tls.budget.rustls_operations.saturating_add(1) <= TURN_IO_ATTEMPTS)
+            {
                 self.write_local = true;
                 return Ok((false, true));
             }
@@ -929,7 +1033,8 @@ impl WssEndpoint {
                 }
             });
             if self.with_tls(|tls| tls.pending_output() > TLS_OUTPUT_CEILING) {
-                let error = tls_capacity_error("TLS pending output exceeded the 128 KiB WSS ceiling");
+                let error =
+                    tls_capacity_error("TLS pending output exceeded the 128 KiB WSS ceiling");
                 self.publish_error(&error);
                 return Err(error);
             }
@@ -984,12 +1089,21 @@ impl WssEndpoint {
             return Ok(RebindBoundary::PeerClosed);
         }
         if !self.shared.rebind_disabled() || self.shared.session_binding() != self.binding.binding {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "old WSS session was not quiesced for Rebind"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "old WSS session was not quiesced for Rebind",
+            ));
         }
         if self.boundary_dirty || self.pending_inbound.is_some() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "WSS receive boundary is not provably clean"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "WSS receive boundary is not provably clean",
+            ));
         }
-        if self.shared.outbound.len() != 0 || self.shared.records.front().is_some() || self.ws_write_pending {
+        if !self.shared.outbound.is_empty()
+            || self.shared.records.front().is_some()
+            || self.ws_write_pending
+        {
             self.rebind_draining = true;
             self.write_local = true;
             let turn = self.drive();
@@ -1001,11 +1115,23 @@ impl WssEndpoint {
             if turn.stop == TcpStop::PeerClosed {
                 return Ok(RebindBoundary::PeerClosed);
             }
-            if self.shared.outbound.len() != 0 || self.shared.records.front().is_some() || self.ws_write_pending {
-                return Ok(if !turn.write_ready { RebindBoundary::WaitWritable } else { RebindBoundary::Pending });
+            if !self.shared.outbound.is_empty()
+                || self.shared.records.front().is_some()
+                || self.ws_write_pending
+            {
+                return Ok(if !turn.write_ready {
+                    RebindBoundary::WaitWritable
+                } else {
+                    RebindBoundary::Pending
+                });
             }
         }
-        if self.shared.inbound.consume_with(|span| Ok(span.len().min(TURN_BYTE_LIMIT)))? != 0 {
+        if self
+            .shared
+            .inbound
+            .consume_with(|span| Ok(span.len().min(TURN_BYTE_LIMIT)))?
+            != 0
+        {
             return Ok(RebindBoundary::Pending);
         }
 
@@ -1035,13 +1161,23 @@ impl WssEndpoint {
         });
         match result {
             Ok(message) => {
+                #[cfg(feature = "test-support")]
+                if let Message::Binary(payload) = &message {
+                    soak_observer::observe(
+                        self.binding,
+                        self.local_port,
+                        SoakDirection::Inbound,
+                        payload,
+                    );
+                }
                 self.boundary_dirty = true;
                 match admit_message(message, &self.shared.inbound) {
                     Ok(WsReceive::PeerClosed { code, reason }) => {
                         self.peer_closed = true;
                         self.read_suspended = true;
                         self.read_local = false;
-                        self.shared.publish_exit_reason(StreamExitReason::WebSocketClose { code, reason });
+                        self.shared
+                            .publish_exit_reason(StreamExitReason::WebSocketClose { code, reason });
                         Ok(RebindBoundary::PeerClosed)
                     }
                     Ok(WsReceive::Backpressured(pending)) => {
@@ -1073,7 +1209,9 @@ impl WssEndpoint {
                     self.write_local = false;
                     Ok(RebindBoundary::WaitWritable)
                 } else {
-                    if stop == WorkStop::SocketWouldBlock && (plain != before_plain || wire != before_wire) {
+                    if stop == WorkStop::SocketWouldBlock
+                        && (plain != before_plain || wire != before_wire)
+                    {
                         self.boundary_dirty = true;
                     }
                     if write_stop == WorkStop::Budget || stop == WorkStop::Budget {
@@ -1131,8 +1269,8 @@ impl WssEndpoint {
             || self.pending_inbound.is_some()
             || !self.shared.rebind_disabled()
             || self.shared.session_binding() != expected.binding
-            || self.shared.inbound.len() != 0
-            || self.shared.outbound.len() != 0
+            || !self.shared.inbound.is_empty()
+            || !self.shared.outbound.is_empty()
             || self.shared.records.front().is_some()
             || self.ws_write_pending
         {
@@ -1148,6 +1286,8 @@ impl WssEndpoint {
         self.deadline = Some(deadline);
         self.retire = retire;
         self.shared.accept_binding(next);
+        #[cfg(feature = "test-support")]
+        soak_observer::rebind_wss_ledger(expected, next);
         Ok(())
     }
 
@@ -1168,7 +1308,11 @@ impl WssEndpoint {
             return WssStep::Failed(error);
         }
         let Some(state) = self.upgrade.take() else {
-            return if self.is_connected() { WssStep::Ready } else { WssStep::Wait };
+            return if self.is_connected() {
+                WssStep::Ready
+            } else {
+                WssStep::Wait
+            };
         };
         self.with_tls_mut(TlsIo::reset_turn);
         let result = match state {
@@ -1184,12 +1328,16 @@ impl WssEndpoint {
                     self.step_from_block()
                 }
                 Ok(RoundResult::StageFinished(StageResult::DoneWriting(stream))) => {
-                    self.upgrade = Some(UpgradeState::Reading(HandshakeMachine::start_read(stream)));
+                    self.upgrade =
+                        Some(UpgradeState::Reading(HandshakeMachine::start_read(stream)));
                     self.setup_local = true;
                     WssStep::Progress
                 }
                 Ok(RoundResult::StageFinished(StageResult::DoneReading { .. })) => {
-                    WssStep::Failed(io::Error::new(io::ErrorKind::InvalidData, "unexpected WSS upgrade read state"))
+                    WssStep::Failed(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "unexpected WSS upgrade read state",
+                    ))
                 }
                 Err(error) => WssStep::Failed(websocket_io_error(error)),
             },
@@ -1204,7 +1352,11 @@ impl WssEndpoint {
                     self.setup_blocked(true);
                     self.step_from_block()
                 }
-                Ok(RoundResult::StageFinished(StageResult::DoneReading { result, stream, tail })) => {
+                Ok(RoundResult::StageFinished(StageResult::DoneReading {
+                    result,
+                    stream,
+                    tail,
+                })) => {
                     let expected = self.expected_accept.as_deref().unwrap_or_default();
                     if let Err(error) = verify_upgrade_response(&result, expected) {
                         WssStep::Failed(error)
@@ -1220,14 +1372,18 @@ impl WssEndpoint {
                         self.upgrade = None;
                         self.expected_accept = None;
                         self.setup_local = false;
-                        self.boundary_dirty = tail_dirty || !self.with_tls(|tls| tls.is_clean_tls_boundary());
+                        self.boundary_dirty =
+                            tail_dirty || !self.with_tls(|tls| tls.is_clean_tls_boundary());
                         self.read_local = true;
                         self.write_local = self.with_tls(|tls| tls.wants_write());
                         WssStep::Ready
                     }
                 }
                 Ok(RoundResult::StageFinished(StageResult::DoneWriting(_))) => {
-                    WssStep::Failed(io::Error::new(io::ErrorKind::InvalidData, "unexpected WSS upgrade write state"))
+                    WssStep::Failed(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "unexpected WSS upgrade write state",
+                    ))
                 }
                 Err(error) => WssStep::Failed(websocket_io_error(error)),
             },
@@ -1239,11 +1395,8 @@ impl WssEndpoint {
             match self.flush_tls() {
                 Ok(()) => {}
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    if self.with_tls(|tls| tls.budget.write_stop) == WorkStop::SocketWouldBlock {
-                        self.write_local = false;
-                    } else {
-                        self.write_local = true;
-                    }
+                    self.write_local =
+                        self.with_tls(|tls| tls.budget.write_stop) != WorkStop::SocketWouldBlock;
                 }
                 Err(error) => return WssStep::Failed(error),
             }
@@ -1255,7 +1408,9 @@ impl WssEndpoint {
             self.read_local = true;
             self.tls_read_paused = false;
         }
-        if matches!(&result, WssStep::Wait) && (self.setup_local || self.read_local || self.write_local) {
+        if matches!(&result, WssStep::Wait)
+            && (self.setup_local || self.read_local || self.write_local)
+        {
             WssStep::Progress
         } else {
             result
@@ -1264,7 +1419,11 @@ impl WssEndpoint {
 
     fn setup_blocked(&mut self, reading: bool) {
         let stop = self.with_tls(|tls| {
-            if reading { tls.budget.read_stop } else { tls.budget.write_stop }
+            if reading {
+                tls.budget.read_stop
+            } else {
+                tls.budget.write_stop
+            }
         });
         match stop {
             WorkStop::SocketWouldBlock => {
@@ -1326,7 +1485,8 @@ impl WssEndpoint {
                 self.peer_closed = true;
                 self.read_suspended = true;
                 self.read_local = false;
-                self.shared.publish_exit_reason(StreamExitReason::WebSocketClose { code, reason });
+                self.shared
+                    .publish_exit_reason(StreamExitReason::WebSocketClose { code, reason });
                 Ok(())
             }
             Ok(_) => Ok(()),
@@ -1350,7 +1510,10 @@ impl WssEndpoint {
             || self.shared.records.front().is_some()
     }
     fn write_work_locally_runnable(&self) -> bool {
-        matches!(self.with_tls(|tls| tls.budget.write_stop), WorkStop::Budget | WorkStop::HighWater)
+        matches!(
+            self.with_tls(|tls| tls.budget.write_stop),
+            WorkStop::Budget | WorkStop::HighWater
+        )
     }
 
     fn handshake_write_pending(&self) -> bool {
@@ -1405,19 +1568,30 @@ impl WssEndpoint {
 
     fn revoked(&self, now: Instant) -> Option<io::Error> {
         if self.cancel.as_ref().is_some_and(CancelToken::is_cancelled) {
-            Some(io::Error::new(io::ErrorKind::ConnectionAborted, "game attempt cancelled"))
+            Some(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "game attempt cancelled",
+            ))
         } else if self.deadline.is_some_and(|deadline| now >= deadline) {
-            Some(io::Error::new(io::ErrorKind::TimedOut, "game login deadline passed"))
+            Some(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "game login deadline passed",
+            ))
         } else {
             None
         }
     }
 
     fn publish_error(&self, error: &io::Error) {
-        if let Some(tls) = error.get_ref().and_then(|source| source.downcast_ref::<TlsFailure>()) {
-            self.shared.publish_exit_reason(StreamExitReason::Tls(tls.0.clone()));
+        if let Some(tls) = error
+            .get_ref()
+            .and_then(|source| source.downcast_ref::<TlsFailure>())
+        {
+            self.shared
+                .publish_exit_reason(StreamExitReason::Tls(tls.0.clone()));
         } else {
-            self.shared.publish_exit_reason(StreamExitReason::WebSocket(error.to_string()));
+            self.shared
+                .publish_exit_reason(StreamExitReason::WebSocket(error.to_string()));
         }
     }
 
@@ -1427,7 +1601,9 @@ impl WssEndpoint {
         if let Some(io) = self.io.take() {
             match Arc::try_unwrap(io) {
                 Ok(mutex) => {
-                    let mut tls = mutex.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let mut tls = mutex
+                        .into_inner()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     let socket = tls.socket.inner_mut();
                     let _ = socket.shutdown(Shutdown::Both);
                     if let Some(registry) = registry {
@@ -1452,6 +1628,8 @@ impl WssEndpoint {
 
 impl Drop for WssEndpoint {
     fn drop(&mut self) {
+        #[cfg(feature = "test-support")]
+        soak_observer::retire_wss_ledger(self.binding);
         if !self.retired {
             self.drop_socket(None);
             self.retire.ack();
@@ -1459,7 +1637,6 @@ impl Drop for WssEndpoint {
         }
     }
 }
-
 fn build_upgrade_request(host: &str) -> io::Result<(Vec<u8>, String)> {
     let uri = format!("wss://{host}/");
     let mut request = uri
@@ -1478,13 +1655,19 @@ fn header_has_token(headers: &tungstenite::http::HeaderMap, name: &str, expected
     headers.get_all(name).iter().any(|value| {
         value.to_str().ok().is_some_and(|value| {
             value.split(',').any(|token| {
-                token.trim_matches(|character| character == ' ' || character == '\t').eq_ignore_ascii_case(expected)
+                token
+                    .trim_matches(|character| character == ' ' || character == '\t')
+                    .eq_ignore_ascii_case(expected)
             })
         })
     })
 }
 
-fn has_one_header_value(headers: &tungstenite::http::HeaderMap, name: &str, expected: &[u8]) -> bool {
+fn has_one_header_value(
+    headers: &tungstenite::http::HeaderMap,
+    name: &str,
+    expected: &[u8],
+) -> bool {
     let mut values = headers.get_all(name).iter();
     matches!((values.next(), values.next()), (Some(value), None) if value.as_bytes() == expected)
 }
@@ -1499,7 +1682,10 @@ fn verify_upgrade_response(response: &Response, expected_accept: &str) -> io::Re
         || !has_one_header_value(headers, "Sec-WebSocket-Protocol", b"binary")
         || headers.contains_key("Sec-WebSocket-Extensions")
     {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "WSS HTTP upgrade response rejected"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "WSS HTTP upgrade response rejected",
+        ));
     }
     Ok(())
 }
@@ -1520,7 +1706,10 @@ fn frame_fault_error(fault: FrameFault) -> io::Error {
             io::ErrorKind::OutOfMemory,
             format!("WSS message exceeds {limit} bytes ({length} bytes)"),
         ),
-        other => io::Error::new(io::ErrorKind::InvalidData, format!("invalid WSS game frame: {other:?}")),
+        other => io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid WSS game frame: {other:?}"),
+        ),
     }
 }
 
@@ -1553,9 +1742,21 @@ mod tests {
     use std::time::{Duration, Instant};
 
     enum TestServerCommand {
-        SendFrames { frames: Vec<Vec<u8>>, done: Sender<io::Result<()>> },
-        DrainUntilIdle { done: Sender<io::Result<()>> },
-        WaitForPong { expected: Vec<u8>, done: Sender<io::Result<bool>> },
+        SendFrames {
+            frames: Vec<Vec<u8>>,
+            done: Sender<io::Result<()>>,
+        },
+        DrainBinaries {
+            expected_binary: Vec<u8>,
+            expected_binary_count: usize,
+            done: Sender<io::Result<usize>>,
+        },
+        WaitForPong {
+            expected: Vec<u8>,
+            expected_binary: Vec<u8>,
+            expected_binary_count: usize,
+            done: Sender<io::Result<bool>>,
+        },
         Stop,
     }
 
@@ -1597,7 +1798,11 @@ mod tests {
             let poll = mio::Poll::new().unwrap();
             let mut socket = TcpStream::from_std(socket);
             poll.registry()
-                .register(&mut socket, mio::Token(binding.connection as usize), Interest::READABLE.add(Interest::WRITABLE))
+                .register(
+                    &mut socket,
+                    mio::Token(binding.connection as usize),
+                    Interest::READABLE.add(Interest::WRITABLE),
+                )
                 .unwrap();
             let endpoint = WssEndpoint::new(
                 binding,
@@ -1610,18 +1815,23 @@ mod tests {
                 retire,
             )
             .unwrap();
-            let mut fixture = Self { endpoint, shared, binding, commands, poll, server: Some(server) };
+            let mut fixture = Self {
+                endpoint,
+                shared,
+                binding,
+                commands,
+                poll,
+                server: Some(server),
+            };
             fixture.complete_upgrade();
             fixture
         }
 
         fn complete_upgrade(&mut self) {
-            for attempt in 0..4096 {
-                let step = if attempt == 0 {
-                    self.endpoint.begin_step(Instant::now())
-                } else {
-                    self.endpoint.on_event(true, false, Instant::now())
-                };
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let mut events = mio::Events::with_capacity(8);
+            while Instant::now() < deadline {
+                let step = self.endpoint.begin_step(Instant::now());
                 self.endpoint.apply_interest(self.poll.registry()).unwrap();
                 if let WssStep::Failed(error) = step {
                     panic!("test WSS upgrade failed: {error}");
@@ -1630,9 +1840,23 @@ mod tests {
                     assert_eq!(self.endpoint.last_interest, Some(Interest::READABLE));
                     return;
                 }
-                thread::yield_now();
+                if matches!(step, WssStep::Wait) {
+                    self.poll
+                        .poll(&mut events, Some(Duration::from_millis(20)))
+                        .unwrap();
+                    for event in &events {
+                        if let WssStep::Failed(error) = self.endpoint.on_event(
+                            event.is_readable(),
+                            event.is_writable(),
+                            Instant::now(),
+                        ) {
+                            panic!("test WSS upgrade failed on readiness: {error}");
+                        }
+                        self.endpoint.apply_interest(self.poll.registry()).unwrap();
+                    }
+                }
             }
-            panic!("test WSS upgrade did not complete");
+            panic!("test WSS upgrade did not complete within 2s");
         }
 
         fn on_event(&mut self, readable: bool, writable: bool) -> WssStep {
@@ -1646,23 +1870,118 @@ mod tests {
             self.endpoint.apply_interest(self.poll.registry()).unwrap();
             turn
         }
+        fn wait_for_event(&mut self, deadline: Instant) {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "test WSS readiness deadline expired");
+            let mut events = mio::Events::with_capacity(8);
+            self.poll.poll(&mut events, Some(remaining)).unwrap();
+            assert!(!events.is_empty(), "test WSS readiness deadline expired");
+            for event in &events {
+                if let WssStep::Failed(error) =
+                    self.endpoint
+                        .on_event(event.is_readable(), event.is_writable(), Instant::now())
+                {
+                    panic!("test WSS readiness failed: {error}");
+                }
+            }
+            self.endpoint.apply_interest(self.poll.registry()).unwrap();
+        }
+
+        fn drive_until_inbound(&mut self, deadline: Instant) -> TcpTurnResult {
+            loop {
+                assert!(
+                    Instant::now() < deadline,
+                    "test WSS inbound deadline expired"
+                );
+                let turn = self.endpoint.drive().unwrap();
+                self.endpoint.apply_interest(self.poll.registry()).unwrap();
+                if turn.read_bytes != 0 {
+                    return turn;
+                }
+                match turn.stop {
+                    TcpStop::LocalWork => {}
+                    TcpStop::Quiescent => self.wait_for_event(deadline),
+                    stop => panic!("WSS stopped before binary admission: {stop:?}"),
+                }
+            }
+        }
+
+        fn drive_until_peer_closed(&mut self, deadline: Instant) -> TcpTurnResult {
+            loop {
+                assert!(Instant::now() < deadline, "test WSS close deadline expired");
+                let turn = self.endpoint.drive().unwrap();
+                self.endpoint.apply_interest(self.poll.registry()).unwrap();
+                if self.endpoint.peer_closed {
+                    return turn;
+                }
+                match turn.stop {
+                    TcpStop::LocalWork => {}
+                    TcpStop::Quiescent => self.wait_for_event(deadline),
+                    stop => panic!("WSS stopped before peer close: {stop:?}"),
+                }
+            }
+        }
+
+        fn drive_until_error(&mut self, deadline: Instant) -> io::Error {
+            loop {
+                assert!(Instant::now() < deadline, "test WSS error deadline expired");
+                match self.endpoint.drive() {
+                    Err(error) => {
+                        self.endpoint.apply_interest(self.poll.registry()).unwrap();
+                        return error;
+                    }
+                    Ok(turn) => {
+                        self.endpoint.apply_interest(self.poll.registry()).unwrap();
+                        match turn.stop {
+                            TcpStop::LocalWork => {}
+                            TcpStop::Quiescent => self.wait_for_event(deadline),
+                            stop => panic!("WSS stopped before expected protocol error: {stop:?}"),
+                        }
+                    }
+                }
+            }
+        }
+
+        fn start_drain_binaries(
+            &self,
+            expected_binary: Vec<u8>,
+            expected_binary_count: usize,
+        ) -> Receiver<io::Result<usize>> {
+            let (done, result) = mpsc::channel();
+            self.commands
+                .send(TestServerCommand::DrainBinaries {
+                    expected_binary,
+                    expected_binary_count,
+                    done,
+                })
+                .unwrap();
+            result
+        }
+
+        fn wait_for_pong(
+            &self,
+            expected: Vec<u8>,
+            expected_binary: Vec<u8>,
+            expected_binary_count: usize,
+        ) {
+            let (done, result) = mpsc::channel();
+            self.commands
+                .send(TestServerCommand::WaitForPong {
+                    expected,
+                    expected_binary,
+                    expected_binary_count,
+                    done,
+                })
+                .unwrap();
+            assert!(server_result(result));
+        }
 
         fn send_frames(&self, frames: Vec<Vec<u8>>) {
             let (done, result) = mpsc::channel();
-            self.commands.send(TestServerCommand::SendFrames { frames, done }).unwrap();
+            self.commands
+                .send(TestServerCommand::SendFrames { frames, done })
+                .unwrap();
             server_result(result);
-        }
-
-        fn drain_until_idle(&self) {
-            let (done, result) = mpsc::channel();
-            self.commands.send(TestServerCommand::DrainUntilIdle { done }).unwrap();
-            server_result(result);
-        }
-
-        fn wait_for_pong(&self, expected: Vec<u8>) {
-            let (done, result) = mpsc::channel();
-            self.commands.send(TestServerCommand::WaitForPong { expected, done }).unwrap();
-            assert!(server_result(result));
         }
     }
 
@@ -1718,7 +2037,7 @@ mod tests {
         commands: Receiver<TestServerCommand>,
     ) -> io::Result<()> {
         let (mut socket, _) = listener.accept()?;
-        socket.set_read_timeout(Some(Duration::from_millis(250)))?;
+        socket.set_read_timeout(Some(Duration::from_secs(2)))?;
         let mut connection = rustls::ServerConnection::new(test_server_config())
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         while connection.is_handshaking() {
@@ -1758,29 +2077,76 @@ mod tests {
                     }
                     let _ = done.send(result);
                 }
-                TestServerCommand::DrainUntilIdle { done } => {
+                TestServerCommand::DrainBinaries {
+                    expected_binary,
+                    expected_binary_count,
+                    done,
+                } => {
+                    let mut binary_count = 0;
                     let result = loop {
+                        if binary_count == expected_binary_count {
+                            break Ok(binary_count);
+                        }
                         match websocket.read() {
-                            Ok(_) => {}
-                            Err(WsError::Io(error))
-                                if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) =>
-                            {
-                                break Ok(());
+                            Ok(Message::Binary(payload)) => {
+                                if payload.as_slice() != expected_binary.as_slice() {
+                                    break Err(io::Error::new(
+                                        io::ErrorKind::InvalidData,
+                                        "unexpected outbound WSS binary payload",
+                                    ));
+                                }
+                                binary_count += 1;
+                            }
+                            Ok(_) => {
+                                break Err(io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    "unexpected outbound WSS control frame",
+                                ));
                             }
                             Err(error) => break Err(websocket_io_error(error)),
                         }
                     };
                     let _ = done.send(result);
                 }
-                TestServerCommand::WaitForPong { expected, done } => {
+                TestServerCommand::WaitForPong {
+                    expected,
+                    expected_binary,
+                    expected_binary_count,
+                    done,
+                } => {
+                    let mut binary_count = 0;
+                    let mut pong_seen = false;
                     let result = loop {
                         match websocket.read() {
-                            Ok(Message::Pong(payload)) => break Ok(payload == expected),
+                            Ok(Message::Binary(payload)) => {
+                                if pong_seen
+                                    || binary_count == expected_binary_count
+                                    || payload.as_slice() != expected_binary.as_slice()
+                                {
+                                    break Err(io::Error::new(
+                                        io::ErrorKind::InvalidData,
+                                        "unexpected outbound WSS binary payload",
+                                    ));
+                                }
+                                binary_count += 1;
+                            }
+                            Ok(Message::Pong(payload)) => {
+                                if pong_seen
+                                    || payload.as_slice() != expected.as_slice()
+                                    || binary_count != expected_binary_count
+                                {
+                                    break Ok(false);
+                                }
+                                pong_seen = true;
+                            }
                             Ok(_) => {}
                             Err(WsError::Io(error))
-                                if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) =>
+                                if matches!(
+                                    error.kind(),
+                                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                                ) =>
                             {
-                                break Ok(false);
+                                break Ok(pong_seen && binary_count == expected_binary_count);
                             }
                             Err(error) => break Err(websocket_io_error(error)),
                         }
@@ -1798,7 +2164,10 @@ mod tests {
         let mut byte = [0u8; 1];
         while !head.ends_with(b"\r\n\r\n") {
             if head.len() == 4096 {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "test HTTP request header too large"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "test HTTP request header too large",
+                ));
             }
             reader.read_exact(&mut byte)?;
             head.push(byte[0]);
@@ -1825,13 +2194,19 @@ mod tests {
     }
 
     fn server_result<T>(result: Receiver<io::Result<T>>) -> T {
-        result.recv_timeout(Duration::from_secs(3)).unwrap().unwrap()
+        result
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .unwrap()
     }
 
     #[test]
     fn two_tls_records_keep_second_wss_message_locally_runnable() {
         let mut fixture = WssFixture::new();
-        fixture.send_frames(vec![raw_ws_frame(true, 2, b"one"), raw_ws_frame(true, 2, b"two")]);
+        fixture.send_frames(vec![
+            raw_ws_frame(true, 2, b"one"),
+            raw_ws_frame(true, 2, b"two"),
+        ]);
 
         let first = fixture.drive();
         assert_eq!(first.read_bytes, 3);
@@ -1852,11 +2227,24 @@ mod tests {
 
         let first_turn = fixture.drive();
         assert_eq!(first_turn.stop, TcpStop::LocalWork);
-        assert_eq!(fixture.endpoint.with_tls(|tls| tls.budget.read_stop), WorkStop::Budget);
+        assert_eq!(
+            fixture.endpoint.with_tls(|tls| tls.budget.read_stop),
+            WorkStop::Budget
+        );
         assert_eq!(fixture.shared.inbound.len(), 0);
 
-        let second_turn = fixture.drive();
-        assert_eq!(second_turn.stop, TcpStop::Quiescent);
+        // TLS may deliver the 16 KiB fragment in more than two bounded
+        // plaintext turns. Keep consuming local work without an extra edge
+        // until the incomplete message reaches a real socket WouldBlock.
+        let mut turn = fixture.drive();
+        for _ in 0..8 {
+            if turn.stop == TcpStop::Quiescent {
+                break;
+            }
+            assert_eq!(turn.stop, TcpStop::LocalWork);
+            turn = fixture.drive();
+        }
+        assert_eq!(turn.stop, TcpStop::Quiescent);
         assert_eq!(fixture.shared.inbound.len(), 0);
 
         fixture.send_frames(vec![raw_ws_frame(true, 0, &[])]);
@@ -1876,12 +2264,19 @@ mod tests {
 
         let record = vec![0x55; OUT_RING_BYTES];
         let mut socket_blocked = false;
+        let mut published_binary_count = 0;
         for _ in 0..4096 {
-            fixture.shared.publish_record(fixture.binding, &record).unwrap();
+            fixture
+                .shared
+                .publish_record(fixture.binding, &record)
+                .unwrap();
             fixture.endpoint.kick_output();
+            published_binary_count += 1;
             for _ in 0..4 {
                 let turn = fixture.drive();
-                if fixture.endpoint.with_tls(|tls| tls.budget.write_stop) == WorkStop::SocketWouldBlock {
+                if fixture.endpoint.with_tls(|tls| tls.budget.write_stop)
+                    == WorkStop::SocketWouldBlock
+                {
                     socket_blocked = true;
                     break;
                 }
@@ -1893,19 +2288,27 @@ mod tests {
                 break;
             }
         }
-        assert!(socket_blocked, "loopback send buffer did not reach WouldBlock");
+        assert!(
+            socket_blocked,
+            "loopback send buffer did not reach WouldBlock"
+        );
 
         assert!(matches!(fixture.on_event(true, false), WssStep::Ready));
         fixture.drive();
         assert!(fixture.endpoint.ws_write_pending);
-        assert_eq!(fixture.endpoint.with_tls(|tls| tls.budget.write_stop), WorkStop::SocketWouldBlock);
+        assert_eq!(
+            fixture.endpoint.with_tls(|tls| tls.budget.write_stop),
+            WorkStop::SocketWouldBlock
+        );
 
-        fixture.drain_until_idle();
+        let drained = fixture.start_drain_binaries(record.clone(), published_binary_count);
         let mut pong_flushed = false;
         for _ in 0..128 {
             fixture.on_event(false, true);
             let turn = fixture.drive();
-            if !fixture.endpoint.ws_write_pending && !fixture.endpoint.with_tls(|tls| tls.wants_write()) {
+            if !fixture.endpoint.ws_write_pending
+                && !fixture.endpoint.with_tls(|tls| tls.wants_write())
+            {
                 pong_flushed = true;
                 break;
             }
@@ -1913,8 +2316,124 @@ mod tests {
                 thread::yield_now();
             }
         }
-        assert!(pong_flushed, "WSS control output remained blocked after the peer drained");
-        fixture.wait_for_pong(b"ping".to_vec());
+        assert!(
+            pong_flushed,
+            "WSS control output remained blocked after the peer drained"
+        );
+        assert_eq!(server_result(drained), published_binary_count);
+        fixture.wait_for_pong(b"ping".to_vec(), Vec::new(), 0);
+    }
+
+    #[test]
+    fn ping_interleaved_with_fragmented_binary_stays_control_only() {
+        let mut fixture = WssFixture::new();
+        fixture.send_frames(vec![raw_ws_frame(false, 2, b"before")]);
+        assert!(matches!(fixture.on_event(true, false), WssStep::Ready));
+        let mut first_fragment_turn = fixture.drive();
+        for _ in 0..8 {
+            if first_fragment_turn.stop == TcpStop::Quiescent {
+                break;
+            }
+            assert_eq!(first_fragment_turn.stop, TcpStop::LocalWork);
+            first_fragment_turn = fixture.drive();
+        }
+        assert_eq!(first_fragment_turn.stop, TcpStop::Quiescent);
+        assert_eq!(fixture.shared.inbound.len(), 0);
+
+        fixture.send_frames(vec![raw_ws_frame(true, 9, b"ping")]);
+        assert!(matches!(fixture.on_event(true, false), WssStep::Ready));
+        let ping_turn = fixture.drive();
+        assert_eq!(ping_turn.read_bytes, 0);
+        fixture.wait_for_pong(b"ping".to_vec(), Vec::new(), 0);
+        assert_eq!(fixture.shared.inbound.len(), 0);
+
+        fixture.send_frames(vec![raw_ws_frame(true, 0, b"after")]);
+        assert!(matches!(fixture.on_event(true, false), WssStep::Ready));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let completed = fixture.drive_until_inbound(deadline);
+        assert_eq!(completed.read_bytes, 11);
+        let mut received = [0; 11];
+        assert_eq!(fixture.shared.take_inbound(&mut received), received.len());
+        assert_eq!(&received, b"beforeafter");
+        fixture.send_frames(vec![raw_ws_frame(true, 10, b"unsolicited")]);
+        assert!(matches!(fixture.on_event(true, false), WssStep::Ready));
+        let pong_turn = fixture.drive();
+        assert_eq!(pong_turn.read_bytes, 0);
+        assert_eq!(fixture.shared.inbound.len(), 0);
+    }
+
+    #[test]
+    fn idle_ping_flushes_its_pong_without_another_data_frame() {
+        let mut fixture = WssFixture::new();
+        assert_eq!(fixture.shared.records.len(), 0, "no outbound game bytes");
+        assert!(!fixture.endpoint.ws_write_pending);
+        fixture
+            .endpoint
+            .with_tls_mut(|tls| tls.socket.refuse_one_socket_write_for_test());
+        fixture.send_frames(vec![raw_ws_frame(true, 9, b"idle-ping")]);
+        assert!(matches!(fixture.on_event(true, false), WssStep::Ready));
+
+        let blocked = fixture.drive();
+        assert_eq!(blocked.read_bytes, 0);
+        assert!(fixture.endpoint.ws_write_pending);
+        assert_eq!(
+            fixture.endpoint.with_tls(|tls| tls.budget.write_stop),
+            WorkStop::SocketWouldBlock,
+            "the first explicit idle-Ping flush reached a blocked wire write"
+        );
+        assert_eq!(
+            fixture.shared.records.len(),
+            0,
+            "no game write rescued the Pong"
+        );
+        for _ in 0..8 {
+            assert!(matches!(fixture.on_event(false, true), WssStep::Ready));
+            fixture.drive();
+            if !fixture.endpoint.ws_write_pending
+                && !fixture.endpoint.with_tls(|tls| tls.wants_write())
+            {
+                break;
+            }
+        }
+        assert!(!fixture.endpoint.ws_write_pending);
+        assert!(!fixture.endpoint.with_tls(|tls| tls.wants_write()));
+        fixture.wait_for_pong(b"idle-ping".to_vec(), Vec::new(), 0);
+        assert_eq!(fixture.shared.inbound.len(), 0);
+    }
+
+    #[test]
+    fn close_control_does_not_enter_the_binary_ring() {
+        let mut fixture = WssFixture::new();
+        fixture.send_frames(vec![
+            raw_ws_frame(false, 2, b"incomplete"),
+            raw_ws_frame(true, 8, &[]),
+        ]);
+        assert!(matches!(fixture.on_event(true, false), WssStep::Ready));
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        fixture.drive_until_peer_closed(deadline);
+        assert!(fixture.endpoint.peer_closed);
+        assert_eq!(fixture.shared.inbound.len(), 0);
+        assert!(matches!(
+            fixture.shared.take_exit_reason(),
+            Some(StreamExitReason::WebSocketClose { code: None, reason }) if reason.is_empty()
+        ));
+    }
+
+    #[test]
+    fn text_frame_fails_without_entering_the_binary_ring() {
+        let mut fixture = WssFixture::new();
+        fixture.send_frames(vec![raw_ws_frame(true, 1, b"not-game-data")]);
+        assert!(matches!(fixture.on_event(true, false), WssStep::Ready));
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let error = fixture.drive_until_error(deadline);
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fixture.shared.inbound.len(), 0);
+        assert!(matches!(
+            fixture.shared.take_exit_reason(),
+            Some(StreamExitReason::WebSocket(_))
+        ));
     }
 
     #[test]
@@ -1947,12 +2466,20 @@ mod tests {
             .header("Sec-WebSocket-Protocol", "other")
             .body(None)
             .unwrap();
-        assert_eq!(verify_upgrade_response(&wrong_protocol, expected).unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            verify_upgrade_response(&wrong_protocol, expected)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
     }
 
     #[test]
     fn oversized_wss_message_maps_to_capacity_error() {
-        let error = frame_fault_error(FrameFault::MessageTooLarge { length: 2, limit: 1 });
+        let error = frame_fault_error(FrameFault::MessageTooLarge {
+            length: 2,
+            limit: 1,
+        });
         assert_eq!(error.kind(), io::ErrorKind::OutOfMemory);
     }
 

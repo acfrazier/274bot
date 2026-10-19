@@ -678,9 +678,13 @@ name = "client-adapter"
 version = "0.2.3"
 dependencies = [
  "client",
+ "libc",
  "mio",
+ "rcgen",
  "rustls",
  "rustls-platform-verifier",
+ "sha2",
+ "socket2",
  "thiserror 2.0.20",
  "tungstenite",
 ]
@@ -1481,6 +1485,7 @@ name = "e2e"
 version = "0.2.3"
 dependencies = [
  "api",
+ "client",
  "client-adapter",
  "host",
  "host-play",
@@ -2099,6 +2104,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror 2.0.20",
+ "tungstenite",
  "vault",
  "windows-sys 0.59.0",
  "zeroize",
@@ -3394,6 +3400,7 @@ dependencies = [
  "api",
  "arboard",
  "client",
+ "client-adapter",
  "dear-imgui-rs",
  "dear-imgui-wgpu",
  "dear-imgui-winit",
@@ -5674,6 +5681,7 @@ version = "0.2.3"
 dependencies = [
  "api",
  "client",
+ "client-adapter",
  "crossterm",
  "frontend-core",
  "host",

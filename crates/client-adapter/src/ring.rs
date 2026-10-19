@@ -65,6 +65,11 @@ impl<const N: usize> Ring<N> {
         }
     }
 
+    /// Observe whether there are no committed unread bytes.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Observe producer capacity after any consumer Release of the head.
     pub fn free(&self) -> usize {
         N - self.len()
@@ -102,11 +107,7 @@ impl<const N: usize> Ring<N> {
         unsafe {
             let ptr = std::ptr::addr_of_mut!((*self.bytes.get())[0]);
             std::ptr::copy_nonoverlapping(source.as_ptr(), ptr.add(start), first);
-            std::ptr::copy_nonoverlapping(
-                source.as_ptr().add(first),
-                ptr,
-                source.len() - first,
-            );
+            std::ptr::copy_nonoverlapping(source.as_ptr().add(first), ptr, source.len() - first);
         }
         self.tail
             .store(tail.wrapping_add(source.len() as u64), Ordering::Release);
@@ -126,11 +127,7 @@ impl<const N: usize> Ring<N> {
         unsafe {
             let ptr = std::ptr::addr_of!((*self.bytes.get())[0]);
             std::ptr::copy_nonoverlapping(ptr.add(start), dest.as_mut_ptr(), first);
-            std::ptr::copy_nonoverlapping(
-                ptr,
-                dest.as_mut_ptr().add(first),
-                len - first,
-            );
+            std::ptr::copy_nonoverlapping(ptr, dest.as_mut_ptr().add(first), len - first);
         }
         self.head
             .store(head.wrapping_add(len as u64), Ordering::Release);
@@ -140,7 +137,10 @@ impl<const N: usize> Ring<N> {
     /// Call `send` on the first contiguous published span. It must return
     /// `Ok(n)` with `n <= span.len()` or an error, never retain the borrowed
     /// span. Only that `Ok(n)` commits consumption. No copy is made for TCP.
-    pub fn consume_with(&self, send: impl FnOnce(&[u8]) -> std::io::Result<usize>) -> std::io::Result<usize> {
+    pub fn consume_with(
+        &self,
+        send: impl FnOnce(&[u8]) -> std::io::Result<usize>,
+    ) -> std::io::Result<usize> {
         let tail = self.tail.load(Ordering::Acquire);
         let head = self.head.load(Ordering::Relaxed);
         let available = tail.wrapping_sub(head) as usize;
@@ -162,7 +162,10 @@ impl<const N: usize> Ring<N> {
 
     /// Read directly into a free TCP ring span. A socket read may be partial;
     /// zero publishes nothing. The producer does not hold an owner lock.
-    pub fn produce_with(&self, recv: impl FnOnce(&mut [u8]) -> std::io::Result<usize>) -> std::io::Result<usize> {
+    pub fn produce_with(
+        &self,
+        recv: impl FnOnce(&mut [u8]) -> std::io::Result<usize>,
+    ) -> std::io::Result<usize> {
         let head = self.head.load(Ordering::Acquire);
         let tail = self.tail.load(Ordering::Relaxed);
         let free = N - tail.wrapping_sub(head) as usize;
@@ -206,10 +209,29 @@ mod tests {
     fn socket_borrows_do_not_consume_on_would_block() {
         let ring = Ring::<7>::new();
         assert!(ring.push_all(b"hello"));
-        assert_eq!(ring.consume_with(|_| Err(std::io::ErrorKind::WouldBlock.into())).unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+        assert_eq!(
+            ring.consume_with(|_| Err(std::io::ErrorKind::WouldBlock.into()))
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::WouldBlock
+        );
         assert_eq!(ring.len(), 5);
-        assert_eq!(ring.consume_with(|span| { assert_eq!(span, b"hello"); Ok(3) }).unwrap(), 3);
-        assert_eq!(ring.produce_with(|span| { span[..2].copy_from_slice(b"xy"); Ok(2) }).unwrap(), 2);
+        assert_eq!(
+            ring.consume_with(|span| {
+                assert_eq!(span, b"hello");
+                Ok(3)
+            })
+            .unwrap(),
+            3
+        );
+        assert_eq!(
+            ring.produce_with(|span| {
+                span[..2].copy_from_slice(b"xy");
+                Ok(2)
+            })
+            .unwrap(),
+            2
+        );
         let mut out = [0; 4];
         assert_eq!(ring.pop(&mut out), 4);
         assert_eq!(&out, b"loxy");

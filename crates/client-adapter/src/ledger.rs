@@ -61,19 +61,34 @@ impl ResourceLedger {
     /// Caller supplies the actual statically allocated connection extent,
     /// including both rings, record slots, controls, and reply cells. Dynamic
     /// TLS/WS buffers are measured separately, not guessed as this value.
-    pub fn admit_connection(self: &Arc<Self>, known_bytes: usize) -> Result<ConnectionCharge, ResourceRefusal> {
+    pub fn admit_connection(
+        self: &Arc<Self>,
+        known_bytes: usize,
+    ) -> Result<ConnectionCharge, ResourceRefusal> {
         let mut counts = self.counts.lock().unwrap();
         if counts.connections == MAX_CONNECTIONS {
             return Err(ResourceRefusal::ConnectionsFull);
         }
-        let bytes = counts.known_rust_bytes.checked_add(known_bytes).ok_or(ResourceRefusal::CountOverflow)?;
-        let command_cells = counts.command_cells.checked_add(COMMAND_CELLS_PER_CONNECTION).ok_or(ResourceRefusal::CountOverflow)?;
-        let reply_cells = counts.reply_cells.checked_add(REPLY_CELLS_PER_CONNECTION).ok_or(ResourceRefusal::CountOverflow)?;
+        let bytes = counts
+            .known_rust_bytes
+            .checked_add(known_bytes)
+            .ok_or(ResourceRefusal::CountOverflow)?;
+        let command_cells = counts
+            .command_cells
+            .checked_add(COMMAND_CELLS_PER_CONNECTION)
+            .ok_or(ResourceRefusal::CountOverflow)?;
+        let reply_cells = counts
+            .reply_cells
+            .checked_add(REPLY_CELLS_PER_CONNECTION)
+            .ok_or(ResourceRefusal::CountOverflow)?;
         counts.connections += 1;
         counts.known_rust_bytes = bytes;
         counts.command_cells = command_cells;
         counts.reply_cells = reply_cells;
-        Ok(ConnectionCharge { ledger: Arc::clone(self), known_bytes })
+        Ok(ConnectionCharge {
+            ledger: Arc::clone(self),
+            known_bytes,
+        })
     }
 
     pub fn admit_handshake(self: &Arc<Self>) -> Result<HandshakeCharge, ResourceRefusal> {
@@ -82,7 +97,9 @@ impl ResourceLedger {
             return Err(ResourceRefusal::HandshakeLaneBusy);
         }
         counts.handshake_lane_occupied = true;
-        Ok(HandshakeCharge { ledger: Arc::clone(self) })
+        Ok(HandshakeCharge {
+            ledger: Arc::clone(self),
+        })
     }
 
     /// Reactor-only admission into the de-duplicated FIFO. No byte payload
@@ -137,7 +154,10 @@ mod tests {
         let ledger = ResourceLedger::new();
         let connection = ledger.admit_connection(40_000).unwrap();
         let lane = ledger.admit_handshake().unwrap();
-        assert_eq!(ledger.admit_handshake().unwrap_err(), ResourceRefusal::HandshakeLaneBusy);
+        assert_eq!(
+            ledger.admit_handshake().unwrap_err(),
+            ResourceRefusal::HandshakeLaneBusy
+        );
         // Publishing a logical terminal is not a resource operation.
         assert_eq!(ledger.snapshot().connections, 1);
         assert!(ledger.snapshot().handshake_lane_occupied);
@@ -158,12 +178,18 @@ mod tests {
         for _ in 0..MAX_CONNECTIONS {
             sockets.push(ledger.admit_connection(1).unwrap());
         }
-        assert_eq!(ledger.admit_connection(1).unwrap_err(), ResourceRefusal::ConnectionsFull);
+        assert_eq!(
+            ledger.admit_connection(1).unwrap_err(),
+            ResourceRefusal::ConnectionsFull
+        );
         assert_eq!(ledger.snapshot().command_cells, 2 * MAX_CONNECTIONS);
         for _ in 0..MAX_LOCAL_WORK {
             ledger.enqueue_local_work().unwrap();
         }
-        assert_eq!(ledger.enqueue_local_work().unwrap_err(), ResourceRefusal::LocalWorkFull);
+        assert_eq!(
+            ledger.enqueue_local_work().unwrap_err(),
+            ResourceRefusal::LocalWorkFull
+        );
         ledger.dequeue_local_work();
         ledger.enqueue_local_work().unwrap();
         drop(sockets);

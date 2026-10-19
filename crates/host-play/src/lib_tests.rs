@@ -2212,15 +2212,17 @@ fn copy_stream_bytes_zeros_without_stream() {
 /// a completed handshake proves both directions count.
 #[test]
 fn copy_stream_bytes_mirrors_stream_counters() {
+    use std::sync::mpsc;
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let log = Arc::new(Mutex::new(Vec::new()));
+    let (release_tx, release_rx) = mpsc::channel();
     let server = thread::spawn(move || {
         let mut s = accept_test_socket(listener);
         grant_login(&mut s, &log, 2);
-        // Keep the socket open briefly so the writer thread flushes the
-        // login block before the client drops it.
-        thread::sleep(Duration::from_millis(50));
+        // Phase R/C must seal and publish the real session before the peer
+        // closes; a fixed sleep races the reactor on slow builders.
+        release_rx.recv_timeout(Duration::from_secs(8)).unwrap();
     });
     let mut c = prepare_client(
         ClientConfig {
@@ -2244,6 +2246,7 @@ fn copy_stream_bytes_mirrors_stream_counters() {
     copy_stream_bytes(&c, &mut s);
     assert!(s.bytes_in > 0, "handshake reads count as bytes_in");
     assert!(s.bytes_out > 0, "handshake writes count as bytes_out");
+    release_tx.send(()).unwrap();
     server.join().unwrap();
 }
 
@@ -2717,7 +2720,9 @@ fn hosted_login(
     assert!(addresses.push(addr), "one numeric loopback address fits");
     let service = Arc::clone(driver.service().reactor());
     let park = arm.park();
-    let retirement = Arc::new(client_adapter::cancel::AttemptRetire::new(token.generation()));
+    let retirement = Arc::new(client_adapter::cancel::AttemptRetire::new(
+        token.generation(),
+    ));
     let transport = match client.session_transport() {
         client::Transport::Tcp => client_adapter::host_network::GameTransport::Tcp,
         client::Transport::Wss => client_adapter::host_network::GameTransport::Wss,
@@ -2787,11 +2792,16 @@ fn hosted_login(
             |_| hold.get(),
         )
         .expect("granted owner starts the prepared transport attempt");
+    let queue_result = format!("{:?}", outcome.test_result());
+    let current_before_r = arm.login_attempt_is_current(command, world_generation);
+    let ingame_before_r = login.client.ingame;
+    let sealed = login
+        .finish_after_q(outcome)
+        .expect("hosted login commits after queue return");
     assert_eq!(
-        login
-            .finish_after_q(outcome)
-            .expect("hosted login commits after queue return"),
-        crate::play_login::SlotLoginOutcome::Promoted
+        sealed,
+        crate::play_login::SlotLoginOutcome::Promoted,
+        "Q result {queue_result}, current before R {current_before_r}, ingame before R {ingame_before_r}"
     );
     driver
 }
@@ -3537,30 +3547,44 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
     let bob = SlotArm::new(8, true);
     let mut permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &alice));
     let alice_cells = synthetic_queue_attempt(alice.queue_owner, 1);
+    let alice_cancel = alice_cells.cancel();
     let (deadline_tx, deadline_rx) = mpsc::channel();
-    let (read_ended_tx, read_ended_rx) = mpsc::channel();
+    let (read_ended_tx, read_ended_rx) = mpsc::channel::<client_adapter::park::ParkOutcome<()>>();
     let (return_tx, return_rx) = mpsc::channel();
     let stuck = thread::spawn(move || {
         permit
             .attempt_with_test_cells(
                 alice_cells,
                 |_, _| true,
-                |deadline, cancel| {
+                |deadline, _login_cancel| {
                     deadline_tx.send(deadline).unwrap();
-                    // This native socket deliberately ignores the queue
-                    // deadline. Only the exact cancel callback can end it.
+                    // This native test socket deliberately ignores the queue
+                    // deadline. The queue revokes the exact adapter token; its
+                    // Park wakes a bounded watcher that closes the socket.
                     let mut socket =
                         TcpStream::connect(endpoint).map_err(|error| error.to_string())?;
                     let close_socket = socket.try_clone().map_err(|error| error.to_string())?;
-                    cancel.register_cancel_callback(move || {
+                    let cancel_park = Arc::clone(alice_cancel.park());
+                    let close_on_cancel = thread::spawn(move || {
+                        let outcome = cancel_park.wait(
+                            deadline + Duration::from_secs(5),
+                            Instant::now,
+                            || false,
+                            || false,
+                            || alice_cancel.is_cancelled(),
+                            || None::<()>,
+                            false,
+                            None,
+                        );
                         let _ = close_socket.shutdown(Shutdown::Both);
+                        outcome
                     });
                     socket
                         .write_all(&[14, 0])
                         .map_err(|error| error.to_string())?;
                     let mut byte = [0; 1];
                     let read = socket.read(&mut byte);
-                    read_ended_tx.send(()).unwrap();
+                    read_ended_tx.send(close_on_cancel.join().unwrap()).unwrap();
                     return_rx.recv_timeout(Duration::from_secs(60)).unwrap();
                     match read {
                         Ok(0) => Err("socket closed by attempt cancellation".to_owned()),
@@ -3609,9 +3633,12 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
             .expect("bob's started attempt returns Q facts");
         bob_done_tx.send(result).unwrap();
     });
-    read_ended_rx
-        .recv_timeout(Duration::from_secs(60))
-        .expect("expired lease fired its socket cancellation");
+    assert_eq!(
+        read_ended_rx
+            .recv_timeout(Duration::from_secs(8))
+            .expect("expired lease fired its socket cancellation"),
+        client_adapter::park::ParkOutcome::Revoked
+    );
     let retired_at = Instant::now();
     assert!(retired_at >= deadline + host::login_queue::LEASE_SLACK);
     assert_eq!(
@@ -3705,16 +3732,29 @@ fn spawned_worker_login_to_a_silent_server_ends_at_its_deadline() {
     play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
 
     let accepted = accepted_rx.recv_timeout(Duration::from_secs(60)).unwrap();
-    assert!(
-        wait_settled(|| play
-            .statuses
+    // Enqueue the sibling while Alice owns the flight, not after her retry
+    // can race to the FIFO head once her timed-out socket is retired.
+    play.queue.lock().enqueue_owner(test_queue_owner(43), 43);
+    let deadline_named = wait_until(hold.as_millis() as u64 + 2_000, || {
+        play.statuses
             .lock()
             .unwrap()
             .iter()
             .find(|status| status.username == "alice")
             .and_then(|status| status.error.clone())
-            .is_some_and(|error| error.contains("login handshake deadline passed"))),
-        "the row names the deadline"
+            .is_some_and(|error| error.contains("login handshake deadline passed"))
+    });
+    assert!(
+        deadline_named,
+        "the row names the deadline; observed status {:?}, lifecycle {:?}",
+        play.statuses
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|status| status.username == "alice")
+            .and_then(|status| status.error.clone()),
+        arm.latest_lifecycle_event()
+            .map(|event| format!("{:?}", event.payload()))
     );
     let took = accepted.elapsed();
     assert!(
@@ -3725,14 +3765,15 @@ fn spawned_worker_login_to_a_silent_server_ends_at_its_deadline() {
         !play.queue.lock().abandon_permit(arm.queue_owner),
         "the timed-out attempt was acknowledged"
     );
-    assert_eq!(
-        request_shared(
-            &play.queue,
-            43,
-            Instant::now() + host::login_queue::LOGIN_START_SPACING
-        ),
-        Permit::Grant,
-        "the next bot proceeds"
+    assert!(
+        wait_until(750, || {
+            request_shared(
+                &play.queue,
+                43,
+                Instant::now() + host::login_queue::LOGIN_START_SPACING,
+            ) == Permit::Grant
+        }),
+        "the next queued bot proceeds after exact socket retirement and spacing"
     );
     arm.stop.store(true, Ordering::Relaxed);
     release_tx.send(()).unwrap();

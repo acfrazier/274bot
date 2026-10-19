@@ -1092,6 +1092,7 @@ mod tests {
         let stop = Arc::new(AtomicBool::new(false));
         let mismatches = Arc::new(AtomicU64::new(0));
         let seen = Arc::new(AtomicU64::new(0));
+        let (first_store_tx, first_store_rx) = std::sync::mpsc::sync_channel(1);
         let producer = {
             let buf = Arc::clone(&buf);
             let stop = Arc::clone(&stop);
@@ -1102,6 +1103,11 @@ mod tests {
                     let mut pixels = vec![0i32; 765 * 503];
                     pixels[0] = n as i32;
                     buf.store(applet_pixmap(pixels));
+                    if n == 1 {
+                        first_store_tx
+                            .send(())
+                            .expect("consumer starts after first store");
+                    }
                     n = n.wrapping_add(1);
                     if n == 0 {
                         n = 1;
@@ -1109,6 +1115,9 @@ mod tests {
                 }
             })
         };
+        first_store_rx
+            .recv()
+            .expect("producer publishes first frame");
         let consumer = {
             let buf = Arc::clone(&buf);
             let stop = Arc::clone(&stop);

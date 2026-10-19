@@ -146,7 +146,8 @@ impl SharedConnection {
             return Err(AppendRefusal::Backpressured);
         }
         self.records.push(record.len() as u16);
-        self.bytes_out.fetch_add(record.len() as u64, Ordering::Relaxed);
+        self.bytes_out
+            .fetch_add(record.len() as u64, Ordering::Relaxed);
         Ok(())
     }
 

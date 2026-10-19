@@ -82,7 +82,8 @@ impl TcpTurn {
         let mut turn_write_allowed = true;
         while io.budget().attempts() < TURN_IO_ATTEMPTS {
             let can_read = self.read_ready && turn_read_allowed && inbound.free() > 0;
-            let can_write = self.write_ready && turn_write_allowed
+            let can_write = self.write_ready
+                && turn_write_allowed
                 && (self.record_remaining != 0 || records.front().is_some());
             if self.read_ready && inbound.free() == 0 {
                 high_water = true;
@@ -117,7 +118,9 @@ impl TcpTurn {
                     self.record_remaining = usize::from(records.front().expect("eligible record"));
                 }
                 let remaining = self.record_remaining;
-                match outbound.consume_with(|buffer| io.write(&buffer[..buffer.len().min(remaining)])) {
+                match outbound
+                    .consume_with(|buffer| io.write(&buffer[..buffer.len().min(remaining)]))
+                {
                     Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
                     Ok(n) => {
                         write_progress += n;
@@ -140,8 +143,8 @@ impl TcpTurn {
                 }
             }
         }
-        let pending_write = self.write_ready
-            && (self.record_remaining != 0 || records.front().is_some());
+        let pending_write =
+            self.write_ready && (self.record_remaining != 0 || records.front().is_some());
         let stop = if closed {
             TcpStop::PeerClosed
         } else {
@@ -203,7 +206,9 @@ mod tests {
             Ok(n)
         }
 
-        fn flush(&mut self) -> io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
     }
 
     #[test]
@@ -212,8 +217,14 @@ mod tests {
         let outbound = Ring::new();
         let records = RecordQueue::new();
         let park = Arc::new(Park::new());
-        let binding = WriterBinding { connection: 4, binding: 7 };
-        let mut io = Budgeted::new(Socket { max_write: 2, ..Socket::default() });
+        let binding = WriterBinding {
+            connection: 4,
+            binding: 7,
+        };
+        let mut io = Budgeted::new(Socket {
+            max_write: 2,
+            ..Socket::default()
+        });
         let mut turn = TcpTurn::default();
         assert!(outbound.push_all(b"abcde"));
         records.push(5);
@@ -221,12 +232,18 @@ mod tests {
         records.push(2);
         turn.on_writable();
         io.inner_mut().writes_blocked = true;
-        assert_eq!(turn.drive(&mut io, &inbound, &outbound, &records, &park, binding).unwrap().stop, TcpStop::Quiescent);
+        assert_eq!(
+            turn.drive(&mut io, &inbound, &outbound, &records, &park, binding)
+                .unwrap()
+                .stop,
+            TcpStop::Quiescent
+        );
         assert_eq!(records.len(), 2);
         io.inner_mut().writes_blocked = false;
         io.reset_turn();
         turn.on_writable();
-        turn.drive(&mut io, &inbound, &outbound, &records, &park, binding).unwrap();
+        turn.drive(&mut io, &inbound, &outbound, &records, &park, binding)
+            .unwrap();
         assert_eq!(io.inner().sent, b"abcdeFG");
         assert_eq!(records.len(), 0);
         assert_eq!(outbound.len(), 0);
@@ -238,13 +255,28 @@ mod tests {
         let outbound = Ring::new();
         let records = RecordQueue::new();
         let park = Park::new();
-        let mut io = Budgeted::new(Socket { max_write: 10, ..Socket::default() });
+        let mut io = Budgeted::new(Socket {
+            max_write: 10,
+            ..Socket::default()
+        });
         let mut turn = TcpTurn::default();
         assert!(outbound.push_all(b"xyz"));
         records.push(3);
         turn.on_readable();
         turn.on_writable();
-        let result = turn.drive(&mut io, &inbound, &outbound, &records, &park, WriterBinding { connection: 1, binding: 1 }).unwrap();
+        let result = turn
+            .drive(
+                &mut io,
+                &inbound,
+                &outbound,
+                &records,
+                &park,
+                WriterBinding {
+                    connection: 1,
+                    binding: 1,
+                },
+            )
+            .unwrap();
         assert!(!result.read_ready);
         assert_eq!(io.inner().sent, b"xyz");
     }
@@ -255,8 +287,14 @@ mod tests {
         let outbound = Ring::new();
         let records = RecordQueue::new();
         let park = Park::new();
-        let binding = WriterBinding { connection: 9, binding: 2 };
-        let mut io = Budgeted::new(Socket { max_write: 1, ..Socket::default() });
+        let binding = WriterBinding {
+            connection: 9,
+            binding: 2,
+        };
+        let mut io = Budgeted::new(Socket {
+            max_write: 1,
+            ..Socket::default()
+        });
         let mut turn = TcpTurn::default();
         assert!(inbound.push_all(&[7; IN_RING_BYTES]));
         assert!(outbound.push_all(&[5; 64]));
@@ -264,11 +302,12 @@ mod tests {
         turn.on_readable();
         turn.on_writable();
 
-        let result = turn.drive(&mut io, &inbound, &outbound, &records, &park, binding).unwrap();
+        let result = turn
+            .drive(&mut io, &inbound, &outbound, &records, &park, binding)
+            .unwrap();
         assert_eq!(result.stop, TcpStop::LocalWork);
         assert!(!result.read_ready);
         assert!(result.write_ready);
-        assert!(outbound.len() > 0);
+        assert!(!outbound.is_empty());
     }
-
 }

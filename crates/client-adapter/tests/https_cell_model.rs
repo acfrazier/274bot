@@ -249,6 +249,109 @@ enum Mutation {
     DoublePublish,
     DoubleTake,
 }
+// Keep worker outcomes in independent exhaustive families to avoid cross-product
+// state growth. The restricted two-success family separately covers both cells.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Scenario {
+    ConnectFailure,
+    TlsAlert,
+    CertificateReject,
+    WorkerLimit,
+    Success,
+    OpaqueVerifier,
+    TwoSuccesses,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OwnerMode {
+    Core,
+    Polls,
+    Takes,
+    Drop,
+    Cancel,
+    Shutdown,
+    MutationRace,
+}
+fn scenario_allows(scenario: Scenario, owner_mode: OwnerMode, action: Action) -> bool {
+    let owner_allowed = match action {
+        Action::StartBlockingWait(_) | Action::BlockingDeadline(_) => {
+            matches!(owner_mode, OwnerMode::Polls | OwnerMode::Shutdown)
+        }
+        Action::StartSteppedPoll(_) | Action::SteppedPoll(_) => {
+            matches!(owner_mode, OwnerMode::Polls | OwnerMode::Shutdown)
+        }
+        Action::Take { .. } => owner_mode == OwnerMode::Takes,
+        Action::DropOwner(_) | Action::OwnerClose(_) => {
+            matches!(owner_mode, OwnerMode::Drop | OwnerMode::MutationRace)
+        }
+        Action::Cancel(_) => owner_mode == OwnerMode::Cancel,
+        Action::Shutdown => owner_mode == OwnerMode::Shutdown,
+        Action::CheckOwnerLive(_) | Action::PublishAfterUncheckedCheck(_) => {
+            owner_mode == OwnerMode::MutationRace
+        }
+        _ => true,
+    };
+    if !owner_allowed {
+        return false;
+    }
+    if scenario == Scenario::TwoSuccesses {
+        return matches!(
+            action,
+            Action::Admit(0)
+                | Action::Claim(0)
+                | Action::StartConnect(0, 0)
+                | Action::ConnectSuccess(0, 0)
+                | Action::Tick
+                | Action::BeginHandshake(0)
+                | Action::StartHandshakeTurn(0)
+                | Action::EnterVerifier(0)
+                | Action::VerifierAccept(0)
+                | Action::HandshakeReturn(0, HandshakeReturn::Success)
+                | Action::PublishSuccess(0)
+                | Action::Take { cell: 0, .. }
+                | Action::Admit(1)
+                | Action::Claim(1)
+                | Action::StartConnect(1, 0)
+                | Action::ConnectSuccess(1, 0)
+                | Action::BeginHandshake(1)
+                | Action::StartHandshakeTurn(1)
+                | Action::EnterVerifier(1)
+                | Action::VerifierAccept(1)
+                | Action::HandshakeReturn(1, HandshakeReturn::Success)
+                | Action::PublishSuccess(1)
+        );
+    }
+    match action {
+        Action::ConnectRefused(..) | Action::ConnectTimeout(..) | Action::ResolveConnect(..) => {
+            scenario == Scenario::ConnectFailure
+        }
+        Action::ConnectSuccess(..) => scenario != Scenario::ConnectFailure,
+        Action::BeginHandshake(_) | Action::StartHandshakeTurn(_) => {
+            scenario != Scenario::ConnectFailure
+        }
+        Action::HandshakeReturn(_, result) => match result {
+            HandshakeReturn::WouldBlock => scenario != Scenario::ConnectFailure,
+            HandshakeReturn::TlsAlert => scenario == Scenario::TlsAlert,
+            HandshakeReturn::WorkerLimit => scenario == Scenario::WorkerLimit,
+            HandshakeReturn::Success => {
+                matches!(scenario, Scenario::WorkerLimit | Scenario::Success)
+            }
+        },
+        Action::EnterVerifier(_) => matches!(
+            scenario,
+            Scenario::CertificateReject
+                | Scenario::WorkerLimit
+                | Scenario::Success
+                | Scenario::OpaqueVerifier
+        ),
+        Action::VerifierAccept(_) => {
+            matches!(scenario, Scenario::WorkerLimit | Scenario::Success)
+        }
+        Action::VerifierReject(_) => scenario == Scenario::CertificateReject,
+        Action::Admit(1) => false,
+        _ => true,
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum HandshakeReturn {
@@ -308,6 +411,7 @@ struct Coverage {
     worker_limit_failure: bool,
     worker_limit_terminal: bool,
     success: bool,
+    second_identity_success: bool,
     expiry_before_publication: bool,
     success_survived_deadline: bool,
     success_taken_after_deadline: bool,
@@ -329,10 +433,48 @@ struct Coverage {
 }
 
 impl Coverage {
+    fn merge(&mut self, other: Self) {
+        macro_rules! merge_flags {
+            ($($field:ident),+ $(,)?) => {
+                $(self.$field |= other.$field;)+
+            };
+        }
+        merge_flags!(
+            refused_address,
+            connect_refusal_terminal,
+            address_deadline_transition,
+            tls_alert,
+            tls_alert_terminal,
+            certificate_rejection,
+            certificate_rejection_terminal,
+            worker_limit_failure,
+            worker_limit_terminal,
+            success,
+            second_identity_success,
+            expiry_before_publication,
+            success_survived_deadline,
+            success_taken_after_deadline,
+            success_published_just_before_deadline,
+            second_take_attempt,
+            published_untaken_when_next_identity_starts,
+            owner_drop_while_worker_holds_socket,
+            publication_before_owner_drop,
+            owner_drop_drained_published_socket,
+            shutdown_drained_published_socket,
+            shutdown_woke_blocking_owner,
+            cancellation,
+            shutdown,
+            opaque_verifier_blocking_deadline,
+            opaque_verifier_expiry,
+            stepped_poll,
+            stepped_terminal_poll,
+            queued_expiry,
+        );
+    }
     fn observe(&mut self, before: &State, action: Action, after: &State) {
         match action {
             Action::ConnectRefused(_, _) => self.refused_address = true,
-            Action::ResolveConnect(index, address) if address == 0 => {
+            Action::ResolveConnect(index, 0) => {
                 if matches!(
                     before.worker,
                     Worker::ConnectReturned(ConnectResult::TimedOut)
@@ -352,9 +494,7 @@ impl Coverage {
                     match failure {
                         Failure::ConnectRefused => self.connect_refusal_terminal = true,
                         Failure::TlsAlert => self.tls_alert_terminal = true,
-                        Failure::CertificateRejected => {
-                            self.certificate_rejection_terminal = true
-                        }
+                        Failure::CertificateRejected => self.certificate_rejection_terminal = true,
                         Failure::WorkerLimit => self.worker_limit_terminal = true,
                         Failure::Cancelled | Failure::OwnerDropped | Failure::Shutdown => {}
                     }
@@ -364,6 +504,9 @@ impl Coverage {
                 let cell = after.cells[index as usize];
                 if cell.terminal == Some(Terminal::Success) && cell.publication_count == 1 {
                     self.success = true;
+                    if index == 1 {
+                        self.second_identity_success = true;
+                    }
                 }
             }
             Action::Tick => {
@@ -453,9 +596,7 @@ impl Coverage {
                 }
             }
             Action::BlockingDeadline(index) => {
-                if before.active == Some(index)
-                    && before.worker == Worker::VerifierOpaque
-                {
+                if before.active == Some(index) && before.worker == Worker::VerifierOpaque {
                     self.opaque_verifier_blocking_deadline = true;
                 }
             }
@@ -492,7 +633,7 @@ enum SearchResult {
 }
 
 // FIFO breadth-first search and first-visit parents make every mutant trace shortest.
-fn explore(mutation: Mutation) -> SearchResult {
+fn explore(mutation: Mutation, scenario: Scenario, owner_mode: OwnerMode) -> SearchResult {
     let initial = State::initial();
     assert!(invariant(&initial, mutation).is_none());
     let mut nodes = vec![Node {
@@ -512,6 +653,9 @@ fn explore(mutation: Mutation) -> SearchResult {
             "HTTPS model clock horizon truncated a recorded deadline"
         );
         for (action, next) in successors(&state, mutation) {
+            if !scenario_allows(scenario, owner_mode, action) {
+                continue;
+            }
             transitions += 1;
             coverage.observe(&state, action, &next);
             if let Some(violation) = invariant(&next, mutation) {
@@ -605,7 +749,9 @@ fn invariant(state: &State, mutation: Mutation) -> Option<String> {
             return Some(format!("cell {id} changed its original queue deadline"));
         }
         if cell.terminal_count != u8::from(cell.terminal.is_some()) {
-            return Some(format!("cell {id} selected zero or multiple terminal states"));
+            return Some(format!(
+                "cell {id} selected zero or multiple terminal states"
+            ));
         }
         if cell.terminal.is_none() && cell.publication_count != 0 {
             return Some(format!("cell {id} published before terminal selection"));
@@ -616,7 +762,9 @@ fn invariant(state: &State, mutation: Mutation) -> Option<String> {
         if cell.revoked != cell.revoked_at.is_some()
             || cell.revoked != cell.revocation_reason.is_some()
         {
-            return Some(format!("cell {id} lost its first revocation reason or time"));
+            return Some(format!(
+                "cell {id} lost its first revocation reason or time"
+            ));
         }
         if let (Some(at), Some(reason)) = (cell.revoked_at, cell.revocation_reason) {
             if !matches!(
@@ -636,7 +784,9 @@ fn invariant(state: &State, mutation: Mutation) -> Option<String> {
             return Some(format!("cell {id} is occupied without one publication"));
         }
         if cell.publication_count == 0 && cell.published_at.is_some() {
-            return Some(format!("cell {id} has a publication time without a publication"));
+            return Some(format!(
+                "cell {id} has a publication time without a publication"
+            ));
         }
         if cell.publication_count == 1 && cell.published_at.is_none() {
             return Some(format!("cell {id} lost its original publication time"));
@@ -652,14 +802,20 @@ fn invariant(state: &State, mutation: Mutation) -> Option<String> {
         }
         if cell.terminal.is_some() {
             if cell.terminal_at > cell.terminal_deadline {
-                return Some(format!("cell {id} selected its terminal state after its recorded deadline"));
+                return Some(format!(
+                    "cell {id} selected its terminal state after its recorded deadline"
+                ));
             }
             match cell.terminal {
                 Some(Terminal::Success) if cell.terminal_at >= cell.terminal_deadline => {
-                    return Some(format!("cell {id} selected success at or after its deadline"));
+                    return Some(format!(
+                        "cell {id} selected success at or after its deadline"
+                    ));
                 }
                 Some(Terminal::Expired) if cell.terminal_at != cell.terminal_deadline => {
-                    return Some(format!("cell {id} did not retain the original expiry clock"));
+                    return Some(format!(
+                        "cell {id} did not retain the original expiry clock"
+                    ));
                 }
                 _ => {}
             }
@@ -669,22 +825,30 @@ fn invariant(state: &State, mutation: Mutation) -> Option<String> {
         }
         if cell.blocking_started {
             if cell.blocking_deadline != cell.blocking_started_at + BLOCKING_OWNER_BUDGET {
-                return Some(format!("cell {id} refreshed its blocking owner's original deadline"));
+                return Some(format!(
+                    "cell {id} refreshed its blocking owner's original deadline"
+                ));
             }
         } else if cell.blocking_waiting || cell.blocking_returned || cell.blocking_saw_terminal {
             return Some(format!("cell {id} has a blocking wait without a start"));
         }
         if cell.blocking_returned && cell.blocking_waiting {
-            return Some(format!("cell {id} both returned and still waits on its blocking call"));
+            return Some(format!(
+                "cell {id} both returned and still waits on its blocking call"
+            ));
         }
         if cell.blocking_saw_terminal && (!cell.blocking_returned || cell.terminal.is_none()) {
-            return Some(format!("cell {id} blocking owner observed no terminal outcome"));
+            return Some(format!(
+                "cell {id} blocking owner observed no terminal outcome"
+            ));
         }
         if cell.blocking_returned
             && !cell.blocking_saw_terminal
             && state.now < cell.blocking_deadline
         {
-            return Some(format!("cell {id} returned its blocking call before its fixed deadline"));
+            return Some(format!(
+                "cell {id} returned its blocking call before its fixed deadline"
+            ));
         }
         if cell.stepped_saw_terminal && cell.terminal.is_none() {
             return Some(format!("cell {id} stepped poll saw no terminal result"));
@@ -731,14 +895,20 @@ fn invariant(state: &State, mutation: Mutation) -> Option<String> {
                 AttemptState::Connected | AttemptState::ConnectedLate
             );
             if connected != attempt.connected_at.is_some() {
-                return Some(format!("cell {id} lost address {address}'s connect-return time"));
+                return Some(format!(
+                    "cell {id} lost address {address}'s connect-return time"
+                ));
             }
             if attempt.state == AttemptState::NotStarted {
                 if attempt.started != 0 || attempt.deadline != 0 {
-                    return Some(format!("cell {id} has clock data for unused address {address}"));
+                    return Some(format!(
+                        "cell {id} has clock data for unused address {address}"
+                    ));
                 }
             } else if attempt.deadline != attempt.started + CONNECT_BUDGET {
-                return Some(format!("cell {id} changed address {address}'s connect deadline"));
+                return Some(format!(
+                    "cell {id} changed address {address}'s connect deadline"
+                ));
             }
         }
 
@@ -755,11 +925,11 @@ fn invariant(state: &State, mutation: Mutation) -> Option<String> {
                 }
             }
             Custody::Cell => {
-                if cell.terminal != Some(Terminal::Success)
-                    || !cell.result_occupied
-                    || cell.revoked
+                if cell.terminal != Some(Terminal::Success) || !cell.result_occupied || cell.revoked
                 {
-                    return Some(format!("cell {id} holds a socket without valid success authority"));
+                    return Some(format!(
+                        "cell {id} holds a socket without valid success authority"
+                    ));
                 }
             }
             Custody::Owner => {
@@ -769,7 +939,9 @@ fn invariant(state: &State, mutation: Mutation) -> Option<String> {
             }
             Custody::Closer => {
                 if state.close_reason[index] == CloseReason::None || state.close_count[index] != 0 {
-                    return Some(format!("cell {id} closer lacks a unique post-transfer close"));
+                    return Some(format!(
+                        "cell {id} closer lacks a unique post-transfer close"
+                    ));
                 }
             }
             Custody::Closed => {
@@ -786,26 +958,35 @@ fn invariant(state: &State, mutation: Mutation) -> Option<String> {
                 && cell.take_count == 1
                 && custody == Custody::Owner)
         {
-            return Some(format!("cell {id} has an occupied success outside cell custody"));
+            return Some(format!(
+                "cell {id} has an occupied success outside cell custody"
+            ));
         }
         if cell.terminal != Some(Terminal::Success) && custody == Custody::Owner {
-            return Some(format!("cell {id} transferred non-success authority to its owner"));
+            return Some(format!(
+                "cell {id} transferred non-success authority to its owner"
+            ));
         }
         if cell.revoked && custody == Custody::Cell {
             return Some(format!("revoked cell {id} retained socket authority"));
         }
-        if cell.blocking_waiting && cell.terminal.is_some()
+        if cell.blocking_waiting
+            && cell.terminal.is_some()
             && !cell.wake_pending
             && cell.wake_count == 0
         {
-            return Some(format!("cell {id} terminal selection stranded its blocking owner"));
+            return Some(format!(
+                "cell {id} terminal selection stranded its blocking owner"
+            ));
         }
         if mutation == Mutation::OmitFailurePublication
             && cell.failure_returned
             && state.active != Some(id)
             && cell.terminal.is_none()
         {
-            return Some(format!("worker closed cell {id}'s failed socket but published no result"));
+            return Some(format!(
+                "worker closed cell {id}'s failed socket but published no result"
+            ));
         }
     }
 
@@ -819,7 +1000,9 @@ fn invariant(state: &State, mutation: Mutation) -> Option<String> {
         .enumerate()
     {
         if custody == Custody::Closer && reason == CloseReason::None {
-            return Some(format!("cell {index} close has no ownership-transfer reason"));
+            return Some(format!(
+                "cell {index} close has no ownership-transfer reason"
+            ));
         }
     }
     None
@@ -830,8 +1013,31 @@ fn successors(state: &State, mutation: Mutation) -> Vec<(Action, State)> {
     let mut add = |action, changed| next.push((action, changed));
 
     if state.now < MAX_TIME && has_future_deadline(state) && !has_due_deadline(state) {
+        // Integer instants strictly between deadlines are behaviorally equivalent:
+        // timer budgets are at least one tick, so retain the last pre-deadline
+        // instant and the due instant while skipping earlier interior instants.
+        let next_deadline = state
+            .cells
+            .iter()
+            .filter(|cell| cell.identity != 0)
+            .flat_map(|cell| {
+                [
+                    (cell.terminal.is_none()).then_some(cell.phase_deadline),
+                    (cell.terminal == Some(Terminal::Success) && cell.result_occupied)
+                        .then_some(cell.phase_deadline),
+                    cell.blocking_waiting.then_some(cell.blocking_deadline),
+                ]
+            })
+            .flatten()
+            .filter(|deadline| *deadline > state.now)
+            .min()
+            .expect("future-deadline predicate had no corresponding deadline");
         let mut changed = *state;
-        changed.now += 1;
+        changed.now = if next_deadline - state.now > 1 {
+            next_deadline - 1
+        } else {
+            next_deadline
+        };
         add(Action::Tick, changed);
     }
 
@@ -903,25 +1109,18 @@ fn successors(state: &State, mutation: Mutation) -> Vec<(Action, State)> {
                     changed.cells[index].attempts[state.address_index as usize].state =
                         AttemptState::Refused;
                     changed.worker = Worker::ConnectReturned(ConnectResult::Refused);
-                    add(
-                        Action::ConnectRefused(active, state.address_index),
-                        changed,
-                    );
+                    add(Action::ConnectRefused(active, state.address_index), changed);
                 }
                 let mut changed = *state;
                 if state.now >= cell.phase_deadline {
                     changed.cells[index].attempts[state.address_index as usize].state =
                         AttemptState::TimedOut;
                     changed.worker = Worker::ConnectReturned(ConnectResult::TimedOut);
-                    add(
-                        Action::ConnectTimeout(active, state.address_index),
-                        changed,
-                    );
+                    add(Action::ConnectTimeout(active, state.address_index), changed);
                 }
                 if state.now <= cell.phase_deadline {
                     let mut changed = *state;
-                    let attempt =
-                        &mut changed.cells[index].attempts[state.address_index as usize];
+                    let attempt = &mut changed.cells[index].attempts[state.address_index as usize];
                     attempt.state = if state.now < cell.phase_deadline {
                         AttemptState::Connected
                     } else {
@@ -934,10 +1133,7 @@ fn successors(state: &State, mutation: Mutation) -> Vec<(Action, State)> {
                     } else {
                         changed.worker = Worker::ClosingLateConnect;
                     }
-                    add(
-                        Action::ConnectSuccess(active, state.address_index),
-                        changed,
-                    );
+                    add(Action::ConnectSuccess(active, state.address_index), changed);
                 }
             }
             Worker::ConnectReturned(result) => {
@@ -961,9 +1157,7 @@ fn successors(state: &State, mutation: Mutation) -> Vec<(Action, State)> {
                     cell.wake_pending = true;
                     changed.address_index = next_address;
                     changed.worker = Worker::ConnectReady;
-                } else if result == ConnectResult::Refused
-                    && state.now < cell.phase_deadline
-                {
+                } else if result == ConnectResult::Refused && state.now < cell.phase_deadline {
                     changed.cells[index].failure_returned = true;
                     changed.worker = Worker::FailureReady(Failure::ConnectRefused);
                 } else {
@@ -1063,9 +1257,7 @@ fn successors(state: &State, mutation: Mutation) -> Vec<(Action, State)> {
                         changed.stale_owner_check = Some(active);
                         add(Action::CheckOwnerLive(active), changed);
                     }
-                    if state.stale_owner_check == Some(active)
-                        && cell.owner_dropped
-                    {
+                    if state.stale_owner_check == Some(active) && cell.owner_dropped {
                         let mut changed = *state;
                         if cell.terminal.is_none() {
                             let now = changed.now;
@@ -1190,8 +1382,7 @@ fn successors(state: &State, mutation: Mutation) -> Vec<(Action, State)> {
         let expiry_eligible = match cell.phase {
             Phase::Queued | Phase::Handshaking => state.now >= cell.phase_deadline,
             Phase::Connecting(address) => {
-                state.now >= cell.phase_deadline
-                    && address as usize + 1 == ADDRESSES
+                state.now >= cell.phase_deadline && address as usize + 1 == ADDRESSES
             }
             Phase::Unused => false,
         };
@@ -1253,9 +1444,7 @@ fn successors(state: &State, mutation: Mutation) -> Vec<(Action, State)> {
             add(Action::WakeOwner(index as u8), changed);
         }
 
-        if cell.terminal.is_some()
-            && (cell.result_occupied || cell.take_count > 0)
-        {
+        if cell.terminal.is_some() && (cell.result_occupied || cell.take_count > 0) {
             // These are two competing calls by the same logical owner. The
             // HTTPS-cell lock serializes them; they are not two fetch owners.
             for contender in 0..2u8 {
@@ -1420,14 +1609,7 @@ fn select_terminal(
 fn select_expiry(state: &mut State, index: usize) {
     let deadline = state.cells[index].phase_deadline;
     let publish = state.cells[index].owner_alive;
-    select_terminal(
-        state,
-        index,
-        Terminal::Expired,
-        deadline,
-        deadline,
-        publish,
-    );
+    select_terminal(state, index, Terminal::Expired, deadline, deadline, publish);
 }
 
 /// Revoke one ticket while holding the lane lock, then hand any cell socket
@@ -1503,19 +1685,71 @@ fn render_trace(trace: &[Action]) -> String {
 
 #[test]
 fn https_cell_scheduler_exhausts_interleavings_and_finds_shortest_mutants() {
-    let result = explore(Mutation::None);
-    let exhausted = match result {
+    let mut coverage = Coverage::default();
+    let mut explored_states = 0usize;
+    let mut transitions = 0usize;
+    for scenario in [
+        Scenario::ConnectFailure,
+        Scenario::TlsAlert,
+        Scenario::CertificateReject,
+        Scenario::WorkerLimit,
+        Scenario::Success,
+        Scenario::OpaqueVerifier,
+    ] {
+        for owner_mode in [
+            OwnerMode::Core,
+            OwnerMode::Polls,
+            OwnerMode::Takes,
+            OwnerMode::Drop,
+            OwnerMode::Cancel,
+            OwnerMode::Shutdown,
+        ] {
+            match explore(Mutation::None, scenario, owner_mode) {
+                SearchResult::Exhausted(exhausted) => {
+                    assert!(exhausted.explored_states <= MAX_STATES);
+                    explored_states += exhausted.explored_states;
+                    transitions += exhausted.transitions;
+                    coverage.merge(exhausted.coverage);
+                }
+                SearchResult::Counterexample(counterexample) => panic!(
+                    "correct HTTPS {:?}/{:?} scenario invariant failed after {} explored states: {}\n{}",
+                    scenario,
+                    owner_mode,
+                    counterexample.explored_states,
+                    counterexample.violation,
+                    render_trace(&counterexample.trace)
+                ),
+            }
+        }
+    }
+    let second_cell = match explore(Mutation::None, Scenario::TwoSuccesses, OwnerMode::Takes) {
         SearchResult::Exhausted(exhausted) => exhausted,
         SearchResult::Counterexample(counterexample) => panic!(
-            "correct HTTPS model invariant failed after {} explored states: {}\n{}",
+            "two-cell HTTPS scenario invariant failed after {} explored states: {}\n{}",
             counterexample.explored_states,
             counterexample.violation,
             render_trace(&counterexample.trace)
         ),
     };
-    assert!(exhausted.explored_states <= MAX_STATES);
-    let coverage = exhausted.coverage;
-    assert!(coverage.refused_address, "no refused connect address was explored");
+    assert!(
+        second_cell.explored_states <= MAX_STATES,
+        "two-cell scenario exceeded its declared state bound"
+    );
+    assert!(
+        second_cell
+            .coverage
+            .published_untaken_when_next_identity_starts,
+        "second identity did not start while the first result cell remained occupied"
+    );
+    assert!(
+        second_cell.coverage.second_identity_success,
+        "second identity did not publish its own result cell"
+    );
+    coverage.merge(second_cell.coverage);
+    assert!(
+        coverage.refused_address,
+        "no refused connect address was explored"
+    );
     assert!(
         coverage.connect_refusal_terminal,
         "no typed refused-address result was published"
@@ -1525,7 +1759,10 @@ fn https_cell_scheduler_exhausts_interleavings_and_finds_shortest_mutants() {
         "no nonfinal address deadline transition was explored"
     );
     assert!(coverage.tls_alert, "no TLS alert was explored");
-    assert!(coverage.tls_alert_terminal, "no typed TLS alert result was published");
+    assert!(
+        coverage.tls_alert_terminal,
+        "no typed TLS alert result was published"
+    );
     assert!(
         coverage.certificate_rejection,
         "no certificate rejection was explored"
@@ -1538,8 +1775,14 @@ fn https_cell_scheduler_exhausts_interleavings_and_finds_shortest_mutants() {
         coverage.worker_limit_failure,
         "no worker-limit failure was explored"
     );
-    assert!(coverage.worker_limit_terminal, "no typed worker-limit result was published");
-    assert!(coverage.success, "no successful handshake publication was explored");
+    assert!(
+        coverage.worker_limit_terminal,
+        "no typed worker-limit result was published"
+    );
+    assert!(
+        coverage.success,
+        "no successful handshake publication was explored"
+    );
     assert!(
         coverage.expiry_before_publication,
         "no pre-publication expiry was explored"
@@ -1559,10 +1802,6 @@ fn https_cell_scheduler_exhausts_interleavings_and_finds_shortest_mutants() {
     assert!(
         coverage.success_published_just_before_deadline,
         "no result published just before its deadline was taken afterward"
-    );
-    assert!(
-        coverage.published_untaken_when_next_identity_starts,
-        "no second identity started with the first result cell occupied"
     );
     assert!(
         coverage.owner_drop_while_worker_holds_socket,
@@ -1599,11 +1838,14 @@ fn https_cell_scheduler_exhausts_interleavings_and_finds_shortest_mutants() {
         coverage.stepped_terminal_poll,
         "no stepped owner poll observed a terminal result"
     );
-    assert!(coverage.queued_expiry, "no queued fetch expiry was explored");
+    assert!(
+        coverage.queued_expiry,
+        "no queued fetch expiry was explored"
+    );
 
     println!(
         "HTTPS model exhausted: explored_states={} transitions={} state_bound={} max_time={}",
-        exhausted.explored_states, exhausted.transitions, MAX_STATES, MAX_TIME
+        explored_states, transitions, MAX_STATES, MAX_TIME
     );
     println!(
         "HTTPS model assumptions: atomic lock transitions; one worker; one logical owner; two immutable identities and cells; FIFO BFS with state deduplication; fair scheduling of enabled finite steps; clock advances toward recorded deadlines and resolves due transitions before another tick; finite connect call times out at its recorded deadline; a late connect success is closed without publication; verifier may remain opaque forever; no wall-time liveness claim"
@@ -1616,7 +1858,14 @@ fn https_cell_scheduler_exhausts_interleavings_and_finds_shortest_mutants() {
         Mutation::DoublePublish,
         Mutation::DoubleTake,
     ] {
-        match explore(mutation) {
+        let (scenario, owner_mode) = match mutation {
+            Mutation::UnlockedCheckThenMove => (Scenario::Success, OwnerMode::MutationRace),
+            Mutation::OmitFailurePublication => (Scenario::TlsAlert, OwnerMode::Polls),
+            Mutation::DoublePublish => (Scenario::Success, OwnerMode::Core),
+            Mutation::DoubleTake => (Scenario::Success, OwnerMode::Takes),
+            Mutation::None => unreachable!(),
+        };
+        match explore(mutation, scenario, owner_mode) {
             SearchResult::Counterexample(counterexample) => {
                 assert!(counterexample.explored_states <= MAX_STATES);
                 assert!(!counterexample.trace.is_empty());

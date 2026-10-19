@@ -121,7 +121,9 @@ pub fn prepare(
         // protocol can fill is reported here and completed at client boot,
         // where the session's OnDemand worker supplies the entries.
         None,
-        |now| { network.maintain(now); },
+        |now| {
+            network.maintain(now);
+        },
     );
     observer.report(ProfileProgress::steps(
         ProfileProgressStage::PreparingCache,

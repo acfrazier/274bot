@@ -688,7 +688,7 @@ fn revision_289_direct_host_writers_match_primary_bytes() {
     c.ingame = true;
     c.set_cheat_admission(client::CheatAdmission::Granted);
 
-    assert!(Send::if_button(0x1234).write_for_revision(c.revision(), &mut c.out));
+    assert!(Send::if_button(0x1234).write_for_client(&mut c));
     assert_eq!(&c.out.data()[..c.out.pos], &[86, 0x12, 0x34]);
 
     c.out.pos = 0;
@@ -720,23 +720,43 @@ fn revision_289_forged_typed_send_refuses_before_any_mutation() {
         prot: ClientProt::OPNPC1,
         value: 99,
     }
-    .write_for_revision(c.revision(), &mut c.out));
+    .write_for_client(&mut c));
     assert_eq!(c.out.pos, 0, "no packet bytes");
     assert_eq!(c.menu_action[0], MiniMenuAction::OP_PLAYER2);
     assert_eq!(c.menu_param_a[0], 7);
     assert_eq!(c.local_player.as_ref().unwrap().route_x[0], 5);
     assert_eq!(c.local_player.as_ref().unwrap().route_z[0], 6);
 
-    assert!(Send::if_button(0x1234).write_for_revision(c.revision(), &mut c.out));
+    assert!(Send::if_button(0x1234).write_for_client(&mut c));
     let actual = c.out.data()[..c.out.pos].to_vec();
     let mut control = Client::new_with_revision(cfg(), ClientRevision::R289);
     control.out.random = Some(Isaac::new(&seed));
-    assert!(Send::if_button(0x1234).write_for_revision(control.revision(), &mut control.out));
+    assert!(Send::if_button(0x1234).write_for_client(&mut control));
     assert_eq!(
         actual,
         control.out.data()[..control.out.pos],
         "the refusal must not consume ISAAC"
     );
+}
+
+#[test]
+fn real_client_typed_sends_reserve_whole_packets_before_cipher_or_cursor_moves() {
+    let seed = [1, 2, 3, 4];
+    let mut button = Client::new_with_revision(cfg(), ClientRevision::R289);
+    button.out.random = Some(Isaac::new(&seed));
+    button.out.pos = 4999;
+    let next = button.out.random.clone().unwrap().next_int();
+    assert!(!Send::if_button(0x1234).write_for_client(&mut button));
+    assert_eq!(button.out.pos, 4999);
+    assert_eq!(button.out.random.as_mut().unwrap().next_int(), next);
+
+    let mut step = Client::new_with_revision(cfg(), ClientRevision::R289);
+    step.out.random = Some(Isaac::new(&seed));
+    step.out.pos = 4994;
+    let next = step.out.random.clone().unwrap().next_int();
+    assert!(!api::prot::WalkStep { x: 5, z: 6 }.write_for_client(&mut step));
+    assert_eq!(step.out.pos, 4994);
+    assert_eq!(step.out.random.as_mut().unwrap().next_int(), next);
 }
 
 /// `close_modal` writes the CLOSE_MODAL opcode through the ISAAC sink.
@@ -1209,11 +1229,9 @@ fn scene() -> Scene {
 fn scene_revision(revision: ClientRevision) -> Scene {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("local addr");
-    let stream = client::io::ClientStream::connect_tcp_for_test(
-        &addr.ip().to_string(),
-        addr.port(),
-    )
-    .expect("connect");
+    let stream =
+        client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+            .expect("connect");
     let mut c = configured_client_revision(revision);
     c.stream = Some(stream);
     Scene {
@@ -3817,7 +3835,7 @@ fn pending_door_packet_matches_client_one_tile_walk() {
     let expected = c.out.data()[..c.out.pos].to_vec();
     c.out.pos = 0;
     c.out.random = Some(Isaac::new(&[1, 2, 3, 4]));
-    api::prot::WalkStep { x: 5, z: 6 }.write(&mut c.out);
+    assert!(api::prot::WalkStep { x: 5, z: 6 }.write_for_client(&mut c));
     assert_eq!(&c.out.data()[..c.out.pos], expected);
 }
 

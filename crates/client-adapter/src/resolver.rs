@@ -161,7 +161,9 @@ pub enum ResolverLookupError {
     NoAddresses,
 }
 
-/// Nonblocking result of inspecting one resolver ticket.
+/// Addresses and failures are Copy transport values; boxing the ready result
+/// would add allocation and indirection to resolver polling.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ResolvePoll {
     Pending,
@@ -223,6 +225,12 @@ impl ResolveTicket {
                 ResolvePoll::Ready(Err(ResolverFailure::Unavailable(unavailable)))
             }
         }
+    }
+
+    /// Actual resolver backend start/end for this ticket's request. Cached
+    /// positive and negative answers have no backend invocation to report.
+    pub fn backend_timing(&self) -> Option<(Instant, Instant)> {
+        mutex_lock(&self.cell.state).backend_timing
     }
 
     /// Atomically detaches this waiter. The slot quota is available to the
@@ -308,10 +316,7 @@ impl ResolverConfiguration {
         }
     }
 
-    pub const fn new(
-        digest: Option<[u8; 32]>,
-        profile: Option<ResolverProfileReceipt>,
-    ) -> Self {
+    pub const fn new(digest: Option<[u8; 32]>, profile: Option<ResolverProfileReceipt>) -> Self {
         Self { digest, profile }
     }
 }
@@ -448,17 +453,18 @@ impl Resolver {
             return Err(ResolverAdmissionError::Unavailable(unavailable));
         }
 
-        if let Some(existing) = state.waiters.iter().flatten().find(|waiter| {
-            waiter.identity.slot == identity.slot
-        }) {
+        if let Some(existing) = state
+            .waiters
+            .iter()
+            .flatten()
+            .find(|waiter| waiter.identity.slot == identity.slot)
+        {
             let same_attempt = existing.identity.generation == identity.generation
                 && state
                     .requests
                     .get(existing.request_index)
                     .and_then(Option::as_ref)
-                    .is_some_and(|request| {
-                        request.id == existing.request_id && request.key == key
-                    });
+                    .is_some_and(|request| request.id == existing.request_id && request.key == key);
             if same_attempt {
                 return Ok(ResolveTicket {
                     identity,
@@ -504,10 +510,8 @@ impl Resolver {
             .position(Option::is_none)
             .ok_or(ResolverAdmissionError::Busy)?;
         let request_charge = if new_request { REQUEST_CHARGE } else { 0 };
-        let add_buffer_charge = new_request
-            && state.active.is_none()
-            && state.queue_len == 0
-            && !state.buffer_reserved;
+        let add_buffer_charge =
+            new_request && state.active.is_none() && state.queue_len == 0 && !state.buffer_reserved;
         let buffer_charge = if add_buffer_charge {
             ACTIVE_BUFFER_CHARGE
         } else {
@@ -696,7 +700,10 @@ impl WakeBatch {
     }
 
     fn push(&mut self, wake: Arc<dyn ResolverWake>) {
-        assert!(self.len < MAX_CONFIGURED_SLOTS, "resolver wake batch overflow");
+        assert!(
+            self.len < MAX_CONFIGURED_SLOTS,
+            "resolver wake batch overflow"
+        );
         self.values[self.len] = Some(wake);
         self.len += 1;
     }
@@ -777,13 +784,15 @@ impl PartialEq for ResolveKey {
     fn eq(&self, other: &Self) -> bool {
         self.host_len == other.host_len
             && self.port == other.port
-            && self.host[..usize::from(self.host_len)]
-                == other.host[..usize::from(other.host_len)]
+            && self.host[..usize::from(self.host_len)] == other.host[..usize::from(other.host_len)]
     }
 }
 
 impl Eq for ResolveKey {}
 
+// Keep completed resolver results inline and Copy: boxing would allocate on
+// the resolver completion path.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Copy)]
 enum ResolverOutcome {
     Resolved(ResolvedAddresses),
@@ -799,6 +808,9 @@ impl ResolverOutcome {
     }
 }
 
+// Ticket state is Copy and polled on the transport path; boxing the result
+// would impose allocation/indirection on that path.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Copy)]
 enum TicketTerminal {
     Pending,
@@ -815,13 +827,20 @@ struct TicketCell {
 
 struct TicketCellState {
     terminal: TicketTerminal,
+    backend_timing: Option<(Instant, Instant)>,
 }
 
 impl TicketCell {
     fn new(ledger: Arc<AtomicUsize>, charge: usize, terminal: TicketTerminal) -> Self {
         Self {
-            state: Mutex::new(TicketCellState { terminal }),
-            _charge: ChargeLease { ledger, bytes: charge },
+            state: Mutex::new(TicketCellState {
+                terminal,
+                backend_timing: None,
+            }),
+            _charge: ChargeLease {
+                ledger,
+                bytes: charge,
+            },
         }
     }
 }
@@ -902,25 +921,31 @@ impl ResolverConfiguration {
         if observed.is_zero() {
             return None;
         }
-        observed.checked_mul(4).map(|threshold| threshold.max(PROFILE_FLOOR))
+        observed
+            .checked_mul(4)
+            .map(|threshold| threshold.max(PROFILE_FLOOR))
     }
 }
 
-const REQUEST_CHARGE: usize =
-    std::mem::size_of::<PendingRequest>() + std::mem::size_of::<ResolverOutcome>() + std::mem::size_of::<usize>();
+const REQUEST_CHARGE: usize = std::mem::size_of::<PendingRequest>()
+    + std::mem::size_of::<ResolverOutcome>()
+    + std::mem::size_of::<usize>();
 const WAITER_CHARGE: usize =
     std::mem::size_of::<Waiter>() + std::mem::size_of::<TicketCell>() + ARC_CONTROL_BYTES;
 const ACTIVE_BUFFER_CHARGE: usize = std::mem::size_of::<ResolvedAddresses>();
 const CACHE_ENTRY_CHARGE: usize = std::mem::size_of::<CacheEntry>();
 
 fn mutex_lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn reserve_pending(ledger: &AtomicUsize, bytes: usize) -> bool {
     ledger
         .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
-            used.checked_add(bytes).filter(|next| *next <= MAX_PENDING_BYTES)
+            used.checked_add(bytes)
+                .filter(|next| *next <= MAX_PENDING_BYTES)
         })
         .is_ok()
 }
@@ -1052,12 +1077,8 @@ fn cancel_ticket(inner: &ResolverInner, cell: &Arc<TicketCell>) -> bool {
         }) else {
             return false;
         };
-        let changed = detach_waiter_locked(
-            &mut state,
-            index,
-            TicketTerminal::Cancelled,
-            &mut wakes,
-        );
+        let changed =
+            detach_waiter_locked(&mut state, index, TicketTerminal::Cancelled, &mut wakes);
         sweep_waiterless_queued(inner, &mut state);
         changed
     };
@@ -1089,12 +1110,7 @@ fn expire_waiters_locked(
             .as_ref()
             .is_some_and(|waiter| now >= waiter.deadline)
         {
-            detach_waiter_locked(
-                state,
-                index,
-                TicketTerminal::TimedOut,
-                wakes,
-            );
+            detach_waiter_locked(state, index, TicketTerminal::TimedOut, wakes);
         }
     }
     sweep_waiterless_queued(inner, state);
@@ -1109,9 +1125,9 @@ fn check_stall_locked(
     if state.unavailable.is_some() {
         return;
     }
-    let stalled = state.active.is_some_and(|active| {
-        now.saturating_duration_since(active.started_at) >= active.threshold
-    });
+    let stalled = state
+        .active
+        .is_some_and(|active| now.saturating_duration_since(active.started_at) >= active.threshold);
     if stalled {
         latch_unavailable_locked(
             inner,
@@ -1221,7 +1237,10 @@ fn take_next_work(inner: &ResolverInner) -> Option<Work> {
             let started_at = inner.clock.now();
             let threshold = policy_threshold(state.policy);
             let epoch = state.cache_epoch;
-            state.requests[index].as_mut().expect("request exists").epoch = Some(epoch);
+            state.requests[index]
+                .as_mut()
+                .expect("request exists")
+                .epoch = Some(epoch);
             state.active = Some(ActiveCall {
                 request_id: request.id,
                 started_at,
@@ -1266,7 +1285,10 @@ fn finish_work(
     let mut wakes = WakeBatch::new();
     {
         let mut state = mutex_lock(&inner.state);
-        if state.active.is_some_and(|active| active.request_id == work.request_id) {
+        if state
+            .active
+            .is_some_and(|active| active.request_id == work.request_id)
+        {
             let active = state.active.take().expect("active call exists");
             state.active_index = None;
             if state.unavailable.is_none()
@@ -1285,6 +1307,7 @@ fn finish_work(
                         let mut cell = mutex_lock(&waiter.cell.state);
                         if matches!(cell.terminal, TicketTerminal::Pending) {
                             cell.terminal = TicketTerminal::Complete(outcome.into_result());
+                            cell.backend_timing = Some((active.started_at, now));
                             wakes.push(waiter.wake);
                         }
                     }
@@ -1319,7 +1342,7 @@ fn worker_panicked(inner: &ResolverInner, active_request_id: Option<u128>) {
             &mut wakes,
         );
         if let Some(active) = state.active {
-            if active_request_id.map_or(true, |id| id == active.request_id) {
+            if active_request_id.is_none_or(|id| id == active.request_id) {
                 if let Some(index) = state.active_index.take() {
                     if state.requests[index].take().is_some() {
                         release_pending(&inner.pending_bytes, REQUEST_CHARGE);
@@ -1354,11 +1377,16 @@ fn prune_expired_cache(state: &mut ResolverState, now: Instant) {
     }
 }
 
-fn cache_lookup(state: &mut ResolverState, key: ResolveKey, now: Instant) -> Option<ResolverOutcome> {
+fn cache_lookup(
+    state: &mut ResolverState,
+    key: ResolveKey,
+    now: Instant,
+) -> Option<ResolverOutcome> {
     let epoch = state.cache_epoch;
-    let index = state.cache.iter().position(|entry| {
-        entry.is_some_and(|cached| cached.key == key && cached.epoch == epoch)
-    })?;
+    let index = state
+        .cache
+        .iter()
+        .position(|entry| entry.is_some_and(|cached| cached.key == key && cached.epoch == epoch))?;
     let cached = state.cache[index].as_mut().expect("cache entry found");
     cached.last_used_at = now;
     Some(cached.outcome)
@@ -1438,11 +1466,15 @@ mod tests {
 
         fn advance(&self, amount: Duration) {
             let mut now = mutex_lock(&self.0);
-            *now = now.checked_add(amount).expect("fake time remains representable");
+            *now = now
+                .checked_add(amount)
+                .expect("fake time remains representable");
         }
 
         fn set_elapsed(&self, base: Instant, amount: Duration) {
-            *mutex_lock(&self.0) = base.checked_add(amount).expect("fake time remains representable");
+            *mutex_lock(&self.0) = base
+                .checked_add(amount)
+                .expect("fake time remains representable");
         }
     }
 
@@ -1460,7 +1492,10 @@ mod tests {
     impl ImmediateBackend {
         fn new() -> Self {
             let mut addresses = ResolvedAddresses::new();
-            addresses.push(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 43594)));
+            addresses.push(SocketAddr::V4(SocketAddrV4::new(
+                Ipv4Addr::LOCALHOST,
+                43594,
+            )));
             Self {
                 calls: AtomicUsize::new(0),
                 addresses,
@@ -1469,7 +1504,11 @@ mod tests {
     }
 
     impl ResolverBackend for ImmediateBackend {
-        fn lookup(&self, _host: &str, _port: u16) -> Result<ResolvedAddresses, ResolverLookupError> {
+        fn lookup(
+            &self,
+            _host: &str,
+            _port: u16,
+        ) -> Result<ResolvedAddresses, ResolverLookupError> {
             self.calls.fetch_add(1, AtomicOrdering::SeqCst);
             Ok(self.addresses)
         }
@@ -1518,7 +1557,9 @@ mod tests {
         let clock = FakeClock::new();
         let resolver = Resolver::injected(
             max_slots,
-            Arc::new(GateBackend { entered: entered_tx }),
+            Arc::new(GateBackend {
+                entered: entered_tx,
+            }),
             Arc::new(clock.clone()),
             configuration,
         )
@@ -1575,7 +1616,10 @@ mod tests {
         })
     }
 
-    fn wait_ready(ticket: &ResolveTicket, wakes: &Receiver<()>) -> Result<ResolvedAddresses, ResolverFailure> {
+    fn wait_ready(
+        ticket: &ResolveTicket,
+        wakes: &Receiver<()>,
+    ) -> Result<ResolvedAddresses, ResolverFailure> {
         loop {
             match ticket.poll() {
                 ResolvePoll::Ready(result) => return result,
@@ -1596,7 +1640,10 @@ mod tests {
         );
         let (wake, wakes) = wake_channel();
         let ticket = ticket(&context.resolver, 1, 1, host, &wake).unwrap();
-        let call = context.entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        let call = context
+            .entered
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         call.result.send(Ok(address_list())).unwrap();
         assert!(wait_ready(&ticket, &wakes).is_ok());
         wait_until_idle(&context.resolver);
@@ -1604,7 +1651,10 @@ mod tests {
 
     fn address_list() -> ResolvedAddresses {
         let mut addresses = ResolvedAddresses::new();
-        addresses.push(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 43_594)));
+        addresses.push(SocketAddr::V4(SocketAddrV4::new(
+            Ipv4Addr::LOCALHOST,
+            43_594,
+        )));
         addresses
     }
 
@@ -1649,11 +1699,23 @@ mod tests {
         let mut tickets = Vec::new();
         let (first_tx, _first_rx) = wake_channel();
         tickets.push(ticket(&context.resolver, 0, 1, "host-0", &first_tx).unwrap());
-        let active = context.entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        let active = context
+            .entered
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         assert_eq!((active.host.as_str(), active.port), ("host-0", 43_594));
         for slot in 1..MAX_PENDING_KEYS {
             let (tx, _rx) = wake_channel();
-            tickets.push(ticket(&context.resolver, slot as u64, 1, &format!("host-{slot}"), &tx).unwrap());
+            tickets.push(
+                ticket(
+                    &context.resolver,
+                    slot as u64,
+                    1,
+                    &format!("host-{slot}"),
+                    &tx,
+                )
+                .unwrap(),
+            );
         }
         assert_eq!(pending_request_count(&context.resolver), MAX_PENDING_KEYS);
         assert!(context.resolver.pending_bytes() <= MAX_PENDING_BYTES);
@@ -1664,8 +1726,14 @@ mod tests {
         );
         let before_overlong = context.resolver.pending_bytes();
         assert_eq!(
-            ticket(&context.resolver, 64, 1, &"x".repeat(MAX_HOST_BYTES + 1), &extra_tx)
-                .unwrap_err(),
+            ticket(
+                &context.resolver,
+                64,
+                1,
+                &"x".repeat(MAX_HOST_BYTES + 1),
+                &extra_tx
+            )
+            .unwrap_err(),
             ResolverAdmissionError::InvalidHost
         );
         assert_eq!(context.resolver.pending_bytes(), before_overlong);
@@ -1695,16 +1763,19 @@ mod tests {
         let (tx, rx) = wake_channel();
         let one = ticket(&resolver, 0, 1, "cache-one", &tx).unwrap();
         assert!(wait_ready(&one, &rx).is_ok());
+        assert_eq!(one.backend_timing(), Some((clock.now(), clock.now())));
         drop(one);
         assert_eq!(backend.calls.load(AtomicOrdering::SeqCst), 1);
         clock.advance(CACHE_TTL - Duration::from_nanos(1));
         let hit = ticket(&resolver, 1, 1, "cache-one", &tx).unwrap();
         assert!(matches!(hit.poll(), ResolvePoll::Ready(Ok(_))));
+        assert_eq!(hit.backend_timing(), None, "cache hit invoked no backend");
         drop(hit);
         assert_eq!(backend.calls.load(AtomicOrdering::SeqCst), 1);
         clock.advance(Duration::from_nanos(1));
         let expired = ticket(&resolver, 2, 1, "cache-one", &tx).unwrap();
         assert!(wait_ready(&expired, &rx).is_ok());
+        assert_eq!(expired.backend_timing(), Some((clock.now(), clock.now())));
         drop(expired);
         assert_eq!(backend.calls.load(AtomicOrdering::SeqCst), 2);
 
@@ -1717,8 +1788,16 @@ mod tests {
         let state = mutex_lock(&resolver.inner.state);
         assert_eq!(state.cache_bytes, MAX_CACHE_ENTRIES * CACHE_ENTRY_CHARGE);
         assert!(state.cache_bytes <= MAX_CACHE_BYTES);
-        assert!(!state.cache.iter().flatten().any(|entry| entry.key.host() == "lru-0"));
-        assert!(state.cache.iter().flatten().any(|entry| entry.key.host() == "lru-128"));
+        assert!(!state
+            .cache
+            .iter()
+            .flatten()
+            .any(|entry| entry.key.host() == "lru-0"));
+        assert!(state
+            .cache
+            .iter()
+            .flatten()
+            .any(|entry| entry.key.host() == "lru-128"));
     }
 
     #[test]
@@ -1726,7 +1805,10 @@ mod tests {
         let context = gated(MAX_CONFIGURED_SLOTS, ResolverConfiguration::unprofiled());
         let (tx, _rx) = wake_channel();
         let first = ticket(&context.resolver, 0, 1, "shared-name", &tx).unwrap();
-        let active = context.entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        let active = context
+            .entered
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         let mut tickets = vec![first];
         let mut next_slot = 1_u64;
         loop {
@@ -1764,7 +1846,10 @@ mod tests {
                 unlocked_wake(&context.resolver, wake_a),
             )
             .unwrap();
-        let call = context.entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        let call = context
+            .entered
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         let (wake_b, unlocked_b) = mpsc::channel();
         let b = context
             .resolver
@@ -1783,7 +1868,10 @@ mod tests {
         assert!(unlocked_a.recv_timeout(Duration::from_secs(5)).unwrap());
         call.result.send(Ok(address_list())).unwrap();
         assert!(unlocked_b.recv_timeout(Duration::from_secs(5)).unwrap());
-        assert_eq!(a.poll(), ResolvePoll::Ready(Err(ResolverFailure::Cancelled)));
+        assert_eq!(
+            a.poll(),
+            ResolvePoll::Ready(Err(ResolverFailure::Cancelled))
+        );
         assert!(matches!(b.poll(), ResolvePoll::Ready(Ok(_))));
         assert!(!b.cancel());
         drop((a, b));
@@ -1810,7 +1898,10 @@ mod tests {
         let context = gated(8, ResolverConfiguration::unprofiled());
         let (wake_a, rx_a) = wake_channel();
         let a = ticket(&context.resolver, 7, 1, "slow-a", &wake_a).unwrap();
-        let active = context.entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        let active = context
+            .entered
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         context.clock.advance(TICKET_WAIT);
         context.resolver.maintain();
         rx_a.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -1854,7 +1945,10 @@ mod tests {
         let context = gated(8, qualified(digest, 30.0));
         let (wake_a, rx_a) = wake_channel();
         let a = ticket(&context.resolver, 1, 1, "blocked-a", &wake_a).unwrap();
-        let active = context.entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        let active = context
+            .entered
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         let start = context.clock.now();
         context.clock.set_elapsed(start, Duration::from_secs(30));
         assert_eq!(context.resolver.maintain().unavailable, None);
@@ -1887,7 +1981,10 @@ mod tests {
         let context = gated(4, qualified(digest, 60.0));
         let (wake, _rx) = wake_channel();
         let ticket = ticket(&context.resolver, 1, 1, "qualified", &wake).unwrap();
-        let call = context.entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        let call = context
+            .entered
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         let start = context.clock.now();
         context.clock.set_elapsed(start, Duration::from_secs(239));
         assert_eq!(
@@ -1899,7 +1996,11 @@ mod tests {
         assert_eq!(context.resolver.health().unavailable, None);
         context.clock.set_elapsed(start, Duration::from_secs(240));
         assert_eq!(
-            context.resolver.maintain().unavailable.map(|value| value.cause),
+            context
+                .resolver
+                .maintain()
+                .unavailable
+                .map(|value| value.cause),
             Some(ResolverUnavailableCause::ProgressLost)
         );
         call.result.send(Ok(address_list())).unwrap();
@@ -1909,10 +2010,7 @@ mod tests {
         let invalid = [0.0, f64::NAN, f64::INFINITY, (u64::MAX as f64) * 2.0];
         for value in invalid {
             let receipt = profile(digest, value);
-            let context = gated(
-                2,
-                ResolverConfiguration::new(Some(digest), Some(receipt)),
-            );
+            let context = gated(2, ResolverConfiguration::new(Some(digest), Some(receipt)));
             assert_unqualified_available(&context, "unqualified");
         }
         let mismatched = gated(
@@ -1922,16 +2020,8 @@ mod tests {
         assert_unqualified_available(&mismatched, "mismatched");
         let missing = gated(2, ResolverConfiguration::unprofiled());
         assert_unqualified_available(&missing, "missing");
-        let incomplete = ResolverProfileReceipt::new(
-            digest,
-            "",
-            "glibc",
-            60.0,
-            true,
-            false,
-            true,
-            [0; 32],
-        );
+        let incomplete =
+            ResolverProfileReceipt::new(digest, "", "glibc", 60.0, true, false, true, [0; 32]);
         let incomplete = gated(
             2,
             ResolverConfiguration::new(Some(digest), Some(incomplete)),
@@ -1945,7 +2035,10 @@ mod tests {
         let context = gated(4, qualified(digest, 30.0));
         let (wake, rx) = wake_channel();
         let cached = ticket(&context.resolver, 0, 1, "cached-key", &wake).unwrap();
-        let cached_call = context.entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        let cached_call = context
+            .entered
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         cached_call.result.send(Ok(address_list())).unwrap();
         rx.recv_timeout(Duration::from_secs(5)).unwrap();
         assert!(matches!(cached.poll(), ResolvePoll::Ready(Ok(_))));
@@ -1953,7 +2046,10 @@ mod tests {
         drop(cached);
 
         let old = ticket(&context.resolver, 1, 1, "old-call", &wake).unwrap();
-        let active = context.entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        let active = context
+            .entered
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         let start = context.clock.now();
         context.clock.set_elapsed(start, Duration::from_secs(120));
         context.resolver.maintain();
@@ -1988,7 +2084,10 @@ mod tests {
         let context = gated(4, ResolverConfiguration::unprofiled());
         let (wake_a, rx_a) = wake_channel();
         let a = ticket(&context.resolver, 1, 1, "default-a", &wake_a).unwrap();
-        let active = context.entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        let active = context
+            .entered
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         let start = context.clock.now();
         for elapsed in [
             Duration::from_secs(30),
@@ -1997,7 +2096,10 @@ mod tests {
         ] {
             context.clock.set_elapsed(start, elapsed);
             assert_eq!(context.resolver.maintain().unavailable, None);
-            assert_eq!(context.resolver.health().policy, ResolverHealthPolicy::Unqualified);
+            assert_eq!(
+                context.resolver.health().policy,
+                ResolverHealthPolicy::Unqualified
+            );
         }
         context.clock.set_elapsed(start, Duration::from_secs(895));
         let (wake_b, rx_b) = wake_channel();
@@ -2005,7 +2107,11 @@ mod tests {
         assert_eq!(b.deadline(), start + Duration::from_secs(905));
         context.clock.set_elapsed(start, UNPROFILED_STALL_LIMIT);
         assert_eq!(
-            context.resolver.maintain().unavailable.map(|value| value.cause),
+            context
+                .resolver
+                .maintain()
+                .unavailable
+                .map(|value| value.cause),
             Some(ResolverUnavailableCause::ProgressLost)
         );
         rx_b.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -2027,7 +2133,10 @@ mod tests {
         let context = gated(8, qualified(digest, 60.0));
         let (wake_old, rx_old) = wake_channel();
         let old = ticket(&context.resolver, 1, 1, "same-name", &wake_old).unwrap();
-        let first_call = context.entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        let first_call = context
+            .entered
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         let start = context.clock.now();
         context.clock.set_elapsed(start, Duration::from_secs(95));
         let (wake_join, rx_join) = wake_channel();
@@ -2056,7 +2165,10 @@ mod tests {
         // The old epoch result is absent from the refreshed cache, but its
         // live joined ticket receives it; the queued new-epoch lookup is
         // the next physical backend call.
-        let second_call = context.entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        let second_call = context
+            .entered
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         assert_eq!(second_call.host, "same-name");
         assert_eq!(second_call.port, 43_594);
         assert!(new_epoch.poll() == ResolvePoll::Pending);
@@ -2069,7 +2181,10 @@ mod tests {
         let repeated = gated(4, qualified(digest, 60.0));
         let (wake, rx) = wake_channel();
         let long = ticket(&repeated.resolver, 1, 1, "long-active", &wake).unwrap();
-        let blocked = repeated.entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        let blocked = repeated
+            .entered
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         let base = repeated.clock.now();
         repeated.clock.set_elapsed(base, Duration::from_secs(200));
         repeated

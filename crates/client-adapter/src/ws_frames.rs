@@ -24,7 +24,10 @@ pub enum WsReceive {
     Backpressured(Vec<u8>),
     /// Auto-generated control output may await explicit WS flush.
     Control,
-    PeerClosed { code: Option<u16>, reason: String },
+    PeerClosed {
+        code: Option<u16>,
+        reason: String,
+    },
 }
 
 /// Called exactly once for each successful `ws.read()` result. An empty
@@ -63,10 +66,7 @@ pub fn admit_message(
 
 /// Reattempt a retained message after the slot has drained ring space. This
 /// does not call `ws.read()` or resubmit a tungstenite data Message.
-pub fn admit_pending(
-    message: Vec<u8>,
-    inbound: &Ring<IN_RING_BYTES>,
-) -> WsReceive {
+pub fn admit_pending(message: Vec<u8>, inbound: &Ring<IN_RING_BYTES>) -> WsReceive {
     if inbound.push_all(&message) {
         WsReceive::Binary(message.len())
     } else {
@@ -83,12 +83,30 @@ mod tests {
     #[test]
     fn controls_and_text_never_enter_game_ring() {
         let ring = Ring::new();
-        assert!(matches!(admit_message(Message::Ping(b"private".to_vec()), &ring), Ok(WsReceive::Control)));
-        assert!(matches!(admit_message(Message::Pong(b"private".to_vec()), &ring), Ok(WsReceive::Control)));
-        assert_eq!(admit_message(Message::Text("private".into()), &ring).unwrap_err(), FrameFault::UnexpectedText);
+        assert!(matches!(
+            admit_message(Message::Ping(b"private".to_vec()), &ring),
+            Ok(WsReceive::Control)
+        ));
+        assert!(matches!(
+            admit_message(Message::Pong(b"private".to_vec()), &ring),
+            Ok(WsReceive::Control)
+        ));
+        assert_eq!(
+            admit_message(Message::Text("private".into()), &ring).unwrap_err(),
+            FrameFault::UnexpectedText
+        );
         assert_eq!(ring.len(), 0);
-        let close = Message::Close(Some(CloseFrame { code: CloseCode::Normal, reason: "bye".into() }));
-        assert!(matches!(admit_message(close, &ring), Ok(WsReceive::PeerClosed { code: Some(1000), .. })));
+        let close = Message::Close(Some(CloseFrame {
+            code: CloseCode::Normal,
+            reason: "bye".into(),
+        }));
+        assert!(matches!(
+            admit_message(close, &ring),
+            Ok(WsReceive::PeerClosed {
+                code: Some(1000),
+                ..
+            })
+        ));
         assert_eq!(ring.len(), 0);
     }
 
@@ -103,7 +121,10 @@ mod tests {
         assert_eq!(ring.len(), IN_RING_BYTES - 2);
         let mut drained = vec![0; 3];
         assert_eq!(ring.pop(&mut drained), 3);
-        assert!(matches!(admit_pending(pending, &ring), WsReceive::Binary(3)));
+        assert!(matches!(
+            admit_pending(pending, &ring),
+            WsReceive::Binary(3)
+        ));
         let mut rest = vec![0; IN_RING_BYTES - 2];
         assert_eq!(ring.pop(&mut rest), IN_RING_BYTES - 2);
         assert_eq!(&rest[IN_RING_BYTES - 5..], &[7; 3]);
@@ -114,7 +135,10 @@ mod tests {
         let ring = Ring::new();
         assert_eq!(
             admit_message(Message::Binary(vec![1; WS_MESSAGE_LIMIT + 1]), &ring).unwrap_err(),
-            FrameFault::MessageTooLarge { length: WS_MESSAGE_LIMIT + 1, limit: WS_MESSAGE_LIMIT },
+            FrameFault::MessageTooLarge {
+                length: WS_MESSAGE_LIMIT + 1,
+                limit: WS_MESSAGE_LIMIT
+            },
         );
         assert_eq!(ring.len(), 0);
     }

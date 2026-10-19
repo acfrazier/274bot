@@ -59,6 +59,7 @@ class FaultConfig:
     ws_fragment_min_frames: int
     ws_fragment_max_frames: int
     ws_ping_one_in: int
+    diagnostic_disable_ws_faults: bool
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,8 @@ class ProxyConfig:
     upstream_port: int
     cert_pem: Path
     key_pem: Path
+    local_login_modulus: str
+    local_login_key_source_sha256: str
     tls_context: ssl.SSLContext
     faults: FaultConfig
     fingerprint: str
@@ -163,6 +166,9 @@ def _parse_faults(mapping: Any) -> FaultConfig:
         if actual != expected:
             raise ConfigError(f"fault.{key} must equal the approved value {expected}")
 
+    diagnostic = mapping.get("diagnostic_disable_ws_faults", False)
+    if type(diagnostic) is not bool:
+        raise ConfigError("fault.diagnostic_disable_ws_faults must be a boolean")
     return FaultConfig(
         seed=seed,
         latency_phases=tuple(phases),
@@ -177,6 +183,7 @@ def _parse_faults(mapping: Any) -> FaultConfig:
         ws_fragment_min_frames=ws_fragment_min_frames,
         ws_fragment_max_frames=ws_fragment_max_frames,
         ws_ping_one_in=ws_ping_one_in,
+        diagnostic_disable_ws_faults=diagnostic,
     )
 
 
@@ -201,6 +208,13 @@ def load_config(path: Path) -> ProxyConfig:
         raise ConfigError("proxy.listen_host must be 127.0.0.1")
     if upstream_host != INTERNAL_HOST:
         raise ConfigError("proxy.upstream_host must be 127.0.0.1")
+    local_login_modulus = _string(proxy, "local_login_modulus", "proxy")
+    if (not 250 <= len(local_login_modulus) <= 4096
+            or not local_login_modulus.isascii() or not local_login_modulus.isdigit()):
+        raise ConfigError("proxy.local_login_modulus must be an Engine RSA decimal modulus")
+    source_sha256 = _string(proxy, "local_login_key_source_sha256", "proxy")
+    if len(source_sha256) != 64 or any(char not in "0123456789abcdef" for char in source_sha256):
+        raise ConfigError("proxy.local_login_key_source_sha256 must be a SHA-256 hex digest")
 
     config_dir = path.resolve().parent
     cert_path = Path(_string(proxy, "cert_pem", "proxy"))
@@ -214,6 +228,8 @@ def load_config(path: Path) -> ProxyConfig:
             raise ConfigError(f"{label} must name an existing regular file")
 
     faults = _parse_faults(_required(document, "fault", "config"))
+    if faults.diagnostic_disable_ws_faults and document.get("run", {}).get("qualification") is not False:
+        raise ConfigError("WS fault isolation is only permitted for a nonqualifying smoke")
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     try:
         context.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
@@ -228,6 +244,8 @@ def load_config(path: Path) -> ProxyConfig:
         cert_pem=cert_path,
         key_pem=key_path,
         tls_context=context,
+        local_login_modulus=local_login_modulus,
+        local_login_key_source_sha256=source_sha256,
         faults=faults,
         fingerprint=hashlib.sha256(raw).hexdigest(),
     )
@@ -316,7 +334,8 @@ class Runtime:
         output_dir.mkdir(parents=True, exist_ok=True)
         self.log_path = output_dir / "connections.jsonl"
         self.ready_path = output_dir / "ready.json"
-        if self.log_path.exists() or self.ready_path.exists():
+        self.start_path = output_dir / "soak-start.json"
+        if self.log_path.exists() or self.ready_path.exists() or self.start_path.exists():
             raise ConfigError("output directory already contains proxy receipt files")
         try:
             self.log = self.log_path.open("x", encoding="utf-8", buffering=1)
@@ -437,8 +456,10 @@ class Runtime:
                 "client_peer_port": int(peer[1]),
             }
         )
+        return context
 
     def maybe_checkpoints(self) -> None:
+        self.phase_started()
         now = time.monotonic()
         with self.context_lock:
             contexts = tuple(self.contexts.values())
@@ -447,31 +468,45 @@ class Runtime:
                 self.write_event({"type": "connection_checkpoint", **context.snapshot()})
         self.reap_finished()
 
-    def start_phase_clock(self, context: ConnectionState) -> None:
-        started_monotonic: float | None = None
-        started_monotonic_ns: int | None = None
-        started_utc: str | None = None
+    def phase_started(self) -> bool:
         with self.phase_lock:
-            if self.phase_zero_monotonic is None:
-                self.phase_zero_monotonic = time.monotonic()
-                self.phase_zero_monotonic_ns = time.monotonic_ns()
-                self.phase_zero_utc = _utc_now()
-                started_monotonic = self.phase_zero_monotonic
-                started_monotonic_ns = self.phase_zero_monotonic_ns
-                started_utc = self.phase_zero_utc
-        if started_monotonic is not None:
-            self.write_event(
-                {
-                    "type": "fault_phase_zero",
-                    "connection_id": context.identifier,
-                    "client_peer_host": context.peer_host,
-                    "client_peer_port": context.peer_port,
-                    "seed": self.config.faults.seed,
-                    "phase_zero_at_utc": started_utc,
-                    "phase_zero_monotonic_ns": started_monotonic_ns,
-                    "phase_zero_elapsed_seconds": round(started_monotonic - self.started, 6),
-                }
-            )
+            if self.phase_zero_monotonic is not None:
+                return True
+            try:
+                marker = json.loads(self.start_path.read_bytes(), object_pairs_hook=_unique_object)
+            except FileNotFoundError:
+                return False
+            except (OSError, ValueError, UnicodeDecodeError) as exc:
+                raise ConfigError(f"invalid atomic soak-start marker: {exc}") from exc
+            if (
+                not isinstance(marker, dict)
+                or marker.get("schema_version") != 1
+                or type(marker.get("seed")) is not int
+                or marker["seed"] != self.config.faults.seed
+                or type(marker.get("monotonic_ns")) is not int
+                or marker["monotonic_ns"] <= 0
+                or marker["monotonic_ns"] > time.monotonic_ns()
+                or not isinstance(marker.get("account"), str)
+                or not marker["account"]
+                or type(marker.get("wall_clock_unix_ms")) is not int
+            ):
+                raise ConfigError("soak-start marker does not identify an observed script Start")
+            self.phase_zero_monotonic_ns = marker["monotonic_ns"]
+            self.phase_zero_monotonic = marker["monotonic_ns"] / 1_000_000_000
+            self.phase_zero_utc = dt.datetime.fromtimestamp(
+                marker["wall_clock_unix_ms"] / 1000, dt.timezone.utc
+            ).isoformat()
+            record = {
+                "type": "fault_phase_zero",
+                "trigger": "first_script_start_after_setup",
+                "account": marker["account"],
+                "seed": self.config.faults.seed,
+                "phase_zero_at_utc": self.phase_zero_utc,
+                "phase_zero_monotonic_ns": self.phase_zero_monotonic_ns,
+                "phase_zero_elapsed_seconds": round(self.phase_zero_monotonic - self.started, 6),
+            }
+        self.write_event(record)
+        return True
     def finalize_unfinished(self) -> None:
         with self.context_lock:
             contexts = tuple(self.contexts.values())
@@ -512,6 +547,7 @@ class ConnectionState:
         self.peer_host = str(peer[0])
         self.peer_port = int(peer[1])
         self.started = time.monotonic()
+        self.started_monotonic_ns = time.monotonic_ns()
         self.started_utc = _utc_now()
         self.next_checkpoint: float | None = None
         self.lock = threading.RLock()
@@ -556,6 +592,8 @@ class ConnectionState:
             for direction in self.a
         }
         self.ws_rng = random.Random(self._derived_seed("ws", "server_to_client"))
+        self.pending_proxy_ping: bytes | None = None
+        self.proxy_ping_serial = 0
         self.handshake: dict[str, Any] = {"request_bytes": 0, "response_bytes": 0, "upgrade_status": None}
         self._fault_phase_chunks: dict[str, collections.Counter[str]] = {
             direction: collections.Counter() for direction in self.a
@@ -576,6 +614,23 @@ class ConnectionState:
     def _derived_seed(self, lane: str, direction: str) -> int:
         material = f"{self.runtime.config.faults.seed}:{self.identifier}:{lane}:{direction}".encode("ascii")
         return int.from_bytes(hashlib.sha256(material).digest()[:8], "big")
+
+    def begin_proxy_ping(self) -> bytes | None:
+        with self.lock:
+            if self.pending_proxy_ping is not None:
+                return None
+            self.proxy_ping_serial += 1
+            payload = f"t14:{self.identifier}:{self.proxy_ping_serial:016x}".encode("ascii")
+            self.pending_proxy_ping = payload
+            return payload
+
+    def consume_proxy_pong(self, payload: bytes) -> bool:
+        with self.lock:
+            if payload != self.pending_proxy_ping:
+                return False
+            self.pending_proxy_ping = None
+            self.ws["client_to_engine"]["counters"]["injected_pong_frames_consumed"] += 1
+            return True
 
     def inc(self, stage: str, direction: str, key: str, amount: int = 1) -> None:
         with self.lock:
@@ -756,6 +811,7 @@ class ConnectionState:
                     "client_peer_host": self.peer_host,
                     "client_peer_port": self.peer_port,
                     "started_at_utc": self.started_utc,
+                    "started_monotonic_ns": self.started_monotonic_ns,
                     "elapsed_seconds": round(time.monotonic() - self.started, 3),
                     "stage_status": dict(self.stage_status),
                     "failures": list(self.failures),
@@ -885,23 +941,26 @@ def _tcp_copy(
     direction: str,
     use_faults: bool,
 ) -> None:
+    counter_stage = {"proxy_a": "a", "tls_terminator": "tls"}.get(stage, stage)
     try:
         while True:
             data = source.recv(TCP_READ_BYTES)
             if not data:
                 _send_half_close(destination)
                 return
-            context.inc(stage, direction, "bytes_read", len(data))
-            context.inc(stage, direction, "chunks_read")
-            if use_faults:
+            context.inc(counter_stage, direction, "bytes_read", len(data))
+            context.inc(counter_stage, direction, "chunks_read")
+            if use_faults and runtime.phase_started():
                 _tcp_fault_send(runtime, context, direction, destination, data)
             else:
+                if use_faults:
+                    context.record_phase_chunk(direction, -1)
                 def on_sent(n: int, calls: int) -> None:
-                    context.inc(stage, direction, "bytes_written", n)
-                    context.inc(stage, direction, "write_calls", calls)
+                    context.inc(counter_stage, direction, "bytes_written", n)
+                    context.inc(counter_stage, direction, "write_calls" if not use_faults else "tcp_write_calls", calls)
 
                 _send_counted(destination, data, on_sent)
-    except (OSError, ssl.SSLError, ConnectionError) as exc:
+    except (OSError, ssl.SSLError, ConnectionError, ConfigError) as exc:
         if not runtime.stop.is_set():
             context.add_failure(stage, exc)
         _safe_shutdown(source)
@@ -1328,8 +1387,10 @@ def _fragment_server_frame(
         )
         context.inc("ws", direction, "fault_fragment_frames")
         if index == 0 and inject_ping:
-            _emit_frame_parts(destination, context, direction, 9, True, memoryview(b""))
-            context.inc("ws", direction, "injected_ping_frames")
+            ping_payload = context.begin_proxy_ping()
+            if ping_payload is not None:
+                _emit_frame_parts(destination, context, direction, 9, True, memoryview(ping_payload))
+                context.inc("ws", direction, "injected_ping_frames")
     context.inc("ws", direction, "fragmented_messages")
 
 
@@ -1354,6 +1415,30 @@ def _relay_ws_direction(
             )
             fragmented_opcode = _validate_message_frame(frame, fragmented_opcode)
             _record_frame_read(context, direction, frame)
+            if expect_masked and frame["opcode"] == 10:
+                mask_key = frame["mask_key"]
+                assert mask_key is not None
+                pong = bytes(byte ^ mask_key[index & 3]
+                             for index, byte in enumerate(frame["payload"]))
+                if context.consume_proxy_pong(pong):
+                    runtime.write_event({
+                        "type": "proxy_injected_pong_consumed",
+                        "connection_id": context.identifier,
+                        "payload_sha256": hashlib.sha256(pong).hexdigest(),
+                    })
+                    continue
+            if frame["opcode"] == 8:
+                payload = frame["payload"]
+                mask_key = frame["mask_key"]
+                if mask_key is not None:
+                    payload = bytes(byte ^ mask_key[index & 3] for index, byte in enumerate(payload))
+                runtime.write_event({
+                    "type": "websocket_close_frame",
+                    "connection_id": context.identifier,
+                    "direction": direction,
+                    "status_code": int.from_bytes(payload[:2], "big") if len(payload) >= 2 else None,
+                    "reason": payload[2:].decode("utf-8", errors="replace") if len(payload) > 2 else "",
+                })
             if binary_message:
                 _payload_hash(context, direction, "read", frame["payload"], frame["mask_key"])
 
@@ -1362,7 +1447,9 @@ def _relay_ws_direction(
                 if binary_message:
                     _payload_hash(context, direction, "written", frame["payload"], frame["mask_key"])
             elif (
-                frame["opcode"] == 2
+                runtime.phase_started()
+                and not runtime.config.faults.diagnostic_disable_ws_faults
+                and frame["opcode"] == 2
                 and frame["fin"]
                 and context.next_ws_random().random() < runtime.config.faults.ws_fragment_probability
             ):
@@ -1379,7 +1466,7 @@ def _relay_ws_direction(
                     context.inc("ws", direction, "binary_messages_read")
                     context.inc("ws", direction, "binary_messages_written")
                     context.finish_binary_message(direction)
-    except (OSError, ssl.SSLError, FrameError, ConnectionError) as exc:
+    except (OSError, ssl.SSLError, FrameError, ConnectionError, ConfigError) as exc:
         if not runtime.stop.is_set():
             context.add_failure("proxy_b_websocket", exc)
         _safe_shutdown(source)
@@ -1422,16 +1509,37 @@ def _proxy_b_connection(runtime: Runtime, client: socket.socket, peer: tuple[Any
     failed = False
     try:
         _nodelay(client)
-        engine = socket.create_connection((runtime.config.upstream_host, runtime.config.upstream_port))
-        _nodelay(engine)
-        runtime.track_socket(engine)
         request = _read_http_headers(client, context, "client_to_engine", "request")
         if request is None:
             context.set_handshake("upgrade_status", "client_closed_before_request")
-            _send_half_close(engine)
             _send_half_close(client)
             return
         context.set_handshake("request_bytes", len(request))
+        if request.split(b"\r\n", 1)[0] in (
+            b"GET /client/client.js HTTP/1.0",
+            b"GET /client/client.js HTTP/1.1",
+        ):
+            # Engine A's bundled client.js lacks the local private key's
+            # modulus. Serve only this read-only test asset; never rewrite a
+            # game packet, WebSocket upgrade, or any other HTTP resource.
+            body = f'const loginRsaN = "{runtime.config.local_login_modulus}";\n'.encode("ascii")
+            headers = (
+                b"HTTP/1.0 200 OK\r\nContent-Type: application/javascript\r\n"
+                + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode("ascii")
+            )
+            context.set_handshake("upgrade_status", 200)
+            context.set_handshake("response_bytes", len(headers))
+            context.set_handshake("local_login_key_fixture", {
+                "rsa_source_sha256": runtime.config.local_login_key_source_sha256,
+                "served_body_sha256": hashlib.sha256(body).hexdigest(),
+                "body_bytes": len(body),
+            })
+            _send_http_headers(client, context, "engine_to_client", headers)
+            _send_ws_wire(client, context, "engine_to_client", body)
+            return
+        engine = socket.create_connection((runtime.config.upstream_host, runtime.config.upstream_port))
+        _nodelay(engine)
+        runtime.track_socket(engine)
         _send_http_headers(engine, context, "client_to_engine", request)
         websocket_request = _is_websocket_request(request)
         response = _read_http_headers(engine, context, "engine_to_client", "response")
@@ -1446,7 +1554,8 @@ def _proxy_b_connection(runtime: Runtime, client: socket.socket, peer: tuple[Any
         if status == 101:
             if not websocket_request:
                 raise FrameError("Engine returned 101 for a non-WebSocket request")
-            runtime.start_phase_clock(context)
+            # The first 101 belongs to unfaulted setup; the Play witness
+            # publishes phase zero only after every slot finishes its Relog.
             _relay_ws_pair(runtime, context, client, engine)
         else:
             _relay_pair(

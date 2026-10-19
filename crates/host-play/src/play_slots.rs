@@ -33,17 +33,15 @@ use crate::play_login::{
     granted_permit_world_is_current, observe_client_session_exit, plan_login_retry,
     publish_login_latched_from_arm, refresh_slot_world_preference, should_handshake,
     sync_profile_arm, tick_flags, transfer_countdown_message, wait_for_permit_with_cancel,
-    wait_for_transfer_response, wait_for_wss_permit, PermitWait,
-    QueuePlaceRetirement,
-    SharedLoginQueue, SlotArm,
-    SlotLogin, SlotLoginOutcome,
+    wait_for_transfer_response, wait_for_wss_permit, PermitWait, QueuePlaceRetirement,
+    SharedLoginQueue, SlotArm, SlotLogin, SlotLoginOutcome,
 };
 use crate::play_status::{
     apply_startup_phase, clear_startup_progress, copy_stream_bytes, lock_statuses,
     mark_login_started, publish_login_lowmem, publish_session_boundary_status,
     publish_slot_disconnected, publish_startup_phase, publish_startup_progress,
-    publish_worker_terminal, record_login_error, set_startup_phase, SlotStatus, StartupPhase,
-    WorkerTerminal,
+    publish_worker_terminal, record_login_deadline, record_login_error, set_startup_phase,
+    SlotStatus, StartupPhase, WorkerTerminal,
 };
 use crate::play_wires::{dispatch_wires, WireCmd};
 use crate::script_runtime::{
@@ -184,7 +182,13 @@ pub enum PlaySpawnError {
     #[error("{}", .0.code().operator_text())]
     Unavailable(api::process_condition::ConditionId),
     #[error("{0}")]
-    Other(#[from] String),
+    Other(String),
+}
+
+impl From<String> for PlaySpawnError {
+    fn from(error: String) -> Self {
+        Self::Other(error)
+    }
 }
 
 impl Play {
@@ -425,14 +429,17 @@ impl Play {
         client_adapter::service::NetworkService::current_started()
             .map_err(PlaySpawnError::NetworkStart)?;
         self.maintain_services(Instant::now());
-        if let Some(condition) = self.with_process_conditions(|conditions| {
-            [
-                api::process_condition::ProcessServiceCode::ReactorUnavailable,
-                api::process_condition::ProcessServiceCode::ResolverUnavailable,
-            ]
-            .into_iter()
-            .find_map(|code| conditions.latched(code).map(|condition| condition.id()))
-        }).flatten() {
+        if let Some(condition) = self
+            .with_process_conditions(|conditions| {
+                [
+                    api::process_condition::ProcessServiceCode::ReactorUnavailable,
+                    api::process_condition::ProcessServiceCode::ResolverUnavailable,
+                ]
+                .into_iter()
+                .find_map(|code| conditions.latched(code).map(|condition| condition.id()))
+            })
+            .flatten()
+        {
             return Err(PlaySpawnError::Unavailable(condition));
         }
         self.connection.require_bot_operation()?;
@@ -899,9 +906,16 @@ fn prepare_game_transport(
     let network = NetworkService::current_started().map_err(|error| error.to_string())?;
     let park = arm.park();
     let addresses = resolve_game(
-        network.resolver(), network.reactor(), SlotKey(arm.queue_owner), token.generation(),
-        &client.config.host, client.config.port, Arc::clone(&park), token,
-    ).map_err(|error| format!("login DNS: {error}"))?;
+        network.resolver(),
+        network.reactor(),
+        SlotKey(arm.queue_owner),
+        token.generation(),
+        &client.config.host,
+        client.config.port,
+        Arc::clone(&park),
+        token,
+    )
+    .map_err(|error| format!("login DNS: {error}"))?;
     let retirement = Arc::new(AttemptRetire::new(token.generation()));
     let transport = match client.session_transport() {
         client::Transport::Tcp => GameTransport::Tcp,
@@ -912,10 +926,25 @@ fn prepare_game_transport(
     let port = client.config.port;
     match client.hosted_stream_binding() {
         Some(previous) => PreparedGameAttempt::new_for_rebind(
-            service, &previous, park, token.clone(), retirement, transport, host, port, addresses,
+            service,
+            &previous,
+            park,
+            token.clone(),
+            retirement,
+            transport,
+            host,
+            port,
+            addresses,
         ),
         None => PreparedGameAttempt::new(
-            service, park, token.clone(), retirement, transport, host, port, addresses,
+            service,
+            park,
+            token.clone(),
+            retirement,
+            transport,
+            host,
+            port,
+            addresses,
         ),
     }
     .map_err(|error| format!("game transport admission: {error}"))
@@ -933,7 +962,6 @@ impl Drop for PrequeueCancelGuard<'_> {
         self.arm.clear_prequeue_cancel(&self.token);
     }
 }
-
 
 /// Every profile spawns one slot thread; shared handles are threaded through
 /// because the closure moves most of them (allowed: see `script_observe`).
@@ -1449,7 +1477,6 @@ fn spawn_slot_thread(
                         },
                         |_| hold.get(),
                     ) else {
-                        drop(slot_login);
                         if wss_health.as_ref().is_some_and(|health| health.loss().is_some()) {
                             arm.publish_handshake_aborted(
                                 AbortedAttempt::Transport(TransportFailure::Closed),
@@ -1483,9 +1510,15 @@ fn spawn_slot_thread(
                         continue;
                     };
                     let login = slot_login.finish_after_q(candidate);
-                    drop(slot_login);
                     match login {
-                        Ok(SlotLoginOutcome::Aborted) => continue,
+                        Ok(SlotLoginOutcome::Aborted(reason)) => {
+                            if reason == AbortedAttempt::Deadline
+                                && arm.login_attempt_is_current(login_command, login_world_generation)
+                            {
+                                record_login_deadline(&slot_statuses, &username);
+                            }
+                            continue;
+                        }
                         Ok(SlotLoginOutcome::CommittedSessionExit(cause)) => {
                             host_log!(Category::Lifecycle, Level::Warn, "post-commit session exit: {cause:?}");
                             publish_slot_disconnected(&slot_statuses, &username);

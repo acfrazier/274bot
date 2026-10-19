@@ -610,6 +610,7 @@ pub struct OperatorSession<Io> {
     /// The process local-state service the front end's composition root
     /// opened; every `Play` this session adopts uses it, so the process has
     /// one writer for its state files.
+    local_state: Option<Arc<host_play::local_state::LocalStateService>>,
     /// Registration that keeps process network maintenance under this
     /// composition's event loop from construction onward.
     network_driver: Option<MaintenanceDriver>,
@@ -1045,7 +1046,7 @@ impl<Io> OperatorSession<Io> {
         if let Some(play) = self.play.as_mut() {
             if let Err(error) = play.try_spawn_slot(profile, input, mailbox, arm) {
                 self.slots.insert(name.to_string(), io);
-                return Err(error);
+                return Err(error.to_string());
             }
         }
         self.slots.insert(name.to_string(), io);
@@ -1846,7 +1847,12 @@ impl<Io> OperatorSession<Io> {
             };
             if let Err(error) = play.try_spawn_slot(profile, spawn.input, spawn.mailbox, spawn.arm)
             {
-                crate::log::global().slot_line(&name, Source::Host, Level::Error, &error);
+                crate::log::global().slot_line(
+                    &name,
+                    Source::Host,
+                    Level::Error,
+                    &error.to_string(),
+                );
             }
         }
     }

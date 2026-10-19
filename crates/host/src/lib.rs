@@ -25,9 +25,9 @@ use api::snapshot::GameSnapshot;
 use auto_run::{auto_run_ready, auto_run_tick, resolve_run_policy, RunPolicy};
 use client::client::{Client, ClientConfig};
 use client::config::{Cache, IfType, IfTypeMut};
-use client_adapter::park::ParkOutcome;
 use client::render::backend::{BackendKind, FrameOutput};
 use client::render::Renderer;
+use client_adapter::park::ParkOutcome;
 use vault::{Profile, ProfileSettings};
 
 pub use capacity::{
@@ -951,11 +951,11 @@ enum ParkWake {
 /// Readiness includes bytes already in the client ring, including buffered
 /// WebSocket/TLS payloads. An error or closed stream takes the normal client
 /// transport-loss path. A stalled partial packet remains suppressed.
-fn buffered_socket_ready(client: &Client, check_stream: bool) -> bool {
+fn buffered_socket_ready(client: &mut Client, check_stream: bool) -> bool {
     check_stream
         && client
             .stream
-            .as_ref()
+            .as_mut()
             .is_some_and(|stream| stream.available().map_or(true, |bytes| bytes != 0))
 }
 
@@ -968,7 +968,7 @@ fn buffered_socket_ready(client: &Client, check_stream: bool) -> bool {
 /// consumes bytes, avoiding repeated readiness from a partial packet or
 /// terminal stream state.
 fn park(
-    client: &Client,
+    client: &mut Client,
     ctl: Option<&SlotPark>,
     control_epoch: &mut u64,
     check_stream: bool,

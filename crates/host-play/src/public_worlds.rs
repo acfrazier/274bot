@@ -260,7 +260,10 @@ struct ModulusFetch {
 
 impl ModulusFetch {
     fn new() -> Self {
-        Self { result: Mutex::new(None), changed: Condvar::new() }
+        Self {
+            result: Mutex::new(None),
+            changed: Condvar::new(),
+        }
     }
 
     fn publish(&self, value: Option<Arc<str>>) {
@@ -305,7 +308,11 @@ impl FetchPublication<'_> {
         self.cell.publish(value.clone());
         let mut cache = MODULI.lock();
         if let Some(record) = cache.get_mut(self.host) {
-            if record.fetching.as_ref().is_some_and(|active| Arc::ptr_eq(active, &self.cell)) {
+            if record
+                .fetching
+                .as_ref()
+                .is_some_and(|active| Arc::ptr_eq(active, &self.cell))
+            {
                 record.cached = value;
                 record.fetching = None;
             }
@@ -358,9 +365,13 @@ pub fn modulus_for(
             }
         } else {
             let cell = Arc::new(ModulusFetch::new());
-            cache.insert(world.host.clone(), ModulusRecord {
-                cached: None, fetching: Some(Arc::clone(&cell)),
-            });
+            cache.insert(
+                world.host.clone(),
+                ModulusRecord {
+                    cached: None,
+                    fetching: Some(Arc::clone(&cell)),
+                },
+            );
             ModulusDemand::Perform(cell)
         }
     };
@@ -369,17 +380,21 @@ pub fn modulus_for(
         ModulusDemand::Join(cell) => cell.wait(cancel, &cell),
         ModulusDemand::Perform(cell) => {
             let mut publication = FetchPublication {
-                host: &world.host, cell, published: false,
+                host: &world.host,
+                cell,
+                published: false,
             };
-            let value = fetch(&world.host, world.port).filter(|digits| {
-                let mut nonzero = false;
-                digits.len() >= 250
-                    && digits.bytes().all(|byte| {
-                        nonzero |= byte != b'0';
-                        byte.is_ascii_digit()
-                    })
-                    && nonzero
-            }).map(Arc::<str>::from);
+            let value = fetch(&world.host, world.port)
+                .filter(|digits| {
+                    let mut nonzero = false;
+                    digits.len() >= 250
+                        && digits.bytes().all(|byte| {
+                            nonzero |= byte != b'0';
+                            byte.is_ascii_digit()
+                        })
+                        && nonzero
+                })
+                .map(Arc::<str>::from);
             publication.finish(value.clone());
             value
         }
@@ -517,10 +532,14 @@ mod tests {
     fn wait_for_joiners(world: &PublicWorld, minimum_refs: usize) {
         let until = Instant::now() + Duration::from_secs(5);
         loop {
-            let refs = MODULI.lock().get(&world.host)
+            let refs = MODULI
+                .lock()
+                .get(&world.host)
                 .and_then(|record| record.fetching.as_ref())
                 .map_or(0, Arc::strong_count);
-            if refs >= minimum_refs { return; }
+            if refs >= minimum_refs {
+                return;
+            }
             assert!(Instant::now() < until, "key fetch joiners did not register");
             std::thread::yield_now();
         }
@@ -529,29 +548,30 @@ mod tests {
     #[test]
     fn forced_refresh_and_twenty_waiters_share_the_performers_fetch() {
         let world = Arc::new(PublicWorld {
-            number: 93, host: "single-flight-w93.invalid".into(), port: 443, node_id: 31,
+            number: 93,
+            host: "single-flight-w93.invalid".into(),
+            port: 443,
+            node_id: 31,
         });
         let (entered_tx, entered_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let owner_world = Arc::clone(&world);
         let performer = std::thread::spawn(move || {
-            modulus_for(
-                &owner_world, false, &LoginCancel::new(),
-                |_, _| {
-                    entered_tx.send(()).unwrap();
-                    release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-                    Some("4".repeat(260))
-                },
-            )
+            modulus_for(&owner_world, false, &LoginCancel::new(), |_, _| {
+                entered_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                Some("4".repeat(260))
+            })
         });
         entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         let mut waiters = Vec::new();
         for _ in 0..20 {
             let world = Arc::clone(&world);
-            waiters.push(std::thread::spawn(move || modulus_for(
-                &world, true, &LoginCancel::new(),
-                |_, _| panic!("forced waiter must not create a second fetch"),
-            )));
+            waiters.push(std::thread::spawn(move || {
+                modulus_for(&world, true, &LoginCancel::new(), |_, _| {
+                    panic!("forced waiter must not create a second fetch")
+                })
+            }));
         }
         wait_for_joiners(&world, 22);
         release_tx.send(()).unwrap();
@@ -560,7 +580,9 @@ mod tests {
             assert_eq!(waiter.join().unwrap(), "4".repeat(260));
         }
         assert_eq!(
-            modulus_for_test(&world, false, |_, _| panic!("successful key remains cached")),
+            modulus_for_test(&world, false, |_, _| panic!(
+                "successful key remains cached"
+            )),
             "4".repeat(260),
         );
     }
@@ -568,27 +590,30 @@ mod tests {
     #[test]
     fn stopped_waiter_cannot_take_over_a_failed_performers_result_cell() {
         let world = Arc::new(PublicWorld {
-            number: 94, host: "single-flight-w94.invalid".into(), port: 443, node_id: 32,
+            number: 94,
+            host: "single-flight-w94.invalid".into(),
+            port: 443,
+            node_id: 32,
         });
         let (entered_tx, entered_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let owner_world = Arc::clone(&world);
-        let performer = std::thread::spawn(move || modulus_for(
-            &owner_world, false, &LoginCancel::new(),
-            |_, _| {
+        let performer = std::thread::spawn(move || {
+            modulus_for(&owner_world, false, &LoginCancel::new(), |_, _| {
                 entered_tx.send(()).unwrap();
                 release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
                 None
-            },
-        ));
+            })
+        });
         entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         let cancelled = LoginCancel::new();
         let wait_cancel = cancelled.clone();
         let wait_world = Arc::clone(&world);
-        let waiter = std::thread::spawn(move || modulus_for(
-            &wait_world, true, &wait_cancel,
-            |_, _| panic!("cancelled waiter must not perform a second fetch"),
-        ));
+        let waiter = std::thread::spawn(move || {
+            modulus_for(&wait_world, true, &wait_cancel, |_, _| {
+                panic!("cancelled waiter must not perform a second fetch")
+            })
+        });
         wait_for_joiners(&world, 3);
         cancelled.cancel();
         assert_eq!(waiter.join().unwrap(), client::PROD_LOGIN_RSAN);
@@ -604,27 +629,30 @@ mod tests {
     #[test]
     fn stopping_performer_does_not_transfer_or_cancel_shared_fetch() {
         let world = Arc::new(PublicWorld {
-            number: 95, host: "single-flight-w95.invalid".into(), port: 443, node_id: 33,
+            number: 95,
+            host: "single-flight-w95.invalid".into(),
+            port: 443,
+            node_id: 33,
         });
         let owner_cancel = LoginCancel::new();
         let owner_wait = owner_cancel.clone();
         let (entered_tx, entered_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let owner_world = Arc::clone(&world);
-        let performer = std::thread::spawn(move || modulus_for(
-            &owner_world, false, &owner_wait,
-            |_, _| {
+        let performer = std::thread::spawn(move || {
+            modulus_for(&owner_world, false, &owner_wait, |_, _| {
                 entered_tx.send(()).unwrap();
                 release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
                 Some("7".repeat(260))
-            },
-        ));
+            })
+        });
         entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         let waiting_world = Arc::clone(&world);
-        let waiter = std::thread::spawn(move || modulus_for(
-            &waiting_world, true, &LoginCancel::new(),
-            |_, _| panic!("stopping the performer must not transfer its fetch"),
-        ));
+        let waiter = std::thread::spawn(move || {
+            modulus_for(&waiting_world, true, &LoginCancel::new(), |_, _| {
+                panic!("stopping the performer must not transfer its fetch")
+            })
+        });
         wait_for_joiners(&world, 3);
         owner_cancel.cancel();
         release_tx.send(()).unwrap();

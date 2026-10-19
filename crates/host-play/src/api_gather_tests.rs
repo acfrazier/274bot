@@ -202,8 +202,9 @@ fn gather_snapshot(tree_id: i32, tile: WorldTile, client: &Client, log_slots: i3
 fn attached_client(tile: WorldTile) -> (Client, TcpListener) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("loopback listener");
     let address = listener.local_addr().expect("listener address");
-    let stream = client::io::ClientStream::connect(&address.ip().to_string(), address.port())
-        .expect("attached loopback stream");
+    let stream =
+        client::io::ClientStream::connect_tcp_for_test(&address.ip().to_string(), address.port())
+            .expect("attached loopback stream");
     let mut cache = Cache::default();
     cache.objs.resize((LOG_ID + 1) as usize, ObjType::default());
     cache.objs[LOG_ID as usize].id = LOG_ID;

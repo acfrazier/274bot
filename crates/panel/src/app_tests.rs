@@ -588,6 +588,8 @@ fn runtime_checked_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, PathBuf
 
 #[test]
 fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
+    let _network_driver = client_adapter::service::NetworkService::start_composition()
+        .expect("panel fixture starts its network composition");
     for revision in [274_u16, 289] {
         let (root, cache, manifest) = checked_fixture(revision);
         // OnDemand hubs are keyed by (game_host, game_port); parallel panel
@@ -794,13 +796,13 @@ fn settle_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
 }
 
 fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
+    let mut state = PanelState::default();
     let (root, options, env) = startup_profile_inputs();
     let template = options
         .resolve_with_env(None, &env)
         .unwrap()
         .prepare_template()
         .unwrap();
-    let mut state = PanelState::default();
     state
         .session
         .configure_profile_with_env(options, env)

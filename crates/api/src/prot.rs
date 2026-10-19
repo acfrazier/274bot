@@ -5,6 +5,8 @@
 //! raw opcode inject. Anticheat/event packets are `pub` in the table but
 //! unused by the kernel.
 
+use client::client::Client;
+use client::io::packet::PacketOutput;
 use client::io::{map_client_prot, ClientProt, ClientRevision, Packet};
 
 /// One legal outbound packet.
@@ -139,6 +141,24 @@ pub trait Out {
     fn pjstr(&mut self, s: &str);
 }
 
+impl Out for PacketOutput<'_> {
+    fn p1_enc(&mut self, opcode: i32) {
+        PacketOutput::p1_enc(self, opcode);
+    }
+    fn p1(&mut self, value: i32) {
+        PacketOutput::p1(self, value);
+    }
+    fn p2(&mut self, value: i32) {
+        PacketOutput::p2(self, value);
+    }
+    fn p4(&mut self, value: i32) {
+        PacketOutput::p4(self, value);
+    }
+    fn pjstr(&mut self, s: &str) {
+        PacketOutput::pjstr(self, s);
+    }
+}
+
 impl Out for Packet {
     fn p1_enc(&mut self, opcode: i32) {
         Packet::p1_enc(self, opcode);
@@ -155,6 +175,13 @@ impl Out for Packet {
     fn pjstr(&mut self, s: &str) {
         Packet::pjstr(self, s);
     }
+}
+
+#[derive(Clone, Copy)]
+enum SendPayload {
+    None,
+    P2,
+    P4,
 }
 
 /// A typed outbound send: opcode + payload, written through [`Out`]. Each
@@ -201,38 +228,50 @@ impl Send {
         }
     }
 
+    fn payload(self) -> Option<SendPayload> {
+        if self.prot == ClientProt::IF_BUTTON {
+            Some(SendPayload::P2)
+        } else if self.prot == ClientProt::CLOSE_MODAL {
+            Some(SendPayload::None)
+        } else if self.prot == ClientProt::RESUME_P_COUNTDIALOG {
+            Some(SendPayload::P4)
+        } else {
+            None
+        }
+    }
+
     /// Append this supported typed send using the row selected for `revision`.
     /// The original named packet selects the payload shape; a forged `Send`
     /// is refused before the output cursor or ISAAC state can move.
     pub fn write_for_revision(self, revision: ClientRevision, out: &mut dyn Out) -> bool {
-        enum Payload {
-            None,
-            P2,
-            P4,
-        }
-
-        let payload = if self.prot == ClientProt::IF_BUTTON {
-            Payload::P2
-        } else if self.prot == ClientProt::CLOSE_MODAL {
-            Payload::None
-        } else if self.prot == ClientProt::RESUME_P_COUNTDIALOG {
-            Payload::P4
-        } else {
+        let Some(payload) = self.payload() else {
             return false;
         };
-        let selected = map_client_prot(revision, self.prot);
-        out.p1_enc(selected.id);
+        out.p1_enc(map_client_prot(revision, self.prot).id);
         match payload {
-            Payload::None => {}
-            Payload::P2 => out.p2(self.value),
-            Payload::P4 => out.p4(self.value),
+            SendPayload::None => {}
+            SendPayload::P2 => out.p2(self.value),
+            SendPayload::P4 => out.p4(self.value),
         }
         true
+    }
+
+    /// Commit the entire opcode and payload through the client's atomic
+    /// reservation, not the raw Packet sink used by detached recorders.
+    pub fn write_for_client(self, client: &mut Client) -> bool {
+        if self.payload().is_none() {
+            return false;
+        }
+        let revision = client.revision();
+        client.encode_output(|out| {
+            let _ = self.write_for_revision(revision, out);
+        })
     }
 }
 
 /// One cardinal movement step. The server validates collision when it processes
 /// the request; unlike client BFS this can be queued behind a pending door Open.
+#[derive(Clone, Copy)]
 pub struct WalkStep {
     pub x: i32,
     pub z: i32,
@@ -255,5 +294,13 @@ impl WalkStep {
         out.p2(self.x);
         out.p2(self.z);
         true
+    }
+
+    /// Commit one complete movement packet through the client's reservation.
+    pub fn write_for_client(self, client: &mut Client) -> bool {
+        let revision = client.revision();
+        client.encode_output(|out| {
+            let _ = self.write_for_revision(revision, out);
+        })
     }
 }

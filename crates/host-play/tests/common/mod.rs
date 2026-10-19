@@ -226,4 +226,3 @@ pub fn maintain_for(play: &Play, duration: Duration) {
         thread::sleep(remaining.min(Duration::from_millis(100)));
     }
 }
-

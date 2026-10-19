@@ -41,7 +41,9 @@ bzip2 = "0.4"
 # the adapter; test roots are injected only through adapter test-support.
 rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
 rcgen = "0.13"
+tungstenite = { version = "=0.24.0", default-features = false, features = ["handshake"] }
 client-adapter = { path = "../client-adapter", features = ["test-support"] }
+client = { workspace = true, features = ["test-support"] }
 script = { path = "../script", features = ["test-hooks"] }
 scenario = { path = "../scenario" }
 
@@ -66,6 +68,10 @@ required-features = ["live-harness", "test-support", "live-probe"]
 name = "seat_live"
 required-features = ["live-harness", "test-support", "live-probe"]
 
+[[test]]
+name = "t14_soak_live"
+required-features = ["live-harness", "test-support"]
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
@@ -89,6 +95,9 @@ live-harness = ["dep:scenario"]
 # Test-only Play fixtures. Enabled from frontend dev-dependencies, never
 # production builds.
 test-support = ["script/test-hooks", "nav/test-support"]
+# Candidate-only LIVE observation; the shared Play soak test also builds on
+# dev without this feature or the test-support adapter.
+soak-observers = ["client-adapter/test-support"]
 
 # Read-only probe for the manual-click LIVE harnesses. Enabled from frontend
 # dev-dependencies, never production builds.

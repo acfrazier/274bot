@@ -46,9 +46,9 @@ use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Instant;
 #[cfg(test)]
 use std::time::Duration;
+use std::time::Instant;
 
 #[cfg(test)]
 use api::interact::Driver;
@@ -151,11 +151,11 @@ use play_login::{
 use play_login::{publish_queue_place, sync_profile_arm, SharedLoginQueue};
 pub use play_login::{LoginLatchReason, SlotArm};
 use play_slots::SlotFrame;
-pub use play_slots::{PlaySpawnError, SlotFrameInput};
 #[cfg(test)]
 use play_slots::{
     end_slot_session, observe_slot_catalog_and_paired, reset_slot_session_work, sync_script_login,
 };
+pub use play_slots::{PlaySpawnError, SlotFrameInput};
 #[cfg(test)]
 use play_status::{
     apply_startup_phase, mark_login_started, publish_session_boundary_status,
@@ -306,10 +306,9 @@ pub struct Play {
     /// Host-capacity registry: each slot thread registers its own record
     /// once and writes only that record per service.
     capacity: Arc<host::CapacityMonitor>,
-    process_start: Result<api::identity::ProcessIncarnation, script::work_admission::WorkStartError>,
+    process_start:
+        Result<api::identity::ProcessIncarnation, script::work_admission::WorkStartError>,
     transport_health: Option<transport_health::ServiceHealth>,
-    transport: Option<Arc<client_adapter::reactor::TransportService>>,
-    resolver: Option<Arc<client_adapter::resolver::Resolver>>,
     /// Registration transferred from an owned headless `run*` composition.
     /// Panel/TUI compositions retain their own driver in OperatorSession.
     _headless_composition_driver: Option<client_adapter::service::MaintenanceDriver>,
@@ -338,10 +337,12 @@ impl Play {
             |observed| observed.reactor,
         );
         let resolver = observed.as_ref().map_or_else(
-            || Some(client_adapter::resolver::ResolverUnavailable {
-                cause: client_adapter::resolver::ResolverUnavailableCause::StartFailed,
-                detected_at: now,
-            }),
+            || {
+                Some(client_adapter::resolver::ResolverUnavailable {
+                    cause: client_adapter::resolver::ResolverUnavailableCause::StartFailed,
+                    detected_at: now,
+                })
+            },
             |observed| observed.resolver,
         );
         health.observe(now, reactor, resolver);
@@ -354,7 +355,9 @@ impl Play {
         &self,
         inspect: impl FnOnce(&api::process_condition::ProcessConditions) -> R,
     ) -> Option<R> {
-        self.transport_health.as_ref().map(|health| health.with_conditions(inspect))
+        self.transport_health
+            .as_ref()
+            .map(|health| health.with_conditions(inspect))
     }
 
     /// Applies to new manual and compiled-native walks; compat wiring is unchanged.

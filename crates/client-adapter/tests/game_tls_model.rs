@@ -1,17 +1,20 @@
 //! Exhaustive bounded model of the game-TLS worker/reactor handoff.
 //!
+//! Named scenario families exhaust bounded, requirement-focused slices. TCP
+//! demand and the WSS capacity waiter remain together where they race behind
+//! the same occupied game lane.
 //! This is a finite scheduler, not a timed OS test. Its three actors are one
 //! producer, one handshake worker, and one reactor. Each successor edge is one
 //! atomic scheduler transition. The WouldBlock readiness recheck and condvar
 //! release share the handoff lock; resource drops, mio wake calls, and K2
 //! notifications are separate transitions after their relevant lock releases.
 //!
-//! The scheduler is weakly fair for continuously enabled finite actions. A
-//! returning handshake turn has one of four oracle outcomes. An opaque turn
-//! has no return transition: revocation, deadline publication, and TCP queue
-//! release must still progress, but physical close/ack cannot be required
-//! until that verifier call returns. Poll has a bounded timeout in the correct
-//! model. No wall-time or OS-scheduling claim follows from this model.
+//! The scheduler is weakly fair for continuously enabled finite actions.
+//! A returning turn selects one of four oracle outcomes in its scenario family.
+//! An opaque turn has no return transition: revocation, deadline publication,
+//! and TCP queue release must still progress, but physical close/ack cannot be
+//! required until that verifier call returns. Poll has a bounded timeout in the
+//! correct model. No wall-time or OS-scheduling claim follows from this model.
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
@@ -24,7 +27,7 @@ const MAX_EDGE_PUBLICATIONS_PER_DIRECTION: u8 = 2;
 const MAX_TURN_ENTRIES_PER_IDENTITY: u8 = 2;
 const HANDSHAKE_BUDGET: u8 = 5;
 const MIN_WSS_REMAINING: u8 = 5;
-const MAX_EXPLORED_STATES: usize = 400_000;
+const MAX_EXPLORED_STATES_PER_SCENARIO: usize = 100_000;
 
 const OWNER_REACTOR: u8 = 1 << 0;
 const OWNER_HANDOFF_CELL: u8 = 1 << 1;
@@ -322,7 +325,10 @@ impl CapacityWaiter {
     };
 
     fn registered(self) -> bool {
-        matches!(self.phase, CapacityPhase::Registered | CapacityPhase::Sleeping)
+        matches!(
+            self.phase,
+            CapacityPhase::Registered | CapacityPhase::Sleeping
+        )
     }
 
     fn live(self) -> bool {
@@ -423,6 +429,18 @@ impl State {
     }
 
     fn next_clock(self) -> Option<u8> {
+        // The maintenance clock cannot cross a due transfer deadline without
+        // running its revocation reduction at that deadline. Otherwise a
+        // capacity-wait timer could jump past D and fabricate a late proof.
+        if self.attempts.iter().any(|attempt| {
+            matches!(
+                attempt.phase,
+                Phase::Pending | Phase::Running | Phase::Waiting | Phase::Returned
+            ) && attempt.revocation.is_none()
+                && self.now >= attempt.original_deadline
+        }) {
+            return None;
+        }
         let mut next = None;
         let mut consider = |time: u8| {
             if time > self.now && next.is_none_or(|current| time < current) {
@@ -493,7 +511,7 @@ impl State {
         }
     }
 
-    fn successors(self, mutation: Mutation) -> Vec<(Action, Self)> {
+    fn successors(self, mutation: Mutation, scenario: Scenario) -> Vec<(Action, Self)> {
         let mut next = Vec::new();
 
         if !self.admission_closed && self.slot == NO_ID && self.lane_available() {
@@ -510,10 +528,16 @@ impl State {
             }
             if self.authorized_count == 1
                 && self.next_transfer_seq == 2
-                && matches!(self.attempts[FIRST].phase, Phase::Accepted | Phase::Released)
+                && matches!(
+                    self.attempts[FIRST].phase,
+                    Phase::Accepted | Phase::Released
+                )
                 && (self.attempts[FIRST].phase == Phase::Accepted
                     || self.attempts[FIRST].retirement_ack)
-                && matches!(self.capacity.phase, CapacityPhase::Absent | CapacityPhase::Ready)
+                && matches!(
+                    self.capacity.phase,
+                    CapacityPhase::Absent | CapacityPhase::Ready
+                )
             {
                 if self.capacity.phase == CapacityPhase::Ready
                     && self.capacity.deadline.saturating_sub(self.now) < MIN_WSS_REMAINING
@@ -574,7 +598,12 @@ impl State {
             if attempt.phase == Phase::Running
                 && attempt.worker_active
                 && attempt.turn == Turn::Idle
-                && attempt.turn_entries < MAX_TURN_ENTRIES_PER_IDENTITY
+                && attempt.turn_entries
+                    < if identity == FIRST {
+                        MAX_TURN_ENTRIES_PER_IDENTITY
+                    } else {
+                        1
+                    }
             {
                 for (opaque, turn) in [(false, Turn::Returning), (true, Turn::Opaque)] {
                     let mut state = self;
@@ -646,7 +675,10 @@ impl State {
                     worker.runnable = false;
                     worker.turn = Turn::Idle;
                 }
-                next.push((Action::LockedRecheckAndCondvarRelease(identity as u8), state));
+                next.push((
+                    Action::LockedRecheckAndCondvarRelease(identity as u8),
+                    state,
+                ));
             }
 
             if attempt.phase == Phase::Running
@@ -822,7 +854,10 @@ impl State {
 
             for direction in 0..2 {
                 if self.edge_publications[direction] < MAX_EDGE_PUBLICATIONS_PER_DIRECTION
-                    && matches!(attempt.phase, Phase::Pending | Phase::Running | Phase::Waiting)
+                    && matches!(
+                        attempt.phase,
+                        Phase::Pending | Phase::Running | Phase::Waiting
+                    )
                 {
                     let mut state = self;
                     let worker = &mut state.attempts[identity];
@@ -865,7 +900,10 @@ impl State {
             }
 
             if attempt.revocation.is_none()
-                && matches!(attempt.phase, Phase::Pending | Phase::Running | Phase::Waiting)
+                && matches!(
+                    attempt.phase,
+                    Phase::Pending | Phase::Running | Phase::Waiting
+                )
             {
                 if self.now >= attempt.original_deadline {
                     let mut state = self;
@@ -989,7 +1027,13 @@ impl State {
             }
         }
 
-        if self.capacity.phase == CapacityPhase::Absent && self.slot != NO_ID {
+        // One WSS waiter joins behind the first transfer at admission. Its
+        // later registration, notification, expiry and grant still interleave
+        // with every worker, queue and reactor action in this finite run.
+        if self.capacity.phase == CapacityPhase::Absent
+            && self.slot == FIRST as u8
+            && self.now == self.attempts[FIRST].start_time
+        {
             let mut state = self;
             state.capacity.phase = CapacityPhase::Requested;
             state.capacity.deadline = self
@@ -1020,7 +1064,10 @@ impl State {
             next.push((Action::RegisterCapacityUnderK2, state));
         }
 
-        if matches!(self.capacity.phase, CapacityPhase::Registered | CapacityPhase::Sleeping) {
+        if matches!(
+            self.capacity.phase,
+            CapacityPhase::Registered | CapacityPhase::Sleeping
+        ) {
             let mut state = self;
             state.resolve_capacity();
             next.push((Action::CapacityLockedRecheck, state));
@@ -1265,7 +1312,12 @@ impl State {
             next.push((Action::BoundedPollTimeoutAndDrain, state));
         }
 
-        if self.tcp.phase == TcpPhase::Absent && self.active_attempt().is_some() {
+        // The later TCP demand is queued behind the first transfer before
+        // clocks advance; its eligibility still races every later receipt.
+        if self.tcp.phase == TcpPhase::Absent
+            && self.slot == FIRST as u8
+            && self.now == self.attempts[FIRST].start_time
+        {
             let mut state = self;
             state.tcp.phase = TcpPhase::Queued;
             state.tcp.key = TransferKey::later_tcp();
@@ -1320,10 +1372,7 @@ impl State {
             next.push((Action::TcpPhysicalAck, state));
         }
 
-        if self.admission_closed
-            && self.capacity.live()
-            && self.capacity.cancellation_count == 0
-        {
+        if self.admission_closed && self.capacity.live() && self.capacity.cancellation_count == 0 {
             let mut state = self;
             state.capacity.phase = CapacityPhase::Cancelled;
             state.capacity.sleeping = false;
@@ -1333,6 +1382,7 @@ impl State {
             next.push((Action::ShutdownCancelsCapacityWaiter, state));
         }
 
+        next.retain(|(action, _)| scenario.allows(self, *action));
         next
     }
 
@@ -1364,11 +1414,10 @@ impl State {
             OWNER_HANDOFF_CELL | OWNER_RESULT_CELL => {
                 attempt.owner_mask = OWNER_REACTOR;
             }
-            OWNER_WORKER => {
-                if attempt.worker_sleeping {
-                    attempt.worker_notified = true;
-                }
+            OWNER_WORKER if attempt.worker_sleeping => {
+                attempt.worker_notified = true;
             }
+            OWNER_WORKER => {}
             _ => {}
         }
         state.wake_due = true;
@@ -1483,22 +1532,48 @@ impl fmt::Display for Action {
                 f,
                 "worker:handshake-turn enter identity {} ({})",
                 id + 1,
-                if *opaque { "opaque nonreturning verifier" } else { "returning oracle" }
+                if *opaque {
+                    "opaque nonreturning verifier"
+                } else {
+                    "returning oracle"
+                }
             ),
-            Self::Return(id, kind) => write!(f, "worker:handshake-turn return identity {} ({kind:?})", id + 1),
+            Self::Return(id, kind) => write!(
+                f,
+                "worker:handshake-turn return identity {} ({kind:?})",
+                id + 1
+            ),
             Self::LockedRecheckAndCondvarRelease(id) => write!(
                 f,
                 "worker:locked readiness recheck + atomic condvar release identity {}",
                 id + 1
             ),
-            Self::RequeueSyntheticLimit(id) => write!(f, "worker:requeue synthetic limit identity {}", id + 1),
-            Self::WorkerWakeAndLockedRecheck(id) => write!(f, "worker:condvar wake + locked recheck identity {}", id + 1),
-            Self::WorkerBoundedCondvarTimeout(id) => write!(f, "worker:bounded condvar timeout identity {}", id + 1),
-            Self::WorkerObservesRevocation(id) => write!(f, "worker:observe revocation identity {}", id + 1),
-            Self::WorkerCloseDropFailure(id) => write!(f, "worker:close/drop failed stream identity {}", id + 1),
-            Self::CloseDropRevokedStream(id) => write!(f, "owner:close/drop revoked stream identity {}", id + 1),
-            Self::PublishFailureResult(id) => write!(f, "worker:publish failure result identity {}", id + 1),
-            Self::PublishSuccessResult(id) => write!(f, "worker:publish Returned result cell identity {}", id + 1),
+            Self::RequeueSyntheticLimit(id) => {
+                write!(f, "worker:requeue synthetic limit identity {}", id + 1)
+            }
+            Self::WorkerWakeAndLockedRecheck(id) => write!(
+                f,
+                "worker:condvar wake + locked recheck identity {}",
+                id + 1
+            ),
+            Self::WorkerBoundedCondvarTimeout(id) => {
+                write!(f, "worker:bounded condvar timeout identity {}", id + 1)
+            }
+            Self::WorkerObservesRevocation(id) => {
+                write!(f, "worker:observe revocation identity {}", id + 1)
+            }
+            Self::WorkerCloseDropFailure(id) => {
+                write!(f, "worker:close/drop failed stream identity {}", id + 1)
+            }
+            Self::CloseDropRevokedStream(id) => {
+                write!(f, "owner:close/drop revoked stream identity {}", id + 1)
+            }
+            Self::PublishFailureResult(id) => {
+                write!(f, "worker:publish failure result identity {}", id + 1)
+            }
+            Self::PublishSuccessResult(id) => {
+                write!(f, "worker:publish Returned result cell identity {}", id + 1)
+            }
             Self::PublishEdge(id, direction) => write!(
                 f,
                 "reactor:publish {} edge identity {}",
@@ -1506,42 +1581,365 @@ impl fmt::Display for Action {
                 id + 1
             ),
             Self::Revoke(id, reason) => write!(f, "producer:revoke identity {} ({reason})", id + 1),
-            Self::ConsumeQueueProof(id) => write!(f, "queue:consume exact TLS release proof identity {}", id + 1),
+            Self::ConsumeQueueProof(id) => write!(
+                f,
+                "queue:consume exact TLS release proof identity {}",
+                id + 1
+            ),
             Self::PhysicalAck(id) => write!(f, "owner:physical retirement ack identity {}", id + 1),
-            Self::FinishAcceptedSlot(id) => write!(f, "reactor:finish accepted handoff slot identity {}", id + 1),
-            Self::FinishReleasedSlot(id) => write!(f, "reactor:finish physically retired slot identity {}", id + 1),
+            Self::FinishAcceptedSlot(id) => write!(
+                f,
+                "reactor:finish accepted handoff slot identity {}",
+                id + 1
+            ),
+            Self::FinishReleasedSlot(id) => write!(
+                f,
+                "reactor:finish physically retired slot identity {}",
+                id + 1
+            ),
             Self::Shutdown => f.write_str("producer:shutdown and close admission"),
             Self::RequestCapacity => f.write_str("producer:request WSS capacity"),
-            Self::CapacityCheckBeforeRegistration => f.write_str("producer:precheck lane availability"),
+            Self::CapacityCheckBeforeRegistration => {
+                f.write_str("producer:precheck lane availability")
+            }
             Self::RegisterCapacityUnderK2 => f.write_str("producer:register waiter under K2"),
             Self::CapacityLockedRecheck => f.write_str("producer:K2-locked lane recheck"),
-            Self::CapacitySleepUnderK2 => f.write_str("producer:atomic K2 release and capacity sleep"),
-            Self::WrongCapacitySleepWithoutRecheck => f.write_str("mutant:capacity sleep without K2 recheck"),
-            Self::ProducerUnlockThenK2Notify => f.write_str("producer:after TLS unlock, bump K2 and notify"),
-            Self::RefuseWssAtGrant => f.write_str("capacity:typed insufficient-time refusal without charge"),
-            Self::RefuseInsufficientWssTime => f.write_str("capacity:typed insufficient-time refusal without charge"),
-            Self::ExpireRefusedWssAtOriginalDeadline => f.write_str("capacity:expire once at immutable D"),
-            Self::CancelCapacityWaiter => f.write_str("producer:stronger capacity-waiter cancellation"),
-            Self::DeliverDelayedOldResult => f.write_str("reactor:deliver delayed old-key result tuple"),
-            Self::TryOldProofAgainstNewIdentity => f.write_str("queue:try old release proof against next identity"),
+            Self::CapacitySleepUnderK2 => {
+                f.write_str("producer:atomic K2 release and capacity sleep")
+            }
+            Self::WrongCapacitySleepWithoutRecheck => {
+                f.write_str("mutant:capacity sleep without K2 recheck")
+            }
+            Self::ProducerUnlockThenK2Notify => {
+                f.write_str("producer:after TLS unlock, bump K2 and notify")
+            }
+            Self::RefuseWssAtGrant => {
+                f.write_str("capacity:typed insufficient-time refusal without charge")
+            }
+            Self::RefuseInsufficientWssTime => {
+                f.write_str("capacity:typed insufficient-time refusal without charge")
+            }
+            Self::ExpireRefusedWssAtOriginalDeadline => {
+                f.write_str("capacity:expire once at immutable D")
+            }
+            Self::CancelCapacityWaiter => {
+                f.write_str("producer:stronger capacity-waiter cancellation")
+            }
+            Self::DeliverDelayedOldResult => {
+                f.write_str("reactor:deliver delayed old-key result tuple")
+            }
+            Self::TryOldProofAgainstNewIdentity => {
+                f.write_str("queue:try old release proof against next identity")
+            }
             Self::ReactorReadsResultCell => f.write_str("reactor:read persistent result cell"),
             Self::TakeReturn(id) => write!(f, "reactor:take exact Returned identity {}", id + 1),
-            Self::WronglyAcceptOldResultForNewIdentity => f.write_str("mutant:accept old result for new identity"),
+            Self::WronglyAcceptOldResultForNewIdentity => {
+                f.write_str("mutant:accept old result for new identity")
+            }
             Self::RejectStaleResultIdentity => f.write_str("reactor:reject stale result identity"),
             Self::MioWake => f.write_str("worker/revoker:mio wake (coalescing token)"),
             Self::PollDrainWake => f.write_str("reactor:Poll drain wake token"),
             Self::PollSleep => f.write_str("reactor:Poll sleep"),
-            Self::BoundedPollTimeoutAndDrain => f.write_str("reactor:bounded Poll timeout and result drain"),
+            Self::BoundedPollTimeoutAndDrain => {
+                f.write_str("reactor:bounded Poll timeout and result drain")
+            }
             Self::QueueLaterTcpAttempt => f.write_str("producer:queue same-slot later TCP attempt"),
-            Self::TcpDemandBecomesEligible => f.write_str("queue:make TCP demand eligible after receipt"),
-            Self::StartEligibleTcpWithoutWaitingForWorker => f.write_str("reactor:start eligible TCP while TLS worker may remain occupied"),
+            Self::TcpDemandBecomesEligible => {
+                f.write_str("queue:make TCP demand eligible after receipt")
+            }
+            Self::StartEligibleTcpWithoutWaitingForWorker => {
+                f.write_str("reactor:start eligible TCP while TLS worker may remain occupied")
+            }
             Self::AcceptTcp => f.write_str("reactor:accept later TCP attempt"),
             Self::CloseDropTcp => f.write_str("reactor:close/drop later TCP attempt"),
-            Self::TcpPhysicalAck => f.write_str("reactor:ack later TCP attempt's own retirement cell"),
-            Self::ShutdownCancelsCapacityWaiter => f.write_str("producer:shutdown revokes capacity waiter"),
+            Self::TcpPhysicalAck => {
+                f.write_str("reactor:ack later TCP attempt's own retirement cell")
+            }
+            Self::ShutdownCancelsCapacityWaiter => {
+                f.write_str("producer:shutdown revokes capacity waiter")
+            }
         }
     }
 }
+
+const RETURN_WOULD_BLOCK: u8 = 1 << 0;
+const RETURN_SYNTHETIC_LIMIT: u8 = 1 << 1;
+const RETURN_SUCCESS: u8 = 1 << 2;
+const RETURN_FAILURE: u8 = 1 << 3;
+
+// Each scenario exhausts its enabled transitions. The partitions bound
+// orthogonal oracle, identity, TCP, and WSS factors; combined partitions below
+// retain the TCP/capacity races that share the occupied game lane.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OracleScope {
+    NoTurn,
+    Returning(u8),
+    Opaque,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ClockScope {
+    Disabled,
+    Full,
+    CapacityRefusal,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RevocationScope {
+    None,
+    DeadlineOnly,
+    CancellationAtBudget,
+    ShutdownAtBudget,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Scenario {
+    name: &'static str,
+    second_identity: bool,
+    tcp_demand: bool,
+    capacity_waiter: bool,
+    capacity_cancellation: bool,
+    oracle: OracleScope,
+    edge_directions: u8,
+    clock: ClockScope,
+    revocation: RevocationScope,
+    return_after: u8,
+}
+
+impl Scenario {
+    fn allows(self, state: State, action: Action) -> bool {
+        match action {
+            Action::Admit(identity) if identity == SECOND as u8 => self.second_identity,
+            Action::EnterTurn(_, opaque) => match self.oracle {
+                OracleScope::NoTurn => false,
+                OracleScope::Returning(_) => !opaque,
+                OracleScope::Opaque => opaque,
+            },
+            Action::Return(identity, kind) => {
+                let return_bit = match kind {
+                    ReturnKind::WouldBlock => RETURN_WOULD_BLOCK,
+                    ReturnKind::SyntheticLimit => RETURN_SYNTHETIC_LIMIT,
+                    ReturnKind::Success => RETURN_SUCCESS,
+                    ReturnKind::Failure => RETURN_FAILURE,
+                };
+                matches!(self.oracle, OracleScope::Returning(mask) if mask & return_bit != 0)
+                    && state.now
+                        >= state.attempts[identity as usize]
+                            .start_time
+                            .saturating_add(self.return_after)
+            }
+            Action::PublishEdge(_, direction) => self.edge_directions & (1 << direction) != 0,
+            Action::AdvanceTime(time) => match self.clock {
+                ClockScope::Disabled => false,
+                ClockScope::Full => {
+                    self.oracle != OracleScope::Opaque || state.attempts[FIRST].turn == Turn::Opaque
+                }
+                ClockScope::CapacityRefusal => {
+                    time <= state
+                        .capacity
+                        .deadline
+                        .saturating_sub(MIN_WSS_REMAINING - 1)
+                        || matches!(
+                            state.capacity.phase,
+                            CapacityPhase::Absent
+                                | CapacityPhase::Refused
+                                | CapacityPhase::Cancelled
+                        )
+                        || state.attempts[FIRST].phase == Phase::Accepted
+                }
+            },
+            Action::Revoke(identity, reason) => {
+                let attempt = state.attempts[identity as usize];
+                match self.revocation {
+                    RevocationScope::None => false,
+                    RevocationScope::DeadlineOnly | RevocationScope::ShutdownAtBudget => {
+                        reason == Revocation::Deadline
+                    }
+                    RevocationScope::CancellationAtBudget => {
+                        reason == Revocation::Deadline
+                            || (reason == Revocation::Cancelled
+                                && attempt
+                                    .start_time
+                                    .checked_add(HANDSHAKE_BUDGET)
+                                    .is_some_and(|cancel_at| state.now >= cancel_at)
+                                && state.now < attempt.original_deadline)
+                    }
+                }
+            }
+            Action::Shutdown => {
+                self.revocation == RevocationScope::ShutdownAtBudget
+                    && state.attempts[FIRST]
+                        .start_time
+                        .checked_add(HANDSHAKE_BUDGET)
+                        .is_some_and(|cancel_at| state.now == cancel_at)
+                    && state.now < state.attempts[FIRST].original_deadline
+            }
+            Action::CancelCapacityWaiter => self.capacity_cancellation,
+            Action::RequestCapacity
+            | Action::CapacityCheckBeforeRegistration
+            | Action::RegisterCapacityUnderK2
+            | Action::CapacityLockedRecheck
+            | Action::CapacitySleepUnderK2
+            | Action::WrongCapacitySleepWithoutRecheck
+            | Action::ProducerUnlockThenK2Notify
+            | Action::RefuseWssAtGrant
+            | Action::RefuseInsufficientWssTime
+            | Action::ExpireRefusedWssAtOriginalDeadline
+            | Action::ShutdownCancelsCapacityWaiter => self.capacity_waiter,
+            Action::QueueLaterTcpAttempt
+            | Action::TcpDemandBecomesEligible
+            | Action::StartEligibleTcpWithoutWaitingForWorker
+            | Action::AcceptTcp
+            | Action::CloseDropTcp
+            | Action::TcpPhysicalAck => self.tcp_demand,
+            Action::DeliverDelayedOldResult
+            | Action::TryOldProofAgainstNewIdentity
+            | Action::WronglyAcceptOldResultForNewIdentity
+            | Action::RejectStaleResultIdentity => self.second_identity,
+            _ => true,
+        }
+    }
+}
+
+const READ_EDGE_RACE: Scenario = Scenario {
+    name: "read-edge-before-and-after-would-block",
+    second_identity: false,
+    tcp_demand: false,
+    capacity_waiter: false,
+    capacity_cancellation: false,
+    oracle: OracleScope::Returning(RETURN_WOULD_BLOCK),
+    edge_directions: 1 << 0,
+    clock: ClockScope::Disabled,
+    revocation: RevocationScope::None,
+    return_after: 0,
+};
+
+const WRITE_EDGE_RACE: Scenario = Scenario {
+    name: "write-edge-before-and-after-would-block",
+    edge_directions: 1 << 1,
+    ..READ_EDGE_RACE
+};
+
+const SYNTHETIC_LIMIT_SCENARIO: Scenario = Scenario {
+    name: "synthetic-limit-requeue",
+    oracle: OracleScope::Returning(RETURN_SYNTHETIC_LIMIT),
+    edge_directions: 0,
+    ..READ_EDGE_RACE
+};
+
+const SUCCESS_SCENARIO: Scenario = Scenario {
+    name: "return-cell-success",
+    oracle: OracleScope::Returning(RETURN_SUCCESS),
+    edge_directions: 0,
+    ..READ_EDGE_RACE
+};
+
+const SUCCESS_DEADLINE_SCENARIO: Scenario = Scenario {
+    name: "returned-cell-deadline-race",
+    clock: ClockScope::Full,
+    revocation: RevocationScope::DeadlineOnly,
+    ..SUCCESS_SCENARIO
+};
+
+const FAILURE_SCENARIO: Scenario = Scenario {
+    name: "return-cell-failure",
+    oracle: OracleScope::Returning(RETURN_FAILURE),
+    edge_directions: 0,
+    ..READ_EDGE_RACE
+};
+
+const NEXT_IDENTITY_SCENARIO: Scenario = Scenario {
+    name: "next-identity-result-cell",
+    second_identity: true,
+    ..SUCCESS_SCENARIO
+};
+
+const DEADLINE_TCP_CAPACITY_SCENARIO: Scenario = Scenario {
+    name: "opaque-deadline-tcp-and-capacity",
+    tcp_demand: true,
+    capacity_waiter: true,
+    capacity_cancellation: true,
+    oracle: OracleScope::Opaque,
+    edge_directions: 0,
+    clock: ClockScope::Full,
+    revocation: RevocationScope::DeadlineOnly,
+    ..READ_EDGE_RACE
+};
+
+const CANCEL_TCP_SCENARIO: Scenario = Scenario {
+    name: "pre-deadline-cancel-and-tcp",
+    tcp_demand: true,
+    edge_directions: 0,
+    clock: ClockScope::Full,
+    revocation: RevocationScope::CancellationAtBudget,
+    oracle: OracleScope::NoTurn,
+    ..READ_EDGE_RACE
+};
+
+const SHUTDOWN_TCP_SCENARIO: Scenario = Scenario {
+    name: "pre-deadline-shutdown-and-tcp",
+    tcp_demand: true,
+    edge_directions: 0,
+    clock: ClockScope::Full,
+    revocation: RevocationScope::ShutdownAtBudget,
+    oracle: OracleScope::NoTurn,
+    ..READ_EDGE_RACE
+};
+
+const PROOF_IDENTITY_SCENARIO: Scenario = Scenario {
+    name: "unconsumed-proof-against-next-identity",
+    second_identity: true,
+    edge_directions: 0,
+    clock: ClockScope::Full,
+    revocation: RevocationScope::CancellationAtBudget,
+    oracle: OracleScope::NoTurn,
+    ..READ_EDGE_RACE
+};
+
+const CAPACITY_GRANT_SCENARIO: Scenario = Scenario {
+    name: "capacity-k2-recheck-and-grant",
+    second_identity: true,
+    capacity_waiter: true,
+    capacity_cancellation: true,
+    ..SUCCESS_SCENARIO
+};
+
+// At start t=0 the immutable D is t=10. Freeing the lane at t=6 leaves four
+// seconds, so the capacity request must receive the typed five-second refusal.
+const CAPACITY_REFUSAL_SCENARIO: Scenario = Scenario {
+    name: "capacity-minimum-time-refusal-and-expiry",
+    capacity_waiter: true,
+    capacity_cancellation: true,
+    edge_directions: 0,
+    clock: ClockScope::CapacityRefusal,
+    revocation: RevocationScope::DeadlineOnly,
+    oracle: OracleScope::Returning(RETURN_FAILURE),
+    return_after: MIN_WSS_REMAINING + 1,
+    ..READ_EDGE_RACE
+};
+
+const TCP_RETIREMENT_SCENARIO: Scenario = Scenario {
+    name: "later-tcp-distinct-retirement",
+    tcp_demand: true,
+    ..SUCCESS_SCENARIO
+};
+
+const CORRECT_SCENARIOS: [Scenario; 14] = [
+    READ_EDGE_RACE,
+    WRITE_EDGE_RACE,
+    SYNTHETIC_LIMIT_SCENARIO,
+    SUCCESS_SCENARIO,
+    SUCCESS_DEADLINE_SCENARIO,
+    FAILURE_SCENARIO,
+    NEXT_IDENTITY_SCENARIO,
+    DEADLINE_TCP_CAPACITY_SCENARIO,
+    CANCEL_TCP_SCENARIO,
+    SHUTDOWN_TCP_SCENARIO,
+    PROOF_IDENTITY_SCENARIO,
+    CAPACITY_GRANT_SCENARIO,
+    CAPACITY_REFUSAL_SCENARIO,
+    TCP_RETIREMENT_SCENARIO,
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Violation {
@@ -1717,9 +2115,7 @@ fn check_invariants(state: State) -> Result<(), Violation> {
                 detail: "physical retirement released before acceptance or close/drop proof",
             });
         }
-        if attempt.physical_ack_count > 0
-            && attempt.accepted_count == 0
-            && attempt.drop_count == 0
+        if attempt.physical_ack_count > 0 && attempt.accepted_count == 0 && attempt.drop_count == 0
         {
             return Err(Violation {
                 invariant: 5,
@@ -1873,8 +2269,8 @@ fn check_invariants(state: State) -> Result<(), Violation> {
     Ok(())
 }
 
-fn assert_fair_progress(state: State, mutation: Mutation) {
-    let transitions = state.successors(mutation);
+fn assert_fair_progress(state: State, mutation: Mutation, scenario: Scenario) {
+    let transitions = state.successors(mutation, scenario);
     if state.tcp.phase == TcpPhase::Eligible {
         assert!(
             transitions
@@ -1885,15 +2281,30 @@ fn assert_fair_progress(state: State, mutation: Mutation) {
     }
     for (identity, attempt) in state.attempts.iter().copied().enumerate() {
         if attempt.phase == Phase::Pending && !attempt.worker_active {
-            assert!(transitions.iter().any(|(action, _)| *action == Action::Claim(identity as u8)));
+            assert!(transitions
+                .iter()
+                .any(|(action, _)| *action == Action::Claim(identity as u8)));
         }
         match attempt.turn {
-            Turn::Returning => assert!(transitions.iter().any(|(action, _)| {
-                matches!(action, Action::Return(id, _) if *id == identity as u8)
-            })),
-            Turn::WouldBlock if attempt.phase == Phase::Running => assert!(transitions
-                .iter()
-                .any(|(action, _)| *action == Action::LockedRecheckAndCondvarRelease(identity as u8))),
+            Turn::Returning => {
+                let can_return =
+                    state.now >= attempt.start_time.saturating_add(scenario.return_after);
+                if can_return {
+                    assert!(transitions.iter().any(|(action, _)| {
+                        matches!(action, Action::Return(id, _) if *id == identity as u8)
+                    }));
+                } else {
+                    assert!(transitions
+                        .iter()
+                        .any(|(action, _)| matches!(action, Action::AdvanceTime(_))));
+                }
+            }
+            Turn::WouldBlock if attempt.phase == Phase::Running => {
+                assert!(transitions
+                    .iter()
+                    .any(|(action, _)| *action
+                        == Action::LockedRecheckAndCondvarRelease(identity as u8)))
+            }
             Turn::SyntheticLimit if attempt.phase == Phase::Running => assert!(transitions
                 .iter()
                 .any(|(action, _)| *action == Action::RequeueSyntheticLimit(identity as u8))),
@@ -1918,7 +2329,8 @@ fn assert_fair_progress(state: State, mutation: Mutation) {
     if state.result_cell.occupied && state.reactor_sleeping {
         assert!(state.wake_token || state.wake_due || state.poll_timeout_scheduled);
     }
-    if state.capacity.phase == CapacityPhase::Ready
+    if scenario.second_identity
+        && state.capacity.phase == CapacityPhase::Ready
         && state.slot == NO_ID
         && state.lane_available()
         && !state.admission_closed
@@ -1941,13 +2353,14 @@ struct Node {
 
 #[derive(Debug)]
 struct Counterexample {
+    scenario: &'static str,
     explored_states: usize,
     explored_transitions: usize,
     violation: Violation,
     trace: Vec<Action>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct ExhaustiveReport {
     explored_states: usize,
     explored_transitions: usize,
@@ -1955,13 +2368,154 @@ struct ExhaustiveReport {
     saw_edge_during_turn: bool,
     saw_edge_after_would_block: bool,
     saw_edge_before_and_after_would_block: bool,
+    saw_edge_during_turn_by_direction: [bool; 2],
+    saw_edge_after_would_block_by_direction: [bool; 2],
+    saw_two_edge_race_by_direction: [bool; 2],
     saw_would_block: bool,
     saw_synthetic_limit: bool,
     saw_success: bool,
     saw_failure: bool,
+    saw_result_cell_published: bool,
+    saw_mio_wake: bool,
+    saw_poll_drain: bool,
+    saw_result_cell_read: bool,
+    saw_result_taken: bool,
+    saw_poll_sleep: bool,
+    saw_bounded_poll_timeout: bool,
+    saw_queue_proof_consumed: bool,
+    saw_game_physical_ack: bool,
     saw_opaque_turn: bool,
     saw_second_identity: bool,
     saw_tcp_while_worker_active: bool,
+    saw_capacity_and_tcp_while_worker_active: bool,
+    saw_queue_released_while_worker_active: bool,
+    saw_capacity_registered: bool,
+    saw_capacity_rechecked: bool,
+    saw_capacity_release_after_precheck_before_registration: bool,
+    saw_capacity_recheck_after_missed_notification: bool,
+    saw_capacity_sleeping: bool,
+    saw_capacity_wake: bool,
+    saw_capacity_ready: bool,
+    saw_capacity_used: bool,
+    saw_capacity_refused: bool,
+    saw_capacity_expired: bool,
+    saw_capacity_cancelled: bool,
+    saw_refused_capacity_cancelled: bool,
+    saw_deadline_revocation: bool,
+    saw_deadline_at_original_d: bool,
+    saw_deadline_revoked_returned_cell: bool,
+    saw_cancel_revocation: bool,
+    saw_shutdown_revocation: bool,
+    saw_next_identity_stale_proof_check: bool,
+    saw_tcp_distinct_retirement: bool,
+}
+
+impl ExhaustiveReport {
+    fn merge(&mut self, other: Self) {
+        self.explored_states = self
+            .explored_states
+            .checked_add(other.explored_states)
+            .expect("aggregate explored-state count must not wrap");
+        self.explored_transitions = self
+            .explored_transitions
+            .checked_add(other.explored_transitions)
+            .expect("aggregate transition count must not wrap");
+        self.max_depth = self.max_depth.max(other.max_depth);
+        self.saw_result_cell_published |= other.saw_result_cell_published;
+        self.saw_mio_wake |= other.saw_mio_wake;
+        self.saw_poll_drain |= other.saw_poll_drain;
+        self.saw_result_cell_read |= other.saw_result_cell_read;
+        self.saw_result_taken |= other.saw_result_taken;
+        self.saw_poll_sleep |= other.saw_poll_sleep;
+        self.saw_bounded_poll_timeout |= other.saw_bounded_poll_timeout;
+        self.saw_queue_proof_consumed |= other.saw_queue_proof_consumed;
+        self.saw_game_physical_ack |= other.saw_game_physical_ack;
+        self.saw_edge_during_turn |= other.saw_edge_during_turn;
+        self.saw_edge_after_would_block |= other.saw_edge_after_would_block;
+        self.saw_edge_before_and_after_would_block |= other.saw_edge_before_and_after_would_block;
+        self.saw_edge_during_turn_by_direction[0] |= other.saw_edge_during_turn_by_direction[0];
+        self.saw_edge_during_turn_by_direction[1] |= other.saw_edge_during_turn_by_direction[1];
+        self.saw_edge_after_would_block_by_direction[0] |=
+            other.saw_edge_after_would_block_by_direction[0];
+        self.saw_edge_after_would_block_by_direction[1] |=
+            other.saw_edge_after_would_block_by_direction[1];
+        self.saw_two_edge_race_by_direction[0] |= other.saw_two_edge_race_by_direction[0];
+        self.saw_two_edge_race_by_direction[1] |= other.saw_two_edge_race_by_direction[1];
+        self.saw_would_block |= other.saw_would_block;
+        self.saw_synthetic_limit |= other.saw_synthetic_limit;
+        self.saw_success |= other.saw_success;
+        self.saw_failure |= other.saw_failure;
+        self.saw_opaque_turn |= other.saw_opaque_turn;
+        self.saw_second_identity |= other.saw_second_identity;
+        self.saw_tcp_while_worker_active |= other.saw_tcp_while_worker_active;
+        self.saw_capacity_and_tcp_while_worker_active |=
+            other.saw_capacity_and_tcp_while_worker_active;
+        self.saw_queue_released_while_worker_active |= other.saw_queue_released_while_worker_active;
+        self.saw_capacity_registered |= other.saw_capacity_registered;
+        self.saw_capacity_rechecked |= other.saw_capacity_rechecked;
+        self.saw_capacity_release_after_precheck_before_registration |=
+            other.saw_capacity_release_after_precheck_before_registration;
+        self.saw_capacity_recheck_after_missed_notification |=
+            other.saw_capacity_recheck_after_missed_notification;
+        self.saw_capacity_sleeping |= other.saw_capacity_sleeping;
+        self.saw_capacity_wake |= other.saw_capacity_wake;
+        self.saw_capacity_ready |= other.saw_capacity_ready;
+        self.saw_capacity_used |= other.saw_capacity_used;
+        self.saw_capacity_refused |= other.saw_capacity_refused;
+        self.saw_capacity_expired |= other.saw_capacity_expired;
+        self.saw_capacity_cancelled |= other.saw_capacity_cancelled;
+        self.saw_refused_capacity_cancelled |= other.saw_refused_capacity_cancelled;
+        self.saw_deadline_revocation |= other.saw_deadline_revocation;
+        self.saw_deadline_at_original_d |= other.saw_deadline_at_original_d;
+        self.saw_deadline_revoked_returned_cell |= other.saw_deadline_revoked_returned_cell;
+        self.saw_cancel_revocation |= other.saw_cancel_revocation;
+        self.saw_shutdown_revocation |= other.saw_shutdown_revocation;
+        self.saw_next_identity_stale_proof_check |= other.saw_next_identity_stale_proof_check;
+        self.saw_tcp_distinct_retirement |= other.saw_tcp_distinct_retirement;
+    }
+}
+
+fn record_state_coverage(report: &mut ExhaustiveReport, state: State) {
+    report.saw_second_identity |= state.authorized_count == 2;
+    let worker_active = state.attempts.iter().any(|attempt| attempt.worker_active);
+    report.saw_tcp_while_worker_active |= worker_active
+        && matches!(
+            state.tcp.phase,
+            TcpPhase::Queued | TcpPhase::Eligible | TcpPhase::Pending
+        );
+    report.saw_capacity_and_tcp_while_worker_active |=
+        worker_active && state.capacity.live() && state.tcp.phase != TcpPhase::Absent;
+    report.saw_queue_released_while_worker_active |= worker_active
+        && !state.attempts[FIRST].queue_credit
+        && state.attempts[FIRST].proof.consumed;
+    report.saw_opaque_turn |= state
+        .attempts
+        .iter()
+        .any(|attempt| attempt.turn == Turn::Opaque);
+
+    let capacity = state.capacity;
+    report.saw_capacity_registered |= capacity.registered();
+    report.saw_capacity_rechecked |= capacity.rechecked;
+    report.saw_capacity_sleeping |= capacity.sleeping;
+    report.saw_capacity_wake |= capacity.wake_pending || state.capacity_notify_due;
+    report.saw_capacity_ready |= capacity.phase == CapacityPhase::Ready;
+    report.saw_capacity_used |= capacity.phase == CapacityPhase::Used;
+    report.saw_capacity_refused |= capacity.phase == CapacityPhase::Refused;
+    report.saw_capacity_expired |= capacity.phase == CapacityPhase::Expired;
+    report.saw_capacity_cancelled |= capacity.phase == CapacityPhase::Cancelled;
+
+    report.saw_next_identity_stale_proof_check |= state.stale_proof_delivered;
+    report.saw_tcp_distinct_retirement |= state.tcp.phase == TcpPhase::Released
+        && state.tcp.physical_ack_count == 1
+        && state.tcp.acknowledgement_key == state.tcp.key;
+    for attempt in state.attempts {
+        match attempt.revocation {
+            Some(Revocation::Deadline) => report.saw_deadline_revocation = true,
+            Some(Revocation::Cancelled) => report.saw_cancel_revocation = true,
+            Some(Revocation::Shutdown) => report.saw_shutdown_revocation = true,
+            None => {}
+        }
+    }
 }
 
 fn reconstruct_trace(nodes: &[Node], mut index: usize) -> Vec<Action> {
@@ -1974,7 +2528,7 @@ fn reconstruct_trace(nodes: &[Node], mut index: usize) -> Vec<Action> {
     trace
 }
 
-fn find_counterexample(mutation: Mutation) -> Counterexample {
+fn find_counterexample(mutation: Mutation, scenario: Scenario) -> Counterexample {
     let mut nodes = vec![Node {
         state: State::INITIAL,
         parent: None,
@@ -1990,13 +2544,14 @@ fn find_counterexample(mutation: Mutation) -> Counterexample {
         let state = nodes[index].state;
         if let Err(violation) = check_invariants(state) {
             return Counterexample {
+                scenario: scenario.name,
                 explored_states: nodes.len(),
                 explored_transitions: transitions,
                 violation,
                 trace: reconstruct_trace(&nodes, index),
             };
         }
-        for (action, next) in state.successors(mutation) {
+        for (action, next) in state.successors(mutation, scenario) {
             transitions = transitions
                 .checked_add(1)
                 .expect("transition count must not wrap");
@@ -2004,8 +2559,9 @@ fn find_counterexample(mutation: Mutation) -> Counterexample {
                 continue;
             }
             assert!(
-                nodes.len() < MAX_EXPLORED_STATES,
-                "mutant search exceeded bounded state count {MAX_EXPLORED_STATES}"
+                nodes.len() < MAX_EXPLORED_STATES_PER_SCENARIO,
+                "mutant search for {} exceeded bounded state count {MAX_EXPLORED_STATES_PER_SCENARIO}",
+                scenario.name
             );
             let child = nodes.len();
             visited.insert(next, child);
@@ -2018,10 +2574,13 @@ fn find_counterexample(mutation: Mutation) -> Counterexample {
             queue.push_back(child);
         }
     }
-    panic!("mutation {mutation:?} did not produce a counterexample")
+    panic!(
+        "mutation {mutation:?} did not produce a counterexample in {}",
+        scenario.name
+    )
 }
 
-fn explore_correct_model() -> ExhaustiveReport {
+fn explore_correct_scenario(scenario: Scenario) -> ExhaustiveReport {
     let mut nodes = vec![Node {
         state: State::INITIAL,
         parent: None,
@@ -2032,21 +2591,7 @@ fn explore_correct_model() -> ExhaustiveReport {
     visited.insert(State::INITIAL, 0usize);
     let mut queue = VecDeque::from([0usize]);
     let mut transitions = 0usize;
-    let mut report = ExhaustiveReport {
-        explored_states: 0,
-        explored_transitions: 0,
-        max_depth: 0,
-        saw_edge_during_turn: false,
-        saw_edge_after_would_block: false,
-        saw_edge_before_and_after_would_block: false,
-        saw_would_block: false,
-        saw_synthetic_limit: false,
-        saw_success: false,
-        saw_failure: false,
-        saw_opaque_turn: false,
-        saw_second_identity: false,
-        saw_tcp_while_worker_active: false,
-    };
+    let mut report = ExhaustiveReport::default();
 
     while let Some(index) = queue.pop_front() {
         let state = nodes[index].state;
@@ -2054,55 +2599,92 @@ fn explore_correct_model() -> ExhaustiveReport {
         report.max_depth = report.max_depth.max(depth);
         if let Err(violation) = check_invariants(state) {
             let trace = reconstruct_trace(&nodes, index);
-            panic!("correct model violated {violation}\ntrace:\n{}", format_trace(&trace));
+            panic!(
+                "correct scenario {} violated {violation}\ntrace:\n{}",
+                scenario.name,
+                format_trace(&trace)
+            );
         }
-        assert_fair_progress(state, Mutation::None);
-        if state.authorized_count == 2 {
-            report.saw_second_identity = true;
-        }
-        if state.tcp.phase == TcpPhase::Pending
-            && state.attempts.iter().any(|attempt| attempt.worker_active)
-        {
-            report.saw_tcp_while_worker_active = true;
-        }
-        if state.attempts.iter().any(|attempt| attempt.turn == Turn::Opaque) {
-            report.saw_opaque_turn = true;
-        }
+        assert_fair_progress(state, Mutation::None, scenario);
+        record_state_coverage(&mut report, state);
 
-        let successors = state.successors(Mutation::None);
-        for (action, next) in successors {
+        for (action, next) in state.successors(Mutation::None, scenario) {
             transitions = transitions
                 .checked_add(1)
                 .expect("transition count must not wrap");
             match action {
-                Action::PublishEdge(id, _) => {
+                Action::PublishEdge(id, direction) => {
+                    let direction = direction as usize;
                     let attempt = state.attempts[id as usize];
                     if attempt.turn == Turn::Returning {
                         report.saw_edge_during_turn = true;
+                        report.saw_edge_during_turn_by_direction[direction] = true;
                     }
                     if attempt.turn == Turn::WouldBlock
                         || (attempt.phase == Phase::Waiting && attempt.last_would_block)
                     {
                         report.saw_edge_after_would_block = true;
+                        report.saw_edge_after_would_block_by_direction[direction] = true;
                     }
                     if attempt.turn == Turn::WouldBlock
-                        && attempt.ready_seq != attempt.call_snapshot
+                        && attempt.ready_seq[direction] != attempt.call_snapshot[direction]
                     {
                         report.saw_edge_before_and_after_would_block = true;
+                        report.saw_two_edge_race_by_direction[direction] = true;
                     }
                 }
                 Action::Return(_, ReturnKind::WouldBlock) => report.saw_would_block = true,
                 Action::Return(_, ReturnKind::SyntheticLimit) => report.saw_synthetic_limit = true,
                 Action::Return(_, ReturnKind::Success) => report.saw_success = true,
                 Action::Return(_, ReturnKind::Failure) => report.saw_failure = true,
+                Action::PublishSuccessResult(_) | Action::PublishFailureResult(_) => {
+                    report.saw_result_cell_published = true;
+                }
+                Action::MioWake => report.saw_mio_wake = true,
+                Action::PollDrainWake => report.saw_poll_drain = true,
+                Action::ReactorReadsResultCell => report.saw_result_cell_read = true,
+                Action::TakeReturn(_) => report.saw_result_taken = true,
+                Action::PollSleep => report.saw_poll_sleep = true,
+                Action::BoundedPollTimeoutAndDrain => report.saw_bounded_poll_timeout = true,
+                Action::ConsumeQueueProof(_) => report.saw_queue_proof_consumed = true,
+                Action::ProducerUnlockThenK2Notify
+                    if state.capacity.phase == CapacityPhase::Requested
+                        && state.capacity.checked
+                        && !state.capacity.observed_free
+                        && state.lane_available() =>
+                {
+                    report.saw_capacity_release_after_precheck_before_registration = true;
+                }
+                Action::CapacityLockedRecheck
+                    if state.capacity.registered()
+                        && state.capacity.register_epoch > state.capacity.observed_epoch
+                        && state.capacity.observed_epoch != state.k2_epoch =>
+                {
+                    report.saw_capacity_recheck_after_missed_notification = true;
+                }
+                Action::Revoke(identity, Revocation::Deadline)
+                    if state.now == state.attempts[identity as usize].original_deadline =>
+                {
+                    report.saw_deadline_at_original_d = true;
+                    if state.result_cell.occupied
+                        && state.attempts[identity as usize].phase == Phase::Returned
+                    {
+                        report.saw_deadline_revoked_returned_cell = true;
+                    }
+                }
+                Action::PhysicalAck(_) => report.saw_game_physical_ack = true,
+                Action::CancelCapacityWaiter if state.capacity.phase == CapacityPhase::Refused => {
+                    report.saw_refused_capacity_cancelled = true;
+                }
                 _ => {}
             }
             if visited.contains_key(&next) {
                 continue;
             }
             assert!(
-                nodes.len() < MAX_EXPLORED_STATES,
-                "correct model exceeded bounded state count {MAX_EXPLORED_STATES}"
+                nodes.len() < MAX_EXPLORED_STATES_PER_SCENARIO,
+                "correct scenario {} exceeded bounded state count {MAX_EXPLORED_STATES_PER_SCENARIO}",
+                scenario.name
             );
             let child = nodes.len();
             visited.insert(next, child);
@@ -2121,6 +2703,22 @@ fn explore_correct_model() -> ExhaustiveReport {
     report
 }
 
+fn explore_correct_model() -> ExhaustiveReport {
+    let mut report = ExhaustiveReport::default();
+    for scenario in CORRECT_SCENARIOS {
+        let scenario_report = explore_correct_scenario(scenario);
+        println!(
+            "correct_game_tls_scenario={} explored_states={} transitions={} max_depth={}",
+            scenario.name,
+            scenario_report.explored_states,
+            scenario_report.explored_transitions,
+            scenario_report.max_depth
+        );
+        report.merge(scenario_report);
+    }
+    report
+}
+
 fn format_trace(trace: &[Action]) -> String {
     trace
         .iter()
@@ -2130,17 +2728,35 @@ fn format_trace(trace: &[Action]) -> String {
         .join("\n")
 }
 
-fn assert_shortest_mutant(mutation: Mutation, expected_invariant: u8, required: &[&str]) {
-    let result = find_counterexample(mutation);
-    assert_eq!(result.violation.invariant, expected_invariant, "{mutation:?}: {result:?}");
-    assert!(!result.trace.is_empty(), "{mutation:?} needs a counterexample trace");
+fn assert_shortest_mutant(
+    scenario: Scenario,
+    mutation: Mutation,
+    expected_invariant: u8,
+    required: &[&str],
+) {
+    let result = find_counterexample(mutation, scenario);
+    assert_eq!(
+        result.violation.invariant, expected_invariant,
+        "{mutation:?} in {}: {result:?}",
+        result.scenario
+    );
+    assert!(
+        !result.trace.is_empty(),
+        "{mutation:?} in {} needs a counterexample trace",
+        result.scenario
+    );
     let rendered = format_trace(&result.trace);
     for action in required {
-        assert!(rendered.contains(action), "{mutation:?} trace lacks {action:?}:\n{rendered}");
+        assert!(
+            rendered.contains(action),
+            "{mutation:?} in {} trace lacks {action:?}:\n{rendered}",
+            result.scenario
+        );
     }
-    assert!(result.explored_states <= MAX_EXPLORED_STATES);
+    assert!(result.explored_states <= MAX_EXPLORED_STATES_PER_SCENARIO);
     println!(
-        "mutant={mutation:?} explored_states={} transitions={} shortest_trace_len={} violation={}\n{}",
+        "mutant={mutation:?} scenario={} explored_states={} transitions={} shortest_trace_len={} violation={}\n{}",
+        result.scenario,
         result.explored_states,
         result.explored_transitions,
         result.trace.len(),
@@ -2152,35 +2768,88 @@ fn assert_shortest_mutant(mutation: Mutation, expected_invariant: u8, required: 
 #[test]
 fn game_tls_model_exhaustively_explores_bounded_interleavings_and_invariants() {
     let report = explore_correct_model();
-    assert!(report.explored_states > 100, "state space is not an exhaustive scheduler");
-    assert!(report.explored_states <= MAX_EXPLORED_STATES);
+    assert!(
+        report.explored_states > 100,
+        "scenario partitions lost meaningful state space"
+    );
+    assert!(report.explored_states <= MAX_EXPLORED_STATES_PER_SCENARIO * CORRECT_SCENARIOS.len());
     assert!(report.explored_transitions >= report.explored_states);
     assert!(report.max_depth > 10);
-    assert!(report.saw_edge_during_turn, "missing edge during an entered socket turn");
+    assert!(report.saw_edge_during_turn);
+    assert!(report.saw_edge_after_would_block);
+    assert!(report.saw_edge_before_and_after_would_block);
+    assert!(report.saw_edge_during_turn_by_direction[0]);
+    assert!(report.saw_edge_during_turn_by_direction[1]);
     assert!(report.saw_would_block);
-    assert!(report.saw_edge_after_would_block, "missing edge after one WouldBlock return");
-    assert!(
-        report.saw_edge_before_and_after_would_block,
-        "the two-edge bound must cover one edge before and another after WouldBlock"
-    );
+    assert!(report.saw_edge_after_would_block_by_direction[0]);
+    assert!(report.saw_edge_after_would_block_by_direction[1]);
+    assert!(report.saw_two_edge_race_by_direction[0]);
+    assert!(report.saw_two_edge_race_by_direction[1]);
     assert!(report.saw_synthetic_limit);
     assert!(report.saw_success);
     assert!(report.saw_failure);
-    assert!(report.saw_opaque_turn, "nonreturning verifier must be an explicit oracle branch");
-    assert!(report.saw_second_identity, "the second transfer identity was not admitted");
+    assert!(report.saw_result_cell_published);
+    assert!(report.saw_mio_wake);
+    assert!(report.saw_poll_drain);
+    assert!(report.saw_result_cell_read);
+    assert!(report.saw_result_taken);
+    assert!(report.saw_poll_sleep);
+    assert!(report.saw_bounded_poll_timeout);
+    assert!(
+        report.saw_opaque_turn,
+        "nonreturning verifier must be an explicit oracle branch"
+    );
+    assert!(
+        report.saw_second_identity,
+        "the second transfer identity was not admitted"
+    );
     assert!(
         report.saw_tcp_while_worker_active,
-        "queue release must permit eligible TCP while opaque TLS work still owns the stream"
+        "queued TCP demand must become eligible while opaque TLS work still owns the stream"
     );
+    assert!(
+        report.saw_capacity_and_tcp_while_worker_active,
+        "capacity waiter and TCP demand must coexist behind an occupied game lane"
+    );
+    assert!(
+        report.saw_queue_released_while_worker_active,
+        "initial-TLS queue proof must release admission independently of physical worker retirement"
+    );
+    assert!(report.saw_queue_proof_consumed);
+    assert!(report.saw_game_physical_ack);
+    assert!(report.saw_capacity_registered);
+    assert!(report.saw_capacity_rechecked);
+    assert!(report.saw_capacity_release_after_precheck_before_registration);
+    assert!(report.saw_capacity_recheck_after_missed_notification);
+    assert!(report.saw_capacity_sleeping);
+    assert!(report.saw_capacity_wake);
+    assert!(report.saw_capacity_ready);
+    assert!(report.saw_capacity_used);
+    assert!(report.saw_capacity_refused);
+    assert!(report.saw_capacity_expired);
+    assert!(report.saw_capacity_cancelled);
+    assert!(report.saw_refused_capacity_cancelled);
+    assert!(report.saw_deadline_revocation);
+    assert!(report.saw_deadline_at_original_d);
+    assert!(report.saw_deadline_revoked_returned_cell);
+    assert!(report.saw_cancel_revocation);
+    assert!(report.saw_shutdown_revocation);
+    assert!(report.saw_next_identity_stale_proof_check);
+    assert!(report.saw_tcp_distinct_retirement);
     println!(
-        "correct_game_tls_model explored_states={} transitions={} max_depth={} assumptions=one producer/worker/reactor; two transfer identities; two edges per direction; counters checked; weak fairness; bounded Poll; opaque verifier has no return obligation",
-        report.explored_states, report.explored_transitions, report.max_depth
+        "correct_game_tls_model scenarios={} explored_states={} transitions={} max_depth={} per_scenario_cap={} assumptions=independently exhaustive scenario families; two transfer identities; two edges per direction; counters checked; weak fairness within each family; bounded Poll; opaque verifier has no return obligation",
+        CORRECT_SCENARIOS.len(),
+        report.explored_states,
+        report.explored_transitions,
+        report.max_depth,
+        MAX_EXPLORED_STATES_PER_SCENARIO
     );
 }
 
 #[test]
 fn mandatory_game_tls_mutants_have_shortest_counterexamples() {
     assert_shortest_mutant(
+        READ_EDGE_RACE,
         Mutation::WrongClear,
         3,
         &[
@@ -2192,6 +2861,7 @@ fn mandatory_game_tls_mutants_have_shortest_counterexamples() {
         ],
     );
     assert_shortest_mutant(
+        SUCCESS_SCENARIO,
         Mutation::WrongCompletion,
         4,
         &[
@@ -2202,6 +2872,7 @@ fn mandatory_game_tls_mutants_have_shortest_counterexamples() {
         ],
     );
     assert_shortest_mutant(
+        NEXT_IDENTITY_SCENARIO,
         Mutation::WrongResultIdentity,
         2,
         &[
@@ -2211,6 +2882,7 @@ fn mandatory_game_tls_mutants_have_shortest_counterexamples() {
         ],
     );
     assert_shortest_mutant(
+        CAPACITY_GRANT_SCENARIO,
         Mutation::WrongCapacity,
         6,
         &[
@@ -2221,6 +2893,7 @@ fn mandatory_game_tls_mutants_have_shortest_counterexamples() {
         ],
     );
     assert_shortest_mutant(
+        DEADLINE_TCP_CAPACITY_SCENARIO,
         Mutation::DeadlineQueueRelease,
         8,
         &[
@@ -2231,18 +2904,16 @@ fn mandatory_game_tls_mutants_have_shortest_counterexamples() {
         ],
     );
     assert_shortest_mutant(
+        DEADLINE_TCP_CAPACITY_SCENARIO,
         Mutation::DeadlinePhysicalRelease,
         5,
-        &[
-            "opaque nonreturning verifier",
-            "deadline",
-        ],
+        &["opaque nonreturning verifier", "deadline"],
     );
 
-    // r4 keeps the deadline exception. Cancellation at t=5 and shutdown at
-    // t=5 must each release queue admission at receipt consumption, even while
-    // physical worker custody remains. The deadline case remains the control.
+    // The pre-deadline mutants retain the deadline exception and isolate the
+    // cancellation and shutdown receipt paths at the original budget time.
     assert_shortest_mutant(
+        CANCEL_TCP_SCENARIO,
         Mutation::PreDeadlineQueueRelease(Revocation::Cancelled),
         8,
         &[
@@ -2253,6 +2924,7 @@ fn mandatory_game_tls_mutants_have_shortest_counterexamples() {
         ],
     );
     assert_shortest_mutant(
+        SHUTDOWN_TCP_SCENARIO,
         Mutation::PreDeadlineQueueRelease(Revocation::Shutdown),
         8,
         &[
@@ -2263,9 +2935,9 @@ fn mandatory_game_tls_mutants_have_shortest_counterexamples() {
         ],
     );
 
-    // The identity guard also covers a delayed queue receipt and a late
-    // physical acknowledgement. Neither may settle the next identity's cell.
+    // Reused game identity and later TCP retirement use distinct exact keys.
     assert_shortest_mutant(
+        PROOF_IDENTITY_SCENARIO,
         Mutation::WrongProofIdentity,
         7,
         &[
@@ -2274,6 +2946,7 @@ fn mandatory_game_tls_mutants_have_shortest_counterexamples() {
         ],
     );
     assert_shortest_mutant(
+        TCP_RETIREMENT_SCENARIO,
         Mutation::WrongRetirementAck,
         7,
         &[

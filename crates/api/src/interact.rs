@@ -1214,14 +1214,10 @@ impl<'a> Interactions<'a> {
             WireCommand::WalkNearest { tile } => {
                 driver::walk_nearest(&mut *self.driver, tile.x, tile.z)
             }
-            WireCommand::DoorStep { tile } => {
-                let revision = self.driver.revision();
-                crate::prot::WalkStep {
-                    x: tile.x,
-                    z: tile.z,
-                }
-                .write_for_revision(revision, self.driver.out())
-            }
+            WireCommand::DoorStep { tile } => self.driver.walk_step(crate::prot::WalkStep {
+                x: tile.x,
+                z: tile.z,
+            }),
             WireCommand::SideTab { tab } => self.driver.click_side_tab(*tab),
             WireCommand::Login { username, password } => {
                 login(&mut *self.driver, username, password, false)

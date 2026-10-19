@@ -75,8 +75,17 @@ pub trait Driver {
     /// the value `interact_with_loc` matches via `type_code2`. Test
     /// drivers return `None` so [`op_loc`] falls back to the loc id.
     fn loc_typecode(&self, scene_x: i32, scene_z: i32) -> Option<i32>;
-    /// The outbound packet sink (ISAAC-encrypted writes only).
+    /// Detached recorder sink. Real clients use the reservation-aware
+    /// `send_packet` and `walk_step` overrides instead of writing here.
     fn out(&mut self) -> &mut dyn Out;
+    fn send_packet(&mut self, send: Send) -> bool {
+        let revision = self.revision();
+        send.write_for_revision(revision, self.out())
+    }
+    fn walk_step(&mut self, step: crate::prot::WalkStep) -> bool {
+        let revision = self.revision();
+        step.write_for_revision(revision, self.out())
+    }
     /// Optional real-sink instrumentation, not an estimate from action costs.
     fn packet_checkpoint(&self) -> Option<Box<PacketCheckpoint>> {
         None
@@ -215,6 +224,13 @@ impl Driver for Client {
 
     fn out(&mut self) -> &mut dyn Out {
         &mut self.out
+    }
+    fn send_packet(&mut self, send: Send) -> bool {
+        send.write_for_client(self)
+    }
+
+    fn walk_step(&mut self, step: crate::prot::WalkStep) -> bool {
+        step.write_for_client(self)
     }
 
     fn packet_checkpoint(&self) -> Option<Box<PacketCheckpoint>> {
@@ -411,15 +427,13 @@ pub fn op_loc<D: Driver + ?Sized>(driver: &mut D, x: i32, z: i32, loc_id: i32) -
 
 /// Close the open modal (`CLOSE_MODAL`).
 pub fn close_modal<D: Driver + ?Sized>(driver: &mut D) -> bool {
-    let revision = driver.revision();
-    let accepted = Send::close_modal().write_for_revision(revision, driver.out());
+    let accepted = driver.send_packet(Send::close_modal());
     mark_input_activity(driver, accepted)
 }
 
 /// Answer a count dialog with `amount` (`RESUME_P_COUNTDIALOG`).
 pub fn answer_count<D: Driver + ?Sized>(driver: &mut D, amount: i32) -> bool {
-    let revision = driver.revision();
-    if !Send::count_dialog(amount).write_for_revision(revision, driver.out()) {
+    if !driver.send_packet(Send::count_dialog(amount)) {
         return false;
     }
     driver.count_dialog_submitted();

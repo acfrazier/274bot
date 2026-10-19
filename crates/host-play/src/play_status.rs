@@ -561,6 +561,20 @@ pub(super) fn record_login_error(
     }
 }
 
+/// A transport which reaches its absolute queue deadline is aborted, not a
+/// server refusal. Name that typed boundary in the row just as the native
+/// client's timed-out login did; the worker may then rejoin the paced queue.
+pub(super) fn record_login_deadline(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str) {
+    const MESSAGE: &str = "login handshake deadline passed";
+    host_log!(Category::Echo, Level::Warn, slot = name, "{MESSAGE}");
+    let mut all = lock_statuses(statuses);
+    if let Some(status) = all.iter_mut().find(|status| status.username == name) {
+        status.startup_phase = StartupPhase::Error;
+        status.startup_phase_started = Instant::now();
+        status.error = Some(MESSAGE.to_owned());
+    }
+}
+
 /// Drop producer-gated observation without changing the display phase.
 /// A successful login/reconnect (`Pump` session gen) must reset snapshot
 /// fields without mislabeling the new session as a queue wait.

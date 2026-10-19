@@ -31,12 +31,21 @@ use vault::{Profile, ProfileSettings};
 const CONFIG_ENV: &str = "BOT_T14_SOAK_CONFIG";
 const OUTPUT_ENV: &str = "BOT_T14_SOAK_OUTPUT";
 const TICK_MS: u64 = 100;
-const OAK_LOG_ID: i32 = 1521;
+const NORMAL_LOG_ID: i32 = 1511;
 const MAPLE_LOG_ID: i32 = 1517;
 const WOODCUTTING_STAT_ID: i32 = 8;
 const GATHERER_PREP_STEP: &str = "prepare Woodcutting 1 and a real bronze axe before Start";
 const GATHERER_SITE_STEP: &str = "stand at the live Draynor normal tree before Start";
 const GATHERER_TREE_PROOF_STEP: &str = "confirm the selected-289 normal tree is live before Start";
+const GATHERER_RELOG_STEP: &str = "relog successfully so the inventory tab binds before Start";
+
+#[derive(Clone, Copy)]
+struct SafeWalk {
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+}
 
 #[derive(Clone)]
 struct BankSite {
@@ -47,6 +56,7 @@ struct BankSite {
     bank: &'static str,
     bank_prefix: &'static str,
     start: WorldTile,
+    safe_walk: Option<SafeWalk>,
 }
 
 struct RunConfig {
@@ -99,6 +109,9 @@ struct Actor {
     first_bank_cycle_monotonic_ns: Option<u64>,
     last_status: Option<StatusSample>,
     connected_ever: bool,
+    setup_relog_requested: bool,
+    setup_relog_exit_observed: bool,
+    setup_relog_returned: bool,
     last_stream_epoch: Option<u32>,
     exit_recorded: bool,
     warmup_qualified: bool,
@@ -117,14 +130,14 @@ struct StatusSample {
     yielded: Option<u64>,
     deaths: Option<u64>,
     bank: Option<String>,
+    failure_code: Option<String>,
+    failure_message: Option<String>,
 }
 
 #[derive(Clone)]
 struct PhaseZero {
     monotonic_ns: u64,
-    connection_id: Value,
-    client_peer_host: Option<String>,
-    client_peer_port: Option<u64>,
+    account: String,
     seed: u64,
     at_utc: Option<String>,
     elapsed_seconds: Option<f64>,
@@ -189,19 +202,18 @@ impl ProxyEventReader {
                 .get("phase_zero_monotonic_ns")
                 .and_then(Value::as_u64)
                 .ok_or("fault_phase_zero event lacks phase_zero_monotonic_ns")?;
+            if event.get("trigger").and_then(Value::as_str)
+                != Some("first_script_start_after_setup")
+            {
+                return Err("proxy phase zero was not caused by Play script Start".into());
+            }
             self.phase_zero = Some(PhaseZero {
                 monotonic_ns,
-                connection_id: event
-                    .get("connection_id")
-                    .cloned()
-                    .ok_or("fault_phase_zero event lacks connection_id")?,
-                client_peer_host: event
-                    .get("client_peer_host")
+                account: event
+                    .get("account")
                     .and_then(Value::as_str)
-                    .map(str::to_owned),
-                client_peer_port: event
-                    .get("client_peer_port")
-                    .and_then(Value::as_u64),
+                    .ok_or("fault_phase_zero event lacks script-Start account")?
+                    .to_owned(),
                 seed,
                 at_utc: event
                     .get("phase_zero_at_utc")
@@ -236,7 +248,9 @@ impl EventWriter {
         output
             .write_all(b"\n")
             .map_err(|error| format!("write event: {error}"))?;
-        output.flush().map_err(|error| format!("flush event: {error}"))
+        output
+            .flush()
+            .map_err(|error| format!("flush event: {error}"))
     }
 }
 
@@ -273,7 +287,10 @@ fn required_bool(root: &Value, path: &str) -> Result<bool, String> {
 fn required_path(root: &Value, path: &str) -> Result<PathBuf, String> {
     let value = PathBuf::from(required_str(root, path)?);
     if !value.is_absolute() {
-        return Err(format!("soak config {path} must be absolute: {}", value.display()));
+        return Err(format!(
+            "soak config {path} must be absolute: {}",
+            value.display()
+        ));
     }
     Ok(value)
 }
@@ -308,7 +325,8 @@ fn monotonic_now_ns() -> Result<u64, String> {
     // SAFETY: POSIX specifies that successful clock_gettime initializes the
     // complete timespec object pointed to by `timestamp`.
     let timestamp = unsafe { timestamp.assume_init() };
-    let seconds = u64::try_from(timestamp.tv_sec).map_err(|_| "negative CLOCK_MONOTONIC seconds")?;
+    let seconds =
+        u64::try_from(timestamp.tv_sec).map_err(|_| "negative CLOCK_MONOTONIC seconds")?;
     let nanoseconds =
         u64::try_from(timestamp.tv_nsec).map_err(|_| "negative CLOCK_MONOTONIC nanoseconds")?;
     seconds
@@ -331,7 +349,9 @@ fn monotonic_clock_reports_ordered_timespecs() {
 }
 
 fn site_has_key(site: &GatherSiteOption, key: &str) -> bool {
-    site.keys.iter().any(|row| row.key.eq_ignore_ascii_case(key))
+    site.keys
+        .iter()
+        .any(|row| row.key.eq_ignore_ascii_case(key))
 }
 
 fn select_sites(root: &Value) -> Result<[BankSite; 2], String> {
@@ -345,7 +365,9 @@ fn select_sites(root: &Value) -> Result<[BankSite; 2], String> {
                     .as_str()
                     .filter(|name| !name.is_empty())
                     .map(ToOwned::to_owned)
-                    .ok_or_else(|| "workload.site_names entries must be non-empty strings".to_owned())
+                    .ok_or_else(|| {
+                        "workload.site_names entries must be non-empty strings".to_owned()
+                    })
             })
             .collect::<Result<Vec<_>, _>>()?,
         _ => return Err("workload.site_names must be an explicit array".into()),
@@ -354,43 +376,79 @@ fn select_sites(root: &Value) -> Result<[BankSite; 2], String> {
         return Err("workload.site_names must resolve to two distinct real content sites".into());
     }
 
-    let mut oak = None;
+    let mut normal = None;
     let mut maple = None;
     for name in names {
         let site = selected
             .gather_site("woodcutting", &name)
             .ok_or_else(|| format!("selected 289 content lacks woodcutting site {name:?}"))?;
-        if site_has_key(site, "oak") {
-            oak = Some(make_site(site, "oak")?);
-        }
-        if site_has_key(site, "maple") {
-            maple = Some(make_site(site, "maple")?);
+        match site.id.as_str() {
+            "woodcutting.catherby" if site_has_key(site, "normal") => {
+                normal = Some(make_site(site, "normal")?);
+            }
+            "woodcutting.seers" if site_has_key(site, "maple") => {
+                maple = Some(make_site(site, "maple")?);
+            }
+            _ => {
+                return Err(format!(
+                    "no reviewed normal/maple live bank seed for {}",
+                    site.id
+                ))
+            }
         }
     }
-    match (oak, maple) {
-        (Some(oak), Some(maple)) if oak.id != maple.id => Ok([oak, maple]),
-        _ => Err("workload.site_names must contain one oak and one maple site from selected 289 content".into()),
+    match (normal, maple) {
+        (Some(normal), Some(maple)) if normal.id != maple.id => Ok([normal, maple]),
+        _ => Err(
+            "workload.site_names must contain one normal-logs and one maple site from selected 289 content"
+                .into(),
+        ),
     }
 }
 
 fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite, String> {
-    let (start, product_id, level, bank, bank_prefix) = match (site.id.as_str(), resource) {
-        ("woodcutting.draynor", "oak") => (
-            WorldTile { x: 3095, z: 3243, level: 0 },
-            OAK_LOG_ID,
-            15,
-            "Nearest",
-            "Draynor; Reachable;",
-        ),
-        ("woodcutting.seers", "maple") => (
-            WorldTile { x: 2727, z: 3501, level: 0 },
-            MAPLE_LOG_ID,
-            45,
-            "Seers",
-            "Seers; Reachable;",
-        ),
-        _ => return Err(format!("no reviewed live bank seed is available for {} ({resource})", site.id)),
-    };
+    let (start, product_id, level, bank, bank_prefix, safe_walk) =
+        match (site.id.as_str(), resource) {
+            ("woodcutting.catherby", "normal") => (
+                WorldTile {
+                    x: 2802,
+                    z: 3462,
+                    level: 0,
+                },
+                NORMAL_LOG_ID,
+                1,
+                "Catherby",
+                "Catherby; Reachable;",
+                // Engine m43_54: accessible normal trees cluster around
+                // (2802,3463); a radius of three excludes the separated
+                // western oak/tree route that the real router cannot reach.
+                // The bank is (2809,3441), inside the non-aggressive corridor.
+                Some(SafeWalk {
+                    min_x: 2788,
+                    max_x: 2814,
+                    min_z: 3436,
+                    max_z: 3468,
+                }),
+            ),
+            ("woodcutting.seers", "maple") => (
+                WorldTile {
+                    x: 2727,
+                    z: 3501,
+                    level: 0,
+                },
+                MAPLE_LOG_ID,
+                45,
+                "Seers",
+                "Seers; Reachable;",
+                None,
+            ),
+            _ => {
+                return Err(format!(
+                    "no reviewed live bank seed is available for {} ({resource})",
+                    site.id
+                ))
+            }
+        };
     let region = &site.region;
     if start.x < region.min_x
         || start.x > region.max_x
@@ -398,7 +456,10 @@ fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite
         || start.z > region.max_z
         || start.level != region.level
     {
-        return Err(format!("live seed tile {start:?} is outside selected content site {}", site.id));
+        return Err(format!(
+            "live seed tile {start:?} is outside selected content site {}",
+            site.id
+        ));
     }
     Ok(BankSite {
         id: site.id.clone(),
@@ -408,11 +469,13 @@ fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite
         bank,
         bank_prefix,
         start,
+        safe_walk,
     })
 }
 
 fn parse_config(path: &Path) -> Result<RunConfig, String> {
-    let bytes = fs::read(path).map_err(|error| format!("read config {}: {error}", path.display()))?;
+    let bytes =
+        fs::read(path).map_err(|error| format!("read config {}: {error}", path.display()))?;
     let root: Value = serde_json::from_slice(&bytes)
         .map_err(|error| format!("parse config {}: {error}", path.display()))?;
     let qualification = required_bool(&root, "run.qualification")?;
@@ -445,7 +508,17 @@ fn parse_config(path: &Path) -> Result<RunConfig, String> {
     let max_unexpected_exits = required_u64(&root, "limits.max_unexpected_exits")?;
     let max_payload_divergences = required_u64(&root, "limits.max_payload_divergences")?;
     if qualification && (max_unexpected_exits != 0 || max_payload_divergences != 0) {
-        return Err("qualification limits must require zero unexpected exits and zero payload divergences".into());
+        return Err(
+            "qualification limits must require zero unexpected exits and zero payload divergences"
+                .into(),
+        );
+    }
+    if required_str(&root, "profile.host")? != "127.0.0.1"
+        || required_str(&root, "profile.asset_host")? != "127.0.0.1"
+        || required_str(&root, "proxy.upstream_host")? != "127.0.0.1"
+        || required_str(&root, "proxy.listen_host")? != "127.0.0.1"
+    {
+        return Err("live soak and debug seeding require exclusively loopback endpoints".into());
     }
     let source_config = root
         .get("run")
@@ -532,12 +605,16 @@ fn validate_isolated_tls(config: &RunConfig, output: &Path) -> Result<(), String
         || !config.nav_pack.is_file()
         || !config.nav_flags.is_file()
     {
-        return Err("profile cache, Engine, navigation pack and navigation flags must exist".into());
+        return Err(
+            "profile cache, Engine, navigation pack and navigation flags must exist".into(),
+        );
     }
     Ok(())
 }
 
-fn load_profile(config: &RunConfig) -> Result<(Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>), String> {
+fn load_profile(
+    config: &RunConfig,
+) -> Result<(Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>), String> {
     let options = ProfileOptions {
         profile: Some(config.profile_name.clone()),
         revision: Some("289".into()),
@@ -551,8 +628,8 @@ fn load_profile(config: &RunConfig) -> Result<(Arc<host_play::ServerProfile>, Ar
         nav_flags: Some(config.nav_flags.clone()),
         ..ProfileOptions::default()
     };
-    let profile = options.resolve(None)?.bind()?;
-    if profile.profile_class() != host_play::ProfileClass::Local
+    let profile = options.resolve(None)?.bind_runtime()?;
+    if profile.profile_class() != host_play::ProfileClass::Remote
         || profile.transport() != client::Transport::Wss
         || profile.revision() != ClientRevision::R289
         || profile.client().game_host() != config.host
@@ -561,6 +638,12 @@ fn load_profile(config: &RunConfig) -> Result<(Arc<host_play::ServerProfile>, Ar
         || profile.client().asset_port() != config.http_port
     {
         return Err("selected profile is not the configured local WSS 289 endpoint".into());
+    }
+    if profile.game_data().is_none() {
+        return Err(format!(
+            "selected WSS profile withheld the generated game data needed by Gatherer: {}",
+            profile.game_data_status().detail(),
+        ));
     }
     let template = SharedClientTemplate::load(Arc::clone(&profile))?;
     if template.world().is_none() {
@@ -583,11 +666,7 @@ fn scenario_for(site: &BankSite, duration: Duration) -> Result<Scenario, String>
         .iter_mut()
         .find(|step| step.name == GATHERER_PREP_STEP)
         .ok_or("Gatherer scenario has no existing account/tool seed step")?;
-    prep.name = if site.resource == "oak" {
-        "prepare Woodcutting 15 and a real bronze axe before Start"
-    } else {
-        "prepare Woodcutting 45 and a real bronze axe before Start"
-    };
+    prep.name = "prepare the selected Woodcutting level and a real bronze axe before Start";
     prep.kind = StepKind::Perform {
         send: Box::new(move |client, _| {
             cheat(client, &format!("setstat woodcutting {skill_level}")).is_sent()
@@ -619,8 +698,7 @@ fn scenario_for(site: &BankSite, duration: Duration) -> Result<Scenario, String>
         .steps
         .iter()
         .position(|step| {
-            step.name == "prepare Woodcutting 15 and a real bronze axe before Start"
-                || step.name == "prepare Woodcutting 45 and a real bronze axe before Start"
+            step.name == "prepare the selected Woodcutting level and a real bronze axe before Start"
         })
         .ok_or("updated Gatherer preparation step disappeared")?;
     scenario.steps.insert(
@@ -639,7 +717,9 @@ fn scenario_for(site: &BankSite, duration: Duration) -> Result<Scenario, String>
             },
         },
     );
-    scenario.steps.retain(|step| step.name != GATHERER_TREE_PROOF_STEP);
+    scenario
+        .steps
+        .retain(|step| step.name != GATHERER_TREE_PROOF_STEP);
     Ok(scenario)
 }
 
@@ -650,7 +730,14 @@ fn bank_settings(site: &BankSite) -> Map<String, Value> {
     settings.insert("targetPreference".into(), json!("Nearest"));
     settings.insert("location".into(), json!("Site"));
     settings.insert("site".into(), json!(site.id));
-    settings.insert("radius".into(), json!(12));
+    settings.insert(
+        "radius".into(),
+        json!(if site.id == "woodcutting.catherby" {
+            3
+        } else {
+            12
+        }),
+    );
     settings.insert("disposition".into(), json!("Bank"));
     settings.insert("bank".into(), json!(site.bank));
     settings.insert("allowTeleports".into(), json!(false));
@@ -685,6 +772,45 @@ fn write_pid_atomic(output: &Path) -> Result<(), String> {
         .map_err(|error| format!("publish {}: {error}", destination.display()))
 }
 
+fn write_soak_start_atomic(
+    output: &Path,
+    account: &str,
+    seed: u64,
+    monotonic_ns: u64,
+    wall_ms: u128,
+) -> Result<(), String> {
+    let temporary = output.join("proxy").join("soak-start.json.tmp");
+    let destination = output.join("proxy").join("soak-start.json");
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|error| format!("create {}: {error}", temporary.display()))?;
+    let mut writer = BufWriter::new(file);
+    serde_json::to_writer(
+        &mut writer,
+        &json!({
+            "schema_version": 1,
+            "account": account,
+            "seed": seed,
+            "monotonic_ns": monotonic_ns,
+            "wall_clock_unix_ms": wall_ms,
+        }),
+    )
+    .map_err(|error| format!("write soak-start marker: {error}"))?;
+    writer
+        .write_all(b"\n")
+        .map_err(|error| format!("write soak-start newline: {error}"))?;
+    writer
+        .flush()
+        .map_err(|error| format!("flush soak-start marker: {error}"))?;
+    writer
+        .get_ref()
+        .sync_all()
+        .map_err(|error| format!("sync soak-start marker: {error}"))?;
+    fs::rename(&temporary, &destination)
+        .map_err(|error| format!("publish {}: {error}", destination.display()))
+}
 
 fn event_base(event: &str, actor: &Actor, started: Instant, wall_ms: u128) -> Value {
     json!({
@@ -733,6 +859,14 @@ fn status_sample(status: &ScriptStatus) -> StatusSample {
         yielded: field_integer(status, "yielded"),
         deaths: field_integer(status, "deaths"),
         bank: field_text(status, "bank"),
+        failure_code: status
+            .failure
+            .as_ref()
+            .map(|failure| failure.code.to_string()),
+        failure_message: status
+            .failure
+            .as_ref()
+            .map(|failure| failure.message.to_string()),
     }
 }
 
@@ -745,6 +879,8 @@ fn status_json(sample: Option<&StatusSample>) -> Value {
             "yielded": sample.yielded,
             "deaths": sample.deaths,
             "bank": sample.bank,
+            "failure_code": sample.failure_code,
+            "failure_message": sample.failure_message,
         }),
         None => Value::Null,
     }
@@ -807,6 +943,9 @@ fn make_actor(
         last_stream_epoch: None,
         exit_recorded: false,
         warmup_qualified: false,
+        setup_relog_requested: false,
+        setup_relog_exit_observed: false,
+        setup_relog_returned: false,
         slot_ready_monotonic_ns: None,
         failure: None,
     })
@@ -858,14 +997,53 @@ fn drive_frame(
             actor.walk_tile_changes = actor.walk_tile_changes.saturating_add(1);
         }
         actor.last_tile = Some(tile);
+        if actor.script_started_at.is_some()
+            && actor.site.safe_walk.is_some_and(|area| {
+                tile.2 != 0
+                    || tile.0 < area.min_x
+                    || tile.0 > area.max_x
+                    || tile.1 < area.min_z
+                    || tile.1 > area.max_z
+            })
+        {
+            fail_actor(
+                actor,
+                writer,
+                run_started,
+                "site-walk-boundary",
+                &format!(
+                    "Catherby bank/oak route left the audited non-aggressive area at {tile:?}"
+                ),
+            );
+        }
     }
-    if matches!(actor.runner.status(), RunnerStatus::Passed | RunnerStatus::Failed(_)) {
+    if matches!(
+        actor.runner.status(),
+        RunnerStatus::Passed | RunnerStatus::Failed(_)
+    ) {
         if let RunnerStatus::Failed(message) = actor.runner.status() {
             fail_actor(actor, writer, run_started, "scenario", &message);
         }
         return;
     }
+    if actor.script_requested && actor.script_started_at.is_none() {
+        // The first ready slot waits for the entire cohort's real setup;
+        // do not spend its StartScript step budget on the cohort barrier.
+        return;
+    }
+    let at_relog = actor.runner.record_step().2 == GATHERER_RELOG_STEP && client.ingame;
+    let before_output = client.out.pos;
     actor.runner.tick_with_hold(client, frame.hold);
+    if at_relog && !actor.setup_relog_requested && client.out.pos > before_output {
+        actor.setup_relog_requested = true;
+        if let Ok(wall_ms) = time_ms() {
+            let mut event = event_base("setup-relog-requested", actor, run_started, wall_ms);
+            event["logout_packet_output_bytes"] = json!(client.out.pos - before_output);
+            if let Err(error) = writer.write(&event) {
+                actor.failure = Some(error);
+            }
+        }
+    }
     if let RunnerStatus::Failed(message) = actor.runner.status() {
         fail_actor(actor, writer, run_started, "scenario", &message);
     }
@@ -890,6 +1068,29 @@ fn record_unexpected_exit(
     }
 }
 
+fn record_setup_relog_exit(
+    actor: &mut Actor,
+    writer: &EventWriter,
+    run_started: Instant,
+    kind: &str,
+) -> bool {
+    if !actor.setup_relog_requested
+        || actor.setup_relog_exit_observed
+        || actor.runner.record_step().2 != GATHERER_RELOG_STEP
+    {
+        return false;
+    }
+    actor.setup_relog_exit_observed = true;
+    if let Ok(wall_ms) = time_ms() {
+        let mut event = event_base("setup-relog-exit", actor, run_started, wall_ms);
+        event["kind"] = json!(kind);
+        if let Err(error) = writer.write(&event) {
+            actor.failure = Some(error);
+        }
+    }
+    true
+}
+
 fn account_status_rows(play: &host_play::Play) -> BTreeMap<String, host_play::SlotStatus> {
     play.statuses()
         .into_iter()
@@ -912,6 +1113,8 @@ fn slot_sample_json(
         "scene_state": slot.map(|status| status.scene_state),
         "tile": slot.and_then(host_play::SlotStatus::ready_tile),
         "script_state": format!("{script_state:?}"),
+        "scenario_step": actor.runner.record_step(),
+        "scenario_status": format!("{:?}", actor.runner.status()),
         "script": status_json(actor.last_status.as_ref()),
         "scene2_unix_ms": actor.scene2_unix_ms,
         "scene2_monotonic_ns": actor.scene2_monotonic_ns,
@@ -981,6 +1184,9 @@ fn actor_summaries(
                 "slot_ready_monotonic_ns": actor.slot_ready_monotonic_ns,
                 "connected_ever": actor.connected_ever,
                 "last_stream_epoch": actor.last_stream_epoch,
+                "setup_relog_requested": actor.setup_relog_requested,
+                "setup_relog_exit_observed": actor.setup_relog_exit_observed,
+                "setup_relog_returned": actor.setup_relog_returned,
                 "connected_at_finish": status.is_some_and(|row| row.connected),
                 "worker_terminal": status.and_then(|row| row.worker_terminal.map(|terminal| format!("{terminal:?}"))),
                 "last_task_status": status_json(actor.last_status.as_ref()),
@@ -990,34 +1196,44 @@ fn actor_summaries(
         .collect()
 }
 
+struct SummaryTiming<'a> {
+    run_started: Instant,
+    phase_zero: Option<&'a PhaseZero>,
+    warmup_end_monotonic_ns: Option<u64>,
+    end_monotonic_ns: Option<u64>,
+}
+
 fn write_summary(
     output: &Path,
     config: &RunConfig,
-    run_started: Instant,
-    phase_zero: Option<&PhaseZero>,
-    warmup_end_monotonic_ns: Option<u64>,
-    end_monotonic_ns: Option<u64>,
+    timing: SummaryTiming<'_>,
     actors: &BTreeMap<String, Arc<Mutex<Actor>>>,
     play: Option<&host_play::Play>,
     outcome: &str,
     unexpected_exits: u64,
 ) -> Result<(), String> {
+    let SummaryTiming {
+        run_started,
+        phase_zero,
+        warmup_end_monotonic_ns,
+        end_monotonic_ns,
+    } = timing;
     let phase_zero_ns = phase_zero.map(|value| value.monotonic_ns);
     let warmup_elapsed_seconds = warmup_end_monotonic_ns
         .zip(phase_zero_ns)
         .and_then(|(end, origin)| end.checked_sub(origin))
         .map(|elapsed| elapsed as f64 / 1_000_000_000.0);
-    let slope_window_seconds = warmup_elapsed_seconds
-        .map(|elapsed| (config.duration.as_secs_f64() - elapsed).max(0.0));
-    let phase_zero_record = phase_zero.map(|value| json!({
-        "monotonic_ns": value.monotonic_ns,
-        "connection_id": value.connection_id,
-        "client_peer_host": value.client_peer_host,
-        "client_peer_port": value.client_peer_port,
-        "seed": value.seed,
-        "at_utc": value.at_utc,
-        "elapsed_seconds_from_proxy_start": value.elapsed_seconds,
-    }));
+    let slope_window_seconds =
+        warmup_elapsed_seconds.map(|elapsed| (config.duration.as_secs_f64() - elapsed).max(0.0));
+    let phase_zero_record = phase_zero.map(|value| {
+        json!({
+            "monotonic_ns": value.monotonic_ns,
+            "account": value.account,
+            "seed": value.seed,
+            "at_utc": value.at_utc,
+            "elapsed_seconds_from_proxy_start": value.elapsed_seconds,
+        })
+    });
     let slots = actor_summaries(actors, play, phase_zero, end_monotonic_ns)?;
     let summary = json!({
         "schema_version": 1,
@@ -1028,7 +1244,7 @@ fn write_summary(
         "run": {
             "slots": config.slots,
             "duration_seconds": config.duration.as_secs(),
-            "duration_anchor": "first-successful-websocket-101",
+            "duration_anchor": "first-script-start-after-all-slot-setup",
             "phase_zero": phase_zero_record,
             "phase_zero_monotonic_ns": phase_zero_ns,
             "warmup_min_seconds": config.warmup.as_secs(),
@@ -1075,7 +1291,9 @@ fn write_summary(
     writer
         .write_all(b"\n")
         .map_err(|error| format!("write summary newline: {error}"))?;
-    writer.flush().map_err(|error| format!("flush summary: {error}"))?;
+    writer
+        .flush()
+        .map_err(|error| format!("flush summary: {error}"))?;
     writer
         .get_ref()
         .sync_all()
@@ -1117,7 +1335,8 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
     }
     let config = parse_config(config_path)?;
     validate_isolated_tls(&config, output)?;
-    let output = fs::canonicalize(output).map_err(|error| format!("canonicalize output: {error}"))?;
+    let output =
+        fs::canonicalize(output).map_err(|error| format!("canonicalize output: {error}"))?;
     if std::env::var("BOT_LIVE_NAME_PREFIX").ok().as_deref() != Some(config.name_prefix.as_str()) {
         return Err("BOT_LIVE_NAME_PREFIX must equal run.name_prefix".into());
     }
@@ -1135,10 +1354,19 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
     candidate_observers::install_tls(&config.ca_pem)?;
     #[cfg(feature = "soak-observers")]
     let candidate_payloads = candidate_observers::CandidateObservers::install(&output)?;
+    #[cfg(feature = "soak-observers")]
+    let _network_driver = client_adapter::service::NetworkService::start_composition()
+        .map_err(|error| format!("T1.4 network composition startup: {error}"))?;
 
     let (_profile, template) = load_profile(&config)?;
     let names = host_play::mint_live_names(config.slots);
-    if names.len() != config.slots || names.iter().collect::<std::collections::BTreeSet<_>>().len() != config.slots {
+    if names.len() != config.slots
+        || names
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != config.slots
+    {
         return Err("host-play did not mint the configured number of unique accounts".into());
     }
     let credentials = host_play::mint_live_entries(&names);
@@ -1164,7 +1392,12 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
     let mut actors = BTreeMap::new();
     for (index, account) in names.iter().enumerate() {
         let site = config.sites[index % config.sites.len()].clone();
-        let actor = make_actor(account.clone(), site, &template, config.duration + config.warmup)?;
+        let actor = make_actor(
+            account.clone(),
+            site,
+            &template,
+            config.duration + config.warmup,
+        )?;
         actors.insert(account.clone(), Arc::new(Mutex::new(actor)));
     }
     let frame_actors = actors.clone();
@@ -1173,7 +1406,7 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
     // This receipt is the external sampler's handshake; publish it atomically
     // immediately before production Play starts its slot workers.
     write_pid_atomic(&output)?;
-    let mut play = host_play::run_with_template(
+    let play = host_play::run_with_template(
         Arc::clone(&template),
         true,
         profiles,
@@ -1182,6 +1415,10 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
             let Some(actor) = frame_actors.get(username) else {
                 return;
             };
+            // WSS is deliberately classified Remote by the product, even on
+            // loopback. Only this isolated LIVE test grants local Engine debug
+            // seeding after checking the proxy, asset and Engine endpoints.
+            client.set_cheat_admission(client::CheatAdmission::Granted);
             let mut actor = match actor.lock() {
                 Ok(actor) => actor,
                 Err(_) => return,
@@ -1201,9 +1438,9 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
     let startup_deadline_ns = run_start_monotonic_ns
         .checked_add(duration_ns)
         .ok_or("startup deadline exceeds monotonic nanosecond range")?;
-    let mut proxy_events =
-        ProxyEventReader::new(output.join("proxy").join("connections.jsonl"));
+    let mut proxy_events = ProxyEventReader::new(output.join("proxy").join("connections.jsonl"));
     let mut phase_zero: Option<PhaseZero> = None;
+    let mut published_start: Option<(String, u64)> = None;
     let mut warmup_end_monotonic_ns = None;
     let mut next_sample_monotonic_ns = None;
     let mut end_monotonic_ns = None;
@@ -1211,368 +1448,519 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
     let mut outcome = "incomplete";
     let loop_result = (|| -> Result<(), String> {
         loop {
-        let now = Instant::now();
-        let now_monotonic_ns = monotonic_now_ns()?;
-        let at_run_deadline = phase_zero.as_ref().is_some_and(|phase_zero| {
-            phase_zero
-                .monotonic_ns
-                .checked_add(duration_ns)
-                .is_some_and(|deadline| now_monotonic_ns >= deadline)
-        });
-        if now >= next_health_check || at_run_deadline {
-            next_health_check = now + Duration::from_secs(1);
-            let statuses = account_status_rows(&play);
-        for (account, actor_ref) in &actors {
-            let mut actor = actor_ref.lock().map_err(|_| "actor state poisoned")?;
-            if let Some(status) = statuses.get(account) {
-                if status.connected {
-                    if actor.connected_ever
-                        && actor
-                            .last_stream_epoch
-                            .is_some_and(|previous| previous != status.stream_epoch)
-                        && !actor.exit_recorded
-                    {
-                        unexpected_exits = unexpected_exits.saturating_add(1);
-                        record_unexpected_exit(
-                            &mut actor,
-                            &event_writer,
-                            run_started,
-                            "stream-epoch-changed",
-                        );
-                    }
-                    actor.connected_ever = true;
-                    actor.last_stream_epoch = Some(status.stream_epoch);
-                } else if (actor.connected_ever || status.stream_epoch != 0)
-                    && !actor.exit_recorded
-                {
-                    actor.connected_ever = true;
-                    unexpected_exits = unexpected_exits.saturating_add(1);
-                    record_unexpected_exit(&mut actor, &event_writer, run_started, "connection");
-                }
-                if status.worker_terminal.is_some() && !actor.exit_recorded {
-                    unexpected_exits = unexpected_exits.saturating_add(1);
-                    record_unexpected_exit(&mut actor, &event_writer, run_started, "worker-terminal");
-                }
-                if let Some(error) = status.error.as_ref() {
-                    if !actor.connected_ever {
-                        fail_actor(
-                            &mut actor,
-                            &event_writer,
-                            run_started,
-                            "slot-login-error",
-                            if error.is_empty() { "slot login error" } else { "slot login reported an error" },
-                        );
-                    }
-                }
-            }
-            if actor.failure.is_some() {
-                continue;
-            }
-            if !actor.script_requested && actor.runner.on_start_script() {
-                actor.script_requested = true;
-                let account = actor.account.clone();
-                let site = actor.site.clone();
-                let event = event_base("script-start-requested", &actor, run_started, time_ms()?);
-                event_writer.write(&event)?;
-                drop(actor);
-                match play.script_start(&account, script::CompiledId("Gatherer"), bank_settings(&site)) {
-                    Ok(()) => {
-                        let mut actor = actor_ref.lock().map_err(|_| "actor state poisoned")?;
-                        actor.script_started_at = Some(Instant::now());
-                        actor.script_started_unix_ms = Some(time_ms()?);
-                        let event = event_base("script-started", &actor, run_started, actor.script_started_unix_ms.unwrap_or_default());
-                        event_writer.write(&event)?;
-                    }
-                    Err(error) => {
-                        let mut actor = actor_ref.lock().map_err(|_| "actor state poisoned")?;
-                        actor.runner.fail_start(&error);
-                        fail_actor(&mut actor, &event_writer, run_started, "script-start", &error);
-                    }
-                }
-                continue;
-            }
-            if actor.script_started_at.is_some() {
-                match play.script_state(account) {
-                    script::RunState::Running if !actor.script_running_observed => {
-                        actor.script_running_observed = true;
-                        actor.script_running_monotonic_ns = Some(now_monotonic_ns);
-                        actor.runner.observe_script_running();
-                        let wall_ms = time_ms()?;
-                        let event = event_base("script-running", &actor, run_started, wall_ms);
-                        event["script_running_monotonic_ns"] = json!(now_monotonic_ns);
-                        event_writer.write(&event)?;
-                    }
-                    script::RunState::Error | script::RunState::Idle | script::RunState::Stopping
-                        if actor.script_running_observed =>
-                    {
-                        unexpected_exits = unexpected_exits.saturating_add(1);
-                        record_unexpected_exit(&mut actor, &event_writer, run_started, "script");
-                    }
-                    _ => {}
-                }
-                if let Some(status) = play.script_native_status(account).as_deref() {
-                    actor.task_status_monotonic_ns.get_or_insert(now_monotonic_ns);
-                    let sample = status_sample(status);
-                    let bank = sample.bank.as_deref().unwrap_or("");
-                    let trips = sample.trips.unwrap_or(0);
-                    if trips < actor.last_trips {
-                        fail_actor(&mut actor, &event_writer, run_started, "task-status", "Gatherer trip counter decreased");
-                    } else if trips > actor.last_trips {
-                        if !bank.starts_with(actor.site.bank_prefix)
-                            || sample.deposited.unwrap_or(0) == 0
-                            || actor.walk_tile_changes == 0
+            let now = Instant::now();
+            let now_monotonic_ns = monotonic_now_ns()?;
+            let at_run_deadline = phase_zero.as_ref().is_some_and(|phase_zero| {
+                phase_zero
+                    .monotonic_ns
+                    .checked_add(duration_ns)
+                    .is_some_and(|deadline| now_monotonic_ns >= deadline)
+            });
+            if now >= next_health_check || at_run_deadline {
+                next_health_check = now + Duration::from_secs(1);
+                let statuses = account_status_rows(&play);
+                for (account, actor_ref) in &actors {
+                    let mut actor = actor_ref.lock().map_err(|_| "actor state poisoned")?;
+                    if let Some(status) = statuses.get(account) {
+                        if status.connected {
+                            if actor.connected_ever
+                                && actor
+                                    .last_stream_epoch
+                                    .is_some_and(|previous| previous != status.stream_epoch)
+                                && !actor.exit_recorded
+                            {
+                                if published_start.is_none()
+                                    && (actor.setup_relog_exit_observed
+                                        && !actor.setup_relog_returned
+                                        || record_setup_relog_exit(
+                                            &mut actor,
+                                            &event_writer,
+                                            run_started,
+                                            "stream-epoch-changed",
+                                        ))
+                                {
+                                    actor.setup_relog_returned = true;
+                                    let event = event_base(
+                                        "setup-relog-returned",
+                                        &actor,
+                                        run_started,
+                                        time_ms()?,
+                                    );
+                                    event_writer.write(&event)?;
+                                } else {
+                                    unexpected_exits = unexpected_exits.saturating_add(1);
+                                    record_unexpected_exit(
+                                        &mut actor,
+                                        &event_writer,
+                                        run_started,
+                                        "stream-epoch-changed",
+                                    );
+                                }
+                            }
+                            actor.connected_ever = true;
+                            actor.last_stream_epoch = Some(status.stream_epoch);
+                        } else if (actor.connected_ever || status.stream_epoch != 0)
+                            && !actor.exit_recorded
                         {
-                            fail_actor(&mut actor, &event_writer, run_started, "bank-cycle-proof", "trip counter lacks the selected bank, deposited product and post-Start movement evidence");
-                        } else {
-                            let new_cycles = trips - actor.last_trips;
-                            actor.bank_cycles = actor.bank_cycles.saturating_add(new_cycles);
-                            actor.first_bank_cycle_elapsed_seconds.get_or_insert_with(|| run_started.elapsed().as_secs());
-                            actor.first_bank_cycle_monotonic_ns.get_or_insert(now_monotonic_ns);
+                            actor.connected_ever = true;
+                            if published_start.is_none()
+                                && (actor.setup_relog_exit_observed && !actor.setup_relog_returned
+                                    || record_setup_relog_exit(
+                                        &mut actor,
+                                        &event_writer,
+                                        run_started,
+                                        "connection",
+                                    ))
+                            {
+                                // A pending clean logout may take many seconds while
+                                // Engine A saves; observe its return by stream epoch.
+                            } else {
+                                unexpected_exits = unexpected_exits.saturating_add(1);
+                                record_unexpected_exit(
+                                    &mut actor,
+                                    &event_writer,
+                                    run_started,
+                                    "connection",
+                                );
+                            }
+                        }
+                        if status.worker_terminal.is_some() && !actor.exit_recorded {
+                            unexpected_exits = unexpected_exits.saturating_add(1);
+                            record_unexpected_exit(
+                                &mut actor,
+                                &event_writer,
+                                run_started,
+                                "worker-terminal",
+                            );
+                        }
+                        if let Some(error) = status.error.as_ref() {
+                            if !actor.connected_ever {
+                                fail_actor(
+                                    &mut actor,
+                                    &event_writer,
+                                    run_started,
+                                    "slot-login-error",
+                                    if error.is_empty() {
+                                        "slot login error"
+                                    } else {
+                                        error.as_str()
+                                    },
+                                );
+                            }
+                        }
+                    }
+                    if actor.failure.is_some() {
+                        continue;
+                    }
+                    if !actor.script_requested && actor.runner.on_start_script() {
+                        if !actor.setup_relog_requested
+                            || !actor.setup_relog_exit_observed
+                            || !actor.setup_relog_returned
+                            || !statuses.get(account).is_some_and(|status| status.connected)
+                        {
+                            fail_actor(
+                        &mut actor, &event_writer, run_started, "setup-relog-proof",
+                        "Gatherer reached Start without a requested logout, observed exit and connected return",
+                    );
+                            continue;
+                        }
+                        actor.script_requested = true;
+                        let event =
+                            event_base("script-start-ready", &actor, run_started, time_ms()?);
+                        event_writer.write(&event)?;
+                    }
+                    if actor.script_started_at.is_some() {
+                        match play.script_state(account) {
+                            script::RunState::Running if !actor.script_running_observed => {
+                                actor.script_running_observed = true;
+                                actor.script_running_monotonic_ns = Some(now_monotonic_ns);
+                                actor.runner.observe_script_running();
+                                let wall_ms = time_ms()?;
+                                let mut event =
+                                    event_base("script-running", &actor, run_started, wall_ms);
+                                event["script_running_monotonic_ns"] = json!(now_monotonic_ns);
+                                event_writer.write(&event)?;
+                            }
+                            script::RunState::Error
+                            | script::RunState::Idle
+                            | script::RunState::Stopping
+                                if actor.script_running_observed =>
+                            {
+                                unexpected_exits = unexpected_exits.saturating_add(1);
+                                record_unexpected_exit(
+                                    &mut actor,
+                                    &event_writer,
+                                    run_started,
+                                    "script",
+                                );
+                            }
+                            _ => {}
+                        }
+                        if let Some(status) = play.script_native_status(account).as_deref() {
+                            actor
+                                .task_status_monotonic_ns
+                                .get_or_insert(now_monotonic_ns);
+                            let sample = status_sample(status);
+                            let bank = sample.bank.as_deref().unwrap_or("");
+                            let trips = sample.trips.unwrap_or(0);
+                            if trips < actor.last_trips {
+                                fail_actor(
+                                    &mut actor,
+                                    &event_writer,
+                                    run_started,
+                                    "task-status",
+                                    "Gatherer trip counter decreased",
+                                );
+                            } else if trips > actor.last_trips {
+                                if !bank.starts_with(actor.site.bank_prefix)
+                                    || sample.deposited.unwrap_or(0) == 0
+                                    || actor.walk_tile_changes == 0
+                                {
+                                    fail_actor(&mut actor, &event_writer, run_started, "bank-cycle-proof", "trip counter lacks the selected bank, deposited product and post-Start movement evidence");
+                                } else {
+                                    let new_cycles = trips - actor.last_trips;
+                                    actor.bank_cycles =
+                                        actor.bank_cycles.saturating_add(new_cycles);
+                                    actor
+                                        .first_bank_cycle_elapsed_seconds
+                                        .get_or_insert_with(|| run_started.elapsed().as_secs());
+                                    actor
+                                        .first_bank_cycle_monotonic_ns
+                                        .get_or_insert(now_monotonic_ns);
+                                    let wall_ms = time_ms()?;
+                                    let mut event =
+                                        event_base("bank-cycle", &actor, run_started, wall_ms);
+                                    event["bank_cycle_monotonic_ns"] = json!(now_monotonic_ns);
+                                    event["trips"] = json!(trips);
+                                    event["deposited"] = json!(sample.deposited);
+                                    event["yielded"] = json!(sample.yielded);
+                                    event["bank"] = json!(bank);
+                                    event["product_id"] = json!(actor.site.product_id);
+                                    event["walk_tile_changes"] = json!(actor.walk_tile_changes);
+                                    event_writer.write(&event)?;
+                                }
+                                actor.last_trips = trips;
+                            }
+                            if sample.deaths.unwrap_or(0) > 0 {
+                                fail_actor(
+                                    &mut actor,
+                                    &event_writer,
+                                    run_started,
+                                    "unexpected-death",
+                                    "Gatherer reported a death",
+                                );
+                            }
+                            if status.failure.is_some() {
+                                fail_actor(
+                                    &mut actor,
+                                    &event_writer,
+                                    run_started,
+                                    "native-task-failure",
+                                    "Gatherer published a failed native status",
+                                );
+                            }
+                            actor.last_status = Some(sample);
+                        }
+                    }
+                    if !actor.warmup_qualified {
+                        if let Some(ready_monotonic_ns) =
+                            slot_ready_at_monotonic_ns(&actor, config.qualification)
+                        {
+                            actor.warmup_qualified = true;
+                            actor.slot_ready_monotonic_ns = Some(ready_monotonic_ns);
                             let wall_ms = time_ms()?;
-                            let mut event = event_base("bank-cycle", &actor, run_started, wall_ms);
-                            event["bank_cycle_monotonic_ns"] = json!(now_monotonic_ns);
-                            event["trips"] = json!(trips);
-                            event["deposited"] = json!(sample.deposited);
-                            event["yielded"] = json!(sample.yielded);
-                            event["bank"] = json!(bank);
-                            event["product_id"] = json!(actor.site.product_id);
-                            event["walk_tile_changes"] = json!(actor.walk_tile_changes);
+                            let mut event =
+                                event_base("slot-workload-ready", &actor, run_started, wall_ms);
+                            event["ready_monotonic_ns"] = json!(ready_monotonic_ns);
+                            event["has_bank_cycle_proof"] =
+                                json!(actor.first_bank_cycle_monotonic_ns.is_some());
                             event_writer.write(&event)?;
                         }
-                        actor.last_trips = trips;
                     }
-                    if sample.deaths.unwrap_or(0) > 0 {
-                        fail_actor(&mut actor, &event_writer, run_started, "unexpected-death", "Gatherer reported a death");
-                    }
-                    if status.failure.is_some() {
-                        fail_actor(&mut actor, &event_writer, run_started, "native-task-failure", "Gatherer published a failed native status");
-                    }
-                    actor.last_status = Some(sample);
                 }
-            }
-            if !actor.warmup_qualified {
-                if let Some(ready_monotonic_ns) =
-                    slot_ready_at_monotonic_ns(&actor, config.qualification)
+                // All slots must complete unfaulted setup, including the stock
+                // Relog, before the first script Start opens the fault window.
+                if published_start.is_none()
+                    && actors.values().try_fold(true, |ready, actor| {
+                        actor
+                            .lock()
+                            .map(|actor| ready && actor.script_requested)
+                            .map_err(|_| "actor state poisoned")
+                    })?
                 {
-                    actor.warmup_qualified = true;
-                    actor.slot_ready_monotonic_ns = Some(ready_monotonic_ns);
-                    let wall_ms = time_ms()?;
-                    let mut event = event_base("slot-workload-ready", &actor, run_started, wall_ms);
-                    event["ready_monotonic_ns"] = json!(ready_monotonic_ns);
-                    event["has_bank_cycle_proof"] =
-                        json!(actor.first_bank_cycle_monotonic_ns.is_some());
-                    event_writer.write(&event)?;
-                }
-            }
-        }
-            if phase_zero.is_none() {
-                if let Some(record) = proxy_events.poll(config.fault_seed)? {
-                    if record.monotonic_ns > startup_deadline_ns {
-                        break Err("first successful WebSocket 101 occurred after the startup deadline".into());
+                    for (account, actor_ref) in &actors {
+                        let site = {
+                            let actor = actor_ref.lock().map_err(|_| "actor state poisoned")?;
+                            actor.site.clone()
+                        };
+                        {
+                            let actor = actor_ref.lock().map_err(|_| "actor state poisoned")?;
+                            event_writer.write(&event_base(
+                                "script-start-requested",
+                                &actor,
+                                run_started,
+                                time_ms()?,
+                            ))?;
+                        }
+                        match play.script_start(
+                            account,
+                            script::CompiledId("Gatherer"),
+                            bank_settings(&site),
+                        ) {
+                            Ok(()) => {
+                                let observed_ns = monotonic_now_ns()?;
+                                let wall_ms = time_ms()?;
+                                if published_start.is_none() {
+                                    write_soak_start_atomic(
+                                        &output,
+                                        account,
+                                        config.fault_seed,
+                                        observed_ns,
+                                        wall_ms,
+                                    )?;
+                                    published_start = Some((account.clone(), observed_ns));
+                                }
+                                let mut actor =
+                                    actor_ref.lock().map_err(|_| "actor state poisoned")?;
+                                actor.script_started_at = Some(Instant::now());
+                                actor.script_started_unix_ms = Some(wall_ms);
+                                let mut event =
+                                    event_base("script-started", &actor, run_started, wall_ms);
+                                event["script_start_monotonic_ns"] = json!(observed_ns);
+                                event_writer.write(&event)?;
+                            }
+                            Err(error) => {
+                                let mut actor =
+                                    actor_ref.lock().map_err(|_| "actor state poisoned")?;
+                                actor.runner.fail_start(&error);
+                                fail_actor(
+                                    &mut actor,
+                                    &event_writer,
+                                    run_started,
+                                    "script-start",
+                                    &error,
+                                );
+                                break;
+                            }
+                        }
                     }
-                    let event = json!({
-                        "schema_version": 1,
-                        "event": "phase-zero",
-                        "elapsed_seconds": 0,
-                        "phase_zero_monotonic_ns": record.monotonic_ns,
-                        "connection_id": record.connection_id,
-                        "client_peer_host": record.client_peer_host,
-                        "client_peer_port": record.client_peer_port,
-                        "seed": record.seed,
-                        "at_utc": record.at_utc,
-                        "elapsed_seconds_from_proxy_start": record.elapsed_seconds,
-                    });
-                    event_writer.write(&event)?;
-                    #[cfg(feature = "soak-observers")]
-                    candidate_payloads.sample(
-                        now_monotonic_ns
-                            .saturating_sub(record.monotonic_ns)
-                            / 1_000_000_000,
-                    )?;
-                    next_sample_monotonic_ns =
-                        Some(record.monotonic_ns.checked_add(sample_ns).ok_or(
-                            "first sample deadline exceeds monotonic nanosecond range",
-                        )?);
-                    phase_zero = Some(record);
                 }
-            }
-        }
-
-        let failures = actors.values().try_fold(false, |failed, actor| {
-            actor
-                .lock()
-                .map(|actor| failed || actor.failure.is_some())
-                .map_err(|_| "actor state poisoned")
-        })?;
-        if failures {
-            break Err("one or more Play slots failed their live soak witness".to_owned());
-        }
-        if phase_zero.is_none() && now_monotonic_ns >= startup_deadline_ns {
-            break Err("no successful WebSocket 101 was observed before the startup deadline".into());
-        }
-        if let Some(phase_zero) = phase_zero.as_ref() {
-            let run_deadline_ns = phase_zero
-                .monotonic_ns
-                .checked_add(duration_ns)
-                .ok_or("run deadline exceeds monotonic nanosecond range")?;
-            if now_monotonic_ns >= run_deadline_ns {
-                let Some(warmup_end) = warmup_end_monotonic_ns else {
-                    break Err("configured phase-zero window ended before all slots completed warmup".into());
-                };
-                if config.qualification && warmup_end >= run_deadline_ns {
-                    break Err("warmup left no positive RSS slope window".into());
-                }
-                end_monotonic_ns = Some(run_deadline_ns);
-                outcome = if config.qualification {
-                    "workload-window-complete-awaiting-external-evaluation"
-                } else {
-                    "smoke-complete-nonqualifying"
-                };
-                break Ok(());
-            }
-            if warmup_end_monotonic_ns.is_none() {
-                if let Some(latest_ready_ns) =
-                    cohort_ready_at_monotonic_ns(&actors)?
-                {
-                    let minimum_warmup_end_ns = phase_zero
-                        .monotonic_ns
-                        .checked_add(warmup_ns)
-                        .ok_or("warmup deadline exceeds monotonic nanosecond range")?;
-                    let target_warmup_end_ns = latest_ready_ns.max(minimum_warmup_end_ns);
-                    if target_warmup_end_ns >= run_deadline_ns {
-                        break Err("cohort workload readiness leaves no positive RSS slope window".into());
-                    }
-                    if now_monotonic_ns >= target_warmup_end_ns {
-                        warmup_end_monotonic_ns = Some(target_warmup_end_ns);
-                        let warmup_elapsed_seconds =
-                            (target_warmup_end_ns - phase_zero.monotonic_ns) as f64
-                                / 1_000_000_000.0;
-                        let slope_window_seconds =
-                            (config.duration.as_secs_f64() - warmup_elapsed_seconds).max(0.0);
+                if phase_zero.is_none() {
+                    if let Some(record) = proxy_events.poll(config.fault_seed)? {
+                        if record.monotonic_ns > startup_deadline_ns {
+                            break Err(
+                                "first script Start occurred after the startup deadline".into()
+                            );
+                        }
+                        if published_start.as_ref()
+                            != Some(&(record.account.clone(), record.monotonic_ns))
+                        {
+                            break Err(
+                                "proxy fault phase does not match first Play script Start".into()
+                            );
+                        }
                         let event = json!({
                             "schema_version": 1,
-                            "event": "warmup-end",
-                            "phase_zero_monotonic_ns": phase_zero.monotonic_ns,
-                            "warmup_end_monotonic_ns": target_warmup_end_ns,
-                            "warmup_end_elapsed_seconds": warmup_elapsed_seconds,
-                            "slope_window_seconds": slope_window_seconds,
-                            "qualification": config.qualification,
+                            "event": "phase-zero",
+                            "elapsed_seconds": 0,
+                            "phase_zero_monotonic_ns": record.monotonic_ns,
+                            "account": record.account,
+                            "seed": record.seed,
+                            "at_utc": record.at_utc,
+                            "elapsed_seconds_from_proxy_start": record.elapsed_seconds,
                         });
                         event_writer.write(&event)?;
+                        #[cfg(feature = "soak-observers")]
+                        candidate_payloads.sample(
+                            now_monotonic_ns.saturating_sub(record.monotonic_ns) / 1_000_000_000,
+                        )?;
+                        next_sample_monotonic_ns =
+                            Some(record.monotonic_ns.checked_add(sample_ns).ok_or(
+                                "first sample deadline exceeds monotonic nanosecond range",
+                            )?);
+                        phase_zero = Some(record);
                     }
                 }
             }
-            if let Some(next_sample_ns) = next_sample_monotonic_ns {
-                if now_monotonic_ns >= next_sample_ns {
-                    let elapsed_ns = now_monotonic_ns.saturating_sub(phase_zero.monotonic_ns);
-                    let elapsed_seconds = elapsed_ns / 1_000_000_000;
-                    let statuses = account_status_rows(&play);
-                    let mut samples = Vec::with_capacity(actors.len());
-                    for (account, actor_ref) in &actors {
-                        let actor = actor_ref.lock().map_err(|_| "actor state poisoned")?;
-                        samples.push(slot_sample_json(
-                            &actor,
-                            statuses.get(account),
-                            play.script_state(account),
-                            now_monotonic_ns,
-                        ));
+
+            let failures = actors.values().try_fold(false, |failed, actor| {
+                actor
+                    .lock()
+                    .map(|actor| failed || actor.failure.is_some())
+                    .map_err(|_| "actor state poisoned")
+            })?;
+            if failures {
+                break Err("one or more Play slots failed their live soak witness".to_owned());
+            }
+            if phase_zero.is_none() && now_monotonic_ns >= startup_deadline_ns {
+                break Err("no script Start was observed before the startup deadline".into());
+            }
+            if let Some(phase_zero) = phase_zero.as_ref() {
+                let run_deadline_ns = phase_zero
+                    .monotonic_ns
+                    .checked_add(duration_ns)
+                    .ok_or("run deadline exceeds monotonic nanosecond range")?;
+                if now_monotonic_ns >= run_deadline_ns {
+                    if config.qualification {
+                        let Some(warmup_end) = warmup_end_monotonic_ns else {
+                            break Err("configured phase-zero window ended before all slots completed warmup".into());
+                        };
+                        if warmup_end >= run_deadline_ns {
+                            break Err("warmup left no positive RSS slope window".into());
+                        }
                     }
-                    let sample = json!({
-                        "schema_version": 1,
-                        "event": "sample",
-                        "elapsed_seconds": elapsed_seconds,
-                        "sample_monotonic_ns": now_monotonic_ns,
-                        "phase_zero_monotonic_ns": phase_zero.monotonic_ns,
-                        "slots": samples,
-                    });
-                    event_writer.write(&sample)?;
-                    #[cfg(feature = "soak-observers")]
-                    candidate_payloads.sample(elapsed_seconds)?;
-                    let next_index = elapsed_ns
-                        .checked_div(sample_ns)
-                        .and_then(|index| index.checked_add(1))
-                        .ok_or("next sample index overflow")?;
-                    next_sample_monotonic_ns = Some(
-                        phase_zero
+                    end_monotonic_ns = Some(run_deadline_ns);
+                    outcome = if config.qualification {
+                        "workload-window-complete-awaiting-external-evaluation"
+                    } else {
+                        "smoke-complete-nonqualifying"
+                    };
+                    break Ok(());
+                }
+                if warmup_end_monotonic_ns.is_none() {
+                    if let Some(latest_ready_ns) = cohort_ready_at_monotonic_ns(&actors)? {
+                        let minimum_warmup_end_ns = phase_zero
                             .monotonic_ns
-                            .checked_add(
-                                next_index
-                                    .checked_mul(sample_ns)
-                                    .ok_or("next sample deadline overflow")?,
-                            )
-                            .ok_or("next sample deadline overflow")?,
-                    );
+                            .checked_add(warmup_ns)
+                            .ok_or("warmup deadline exceeds monotonic nanosecond range")?;
+                        let target_warmup_end_ns = latest_ready_ns.max(minimum_warmup_end_ns);
+                        if config.qualification && target_warmup_end_ns >= run_deadline_ns {
+                            break Err(
+                                "cohort workload readiness leaves no positive RSS slope window"
+                                    .into(),
+                            );
+                        }
+                        if now_monotonic_ns >= target_warmup_end_ns {
+                            warmup_end_monotonic_ns = Some(target_warmup_end_ns);
+                            let warmup_elapsed_seconds =
+                                (target_warmup_end_ns - phase_zero.monotonic_ns) as f64
+                                    / 1_000_000_000.0;
+                            let slope_window_seconds =
+                                (config.duration.as_secs_f64() - warmup_elapsed_seconds).max(0.0);
+                            let event = json!({
+                                "schema_version": 1,
+                                "event": "warmup-end",
+                                "phase_zero_monotonic_ns": phase_zero.monotonic_ns,
+                                "warmup_end_monotonic_ns": target_warmup_end_ns,
+                                "warmup_end_elapsed_seconds": warmup_elapsed_seconds,
+                                "slope_window_seconds": slope_window_seconds,
+                                "qualification": config.qualification,
+                            });
+                            event_writer.write(&event)?;
+                        }
+                    }
+                }
+                if let Some(next_sample_ns) = next_sample_monotonic_ns {
+                    if now_monotonic_ns >= next_sample_ns {
+                        let elapsed_ns = now_monotonic_ns.saturating_sub(phase_zero.monotonic_ns);
+                        let elapsed_seconds = elapsed_ns / 1_000_000_000;
+                        let statuses = account_status_rows(&play);
+                        let mut samples = Vec::with_capacity(actors.len());
+                        for (account, actor_ref) in &actors {
+                            let actor = actor_ref.lock().map_err(|_| "actor state poisoned")?;
+                            samples.push(slot_sample_json(
+                                &actor,
+                                statuses.get(account),
+                                play.script_state(account),
+                                now_monotonic_ns,
+                            ));
+                        }
+                        let sample = json!({
+                            "schema_version": 1,
+                            "event": "sample",
+                            "elapsed_seconds": elapsed_seconds,
+                            "sample_monotonic_ns": now_monotonic_ns,
+                            "phase_zero_monotonic_ns": phase_zero.monotonic_ns,
+                            "slots": samples,
+                        });
+                        event_writer.write(&sample)?;
+                        #[cfg(feature = "soak-observers")]
+                        candidate_payloads.sample(elapsed_seconds)?;
+                        let next_index = elapsed_ns
+                            .checked_div(sample_ns)
+                            .and_then(|index| index.checked_add(1))
+                            .ok_or("next sample index overflow")?;
+                        next_sample_monotonic_ns = Some(
+                            phase_zero
+                                .monotonic_ns
+                                .checked_add(
+                                    next_index
+                                        .checked_mul(sample_ns)
+                                        .ok_or("next sample deadline overflow")?,
+                                )
+                                .ok_or("next sample deadline overflow")?,
+                        );
+                    }
                 }
             }
-        }
-        let tick = Duration::from_millis(TICK_MS);
-        let remaining_ns = phase_zero
-            .as_ref()
-            .and_then(|phase_zero| phase_zero.monotonic_ns.checked_add(duration_ns))
-            .unwrap_or(startup_deadline_ns)
-            .checked_sub(now_monotonic_ns);
-        let sleep = remaining_ns
-            .map(Duration::from_nanos)
-            .map_or(tick, |remaining| remaining.min(tick));
-        thread::sleep(sleep);
+            let tick = Duration::from_millis(TICK_MS);
+            let remaining_ns = phase_zero
+                .as_ref()
+                .and_then(|phase_zero| phase_zero.monotonic_ns.checked_add(duration_ns))
+                .unwrap_or(startup_deadline_ns)
+                .checked_sub(now_monotonic_ns);
+            let sleep = remaining_ns
+                .map(Duration::from_nanos)
+                .map_or(tick, |remaining| remaining.min(tick));
+            thread::sleep(sleep);
         }
     })();
 
     if end_monotonic_ns.is_none() {
         end_monotonic_ns = monotonic_now_ns().ok();
     }
-    let finish_elapsed_seconds = phase_zero
-        .as_ref()
-        .zip(end_monotonic_ns)
-        .and_then(|(phase_zero, end)| end.checked_sub(phase_zero.monotonic_ns))
-        .map(|elapsed| elapsed / 1_000_000_000)
-        .unwrap_or(0);
-    #[cfg(feature = "soak-observers")]
-    let observer_finish = candidate_payloads.finish(finish_elapsed_seconds);
-    #[cfg(not(feature = "soak-observers"))]
-    let observer_finish: Result<(), String> = Ok(());
-    let loop_result = match (loop_result, observer_finish) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
-        (Err(error), Err(finish_error)) => {
-            Err(format!("{error}; candidate observer finalization failed: {finish_error}"))
-        }
-    };
-
-    if let Err(error) = loop_result {
+    if loop_result.is_err() {
         outcome = "failed";
-        let summary_result = write_summary(
-            &output,
-            &config,
-            run_started,
-            phase_zero.as_ref(),
-            warmup_end_monotonic_ns,
-            end_monotonic_ns,
-            &actors,
-            Some(&play),
-            outcome,
-            unexpected_exits,
-        );
-        return match summary_result {
-            Ok(()) => Err(error),
-            Err(summary_error) => {
-                Err(format!("{error}; additionally failed to publish summary: {summary_error}"))
-            }
-        };
     }
-    write_summary(
+    // The live summary must observe Play before it shuts down the slots.
+    let summary_result = write_summary(
         &output,
         &config,
-        run_started,
-        phase_zero.as_ref(),
-        warmup_end_monotonic_ns,
-        end_monotonic_ns,
+        SummaryTiming {
+            run_started,
+            phase_zero: phase_zero.as_ref(),
+            warmup_end_monotonic_ns,
+            end_monotonic_ns,
+        },
         &actors,
         Some(&play),
         outcome,
         unexpected_exits,
-    )?;
-    Ok(())
+    );
+    // Play::drop signals and joins every client. Its final requested logout
+    // is a real outbound game message; finish the candidate SHA only after
+    // that message, never at the earlier end-of-window sample.
+    drop(play);
+    #[cfg(feature = "soak-observers")]
+    let observer_finish = {
+        let finish_elapsed_seconds = phase_zero
+            .as_ref()
+            .and_then(|phase_zero| {
+                monotonic_now_ns()
+                    .ok()?
+                    .checked_sub(phase_zero.monotonic_ns)
+            })
+            .map(|elapsed| elapsed / 1_000_000_000)
+            .unwrap_or(0);
+        candidate_payloads.finish(finish_elapsed_seconds)
+    };
+    #[cfg(not(feature = "soak-observers"))]
+    let observer_finish: Result<(), String> = Ok(());
+    let mut errors = Vec::new();
+    if let Err(error) = loop_result {
+        errors.push(error);
+    }
+    if let Err(error) = summary_result {
+        errors.push(format!("summary publication failed: {error}"));
+    }
+    if let Err(error) = observer_finish {
+        errors.push(format!("candidate observer finalization failed: {error}"));
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 #[test]

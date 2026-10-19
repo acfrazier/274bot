@@ -6275,7 +6275,8 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     {
         subject.settings.random_events = false;
     }
-    play.try_spawn_slot(subject, None, None, None)?;
+    play.try_spawn_slot(subject, None, None, None)
+        .map_err(|error| error.to_string())?;
     if let (Some(helper_account), Some(helper_password)) =
         (helper_account.as_ref(), helper_password.as_ref())
     {
@@ -6284,7 +6285,8 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             None,
             None,
             None,
-        )?;
+        )
+        .map_err(|error| error.to_string())?;
     }
     let settings = cell.settings(case);
     let mut identity = json!({
@@ -7675,7 +7677,8 @@ fn run_quester_sheep_shared_core() -> Result<(), String> {
         slot.runner.set_obj_names(play.obj_names());
         slot.start_handle = Some(play.script_start_handle());
     }
-    play.try_spawn_slot(mint_profile(&account, &password, 1)?, None, None, None)?;
+    play.try_spawn_slot(mint_profile(&account, &password, 1)?, None, None, None)
+        .map_err(|error| error.to_string())?;
     play.focus(&account);
     println!(
         "{}",

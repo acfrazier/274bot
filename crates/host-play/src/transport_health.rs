@@ -139,20 +139,38 @@ mod tests {
             detected_at: detected,
         };
         assert_eq!(
-            health.observe(start + Duration::from_millis(200), Some(ReactorLoss::ProgressLost), Some(resolver)),
-            HealthEffects { reactor_unavailable: true, resolver_unavailable: true },
+            health.observe(
+                start + Duration::from_millis(200),
+                Some(ReactorLoss::ProgressLost),
+                Some(resolver)
+            ),
+            HealthEffects {
+                reactor_unavailable: true,
+                resolver_unavailable: true
+            },
         );
         assert_eq!(
-            health.observe(start + Duration::from_secs(3), Some(ReactorLoss::StartFailed), Some(resolver)),
+            health.observe(
+                start + Duration::from_secs(3),
+                Some(ReactorLoss::StartFailed),
+                Some(resolver)
+            ),
             HealthEffects::default(),
         );
         health.with_conditions(|conditions| {
             assert_eq!(
-                conditions.latched(ProcessServiceCode::ReactorUnavailable).unwrap().cause(),
+                conditions
+                    .latched(ProcessServiceCode::ReactorUnavailable)
+                    .unwrap()
+                    .cause(),
                 ConditionCause::ProgressLost,
             );
             assert_eq!(
-                conditions.latched(ProcessServiceCode::ResolverUnavailable).unwrap().detected_at().as_duration(),
+                conditions
+                    .latched(ProcessServiceCode::ResolverUnavailable)
+                    .unwrap()
+                    .detected_at()
+                    .as_duration(),
                 Duration::from_millis(125),
             );
         });

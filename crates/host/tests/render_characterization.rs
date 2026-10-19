@@ -723,8 +723,10 @@ fn with_slot<R>(
         let slot = scope.spawn(move || {
             let mut client = scene_client(None);
             if let Some(addr) = server {
-                client.stream =
-                    Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+                client.stream = Some(
+                    ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+                        .unwrap(),
+                );
             }
             client.last_response = Some(Instant::now());
             let bytes_out_start = client.stream.as_ref().map_or(0, ClientStream::bytes_out);

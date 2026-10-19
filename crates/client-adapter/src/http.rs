@@ -143,13 +143,10 @@ pub fn fetch_blocking(
             .checked_add(FETCH_STEP_BUDGET)
             .unwrap_or_else(|| deadline.unwrap_or(now));
         let until = deadline.map_or(step_until, |deadline| deadline.min(step_until));
-        match fetch.poll(until)? {
-            Some(body) => {
-                check_cancel(cancel)?;
-                check_blocking_deadline(deadline)?;
-                return Ok(body);
-            }
-            None => {}
+        if let Some(body) = fetch.poll(until)? {
+            check_cancel(cancel)?;
+            check_blocking_deadline(deadline)?;
+            return Ok(body);
         }
     }
 }
@@ -204,10 +201,7 @@ impl HttpFetch {
     }
 
     fn install_https(&mut self, established: EstablishedTls) -> Result<(), AssetFetchError> {
-        let EstablishedTls {
-            socket,
-            connection,
-        } = established;
+        let EstablishedTls { socket, connection } = established;
         socket
             .set_nonblocking(true)
             .map_err(|_| CONNECTION_FAILED)?;
@@ -227,11 +221,7 @@ impl HttpFetch {
         for _ in 0..IO_OPERATIONS_PER_STEP {
             match self.phase {
                 Phase::Connecting => {
-                    let connect_error = self
-                        .socket
-                        .as_mut()
-                        .ok_or(CONNECTION_FAILED)?
-                        .take_error();
+                    let connect_error = self.socket.as_mut().ok_or(CONNECTION_FAILED)?.take_error();
                     match connect_error {
                         Ok(Some(_)) | Err(_) => {
                             self.start_next_address()?;
@@ -239,11 +229,7 @@ impl HttpFetch {
                         }
                         Ok(None) => {}
                     }
-                    let peer = self
-                        .socket
-                        .as_mut()
-                        .ok_or(CONNECTION_FAILED)?
-                        .peer_addr();
+                    let peer = self.socket.as_mut().ok_or(CONNECTION_FAILED)?.peer_addr();
                     match peer {
                         Ok(_) => {
                             self.progress_at = Some(Instant::now());
@@ -544,10 +530,16 @@ impl ResponseParser {
             return Err(CONNECTION_FAILED);
         }
         self.header.extend_from_slice(bytes);
-        let Some(split) = self.header.windows(4).position(|window| window == b"\r\n\r\n") else {
+        let Some(split) = self
+            .header
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+        else {
             return Ok(());
         };
-        let framing = parse_response_headers(&self.header[..split])?;
+        // The delimiter starts with the final header line's CRLF. Keep that
+        // CRLF in the parsed head; only the second CRLF separates the body.
+        let framing = parse_response_headers(&self.header[..split + 2])?;
         let body_start = split + 4;
         let header = std::mem::take(&mut self.header);
         self.framing = Some(framing);
@@ -629,10 +621,8 @@ impl ResponseParser {
                 ChunkState::Trailers => {
                     let byte = bytes[index];
                     index += 1;
-                    self.trailer_bytes = self
-                        .trailer_bytes
-                        .checked_add(1)
-                        .ok_or(CONNECTION_FAILED)?;
+                    self.trailer_bytes =
+                        self.trailer_bytes.checked_add(1).ok_or(CONNECTION_FAILED)?;
                     if self.trailer_bytes > MAX_HEADER_BYTES {
                         return Err(CONNECTION_FAILED);
                     }
@@ -656,8 +646,7 @@ impl ResponseParser {
     }
 
     fn push_chunk_line(&mut self, byte: u8) -> Result<(), AssetFetchError> {
-        if self.chunk_line.len() >= MAX_CHUNK_LINE_BYTES
-            || self.chunk_line.try_reserve(1).is_err()
+        if self.chunk_line.len() >= MAX_CHUNK_LINE_BYTES || self.chunk_line.try_reserve(1).is_err()
         {
             return Err(CONNECTION_FAILED);
         }
@@ -685,7 +674,8 @@ impl ResponseParser {
 }
 
 fn parse_response_headers(bytes: &[u8]) -> Result<Framing, AssetFetchError> {
-    let mut lines = bytes.split(|byte| *byte == b'\n');
+    let head = bytes.strip_suffix(b"\n").ok_or(CONNECTION_FAILED)?;
+    let mut lines = head.split(|byte| *byte == b'\n');
     let status = lines.next().ok_or(CONNECTION_FAILED)?;
     let status = status.strip_suffix(b"\r").ok_or(CONNECTION_FAILED)?;
     if !status.starts_with(b"HTTP/1.0 200 ") && !status.starts_with(b"HTTP/1.1 200 ") {
@@ -730,7 +720,10 @@ fn parse_response_headers(bytes: &[u8]) -> Result<Framing, AssetFetchError> {
 }
 
 fn validate_header_field(line: &[u8]) -> Result<(&[u8], &[u8]), AssetFetchError> {
-    let colon = line.iter().position(|byte| *byte == b':').ok_or(CONNECTION_FAILED)?;
+    let colon = line
+        .iter()
+        .position(|byte| *byte == b':')
+        .ok_or(CONNECTION_FAILED)?;
     let name = &line[..colon];
     if name.is_empty() || !name.iter().copied().all(is_header_token) {
         return Err(CONNECTION_FAILED);
@@ -749,16 +742,34 @@ fn is_header_token(byte: u8) -> bool {
     byte.is_ascii_alphanumeric()
         || matches!(
             byte,
-            b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.' | b'^'
-                | b'_' | b'`' | b'|' | b'~'
+            b'!' | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'.'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'|'
+                | b'~'
         )
 }
 
 fn trim_ows(mut value: &[u8]) -> &[u8] {
-    while value.first().is_some_and(|byte| matches!(byte, b' ' | b'\t')) {
+    while value
+        .first()
+        .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
+    {
         value = &value[1..];
     }
-    while value.last().is_some_and(|byte| matches!(byte, b' ' | b'\t')) {
+    while value
+        .last()
+        .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
+    {
         value = &value[..value.len() - 1];
     }
     value
@@ -917,19 +928,13 @@ fn flush_tls_blocking(
     Ok(())
 }
 
-fn set_read_timeout(
-    socket: &StdTcpStream,
-    io_limit: Duration,
-) -> Result<(), AssetFetchError> {
+fn set_read_timeout(socket: &StdTcpStream, io_limit: Duration) -> Result<(), AssetFetchError> {
     socket
         .set_read_timeout(Some(io_limit))
         .map_err(|_| CONNECTION_FAILED)
 }
 
-fn set_write_timeout(
-    socket: &StdTcpStream,
-    io_limit: Duration,
-) -> Result<(), AssetFetchError> {
+fn set_write_timeout(socket: &StdTcpStream, io_limit: Duration) -> Result<(), AssetFetchError> {
     socket
         .set_write_timeout(Some(io_limit))
         .map_err(|_| CONNECTION_FAILED)
@@ -1041,11 +1046,8 @@ mod tests {
     }
 
     fn response(body: &[u8]) -> Vec<u8> {
-        let mut response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
-            body.len()
-        )
-        .into_bytes();
+        let mut response =
+            format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
         response.extend_from_slice(body);
         response
     }
@@ -1132,14 +1134,8 @@ mod tests {
         });
 
         let https = HttpsLane::start(None, test_health()).unwrap();
-        let mut fetch = start_fetch(
-            Transport::Tcp,
-            "127.0.0.1",
-            &loopback(port),
-            "/crc",
-            &https,
-        )
-        .unwrap();
+        let mut fetch =
+            start_fetch(Transport::Tcp, "127.0.0.1", &loopback(port), "/crc", &https).unwrap();
         let (body, polls, longest) = poll_steps(fetch.as_mut());
         server.join().unwrap();
         https.shutdown();
@@ -1179,7 +1175,10 @@ mod tests {
         );
         let elapsed = started.elapsed();
         assert_eq!(result, Err(AssetFetchError::Connection));
-        assert!(elapsed < Duration::from_millis(250), "fetch took {elapsed:?}");
+        assert!(
+            elapsed < Duration::from_millis(250),
+            "fetch took {elapsed:?}"
+        );
         assert_eq!(
             head_rx.recv().unwrap(),
             b"GET /crc HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n"
@@ -1198,14 +1197,8 @@ mod tests {
             tls_server_response(socket, server_config(), b"tls-body");
         });
         let https = HttpsLane::start(Some(client_config()), test_health()).unwrap();
-        let mut fetch = start_fetch(
-            Transport::Wss,
-            "localhost",
-            &loopback(port),
-            "/crc",
-            &https,
-        )
-        .unwrap();
+        let mut fetch =
+            start_fetch(Transport::Wss, "localhost", &loopback(port), "/crc", &https).unwrap();
         let (body, _, _) = poll_steps(fetch.as_mut());
         server.join().unwrap();
         https.shutdown();

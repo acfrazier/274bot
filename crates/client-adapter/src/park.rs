@@ -108,7 +108,15 @@ impl Park {
         revoked: impl FnOnce() -> bool,
         ready: impl FnOnce() -> Option<T>,
     ) -> Option<ParkOutcome<T>> {
-        Self::check(deadline, now, unavailable, selected_intent, revoked, ready, false)
+        Self::check(
+            deadline,
+            now,
+            unavailable,
+            selected_intent,
+            revoked,
+            ready,
+            false,
+        )
     }
 
     /// Wait for a generation-matched result. The absolute deadline never
@@ -202,11 +210,25 @@ mod tests {
         let park = Park::new();
         let deadline = Instant::now();
         assert_eq!(
-            park.try_ready(deadline, || deadline, || false, || false, || false, || Some(12)),
+            park.try_ready(
+                deadline,
+                || deadline,
+                || false,
+                || false,
+                || false,
+                || Some(12)
+            ),
             Some(ParkOutcome::Deadline)
         );
         assert_eq!(
-            park.try_ready(deadline, || deadline, || false, || false, || true, || Some(12)),
+            park.try_ready(
+                deadline,
+                || deadline,
+                || false,
+                || false,
+                || true,
+                || Some(12)
+            ),
             Some(ParkOutcome::Revoked)
         );
     }
@@ -231,27 +253,47 @@ mod tests {
     #[test]
     fn space_publish_before_or_after_marker_never_loses_progress() {
         let park = Arc::new(Park::new());
-        let binding = WriterBinding { connection: 3, binding: 7 };
+        let binding = WriterBinding {
+            connection: 3,
+            binding: 7,
+        };
         let space = Arc::new(AtomicBool::new(false));
         // Drain before arm: K2 recheck sees the published capacity.
         space.store(true, Ordering::Release);
         park.publish_freed_space(binding);
-        assert_eq!(park.wait(Instant::now() + Duration::from_secs(1), Instant::now, || false, || false, || false, || space.load(Ordering::Acquire).then_some(()), false, Some(binding)), ParkOutcome::Ready(()));
+        assert_eq!(
+            park.wait(
+                Instant::now() + Duration::from_secs(1),
+                Instant::now,
+                || false,
+                || false,
+                || false,
+                || space.load(Ordering::Acquire).then_some(()),
+                false,
+                Some(binding)
+            ),
+            ParkOutcome::Ready(())
+        );
 
         space.store(false, Ordering::Release);
         let (armed, receiver) = mpsc::channel();
         let worker = Arc::clone(&park);
         let observed = Arc::clone(&space);
-        let thread = std::thread::spawn(move || worker.wait(
-            Instant::now() + Duration::from_secs(1),
-            Instant::now,
-            || false,
-            || false,
-            || false,
-            || { armed.send(()).ok(); observed.load(Ordering::Acquire).then_some(()) },
-            false,
-            Some(binding),
-        ));
+        let thread = std::thread::spawn(move || {
+            worker.wait(
+                Instant::now() + Duration::from_secs(1),
+                Instant::now,
+                || false,
+                || false,
+                || false,
+                || {
+                    armed.send(()).ok();
+                    observed.load(Ordering::Acquire).then_some(())
+                },
+                false,
+                Some(binding),
+            )
+        });
         receiver.recv().unwrap();
         space.store(true, Ordering::Release);
         park.publish_freed_space(binding);

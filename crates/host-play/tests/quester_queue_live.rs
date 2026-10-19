@@ -450,7 +450,8 @@ fn run_quester_queue() -> Result<(), String> {
         slot.runner.set_obj_names(play.obj_names());
         slot.start_handle = Some(play.script_start_handle());
     }
-    play.try_spawn_slot(mint_profile(&account, &password, 1)?, None, None, None)?;
+    play.try_spawn_slot(mint_profile(&account, &password, 1)?, None, None, None)
+        .map_err(|error| error.to_string())?;
     play.focus(&account);
     println!(
         "{}",
