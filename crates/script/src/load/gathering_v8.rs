@@ -5,9 +5,10 @@
 
 use super::callback_v8::{self as cb, Flow, JsResult};
 use crate::gather_locations::{
-    self, Axis, Nearest, Resolution, DEFAULT_BOOTH_NAME, DEFAULT_BOOTH_OP, MAP_SQUARE,
+    self, Axis, Resolution, Resolver, DEFAULT_BOOTH_NAME, DEFAULT_BOOTH_OP, MAP_SQUARE,
 };
 use rustyscript::Runtime;
+use std::ops::ControlFlow;
 
 const BOOTH_NAME: i32 = 0;
 const BOOTH_OP: i32 = 1;
@@ -181,18 +182,17 @@ pub(super) fn resolve_gathering_location<'s>(
     let to_lower_case = cb::get(scope, trimmed, "toLowerCase")?;
     let normalized = cb::call(scope, to_lower_case, trimmed, &[], "toLowerCase")?;
 
-    match resolution_mode(scope, normalized) {
-        Resolution::Freeform => Ok(v8::null(scope).into()),
-        mode @ (Resolution::Closest | Resolution::Auto) => {
-            let pool = if mode == Resolution::Auto {
-                filtered_same_square(scope, table, start_tile)?
-            } else {
-                table
-            };
-            nearest_row(scope, start_tile, pool)
-        }
-        Resolution::Named => find_named_row(scope, table, normalized),
-    }
+    let mode = resolution_mode(scope, normalized);
+    let found = gather_locations::resolve_with(
+        mode,
+        &mut ForeignResolver {
+            scope,
+            start_tile,
+            table,
+            normalized,
+        },
+    )?;
+    Ok(found.unwrap_or_else(|| v8::null(scope).into()))
 }
 
 fn resolution_mode(scope: &mut v8::HandleScope, normalized: v8::Local<v8::Value>) -> Resolution {
@@ -242,46 +242,72 @@ fn filter_same_square_callback<'s>(
     cb::finish(scope, rv, result);
 }
 
-fn nearest_row<'s>(
-    scope: &mut v8::HandleScope<'s>,
+struct ForeignPool<'s> {
+    rows: v8::Local<'s, v8::Value>,
+    index: f64,
+}
+
+struct ForeignResolver<'a, 's> {
+    scope: &'a mut v8::HandleScope<'s>,
     start_tile: v8::Local<'s, v8::Value>,
-    pool: v8::Local<'s, v8::Value>,
-) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let length = cb::get(scope, pool, "length")?;
-    if length.strict_equals(cb::num(scope, 0.0)) {
-        return Ok(v8::null(scope).into());
+    table: v8::Local<'s, v8::Value>,
+    normalized: v8::Local<'s, v8::Value>,
+}
+
+impl<'s> Resolver for ForeignResolver<'_, 's> {
+    type Pool = ForeignPool<'s>;
+    type Row = v8::Local<'s, v8::Value>;
+    type Error = cb::Throw<'s>;
+
+    fn pool(&mut self, local_only: bool) -> JsResult<'s, Self::Pool> {
+        let rows = if local_only {
+            filtered_same_square(self.scope, self.table, self.start_tile)?
+        } else {
+            self.table
+        };
+        Ok(ForeignPool { rows, index: 1.0 })
     }
 
-    let mut best = cb::get_index(scope, pool, 0)?;
-    let best_spot = cb::get(scope, best, "spot")?;
-    let mut rank = Nearest::new(bank_distance(scope, start_tile, best_spot)?);
-    let mut index = 1.0;
+    fn first(&mut self, pool: &mut Self::Pool) -> JsResult<'s, Option<(Self::Row, f64)>> {
+        let length = cb::get(self.scope, pool.rows, "length")?;
+        if length.strict_equals(cb::num(self.scope, 0.0)) {
+            return Ok(None);
+        }
+        let row = cb::get_index(self.scope, pool.rows, 0)?;
+        let spot = cb::get(self.scope, row, "spot")?;
+        let distance = bank_distance(self.scope, self.start_tile, spot)?;
+        Ok(Some((row, distance)))
+    }
 
-    loop {
-        let inner = &mut v8::EscapableHandleScope::new(scope);
+    fn next(
+        &mut self,
+        pool: &mut Self::Pool,
+        prefer: impl FnOnce(f64) -> bool,
+    ) -> JsResult<'s, ControlFlow<(), Option<Self::Row>>> {
+        let inner = &mut v8::EscapableHandleScope::new(self.scope);
         let result = (|| {
-            let length = cb::get(inner, pool, "length")?;
-            let index_value = cb::num(inner, index);
+            let length = cb::get(inner, pool.rows, "length")?;
+            let index_value = cb::num(inner, pool.index);
             if !cb::lt(inner, index_value, length)? {
                 return Ok(Flow::Break(None));
             }
-            let location = cb::get_index(inner, pool, index as u32)?;
-            let spot = cb::get(inner, location, "spot")?;
-            let distance = bank_distance(inner, start_tile, spot)?;
-            if rank.consider(distance) {
-                Ok(Flow::Continue(Some(location)))
-            } else {
-                Ok(Flow::Continue(None))
-            }
+            let row = cb::get_index(inner, pool.rows, pool.index as u32)?;
+            let spot = cb::get(inner, row, "spot")?;
+            let distance = bank_distance(inner, self.start_tile, spot)?;
+            Ok(Flow::Continue(prefer(distance).then_some(row)))
         })();
         match cb::iteration(inner, result)? {
-            Flow::Continue(Some(location)) => best = location,
-            Flow::Continue(None) => {}
-            Flow::Break(_) => break,
+            Flow::Continue(candidate) => {
+                pool.index += 1.0;
+                Ok(ControlFlow::Continue(candidate))
+            }
+            Flow::Break(_) => Ok(ControlFlow::Break(())),
         }
-        index += 1.0;
     }
-    Ok(best)
+
+    fn find_named(&mut self) -> JsResult<'s, Option<Self::Row>> {
+        find_named_row(self.scope, self.table, self.normalized)
+    }
 }
 
 /// Read the frozen bankDistance operands in order. `sub` performs V8
@@ -309,7 +335,7 @@ fn find_named_row<'s>(
     scope: &mut v8::HandleScope<'s>,
     table: v8::Local<'s, v8::Value>,
     normalized: v8::Local<'s, v8::Value>,
-) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+) -> JsResult<'s, Option<v8::Local<'s, v8::Value>>> {
     let find = cb::get(scope, table, "find")?;
     let Some(predicate) = v8::Function::builder(find_named_callback)
         .data(normalized)
@@ -322,11 +348,7 @@ fn find_named_row<'s>(
     };
     let predicate: v8::Local<v8::Value> = predicate.into();
     let found = cb::call(scope, find, table, &[predicate], "find")?;
-    if found.is_null_or_undefined() {
-        Ok(v8::null(scope).into())
-    } else {
-        Ok(found)
-    }
+    Ok((!found.is_null_or_undefined()).then_some(found))
 }
 
 fn find_named_callback<'s>(
