@@ -47,6 +47,8 @@ mod gather_methods_v8;
 #[cfg(feature = "load")]
 mod hunt_v8;
 #[cfg(feature = "load")]
+mod inventory_v8;
+#[cfg(feature = "load")]
 mod isolate;
 mod library;
 #[cfg(feature = "load")]
