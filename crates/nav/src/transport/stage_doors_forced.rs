@@ -329,13 +329,14 @@ struct Motion<'a> {
     gate_read: bool,
     entrance: Option<entrances::Inputs<'a>>,
     returned: Option<Val>,
+    value_query: bool,
     timer: Option<&'a str>,
 }
 
 impl Motion<'_> {
     fn run(&mut self, body: &[Stmt], env: &mut Env) -> End {
         for (index, stmt) in body.iter().enumerate() {
-            if self.entrance.is_some() && self.moved
+            if self.entrance.is_some() && self.moved && !self.value_query
                 && matches!(stmt, Stmt::If(..) | Stmt::Assign(..))
                 && body[index..].iter().all(|stmt| self.base.src.certified(stmt))
             {
@@ -402,7 +403,7 @@ impl Motion<'_> {
                     match cond.value {
                         Some(true) => return self.run(body, env),
                         Some(false) => {}
-                        None if self.entrance.is_some()
+                        None if self.timer.is_some()
                             && body.iter().all(|stmt| matches!(stmt, Stmt::Return(calls) if calls.is_empty()))
                             && self.base.src.certified(stmt) => {}
                         None => return End::Refused,
@@ -1083,6 +1084,7 @@ pub(super) fn forced_move_edges(
                                 gate_read: false,
                                 entrance: None,
                                 returned: None,
+                                value_query: false,
                                 timer: None,
                             };
                             let mut env = Env::new();

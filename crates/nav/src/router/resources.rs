@@ -1298,7 +1298,7 @@ pub(super) fn fixed_allowed(state: &WorldState, edge: &TransportEdge, relax: Rel
     };
     fixed_requirements
         && state.worn_req_allows(edge)
-        && state.worn_all_req_allows(edge)
+        && (relax == Relax::EntranceExclusions || state.worn_all_req_allows(edge))
         && match relax {
             Relax::Strict | Relax::EntranceExclusions => {
                 state.quest_gates(edge) == Truth::True

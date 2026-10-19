@@ -153,6 +153,8 @@ fn route_view_borrows_the_owner_route_under_the_world_identity() {
                     varp_req: vec![],
                     worn_req: vec![],
                     worn_all_req: vec![],
+                    forbidden_held: vec![],
+                    forbidden_worn: vec![],
                     members_req: false,
                     wildy_cap: None,
                     quest_gates: None,

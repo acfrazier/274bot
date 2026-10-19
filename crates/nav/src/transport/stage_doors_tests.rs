@@ -1648,3 +1648,263 @@ fn death_plateau_rocks_cross_only_with_strictly_worn_climbing_boots() {
         Err(RouteError::NoPath)
     ));
 }
+
+fn derive_entrance_fixture(fx: &Fixture) -> (TransportGraph, WorldCollision) {
+    let defs = loc_defs(&[(6000, 2, 2), (6001, 2, 2)]);
+    let collision = bake_collision(fx, &defs, &HashSet::new());
+    let selected = api::game_data::for_revision(client::io::ClientRevision::R289)
+        .expect("selected revision");
+    let (facts, identity) = selected.quest_identity_for_bake().expect("verified family");
+    let quests = QuestSource {
+        family: crate::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+        facts: &facts,
+    };
+    let graph = derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(&quests)).0;
+    (graph, collision)
+}
+
+#[test]
+fn completed_quest_teleport_entrance_uses_a_typed_canonical_gate() {
+    let fx = Fixture::new();
+    write_forced_fixture(&fx, r#"
+[oploc2,obstacle]
+if(%heroquest ! ^hero_complete) { return; }
+p_delay(1);
+p_teleport(0_44_53_5_46);
+"#);
+    let (graph, _) = derive_entrance_fixture(&fx);
+    let edges: Vec<_> = graph.edges.iter().filter(|edge| edge.loc_id == 6000).collect();
+    assert!(!edges.is_empty(), "the completed-quest teleport must be extracted");
+    for edge in edges {
+        let gates = edge.quest_gates.as_ref().expect("typed completion gate");
+        assert_eq!(gates.gates().len(), 1);
+        assert!(matches!(&gates.gates()[0], api::selected::QuestGate::Complete(quest)
+            if quest.0.as_ref() == "hero"));
+        assert!(edge.quest_req.is_empty());
+        assert!(edge.varp_req.is_empty(), "hidden quest varps are not live evidence");
+        assert_eq!(edge.to, tile(2821, 3438));
+        assert_eq!(edge.ticks, 3, "one operation, one delay tick, and the content yield");
+    }
+}
+
+#[test]
+fn held_key_and_held_exclusion_are_both_required_by_the_content_trajectory() {
+    let fx = Fixture::new();
+    write_forced_fixture(&fx, r#"
+[oploc2,obstacle]
+if(inv_total(inv, gate_key) = 0) { return; }
+if(inv_total(inv, prisoner) > 0) { return; }
+p_delay(2);
+p_teleport(0_44_53_5_46);
+"#);
+    fx.write("pack/obj.pack", "1001=gate_key\n1002=prisoner\n");
+    let (graph, collision) = derive_entrance_fixture(&fx);
+    let edges: Vec<_> = graph.edges.iter().filter(|edge| edge.loc_id == 6000).collect();
+    assert!(!edges.is_empty());
+    for edge in edges {
+        assert_eq!(edge.item_req, [(1001, 1)]);
+        assert_eq!(edge.forbidden_held, [1002]);
+    }
+    let from = tile(2818, 3438);
+    let to = tile(2821, 3438);
+    let mut state = WorldState { inventory_ready: true, ..WorldState::empty() };
+    state.inv.insert(1001, 1);
+    assert!(crosses(&graph, &collision, from, to, &state, 6000).unwrap());
+    state.inv.insert(1002, 1);
+    assert_eq!(crosses(&graph, &collision, from, to, &state, 6000), Err(RouteError::NoPath));
+    state.inv.remove(&1002);
+    state.inventory_ready = false;
+    assert_eq!(crosses(&graph, &collision, from, to, &state, 6000), Err(RouteError::NoPath));
+}
+
+#[test]
+fn teleport_entrance_keeps_every_worn_piece_strict() {
+    let fx = Fixture::new();
+    write_forced_fixture(&fx, r#"
+[oploc2,obstacle]
+if(inv_total(worn, shirt) = 0 | inv_total(worn, robe) = 0 | inv_total(worn, boots) = 0) { return; }
+p_delay(2);
+p_teleport(0_44_53_5_46);
+"#);
+    fx.write("pack/obj.pack", "1001=shirt\n1002=robe\n1003=boots\n");
+    let (graph, collision) = derive_entrance_fixture(&fx);
+    let edges: Vec<_> = graph.edges.iter().filter(|edge| edge.loc_id == 6000).collect();
+    assert!(!edges.is_empty());
+    for edge in edges { assert_eq!(edge.worn_all_req, [1001, 1002, 1003]); }
+    let mut state = WorldState { worn: HashSet::from([1001, 1002, 1003]), ..WorldState::empty() };
+    assert!(crosses(&graph, &collision, tile(2818, 3438), tile(2821, 3438), &state, 6000).unwrap());
+    state.worn.remove(&1002);
+    state.inv.insert(1002, 1);
+    assert_eq!(crosses(&graph, &collision, tile(2818, 3438), tile(2821, 3438), &state, 6000), Err(RouteError::NoPath));
+}
+
+#[test]
+fn live_npc_refusal_is_not_assumed_away_by_the_entrance_bake() {
+    let fx = Fixture::new();
+    write_forced_fixture(&fx, r#"
+[oploc2,obstacle]
+if(inv_total(inv, gate_key) = 0) { return; }
+if(npc_find(gate_guard, true)) { return; }
+p_teleport(0_44_53_5_46);
+"#);
+    fx.write("pack/obj.pack", "1001=gate_key\n");
+    let (graph, _) = derive_entrance_fixture(&fx);
+    assert!(!graph.edges.iter().any(|edge| edge.loc_id == 6000),
+        "a possible live guard refusal makes the trajectory unproven");
+}
+
+#[test]
+fn item_on_wall_requires_the_selected_held_key_and_preserves_the_free_exit() {
+    let fx = Fixture::new();
+    write_stage_engine(&fx);
+    fx.write("pack/loc.pack", "900=key_door\n1535=loc_1535\n");
+    fx.write("pack/obj.pack", "1001=gate_key\n");
+    fx.write("scripts/key.loc", "[key_door]\nop1=Open\n");
+    fx.write("scripts/key.rs2", r#"
+[oplocu,key_door]
+if(last_useitem = gate_key) {
+    ~open_and_close_door(loc_1535, ~check_axis(coord, loc_coord, loc_angle), false);
+}
+[oploc1,key_door]
+if(~check_axis(coord, loc_coord, loc_angle) = true) { return; }
+~open_and_close_door(loc_1535, false, false);
+"#);
+    write_barrier_square(&fx, &[46], "0 4 46: 900 0 2\n");
+    let (graph, _) = derive_stage(&fx, &[900]);
+    assert!(graph.edges.iter().any(|edge| edge.loc_id == 900 && edge.option == 0 && edge.item_req == [(1001, 1)]));
+    assert!(graph.edges.iter().any(|edge| edge.loc_id == 900 && edge.option == 1 && edge.item_req.is_empty()));
+}
+
+#[test]
+fn completed_journal_does_not_prove_exact_progress_after_a_possible_later_write() {
+    for later_write in [
+        "%heroquest = 16;",
+        "%heroquest = calc(%heroquest + 1);",
+        "%heroquest, $other = ~two_values;",
+        "$other, %heroquest = 1, 16;",
+    ] {
+        let fx = Fixture::new();
+        write_forced_fixture(&fx, r#"
+[oploc2,obstacle]
+if(%heroquest ! ^hero_complete) { return; }
+p_teleport(0_44_53_5_46);
+"#);
+        // A queue is not an entrance handler. Its writes still constrain
+        // what the completed journal row can prove.
+        fx.write("scripts/later.rs2", &format!("[queue,later]\n{later_write}\n"));
+        let (graph, _) = derive_entrance_fixture(&fx);
+        assert!(!graph.edges.iter().any(|edge| edge.loc_id == 6000),
+            "green means at least completion, not equality: {later_write}");
+    }
+}
+
+#[test]
+fn completion_lower_bound_proves_an_earlier_threshold_without_claiming_its_exact_stage() {
+    let fx = Fixture::new();
+    write_forced_fixture(&fx, r#"
+[oploc2,obstacle]
+if(%heroquest < ^hero_phoenix_talked_charlie) { return; }
+p_teleport(0_44_53_5_46);
+[queue,later]
+%heroquest = calc(%heroquest + 1);
+"#);
+    let (graph, _) = derive_entrance_fixture(&fx);
+    let edges: Vec<_> = graph.edges.iter().filter(|edge| edge.loc_id == 6000).collect();
+    assert!(!edges.is_empty());
+    assert!(edges.iter().all(|edge| edge.quest_gates.as_ref().is_some_and(|gates|
+        matches!(gates.gates(), [api::selected::QuestGate::Complete(quest)] if quest.0.as_ref() == "hero"))));
+}
+
+#[test]
+fn unknown_return_guard_before_a_teleport_does_not_authorize_an_entrance() {
+    let fx = Fixture::new();
+    write_forced_fixture(&fx, r#"
+[oploc2,obstacle]
+if(%plain_flag = 1) { return; }
+if(inv_total(inv, gate_key) = 0) { return; }
+p_teleport(0_44_53_5_46);
+"#);
+    fx.write("pack/obj.pack", "1001=gate_key\n");
+    let (graph, _) = derive_entrance_fixture(&fx);
+    assert!(!graph.edges.iter().any(|edge| edge.loc_id == 6000),
+        "a non-moving guard can still refuse the operation");
+}
+
+#[test]
+fn animated_completed_quest_force_move_keeps_its_canonical_gate() {
+    let fx = Fixture::new();
+    write_forced_fixture(&fx, r#"
+[oploc2,obstacle]
+if(%heroquest ! ^hero_complete) { return; }
+loc_anim(roots_open);
+~forcemove(0_44_53_5_46);
+loc_anim(roots_close);
+"#);
+    let (graph, _) = derive_entrance_fixture(&fx);
+    let edges: Vec<_> = graph.edges.iter().filter(|edge| edge.loc_id == 6000).collect();
+    assert!(!edges.is_empty(), "a loc animation does not move or refuse the player");
+    assert!(edges.iter().all(|edge| edge.quest_gates.as_ref().is_some_and(|gates|
+        matches!(gates.gates(), [api::selected::QuestGate::Complete(quest)] if quest.0.as_ref() == "hero"))));
+}
+
+#[test]
+fn nonmoving_equipment_query_proc_preserves_its_worn_exclusion() {
+    let fx = Fixture::new();
+    write_forced_fixture(&fx, r#"
+[oploc2,obstacle]
+if(inv_total(inv, gate_key) = 0 | ~wearing_armour = true) { return; }
+p_teleport(0_44_53_5_46);
+[proc,wearing_armour]()(boolean)
+def_obj $torso = inv_getobj(worn, ^wearpos_torso);
+if($torso ! null & oc_category($torso) = armour_body) { return(true); }
+return(false);
+"#);
+    fx.write("pack/obj.pack", "1001=gate_key\n1002=armour\n");
+    fx.write("scripts/worn.constant", "^wearpos_torso = 4\n");
+    fx.write("scripts/worn.obj", "[armour]\nwearpos=torso\ncategory=armour_body\n");
+    let (graph, collision) = derive_entrance_fixture(&fx);
+    assert!(graph.edges.iter().any(|edge| edge.loc_id == 6000 && edge.forbidden_worn.contains(&1002)));
+    let mut state = WorldState {
+        inv: HashMap::from([(1001, 1)]),
+        inventory_ready: true,
+        equipment_ready: true,
+        ..WorldState::empty()
+    };
+    let from = tile(2818, 3438);
+    let to = tile(2821, 3438);
+    assert!(crosses(&graph, &collision, from, to, &state, 6000).unwrap());
+    state.worn.insert(1002);
+    assert_eq!(crosses(&graph, &collision, from, to, &state, 6000), Err(RouteError::NoPath));
+}
+
+#[test]
+fn post_crossing_timer_evaluates_pure_query_returns_before_admission() {
+    let fx = Fixture::new();
+    write_forced_fixture(&fx, r#"
+[oploc2,obstacle]
+if(inv_total(inv, gate_key) = 0) { return; }
+p_teleport(0_44_53_5_46);
+settimer(guard_check, 25);
+[timer,guard_check]
+if(~wearing_armour = true) { p_teleport(0_44_53_2_46); }
+settimer(guard_check, 25);
+[proc,wearing_armour]()(boolean)
+def_obj $torso = inv_getobj(worn, ^wearpos_torso);
+if($torso ! null & oc_category($torso) = armour_body) { return(true); }
+return(false);
+"#);
+    fx.write("pack/obj.pack", "1001=gate_key\n1002=armour\n");
+    fx.write("scripts/worn.constant", "^wearpos_torso = 4\n");
+    fx.write("scripts/worn.obj", "[armour]\nwearpos=torso\ncategory=armour_body\n");
+    let (graph, collision) = derive_entrance_fixture(&fx);
+    assert!(graph.edges.iter().any(|edge| edge.loc_id == 6000 && edge.forbidden_worn.contains(&1002)));
+    let mut state = WorldState {
+        inv: HashMap::from([(1001, 1)]),
+        inventory_ready: true,
+        equipment_ready: true,
+        ..WorldState::empty()
+    };
+    assert!(crosses(&graph, &collision, tile(2818, 3438), tile(2821, 3438), &state, 6000).unwrap());
+    state.worn.insert(1002);
+    assert_eq!(crosses(&graph, &collision, tile(2818, 3438), tile(2821, 3438), &state, 6000), Err(RouteError::NoPath));
+}
