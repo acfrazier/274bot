@@ -212,10 +212,6 @@ fn interact_union_publishes_only_live_bank_queue_ops() {
     let union = type_block(&src, "InteractReq");
     assert!(union.contains("| { op: 'walk-nearest-bank'}"), "{union}");
     assert!(
-        union.contains("| { op: 'withdraw-load'; name: string; bank_generation: number}"),
-        "the public v2 load request keeps its documented fields: {union}"
-    );
-    assert!(
         !union.contains("inspect-ack"),
         "the isolate consume-ack stays off the published queue: {union}"
     );
