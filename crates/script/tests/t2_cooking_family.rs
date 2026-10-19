@@ -1,10 +1,10 @@
 //! Served cooking-catalog compatibility across API and data module aliases.
+#![cfg(feature = "load")]
 
 use std::sync::Arc;
 
 use api::game_data::SelectedGameData;
-use api::named_banks::{NamedBankFacts, BANK_CATALOG};
-use nav::named_banks::resolve;
+use api::named_banks::{NamedBank, NamedBankFacts, BANK_CATALOG};
 use script::{LoadIsolate, LoadIsolateError, LoadShape};
 
 fn data() -> Arc<SelectedGameData> {
@@ -12,10 +12,14 @@ fn data() -> Arc<SelectedGameData> {
 }
 
 fn roster() -> NamedBankFacts {
-    resolve(
-        BANK_CATALOG,
-        &data().bank_placements().unwrap().rows,
-        |_| true,
+    NamedBankFacts::from_banks(
+        BANK_CATALOG
+            .iter()
+            .map(|definition| NamedBank {
+                definition: Some(definition),
+                ..NamedBank::new(definition.name, definition.tile)
+            })
+            .collect(),
     )
 }
 
@@ -322,6 +326,12 @@ try {
 } catch (error) {
     resolutionError = error.message;
 }
+let unknownResolutionError = '';
+try {
+    resolveCookLocation('Nowhere');
+} catch (error) {
+    unknownResolutionError = error.message;
+}
 
 globalThis.__cooking_offline = {
     locationCount: COOK_LOCATIONS.length,
@@ -331,7 +341,7 @@ globalThis.__cooking_offline = {
     buildReturnsPrebuiltArray: buildCookLocations([{ name: 'ignored' }]) === COOK_LOCATIONS,
     customIsNull: resolveCookLocation('Custom') === null,
     blankIsNull: resolveCookLocation('  ') === null,
-    unknownIsNull: resolveCookLocation('Nowhere') === null,
+    unknownResolutionError,
     nearestIsNull: nearestCookSurface(undefined) === null,
     resolutionError,
 };
@@ -371,7 +381,17 @@ fn runtime_catalog_exports_keep_aliases_options_surfaces_and_boundaries() {
     );
     assert_eq!(
         catalog["curatedDraynor"],
-        serde_json::json!([3100, 3257, 3102, 3258, 3100, 3256, "Fireplace", "fire", true])
+        serde_json::json!([
+            3100,
+            3257,
+            3102,
+            3258,
+            3100,
+            3256,
+            "Fireplace",
+            "fire",
+            true
+        ])
     );
     assert_eq!(
         catalog["generatedAlKharid"],
@@ -379,7 +399,10 @@ fn runtime_catalog_exports_keep_aliases_options_surfaces_and_boundaries() {
     );
     assert_eq!(catalog["allSurfacesStayOnBankPlaneAndWithinLimit"], true);
     assert_eq!(catalog["catherbyTilesAreTileInstances"], true);
-    assert_eq!(catalog["nearestOven"], serde_json::json!([2715, 3476, "oven"]));
+    assert_eq!(
+        catalog["nearestOven"],
+        serde_json::json!([2715, 3476, "oven"])
+    );
     assert_eq!(
         catalog["nearestSameKind"],
         serde_json::json!([2818, 3455, "oven"])
@@ -434,7 +457,10 @@ fn resolver_keeps_predicate_order_errors_and_default_unlocks() {
     assert_eq!(resolved["autoName"], "Varrock East");
     assert_eq!(resolved["autoOrder"], serde_json::json!(expected_names));
     assert_eq!(resolved["namedName"], "Catherby");
-    assert_eq!(resolved["namedPredicateCalledOnceWithCatalogIdentity"], true);
+    assert_eq!(
+        resolved["namedPredicateCalledOnceWithCatalogIdentity"],
+        true
+    );
     assert_eq!(resolved["settingCoercion"], serde_json::json!(["string"]));
     assert_eq!(resolved["convertedSettingName"], "Catherby");
     assert_eq!(resolved["customIsNull"], true);
@@ -468,7 +494,10 @@ fn absent_selected_data_keeps_empty_catalog_and_explicit_resolution_error() {
     assert_eq!(offline["buildReturnsPrebuiltArray"], true);
     assert_eq!(offline["customIsNull"], true);
     assert_eq!(offline["blankIsNull"], true);
-    assert_eq!(offline["unknownIsNull"], true);
+    assert_eq!(
+        offline["unknownResolutionError"],
+        offline["resolutionError"]
+    );
     assert_eq!(offline["nearestIsNull"], true);
     assert_eq!(
         offline["resolutionError"],
