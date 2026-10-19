@@ -3,7 +3,9 @@
 use super::compile::CompiledPath;
 use super::path::{PathDocument, PathRoleDocument, ProgressDocument};
 use api::quest_facts::QuestCatalog;
-use api::quest_progress::{EvidenceStamp, JournalRead, ProgressFlag, QuestProgress};
+use api::quest_progress::{
+    quest_list_status, EvidenceStamp, JournalRead, ProgressFlag, QuestProgress,
+};
 use api::selected::{FactKey, Gap, Knowledge, SelectedPin, Truth};
 use api::snapshot::{QuestListStatus, SnapshotView};
 use std::sync::Arc;
@@ -401,12 +403,7 @@ pub fn quest_colour(
     quests: &QuestCatalog,
     snapshot: SnapshotView<'_>,
 ) -> Option<QuestListStatus> {
-    let facts = quests.quest(path.id.0.as_ref()).ok()?;
-    let rows = snapshot.quest_statuses()?;
-    rows.value
-        .iter()
-        .find(|row| row.name.eq_ignore_ascii_case(facts.display.as_ref()))
-        .map(|row| row.status())
+    quest_list_status(quests, &path.id, snapshot).map(|status| status.value)
 }
 
 pub fn resolve_colour(
@@ -1139,5 +1136,62 @@ mod tests {
             Knowledge::Known(stage) if stage.0.as_ref() == "sheep:2"
         ));
         assert_eq!(completed.complete, Truth::True);
+    }
+
+    #[test]
+    fn quest_colour_matches_shared_snapshot_lookup_and_stage_colours() {
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+        let facts = quests.iter().next().expect("selected quest catalog has rows");
+        let mut path = path(Vec::new(), Vec::new(), false);
+        path.id = facts.id.clone();
+        let display = facts.display.to_string();
+        let cases = [
+            (
+                0xF80000,
+                QuestListStatus::NotStarted,
+                Some(path.colour_not_started.clone()),
+            ),
+            (
+                0xF8F800,
+                QuestListStatus::InProgress,
+                Some(path.colour_in_progress.clone()),
+            ),
+            (
+                0x00F800,
+                QuestListStatus::Complete,
+                Some(path.colour_complete.clone()),
+            ),
+            (0x123456, QuestListStatus::Unknown, None),
+        ];
+
+        for (colour, status, stage) in cases {
+            let mut snapshot = api::snapshot::GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            snapshot.seed_quest_statuses(
+                vec![api::snapshot::QuestStatusView {
+                    component_id: 1,
+                    name: display.to_ascii_uppercase(),
+                    colour,
+                }],
+                true,
+            );
+            let view = SnapshotView::new(Some(&snapshot), stamp(1));
+
+            assert_eq!(quest_colour(&path, &quests, view), Some(status));
+            assert_eq!(
+                quest_list_status(&quests, &path.id, view).map(|observed| observed.value),
+                Some(status)
+            );
+            assert_eq!(colour_stage(&path, &quests, view), stage);
+        }
+
+        let mut missing = api::snapshot::GameSnapshot::new();
+        missing.seed_ingame(2);
+        missing.seed_quest_statuses(Vec::new(), true);
+        assert_eq!(
+            quest_colour(&path, &quests, SnapshotView::new(Some(&missing), stamp(1))),
+            None
+        );
     }
 }
