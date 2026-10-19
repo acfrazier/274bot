@@ -172,6 +172,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - A Quester folder accepts at most 4,096 entries, 1 MiB per Path document and
   16 MiB of retained documents. Larger folders or documents report a typed
   validation error and leave the last successful registry available.
+- Fixed: FlourCollector and other scripts that call `Reach.locOp` no longer
+  stop with "not impl: Reach.locOp" on every loop. The call now walks to the
+  object, opens doors on the way and uses the object, as the script expects.
 
 ### Navigation
 
@@ -201,6 +204,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   Busy search capacity or result storage delays a valid inspection instead
   of refusing it. Reset cancels the current inspection and prevents stale
   output. Recent results remain available until acknowledged or replaced.
+- Fixed: Compat v1 scripts that open a bank by walking to its stand, such as
+  FlourCollector on its way back from Sinclair Mansion, no longer refuse that
+  walk because of danger zones. Their other walks already crossed the same
+  zones, so the script now walks out and back the same way.
 
 ### Random-event guardian
 

@@ -3879,6 +3879,19 @@ interface Interactable {
     interact(action: string): boolean | Promise<boolean>;
 }
 type ReachStatus = 'done' | 'retry' | 'unreachable';
+interface ReachLocOpts {
+    name: string;
+    op: string;
+    near: WorldTile;
+    within?: number;
+    /** Exact loc id, when the display name is shared with something else in range. */
+    id?: number;
+    expect: () => boolean;
+    expectMs?: number;
+    /** Game-message pattern emitted when the loc op cannot run yet. */
+    refused?: RegExp;
+    log?: (m: string) => void;
+}
 interface ReachNpcOpts {
     name: string;
     near: WorldTile;
@@ -3904,6 +3917,7 @@ interface ReachEntityOpts<T extends ReachEntity> {
  */
 export const Reach: {
     entityOp<T extends ReachEntity>(opts: ReachEntityOpts<T>): Promise<ReachStatus>;
+    locOp(opts: ReachLocOpts): Promise<ReachStatus>;
     npcDialog(opts: ReachNpcOpts): Promise<ReachStatus>;
 };
 
