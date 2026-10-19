@@ -12,6 +12,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- The runecrafting compatibility catalog is materialized directly from the Rust
+  route roster. Its names, order, default rune and real Tile values are unchanged;
+  the unused posted content-page copy has been removed.
 - Cow location, toll, bootstrap and loot-leash helpers are admitted as a complete
   Rust-backed compatibility family. Catalog order, selected-bank bindings,
   object identities and existing behavior are unchanged.
