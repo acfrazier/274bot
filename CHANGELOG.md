@@ -228,6 +228,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   The northern Desert Mining Camp mine stays hidden: its intervening
   minecart needs a dialogue and a chance-gated crossing that is not modelled
   yet. The remaining hidden-site counts are 85 on 289 and 66 on 274.
+- The bundled map pack now uses format 17. The app rebuilds it automatically.
+  If you use a map pack you baked yourself, rebake it before use with
+  `cargo run -p nav --bin nav-pack`.
 
 ### Random-event guardian
 
