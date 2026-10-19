@@ -42,10 +42,7 @@ fn entity<'a>(
 
 fn snapshot<'a>(
     tick: u64,
-    npcs: &'a [SceneEntityInput<'a>],
-    locs: &'a [SceneEntityInput<'a>],
-    players: &'a [SceneEntityInput<'a>],
-    ground: &'a [SceneEntityInput<'a>],
+    [npcs, locs, players, ground]: [&'a [SceneEntityInput<'a>]; 4],
     self_slot: i32,
     run_energy: i32,
     main_modal_id: i32,
@@ -369,10 +366,7 @@ fn production_entity_queries_follow_only_the_successful_native_generation() {
     ];
     let base = snapshot(
         1,
-        &base_npcs,
-        &base_locs,
-        &base_players,
-        &base_ground,
+        [&base_npcs, &base_locs, &base_players, &base_ground],
         0,
         0,
         -1,
@@ -491,10 +485,7 @@ fn production_entity_queries_follow_only_the_successful_native_generation() {
     )];
     let failed = snapshot(
         2,
-        &failed_npcs,
-        &failed_locs,
-        &failed_players,
-        &failed_ground,
+        [&failed_npcs, &failed_locs, &failed_players, &failed_ground],
         9,
         0,
         77,
@@ -540,10 +531,7 @@ fn production_entity_queries_follow_only_the_successful_native_generation() {
     );
     let omitted = snapshot(
         3,
-        &failed_npcs,
-        &failed_locs,
-        &failed_players,
-        &failed_ground,
+        [&failed_npcs, &failed_locs, &failed_players, &failed_ground],
         9,
         1,
         77,
@@ -586,10 +574,7 @@ fn production_entity_queries_follow_only_the_successful_native_generation() {
     )];
     let advanced = snapshot(
         4,
-        &fresh_npcs,
-        &failed_locs,
-        &failed_players,
-        &failed_ground,
+        [&fresh_npcs, &failed_locs, &failed_players, &failed_ground],
         8,
         1,
         77,
