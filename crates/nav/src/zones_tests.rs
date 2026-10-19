@@ -493,7 +493,7 @@ struct PackMembershipUnitBound {
 // assertion affected by host scheduling, fail if a supported pack grows.
 const PACK_274_MEMBERSHIP_UNIT: PackMembershipUnitBound = PackMembershipUnitBound {
     revision: 274,
-    nav_sha256: "357ab9027003f9da254b2d0cb1a5f86b4b0e94b73465529460707a767b004fe0",
+    nav_sha256: "d934ac2aed29425e23be53d8cc6139e9a5adea0537fe6a0b6cd922bc6668675b",
     bucket_candidates: 32,
     carves_per_candidate: 141,
     carves_per_bucket: 1_334,
@@ -503,7 +503,7 @@ const PACK_274_MEMBERSHIP_UNIT: PackMembershipUnitBound = PackMembershipUnitBoun
 };
 const PACK_289_MEMBERSHIP_UNIT: PackMembershipUnitBound = PackMembershipUnitBound {
     revision: 289,
-    nav_sha256: "4270f02711447267e0ee639579d41532996a3d37f712d5d63cdb79051e45300f",
+    nav_sha256: "4e8ab5af4694cf6722ed3836c3e1f42e9ac1be136d4d1127c7db698f4fc6500b",
     bucket_candidates: 32,
     carves_per_candidate: 141,
     carves_per_bucket: 1_749,

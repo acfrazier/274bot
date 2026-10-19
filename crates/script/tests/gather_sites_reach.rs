@@ -59,6 +59,7 @@ const LUMBRIDGE: WorldTile = WorldTile {
 const SKILL_IDS: std::ops::RangeInclusive<i32> = 0..=30;
 const COINS: i32 = 995;
 const COIN_STACK: i32 = 1_000_000;
+const QUEST_NOT_STARTED_COLOUR: i32 = 0xF80000;
 /// Tiles beside a region's resource spots that a gatherer can stand on.
 const MARGIN: i32 = 1;
 
@@ -83,8 +84,7 @@ fn worn_for(site: &GatherSiteOption) -> Vec<i32> {
     worn
 }
 
-/// Complete journals from the selected revision through the production provider.
-fn completed_quests(world: &NavWorld) -> QuestEvidence {
+fn quest_evidence(world: &NavWorld, incomplete_quest: Option<&str>) -> QuestEvidence {
     let selected = game_data::for_revision(ClientRevision::R289).expect("289 selected data");
     let (facts, identity) = selected
         .quest_identity_for_bake()
@@ -106,18 +106,30 @@ fn completed_quests(world: &NavWorld) -> QuestEvidence {
     };
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
-    snapshot.seed_quest_statuses(
-        catalog
-            .iter()
-            .enumerate()
-            .map(|(index, quest)| QuestStatusView {
+    let mut incomplete_found = incomplete_quest.is_none();
+    let statuses = catalog
+        .iter()
+        .enumerate()
+        .map(|(index, quest)| {
+            let incomplete = incomplete_quest
+                .is_some_and(|name| quest.display.as_ref().eq_ignore_ascii_case(name));
+            incomplete_found |= incomplete;
+            QuestStatusView {
                 component_id: index as i32,
                 name: quest.display.to_string(),
-                colour: nav::world_state::QUEST_COMPLETE_COLOUR,
-            })
-            .collect(),
-        true,
+                colour: if incomplete {
+                    QUEST_NOT_STARTED_COLOUR
+                } else {
+                    nav::world_state::QUEST_COMPLETE_COLOUR
+                },
+            }
+        })
+        .collect();
+    assert!(
+        incomplete_found,
+        "the requested incomplete quest is in the selected catalog"
     );
+    snapshot.seed_quest_statuses(statuses, true);
     let provider = QuestListEvidenceProvider::from_snapshot(
         &catalog,
         Some(identity),
@@ -125,6 +137,11 @@ fn completed_quests(world: &NavWorld) -> QuestEvidence {
         SnapshotView::new(Some(&snapshot), stamp),
     );
     QuestEvidence::new(Arc::new(provider), family, stamp)
+}
+
+/// Complete journals from the selected revision through the production provider.
+fn completed_quests(world: &NavWorld) -> QuestEvidence {
+    quest_evidence(world, None)
 }
 
 /// The maxed account, with only the site's declared worn items left to the caller.
@@ -422,5 +439,40 @@ fn every_published_gather_site_is_reachable_and_every_hidden_one_is_not() {
         "{} hidden gather site(s) are reachable on the pack now (it gained the entrance): restore each by removing its SITE_OVERRIDES drop row in tools/game-data/extractors/gathering.ts, then regenerate the game data:\n{}",
         restorable.len(),
         restorable.join("\n")
+    );
+}
+
+#[test]
+#[ignore = "requires the real 289 nav pack in NAV_PACK (with its .navflags beside it)"]
+fn lower_mine_returns_no_path_when_only_the_tourist_trap_is_incomplete() {
+    let selected = game_data::for_revision(ClientRevision::R289).expect("289 selected data");
+    let pack = real_nav_pack();
+    let world = load_world(&pack);
+    let site = selected
+        .gather_site("mining", "mining.desert_mining_camp.underground")
+        .expect("published lower mine");
+    assert!(site.requires.iter().any(|requirement| matches!(
+        requirement,
+        GatherSiteRequirement::Quest { name } if name == "The Tourist Trap"
+    )));
+
+    let quests = quest_evidence(&world, Some("The Tourist Trap"));
+    let mut state = maxed_state(&world, quests);
+    state.quests.remove("The Tourist Trap");
+    let worn = worn_for(site);
+    assert_eq!(worn, vec![1844, 1845, 1846]);
+    state.worn = worn.into_iter().collect();
+    state.inv.insert(1839, 1);
+    assert_eq!(state.inv.get(&1839), Some(&1), "the metal key is held");
+    assert!(
+        !state.quests.contains("The Tourist Trap"),
+        "raw quest state does not mark The Tourist Trap complete"
+    );
+
+    let reachable = reached(&world, &state, &[Target::from(site)]);
+    assert!(
+        !reachable.contains(site.id.as_str()),
+        "{} must return NoPath when The Tourist Trap is not started",
+        site.id
     );
 }

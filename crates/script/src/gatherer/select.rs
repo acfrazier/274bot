@@ -1402,7 +1402,7 @@ pub(crate) fn test_real_nav_world() -> &'static std::sync::Arc<nav::world::NavWo
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| {
                     std::path::PathBuf::from(
-                        "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+                        "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
                     )
                 });
             std::sync::Arc::new(
@@ -3364,7 +3364,7 @@ pub(crate) mod tests {
     fn fishing_guild_ardougne_approach_picks_a_legal_stand() {
         let Some(_pack) = crate::ctx::test_support::local_asset_path(
             "NAV_PACK",
-            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+            "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
             "real 289 nav pack",
         ) else {
             return;
@@ -3460,7 +3460,7 @@ pub(crate) mod tests {
     fn fishing_approach_keeps_a_legal_clamped_stand() {
         let Some(_pack) = crate::ctx::test_support::local_asset_path(
             "NAV_PACK",
-            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+            "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
             "real 289 nav pack",
         ) else {
             return;
@@ -3614,7 +3614,7 @@ pub(crate) mod tests {
     fn fishing_stand_search_does_not_repeat_on_waiting_ticks() {
         let Some(_pack) = crate::ctx::test_support::local_asset_path(
             "NAV_PACK",
-            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+            "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
             "real 289 nav pack",
         ) else {
             return;
@@ -3790,7 +3790,7 @@ pub(crate) mod tests {
     fn fishing_npc_bounds_have_legal_initial_stands_on_every_side() {
         let Some(_pack) = crate::ctx::test_support::local_asset_path(
             "NAV_PACK",
-            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+            "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
             "real 289 nav pack",
         ) else {
             return;

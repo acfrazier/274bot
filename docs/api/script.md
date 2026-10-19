@@ -1066,6 +1066,12 @@ a choice list; lists with more than 16 choices support search. The panel
 combo has the same eligibility and search threshold. Search matches site
 names and ids; Esc cancels without changing the selection.
 
+The lower Desert Mining Camp site requires The Tourist Trap complete and all
+three slave-kit pieces worn. It supports Power mode only. Bank-mode Start
+rejects this site with the reason stored in its `banking_unavailable` field.
+The bot cannot remove the kit to pass the camp's exit, so it has no return
+route to a bank.
+
 Site chooses an accessible placement of a selected resource nearest the
 camp's resource centroid. That retained anchor survives Pause/Resume; changing
 the site requires a fresh Start. The work area remains `anchor ± radius`,

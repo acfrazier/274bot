@@ -187,6 +187,11 @@ fn resolve_site(
     }) {
         return error(format!("{id} is not for the selected resources"));
     }
+    if settings.disposition.eq_ignore_ascii_case("Bank") {
+        if let Some(reason) = &site.banking_unavailable {
+            return error(format!("{}: {reason}", site.label));
+        }
+    }
     (Some(index), None)
 }
 
@@ -201,8 +206,19 @@ mod tests {
         site: &str,
         location: &str,
     ) -> Arc<PreparedConfig> {
+        prepared_site_with_disposition(skill, resource, site, location, "Bank")
+    }
+
+    fn prepared_site_with_disposition(
+        skill: &str,
+        resource: &str,
+        site: &str,
+        location: &str,
+        disposition: &str,
+    ) -> Arc<PreparedConfig> {
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let mut bag = SettingsBag::new();
+        bag.insert("disposition".into(), json!(disposition));
         bag.insert("skill".into(), json!(skill));
         bag.insert("location".into(), json!(location));
         bag.insert("site".into(), json!(site));
@@ -297,5 +313,44 @@ mod tests {
             assert_eq!(prepared.site().unwrap().id, "fishing.catherby");
             assert_eq!(prepared.settings.fishing_method, resource);
         }
+    }
+
+    #[test]
+    fn banking_site_rejects_bank_mode_but_remains_available_in_power_mode() {
+        let site_id = "mining.desert_mining_camp.underground";
+        let bank_config = prepared_site("Mining", "copper", site_id, "Site");
+        let bank = bank_config.get::<Arc<Prepared>>().unwrap();
+        let site = bank.selected.gather_site("mining", site_id).unwrap();
+        let expected_message = format!(
+            "{}: {}",
+            site.label,
+            site.banking_unavailable.as_deref().unwrap()
+        );
+        let error = bank.site_error.as_ref().unwrap();
+        assert_eq!(error.message.as_ref(), expected_message.as_str());
+        assert!(bank.site().is_none());
+        let bank_run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        assert!(matches!(
+            create(bank_run, bank_config, &mut RetainedMemory::default()),
+            Err(StartError::Config(error))
+                if error.message.as_ref() == expected_message.as_str()
+        ));
+
+        let power_config =
+            prepared_site_with_disposition("Mining", "copper", site_id, "Site", "Power");
+        let power = power_config.get::<Arc<Prepared>>().unwrap();
+        assert_eq!(power.settings.disposition, "Power");
+        assert!(power.site_error.is_none());
+        assert_eq!(power.site().unwrap().id, site_id);
+        let power_run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        assert!(create(power_run, power_config, &mut RetainedMemory::default()).is_ok());
     }
 }

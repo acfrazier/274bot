@@ -1308,6 +1308,9 @@ pub struct GatherSiteOption {
     /// names them; no gate reads this list. Empty when nothing gates the site.
     #[serde(default)]
     pub requires: Vec<GatherSiteRequirement>,
+    /// User-facing reason that Bank mode cannot use this site. Other dispositions remain available.
+    #[serde(default)]
+    pub banking_unavailable: Option<String>,
 }
 
 /// One requirement a published gather site names. `kind` selects the variant.

@@ -6534,26 +6534,32 @@ fn missing_item_result_retention_uses_route_edges_not_the_search_budget() {
 #[test]
 #[ignore = "loads the two reviewed real nav packs"]
 fn reviewed_real_packs_have_exact_carry_and_worn_row_counts() {
-    for (path, expected_carry, expected_worn) in [
+    for (variable, fallback, expected_carry, expected_worn) in [
         (
-            "/srv/dev/scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
-            221,
+            "NAV_PACK",
+            "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
+            251,
             3_603,
         ),
         (
-            "/srv/dev/scratch/274bot-evidence/TRACK-T5/T5W/membership/nav/274/membership.navpack",
-            152,
+            "T5W_MEMBERSHIP_NAVPACK_274",
+            "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-274-v17.navpack",
+            182,
             3_483,
         ),
     ] {
-        let world = crate::world::NavWorld::load_pack(&PathBuf::from(path))
-            .expect("load the reviewed pack from its real content");
+        let path = std::env::var_os(variable)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(fallback));
+        let world = crate::world::NavWorld::load_pack(&path)
+            .expect("load the reviewed v17 pack from its real content");
         let envelope = crate::contract::SearchGraphEnvelope::from_graph(&world.graph);
         assert!(envelope.is_representable());
         assert_eq!(
             (envelope.carry_rows, envelope.worn_rows),
             (expected_carry, expected_worn),
-            "{path}"
+            "{}",
+            path.display()
         );
     }
 }

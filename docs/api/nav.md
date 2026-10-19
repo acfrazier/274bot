@@ -144,6 +144,18 @@ landings do not set it.
 rebaked. The `274N` grid decoder (`decode_grid`) stays for old boolean-walk
 files.
 
+The revision-289 reference is now the v17 entrance bake,
+`274bot-289-v17.navpack`, with its `274bot-289-v17.navflags` sibling.
+Local evidence is in
+`/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/`.
+Set `NAV_PACK`, `WORLD_NAV_PACK` and `NAV_ARRIVAL_PACK` to this pack.
+Set `BOT_NAV_BUILD=skip` for tests that use the reference.
+An explicitly selected unreadable or wrong-version pack fails the real-pack
+tests. It does not silently skip the identity and transport-census check.
+CI obtains the same SHA-pinned files from the dedicated `nav-reference-v17`
+release assets. Publishing those assets is an operator action.
+
+
 ### Build-time selection, reuse and overrides
 
 | Env | Default | Meaning |
