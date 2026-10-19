@@ -543,28 +543,23 @@
       "cases": [
         {
           "name": " > GameMessages > mark starts at 0 and advances per record",
-          "status": "fail",
-          "reason": "Error: expected 0 to be 1"
+          "status": "pass"
         },
         {
           "name": " > GameMessages > sawSince only sees messages recorded after the mark",
-          "status": "fail",
-          "reason": "Error: expected false to be true"
+          "status": "pass"
         },
         {
           "name": " > GameMessages > stateful patterns remain stable across repeated checks",
-          "status": "fail",
-          "reason": "Error: expected false to be true"
+          "status": "pass"
         },
         {
           "name": " > GameMessages > identical repeated texts are distinct messages",
-          "status": "fail",
-          "reason": "Error: expected 0 to be 2"
+          "status": "pass"
         },
         {
           "name": " > GameMessages > ring caps at 64 but seq keeps climbing",
-          "status": "fail",
-          "reason": "Error: expected 0 to be 70"
+          "status": "pass"
         },
         {
           "name": " > GameMessages > CANT_REACH matches the live server line",
