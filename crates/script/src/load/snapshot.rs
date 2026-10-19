@@ -355,19 +355,6 @@ pub(super) fn materialize_snapshot(
     } else if !had {
         set(&mut scope, obj, "withdraw_x_result", falsy)?;
     }
-    if snap.has_withdraw_load_result_seq() {
-        let seq = num(&mut scope, snap.withdraw_load_result_seq() as f64);
-        set(&mut scope, obj, "withdraw_load_result_seq", seq)?;
-    } else if !had {
-        let seq = num(&mut scope, 0.0);
-        set(&mut scope, obj, "withdraw_load_result_seq", seq)?;
-    }
-    if snap.has_withdraw_load_result() {
-        let result = v8::Boolean::new(&mut scope, snap.withdraw_load_result());
-        set(&mut scope, obj, "withdraw_load_result", result.into())?;
-    } else if !had {
-        set(&mut scope, obj, "withdraw_load_result", falsy)?;
-    }
     if snap.has_bank_op_result_seq() {
         let seq = num(&mut scope, snap.bank_op_result_seq() as f64);
         set(&mut scope, obj, "bank_op_result_seq", seq)?;

@@ -384,9 +384,6 @@ required-features = ["load"]
 name = "bank_withdraw_op"
 required-features = ["load"]
 [[test]]
-name = "bank_v2_load"
-required-features = ["load"]
-[[test]]
 name = "chat_dialog_continue"
 required-features = ["load"]
 [[test]]
