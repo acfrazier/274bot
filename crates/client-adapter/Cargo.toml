@@ -13,3 +13,8 @@ tungstenite = { version = "=0.24.0", default-features = false, features = ["hand
 thiserror = "=2.0.20"
 rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
 rustls-platform-verifier = "=0.7.0"
+
+[dev-dependencies]
+libc = "0.2"
+rcgen = "0.13"
+sha2 = "=0.10.9"
