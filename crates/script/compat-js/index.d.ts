@@ -3212,16 +3212,16 @@ export default class EntityQuery<E extends QueryableEntity> {
         z: number;
         level?: number;
     }, dist: number): this;
-    inside(area?: {
+    inside(area: {
         minX: number;
         maxX: number;
         minZ: number;
         maxZ: number;
-    }): never;
+    }): this;
     where(pred: (e: E) => boolean): this;
     results(): E[];
     nearest(): E | null;
-    nearestPreferLocal(preferRadius?: number): never;
+    nearestPreferLocal(preferRadius: number): E | null;
     first(): E | null;
     exists(): boolean;
     count(): number;

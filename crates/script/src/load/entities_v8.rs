@@ -117,7 +117,8 @@ fn string_call<'s>(
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let global = global(scope);
     let constructor = cb::get(scope, global.into(), "String")?;
-    cb::call(scope, constructor, undefined(scope), &[value], "String")
+    let receiver = undefined(scope);
+    cb::call(scope, constructor, receiver, &[value], "String")
 }
 
 fn lower_case<'s>(
@@ -182,9 +183,9 @@ fn entity_snap_view<'s>(
     if !cb::truthy(scope, row) {
         return Ok(null(scope));
     }
-    let source = row.to_object(scope).ok_or_else(|| {
-        cb::type_error(scope, "Cannot convert undefined or null to object")
-    })?;
+    let source = row
+        .to_object(scope)
+        .ok_or_else(|| cb::type_error(scope, "Cannot convert undefined or null to object"))?;
     let view = v8::Object::new(scope);
     spread_own_enumerable(scope, source, view)?;
 
@@ -254,7 +255,7 @@ fn spread_property<'s>(
     if !cb::truthy(scope, enumerable) {
         return Ok(Flow::Continue(None));
     }
-    let value = cb::get(scope, source.into(), key)?;
+    let value = cb::catching(scope, |s| source.get(s, key))?;
     let created = cb::catching(scope, |s| target.create_data_property(s, key_name, value))?;
     if !created {
         return Err(cb::type_error(scope, "could not copy entity property"));
@@ -273,13 +274,19 @@ fn present_ops<'s>(
     };
     let predicate = v8::Function::new(scope, present_ops_predicate)
         .ok_or_else(|| cb::type_error(scope, "could not create action filter"))?;
-    cb::call_method(scope, actions, "filter", &[predicate.into()], "actions.filter")
+    cb::call_method(
+        scope,
+        actions,
+        "filter",
+        &[predicate.into()],
+        "actions.filter",
+    )
 }
 
 fn present_ops_predicate<'s>(
     scope: &mut v8::HandleScope<'s>,
     args: v8::FunctionCallbackArguments<'s>,
-    rv: v8::ReturnValue,
+    mut rv: v8::ReturnValue,
 ) {
     let action = args.get(0);
     if !cb::truthy(scope, action) {
@@ -311,9 +318,9 @@ fn op_index_value<'s>(
         if !cb::lt(scope, current_index, length)? {
             return Ok(-1.0);
         }
-        let object = actions.to_object(scope).ok_or_else(|| {
-            cb::type_error(scope, "Cannot convert undefined or null to object")
-        })?;
+        let object = actions
+            .to_object(scope)
+            .ok_or_else(|| cb::type_error(scope, "Cannot convert undefined or null to object"))?;
         let action_at_index = cb::num(scope, index);
         let candidate = cb::catching(scope, |s| object.get(s, action_at_index))?;
         if cb::truthy(scope, candidate) {
@@ -373,7 +380,10 @@ fn talk_op_predicate<'s>(
         let source = v8::String::new(scope, "^talk").unwrap_or_else(|| v8::String::empty(scope));
         let Some(regex) = v8::RegExp::new(scope, source, v8::RegExpCreationFlags::IGNORE_CASE)
         else {
-            return Err(cb::type_error(scope, "could not create talk action regular expression"));
+            return Err(cb::type_error(
+                scope,
+                "could not create talk action regular expression",
+            ));
         };
         let test = cb::get(scope, regex.into(), "test")?;
         let text = string_call(scope, args.get(0))?;
@@ -396,6 +406,8 @@ fn entities_all<'s>(
         Some(1) => "players",
         _ => return Err(cb::not_impl(scope, "entity collection")),
     };
+    let receiver = undefined(scope);
+    let snapshot = cb::call(scope, snap_fn, receiver, &[], "snap")?;
     let rows = cb::get(scope, snapshot, key)?;
     let rows = if cb::truthy(scope, rows) {
         rows
@@ -404,7 +416,12 @@ fn entities_all<'s>(
     };
     let map = cb::get(scope, rows, "map")?;
     let data = data_object(scope, "constructor", constructor)?;
-    let mapper = build_callback(scope, wrap_entity_row, data, "could not create entity mapper")?;
+    let mapper = build_callback(
+        scope,
+        wrap_entity_row,
+        data,
+        "could not create entity mapper",
+    )?;
     cb::call(scope, map, rows, &[mapper], "entity snapshots map")
 }
 
@@ -458,7 +475,12 @@ fn query_name<'s>(
         .ok_or_else(|| cb::type_error(scope, "could not create query name mapper"))?;
     let wanted = cb::call(scope, map, names, &[mapper.into()], "query names.map")?;
     let data = data_object(scope, "wanted", wanted)?;
-    let predicate = build_callback(scope, query_name_predicate, data, "could not create name filter")?;
+    let predicate = build_callback(
+        scope,
+        query_name_predicate,
+        data,
+        "could not create name filter",
+    )?;
     push_filter(scope, query, "snapFilters", predicate)
 }
 
@@ -503,7 +525,12 @@ fn query_action<'s>(
     let string = string_call(scope, action)?;
     let wanted = lower_case(scope, string)?;
     let data = data_object(scope, "wanted", wanted)?;
-    let predicate = build_callback(scope, query_action_predicate, data, "could not create action filter")?;
+    let predicate = build_callback(
+        scope,
+        query_action_predicate,
+        data,
+        "could not create action filter",
+    )?;
     push_filter(scope, query, "snapFilters", predicate)
 }
 
@@ -562,7 +589,12 @@ fn query_within<'s>(
     distance: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let data = data_object(scope, "distance", distance)?;
-    let predicate = build_callback(scope, query_within_predicate, data, "could not create distance filter")?;
+    let predicate = build_callback(
+        scope,
+        query_within_predicate,
+        data,
+        "could not create distance filter",
+    )?;
     push_filter(scope, query, "snapFilters", predicate)
 }
 
@@ -654,7 +686,12 @@ fn query_inside<'s>(
     area: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let data = data_object(scope, "area", area)?;
-    let predicate = build_callback(scope, query_inside_predicate, data, "could not create area filter")?;
+    let predicate = build_callback(
+        scope,
+        query_inside_predicate,
+        data,
+        "could not create area filter",
+    )?;
     push_filter(scope, query, "snapFilters", predicate)
 }
 
@@ -690,7 +727,6 @@ fn query_inside_predicate<'s>(
     cb::finish(scope, rv, result);
 }
 
-
 fn push_filter<'s>(
     scope: &mut v8::HandleScope<'s>,
     query: v8::Local<'s, v8::Value>,
@@ -717,7 +753,12 @@ fn filter_array_passes<'s>(
     let filters = cb::get(scope, query, key)?;
     let every = cb::get(scope, filters, "every")?;
     let data = data_object(scope, "view", view)?;
-    let predicate = build_callback(scope, invoke_filter, data, "could not create filter callback")?;
+    let predicate = build_callback(
+        scope,
+        invoke_filter,
+        data,
+        "could not create filter callback",
+    )?;
     let label = if key == "snapFilters" {
         "this.snapFilters.every"
     } else {
@@ -734,7 +775,8 @@ fn invoke_filter<'s>(
 ) {
     let result = (|| {
         let view = cb::get(scope, args.data(), "view")?;
-        cb::call(scope, args.get(0), undefined(scope), &[view], "f")
+        let receiver = undefined(scope);
+        cb::call(scope, args.get(0), receiver, &[view], "f")
     })();
     cb::finish(scope, rv, result);
 }
@@ -778,7 +820,8 @@ fn match_entity_iteration<'s>(
         if !filter_array_passes(scope, query, "entityFilters", entity)? {
             return Ok(Flow::Continue(None));
         }
-        let result = cb::call(scope, seen, undefined(scope), &[entity], "seen")?;
+        let receiver = undefined(scope);
+        let result = cb::call(scope, seen, receiver, &[entity], "seen")?;
         if cb::truthy(scope, result) {
             snapshots.close(scope)?;
             Ok(Flow::Break(None))
@@ -795,8 +838,19 @@ fn query_results<'s>(
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let output: v8::Local<v8::Value> = v8::Array::new(scope, 0).into();
     let data = data_object(scope, "output", output)?;
-    let callback = build_callback(scope, collect_result, data, "could not create query collector")?;
-    cb::call_method(scope, query, "forEachMatch", &[callback], "this.forEachMatch")?;
+    let callback = build_callback(
+        scope,
+        collect_result,
+        data,
+        "could not create query collector",
+    )?;
+    cb::call_method(
+        scope,
+        query,
+        "forEachMatch",
+        &[callback],
+        "this.forEachMatch",
+    )?;
     Ok(output)
 }
 
@@ -817,9 +871,21 @@ fn query_nearest<'s>(
     scope: &mut v8::HandleScope<'s>,
     query: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let data = data_object(scope, "best", null(scope))?;
-    let callback = build_callback(scope, rank_nearest, data, "could not create nearest callback")?;
-    cb::call_method(scope, query, "forEachMatch", &[callback], "this.forEachMatch")?;
+    let empty = null(scope);
+    let data = data_object(scope, "best", empty)?;
+    let callback = build_callback(
+        scope,
+        rank_nearest,
+        data,
+        "could not create nearest callback",
+    )?;
+    cb::call_method(
+        scope,
+        query,
+        "forEachMatch",
+        &[callback],
+        "this.forEachMatch",
+    )?;
     cb::get(scope, data, "best")
 }
 
@@ -836,7 +902,10 @@ fn set_data<'s>(
     if cb::catching(scope, |s| object.set(s, key, value))? {
         Ok(())
     } else {
-        Err(cb::type_error(scope, "could not update query callback state"))
+        Err(cb::type_error(
+            scope,
+            "could not update query callback state",
+        ))
     }
 }
 fn rank_nearest<'s>(
@@ -866,9 +935,21 @@ fn query_first<'s>(
     scope: &mut v8::HandleScope<'s>,
     query: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let data = data_object(scope, "hit", null(scope))?;
-    let callback = build_callback(scope, capture_first, data, "could not create first callback")?;
-    cb::call_method(scope, query, "forEachMatch", &[callback], "this.forEachMatch")?;
+    let empty = null(scope);
+    let data = data_object(scope, "hit", empty)?;
+    let callback = build_callback(
+        scope,
+        capture_first,
+        data,
+        "could not create first callback",
+    )?;
+    cb::call_method(
+        scope,
+        query,
+        "forEachMatch",
+        &[callback],
+        "this.forEachMatch",
+    )?;
     cb::get(scope, data, "hit")
 }
 
@@ -900,7 +981,13 @@ fn query_count<'s>(
     let zero = cb::num(scope, 0.0);
     let data = data_object(scope, "count", zero)?;
     let callback = build_callback(scope, count_result, data, "could not create count callback")?;
-    cb::call_method(scope, query, "forEachMatch", &[callback], "this.forEachMatch")?;
+    cb::call_method(
+        scope,
+        query,
+        "forEachMatch",
+        &[callback],
+        "this.forEachMatch",
+    )?;
     cb::get(scope, data, "count")
 }
 
@@ -1016,7 +1103,6 @@ fn rank_pool_iteration<'s>(
         None => Ok(Flow::Continue(Some(best))),
     }
 }
-
 
 fn entity_instance_snap<'s>(
     scope: &mut v8::HandleScope<'s>,
@@ -1197,7 +1283,8 @@ fn entity_targets_me<'s>(
     }
     let row = entity_instance_snap(scope, instance)?;
     let target_index = cb::get(scope, row, "target_index")?;
-    let snapshot = cb::call(scope, snap_fn, undefined(scope), &[], "snap")?;
+    let receiver = undefined(scope);
+    let snapshot = cb::call(scope, snap_fn, receiver, &[], "snap")?;
     let self_slot = cb::get(scope, snapshot, "self_slot")?;
     let self_slot = if self_slot.is_null_or_undefined() {
         cb::num(scope, 0.0)
@@ -1212,7 +1299,8 @@ fn npc_targets_another_player<'s>(
     instance: v8::Local<'s, v8::Value>,
     snap_fn: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let snapshot = cb::call(scope, snap_fn, undefined(scope), &[], "snap")?;
+    let receiver = undefined(scope);
+    let snapshot = cb::call(scope, snap_fn, receiver, &[], "snap")?;
     let self_slot = cb::get(scope, snapshot, "self_slot")?;
     let self_slot = if self_slot.is_null_or_undefined() {
         cb::num(scope, 0.0)
@@ -1303,7 +1391,8 @@ fn npc_valid<'s>(
     instance: v8::Local<'s, v8::Value>,
     snap_fn: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let snapshot = cb::call(scope, snap_fn, undefined(scope), &[], "snap")?;
+    let receiver = undefined(scope);
+    let snapshot = cb::call(scope, snap_fn, receiver, &[], "snap")?;
     let npcs = cb::get(scope, snapshot, "npcs")?;
     let npcs = if cb::truthy(scope, npcs) {
         npcs
@@ -1312,7 +1401,12 @@ fn npc_valid<'s>(
     };
     let some = cb::get(scope, npcs, "some")?;
     let data = cb::object(scope, &[("instance", instance)])?;
-    let predicate = build_callback(scope, npc_valid_predicate, data, "could not create NPC identity predicate")?;
+    let predicate = build_callback(
+        scope,
+        npc_valid_predicate,
+        data,
+        "could not create NPC identity predicate",
+    )?;
     cb::call(scope, some, npcs, &[predicate], "npcs.some")
 }
 
@@ -1356,7 +1450,8 @@ fn queue_interaction<'s>(
     queue: v8::Local<'s, v8::Value>,
     request: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    cb::call(scope, queue, undefined(scope), &[request], "queue")
+    let receiver = undefined(scope);
+    cb::call(scope, queue, receiver, &[request], "queue")
 }
 
 fn npc_interact<'s>(
@@ -1388,14 +1483,24 @@ fn npc_interact<'s>(
     let row = entity_instance_snap(scope, instance)?;
     let name = cb::get(scope, row, "name")?;
     let name = if name.is_null_or_undefined() {
-        v8::String::new(scope, "").unwrap_or_else(|| v8::String::empty(scope)).into()
+        v8::String::new(scope, "")
+            .unwrap_or_else(|| v8::String::empty(scope))
+            .into()
     } else {
         name
     };
     let row = entity_instance_snap(scope, instance)?;
     let index = cb::get(scope, row, "index")?;
     let op = cb::string(scope, "npc");
-    let request = cb::object(scope, &[("op", op), ("name", name), ("action", verb), ("index", index)])?;
+    let request = cb::object(
+        scope,
+        &[
+            ("op", op),
+            ("name", name),
+            ("action", verb),
+            ("index", index),
+        ],
+    )?;
     queue_interaction(scope, queue, request)?;
     Ok(boolean(scope, true))
 }
@@ -1422,7 +1527,16 @@ fn loc_interact<'s>(
     };
     let verb = string_call(scope, action)?;
     let op = cb::string(scope, "loc");
-    let request = cb::object(scope, &[("op", op), ("x", x), ("z", z), ("level", level), ("action", verb)])?;
+    let request = cb::object(
+        scope,
+        &[
+            ("op", op),
+            ("x", x),
+            ("z", z),
+            ("level", level),
+            ("action", verb),
+        ],
+    )?;
     let global = global(scope);
     let number = cb::get(scope, global.into(), "Number")?;
     let is_integer = cb::get(scope, number, "isInteger")?;
@@ -1431,10 +1545,7 @@ fn loc_interact<'s>(
     let integer = cb::call(scope, is_integer, number, &[id], "Number.isInteger")?;
     if cb::truthy(scope, integer) {
         let key = cb::string(scope, "id");
-        let created = cb::catching(scope, |s| object.set(s, key, id))?;
-        if !created {
-            return Err(cb::type_error(scope, "could not set interaction id"));
-        }
+        cb::assign(scope, request, key, id)?;
     }
     queue_interaction(scope, queue, request)?;
     Ok(boolean(scope, true))
@@ -1452,7 +1563,9 @@ fn player_interact<'s>(
     let row = entity_instance_snap(scope, instance)?;
     let name = cb::get(scope, row, "name")?;
     let name = if name.is_null_or_undefined() {
-        v8::String::new(scope, "").unwrap_or_else(|| v8::String::empty(scope)).into()
+        v8::String::new(scope, "")
+            .unwrap_or_else(|| v8::String::empty(scope))
+            .into()
     } else {
         name
     };
@@ -1492,7 +1605,17 @@ fn ground_item_interact<'s>(
     };
     let verb = string_call(scope, action)?;
     let op = cb::string(scope, "obj");
-    let request = cb::object(scope, &[("op", op), ("x", x), ("z", z), ("level", level), ("name", name), ("action", verb)])?;
+    let request = cb::object(
+        scope,
+        &[
+            ("op", op),
+            ("x", x),
+            ("z", z),
+            ("level", level),
+            ("name", name),
+            ("action", verb),
+        ],
+    )?;
     queue_interaction(scope, queue, request)?;
     Ok(boolean(scope, true))
 }
@@ -1561,12 +1684,30 @@ globalThis.checkPureJs = () => true;
             }
         });
         println!("EntityQuery cold={cold:?}; warm1000={warm:?}");
-        assert!(cold.count_total <= 3, "cold entity bridge allocations: {cold:?}");
-        assert!(cold.count_current <= 3, "cold retained entity bridge allocations: {cold:?}");
-        assert!(cold.count_max <= 3, "cold peak entity bridge allocations: {cold:?}");
-        assert!(cold.bytes_total <= 336, "cold entity bridge bytes: {cold:?}");
-        assert!(cold.bytes_current <= 336, "cold retained entity bridge bytes: {cold:?}");
-        assert!(cold.bytes_max <= 336, "cold peak entity bridge bytes: {cold:?}");
+        assert!(
+            cold.count_total <= 3,
+            "cold entity bridge allocations: {cold:?}"
+        );
+        assert!(
+            cold.count_current <= 3,
+            "cold retained entity bridge allocations: {cold:?}"
+        );
+        assert!(
+            cold.count_max <= 3,
+            "cold peak entity bridge allocations: {cold:?}"
+        );
+        assert!(
+            cold.bytes_total <= 336,
+            "cold entity bridge bytes: {cold:?}"
+        );
+        assert!(
+            cold.bytes_current <= 336,
+            "cold retained entity bridge bytes: {cold:?}"
+        );
+        assert!(
+            cold.bytes_max <= 336,
+            "cold peak entity bridge bytes: {cold:?}"
+        );
         assert_eq!(warm, allocation_counter::AllocationInfo::default());
     }
 
@@ -1610,17 +1751,26 @@ globalThis.checkFourScopes = () => __scope_cache_control(true);
             assert!(pure_js.call(&mut scope, receiver, &[]).unwrap().is_true());
         });
         let cold = allocation_counter::measure(|| {
-            assert!(three_scopes.call(&mut scope, receiver, &[]).unwrap().is_true());
+            assert!(three_scopes
+                .call(&mut scope, receiver, &[])
+                .unwrap()
+                .is_true());
         });
         let query_after_control = allocation_counter::measure(|| {
             assert!(query.call(&mut scope, receiver, &[]).unwrap().is_true());
         });
         let extra_depth = allocation_counter::measure(|| {
-            assert!(four_scopes.call(&mut scope, receiver, &[]).unwrap().is_true());
+            assert!(four_scopes
+                .call(&mut scope, receiver, &[])
+                .unwrap()
+                .is_true());
         });
         let warm = allocation_counter::measure(|| {
             for _ in 0..1_000 {
-                assert!(four_scopes.call(&mut scope, receiver, &[]).unwrap().is_true());
+                assert!(four_scopes
+                    .call(&mut scope, receiver, &[])
+                    .unwrap()
+                    .is_true());
                 assert!(query.call(&mut scope, receiver, &[]).unwrap().is_true());
             }
         });
