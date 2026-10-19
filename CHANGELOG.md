@@ -444,6 +444,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 #### Scripts
 
+- Each bot uses less memory on crowded scenes. Posted NPC, loc, player and
+  ground-item rows are now built with their final property layout instead of
+  growing a large per-row property dictionary. Row values, field order, null
+  names, object identities and query results are unchanged.
 - The compatibility family table now includes magic, prayer, and selected-content
   data modules. Generation rejects a typed module without a family row.
   This corrects coverage reporting and does not activate new behavior.
