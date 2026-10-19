@@ -52,11 +52,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   and local bank calculations are owned by Rust.
   Paused bank walks revalidate their saved destination on Resume without
   repeating bank callbacks or extending the operation's active-time limit.
-  The v2 BoneBurier example uses `Bank.withdrawLoad`. The public v2
-  `withdraw-load` request and its snapshot result fields remain supported
-  through the same native operation, with the caller's bank generation.
   Bank-opening log text is shortened at a UTF-8 boundary to fit the prompt
   byte limit, without changing the operation's result.
+- Breaking change: NativeApi v2 no longer accepts `withdraw-load` or exposes
+  `withdraw_load_result_seq` and `withdraw_load_result`. Use `withdraw-x` with
+  the number of free slots or compatibility `Bank.withdrawLoad(name)`. The
+  BoneBurier v2 example uses that method.
 - Entity wrappers and queries run on the native boundary, including area and
   player-preferred nearest filters. Production collections select and rank from
   the decoded Rust scene, paired with the original public row objects only after
@@ -410,10 +411,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - The compatibility family table now includes magic, prayer, and selected-content
   data modules. Generation rejects a typed module without a family row.
   This corrects coverage reporting and does not activate new behavior.
-- A v2 `withdraw-load` request now completes with `false` if a later bank
-  operation replaces it, its start fails, or a session boundary cancels it.
-  Its result sequence stays unchanged across session boundaries without
-  pending work and resets only for a fresh script runtime.
 
 #### Navigation
 
