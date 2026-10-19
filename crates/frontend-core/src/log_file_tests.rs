@@ -47,12 +47,12 @@ fn the_session_file_is_off_unless_the_preference_says_on() {
     preferences.reload().unwrap();
     assert!(!session_log_setting(&preferences), "absent key: off");
 
-    persist_session_log_setting(&preferences, true).unwrap();
+    crate::prefs::settled_for_test(persist_session_log_setting(&preferences, true)).unwrap();
     assert!(session_log_setting(&preferences));
     let value: serde_json::Value = serde_json::from_slice(&std::fs::read(&prefs).unwrap()).unwrap();
     assert_eq!(value["last_focus"], "alice", "other keys survive");
     assert_eq!(value["background_bots_ack"], true);
-    persist_session_log_setting(&preferences, false).unwrap();
+    crate::prefs::settled_for_test(persist_session_log_setting(&preferences, false)).unwrap();
     assert!(!session_log_setting(&preferences));
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -94,7 +94,7 @@ fn session_log_writer_waits_for_peer_nav_transaction_and_preserves_its_grant() {
         matches!(premature, Err(std::sync::mpsc::RecvTimeoutError::Timeout)),
         "the log-pane writer bypassed the shared preference lock"
     );
-    done_rx.recv().unwrap().unwrap();
+    crate::prefs::settled_for_test(done_rx.recv().unwrap()).unwrap();
     let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&prefs).unwrap()).unwrap();
     assert_eq!(saved["nav"]["allow_danger_zones"], true);
     assert_eq!(saved[SESSION_LOG_KEY], true);

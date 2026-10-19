@@ -1805,8 +1805,16 @@ fn removing_a_walk_slot_twice_logs_one_cancellation() {
             models: frontend_core::Models::none(),
             frame_hook: None,
         };
-        session.core.remove(slot, Instant::now(), &mut surface);
-        session.core.remove(slot, Instant::now(), &mut surface);
+        for _ in 0..2 {
+            session
+                .core
+                .submit(
+                    OperatorCommand::Remove,
+                    Targets::Profile(slot),
+                    &mut surface,
+                )
+                .unwrap();
+        }
     }
     assert!(walk_cleared);
 
@@ -3332,8 +3340,16 @@ fn settings_popup_persists_guardian_fields_and_live_policy() {
     session.core.select("alice");
     session
         .core
-        .set_random_event_policy("alice", "river troll", frontend_core::GuardianPolicy::Fight)
-        .unwrap();
+        .stage_guardian(frontend_core::GuardianEdit::policy(
+            "river troll",
+            frontend_core::GuardianPolicy::Fight,
+        ));
+    session
+        .core
+        .submit_detached(OperatorCommand::SetGuardian, Targets::Profile("alice"))
+        .unwrap()
+        .operation()
+        .expect("the policy write opened an operation");
     session.core.flush_writes();
     assert_eq!(
         arm_random_event_policy(&alice, "river troll"),
@@ -3750,7 +3766,13 @@ fn settings_popup_stays_bound_to_its_profile_across_focus_change() {
             ..host_play::SlotStatus::default()
         }));
     session.core.poll();
-    session.core.set_memory_mode("alice", false).unwrap();
+    session
+        .core
+        .submit_detached(
+            OperatorCommand::SetMemoryMode(api::lifecycle::MemoryMode::High),
+            Targets::Profile("alice"),
+        )
+        .unwrap();
     session.core.flush_writes();
     focus_member(&mut session, &mut app, "alice");
     let open = app.run_command(crate::commands::Command::Settings);

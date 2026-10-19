@@ -395,7 +395,9 @@ pub enum OperatorCommand {
     /// the member settles on the writer.
     SetRaster(RasterMode),
     /// One draw-policy switch (panel `game renderer`, `capture input`,
-    /// `sidecar 50 fps`, `focused 50 fps`, `full rate (this run)`).
+    /// `sidecar 50 fps`, `focused 50 fps`, `full rate (this run)`). The
+    /// switch applies at once; a saved switch settles on the preference
+    /// writer's durable receipt.
     SetDraw(DrawSwitch, bool),
 
     // --- Preferences and notices ---
@@ -444,7 +446,8 @@ pub enum OperatorCommand {
     /// `OperatorSession::set_capacity_render`, `session.rs:564`).
     SetRenderAll(bool),
     /// Acknowledge a one-time notice (background bots, walk-permission and
-    /// danger-routing notices).
+    /// danger-routing notices). A saved acknowledgement settles on the
+    /// preference writer's durable receipt.
     AcknowledgeNotice,
     /// Save the log view to a file (panel log `Save`, TUI log `w`).
     SaveLog,
@@ -985,9 +988,7 @@ impl OperatorCommand {
             | Self::DeclineMapBake
             | Self::SetRenderAll(_)
             | Self::SetMultiBox(_)
-            | Self::SetDraw(..)
-            | Self::GameInput
-            | Self::AcknowledgeNotice => Settles::AtDispatch,
+            | Self::GameInput => Settles::AtDispatch,
             _ => Settles::Owner,
         }
     }

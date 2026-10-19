@@ -278,7 +278,8 @@ pub fn assign_marked<Io>(
                     }));
                     BulkReport::new(LABEL, DONE, rows, None)
                 }
-                Err(reason) => {
+                Err(error) => {
+                    let reason = error.to_string();
                     rows.extend(
                         names
                             .iter()
@@ -484,7 +485,8 @@ fn assign_and_restart_names<Io>(
                 root: catalog_root.map(Path::to_path_buf),
                 restart: true,
             };
-            if let Err(reason) = scripts.defer_pending_catalog_assignment(action) {
+            if let Err(error) = scripts.defer_pending_catalog_assignment(action) {
+                let reason = error.to_string();
                 for name in names {
                     scripts.tally_fail(name, &reason);
                 }

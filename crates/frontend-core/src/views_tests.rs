@@ -323,7 +323,13 @@ fn auto_login_off_during_a_retry_wait_parks_the_slot_with_the_error_as_history()
     s.poll();
     assert_eq!(row(&s, "va-gus").phase, Phase::LoginError);
 
-    s.set_auto_login("va-gus", false).unwrap();
+    s.submit_detached(
+        crate::command::OperatorCommand::SetAutoLogin(false),
+        crate::Targets::Profile("va-gus"),
+    )
+    .unwrap()
+    .operation()
+    .expect("the write opened an operation");
     s.flush_writes();
     s.poll();
     let parked = row(&s, "va-gus");
@@ -336,7 +342,13 @@ fn auto_login_off_during_a_retry_wait_parks_the_slot_with_the_error_as_history()
     assert_eq!(s.fleet_view().counts().failed, 0);
     assert_eq!(detail(&s).state, "logged out (Log in to connect)");
 
-    s.set_auto_login("va-gus", true).unwrap();
+    s.submit_detached(
+        crate::command::OperatorCommand::SetAutoLogin(true),
+        crate::Targets::Profile("va-gus"),
+    )
+    .unwrap()
+    .operation()
+    .expect("the write opened an operation");
     s.flush_writes();
     s.poll();
     assert_eq!(

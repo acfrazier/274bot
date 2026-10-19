@@ -336,12 +336,19 @@ fn boot_for(mode: &RunMode, vault_pass: Option<Passphrase>) -> Option<Boot> {
 /// fatal `FAIL:` message for live-harness failures; the vault unlock
 /// failure is non-fatal (the in-panel prompt covers typing).
 fn boot_execute(state: &mut PanelState, boot: Boot) -> Result<(), String> {
-    state.session.ensure_profile_bound()?;
-    state.session.require_bot_operation()?;
+    state
+        .session
+        .ensure_profile_bound()
+        .map_err(|error| error.to_string())?;
+    state
+        .session
+        .require_bot_operation()
+        .map_err(|error| error.to_string())?;
     match boot {
         #[cfg(feature = "memory-profile")]
         Boot::Memory(config) => {
-            let run = frontend_core::bench::BenchRun::prepare(config, "panel")?;
+            let run = frontend_core::bench::BenchRun::prepare(config, "panel")
+                .map_err(|error| error.to_string())?;
             state.session.prepare_memory(&run)?;
             state.memory = Some(run);
             Ok(())
@@ -482,7 +489,7 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
                     fail_startup(&mut state.session, fatal, error);
                 }
             }
-            Err(error) => fail_startup(&mut state.session, fatal, error),
+            Err(error) => fail_startup(&mut state.session, fatal, error.to_string()),
         }
     }
 
@@ -503,7 +510,7 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
                         .pending_boot
                         .as_ref()
                         .is_some_and(boot_failure_is_fatal);
-                    fail_startup(&mut state.session, fatal, error);
+                    fail_startup(&mut state.session, fatal, error.to_string());
                 }
             }
         }
@@ -544,7 +551,7 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
                     pending: ValidationPending::new(generation, template),
                 });
             }
-            Err(error) => fail_startup(&mut state.session, fatal, error),
+            Err(error) => fail_startup(&mut state.session, fatal, error.to_string()),
         }
     }
 
@@ -6625,12 +6632,12 @@ fn init_panel_running(
     state
         .session
         .configure_profile(args.profile.duplicate())
-        .map_err(window::PanelError::ServerProfile)?;
+        .map_err(|error| window::PanelError::ServerProfile(error.to_string()))?;
     let vault_pass = if args.vault_pass_stdin && matches!(args.mode, RunMode::Interactive) {
         let exists = state
             .session
             .default_vault_exists()
-            .map_err(window::PanelError::ServerProfile)?;
+            .map_err(|error| window::PanelError::ServerProfile(error.to_string()))?;
         match frontend_core::launch::obtain_passphrase("panel-play", true, exists) {
             Ok(pass) => Some(pass),
             Err(msg) => {
@@ -6652,7 +6659,11 @@ fn init_panel_running(
                 .session
                 .launcher
                 .configured_class(state.session.ui.server_revision);
-            if let Err(error) = class.and_then(frontend_core::bench::require_live_benchmark) {
+            let live = class.map_err(|error| error.to_string()).and_then(|class| {
+                frontend_core::bench::require_live_benchmark(class)
+                    .map_err(|error| error.to_string())
+            });
+            if let Err(error) = live {
                 eprintln!("FAIL: {error}");
                 exit_after_work_shutdown(1);
             }
@@ -7102,19 +7113,16 @@ fn record_presented_upload(
     }
 }
 
-/// The per-frame UI body: session pump, live harness ticks, dock host,
-/// chrome, game pane, rail.
-fn ui_frame(
-    ui: &Ui,
-    gpu: &mut Gpu,
-    state: &mut PanelState,
-    progress: Option<StartupProgressView>,
-    live_failure: &Mutex<Option<String>>,
-) -> bool {
+/// The ordered, non-drawing front of the per-frame UI body: theme, shots,
+/// recording, the session pump, Quester Paths and the live harness tick.
+/// Returns `true` when the live harness ends the run. `ui_frame` calls it
+/// right after it resets the input staging and before it draws anything; the
+/// order of these calls is the frame's contract (the pump publishes the
+/// status the live tick reads).
+fn frame_pumps(state: &mut PanelState, live_failure: &Mutex<Option<String>>) -> bool {
     apply_amber_current(&state.session.ui.chrome);
     let wrote_shots = pump_shots(state);
     pump_record(state);
-    state.session.map_desk.begin_game_input_frame();
     state.session.pump_status();
     #[cfg(feature = "memory-profile")]
     if let Some(run) = state.memory.as_mut() {
@@ -7159,6 +7167,22 @@ fn ui_frame(
             }
             return true;
         }
+    }
+    false
+}
+
+/// The per-frame UI body: the pump phase ([`frame_pumps`]), dock host,
+/// chrome, game pane, the staged GameInput submit, rail.
+fn ui_frame(
+    ui: &Ui,
+    gpu: &mut Gpu,
+    state: &mut PanelState,
+    progress: Option<StartupProgressView>,
+    live_failure: &Mutex<Option<String>>,
+) -> bool {
+    state.session.map_desk.begin_game_input_frame();
+    if frame_pumps(state, live_failure) {
+        return true;
     }
     // Interactive whole-window capture: F12 enqueues one shot per press
     // (a rising edge, no repeat) with no scenario involved. Harness runs
@@ -7381,3 +7405,7 @@ mod window_tests;
 #[cfg(test)]
 #[path = "app_teardown_tests.rs"]
 mod teardown_tests;
+
+#[cfg(test)]
+#[path = "app_frame_tests.rs"]
+mod frame_tests;

@@ -10,10 +10,14 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use api::identity::RequestId;
+use api::identity::{RequestId, Settlement};
+use host_play::local_state::{QueuedUpdate, Update};
 
 use super::commands::{Applied, Submitted};
-use crate::command::{DrawSwitch, FailureKind, OperatorCommand, Rejection, SkipReason};
+use crate::command::{
+    CommandFailure, Completion, DrawSwitch, FailureKind, OperatorCommand, Rejection, SkipReason,
+    Subject,
+};
 use crate::map_bake::MapBakeChoice;
 use crate::nav_prefs::NavPreference;
 use crate::quester_paths::QuesterPathsView;
@@ -314,21 +318,101 @@ impl<Io> OperatorSession<Io> {
             return;
         }
         let applied = match row {
-            PrefRow::Draw(switch, on) => self.set_draw(switch, on, surface),
-            PrefRow::Nav(preference, on) => self.set_nav_preference(preference, on, surface),
-            PrefRow::Danger(level) => self.set_danger_level(level, surface),
-            PrefRow::SessionLog(on) => self.set_session_log(on),
-            PrefRow::MapBake(choice) => self.set_map_bake_choice(choice, surface),
-            PrefRow::QuesterPaths => self.set_quester_paths(surface),
+            PrefRow::Draw(switch, on) => self.set_draw(request, switch, on, surface),
+            PrefRow::Nav(preference, on) => {
+                self.set_nav_preference(request, preference, on, surface)
+            }
+            PrefRow::Danger(level) => self.set_danger_level(request, level, surface),
+            PrefRow::SessionLog(on) => self.set_session_log(request, on),
+            PrefRow::MapBake(choice) => self.set_map_bake_choice(request, choice, surface),
+            PrefRow::QuesterPaths => self.set_quester_paths(request, surface),
             PrefRow::ReloadQuesterPaths => self.reload_quester_paths(request, surface),
-            PrefRow::AcknowledgeNotice => self.acknowledge_notice(surface),
+            PrefRow::AcknowledgeNotice => self.acknowledge_notice(request, surface),
             PrefRow::SaveLog => self.save_log(request),
         };
         self.settle_app(request, command, applied, submitted);
     }
 
+    /// The terminal of a preference write that did not fail: `Done` with
+    /// `effect` applied when it is durable; when the bounded wait ended
+    /// with it still queued, the member stays pending and settles from
+    /// the writer's terminal ([`Self::settle_pref_writes`]).
+    fn after_write(
+        &mut self,
+        request: RequestId,
+        write: Update,
+        what: &'static str,
+        effect: PrefEffect,
+    ) -> Applied {
+        match write {
+            Update::Durable => {
+                self.apply_pref_effect(effect);
+                Applied::Done
+            }
+            Update::Queued(queued) => {
+                self.commands.watch_pref_write(PrefWriteWatch {
+                    request,
+                    queued,
+                    what,
+                    effect,
+                });
+                Applied::Later
+            }
+        }
+    }
+
+    /// What a durable preference write changes in this session beyond the
+    /// file (the effects that need no lent model).
+    fn apply_pref_effect(&mut self, effect: PrefEffect) {
+        match effect {
+            PrefEffect::None => {}
+            PrefEffect::Walk(pause) => {
+                if let Some(on) = pause {
+                    self.set_pause_script_on_manual_walk_abort(on);
+                }
+                self.refresh_walk_globals();
+            }
+            PrefEffect::SessionLog(on) => {
+                crate::log_file::apply_session_log(on);
+            }
+        }
+    }
+
+    /// Poll every preference write still queued on the writer thread and
+    /// settle the command of each one that ended: `Done` (its effect
+    /// applied) when durable, `Failed(WriteFailed)` with the reason
+    /// otherwise. Nothing to do, and nothing allocated, while none is
+    /// queued.
+    pub(super) fn settle_pref_writes(&mut self) {
+        let mut index = 0;
+        while index < self.commands.pref_writes().len() {
+            let Some(outcome) = self.commands.pref_writes()[index].queued.poll() else {
+                index += 1;
+                continue;
+            };
+            let watch = self.commands.pref_writes().swap_remove(index);
+            let (terminal, detail) = match outcome {
+                Ok(()) => {
+                    self.apply_pref_effect(watch.effect);
+                    (Settlement::Completed(Completion::Done), None)
+                }
+                Err(error) => (
+                    Settlement::Failed(CommandFailure::Failed(FailureKind::WriteFailed)),
+                    Some(format!("{}: {error}", watch.what)),
+                ),
+            };
+            self.settle_later(
+                watch.request,
+                Subject::Application,
+                terminal,
+                detail.as_deref(),
+            );
+        }
+    }
+
     fn set_draw<S: SlotSurface<Io = Io>>(
         &mut self,
+        request: RequestId,
         switch: DrawSwitch,
         on: bool,
         surface: &mut S,
@@ -342,7 +426,9 @@ impl<Io> OperatorSession<Io> {
             draw.persist
         };
         let write = match (persist, DrawPolicy::key(switch)) {
-            (true, Some(key)) => Some(self.write_preference(key, serde_json::Value::Bool(on))),
+            (true, Some(key)) => {
+                Some((key, self.write_preference(key, serde_json::Value::Bool(on))))
+            }
             _ => None,
         };
         surface.draw_changed(switch, on);
@@ -364,13 +450,15 @@ impl<Io> OperatorSession<Io> {
             );
         }
         match write {
-            Some(Err(applied)) => applied,
-            Some(Ok(())) | None => Applied::Done,
+            Some((_, Err(applied))) => applied,
+            Some((key, Ok(write))) => self.after_write(request, write, key, PrefEffect::None),
+            None => Applied::Done,
         }
     }
 
     fn set_nav_preference<S: SlotSurface<Io = Io>>(
         &mut self,
+        request: RequestId,
         preference: NavPreference,
         on: bool,
         surface: &mut S,
@@ -378,18 +466,27 @@ impl<Io> OperatorSession<Io> {
         let Some(preferences) = self.preferences() else {
             return no_store();
         };
-        if let Err(error) = crate::nav_prefs::write_nav_preference(&preferences, preference, on) {
-            return write_failed("navigation preference", &error);
+        let write = match crate::nav_prefs::write_nav_preference(&preferences, preference, on) {
+            Ok(write) => write,
+            Err(error) => return write_failed("navigation preference", &error),
+        };
+        let pause = (preference == NavPreference::PauseScriptOnManualWalkAbort).then_some(on);
+        let durable = matches!(write, Update::Durable);
+        let applied = self.after_write(
+            request,
+            write,
+            "navigation preference",
+            PrefEffect::Walk(pause),
+        );
+        if durable {
+            self.adopt_walk_globals(&preferences, surface);
         }
-        if preference == NavPreference::PauseScriptOnManualWalkAbort {
-            self.set_pause_script_on_manual_walk_abort(on);
-        }
-        self.adopt_walk_globals(&preferences, surface);
-        Applied::Done
+        applied
     }
 
     fn set_danger_level<S: SlotSurface<Io = Io>>(
         &mut self,
+        request: RequestId,
         level: DangerLevel,
         surface: &mut S,
     ) -> Applied {
@@ -404,11 +501,16 @@ impl<Io> OperatorSession<Io> {
             before.script_scope_notice_ack(),
             before.survivable_routing_notice_ack(),
         );
-        if let Err(error) = WalkGlobalsView::persist_changed(&preferences, before, after) {
-            return write_failed("danger routing", &error);
+        let write = match WalkGlobalsView::persist_changed(&preferences, before, after) {
+            Ok(write) => write,
+            Err(error) => return write_failed("danger routing", &error),
+        };
+        let durable = matches!(write, Update::Durable);
+        let applied = self.after_write(request, write, "danger routing", PrefEffect::Walk(None));
+        if durable {
+            self.adopt_walk_globals(&preferences, surface);
         }
-        self.adopt_walk_globals(&preferences, surface);
-        Applied::Done
+        applied
     }
 
     /// Read the durable walk globals back and hand them to the play
@@ -425,35 +527,48 @@ impl<Io> OperatorSession<Io> {
         }
     }
 
-    fn set_session_log(&mut self, on: bool) -> Applied {
+    fn set_session_log(&mut self, request: RequestId, on: bool) -> Applied {
         let Some(preferences) = self.preferences() else {
             return no_store();
         };
-        if let Err(error) = crate::log_file::persist_session_log_setting(&preferences, on) {
-            return write_failed("session file setting", &error);
+        match crate::log_file::persist_session_log_setting(&preferences, on) {
+            Ok(write) => self.after_write(
+                request,
+                write,
+                "session file setting",
+                PrefEffect::SessionLog(on),
+            ),
+            Err(error) => write_failed("session file setting", &error),
         }
-        crate::log_file::apply_session_log(on);
-        Applied::Done
     }
 
+    /// The bake gate (a lent model) takes the choice once the write is
+    /// accepted, durable or still queued: the gate is this run's consent,
+    /// and the command's terminal reports the save.
     fn set_map_bake_choice<S: SlotSurface<Io = Io>>(
         &mut self,
+        request: RequestId,
         choice: MapBakeChoice,
         surface: &mut S,
     ) -> Applied {
         let Some(preferences) = self.preferences() else {
             return no_store();
         };
-        if let Err(error) = crate::map_bake::persist_map_bake_choice(&preferences, choice) {
-            return write_failed("map bake choice", &error);
-        }
+        let write = match crate::map_bake::persist_map_bake_choice(&preferences, choice) {
+            Ok(write) => write,
+            Err(error) => return write_failed("map bake choice", &error),
+        };
         if let Some(desk) = surface.models().map.as_deref_mut() {
             desk.bake_gate_mut().set_choice(choice);
         }
-        Applied::Done
+        self.after_write(request, write, "map bake choice", PrefEffect::None)
     }
 
-    fn set_quester_paths<S: SlotSurface<Io = Io>>(&mut self, surface: &mut S) -> Applied {
+    fn set_quester_paths<S: SlotSurface<Io = Io>>(
+        &mut self,
+        request: RequestId,
+        surface: &mut S,
+    ) -> Applied {
         let Some((after, persist)) = self.commands.take_quester_paths() else {
             return not_staged("Quest Paths settings");
         };
@@ -461,12 +576,15 @@ impl<Io> OperatorSession<Io> {
             return no_store();
         };
         let selected = self.commands.take_quester_game_data();
-        let mut models = surface.models();
-        let Some(paths) = models.quester.as_deref_mut() else {
-            return no_model("Quest Paths settings");
+        let applied = {
+            let mut models = surface.models();
+            let Some(paths) = models.quester.as_deref_mut() else {
+                return no_model("Quest Paths settings");
+            };
+            paths.apply_changed(&preferences, &after, selected, persist)
         };
-        match paths.apply_changed(&preferences, &after, selected, persist) {
-            Ok(()) => Applied::Done,
+        match applied {
+            Ok(write) => self.after_write(request, write, "Quest Paths settings", PrefEffect::None),
             Err(reason) => Applied::Failed(FailureKind::WriteFailed, Some(reason)),
         }
     }
@@ -493,7 +611,11 @@ impl<Io> OperatorSession<Io> {
         }
     }
 
-    fn acknowledge_notice<S: SlotSurface<Io = Io>>(&mut self, surface: &mut S) -> Applied {
+    fn acknowledge_notice<S: SlotSurface<Io = Io>>(
+        &mut self,
+        request: RequestId,
+        surface: &mut S,
+    ) -> Applied {
         let Some(notice) = self.commands.take_notice() else {
             return not_staged("notice");
         };
@@ -502,8 +624,10 @@ impl<Io> OperatorSession<Io> {
                 let Some(preferences) = self.preferences() else {
                     return no_store();
                 };
-                match host_play::persist_background_bots_ack(preferences.inner()) {
-                    Ok(()) => Applied::Done,
+                match host_play::begin_persist_background_bots_ack(preferences.inner()) {
+                    Ok(write) => {
+                        self.after_write(request, write, "background bots", PrefEffect::None)
+                    }
                     Err(error) => Applied::Failed(
                         FailureKind::WriteFailed,
                         Some(host_play::background_bots_ack_error(&error)),
@@ -512,7 +636,12 @@ impl<Io> OperatorSession<Io> {
             }
             Notice::RenderAllWarning => {
                 match self.write_preference(RENDER_ALL_WARNING_ACK_KEY, true.into()) {
-                    Ok(()) => Applied::Done,
+                    Ok(write) => self.after_write(
+                        request,
+                        write,
+                        RENDER_ALL_WARNING_ACK_KEY,
+                        PrefEffect::None,
+                    ),
                     Err(applied) => applied,
                 }
             }
@@ -535,11 +664,12 @@ impl<Io> OperatorSession<Io> {
         Applied::Later
     }
 
-    /// Write one top-level preference; the failure as the member's terminal.
-    fn write_preference(&self, key: &str, value: serde_json::Value) -> Result<(), Applied> {
+    /// Write one top-level preference; the failure as the member's
+    /// terminal.
+    fn write_preference(&self, key: &str, value: serde_json::Value) -> Result<Update, Applied> {
         let preferences = self.preferences().ok_or_else(no_store)?;
         preferences
-            .set(key, value)
+            .begin_set(key, value)
             .map_err(|error| write_failed(key, &error))
     }
 }
@@ -563,6 +693,29 @@ fn not_staged(what: &str) -> Applied {
         Rejection::NotStaged,
         Some(format!("{what}: nothing staged")),
     )
+}
+
+/// What a durable preference write changes in the session beyond the
+/// file, applied when the write is durable (at once, or when a queued
+/// write settles).
+#[derive(Debug, Clone, Copy)]
+pub(super) enum PrefEffect {
+    None,
+    /// Re-adopt the durable walk globals; with `Some`, also the manual-walk
+    /// pause.
+    Walk(Option<bool>),
+    /// Open or close the session file.
+    SessionLog(bool),
+}
+
+/// A preference command whose write is still queued on the writer
+/// thread.
+pub(super) struct PrefWriteWatch {
+    pub(super) request: RequestId,
+    pub(super) queued: QueuedUpdate,
+    /// What the write saves, for a failure's detail.
+    pub(super) what: &'static str,
+    pub(super) effect: PrefEffect,
 }
 
 fn write_failed(what: &str, error: &std::io::Error) -> Applied {

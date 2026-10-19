@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use api::identity::Settlement;
+use api::identity::{RequestId, Settlement};
 use api::local_state::{
     AccountKey, ContentScope, DomainEdit, DomainIdentity, DomainLease, DurableReceipt, ErrorCode,
     LoadoutEdit, LoadoutOp, LocalStateDomain, LocalStatePort, PreferencesEdit, StoreVersion,
@@ -26,7 +26,7 @@ use script::local_state::StatePort;
 use script::{LoadoutsBacking, LoadoutsBaseline, LoadoutsSaveError};
 use serde_json::{Map, Value};
 
-use super::{files, LocalStateService, RequestState};
+use super::{files, LocalStateService, ReadbackTicket, RequestState};
 
 /// How long a frontend's read or write waits for the writer thread.
 pub const FRONTEND_TIMEOUT: Duration = Duration::from_secs(5);
@@ -172,47 +172,18 @@ impl Preferences {
     /// left and each durable before the next. When another writer changed
     /// the file first, read and merge again (a few times at most). A
     /// preference `merge` removes cannot be written and is an error. The
-    /// read is a save's ([`LocalStateService::readback_for_save`]): a file
+    /// read is a save's ([`LocalStateService::start_readback`]): a file
     /// whose content is malformed is moved aside and the update starts
     /// from fresh preferences, as the old shared writer did.
     pub fn update(
         &self,
-        mut merge: impl FnMut(&mut Map<String, Value>) -> io::Result<()>,
+        merge: impl FnMut(&mut Map<String, Value>) -> io::Result<()>,
     ) -> io::Result<()> {
-        let shared = &*self.shared;
-        let mut conflict = None;
-        for _ in 0..UPDATE_ATTEMPTS {
-            let (lease, _) = shared
-                .service
-                .readback_for_save(&shared.identity, FRONTEND_TIMEOUT)
-                .map_err(|code| self.error(code))?;
-            let before = self.adopt(&lease)?;
-            let mut after = (*before).clone();
-            merge(&mut after)?;
-            let mut expected = lease.version();
-            let mut conflicted = false;
-            for (key, value) in preference_edits(&before, &after)? {
-                let edit =
-                    PreferencesEdit::try_new(shared.identity.clone(), Some(expected), &key, &value)
-                        .map_err(|code| self.error(code))?;
-                match settle(&shared.service, DomainEdit::Preferences(edit))
-                    .map_err(|error| self.wrap(error))?
-                {
-                    Settled::Durable(receipt) => expected = receipt.version(),
-                    Settled::Refused(code) => return Err(self.error(code)),
-                    Settled::Conflict(code) => {
-                        conflict = Some(code);
-                        conflicted = true;
-                        break;
-                    }
-                }
-            }
-            if !conflicted {
-                shared.held.lock().read_at = Some(Instant::now());
-                return Ok(());
-            }
+        let mut run = self.begin_run(merge)?;
+        match self.drive(&mut run, Some(FRONTEND_TIMEOUT)) {
+            Some(result) => result,
+            None => Err(self.waited_out(&run)),
         }
-        Err(self.error(conflict.expect("only a conflict retries")))
     }
 
     /// Set one top-level preference.
@@ -221,6 +192,187 @@ impl Preferences {
             document.insert(key.to_string(), value.clone());
             Ok(())
         })
+    }
+
+    /// [`Self::update`] for an operator command that reports its outcome:
+    /// the same reads, merges and bounded waits, but when a wait ends
+    /// with the read or an edit still queued on the writer thread, the
+    /// rest of the update is handed back ([`Update::Queued`]) instead of
+    /// failing. The service settles what it queued whatever the caller
+    /// does; [`QueuedUpdate::poll`] submits the remaining edits, each
+    /// against the version the one before left, and reports the update's
+    /// terminal. So a slow or busy disk delays the outcome; it never turns
+    /// a write that later lands into a failure, and never drops the
+    /// update's later edits.
+    pub fn begin_update(
+        &self,
+        merge: impl FnMut(&mut Map<String, Value>) -> io::Result<()> + Send + 'static,
+    ) -> io::Result<Update> {
+        let merge: BoxedMerge = Box::new(merge);
+        let mut run = self.begin_run(merge)?;
+        Ok(match self.drive(&mut run, Some(FRONTEND_TIMEOUT)) {
+            Some(result) => {
+                result?;
+                Update::Durable
+            }
+            None => Update::Queued(QueuedUpdate {
+                preferences: self.clone(),
+                run,
+            }),
+        })
+    }
+
+    /// [`Self::set`] through [`Self::begin_update`].
+    pub fn begin_set(&self, key: &str, value: Value) -> io::Result<Update> {
+        let key = key.to_string();
+        self.begin_update(move |document| {
+            document.insert(key.clone(), value.clone());
+            Ok(())
+        })
+    }
+
+    /// Queue the update's first read (a save's read: see
+    /// [`LocalStateService::start_readback`]).
+    fn begin_run<F>(&self, merge: F) -> io::Result<UpdateRun<F>> {
+        let ticket = self
+            .shared
+            .service
+            .start_readback(&self.shared.identity, true)
+            .map_err(|code| self.error(code))?;
+        Ok(UpdateRun {
+            merge,
+            stage: Stage::Reading(ticket),
+            reads: 1,
+        })
+    }
+
+    /// Advance `run` until it ends, each wait for the writer thread
+    /// bounded by `wait` (without one, nothing waits: a frame's check).
+    /// `None` while its read or an edit is still queued.
+    fn drive<F: FnMut(&mut Map<String, Value>) -> io::Result<()>>(
+        &self,
+        run: &mut UpdateRun<F>,
+        wait: Option<Duration>,
+    ) -> Option<io::Result<()>> {
+        let shared = &*self.shared;
+        loop {
+            match &mut run.stage {
+                Stage::Reading(ticket) => {
+                    let read = shared.service.finish_readback(
+                        &shared.identity,
+                        *ticket,
+                        wait.map(|wait| Instant::now() + wait),
+                    )?;
+                    let started = read
+                        .map_err(|code| self.error(code))
+                        .and_then(|(lease, _)| self.start_edits(&mut run.merge, &lease));
+                    match started {
+                        Err(error) => return Some(Err(error)),
+                        Ok(None) => return Some(self.finished()),
+                        Ok(Some(stage)) => run.stage = stage,
+                    }
+                }
+                Stage::Writing { request, rest } => {
+                    let state = match wait {
+                        Some(wait) => shared.service.wait_request(*request, wait),
+                        None => shared.service.request_state(*request),
+                    };
+                    match state {
+                        RequestState::Pending => return None,
+                        RequestState::Settled(Settlement::Completed(receipt)) => {
+                            let Some((key, value)) = rest.next() else {
+                                return Some(self.finished());
+                            };
+                            match self.submit_edit(&key, &value, receipt.version()) {
+                                Ok(next) => *request = next,
+                                Err(error) => return Some(Err(error)),
+                            }
+                        }
+                        RequestState::Settled(Settlement::Failed(
+                            code @ ErrorCode::Conflict { .. },
+                        )) => {
+                            // Another writer changed the file first: read
+                            // and merge again (a few times at most).
+                            if run.reads == UPDATE_ATTEMPTS {
+                                return Some(Err(self.error(code)));
+                            }
+                            match shared.service.start_readback(&shared.identity, true) {
+                                Ok(ticket) => {
+                                    run.reads += 1;
+                                    run.stage = Stage::Reading(ticket);
+                                }
+                                Err(code) => return Some(Err(self.error(code))),
+                            }
+                        }
+                        RequestState::Settled(Settlement::Failed(code)) => {
+                            return Some(Err(self.error(code)))
+                        }
+                        RequestState::Settled(Settlement::Cancelled(why)) => {
+                            return Some(Err(self.wrap(io::Error::new(
+                                io::ErrorKind::Interrupted,
+                                format!("the write was cancelled ({why:?})"),
+                            ))))
+                        }
+                        RequestState::Forgotten => {
+                            return Some(Err(self.wrap(io::Error::other(
+                                "the service no longer holds the write's settlement",
+                            ))))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Adopt what the read found, merge, and submit the first changed
+    /// preference; `None` when the merge changed nothing.
+    fn start_edits<F: FnMut(&mut Map<String, Value>) -> io::Result<()>>(
+        &self,
+        merge: &mut F,
+        lease: &DomainLease,
+    ) -> io::Result<Option<Stage>> {
+        let before = self.adopt(lease)?;
+        let mut after = (*before).clone();
+        merge(&mut after)?;
+        let mut rest = preference_edits(&before, &after)?.into_iter();
+        let Some((key, value)) = rest.next() else {
+            return Ok(None);
+        };
+        let request = self.submit_edit(&key, &value, lease.version())?;
+        Ok(Some(Stage::Writing { request, rest }))
+    }
+
+    /// Submit one preference row against `expected`.
+    fn submit_edit(&self, key: &str, value: &str, expected: StoreVersion) -> io::Result<RequestId> {
+        let shared = &*self.shared;
+        let edit = PreferencesEdit::try_new(shared.identity.clone(), Some(expected), key, value)
+            .map_err(|code| self.error(code))?;
+        match shared.service.submit(DomainEdit::Preferences(edit)) {
+            SubmitReceipt::Accepted { request } => Ok(request),
+            SubmitReceipt::Refused(code) => Err(self.error(code)),
+        }
+    }
+
+    /// An update ended durable: what it read is fresh.
+    fn finished(&self) -> io::Result<()> {
+        self.shared.held.lock().read_at = Some(Instant::now());
+        Ok(())
+    }
+
+    /// Why a bounded [`Self::update`] gave up on `run`.
+    fn waited_out<F>(&self, run: &UpdateRun<F>) -> io::Error {
+        match run.stage {
+            Stage::Reading(_) => self.error(ErrorCode::NotReady {
+                domain: self.shared.identity.domain(),
+            }),
+            Stage::Writing { .. } => self.wrap(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "the write was not durable within {FRONTEND_TIMEOUT:?}; it stays queued and \
+                     settles later"
+                ),
+            )),
+        }
     }
 
     fn adopt(&self, lease: &DomainLease) -> io::Result<Arc<Map<String, Value>>> {
@@ -303,6 +455,71 @@ fn preference_edits(
         }
     }
     Ok(edits)
+}
+
+/// The merge a queued update keeps for a read after a conflict.
+type BoxedMerge = Box<dyn FnMut(&mut Map<String, Value>) -> io::Result<()> + Send>;
+
+/// One preferences update in progress: its read of the file, then its
+/// changed rows, each submitted against the version the one before left.
+struct UpdateRun<F> {
+    merge: F,
+    stage: Stage,
+    /// Reads begun (one, plus one per conflict, at most
+    /// [`UPDATE_ATTEMPTS`]).
+    reads: usize,
+}
+
+enum Stage {
+    /// The save's read of the file is queued.
+    Reading(ReadbackTicket),
+    /// `request` is queued or in flight; `rest` follow it in order.
+    Writing {
+        request: RequestId,
+        rest: std::vec::IntoIter<(String, String)>,
+    },
+}
+
+/// How [`Preferences::begin_update`] ended on the caller's thread.
+pub enum Update {
+    /// Every changed preference is durable.
+    Durable,
+    /// A bounded wait ended with the read or an edit still queued: the
+    /// rest of the update, for [`QueuedUpdate::poll`].
+    Queued(QueuedUpdate),
+}
+
+impl std::fmt::Debug for Update {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Durable => f.write_str("Durable"),
+            Self::Queued(_) => f.write_str("Queued"),
+        }
+    }
+}
+
+/// The rest of a preferences update whose bounded wait ended while the
+/// writer thread still held its read or an edit. The service settles the
+/// queued work whether or not this is polled; polling submits the
+/// update's remaining edits and reports its terminal.
+pub struct QueuedUpdate {
+    preferences: Preferences,
+    run: UpdateRun<BoxedMerge>,
+}
+
+impl QueuedUpdate {
+    /// Advance without waiting (cheap, once per frame): submit the next
+    /// edit once the one before is durable, read and merge again after a
+    /// conflict. `None` while still queued; then the update's terminal.
+    pub fn poll(&mut self) -> Option<io::Result<()>> {
+        self.preferences.drive(&mut self.run, None)
+    }
+
+    /// [`Self::poll`], waiting at most `wait` for each step of the
+    /// writer thread.
+    pub fn wait(&mut self, wait: Duration) -> Option<io::Result<()>> {
+        self.preferences.drive(&mut self.run, Some(wait))
+    }
 }
 
 /// The operator loadouts a frontend's form edits ([`script::LoadoutsStore`]

@@ -261,6 +261,10 @@ struct StagedMapAction {
 struct StagedDebugCommand {
     command: String,
     snapshot: Option<Vec<(crate::selection::ProfileIdentity, String)>>,
+    /// A command the front end's own controls issue (the rail cheat
+    /// buttons), sent as the host's internal cheat rather than as typed
+    /// operator text.
+    internal: bool,
 }
 
 struct StagedMapDemand {
@@ -416,6 +420,17 @@ impl MapDesk {
         self.debug_command = Some(StagedDebugCommand {
             command: command.to_owned(),
             snapshot,
+            internal: false,
+        });
+    }
+
+    /// Stage a command a front-end control issues (the panel's rail cheat
+    /// buttons) for the next DebugCommand on one profile.
+    pub fn stage_internal_debug_command(&mut self, command: &str) {
+        self.debug_command = Some(StagedDebugCommand {
+            command: command.to_owned(),
+            snapshot: None,
+            internal: true,
         });
     }
 
@@ -467,22 +482,33 @@ impl<Io> OperatorSession<Io> {
         surface: &mut S,
         submitted: &mut super::commands::Submitted,
     ) {
+        if matches!(targets, super::commands::Targets::Application) {
+            if self.app_admitted(request) {
+                self.map_row_for(row, targets, request, &[], surface, submitted);
+            }
+            return;
+        }
+        let names = self.admitted_names(request);
+        if !names.is_empty() {
+            self.map_row_for(row, targets, request, &names, surface, submitted);
+        }
+        self.release_names(names);
+    }
+
+    /// `row` for the admitted `names` (none for an application target).
+    fn map_row_for<S: crate::surface::SlotSurface<Io = Io>>(
+        &mut self,
+        row: MapRow,
+        targets: super::commands::Targets<'_>,
+        request: RequestId,
+        names: &[String],
+        surface: &mut S,
+        submitted: &mut super::commands::Submitted,
+    ) {
         use super::commands::Applied;
 
         let command = row.command();
         let application = matches!(targets, super::commands::Targets::Application);
-        let names = if application {
-            if !self.app_admitted(request) {
-                return;
-            }
-            Vec::new()
-        } else {
-            self.admitted_names(request)
-        };
-        if !application && names.is_empty() {
-            return;
-        }
-
         let mut models = surface.models();
         let Some(desk) = models.map.as_deref_mut() else {
             let refused =
@@ -491,7 +517,7 @@ impl<Io> OperatorSession<Io> {
                 self.settle_app(request, command, refused, submitted);
             } else {
                 for name in names {
-                    self.settle_member(request, command, &name, refused.clone(), submitted);
+                    self.settle_member(request, command, name, refused.clone(), submitted);
                 }
             }
             return;
@@ -520,7 +546,7 @@ impl<Io> OperatorSession<Io> {
                         )
                     }
                 }
-                MapRow::WalkTo => self.walk_to(desk, &names, targets),
+                MapRow::WalkTo => self.walk_to(desk, names, targets),
                 MapRow::GroupWalk | MapRow::Teleport | MapRow::DebugCommand | MapRow::GameInput => {
                     Applied::Rejected(
                         Rejection::NotApplicable,
@@ -534,9 +560,9 @@ impl<Io> OperatorSession<Io> {
 
         match row {
             MapRow::WalkTo => {
-                let applied = self.walk_to(desk, &names, targets);
+                let applied = self.walk_to(desk, names, targets);
                 for name in names {
-                    self.settle_member(request, command, &name, applied.clone(), submitted);
+                    self.settle_member(request, command, name, applied.clone(), submitted);
                 }
             }
             MapRow::GroupWalk => {
@@ -546,16 +572,16 @@ impl<Io> OperatorSession<Io> {
                         Some("marked rows unavailable".into()),
                     );
                     for name in names {
-                        self.settle_member(request, command, &name, refused.clone(), submitted);
+                        self.settle_member(request, command, name, refused.clone(), submitted);
                     }
                     return;
                 };
-                self.group_walk(desk, selection, &names, targets, request, submitted);
+                self.group_walk(desk, selection, names, targets, request, submitted);
             }
             MapRow::Teleport => {
-                let applied = self.teleport(desk, &names, targets);
+                let applied = self.teleport(desk, names, targets);
                 for name in names {
-                    self.settle_member(request, command, &name, applied.clone(), submitted);
+                    self.settle_member(request, command, name, applied.clone(), submitted);
                 }
             }
             MapRow::DebugCommand => {
@@ -564,7 +590,7 @@ impl<Io> OperatorSession<Io> {
                         self.settle_member(
                             request,
                             command,
-                            &name,
+                            name,
                             Applied::Rejected(Rejection::NotStaged, None),
                             submitted,
                         );
@@ -577,7 +603,7 @@ impl<Io> OperatorSession<Io> {
                             self.settle_member(
                                 request,
                                 command,
-                                &name,
+                                name,
                                 Applied::Rejected(
                                     Rejection::NoModel,
                                     Some("marked rows unavailable".into()),
@@ -592,7 +618,7 @@ impl<Io> OperatorSession<Io> {
                             self.settle_member(
                                 request,
                                 command,
-                                &name,
+                                name,
                                 Applied::Rejected(Rejection::NotStaged, None),
                                 submitted,
                             );
@@ -607,33 +633,38 @@ impl<Io> OperatorSession<Io> {
                     });
                     submitted.set_marked(report);
                     for name in names {
-                        let applied = match results.iter().find(|(row, _)| row == &name) {
+                        let applied = match results.iter().find(|(row, _)| row == name) {
                             Some((_, Ok(()))) => Applied::Done,
                             Some((_, Err(error))) => {
                                 Applied::Rejected(Rejection::NotApplicable, Some(error.clone()))
                             }
                             None => Applied::Rejected(Rejection::NotApplicable, None),
                         };
-                        self.settle_member(request, command, &name, applied, submitted);
+                        self.settle_member(request, command, name, applied, submitted);
                     }
                 } else if matches!(
                     targets,
                     super::commands::Targets::Profile(_) | super::commands::Targets::Selected
                 ) && names.len() == 1
                 {
-                    let applied = self.debug_command(&names[0], &staged.command).map_or_else(
+                    let sent = if staged.internal {
+                        self.debug_command_internal(&names[0], &staged.command)
+                    } else {
+                        self.debug_command(&names[0], &staged.command)
+                    };
+                    let applied = sent.map_or_else(
                         |error| Applied::Rejected(Rejection::NotApplicable, Some(error)),
                         |_| Applied::Done,
                     );
                     for name in names {
-                        self.settle_member(request, command, &name, applied.clone(), submitted);
+                        self.settle_member(request, command, name, applied.clone(), submitted);
                     }
                 } else {
                     for name in names {
                         self.settle_member(
                             request,
                             command,
-                            &name,
+                            name,
                             Applied::Rejected(Rejection::NotApplicable, None),
                             submitted,
                         );
@@ -641,9 +672,9 @@ impl<Io> OperatorSession<Io> {
                 }
             }
             MapRow::GameInput => {
-                let applied = self.game_input(desk, &names, targets);
+                let applied = self.game_input(desk, names, targets);
                 for name in names {
-                    self.settle_member(request, command, &name, applied.clone(), submitted);
+                    self.settle_member(request, command, name, applied.clone(), submitted);
                 }
             }
             MapRow::OpenDemand | MapRow::ReleaseDemand | MapRow::BakeNow | MapRow::DeclineBake => {
@@ -651,7 +682,7 @@ impl<Io> OperatorSession<Io> {
                     self.settle_member(
                         request,
                         command,
-                        &name,
+                        name,
                         Applied::Rejected(Rejection::NotApplicable, None),
                         submitted,
                     );

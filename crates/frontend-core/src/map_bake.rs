@@ -127,22 +127,24 @@ pub fn load_map_bake_choice(preferences: &crate::prefs::UiPreferences) -> MapBak
         .unwrap_or_default()
 }
 
-/// Write the remembered choice into the shared preferences, keeping every
-/// other one.
-/// Fixture seam: [`persist_map_bake_choice`] for integration tests.
+/// Fixture seam: [`persist_map_bake_choice`] for integration tests,
+/// durable when it returns.
 #[cfg(any(test, feature = "test-support"))]
 pub fn persist_map_bake_choice_for_test(
     preferences: &crate::prefs::UiPreferences,
     choice: MapBakeChoice,
 ) -> io::Result<()> {
-    persist_map_bake_choice(preferences, choice)
+    crate::prefs::settled_for_test(persist_map_bake_choice(preferences, choice))
 }
 
+/// Write the remembered choice into the shared preferences, keeping every
+/// other one. A write still queued when the bounded wait ends comes back
+/// [`host_play::local_state::Update::Queued`].
 pub(crate) fn persist_map_bake_choice(
     preferences: &crate::prefs::UiPreferences,
     choice: MapBakeChoice,
-) -> io::Result<()> {
-    preferences.set(MAP_BAKE_KEY, choice.as_str().into())
+) -> io::Result<host_play::local_state::Update> {
+    preferences.begin_set(MAP_BAKE_KEY, choice.as_str().into())
 }
 
 /// Whether the front end shows the bake warning.

@@ -364,7 +364,7 @@ fn configure_isolated_profile(
     session: &mut Session,
     options: ProfileOptions,
     home: &Path,
-) -> Result<(), String> {
+) -> Result<(), frontend_core::launch::ProfileError> {
     session.configure_profile_with_env(
         ProfileArgs::from_host(options),
         ProfileEnv::from_host(isolated_profile_environment(home)),
@@ -462,7 +462,12 @@ fn profile_preparation_failure_keeps_vault_play_and_slots_absent() {
     let generation = session.profile_generation();
 
     assert_eq!(
-        session.finish_profile_preparation(generation, Err("cache changed".into())),
+        session.finish_profile_preparation(
+            generation,
+            Err(frontend_core::launch::ProfileError::Prepare(
+                "cache changed".into()
+            ))
+        ),
         PreparationCompletion::Failed
     );
     assert_eq!(session.error.as_deref(), Some("cache changed"));
@@ -921,7 +926,12 @@ fn unbound_and_failed_profile_bind_hide_local_debug_capabilities() {
 
     let generation = session.profile_generation();
     assert_eq!(
-        session.finish_profile_preparation(generation, Err("bind refused".into())),
+        session.finish_profile_preparation(
+            generation,
+            Err(frontend_core::launch::ProfileError::Prepare(
+                "bind refused".into()
+            ))
+        ),
         PreparationCompletion::Failed
     );
     assert!(!session.profile_bound());

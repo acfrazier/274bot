@@ -57,8 +57,9 @@ impl<Io> OperatorSession<Io> {
         }
         let applied = match row {
             FleetRow::Mark(on) => {
-                for name in self.admitted_names(request) {
-                    let identity = self.profile_identity_or_synthetic(&name);
+                let names = self.admitted_names(request);
+                for name in &names {
+                    let identity = self.profile_identity_or_synthetic(name);
                     let applied = match surface.models().marks.as_deref_mut() {
                         Some(marks) => {
                             marks.set(identity, on);
@@ -66,8 +67,9 @@ impl<Io> OperatorSession<Io> {
                         }
                         None => no_model("marks"),
                     };
-                    self.settle_member(request, command, &name, applied, submitted);
+                    self.settle_member(request, command, name, applied, submitted);
                 }
+                self.release_names(names);
                 return;
             }
             FleetRow::Filter => match surface.models().fleet_filter.as_deref_mut() {

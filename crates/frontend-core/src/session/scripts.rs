@@ -341,7 +341,7 @@ fn dispatch_application<Io>(
             };
             match crate::scripts::paths::set_rs2b0t_import_deferred_at(&path) {
                 Ok(()) => Applied::Done,
-                Err(error) => Applied::Rejected(Rejection::NotApplicable, Some(error)),
+                Err(error) => Applied::Rejected(Rejection::NotApplicable, Some(error.to_string())),
             }
         }
         ScriptRow::Start

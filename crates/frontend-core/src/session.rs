@@ -1251,7 +1251,7 @@ impl<Io> OperatorSession<Io> {
     /// Log in). Without a play (pre-unlock) only the IO is registered.
     /// While the name's previous worker is still stopping, the spawn is
     /// queued and [`Self::poll`] starts it once that worker has exited.
-    pub fn ensure_slot<S: SlotSurface<Io = Io>>(
+    pub(crate) fn ensure_slot<S: SlotSurface<Io = Io>>(
         &mut self,
         name: &str,
         arm: Option<Arc<SlotArm>>,
@@ -1364,7 +1364,7 @@ impl<Io> OperatorSession<Io> {
     /// Bring `name`'s worker up without changing login intent: cancel a
     /// pending removal and spawn with the profile's saved arm. A terminal
     /// lifetime is kept (its failure stays visible) until explicit Log in.
-    pub fn open_slot<S: SlotSurface<Io = Io>>(
+    pub(crate) fn open_slot<S: SlotSurface<Io = Io>>(
         &mut self,
         name: &str,
         surface: &mut S,
@@ -1395,7 +1395,8 @@ impl<Io> OperatorSession<Io> {
     /// chooses a member (last focus if it is now on the wall, else the
     /// first) so panel and TUI have something to show. Single-row Load /
     /// clicking a bot still focuses that member.
-    pub fn load_all<S: SlotSurface<Io = Io>>(
+    #[cfg(test)]
+    pub(crate) fn load_all<S: SlotSurface<Io = Io>>(
         &mut self,
         surface: &mut S,
         last_focus: Option<&str>,
@@ -1477,13 +1478,14 @@ impl<Io> OperatorSession<Io> {
     /// Log in every member. Queue membership follows worker arrival; the
     /// selected slot (or the first spawned one) is the sole priority
     /// exception.
-    pub fn login_all<S: SlotSurface<Io = Io>>(&mut self, surface: &mut S) -> OperationId {
+    #[cfg(test)]
+    pub(crate) fn login_all<S: SlotSurface<Io = Io>>(&mut self, surface: &mut S) -> OperationId {
         let names = self.fleet.members().to_vec();
         self.login_members(&names, surface)
     }
 
-    /// [`Self::login_all`] for the named members only, as one operation.
-    pub fn login_members<S: SlotSurface<Io = Io>>(
+    /// Log in the named members only, as one operation.
+    pub(crate) fn login_members<S: SlotSurface<Io = Io>>(
         &mut self,
         names: &[String],
         surface: &mut S,
@@ -1563,7 +1565,8 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// Log out every member and every other running slot.
-    pub fn logout_all(&mut self) -> OperationId {
+    #[cfg(test)]
+    pub(crate) fn logout_all(&mut self) -> OperationId {
         let mut names = self.fleet.members().to_vec();
         if let Some(play) = &self.play {
             for s in play.statuses() {
@@ -1575,8 +1578,8 @@ impl<Io> OperatorSession<Io> {
         self.logout_members(&names)
     }
 
-    /// [`Self::logout_all`] for the named slots only, as one operation.
-    pub fn logout_members(&mut self, names: &[String]) -> OperationId {
+    /// Log out the named slots only, as one operation.
+    pub(crate) fn logout_members(&mut self, names: &[String]) -> OperationId {
         let op = self.operations.open(ActionKind::Logout);
         for name in names {
             self.logout_member(op, name);
@@ -1682,8 +1685,10 @@ impl<Io> OperatorSession<Io> {
         play.cheat(name, cmd).map_err(|refusal| refusal.to_string())
     }
 
-    /// Run a debug command the front end issues itself (the tutorial probe,
-    /// debug buttons) on `name`'s slot.
+    /// Run the front end's tutorial probe (`getvar tutorial`, a read the
+    /// panel sends itself once a slot is in game) on `name`'s slot. Not an
+    /// operator decision: the panel's rail cheat buttons go through
+    /// [`crate::OperatorCommand::DebugCommand`].
     pub fn debug_command_internal(&self, name: &str, cmd: &str) -> Result<(), String> {
         let play = self.play.as_ref().ok_or("no active play session")?;
         play.cheat_internal(name, cmd)
@@ -1723,39 +1728,25 @@ impl<Io> OperatorSession<Io> {
         self.play.as_ref()?.script_start_wait_reason()
     }
 
-    /// Deliver a paint-button click to `name`'s script.
-    pub fn script_paint_click(&self, name: &str, id: &str, generation: u64) {
+    /// Deliver a paint-button click to `name`'s script (the
+    /// `ScriptPaintInput` dispatch target).
+    pub(crate) fn script_paint_click(&self, name: &str, id: &str, generation: u64) {
         if let Some(play) = &self.play {
             play.script_paint_click(name, id, generation);
         }
     }
 
-    /// Deliver a paint chrome selection to `name`'s script.
-    pub fn script_paint_select(&self, name: &str, key: &str, select_name: &str, generation: u64) {
+    /// Deliver a paint chrome selection to `name`'s script (the
+    /// `ScriptPaintInput` dispatch target).
+    pub(crate) fn script_paint_select(
+        &self,
+        name: &str,
+        key: &str,
+        select_name: &str,
+        generation: u64,
+    ) {
         if let Some(play) = &self.play {
             play.script_paint_select(name, key, select_name, generation);
-        }
-    }
-
-    /// Press the chat modal's Continue button on `name`'s slot.
-    pub fn chat_continue(&self, name: &str) {
-        if let Some(play) = &self.play {
-            play.queue_wire(name, host_play::WireCmd::Continue);
-        }
-    }
-
-    /// Press the chat modal's `option`-th choice (1-based) on `name`'s slot.
-    pub fn chat_answer(&self, name: &str, option: i32) {
-        if let Some(play) = &self.play {
-            play.queue_wire(name, host_play::WireCmd::Answer(option));
-        }
-    }
-
-    /// Step `name` to the adjacent tile `(x, z, level)` (a direct one-step
-    /// move, not a routed walk).
-    pub fn step_to(&self, name: &str, x: i32, z: i32, level: i32) {
-        if let Some(play) = &self.play {
-            play.queue_wire(name, host_play::WireCmd::Walk { x, z, level });
         }
     }
 
@@ -1797,7 +1788,11 @@ impl<Io> OperatorSession<Io> {
     /// Queue and persist the memory mode for the next login. Both front ends
     /// use this command; it never mutates the running client or logs out.
     /// [`Self::memory_status`] retains the applied mode through socket reconnects.
-    pub fn set_memory_mode(&mut self, name: &str, lowmem: bool) -> Result<OperationId, String> {
+    pub(crate) fn set_memory_mode(
+        &mut self,
+        name: &str,
+        lowmem: bool,
+    ) -> Result<OperationId, String> {
         let mut profile = self
             .vault
             .as_ref()
@@ -1822,7 +1817,7 @@ impl<Io> OperatorSession<Io> {
     /// Post one Relog-now row. The owner holds its login half across the
     /// current session exit; the frontend only tracks the originating
     /// session for the operator's pending notice.
-    pub fn request_memory_relog<S: SlotSurface<Io = Io>>(
+    pub(crate) fn request_memory_relog<S: SlotSurface<Io = Io>>(
         &mut self,
         name: &str,
         surface: &mut S,
@@ -1879,7 +1874,7 @@ impl<Io> OperatorSession<Io> {
     /// disconnected worker is stopped asynchronously. Neither path sleeps
     /// or joins on the caller. When the removed member was selected, its
     /// neighbour is selected (or the selection cleared).
-    pub fn remove<S: SlotSurface<Io = Io>>(
+    pub(crate) fn remove<S: SlotSurface<Io = Io>>(
         &mut self,
         name: &str,
         now: Instant,
@@ -2471,7 +2466,7 @@ impl<Io> OperatorSession<Io> {
     /// Stop every listed slot's script, including a slot still reaping a
     /// previous run with a replacement Start queued behind it: Stop drops
     /// that queued Start. Returns the operation and how many were stopped.
-    pub fn stop_scripts(&mut self, names: &[String]) -> (OperationId, usize) {
+    pub(crate) fn stop_scripts(&mut self, names: &[String]) -> (OperationId, usize) {
         let op = self.operations.open(ActionKind::ScriptStop);
         let mut stopped = 0;
         for name in names {
@@ -2544,7 +2539,7 @@ impl<Io> OperatorSession<Io> {
     /// Stage a new profile like [`Self::save_profile`], refused when a
     /// profile of that username already exists: a new row never overwrites
     /// another profile.
-    pub fn create_profile(
+    pub(crate) fn create_profile(
         &mut self,
         profile: Profile,
         mirror: ArmMirror,
@@ -2569,7 +2564,7 @@ impl<Io> OperatorSession<Io> {
     /// and the removal of the old one are written in a single commit, and a
     /// failure puts both back. Refused when another profile already has the
     /// new username: a rename never overwrites it.
-    pub fn rename_profile(
+    pub(crate) fn rename_profile(
         &mut self,
         old: &str,
         profile: Profile,
@@ -2658,7 +2653,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Delete a vault profile only; a live member is not logged out or
     /// dropped. Returns `None` when there was no such profile.
-    pub fn vault_remove(&mut self, name: &str) -> Result<Option<OperationId>, String> {
+    pub(crate) fn vault_remove(&mut self, name: &str) -> Result<Option<OperationId>, String> {
         if self.profile_saving(name) {
             return Err(format!("chooser: {name}: {SAVING}"));
         }
@@ -2761,7 +2756,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Persist a profile's auto-login; a running slot's arm follows once the
     /// write is durable. Never spawns or stops a slot.
-    pub fn set_auto_login(&mut self, name: &str, on: bool) -> Result<OperationId, String> {
+    pub(crate) fn set_auto_login(&mut self, name: &str, on: bool) -> Result<OperationId, String> {
         let mut profile = self
             .vault
             .as_ref()
@@ -2776,7 +2771,7 @@ impl<Io> OperatorSession<Io> {
     /// Persist a profile's random-event guardian fields; a running slot's
     /// arm follows once the write is durable, so toggling off never acts or
     /// holds without a respawn.
-    pub fn set_random_settings(
+    pub(crate) fn set_random_settings(
         &mut self,
         name: &str,
         random_events: bool,
@@ -2799,7 +2794,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Persist one hostile random's policy and mirror it to a running slot
     /// once the vault write is durable.
-    pub fn set_random_event_policy(
+    pub(crate) fn set_random_event_policy(
         &mut self,
         name: &str,
         event: &str,
@@ -2955,7 +2950,7 @@ impl<Io> OperatorSession<Io> {
     /// write settles in [`Self::poll`]; the record then moves from
     /// [`Self::saves_in_flight`] to [`Self::take_settled_saves`], with the
     /// write's result.
-    pub fn track_save(&mut self, record: SaveRecord) {
+    pub(crate) fn track_save(&mut self, record: SaveRecord) {
         self.saves.track(record);
     }
 

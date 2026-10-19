@@ -255,6 +255,43 @@ struct Post {
     receipt: Option<PostReceipt>,
 }
 
+/// Reusable member-name storage: a name list is emptied into the pool and
+/// refilled from it, so the per-submit target and admitted-member lists keep
+/// their `String` buffers and allocate nothing once warmed up.
+#[derive(Default)]
+pub(super) struct NamePool {
+    /// Emptied name buffers, ready for the next [`Self::push`].
+    strings: Vec<String>,
+    /// Emptied lists, ready for the next [`Self::take_list`].
+    lists: Vec<Vec<String>>,
+}
+
+impl NamePool {
+    /// Empty `list`, keeping its name buffers for later pushes.
+    fn clear(&mut self, list: &mut Vec<String>) {
+        self.strings.append(list);
+    }
+
+    /// Append a copy of `name` to `list` in a reused buffer.
+    fn push(&mut self, list: &mut Vec<String>, name: &str) {
+        let mut slot = self.strings.pop().unwrap_or_default();
+        slot.clear();
+        slot.push_str(name);
+        list.push(slot);
+    }
+
+    /// An empty list with retained capacity (or a new one while cold).
+    fn take_list(&mut self) -> Vec<String> {
+        self.lists.pop().unwrap_or_default()
+    }
+
+    /// Take `list` back, keeping its name buffers and its own capacity.
+    fn recycle(&mut self, mut list: Vec<String>) {
+        self.strings.append(&mut list);
+        self.lists.push(list);
+    }
+}
+
 /// The session's command state: the book, the members waiting on an owner
 /// report, and the arms whose events settle posted members.
 #[derive(Default)]
@@ -274,6 +311,8 @@ pub(super) struct CommandDesk {
     guardian: Option<GuardianEdit>,
     /// Member names of the command being opened (reused buffer).
     names: Vec<String>,
+    /// Name buffers behind `names` and the admitted-member lists.
+    pool: NamePool,
     /// Members of the command being opened (reused buffer).
     targets: Vec<(Subject, Scope)>,
     /// The notice the next AcknowledgeNotice answers.
@@ -282,6 +321,9 @@ pub(super) struct CommandDesk {
     log_save: Option<(std::path::PathBuf, String)>,
     /// SaveLog commands whose write is still running.
     log_saves: Vec<(RequestId, crate::log::SaveTicket)>,
+    /// Preference commands whose write is still queued on the
+    /// local-state writer thread.
+    pref_writes: Vec<super::prefs::PrefWriteWatch>,
     /// The Quester Paths settings (and whether to write them) the next
     /// SetQuesterPaths applies.
     quester_paths: Option<(crate::quester_paths::QuesterPathsView, bool)>,
@@ -328,6 +370,14 @@ impl CommandDesk {
 
     pub(super) fn watch_log_save(&mut self, request: RequestId, ticket: crate::log::SaveTicket) {
         self.log_saves.push((request, ticket));
+    }
+
+    pub(super) fn watch_pref_write(&mut self, watch: super::prefs::PrefWriteWatch) {
+        self.pref_writes.push(watch);
+    }
+
+    pub(super) fn pref_writes(&mut self) -> &mut Vec<super::prefs::PrefWriteWatch> {
+        &mut self.pref_writes
     }
 
     pub(super) fn stage_quester_paths(
@@ -542,7 +592,7 @@ impl<Io> OperatorSession<Io> {
         marks: Option<&crate::MarkedSelection>,
     ) -> Result<(), SubmitError> {
         let mut names = std::mem::take(&mut self.commands.names);
-        names.clear();
+        self.commands.pool.clear(&mut names);
         let application_target = matches!(targets, Targets::Application);
         match (command.subject(), targets) {
             (SubjectKind::Application, Targets::Application) => {}
@@ -552,17 +602,19 @@ impl<Io> OperatorSession<Io> {
                 self.commands.names = names;
                 return Err(SubmitError::WrongTargets(command));
             }
-            (SubjectKind::Profile, Targets::Profile(name)) => names.push(name.to_string()),
+            (SubjectKind::Profile, Targets::Profile(name)) => {
+                self.commands.pool.push(&mut names, name);
+            }
             (SubjectKind::Profile, Targets::Profiles(list)) => {
                 for name in list {
                     if !names.contains(name) {
-                        names.push(name.clone());
+                        self.commands.pool.push(&mut names, name);
                     }
                 }
             }
             (SubjectKind::Profile, Targets::Selected) => {
-                if let Some(name) = self.selected.clone() {
-                    names.push(name);
+                if let Some(name) = self.selected.as_deref() {
+                    self.commands.pool.push(&mut names, name);
                 }
             }
             (SubjectKind::Profile, Targets::Everyone) => self.everyone(command, &mut names),
@@ -661,14 +713,23 @@ impl<Io> OperatorSession<Io> {
             .is_some_and(|member| member.pending().is_some())
     }
 
-    /// The admitted members of the command being dispatched.
-    pub(super) fn admitted_names(&self, request: RequestId) -> Vec<String> {
-        self.commands
-            .names
-            .iter()
-            .filter(|name| self.admitted(request, name))
-            .cloned()
-            .collect()
+    /// The admitted members of the command being dispatched, in a pooled
+    /// list: hand it back with [`Self::release_names`] when the arm is done.
+    pub(super) fn admitted_names(&mut self, request: RequestId) -> Vec<String> {
+        let mut admitted = self.commands.pool.take_list();
+        let names = std::mem::take(&mut self.commands.names);
+        for name in &names {
+            if self.admitted(request, name) {
+                self.commands.pool.push(&mut admitted, name);
+            }
+        }
+        self.commands.names = names;
+        admitted
+    }
+
+    /// Return a list from [`Self::admitted_names`] to the pool.
+    pub(super) fn release_names(&mut self, names: Vec<String>) {
+        self.commands.pool.recycle(names);
     }
 
     fn dispatch<S: SlotSurface<Io = Io>>(
@@ -696,6 +757,7 @@ impl<Io> OperatorSession<Io> {
                         submitted.added += 1;
                     }
                 }
+                self.release_names(names);
                 if matches!(targets, Targets::Everyone) && self.selected.is_none() {
                     let hint = self.focus_hint.clone();
                     if let Some(name) = super::pick_focus(self.members(), hint.as_deref()) {
@@ -711,6 +773,7 @@ impl<Io> OperatorSession<Io> {
                     self.own_member(request, command, name, removal.op);
                     submitted.removal = Some(removal);
                 }
+                self.release_names(names);
             }
             OperatorCommand::Login if matches!(targets, Targets::Marked) => {
                 self.login_marked(request, surface, submitted);
@@ -720,6 +783,7 @@ impl<Io> OperatorSession<Io> {
                 if !names.is_empty() {
                     submitted.operation = Some(self.login_members(&names, surface));
                 }
+                self.release_names(names);
             }
             OperatorCommand::Logout if matches!(targets, Targets::Marked) => {
                 self.logout_marked(request, surface, submitted);
@@ -729,62 +793,72 @@ impl<Io> OperatorSession<Io> {
                 if !names.is_empty() {
                     submitted.operation = Some(self.logout_members(&names));
                 }
+                self.release_names(names);
             }
             OperatorCommand::RelogNow => {
-                for name in self.admitted_names(request) {
-                    let op = self.request_memory_relog(&name, surface);
+                let names = self.admitted_names(request);
+                for name in &names {
+                    let op = self.request_memory_relog(name, surface);
                     submitted.operation = Some(op);
                 }
+                self.release_names(names);
             }
             OperatorCommand::SetAutoLogin(on) => {
-                for name in self.admitted_names(request) {
-                    let result = self.set_auto_login(&name, on);
+                let names = self.admitted_names(request);
+                for name in &names {
+                    let result = self.set_auto_login(name, on);
                     submitted.operation = result.as_ref().ok().copied().or(submitted.operation);
-                    self.owner_result(request, command, &name, result);
+                    self.owner_result(request, command, name, result);
                 }
+                self.release_names(names);
             }
             OperatorCommand::SetMemoryMode(mode) => {
                 let lowmem = mode == api::lifecycle::MemoryMode::Low;
                 let mut models = surface.models();
-                for name in self.admitted_names(request) {
-                    let result = self.set_memory_mode(&name, lowmem);
+                let names = self.admitted_names(request);
+                for name in &names {
+                    let result = self.set_memory_mode(name, lowmem);
                     submitted.operation = result.as_ref().ok().copied().or(submitted.operation);
                     if let Some(form_save) = models.form_save.as_deref_mut() {
                         match &result {
-                            Ok(op) => form_save.submitted(self, *op, Some(&name), &name),
+                            Ok(op) => form_save.submitted(self, *op, Some(name), name),
                             Err(reason) => form_save.refused(reason.clone()),
                         }
                     }
-                    self.owner_result(request, command, &name, result);
+                    self.owner_result(request, command, name, result);
                 }
+                self.release_names(names);
             }
             OperatorCommand::Select => {
                 let open = std::mem::take(&mut self.commands.select_opens_slot);
-                for name in self.admitted_names(request) {
+                let names = self.admitted_names(request);
+                for name in &names {
                     if open {
-                        if let Err(reason) = self.open_slot(&name, surface) {
+                        if let Err(reason) = self.open_slot(name, surface) {
                             let applied = Applied::Rejected(rejection(&reason), Some(reason));
-                            self.settle_member(request, command, &name, applied, submitted);
+                            self.settle_member(request, command, name, applied, submitted);
                             continue;
                         }
                     }
-                    self.select(&name);
-                    self.settle_member(request, command, &name, Applied::Done, submitted);
+                    self.select(name);
+                    self.settle_member(request, command, name, Applied::Done, submitted);
                 }
+                self.release_names(names);
             }
             OperatorCommand::PauseScript | OperatorCommand::ResumeScript => {
-                for name in self.admitted_names(request) {
+                let names = self.admitted_names(request);
+                for name in &names {
                     // Today's toggle: Resume when Paused, otherwise Pause
                     // (the run owner settles a Pause with no running script
                     // as skipped).
                     let paused = self
                         .play
                         .as_ref()
-                        .is_some_and(|play| play.script_state(&name) == script::RunState::Paused);
+                        .is_some_and(|play| play.script_state(name) == script::RunState::Paused);
                     let applies = (command == OperatorCommand::ResumeScript) == paused;
                     if applies {
-                        let op = self.toggle_pause(&name);
-                        self.own_member(request, command, &name, op);
+                        let op = self.toggle_pause(name);
+                        self.own_member(request, command, name, op);
                     } else {
                         let reason = if command == OperatorCommand::PauseScript {
                             SkipReason::NoRunningScript
@@ -793,12 +867,13 @@ impl<Io> OperatorSession<Io> {
                         };
                         self.settle_name(
                             request,
-                            &name,
+                            name,
                             Settlement::Completed(Completion::Skipped(reason)),
                             None,
                         );
                     }
                 }
+                self.release_names(names);
             }
             OperatorCommand::StopScript => {
                 let names = self.admitted_names(request);
@@ -834,6 +909,7 @@ impl<Io> OperatorSession<Io> {
                     (_, []) => {}
                     _ => submitted.operation = Some(self.stop_scripts(&names).0),
                 }
+                self.release_names(names);
             }
             OperatorCommand::SaveProfile | OperatorCommand::CreateProfile => {
                 let names = if command == OperatorCommand::SaveProfile {
@@ -1102,91 +1178,103 @@ impl<Io> OperatorSession<Io> {
                         }
                     }
                 }
+                self.release_names(names);
             }
             OperatorCommand::DeleteProfile => {
                 let mut models = surface.models();
-                for name in self.admitted_names(request) {
+                let names = self.admitted_names(request);
+                for name in &names {
                     if let Some(editor) = models.editor.as_deref_mut() {
-                        if !editor.before_delete(self, &name) {
+                        if !editor.before_delete(self, name) {
                             self.settle_member(
                                 request,
                                 command,
-                                &name,
+                                name,
                                 Applied::Skipped(SkipReason::DecisionStaged),
                                 submitted,
                             );
                             continue;
                         }
                     }
-                    let identity = self.profile_identity_or_synthetic(&name);
-                    match self.vault_remove(&name) {
+                    let identity = self.profile_identity_or_synthetic(name);
+                    match self.vault_remove(name) {
                         Ok(Some(op)) => {
                             if let Some(marks) = models.marks.as_deref_mut() {
                                 marks.remove(identity);
                             }
                             submitted.operation = Some(op);
-                            self.own_member(request, command, &name, op);
+                            self.own_member(request, command, name, op);
                         }
                         Ok(None) => self.settle_name(
                             request,
-                            &name,
+                            name,
                             Settlement::Completed(Completion::Skipped(
                                 SkipReason::ProfileUnavailable,
                             )),
                             None,
                         ),
-                        Err(reason) => self.owner_result(request, command, &name, Err(reason)),
+                        Err(reason) => self.owner_result(request, command, name, Err(reason)),
                     }
                 }
+                self.release_names(names);
             }
             OperatorCommand::SetGuardian => {
                 let edit = self.commands.guardian.take();
                 let mut models = surface.models();
-                for name in self.admitted_names(request) {
+                let names = self.admitted_names(request);
+                for name in &names {
                     let result = match edit.as_ref().map(|edit| &edit.0) {
                         Some(GuardianEditKind::Fields {
                             random_events,
                             lamp_skill,
                             lamp_auto,
                         }) => {
-                            self.set_random_settings(&name, *random_events, lamp_skill, *lamp_auto)
+                            self.set_random_settings(name, *random_events, lamp_skill, *lamp_auto)
                         }
                         Some(GuardianEditKind::Policy { event, policy }) => {
-                            self.set_random_event_policy(&name, event, *policy)
+                            self.set_random_event_policy(name, event, *policy)
                         }
                         None => Err("random: nothing staged".to_string()),
                     };
                     submitted.operation = result.as_ref().ok().copied().or(submitted.operation);
                     if let Some(form_save) = models.form_save.as_deref_mut() {
                         match &result {
-                            Ok(op) => form_save.submitted(self, *op, Some(&name), &name),
+                            Ok(op) => form_save.submitted(self, *op, Some(name), name),
                             Err(reason) => form_save.refused(format!("settings: {reason}")),
                         }
                     }
-                    self.owner_result(request, command, &name, result);
+                    self.owner_result(request, command, name, result);
                 }
+                self.release_names(names);
             }
             OperatorCommand::SetRaster(raster) => {
-                for name in self.admitted_names(request) {
-                    let result = self.set_profile_raster(&name, raster);
-                    self.optional_write(request, command, &name, result, submitted);
+                let names = self.admitted_names(request);
+                for name in &names {
+                    let result = self.set_profile_raster(name, raster);
+                    self.optional_write(request, command, name, result, submitted);
                 }
+                self.release_names(names);
             }
             OperatorCommand::MarkTutorialSkipped => {
-                for name in self.admitted_names(request) {
-                    let result = self.record_tutorial_state(&name, true);
-                    self.optional_write(request, command, &name, result, submitted);
+                let names = self.admitted_names(request);
+                for name in &names {
+                    let result = self.record_tutorial_state(name, true);
+                    self.optional_write(request, command, name, result, submitted);
                 }
+                self.release_names(names);
             }
             OperatorCommand::SetWorld(world) => {
-                for name in self.admitted_names(request) {
-                    let applied = self.set_world_preference(&name, world);
-                    self.settle_member(request, command, &name, applied, submitted);
+                let names = self.admitted_names(request);
+                for name in &names {
+                    let applied = self.set_world_preference(name, world);
+                    self.settle_member(request, command, name, applied, submitted);
                 }
+                self.release_names(names);
             }
             OperatorCommand::Quit => {
                 let names = self.admitted_names(request);
                 self.quit(request, &names);
+                self.release_names(names);
             }
             OperatorCommand::SwitchWorld(_) => {
                 unreachable!("SwitchWorld is refused with NoEntryPoint before a command opens")
@@ -2125,6 +2213,7 @@ impl<Io> OperatorSession<Io> {
         self.drain_watched();
         self.settle_owned();
         self.commands.settle_log_saves();
+        self.settle_pref_writes();
         if !self.commands.book.has_pending() {
             return;
         }

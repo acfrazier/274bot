@@ -739,6 +739,16 @@ mod tests {
 
     const PASSPHRASE: &str = "test-passphrase-01";
 
+    /// Hang guard for every wait in this module, never a pass condition and
+    /// never a latency target. Each wait ends on the product's own settlement
+    /// signal (the slot's run state, the preparation leaving
+    /// `core.preparations`): every accepted preparation reaches a terminal.
+    /// Preparation runs on one process-wide background worker shared with
+    /// every other test in this binary, so on a loaded host a wait queues
+    /// behind all of them. The guard only stops a deadlocked test and is
+    /// minutes, not the expected duration.
+    const HANG_GUARD: Duration = Duration::from_secs(600);
+
     struct Fixture {
         core: OperatorSession<()>,
         scripts: Scripts,
@@ -861,10 +871,23 @@ mod tests {
         gate
     }
 
+    /// Poll until the slot is Running; a slot that ends in `Error` has failed
+    /// its Start, which fails the test now.
     fn wait_running(f: &mut Fixture, name: &str) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while f.core.play().unwrap().script_state(name) != script::RunState::Running {
-            assert!(Instant::now() < deadline, "{name} did not start");
+        let guard = Instant::now() + HANG_GUARD;
+        loop {
+            let state = f.core.play().unwrap().script_state(name);
+            if state == script::RunState::Running {
+                return;
+            }
+            assert!(
+                state != script::RunState::Error,
+                "{name} ended {state:?} instead of Running"
+            );
+            assert!(
+                Instant::now() < guard,
+                "{name} did not start: hang guard expired"
+            );
             f.core.poll();
             f.scripts.poll(&mut f.core);
             std::thread::sleep(Duration::from_millis(5));
@@ -911,9 +934,12 @@ mod tests {
 
         // Settle only the superseded copy, leaving the real replacement
         // result gated. The queued Start must not consume the pre-copy bag.
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let guard = Instant::now() + HANG_GUARD;
         while f.core.preparations.contains_key(&original) {
-            assert!(Instant::now() < deadline, "original copy did not settle");
+            assert!(
+                Instant::now() < guard,
+                "original copy did not settle: hang guard expired"
+            );
             f.core.poll();
             std::thread::yield_now();
         }
@@ -1187,16 +1213,7 @@ mod tests {
             .unwrap();
         assert_eq!(copied_bag["targetPreference"], "Nearest");
         f.scripts.start_profile(&mut f.core, "bob", None).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while f.core.play().unwrap().script_state("bob") != script::RunState::Running {
-            assert!(
-                Instant::now() < deadline,
-                "Bob's profile Start did not settle"
-            );
-            f.core.poll();
-            f.scripts.poll(&mut f.core);
-            std::thread::yield_now();
-        }
+        wait_running(&mut f, "bob");
         assert_eq!(
             f.configure_expected_bag("bob", id, copied_bag),
             script::CompiledDelivery::Unchanged,
@@ -1342,9 +1359,12 @@ mod tests {
         assert!(Scripts::assignment(&f.core, "bob").is_none());
 
         let intermediate = if let Some(release) = gate {
-            let deadline = Instant::now() + Duration::from_secs(10);
+            let guard = Instant::now() + HANG_GUARD;
             while f.core.preparations.contains_key(&second) {
-                assert!(Instant::now() < deadline, "second copy did not settle");
+                assert!(
+                    Instant::now() < guard,
+                    "second copy did not settle: hang guard expired"
+                );
                 f.core.poll();
                 std::thread::yield_now();
             }

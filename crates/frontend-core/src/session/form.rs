@@ -65,10 +65,12 @@ impl<Io> OperatorSession<Io> {
             let applied = self.apply_form_row(row, None, surface);
             self.settle_app(request, command, applied, submitted);
         } else {
-            for name in self.admitted_names(request) {
-                let applied = self.apply_form_row(row, Some(&name), surface);
-                self.settle_member(request, command, &name, applied, submitted);
+            let names = self.admitted_names(request);
+            for name in &names {
+                let applied = self.apply_form_row(row, Some(name), surface);
+                self.settle_member(request, command, name, applied, submitted);
             }
+            self.release_names(names);
         }
     }
 

@@ -269,22 +269,24 @@ fn prepare_session_n(
     let mut session = Session::with_instance(frontend_core::launch::InstancePermit::skip());
     session.persist_ui = false;
     session.ui.nav.pause_script_on_manual_walk_abort = pause_owner;
-    session.configure_profile(frontend_core::launch::ProfileArgs::from_host(
-        host_play::ProfileOptions {
-            profile: Some("local-289".into()),
-            revision: Some("289".into()),
-            host: Some("127.0.0.1".into()),
-            asset_host: Some("127.0.0.1".into()),
-            port: Some(LOCAL_GAME_PORT),
-            http_port: Some(LOCAL_ASSET_PORT),
-            engine_dir: Some(inputs.engine.clone()),
-            nav_pack: Some(inputs.nav_pack.clone()),
-            cache_dir: Some(inputs.cache.clone()),
-            unpack_dir: Some(inputs.cache.clone()),
-            ..host_play::ProfileOptions::default()
-        },
-    ))?;
-    session.bind_profile()?;
+    session
+        .configure_profile(frontend_core::launch::ProfileArgs::from_host(
+            host_play::ProfileOptions {
+                profile: Some("local-289".into()),
+                revision: Some("289".into()),
+                host: Some("127.0.0.1".into()),
+                asset_host: Some("127.0.0.1".into()),
+                port: Some(LOCAL_GAME_PORT),
+                http_port: Some(LOCAL_ASSET_PORT),
+                engine_dir: Some(inputs.engine.clone()),
+                nav_pack: Some(inputs.nav_pack.clone()),
+                cache_dir: Some(inputs.cache.clone()),
+                unpack_dir: Some(inputs.cache.clone()),
+                ..host_play::ProfileOptions::default()
+            },
+        ))
+        .map_err(|error| error.to_string())?;
+    session.bind_profile().map_err(|error| error.to_string())?;
     let cell = frontend_core::test_support::live::scenario_with_profiles_for_test(
         "render_smoke",
         count,

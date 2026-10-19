@@ -252,12 +252,14 @@ pub fn session_log_setting(preferences: &crate::prefs::UiPreferences) -> bool {
 }
 
 /// Store the preference durably, keeping every other one. A preferences
-/// file the service refused is never written: that is an error.
+/// file the service refused is never written: that is an error. A write
+/// still queued when the bounded wait ends comes back
+/// [`host_play::local_state::Update::Queued`].
 pub(crate) fn persist_session_log_setting(
     preferences: &crate::prefs::UiPreferences,
     on: bool,
-) -> io::Result<()> {
-    preferences.set(SESSION_LOG_KEY, serde_json::Value::Bool(on))
+) -> io::Result<host_play::local_state::Update> {
+    preferences.begin_set(SESSION_LOG_KEY, serde_json::Value::Bool(on))
 }
 
 /// Startup: open this process's session file when the saved preference

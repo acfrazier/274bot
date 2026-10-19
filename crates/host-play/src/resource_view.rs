@@ -111,6 +111,15 @@ pub fn persist_background_bots_ack(preferences: &Preferences) -> io::Result<()> 
     preferences.set(BACKGROUND_BOTS_ACK_KEY, serde_json::Value::Bool(true))
 }
 
+/// [`persist_background_bots_ack`] for the operator command that reports
+/// its outcome: a write still queued when the bounded wait ends comes
+/// back [`crate::local_state::Update::Queued`].
+pub fn begin_persist_background_bots_ack(
+    preferences: &Preferences,
+) -> io::Result<crate::local_state::Update> {
+    preferences.begin_set(BACKGROUND_BOTS_ACK_KEY, serde_json::Value::Bool(true))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
