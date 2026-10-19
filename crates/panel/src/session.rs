@@ -31,7 +31,7 @@ use frontend_core::command::{DrawSwitch, RasterMode};
 use frontend_core::frames::{AudioChange, AudioGate};
 use frontend_core::launch::{
     BoundProfile, Passphrase, PlayConfig, PreparationCompletion, ProfileArgs, ProfileClass,
-    ProfileEnv, ProfileLauncher, ProfilePreparation, ProfileTemplate, UnlockStage,
+    ProfileEnv, ProfileError, ProfileLauncher, ProfilePreparation, ProfileTemplate, UnlockStage,
     ValidatedProfile,
 };
 use frontend_core::scripts::{CardSource, LoadoutForm, SchemaRef, ScriptChoice, ScriptRunState};
@@ -1619,7 +1619,7 @@ impl Session {
 
     /// Install production launch inputs while the locked panel still exposes
     /// its saved revision selector. Resolution is deferred until unlock/live boot.
-    pub fn configure_profile(&mut self, args: ProfileArgs) -> Result<(), String> {
+    pub fn configure_profile(&mut self, args: ProfileArgs) -> Result<(), ProfileError> {
         self.configure_profile_with_env(args, ProfileEnv::capture())
     }
 
@@ -1629,7 +1629,7 @@ impl Session {
         &mut self,
         args: ProfileArgs,
         environment: ProfileEnv,
-    ) -> Result<(), String> {
+    ) -> Result<(), ProfileError> {
         self.launcher.configure(args, environment)
     }
 
@@ -1637,19 +1637,19 @@ impl Session {
         self.launcher.generation()
     }
 
-    pub(crate) fn profile_preparation(&self) -> Result<ProfilePreparation, String> {
+    pub(crate) fn profile_preparation(&self) -> Result<ProfilePreparation, ProfileError> {
         self.launcher.preparation(self.ui.server_revision)
     }
 
     pub(crate) fn finish_profile_preparation(
         &mut self,
         generation: u64,
-        result: Result<ProfileTemplate, String>,
+        result: Result<ProfileTemplate, ProfileError>,
     ) -> PreparationCompletion {
         let (completion, error) = self.launcher.finish_preparation(generation, result);
         match completion {
             PreparationCompletion::Installed => self.on_profile_installed(),
-            PreparationCompletion::Failed => self.error = error,
+            PreparationCompletion::Failed => self.error = error.map(|error| error.to_string()),
             PreparationCompletion::Stale => {}
         }
         completion
@@ -1672,14 +1672,14 @@ impl Session {
         self.on_profile_installed();
     }
 
-    pub(crate) fn template_for_validation(&self) -> Result<ProfileTemplate, String> {
+    pub(crate) fn template_for_validation(&self) -> Result<ProfileTemplate, ProfileError> {
         self.launcher.template_for_validation()
     }
 
     pub(crate) fn install_validated_template(
         &mut self,
         validated: ValidatedProfile,
-    ) -> Result<(), String> {
+    ) -> Result<(), ProfileError> {
         self.launcher.install_validated(validated)
     }
 
@@ -1705,20 +1705,20 @@ impl Session {
     }
 
     /// Resolve and freeze the panel's process profile before vault mutation.
-    pub fn bind_profile(&mut self) -> Result<(), String> {
+    pub fn bind_profile(&mut self) -> Result<(), ProfileError> {
         self.launcher.bind(self.ui.server_revision)?;
         self.on_profile_installed();
         Ok(())
     }
 
-    pub fn ensure_profile_bound(&mut self) -> Result<(), String> {
+    pub fn ensure_profile_bound(&mut self) -> Result<(), ProfileError> {
         if self.launcher.bound().is_none() && self.launcher.configured() {
             self.bind_profile()?;
         }
         Ok(())
     }
 
-    pub fn require_bot_operation(&self) -> Result<(), String> {
+    pub fn require_bot_operation(&self) -> Result<(), ProfileError> {
         self.launcher
             .bound()
             .map_or(Ok(()), BoundProfile::require_bot_operation)
@@ -1750,7 +1750,7 @@ impl Session {
             .map_or_else(|_| "bot".into(), |revision| format!("{revision}bot"))
     }
 
-    pub fn effective_revision_label(&self) -> Result<String, String> {
+    pub fn effective_revision_label(&self) -> Result<String, ProfileError> {
         self.launcher.revision_label(self.ui.server_revision)
     }
 
@@ -1758,7 +1758,7 @@ impl Session {
         self.launcher.class(self.core.has_play())
     }
 
-    fn vault_path(&self) -> Result<PathBuf, String> {
+    fn vault_path(&self) -> Result<PathBuf, ProfileError> {
         self.launcher
             .vault_path(self.ui.server_revision, default_vault_path())
     }
@@ -1792,7 +1792,7 @@ impl Session {
     }
 
     /// Whether the default vault file exists (locked prompt: Unlock vs Create).
-    pub fn default_vault_exists(&self) -> Result<bool, String> {
+    pub fn default_vault_exists(&self) -> Result<bool, ProfileError> {
         self.vault_path().map(|path| path.is_file())
     }
 
@@ -1840,7 +1840,7 @@ impl Session {
             .ensure_profile_bound()
             .and_then(|()| self.require_bot_operation())
         {
-            self.error = Some(msg);
+            self.error = Some(msg.to_string());
             return false;
         }
         match self.start_play(path, pass) {
@@ -1903,7 +1903,8 @@ impl Session {
                 .clone()
                 .unwrap_or_else(|| "benchmark vault failed".into()));
         }
-        run.bind_seed_nav(&self.core)?;
+        run.bind_seed_nav(&self.core)
+            .map_err(|error| error.to_string())?;
         self.set_multibox(true);
         for name in run.names() {
             self.submit_reporting(OperatorCommand::Load, Targets::Profile(name));
@@ -2002,7 +2003,8 @@ impl Session {
     /// scenario selects a card from that catalogue.
     fn fill_live_catalog(&mut self) -> Result<(), String> {
         let root = self
-            .catalog_root()?
+            .catalog_root()
+            .map_err(|error| error.to_string())?
             .ok_or_else(|| "$RS2B0T catalog root unavailable".to_string())?;
         let path_file = self.rs2b0t_path_file();
         self.scripts
@@ -2166,7 +2168,9 @@ impl Session {
             self.fill_live_catalog()?;
             for card in &fleet_cards {
                 if !self.scripts.card_is_prepared(CardSource::Catalog, card) {
-                    self.scripts.transpile_blocking(CardSource::Catalog, card)?;
+                    self.scripts
+                        .transpile_blocking(CardSource::Catalog, card)
+                        .map_err(|error| error.to_string())?;
                 }
             }
             let plan = frontend_core::live::StartPlan::fleet_catalog(
@@ -2448,21 +2452,24 @@ impl Session {
         (focused, draws)
     }
 
-    /// Queue a host-owned rail cheat on the focused slot. No-op without
-    /// play/focus; these controls are not Debug-tab reply probes.
-    pub fn cheat_focused(&self, cmd: &str) {
+    /// Queue a host-owned rail cheat on the focused slot through the
+    /// `DebugCommand` row. No-op without play/focus; these controls are not
+    /// Debug-tab reply probes.
+    pub fn cheat_focused(&mut self, cmd: &str) {
         let Some(name) = self.focused_name() else {
             return;
         };
-        let _ = self.core.debug_command_internal(&name, cmd);
+        if !self.core.has_play() {
+            return;
+        }
+        self.map_desk.stage_internal_debug_command(cmd);
+        self.submit(OperatorCommand::DebugCommand, Targets::Profile(&name));
     }
 
     /// Attach the opt-in Debug catalog from the immutable server profile.
     /// Normal selected game data is deliberately not used as a fallback.
-    pub fn debug_catalog(&self) -> Result<Arc<api::debug_commands::DebugCatalog>, String> {
-        let profile = self
-            .server_profile()
-            .ok_or_else(|| "no bound server profile".to_string())?;
+    pub fn debug_catalog(&self) -> Result<Arc<api::debug_commands::DebugCatalog>, ProfileError> {
+        let profile = self.server_profile().ok_or(ProfileError::NotBound)?;
         profile.debug_catalog()
     }
 
@@ -2488,6 +2495,7 @@ impl Session {
                 Ok(())
             }
             Err(error) => {
+                let error = error.to_string();
                 self.debug_panel.set_catalog_error(error.clone());
                 Err(error)
             }
@@ -4422,7 +4430,12 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return;
         };
-        self.core.script_paint_click(&name, id, generation);
+        self.scripts
+            .stage_paint_input(frontend_core::scripts::PaintInput::click(
+                id.to_owned(),
+                generation,
+            ));
+        self.submit(OperatorCommand::ScriptPaintInput, Targets::Profile(&name));
     }
 
     /// Persistent strip/rail/tabs selection on the focused slot.
@@ -4430,8 +4443,13 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return;
         };
-        self.core
-            .script_paint_select(&name, key, select_name, generation);
+        self.scripts
+            .stage_paint_input(frontend_core::scripts::PaintInput::select(
+                key.to_owned(),
+                select_name.to_owned(),
+                generation,
+            ));
+        self.submit(OperatorCommand::ScriptPaintInput, Targets::Profile(&name));
     }
 
     /// Overlay generation for the path overlay's rising-edge refresh.

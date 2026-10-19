@@ -29,10 +29,19 @@ pub fn rs2b0t_root() -> Option<PathBuf> {
     script::rs2b0t_root()
 }
 
+/// Why a configured catalogue root cannot be used.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CatalogRootError {
+    /// The persisted root file is unreadable, untrusted, not an absolute
+    /// path or contains `..`; the sentence names the file and the reason.
+    #[error("{0}")]
+    Unusable(String),
+}
+
 /// The configured rs2b0t catalogue root, if any, with the reason a
 /// configured root cannot be used.
-pub fn rs2b0t_root_checked() -> Result<Option<PathBuf>, String> {
-    script::rs2b0t_root_checked()
+pub fn rs2b0t_root_checked() -> Result<Option<PathBuf>, CatalogRootError> {
+    script::rs2b0t_root_checked().map_err(CatalogRootError::Unusable)
 }
 
 /// The registry index a catalogue root must contain.
@@ -50,12 +59,23 @@ pub fn rs2b0t_import_deferred_at(path: &Path) -> bool {
     script::rs2b0t_import_deferred_at(path)
 }
 
+/// Why the catalogue-import marker could not be changed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ImportMarkerError {
+    /// The deferral marker could not be written.
+    #[error("{0}")]
+    Write(String),
+    /// The marker could not be removed.
+    #[error("{0}")]
+    Clear(String),
+}
+
 /// Record a deferred catalogue import at `path`.
-pub fn set_rs2b0t_import_deferred_at(path: &Path) -> Result<(), String> {
-    script::set_rs2b0t_import_deferred_at(path)
+pub fn set_rs2b0t_import_deferred_at(path: &Path) -> Result<(), ImportMarkerError> {
+    script::set_rs2b0t_import_deferred_at(path).map_err(ImportMarkerError::Write)
 }
 
 /// Clear the catalogue-import marker at `path`.
-pub fn clear_rs2b0t_import_at(path: &Path) -> Result<(), String> {
-    script::clear_rs2b0t_import_at(path)
+pub fn clear_rs2b0t_import_at(path: &Path) -> Result<(), ImportMarkerError> {
+    script::clear_rs2b0t_import_at(path).map_err(ImportMarkerError::Clear)
 }

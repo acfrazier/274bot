@@ -1,5 +1,7 @@
 use std::io;
 
+use host_play::local_state::Update;
+
 use crate::prefs::UiPreferences;
 
 /// A boolean inside the shared `panel-ui.json` `nav` object.
@@ -58,14 +60,16 @@ pub fn nav_preference(preferences: &UiPreferences, preference: NavPreference) ->
 }
 
 /// Write one shared nested nav boolean: only that key is merged, against
-/// the file as the service reads it then.
+/// the file as the service reads it then. A write still queued when the
+/// bounded wait ends comes back [`Update::Queued`] for its command to
+/// settle from.
 pub(crate) fn write_nav_preference(
     preferences: &UiPreferences,
     preference: NavPreference,
     enabled: bool,
-) -> io::Result<()> {
+) -> io::Result<Update> {
     let (key, _) = preference.key_and_default();
-    preferences.update(|document| {
+    preferences.begin_update(move |document| {
         let mut nav = document
             .get("nav")
             .filter(|value| value.is_object())
@@ -80,19 +84,20 @@ pub(crate) fn write_nav_preference(
 }
 
 /// Fixture seam: arrange a stored nav boolean as another writer would
-/// (front-end tests).
+/// (front-end tests), durable when it returns.
 #[cfg(any(test, feature = "test-support"))]
 pub fn write_nav_preference_for_test(
     preferences: &UiPreferences,
     preference: NavPreference,
     enabled: bool,
 ) -> io::Result<()> {
-    write_nav_preference(preferences, preference, enabled)
+    crate::prefs::settled_for_test(write_nav_preference(preferences, preference, enabled))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{nav_preference, write_nav_preference, NavPreference};
+    use crate::prefs::settled_for_test;
     use crate::prefs::UiPreferences as Preferences;
     use host_play::local_state::{LocalStateService, StateRoot};
     use std::path::PathBuf;
@@ -141,23 +146,33 @@ mod tests {
                 !nav_preference(&prefs, preference).unwrap(),
                 "missing {preference:?} defaults off"
             );
-            write_nav_preference(&prefs, preference, true)
-                .map(|()| true)
-                .unwrap();
+            settled_for_test(write_nav_preference(&prefs, preference, true)).unwrap();
         }
 
-        write_nav_preference(&prefs, NavPreference::SurvivableRouting, false)
-            .map(|()| false)
-            .unwrap();
-        write_nav_preference(&prefs, NavPreference::SurvivableRouting, true)
-            .map(|()| true)
-            .unwrap();
-        write_nav_preference(&prefs, NavPreference::ShowSpecialAreas, true)
-            .map(|()| true)
-            .unwrap();
-        write_nav_preference(&prefs, NavPreference::PauseScriptOnManualWalkAbort, false)
-            .map(|()| false)
-            .unwrap();
+        settled_for_test(write_nav_preference(
+            &prefs,
+            NavPreference::SurvivableRouting,
+            false,
+        ))
+        .unwrap();
+        settled_for_test(write_nav_preference(
+            &prefs,
+            NavPreference::SurvivableRouting,
+            true,
+        ))
+        .unwrap();
+        settled_for_test(write_nav_preference(
+            &prefs,
+            NavPreference::ShowSpecialAreas,
+            true,
+        ))
+        .unwrap();
+        settled_for_test(write_nav_preference(
+            &prefs,
+            NavPreference::PauseScriptOnManualWalkAbort,
+            false,
+        ))
+        .unwrap();
 
         let saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(prefs.path()).unwrap()).unwrap();
@@ -206,9 +221,12 @@ mod tests {
         let prefs = Preferences::new(
             LocalStateService::open_process(StateRoot::new(blocked.clone())).preferences(),
         );
-        write_nav_preference(&prefs, NavPreference::PauseScriptOnManualWalkAbort, false)
-            .map(|()| false)
-            .expect_err("the preference writer must report an inaccessible destination");
+        settled_for_test(write_nav_preference(
+            &prefs,
+            NavPreference::PauseScriptOnManualWalkAbort,
+            false,
+        ))
+        .expect_err("the preference writer must report an inaccessible destination");
         assert_eq!(std::fs::read(&blocked).unwrap(), b"not a directory");
         std::fs::remove_dir_all(dir).unwrap();
     }

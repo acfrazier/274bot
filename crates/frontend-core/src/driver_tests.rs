@@ -319,6 +319,31 @@ fn terminal_app(d: &HeadlessDriver, request: RequestId) -> Option<Terminal> {
         .cloned()
 }
 
+/// The application member's terminal once it settles, polling the session
+/// as a front end's frames do. A preference write the writer thread still
+/// holds when its bounded wait ends keeps the member pending until the
+/// write's own terminal (a busy disk delays it; nothing fails for that):
+/// this waits for that product signal. [`SETTLE_HANG_GUARD`] only ends a
+/// test whose writer hung; it is not the pass condition.
+fn settled_app(d: &mut HeadlessDriver, request: RequestId) -> Option<Terminal> {
+    let start = std::time::Instant::now();
+    loop {
+        if let Some(terminal) = terminal_app(d, request) {
+            return Some(terminal);
+        }
+        d.report(request)?;
+        assert!(
+            start.elapsed() < SETTLE_HANG_GUARD,
+            "the command never settled: its writer hung"
+        );
+        d.poll();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// See [`settled_app`]: far above any disk delay of a loaded host.
+const SETTLE_HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(600);
+
 fn rejected(rejection: crate::command::Rejection) -> Terminal {
     Settlement::Failed(CommandFailure::Rejected(rejection))
 }
@@ -444,7 +469,7 @@ fn preference_rows_write_the_file_and_a_new_session_reads_them_back() {
     for row in rows {
         let submitted = d.submit(row, Targets::Application).expect("admitted");
         assert_eq!(
-            terminal_app(&d, submitted.request()),
+            settled_app(&mut d, submitted.request()),
             Some(done()),
             "{row:?}"
         );
@@ -495,7 +520,7 @@ fn preference_rows_write_the_file_and_a_new_session_reads_them_back() {
     let off = d
         .submit(OperatorCommand::SetSessionLog(false), Targets::Application)
         .expect("admitted");
-    assert_eq!(terminal_app(&d, off.request()), Some(done()));
+    assert_eq!(settled_app(&mut d, off.request()), Some(done()));
     assert!(crate::log_file::session_log_path().is_none());
 }
 

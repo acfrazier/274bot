@@ -6,12 +6,13 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use frontend_core::walk_map::WalkMapDemand;
 use frontend_core::{load_map_bake_choice, MapBakeChoice, MapBakeGate, MapBakePrompt};
 use host_play::map_cache::fixture::{
-    fixture_descriptor, other_cache_descriptor, ship_fixture_terrain, CountingMapProducer,
+    fixture_descriptor, other_cache_descriptor, ship_fixture_terrain, wait_for_status,
+    CountingMapProducer,
 };
 use host_play::map_cache::{
     MapCacheRoot, MapDemand, MapDemandHandle, MapDemandManager, MapJobStatus, ShippedMap,
@@ -82,20 +83,13 @@ fn tree(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     out
 }
 
+/// Wait on the demand's own terminal status. `wait_for_status` parks on the
+/// work service's publication change, fails the test when the demand ends in
+/// any terminal other than Ready, and keeps only a deadlock guard: there is no
+/// wall-clock pass condition, because the demand queues behind other tests'
+/// map jobs in this process (see the guard's comment in the fixture).
 fn wait_ready(handle: &MapDemandHandle) {
-    let start = Instant::now();
-    loop {
-        match handle.status() {
-            MapJobStatus::Ready => return,
-            MapJobStatus::Queued | MapJobStatus::Running(_) => {}
-            other => panic!("map demand ended {other:?}"),
-        }
-        assert!(
-            start.elapsed() < Duration::from_secs(10),
-            "map demand never ready"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    wait_for_status(handle, MapJobStatus::Ready);
 }
 
 fn has_terrain(handle: &MapDemandHandle) -> bool {

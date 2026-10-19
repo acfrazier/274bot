@@ -3377,3 +3377,55 @@ fn a_rename_apart_whose_copy_cannot_be_made_leaves_the_file_untouched_and_refuse
         bytes
     );
 }
+
+/// T3.3 r4: an operator command's preferences update whose bounded wait
+/// ends while the writer thread still holds its first edit comes back
+/// queued, not failed. Polling it submits the update's later edit once
+/// the first is durable, and both land: a slow disk delays the outcome
+/// and loses nothing.
+#[test]
+fn a_queued_preferences_update_is_finished_by_polling_and_loses_no_edit() {
+    let scratch = IsolatedEnv::enter("local-state-t33-queued-update");
+    let preferences = preferences_at(&scratch, "queued");
+    preferences.reload().unwrap();
+    let (release, gate) = mpsc::channel::<()>();
+    let gate = std::sync::Mutex::new(gate);
+    let first = AtomicBool::new(true);
+    preferences
+        .service()
+        .set_write_hook(Arc::new(move |path, bytes| {
+            if first.swap(false, Ordering::SeqCst) {
+                // The busy disk: the first file write waits for the test.
+                let _ = gate.lock().unwrap().recv();
+            }
+            vault::write_private_file(path, bytes)
+        }));
+
+    let update = preferences
+        .begin_update(|document| {
+            document.insert("a".into(), serde_json::json!(1));
+            document.insert("b".into(), serde_json::json!(2));
+            Ok(())
+        })
+        .unwrap();
+    let Update::Queued(mut queued) = update else {
+        panic!("the held first write outlasts the bounded wait: {update:?}");
+    };
+    assert!(
+        queued.poll().is_none(),
+        "still queued while the disk is held"
+    );
+    assert!(!preferences.path().exists(), "nothing written yet");
+
+    release.send(()).unwrap();
+    // A hang guard, not a pass condition: the writer settles both edits
+    // once released.
+    queued
+        .wait(Duration::from_secs(600))
+        .expect("the queued update settles")
+        .expect("both edits are durable");
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(preferences.path()).unwrap()).unwrap();
+    assert_eq!(saved, serde_json::json!({"a": 1, "b": 2}));
+    assert_eq!(preferences.value("b").unwrap(), 2);
+}

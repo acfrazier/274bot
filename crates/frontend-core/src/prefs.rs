@@ -13,6 +13,7 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use host_play::local_state::Update;
 use serde_json::{Map, Value};
 
 /// A handle on the preferences document. [`Self::share`] gives another
@@ -70,7 +71,47 @@ impl UiPreferences {
     pub fn set(&self, key: &str, value: Value) -> io::Result<()> {
         self.inner.set(key, value)
     }
+
+    /// [`Self::update`] for an operator command: when the bounded wait
+    /// ends with the write still queued, the rest of the update comes
+    /// back as [`Update::Queued`] for the command to settle from
+    /// ([`crate::OperatorSession::poll`]), instead of a failure.
+    pub(crate) fn begin_update(
+        &self,
+        merge: impl FnMut(&mut Map<String, Value>) -> io::Result<()> + Send + 'static,
+    ) -> io::Result<Update> {
+        self.inner.begin_update(merge)
+    }
+
+    /// [`Self::set`] through [`Self::begin_update`].
+    pub(crate) fn begin_set(&self, key: &str, value: Value) -> io::Result<Update> {
+        self.inner.begin_set(key, value)
+    }
 }
+
+/// Test seam: the terminal of a preference write that may still be
+/// queued. The writer thread settles every queued write (durable,
+/// refused, or cancelled when its service stops), so this waits for that
+/// settlement; [`WRITE_HANG_GUARD`] only ends a test whose writer hung.
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn settled_for_test(write: io::Result<Update>) -> io::Result<()> {
+    match write? {
+        Update::Durable => Ok(()),
+        Update::Queued(mut queued) => queued.wait(WRITE_HANG_GUARD).unwrap_or_else(|| {
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("the preference write was still queued after {WRITE_HANG_GUARD:?}"),
+            ))
+        }),
+    }
+}
+
+/// How long a test waits for one step of a queued preference write
+/// before it calls the writer hung. Not a pass condition: a loaded host
+/// delays the step (round 3 saw more than 5 s on a busy disk), and the
+/// step ends by itself; ten minutes is far above any such delay.
+#[cfg(any(test, feature = "test-support"))]
+const WRITE_HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(600);
 
 #[cfg(any(test, feature = "test-support"))]
 impl UiPreferences {

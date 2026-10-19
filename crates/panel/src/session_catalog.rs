@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use frontend_core::{
     command::OperatorCommand,
+    launch::ProfileError,
     scripts::{paths, CardSource, CatalogActionKind, ScriptChoice},
 };
 
@@ -19,12 +20,22 @@ fn default_catalog_browse_dir(last: Option<&Path>) -> PathBuf {
     crate::script_picker::default_load_browse_dir(last)
 }
 
+/// Why the catalogue root could not be determined: the bound or configured
+/// profile failed to resolve, or the persisted root file is unusable.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum CatalogRootFailure {
+    #[error(transparent)]
+    Profile(#[from] ProfileError),
+    #[error(transparent)]
+    Root(#[from] paths::CatalogRootError),
+}
+
 impl Session {
-    pub(crate) fn catalog_root(&self) -> Result<Option<PathBuf>, String> {
+    pub(crate) fn catalog_root(&self) -> Result<Option<PathBuf>, CatalogRootFailure> {
         if self.launcher.bound().is_some() || self.launcher.configured() {
-            self.launcher.catalog_root(self.ui.server_revision)
+            Ok(self.launcher.catalog_root(self.ui.server_revision)?)
         } else {
-            paths::rs2b0t_root_checked()
+            Ok(paths::rs2b0t_root_checked()?)
         }
     }
 

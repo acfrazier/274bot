@@ -531,12 +531,47 @@ enum TranspileJob {
     },
 }
 
+/// Why preparing one card's JavaScript failed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TranspileError {
+    /// The card could not be snapshotted, prepared or committed; the
+    /// sentence is the one the script layer reports.
+    #[error("{0}")]
+    Preparation(String),
+    /// The shared worker refused the job or lost it.
+    #[error("{0}")]
+    Worker(String),
+    /// The card changed while it was being prepared.
+    #[error("card changed while it was being prepared")]
+    CardChanged,
+    /// Preparation finished but the card holds no JavaScript.
+    #[error("card preparation produced no JavaScript")]
+    NoJavaScript,
+    /// The worker returned a confirmation instead of a preparation.
+    #[error("unexpected confirmation result")]
+    UnexpectedConfirmation,
+    /// Another client's card preparation result is still uncollected.
+    #[error("another client has an uncollected card preparation result")]
+    ResultUncollected,
+    /// The job ended without leaving a result.
+    #[error("card preparation finished without a result")]
+    NoResult,
+}
+
+/// Why a marked assignment could not wait for catalog preparation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum AssignmentDeferError {
+    /// Another assignment already waits for the catalog.
+    #[error("an assignment is already waiting for catalog preparation")]
+    AlreadyWaiting,
+}
+
 struct TranspileResult {
     generation: u64,
     client: TranspileClient,
     source: script::ScriptSource,
     lookup: String,
-    result: Result<(), String>,
+    result: Result<(), TranspileError>,
 }
 
 impl ScriptWorkState {
@@ -667,7 +702,11 @@ impl Scripts {
 
     /// Request one card's preparation through WorkAdmission for the panel
     /// warmup queue. Full is retained as one bounded demand.
-    pub fn request_transpile(&mut self, source: CardSource, lookup: &str) -> Result<(), String> {
+    pub fn request_transpile(
+        &mut self,
+        source: CardSource,
+        lookup: &str,
+    ) -> Result<(), TranspileError> {
         let source = source.to_script();
         self.request_transpile_for(TranspileClient::PanelQueue, source, lookup)
             .map(|_| ())
@@ -680,7 +719,7 @@ impl Scripts {
         &mut self,
         source: CardSource,
         lookup: &str,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, TranspileError> {
         let source = source.to_script();
         self.request_transpile_for(TranspileClient::ExternalLoader, source, lookup)
     }
@@ -693,7 +732,7 @@ impl Scripts {
         &mut self,
         source: CardSource,
         lookup: &str,
-    ) -> Option<Result<(), String>> {
+    ) -> Option<Result<(), TranspileError>> {
         let source = source.to_script();
         self.take_transpile_result_for(TranspileClient::ExternalLoader, source, lookup)
     }
@@ -703,7 +742,7 @@ impl Scripts {
         client: TranspileClient,
         source: script::ScriptSource,
         lookup: &str,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, TranspileError> {
         if let Some(job) = self.async_work.transpile.as_ref() {
             let (active_client, active_source, active_lookup) = match job {
                 TranspileJob::Pending {
@@ -742,7 +781,8 @@ impl Scripts {
         }
         let snapshot = Arc::new(
             self.js
-                .card_preparation_snapshot(source, lookup, None)?
+                .card_preparation_snapshot(source, lookup, None)
+                .map_err(TranspileError::Preparation)?
                 .force_prepare()
                 .cache_even_if_unloadable(),
         );
@@ -779,7 +819,9 @@ impl Scripts {
             })
     }
 
-    pub fn take_transpile_result(&mut self) -> Option<(CardSource, String, Result<(), String>)> {
+    pub fn take_transpile_result(
+        &mut self,
+    ) -> Option<(CardSource, String, Result<(), TranspileError>)> {
         let result = self.async_work.transpile_result.as_ref()?;
         if result.generation != self.async_work.transpile_generation
             || result.client != TranspileClient::PanelQueue
@@ -799,7 +841,7 @@ impl Scripts {
         client: TranspileClient,
         source: script::ScriptSource,
         lookup: &str,
-    ) -> Option<Result<(), String>> {
+    ) -> Option<Result<(), TranspileError>> {
         let matches = self
             .async_work
             .transpile_result
@@ -833,7 +875,11 @@ impl Scripts {
 
     /// Synchronous receipt for non-interactive live setup before its session
     /// begins pumping. Interactive callers use `request_transpile`.
-    pub fn transpile_blocking(&mut self, source: CardSource, lookup: &str) -> Result<(), String> {
+    pub fn transpile_blocking(
+        &mut self,
+        source: CardSource,
+        lookup: &str,
+    ) -> Result<(), TranspileError> {
         let source = source.to_script();
         loop {
             if self.request_transpile_for(TranspileClient::LiveSetup, source, lookup)? {
@@ -843,7 +889,7 @@ impl Scripts {
             if self.async_work.transpile_result.is_some()
                 && !self.transpile_pending_for(TranspileClient::LiveSetup)
             {
-                return Err("another client has an uncollected card preparation result".into());
+                return Err(TranspileError::ResultUncollected);
             }
             std::thread::yield_now();
         }
@@ -855,7 +901,7 @@ impl Scripts {
                 return result;
             }
             if !self.transpile_pending_for(TranspileClient::LiveSetup) {
-                return Err("card preparation finished without a result".into());
+                return Err(TranspileError::NoResult);
             }
             std::thread::yield_now();
         }
@@ -1146,7 +1192,7 @@ impl Scripts {
                     client,
                     source,
                     lookup,
-                    result: Err(error.to_string()),
+                    result: Err(TranspileError::Worker(error.to_string())),
                 });
                 return;
             }
@@ -1185,7 +1231,7 @@ impl Scripts {
                     client,
                     source,
                     lookup,
-                    result: Err(error.to_string()),
+                    result: Err(TranspileError::Worker(error.to_string())),
                 });
             }
         }
@@ -1232,9 +1278,12 @@ impl Scripts {
         let result = match task.join() {
             Ok(Ok(script::load::CardPreparationOutcome::Prepared(prepared))) => {
                 if !self.card_snapshot_current(source, &lookup, &snapshot) {
-                    Err("card changed while it was being prepared".into())
+                    Err(TranspileError::CardChanged)
                 } else {
-                    self.js.commit_prepared(prepared).map(|_| ())
+                    self.js
+                        .commit_prepared(prepared)
+                        .map(|_| ())
+                        .map_err(TranspileError::Preparation)
                 }
             }
             Ok(Ok(script::load::CardPreparationOutcome::Unchanged)) => {
@@ -1243,18 +1292,18 @@ impl Scripts {
                 {
                     Ok(())
                 } else {
-                    Err("card preparation produced no JavaScript".into())
+                    Err(TranspileError::NoJavaScript)
                 }
             }
             Ok(Ok(script::load::CardPreparationOutcome::Failed { error, failure })) => {
                 self.js.record_failure(failure);
-                Err(error)
+                Err(TranspileError::Preparation(error))
             }
             Ok(Ok(script::load::CardPreparationOutcome::Confirmed)) => {
-                Err("unexpected confirmation result".into())
+                Err(TranspileError::UnexpectedConfirmation)
             }
-            Ok(Err(error)) => Err(error),
-            Err(error) => Err(error.to_string()),
+            Ok(Err(error)) => Err(TranspileError::Preparation(error)),
+            Err(error) => Err(TranspileError::Worker(error.to_string())),
         };
         if let Err(error) = &result {
             self.show(format!("transpile {lookup}: {error}"));
@@ -1733,9 +1782,9 @@ impl Scripts {
     pub(crate) fn defer_pending_catalog_assignment(
         &mut self,
         action: crate::marked::PendingCatalogAssignment,
-    ) -> Result<(), String> {
+    ) -> Result<(), AssignmentDeferError> {
         if self.async_work.pending_marked_action.is_some() {
-            return Err("an assignment is already waiting for catalog preparation".into());
+            return Err(AssignmentDeferError::AlreadyWaiting);
         }
         self.async_work.pending_marked_action = Some(action);
         Ok(())

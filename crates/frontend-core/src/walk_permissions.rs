@@ -333,11 +333,15 @@ impl WalkGlobalsView {
         }
     }
 
+    /// Write the fields `after` changes from `before`, merged into the
+    /// file's `nav` object as the service reads it then. A write still
+    /// queued when the bounded wait ends comes back
+    /// [`host_play::local_state::Update::Queued`].
     pub(crate) fn persist_changed(
         preferences: &crate::prefs::UiPreferences,
         before: Self,
         after: Self,
-    ) -> io::Result<()> {
+    ) -> io::Result<host_play::local_state::Update> {
         let before_globals = before.globals;
         let after_globals = after.globals;
         let changed = [
@@ -378,10 +382,10 @@ impl WalkGlobalsView {
             ),
         ];
         if changed.iter().all(|(_, before, after)| before == after) {
-            return Ok(());
+            return Ok(host_play::local_state::Update::Durable);
         }
 
-        preferences.update(|document| {
+        preferences.begin_update(move |document| {
             let nav = document
                 .entry("nav")
                 .or_insert_with(|| serde_json::json!({}));
@@ -567,7 +571,12 @@ mod tests {
             survivable_routing_notice_ack: true,
         };
         after.globals.set_danger_level(DangerLevel::WhenSurvivable);
-        WalkGlobalsView::persist_changed(store.prefs(), before, after).unwrap();
+        crate::prefs::settled_for_test(WalkGlobalsView::persist_changed(
+            store.prefs(),
+            before,
+            after,
+        ))
+        .unwrap();
         let persisted =
             serde_json::from_slice::<serde_json::Value>(&std::fs::read(store.path()).unwrap())
                 .unwrap();
@@ -582,14 +591,18 @@ mod tests {
         assert_eq!(persisted["nav"]["survivable_routing_notice_ack"], true);
         assert_eq!(persisted["nav"]["show_nav_path"], false);
 
-        crate::nav_prefs::write_nav_preference(
+        crate::prefs::settled_for_test(crate::nav_prefs::write_nav_preference(
             store.prefs(),
             crate::NavPreference::AllowTeleports,
             false,
-        )
-        .map(|()| false)
+        ))
         .unwrap();
-        WalkGlobalsView::persist_changed(store.prefs(), after, after).unwrap();
+        crate::prefs::settled_for_test(WalkGlobalsView::persist_changed(
+            store.prefs(),
+            after,
+            after,
+        ))
+        .unwrap();
         let after_noop = WalkGlobalsView::read(store.prefs());
         assert!(!after_noop.globals.allow_teleports);
         assert_eq!(after_noop.danger_level(), DangerLevel::WhenSurvivable);

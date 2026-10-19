@@ -21,6 +21,15 @@ use crate::surface::HeadlessSurface;
 const LOOPING: &str = "export default class T extends LoopingBot { override loop() {} }\n";
 const THIEVER: &str = "export const SETTINGS = { target: { type: 'string', default: 'Guard' } };\nexport default class T extends LoopingBot { override loop() {} }\n";
 
+/// Hang guard for every wait in this file, never a pass condition and never a
+/// latency target. Each wait ends on the product's own settlement signal
+/// (`starts_pending()` false, the slot's run state): every accepted job
+/// reaches a terminal. Start preparation shares one process-wide background
+/// worker with every other test in this binary, so a wait on a loaded host
+/// queues behind all of them. The guard only stops a deadlocked test and is
+/// minutes, not the expected duration.
+const HANG_GUARD: Duration = Duration::from_secs(600);
+
 struct Fixture {
     core: OperatorSession<()>,
     scripts: Scripts,
@@ -109,13 +118,29 @@ impl Fixture {
         }
     }
 
+    /// Pump the core and the coordinator until `done` holds. The pass condition
+    /// is the product's own settlement signal; the only time bound is
+    /// `HANG_GUARD`.
     fn until(&mut self, what: &str, mut done: impl FnMut(&Self) -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while !done(self) && Instant::now() < deadline {
+        let guard = Instant::now() + HANG_GUARD;
+        while !done(self) {
+            assert!(Instant::now() < guard, "{what}: hang guard expired");
             self.pump();
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(done(self), "timed out waiting for {what}");
+    }
+
+    /// Pump until the slot reaches `want`. A slot that ends in `Error` when
+    /// another state was wanted has failed, which fails the test now.
+    fn until_state(&mut self, name: &str, want: ScriptRunState) {
+        self.until(name, |f| {
+            let state = f.state(name);
+            assert!(
+                state == want || state != ScriptRunState::Error,
+                "{name} ended {state:?}, wanted {want:?}"
+            );
+            state == want
+        });
     }
 
     fn state(&self, name: &str) -> ScriptRunState {
@@ -127,7 +152,7 @@ impl Fixture {
             .start_profile(&mut self.core, name, None)
             .unwrap();
         self.until("start to settle", |f| !f.scripts.starts_pending());
-        self.until("Running", |f| f.state(name) == ScriptRunState::Running);
+        self.until_state(name, ScriptRunState::Running);
     }
 
     fn generation(&self, name: &str) -> u64 {
@@ -252,7 +277,7 @@ fn assign_and_restart_replaces_running_cards_and_starts_idle_ones() {
     assign_and_restart_marked(&selection, &mut f.core, &mut f.scripts, &new_sel, None);
     f.until("every restart to settle", |f| !f.scripts.starts_pending());
     for name in ["alice", "bob", "carol"] {
-        f.until(name, |f| f.state(name) == ScriptRunState::Running);
+        f.until_state(name, ScriptRunState::Running);
         f.core.flush_writes();
         assert_eq!(
             f.assignment_key(name),
@@ -285,9 +310,7 @@ fn logout_while_a_restart_waits_for_the_stop_cancels_it() {
     );
     assert!(f.scripts.cancel_queued_as("alice", "logged out"));
     assert!(!f.scripts.starts_pending());
-    f.until("the stop to finish", |f| {
-        f.state("alice") == ScriptRunState::Idle
-    });
+    f.until_state("alice", ScriptRunState::Idle);
     f.pump();
     assert_eq!(f.state("alice"), ScriptRunState::Idle, "never restarted");
 }
@@ -630,15 +653,17 @@ fn a_started_run_reports_progress_and_a_stopped_one_does_not() {
     let progress = |f: &Fixture| f.core.play().unwrap().script_progress("alice");
     assert!(progress(&f).is_none(), "never started");
 
+    let before_start = Instant::now();
     f.start_running("alice");
     let run = progress(&f).expect("a running slot has a run");
-    assert!(run.running_for < Duration::from_secs(20));
+    // A run cannot have been running for longer than this test has existed
+    // since it asked for the Start; no absolute duration is asserted, which a
+    // loaded host could exceed.
+    assert!(run.running_for <= before_start.elapsed());
     assert_eq!(run.levels_gained(), 0);
 
     f.core.play().unwrap().script_stop("alice");
-    f.until("the stop to finish", |f| {
-        f.state("alice") == ScriptRunState::Idle
-    });
+    f.until_state("alice", ScriptRunState::Idle);
     assert!(progress(&f).is_none(), "a stopped slot shows no run");
 
     f.start_running("alice");
@@ -829,9 +854,7 @@ fn operator_apply_assign_start_does_not_start_on_defaults() {
         .start_selected(&mut f.core, "bob", None, None)
         .unwrap();
     f.until("starts to settle", |f| !f.scripts.starts_pending());
-    f.until("bob running on default", |f| {
-        f.state("bob") == ScriptRunState::Running
-    });
+    f.until_state("bob", ScriptRunState::Running);
     let guard: serde_json::Map<String, serde_json::Value> =
         std::iter::once(("target".to_string(), serde_json::json!("Guard"))).collect();
     assert!(
@@ -839,9 +862,7 @@ fn operator_apply_assign_start_does_not_start_on_defaults() {
         "Cancel then Start uses the card default, not the unapplied copy"
     );
     f.core.play().unwrap().script_stop("bob");
-    f.until("bob idle after cancel-start", |f| {
-        f.state("bob") == ScriptRunState::Idle
-    });
+    f.until_state("bob", ScriptRunState::Idle);
 
     f.scripts.prepare_settings_sync(
         &f.core,
@@ -857,7 +878,7 @@ fn operator_apply_assign_start_does_not_start_on_defaults() {
         .start_selected(&mut f.core, "bob", None, None)
         .unwrap();
     f.until("starts to settle", |f| !f.scripts.starts_pending());
-    f.until("bob running", |f| f.state("bob") == ScriptRunState::Running);
+    f.until_state("bob", ScriptRunState::Running);
     let knight: serde_json::Map<String, serde_json::Value> = std::iter::once((
         "target".to_string(),
         serde_json::json!("Knight of Ardougne"),

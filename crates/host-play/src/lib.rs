@@ -170,7 +170,8 @@ use play_wires::dispatch_wires;
 pub use play_wires::{CheatRefusal, WireCmd};
 pub use resource_view::{
     background_bot_count, background_bots_ack_error, background_bots_acked,
-    clear_background_bots_ack_error, persist_background_bots_ack, LiveSlot,
+    begin_persist_background_bots_ack, clear_background_bots_ack_error,
+    persist_background_bots_ack, LiveSlot,
 };
 pub use rss::{count_tcp_to, current_resident_bytes, parse_lsof_established, sample_process};
 pub use scatter::{scatter_tile_for, tele_args};

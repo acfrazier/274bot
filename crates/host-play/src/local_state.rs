@@ -115,7 +115,7 @@ mod frontend;
 
 use files::{ContentDigest, LockError, ReadDocument, ReadError, RenameRefusal, Rewrite, StoreKey};
 pub use files::{StateRoot, HINT_SCHEMA_VERSION, MAX_PREFERENCES_BYTES};
-pub use frontend::{Preferences, ServiceLoadouts};
+pub use frontend::{Preferences, QueuedUpdate, ServiceLoadouts, Update};
 
 /// How many edits of one operator store (loadouts, preferences) may wait
 /// behind the one in flight.
@@ -287,6 +287,14 @@ pub enum RequestState {
     /// or newer settlements of the store displaced it), or never accepted
     /// it. The outcome is unknown: treat the work as not saved.
     Forgotten,
+}
+
+/// A queued re-read of one store's file
+/// ([`LocalStateService::start_readback`]): the completed-readback count
+/// that answers it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ReadbackTicket {
+    target: u64,
 }
 
 /// Whether an accepted request's rows reached the disk, following the
@@ -670,31 +678,28 @@ impl LocalStateService {
         identity: &DomainIdentity,
         timeout: Duration,
     ) -> Result<(DomainLease, bool), ErrorCode> {
-        self.readback_with(identity, timeout, false)
+        let ticket = self.start_readback(identity, false)?;
+        self.finish_readback(identity, ticket, Some(Instant::now() + timeout))
+            .unwrap_or(Err(ErrorCode::NotReady {
+                domain: identity.domain(),
+            }))
     }
 
-    /// [`Self::readback`] for a save about to be made: the one read that
-    /// quarantines a preferences file whose content is malformed and
-    /// starts fresh preferences (the recovery the old shared writer made
-    /// on a save). A read for anything else refuses such a file, so its
-    /// readers fail closed until a save recovers it.
-    pub(crate) fn readback_for_save(
+    /// Queue a re-read of `identity`'s file and return what
+    /// [`Self::finish_readback`] waits for: a read that began after this
+    /// call. With `recover`, the read is a save's (a preferences update
+    /// about to write): the one read that quarantines a preferences file
+    /// whose content is malformed and starts fresh preferences (the
+    /// recovery the old shared writer made on a save). A read for anything
+    /// else refuses such a file, so its readers fail closed until a save
+    /// recovers it.
+    pub(crate) fn start_readback(
         &self,
         identity: &DomainIdentity,
-        timeout: Duration,
-    ) -> Result<(DomainLease, bool), ErrorCode> {
-        self.readback_with(identity, timeout, true)
-    }
-
-    fn readback_with(
-        &self,
-        identity: &DomainIdentity,
-        timeout: Duration,
         recover: bool,
-    ) -> Result<(DomainLease, bool), ErrorCode> {
+    ) -> Result<ReadbackTicket, ErrorCode> {
         let key = self.store_key(identity)?;
         let domain = identity.domain();
-        let deadline = Instant::now() + timeout;
         let mut state = self.shared.state.lock();
         state.admit(&key)?;
         if recover {
@@ -705,12 +710,31 @@ impl LocalStateService {
         let Some(target) = self.shared.request_readback(&mut state, &key) else {
             return Err(ErrorCode::NotReady { domain });
         };
+        Ok(ReadbackTicket { target })
+    }
+
+    /// The result of the read `ticket` waits for: the rows at the store's
+    /// real version and whether a file exists, or the typed refusal.
+    /// `None` while that read has not completed by `deadline`; without a
+    /// deadline, `None` at once (a frame's check, never a wait).
+    pub(crate) fn finish_readback(
+        &self,
+        identity: &DomainIdentity,
+        ticket: ReadbackTicket,
+        deadline: Option<Instant>,
+    ) -> Option<Result<(DomainLease, bool), ErrorCode>> {
+        let domain = identity.domain();
+        let key = match self.store_key(identity) {
+            Ok(key) => key,
+            Err(code) => return Some(Err(code)),
+        };
+        let mut state = self.shared.state.lock();
         loop {
             let Some(store) = state.stores.get(&key) else {
-                return Err(ErrorCode::NotReady { domain });
+                return Some(Err(ErrorCode::NotReady { domain }));
             };
-            if store.readbacks >= target {
-                return match &store.file {
+            if store.readbacks >= ticket.target {
+                return Some(match &store.file {
                     FileState::Cold => Err(ErrorCode::NotReady { domain }),
                     FileState::Rejected(rejection) => Err(ErrorCode::Failed {
                         domain,
@@ -719,15 +743,16 @@ impl LocalStateService {
                     FileState::Read(cached) => {
                         lease_of(identity, cached).map(|lease| (lease, cached.digest.is_some()))
                     }
-                };
+                });
             }
+            let deadline = deadline?;
             if self
                 .shared
                 .settled
                 .wait_until(&mut state, deadline)
                 .timed_out()
             {
-                return Err(ErrorCode::NotReady { domain });
+                return None;
             }
         }
     }
@@ -1714,7 +1739,7 @@ impl Shared {
     /// read ([`Self::dedupe_loadouts`]); a preferences file whose content is
     /// malformed (not JSON, or JSON that is not an object) is quarantined
     /// and started fresh, only on the read a save makes (`recover`,
-    /// [`LocalStateService::readback_for_save`];
+    /// [`LocalStateService::start_readback`];
     /// [`Self::quarantine_preferences`]). The file is then read as the
     /// repair left it. `held` is the lock when the caller (a write) holds it
     /// already; otherwise the repair takes it. Every other refusal (owner,

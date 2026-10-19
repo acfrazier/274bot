@@ -9,10 +9,12 @@ use host_play::{InstancePermit, Play, PlayOptions, SlotArm, SlotStatus, StartupP
 use vault::{Profile, ProfileSettings, Vault};
 
 use super::*;
+use crate::command::OperatorCommand;
 use crate::scripts::LoadShape;
 use crate::surface::{SlotAttach, SlotSurface};
 use crate::ArmMirror;
 use crate::WalkGlobals;
+use api::lifecycle::MemoryMode;
 
 /// Records lifecycle callbacks; IO values count attaches so reuse is visible.
 #[derive(Default)]
@@ -53,6 +55,35 @@ impl SlotSurface for Recorder {
     }
 
     fn draw_changed(&mut self, _switch: crate::command::DrawSwitch, _on: bool) {}
+}
+
+/// The auto-login row for `name` through the command seam; its operation.
+fn submit_auto_login<Io>(s: &mut OperatorSession<Io>, name: &str, on: bool) -> OperationId {
+    s.submit_detached(OperatorCommand::SetAutoLogin(on), Targets::Profile(name))
+        .unwrap()
+        .operation()
+        .expect("the write opened an operation")
+}
+
+/// The memory-mode row for `name` through the command seam; its operation.
+fn submit_memory_mode<Io>(s: &mut OperatorSession<Io>, name: &str, lowmem: bool) -> OperationId {
+    let mode = if lowmem {
+        MemoryMode::Low
+    } else {
+        MemoryMode::High
+    };
+    s.submit_detached(OperatorCommand::SetMemoryMode(mode), Targets::Profile(name))
+        .unwrap()
+        .operation()
+        .expect("the write opened an operation")
+}
+
+/// The profile-delete row for `name` through the command seam; its operation.
+fn submit_vault_remove<Io>(s: &mut OperatorSession<Io>, name: &str) -> OperationId {
+    s.submit_detached(OperatorCommand::DeleteProfile, Targets::Profile(name))
+        .unwrap()
+        .operation()
+        .expect("the delete opened an operation")
 }
 
 fn empty_play() -> Play {
@@ -456,11 +487,47 @@ fn member_still_stopping(
     (s, surface, release, remove)
 }
 
+/// Hang guard for every wait in this file, never a pass condition and never a
+/// latency target. Each wait ends on the product's own settlement signal (a
+/// settled Start, a settled operation, a worker that has exited, a published
+/// line), and every accepted job and every stopping worker reaches one. Start
+/// preparation shares one process-wide background worker with every other test
+/// in this binary, so a wait on a loaded host queues behind all of them. The
+/// guard only stops a deadlocked test and is minutes, not the expected duration.
+const HANG_GUARD: Duration = Duration::from_secs(600);
+
+/// Poll the session, as a front end does once per frame, until `done` holds.
+/// `done` runs before the first poll and after every poll.
+fn pump_until<Io>(
+    s: &mut OperatorSession<Io>,
+    what: &str,
+    mut done: impl FnMut(&mut OperatorSession<Io>) -> bool,
+) {
+    let guard = Instant::now() + HANG_GUARD;
+    while !done(s) {
+        assert!(Instant::now() < guard, "{what}: hang guard expired");
+        s.poll();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Poll until `op`'s outcome for alice is no longer Pending; the caller
+/// asserts which terminal it reached.
+fn wait_operation_settled<Io>(s: &mut OperatorSession<Io>, op: OperationId) {
+    pump_until(s, "operation did not settle", |s| {
+        s.operation(op).unwrap().outcome("alice") != Some(&Outcome::Pending)
+    });
+}
+
 /// Let `b`'s old worker exit, then poll once.
 fn finish_stopping(s: &mut OperatorSession<u32>, release: std::sync::mpsc::Sender<()>) {
     drop(release);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while s.play().unwrap().slot_stopping("b") && Instant::now() < deadline {
+    let guard = Instant::now() + HANG_GUARD;
+    while s.play().unwrap().slot_stopping("b") {
+        assert!(
+            Instant::now() < guard,
+            "b's worker did not exit: hang guard expired"
+        );
         std::thread::yield_now();
     }
     s.poll();
@@ -528,7 +595,7 @@ fn memory_toggle_while_spawn_is_deferred_updates_its_profile_and_arm() {
     let (mut s, mut surface, release, _) = member_still_stopping("deferred-memory-toggle");
     s.load_all(&mut surface, None);
 
-    s.set_memory_mode("b", false).unwrap();
+    submit_memory_mode(&mut s, "b", false);
     let deferred = s.deferred.get("b").expect("replacement spawn is deferred");
     assert!(
         !deferred.profile.settings.lowmem,
@@ -559,7 +626,7 @@ fn failed_memory_toggle_resets_a_deferred_profile_and_arm() {
     s.load_all(&mut surface, None);
     let blocked = block_writes(&vault_path("deferred-memory-toggle-fail"));
 
-    s.set_memory_mode("b", false).unwrap();
+    submit_memory_mode(&mut s, "b", false);
     s.flush_writes();
     unblock_writes(blocked);
 
@@ -741,15 +808,12 @@ fn looping_bot(dir: &std::path::Path) -> (String, LoadShape) {
 }
 
 fn settle_start(s: &mut OperatorSession<u32>) -> Vec<StartSettled> {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        s.poll();
-        let settled = s.take_settled_starts();
-        if !settled.is_empty() || Instant::now() > deadline {
-            return settled;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    let mut settled = Vec::new();
+    pump_until(s, "script Start did not settle", |s| {
+        settled = s.take_settled_starts();
+        !settled.is_empty()
+    });
+    settled
 }
 
 #[test]
@@ -803,13 +867,7 @@ fn offline_start_and_stop_settle_through_poll() {
     );
 
     let stop = s.stop_script("alice");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while s.operation(stop).unwrap().outcome("alice") == Some(&Outcome::Pending)
-        && Instant::now() < deadline
-    {
-        s.poll();
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    wait_operation_settled(&mut s, stop);
     assert_eq!(
         s.operation(stop).unwrap().outcome("alice"),
         Some(&Outcome::Completed)
@@ -1196,13 +1254,11 @@ fn script_lines_reach_the_slot_log_through_the_poll() {
         Some("file:broken".into()),
     )
     .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
     let mut taken = Vec::new();
-    while Instant::now() < deadline && taken.is_empty() {
-        s.poll();
+    pump_until(&mut s, "the failing script's log lines", |s| {
         taken.extend(s.script_lines().iter().cloned());
-        std::thread::sleep(Duration::from_millis(5));
-    }
+        !taken.is_empty()
+    });
     s.poll();
     assert!(s.script_lines().is_empty(), "lines are handed out once");
     assert!(
@@ -1258,7 +1314,7 @@ fn a_profile_write_is_queued_and_the_arm_follows_only_once_it_is_durable() {
     s.load("alice", &mut surface);
     let alice = arm(&s, "alice");
 
-    let op = s.set_auto_login("alice", true).unwrap();
+    let op = submit_auto_login(&mut s, "alice", true);
 
     assert!(
         s.vault().unwrap().get("alice").unwrap().settings.auto_login,
@@ -1287,7 +1343,7 @@ fn consecutive_writes_land_in_order_with_the_last_one_on_disk() {
     let mut s = session("write-order", &[("alice", 1, false)]);
     s.set_random_settings("alice", false, "Magic", false)
         .unwrap();
-    s.set_auto_login("alice", true).unwrap();
+    submit_auto_login(&mut s, "alice", true);
     s.set_random_settings("alice", true, "Prayer", true)
         .unwrap();
     s.flush_writes();
@@ -1400,13 +1456,7 @@ fn stop_scripts_drops_a_start_queued_behind_a_reap() {
     let (op, stopped) = s.stop_scripts(&["alice".to_string()]);
 
     assert_eq!(stopped, 1, "a Stopping slot with a queued Start is stopped");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while s.operation(op).unwrap().outcome("alice") == Some(&Outcome::Pending)
-        && Instant::now() < deadline
-    {
-        s.poll();
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    wait_operation_settled(&mut s, op);
     assert_eq!(
         s.operation(op).unwrap().outcome("alice"),
         Some(&Outcome::Completed)
@@ -1434,8 +1484,8 @@ fn a_write_replaced_in_the_same_commit_is_cancelled_and_its_mirror_never_runs() 
     let alice = arm(&s, "alice");
     let gate = s.write_gate();
     let held = gate.lock().unwrap();
-    let on = s.set_auto_login("alice", true).unwrap();
-    let off = s.set_auto_login("alice", false).unwrap();
+    let on = submit_auto_login(&mut s, "alice", true);
+    let off = submit_auto_login(&mut s, "alice", false);
     drop(held);
     s.flush_writes();
 
@@ -1465,7 +1515,7 @@ fn coalesced_edits_of_different_settings_all_reach_the_running_slot() {
     assert!(alice.random_events.load(Ordering::Relaxed));
     let gate = s.write_gate();
     let held = gate.lock().unwrap();
-    let auto = s.set_auto_login("alice", false).unwrap();
+    let auto = submit_auto_login(&mut s, "alice", false);
     let magic = s
         .set_random_settings("alice", false, "Magic", false)
         .unwrap();
@@ -1760,7 +1810,7 @@ fn on_a_failed_commit_a_superseded_write_is_cancelled_and_only_the_final_one_fai
     let blocked = block_writes(&vault_path("write-coalesce-fail"));
     let gate = s.write_gate();
     let held = gate.lock().unwrap();
-    let on = s.set_auto_login("alice", true).unwrap();
+    let on = submit_auto_login(&mut s, "alice", true);
     let off = s
         .set_random_settings("alice", false, "Magic", false)
         .unwrap();
@@ -2038,7 +2088,7 @@ fn a_failed_save_hands_back_the_draft_that_did_not_land() {
     let op = form_saves_alice(&mut s, &mut form, "typed");
     // An unrelated edit staged after the save changes the vault row, not
     // what the save carried.
-    s.set_auto_login("alice", true).unwrap();
+    submit_auto_login(&mut s, "alice", true);
     assert_eq!(
         s.saves_in_flight()
             .iter()
@@ -2118,7 +2168,7 @@ fn memory_toggle_stages_arms_and_settles() {
     publish_alice_login(&mut s, true);
     assert!(!s.memory_status("alice").unwrap().differs());
 
-    let op = s.set_memory_mode("alice", false).unwrap();
+    let op = submit_memory_mode(&mut s, "alice", false);
     assert_eq!(
         arm(&s, "alice").lowmem_handshake(),
         Some(false),
@@ -2154,7 +2204,7 @@ fn older_memory_save_cannot_rearm_a_cancelled_queue_across_commits() {
     s.load("alice", &mut surface);
     publish_alice_login(&mut s, true);
 
-    let first = s.set_memory_mode("alice", false).unwrap();
+    let first = submit_memory_mode(&mut s, "alice", false);
     // Seal and finish the first commit, but delay delivering its completion
     // until after the operator has cancelled that queued mode.
     let written = s.writer.as_mut().unwrap().wait_take().unwrap();
@@ -2163,7 +2213,7 @@ fn older_memory_save_cannot_rearm_a_cancelled_queue_across_commits() {
     assert!(written.result.is_ok());
     let gate = s.write_gate();
     let held = gate.lock().unwrap();
-    let second = s.set_memory_mode("alice", true).unwrap();
+    let second = submit_memory_mode(&mut s, "alice", true);
     assert_eq!(arm(&s, "alice").lowmem_handshake(), Some(true));
     assert!(!s.memory_status("alice").unwrap().differs());
 
@@ -2248,7 +2298,7 @@ fn a_save_of_a_profile_deleted_before_it_was_written_leaves_nothing_to_show() {
     let gate = s.write_gate();
     let held = gate.lock().unwrap();
     form_saves_alice(&mut s, &mut form, "typed");
-    s.vault_remove("alice").unwrap().unwrap();
+    submit_vault_remove(&mut s, "alice");
     drop(held);
     s.flush_writes();
 
@@ -2270,7 +2320,7 @@ fn a_delete_that_fails_after_a_queued_save_reports_once_and_restores_the_profile
     let gate = s.write_gate();
     let held = gate.lock().unwrap();
     form_saves_alice(&mut s, &mut form, "typed");
-    let delete = s.vault_remove("alice").unwrap().unwrap();
+    let delete = submit_vault_remove(&mut s, "alice");
     let blocked = block_writes(&vault_path("form-delete-fails"));
     drop(held);
     s.flush_writes();
@@ -2296,7 +2346,7 @@ fn a_delete_that_fails_after_a_queued_save_reports_once_and_restores_the_profile
 fn memory_toggle_before_load_applies_at_spawn_without_notice() {
     let mut s = session("mem-early", &[("alice", 1, true)]);
     let mut surface = Recorder::default();
-    s.set_memory_mode("alice", false).unwrap();
+    submit_memory_mode(&mut s, "alice", false);
     s.flush_writes();
     s.load("alice", &mut surface);
     assert_eq!(arm(&s, "alice").lowmem_handshake(), Some(false));
@@ -2335,7 +2385,7 @@ fn memory_relog_posts_one_atomic_intent_and_waits_for_owner_session() {
     );
     s.poll();
 
-    s.set_memory_mode("alice", false).unwrap();
+    submit_memory_mode(&mut s, "alice", false);
     s.flush_writes();
     let relog = s.request_memory_relog("alice", &mut surface);
     assert_eq!(
@@ -2452,7 +2502,7 @@ fn a_failed_memory_write_resets_the_armed_handshake() {
     publish_alice_login(&mut s, true);
     let blocked = block_writes(&vault_path("mem-write-fail"));
 
-    let op = s.set_memory_mode("alice", false).unwrap();
+    let op = submit_memory_mode(&mut s, "alice", false);
     assert_eq!(arm(&s, "alice").lowmem_handshake(), Some(false));
     s.flush_writes();
     unblock_writes(blocked);
@@ -2510,13 +2560,7 @@ fn memory_relog_warns_while_a_script_runs() {
     );
 
     let stop = s.stop_script("alice");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while s.operation(stop).unwrap().outcome("alice") == Some(&Outcome::Pending)
-        && Instant::now() < deadline
-    {
-        s.poll();
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    wait_operation_settled(&mut s, stop);
     assert!(
         !s.memory_relog_warning("alice"),
         "a stopped script needs no warning"
@@ -2540,7 +2584,7 @@ fn memory_ingame_toggled(test: &str) -> (OperatorSession<u32>, Recorder) {
         },
     );
     s.poll();
-    s.set_memory_mode("alice", false).unwrap();
+    submit_memory_mode(&mut s, "alice", false);
     s.flush_writes();
     assert!(s.memory_status("alice").unwrap().differs());
     (s, surface)

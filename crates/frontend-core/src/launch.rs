@@ -203,13 +203,14 @@ impl ProfileArgs {
     }
 
     /// Parsed numeric client revision for offline map-bundle tooling.
-    pub fn revision_number(&self) -> Result<Option<u16>, String> {
+    pub fn revision_number(&self) -> Result<Option<u16>, ProfileError> {
         self.0
             .revision
             .as_deref()
             .map(host_play::parse_revision)
             .transpose()
             .map(|revision| revision.map(|revision| revision.as_i32() as u16))
+            .map_err(ProfileError::Arguments)
     }
 
     /// Cache directory selected for offline map-bundle tooling.
@@ -248,8 +249,10 @@ impl ProfileArgs {
 /// the front end's own parser.
 pub fn parse_profile_args(
     args: impl IntoIterator<Item = impl AsRef<str>>,
-) -> Result<(ProfileArgs, Vec<String>), String> {
-    host_play::parse_profile_args(args).map(|(options, rest)| (ProfileArgs(options), rest))
+) -> Result<(ProfileArgs, Vec<String>), ProfileError> {
+    host_play::parse_profile_args(args)
+        .map(|(options, rest)| (ProfileArgs(options), rest))
+        .map_err(ProfileError::Arguments)
 }
 
 /// The ambient inputs (environment, home) a profile resolves against,
@@ -334,8 +337,10 @@ impl BoundProfile {
     }
 
     /// Refuse bot operation on a profile that forbids it.
-    pub fn require_bot_operation(&self) -> Result<(), String> {
-        self.0.require_bot_operation()
+    pub fn require_bot_operation(&self) -> Result<(), ProfileError> {
+        self.0
+            .require_bot_operation()
+            .map_err(ProfileError::BotOperationRefused)
     }
 
     /// The vault this profile keeps its accounts in.
@@ -398,8 +403,8 @@ impl BoundProfile {
 
     /// The opt-in debug command catalogue of this profile.
     #[cfg(feature = "debug-catalog")]
-    pub fn debug_catalog(&self) -> Result<Arc<api::debug_commands::DebugCatalog>, String> {
-        self.0.debug_catalog()
+    pub fn debug_catalog(&self) -> Result<Arc<api::debug_commands::DebugCatalog>, ProfileError> {
+        self.0.debug_catalog().map_err(ProfileError::DebugCatalog)
     }
 
     /// The world numbers of the profile's public world list, for profiles
@@ -611,6 +616,69 @@ impl SubmitError {
     }
 }
 
+/// Why a server-profile operation failed. The `String` variants carry the
+/// operator-facing sentence the lower layer (`host-play`) reports.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ProfileError {
+    /// A profile is already bound; the revision cannot change.
+    #[error("server profile is already bound; restart to change revision")]
+    AlreadyBound,
+    /// No production server-profile inputs were configured.
+    #[error("no production server profile was configured")]
+    NotConfigured,
+    /// No profile environment was configured.
+    #[error("no profile environment was configured")]
+    NoEnvironment,
+    /// No template has been prepared yet.
+    #[error("server profile is not prepared")]
+    NotPrepared,
+    /// The session is not bound to a server profile.
+    #[error("no bound server profile")]
+    NotBound,
+    /// The validated template belongs to another profile.
+    #[error("validated template does not match the active server profile")]
+    ValidationMismatch,
+    /// The command-line profile inputs (flags, revision) are invalid.
+    #[error("{0}")]
+    Arguments(String),
+    /// The configured inputs do not resolve to a server profile.
+    #[error("{0}")]
+    Resolve(String),
+    /// Preparing or validating the client template failed.
+    #[error("{0}")]
+    Prepare(String),
+    /// The shared preparation worker failed or lost the job.
+    #[error("{0}")]
+    Worker(String),
+    /// The profile forbids bot operation.
+    #[error("{0}")]
+    BotOperationRefused(String),
+    /// The profile's debug command catalogue is unavailable.
+    #[error("{0}")]
+    DebugCatalog(String),
+}
+
+impl ProfileError {
+    /// Heap bytes the carried message owns.
+    #[cfg(any(test, feature = "test-support"))]
+    fn owned_bytes(&self) -> usize {
+        match self {
+            Self::Arguments(message)
+            | Self::Resolve(message)
+            | Self::Prepare(message)
+            | Self::Worker(message)
+            | Self::BotOperationRefused(message)
+            | Self::DebugCatalog(message) => message.capacity(),
+            Self::AlreadyBound
+            | Self::NotConfigured
+            | Self::NoEnvironment
+            | Self::NotPrepared
+            | Self::NotBound
+            | Self::ValidationMismatch => 0,
+        }
+    }
+}
+
 /// One capped process-profile reservation for captured inputs, decode
 /// scratch, and the prepared shared-client template.
 const PROFILE_PREPARATION_INPUT_BYTES: usize = 64 * 1024 * 1024;
@@ -680,7 +748,7 @@ impl ProfilePreparation {
 
     /// Run the whole preparation on this thread (tests).
     #[cfg(any(test, feature = "test-support"))]
-    pub fn run_blocking(&self) -> Result<ProfileTemplate, String> {
+    pub fn run_blocking(&self) -> Result<ProfileTemplate, ProfileError> {
         let mut steps = PreparationSteps::new(
             Arc::clone(&self.inputs),
             host_play::progress::ProfileProgressObserver::default(),
@@ -698,7 +766,7 @@ impl ProfilePreparation {
 /// A submitted profile preparation.
 pub struct PreparationJob {
     generation: u64,
-    task: script::preparation::PreparedTask<Result<Arc<SharedClientTemplate>, String>>,
+    task: script::preparation::PreparedTask<Result<Arc<SharedClientTemplate>, ProfileError>>,
     latest: LatestProgress,
 }
 
@@ -708,14 +776,14 @@ impl PreparationJob {
     #[cfg(any(test, feature = "test-support"))]
     pub fn settled_for_test(
         generation: u64,
-        result: Result<ProfileTemplate, String>,
+        result: Result<ProfileTemplate, ProfileError>,
         progress: ProgressView,
     ) -> Self {
         let result = result.map(|template| template.0);
         let result_bytes = std::mem::size_of_val(&result)
             + match &result {
                 Ok(_) => 0,
-                Err(error) => error.capacity(),
+                Err(error) => error.owned_bytes(),
             };
         let input = script::preparation::PreparationInput::new(generation, 0, 0, result_bytes)
             .expect("a tiny preparation input");
@@ -750,10 +818,10 @@ impl PreparationJob {
     }
 
     /// The prepared template, or why preparation failed.
-    pub fn join(self) -> Result<ProfileTemplate, String> {
+    pub fn join(self) -> Result<ProfileTemplate, ProfileError> {
         self.task
             .join()
-            .map_err(|error| error.to_string())
+            .map_err(|error| ProfileError::Worker(error.to_string()))
             .and_then(|result| result)
             .map(ProfileTemplate)
     }
@@ -807,7 +875,11 @@ impl ValidationPending {
             script::preparation::PreparationKind::Profile,
             api::identity::Scope::Process,
             input,
-            move |_| template.validate_for_play_with_progress(&observer),
+            move |_| {
+                template
+                    .validate_for_play_with_progress(&observer)
+                    .map_err(ProfileError::Prepare)
+            },
         )
         .map_err(submit_error)?;
         Ok(ValidationJob {
@@ -821,7 +893,7 @@ impl ValidationPending {
 /// A submitted final validation.
 pub struct ValidationJob {
     generation: u64,
-    task: script::preparation::PreparedTask<Result<ValidatedTemplate, String>>,
+    task: script::preparation::PreparedTask<Result<ValidatedTemplate, ProfileError>>,
     latest: LatestProgress,
 }
 
@@ -841,10 +913,10 @@ impl ValidationJob {
     }
 
     /// The validated template, or why validation failed.
-    pub fn join(self) -> Result<ValidatedProfile, String> {
+    pub fn join(self) -> Result<ValidatedProfile, ProfileError> {
         self.task
             .join()
-            .map_err(|error| error.to_string())
+            .map_err(|error| ProfileError::Worker(error.to_string()))
             .and_then(|result| result)
             .map(ValidatedProfile)
     }
@@ -875,8 +947,9 @@ impl PreparationSteps {
 
     fn step(
         &mut self,
-    ) -> script::preparation::CooperativePreparationStep<Result<Arc<SharedClientTemplate>, String>>
-    {
+    ) -> script::preparation::CooperativePreparationStep<
+        Result<Arc<SharedClientTemplate>, ProfileError>,
+    > {
         use host_play::progress::{ProfileProgress, ProfileProgressStage};
         use script::preparation::CooperativePreparationStep as Step;
         let Some(template) = self.template.as_mut() else {
@@ -903,7 +976,7 @@ impl PreparationSteps {
                     }
                 }
                 Err(error) => Step::Complete {
-                    output: Err(error),
+                    output: Err(ProfileError::Resolve(error)),
                     completed: 0,
                     total: None,
                 },
@@ -917,7 +990,7 @@ impl PreparationSteps {
                 Step::Continue { completed, total }
             }
             host_play::TemplateStep::Complete(output) => Step::Complete {
-                output,
+                output: output.map_err(ProfileError::Prepare),
                 completed: 1,
                 total: Some(1),
             },
@@ -976,9 +1049,13 @@ impl ProfileLauncher {
 
     /// Install production launch inputs. Resolution waits for the first
     /// preparation.
-    pub fn configure(&mut self, args: ProfileArgs, environment: ProfileEnv) -> Result<(), String> {
+    pub fn configure(
+        &mut self,
+        args: ProfileArgs,
+        environment: ProfileEnv,
+    ) -> Result<(), ProfileError> {
         if self.bound.is_some() {
-            return Err("server profile is already bound; restart to change revision".into());
+            return Err(ProfileError::AlreadyBound);
         }
         self.args = Some(args);
         self.environment = Some(environment);
@@ -1002,19 +1079,10 @@ impl ProfileLauncher {
     }
 
     /// Capture a preparation of the configured inputs at `saved_revision`.
-    pub fn preparation(&self, saved_revision: u16) -> Result<ProfilePreparation, String> {
-        let options = self
-            .args
-            .as_ref()
-            .ok_or_else(|| "no production server profile was configured".to_string())?
-            .0
-            .clone();
-        let environment = self
-            .environment
-            .as_ref()
-            .ok_or_else(|| "no profile environment was configured".to_string())?
-            .0
-            .clone();
+    pub fn preparation(&self, saved_revision: u16) -> Result<ProfilePreparation, ProfileError> {
+        let (args, environment) = self.inputs()?;
+        let options = args.0.clone();
+        let environment = environment.0.clone();
         let (observer, latest) = progress_channel(host_play::progress::ProfileProgress::steps(
             host_play::progress::ProfileProgressStage::SelectingServerProfile,
             0,
@@ -1037,8 +1105,8 @@ impl ProfileLauncher {
     pub fn finish_preparation(
         &mut self,
         generation: u64,
-        result: Result<ProfileTemplate, String>,
-    ) -> (PreparationCompletion, Option<String>) {
+        result: Result<ProfileTemplate, ProfileError>,
+    ) -> (PreparationCompletion, Option<ProfileError>) {
         self.preparing = false;
         if generation != self.generation {
             return (PreparationCompletion::Stale, None);
@@ -1074,47 +1142,42 @@ impl ProfileLauncher {
 
     /// Resolve and prepare the profile on this thread at `saved_revision`,
     /// then bind it.
-    pub fn bind(&mut self, saved_revision: u16) -> Result<(), String> {
+    pub fn bind(&mut self, saved_revision: u16) -> Result<(), ProfileError> {
         self.bind_with(Some(saved_revision))
     }
 
     /// Bind as [`Self::bind`] does, with no saved revision to fall back on
     /// (the profile's own or default revision applies).
-    pub fn bind_with(&mut self, saved_revision: Option<u16>) -> Result<(), String> {
+    pub fn bind_with(&mut self, saved_revision: Option<u16>) -> Result<(), ProfileError> {
         if self.bound.is_some() {
-            return Err("server profile is already bound; restart to change revision".into());
+            return Err(ProfileError::AlreadyBound);
         }
-        let options = self
-            .args
-            .as_ref()
-            .ok_or_else(|| "no production server profile was configured".to_string())?;
-        let environment = self
-            .environment
-            .as_ref()
-            .ok_or_else(|| "no profile environment was configured".to_string())?;
+        let (options, environment) = self.inputs()?;
         let template = options
             .0
-            .resolve_with_env(saved_revision, &environment.0)?
-            .prepare_template()?;
+            .resolve_with_env(saved_revision, &environment.0)
+            .map_err(ProfileError::Resolve)?
+            .prepare_template()
+            .map_err(ProfileError::Prepare)?;
         self.install(ProfileTemplate(template));
         Ok(())
     }
 
     /// The prepared template, for final validation.
-    pub fn template_for_validation(&self) -> Result<ProfileTemplate, String> {
+    pub fn template_for_validation(&self) -> Result<ProfileTemplate, ProfileError> {
         self.template
             .as_ref()
             .map(ProfileTemplate::share)
-            .ok_or_else(|| "server profile is not prepared".to_string())
+            .ok_or(ProfileError::NotPrepared)
     }
 
     /// Keep a validation of the active template for the next launch.
-    pub fn install_validated(&mut self, validated: ValidatedProfile) -> Result<(), String> {
+    pub fn install_validated(&mut self, validated: ValidatedProfile) -> Result<(), ProfileError> {
         let Some(template) = self.template.as_ref() else {
-            return Err("server profile is not prepared".into());
+            return Err(ProfileError::NotPrepared);
         };
         if !validated.is_for(template) {
-            return Err("validated template does not match the active server profile".into());
+            return Err(ProfileError::ValidationMismatch);
         }
         self.validated = Some(validated);
         Ok(())
@@ -1149,19 +1212,23 @@ impl ProfileLauncher {
         self.play.0.host = host.to_string();
     }
 
-    /// Resolve the configured inputs at `saved_revision` without binding.
-    fn resolve(&self, saved_revision: u16) -> Result<host_play::ProfileSelection, String> {
-        let options = self
-            .args
-            .as_ref()
-            .ok_or_else(|| "no production server profile was configured".to_string())?;
+    /// The configured production inputs, or why they are missing.
+    fn inputs(&self) -> Result<(&ProfileArgs, &ProfileEnv), ProfileError> {
+        let args = self.args.as_ref().ok_or(ProfileError::NotConfigured)?;
         let environment = self
             .environment
             .as_ref()
-            .ok_or_else(|| "no profile environment was configured".to_string())?;
+            .ok_or(ProfileError::NoEnvironment)?;
+        Ok((args, environment))
+    }
+
+    /// Resolve the configured inputs at `saved_revision` without binding.
+    fn resolve(&self, saved_revision: u16) -> Result<host_play::ProfileSelection, ProfileError> {
+        let (options, environment) = self.inputs()?;
         options
             .0
             .resolve_with_env(Some(saved_revision), &environment.0)
+            .map_err(ProfileError::Resolve)
     }
 
     /// The server label: the bound profile's, else the configured one at
@@ -1180,7 +1247,7 @@ impl ProfileLauncher {
     }
 
     /// The effective client revision label.
-    pub fn revision_label(&self, saved_revision: u16) -> Result<String, String> {
+    pub fn revision_label(&self, saved_revision: u16) -> Result<String, ProfileError> {
         if let Some(profile) = &self.bound {
             return Ok(profile.revision().to_string());
         }
@@ -1209,7 +1276,7 @@ impl ProfileLauncher {
 
     /// The class of the profile the configured inputs resolve to at
     /// `saved_revision` (before it is bound).
-    pub fn configured_class(&self, saved_revision: u16) -> Result<ProfileClass, String> {
+    pub fn configured_class(&self, saved_revision: u16) -> Result<ProfileClass, ProfileError> {
         self.resolve(saved_revision)
             .map(|selection| ProfileClass::from_host(selection.profile_class()))
     }
@@ -1220,7 +1287,7 @@ impl ProfileLauncher {
         &self,
         saved_revision: u16,
         legacy: std::path::PathBuf,
-    ) -> Result<std::path::PathBuf, String> {
+    ) -> Result<std::path::PathBuf, ProfileError> {
         if let Some(profile) = &self.bound {
             return Ok(profile.vault_path().to_path_buf());
         }
@@ -1234,7 +1301,10 @@ impl ProfileLauncher {
 
     /// The catalogue root: the bound profile's, else the configured one at
     /// `saved_revision`.
-    pub fn catalog_root(&self, saved_revision: u16) -> Result<Option<std::path::PathBuf>, String> {
+    pub fn catalog_root(
+        &self,
+        saved_revision: u16,
+    ) -> Result<Option<std::path::PathBuf>, ProfileError> {
         if let Some(profile) = &self.bound {
             return Ok(profile.catalog_root().map(std::path::Path::to_path_buf));
         }
@@ -1362,8 +1432,8 @@ pub(crate) fn open_vault_typed(
 
 /// Delete the vault file at `path` (forgotten-passphrase recovery). A
 /// missing file is not an error.
-pub(crate) fn reset_vault_file(path: &std::path::Path) -> Result<(), String> {
-    vault::Vault::reset_file(path).map_err(|error| error.to_string())
+pub(crate) fn reset_vault_file(path: &std::path::Path) -> Result<(), vault::VaultError> {
+    vault::Vault::reset_file(path)
 }
 
 /// Whether `arg` is a removed passphrase flag.
@@ -1376,6 +1446,16 @@ pub fn removed_passphrase_flag_error(program: &str) -> String {
     host_play::passphrase::removed_flag_error(program)
 }
 
+/// Why reading the vault passphrase failed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum PassphraseError {
+    /// The passphrase could not be asked for or read (no terminal, closed or
+    /// unreadable input, a refused new passphrase); the sentence is the one
+    /// `host-play` reports.
+    #[error("{0}")]
+    Unavailable(String),
+}
+
 /// Read the vault passphrase for `program`: prompted on a terminal, else
 /// read from stdin when `from_stdin`. `vault_exists` chooses the unlock or
 /// the create prompt.
@@ -1383,13 +1463,14 @@ pub fn obtain_passphrase(
     program: &str,
     from_stdin: bool,
     vault_exists: bool,
-) -> Result<Passphrase, String> {
+) -> Result<Passphrase, PassphraseError> {
     host_play::passphrase::obtain(
         program,
         from_stdin,
         host_play::passphrase::Purpose::for_vault(vault_exists),
     )
     .map(Passphrase::from_secret)
+    .map_err(PassphraseError::Unavailable)
 }
 
 /// Warn once on stderr when the legacy passphrase environment variable is

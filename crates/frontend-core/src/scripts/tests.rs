@@ -30,6 +30,17 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings, Vault};
 const LOOPING: &str = "export default class T extends LoopingBot { override loop() {} }\n";
 
+/// Hang guard for every wait in this file, never a pass condition and never a
+/// latency target. Each wait ends on the product's own settlement signal
+/// (`starts_pending()`, `catalog_work_pending()`, the slot's run state): every
+/// admitted job reaches a terminal and a Start refused as Full is resubmitted
+/// on each poll. Card and catalogue preparation share one process-wide
+/// background worker and one byte allowance (`script::work_admission`), so a
+/// test waits behind the preparations of every other test in this binary; on a
+/// loaded host that queue is far longer than one job. The guard only stops a
+/// deadlocked test and is minutes, not the expected duration.
+const HANG_GUARD: Duration = Duration::from_secs(600);
+
 struct Fixture {
     core: OperatorSession<()>,
     scripts: Scripts,
@@ -101,40 +112,43 @@ impl Fixture {
         self.core.flush_writes();
     }
 
-    /// Poll the core and the coordinator until no Start is pending.
-    fn settle(&mut self) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while self.scripts.starts_pending() && Instant::now() < deadline {
+    /// Pump the core and the coordinator, as the front end does once per
+    /// frame, until `done` holds. The pass condition is the product's own
+    /// settlement signal; the only time bound is `HANG_GUARD`.
+    fn pump_until(&mut self, what: &str, mut done: impl FnMut(&mut Self) -> bool) {
+        let guard = Instant::now() + HANG_GUARD;
+        while !done(self) {
+            assert!(Instant::now() < guard, "{what}: hang guard expired");
             self.core.poll();
             self.scripts.poll(&mut self.core);
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(
-            !self.scripts.starts_pending(),
-            "script Start did not settle"
-        );
-    }
-    fn settle_catalog_work(&mut self) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while self.scripts.catalog_work_pending() && Instant::now() < deadline {
-            self.core.poll();
-            self.scripts.poll(&mut self.core);
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        assert!(
-            !self.scripts.catalog_work_pending(),
-            "catalog work did not settle"
-        );
     }
 
+    /// Poll until no Start is pending (settled, failed or skipped).
+    fn settle(&mut self) {
+        self.pump_until("script Start did not settle", |f| {
+            !f.scripts.starts_pending()
+        });
+    }
+
+    fn settle_catalog_work(&mut self) {
+        self.pump_until("catalog work did not settle", |f| {
+            !f.scripts.catalog_work_pending()
+        });
+    }
+
+    /// Poll until the slot reaches `want`. A slot that ends in `Error` when
+    /// another state was wanted has failed: that fails the test now.
     fn wait_state(&mut self, name: &str, want: ScriptRunState) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while self.state(name) != want && Instant::now() < deadline {
-            self.core.poll();
-            self.scripts.poll(&mut self.core);
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        assert_eq!(self.state(name), want, "{name}");
+        self.pump_until(name, |f| {
+            let state = f.state(name);
+            assert!(
+                state == want || state != ScriptRunState::Error,
+                "{name} ended {state:?}, wanted {want:?}"
+            );
+            state == want
+        });
     }
 
     fn state(&self, name: &str) -> ScriptRunState {
@@ -977,14 +991,14 @@ fn compiled_scenario_start_script_holds_without_failing_preparation() {
         fire_pending_catalog_start(&mut pending, true, false, arming),
         StartScriptPump::Continue
     );
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let guard = Instant::now() + HANG_GUARD;
     loop {
         match fire_pending_catalog_start(&mut pending, true, false, arming) {
             StartScriptPump::CompiledRunning => break,
             StartScriptPump::CompiledFailed(error) => panic!("{error}"),
             _ => assert!(
-                Instant::now() < deadline,
-                "compiled scenario did not settle"
+                Instant::now() < guard,
+                "compiled scenario did not settle: hang guard expired"
             ),
         }
         std::thread::yield_now();
@@ -1365,7 +1379,14 @@ fn a_sync_saved_together_with_another_edit_counts_as_saved_and_reaches_a_run() {
         let gate = f.core.write_gate();
         let held = gate.lock().unwrap();
         let op = f.scripts.apply_settings_sync(&mut f.core).unwrap();
-        f.core.set_auto_login("bob", true).unwrap();
+        f.core
+            .submit_detached(
+                OperatorCommand::SetAutoLogin(true),
+                crate::Targets::Profile("bob"),
+            )
+            .unwrap()
+            .operation()
+            .expect("the write opened an operation");
         drop(held);
         f.core.flush_writes();
         f.scripts.poll(&mut f.core);
@@ -1489,8 +1510,14 @@ fn a_ready_start_never_erases_a_newer_front_end_banner() {
         if let Some(error) = newer {
             banner = Some(error.to_string());
         }
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while f.scripts.starts_pending() && Instant::now() < deadline {
+        // The banner folds every notice the coordinator raises while the
+        // Start settles, so it pumps as `pump_until` does, plus that fold.
+        let guard = Instant::now() + HANG_GUARD;
+        while f.scripts.starts_pending() {
+            assert!(
+                Instant::now() < guard,
+                "script Start did not settle: hang guard expired"
+            );
             f.core.poll();
             f.scripts.poll(&mut f.core);
             if let Some(notice) = f.scripts.take_notice() {
@@ -1498,7 +1525,6 @@ fn a_ready_start_never_erases_a_newer_front_end_banner() {
             }
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(!f.scripts.starts_pending());
         assert_eq!(banner.as_deref(), newer, "newer banner {newer:?}");
         f.core.play().unwrap().script_stop("alice");
     }
@@ -1534,22 +1560,13 @@ fn a_start_carries_its_operation_to_the_row_and_the_log() {
     f.scripts
         .start_selected(&mut f.core, "opid-bob", None, None)
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while f
-        .core
-        .fleet_view()
-        .row("opid-alice")
-        .and_then(|row| row.last_op())
-        .is_none_or(|op| op.action() != crate::ActionKind::ScriptStart)
-    {
-        assert!(
-            Instant::now() < deadline,
-            "Start preparation did not publish"
-        );
-        f.core.poll();
-        f.scripts.poll(&mut f.core);
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    f.pump_until("Start preparation did not publish", |f| {
+        f.core
+            .fleet_view()
+            .row("opid-alice")
+            .and_then(|row| row.last_op())
+            .is_some_and(|op| op.action() == crate::ActionKind::ScriptStart)
+    });
     let accepted = op_of(&f, "opid-alice");
     assert_eq!(accepted.action(), crate::ActionKind::ScriptStart);
     f.settle();
@@ -1721,7 +1738,7 @@ fn queued_native_copy_waits_for_durable_apply() {
     assert_eq!(f.scripts.start_queue_place("bob"), Some(place));
     // Exercise the second asynchronous boundary too: preparation has staged
     // the copied row, but the writer still cannot commit it.
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let guard = Instant::now() + HANG_GUARD;
     let key = script::compiled_identity_key(id);
     loop {
         f.core.poll();
@@ -1739,8 +1756,8 @@ fn queued_native_copy_waits_for_durable_apply() {
             break;
         }
         assert!(
-            Instant::now() < deadline,
-            "native preparation did not settle"
+            Instant::now() < guard,
+            "native preparation did not settle: hang guard expired"
         );
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -2163,7 +2180,14 @@ fn native_settings_reply_loses_to_profile_recreation() {
             Map::new(),
         )
         .unwrap();
-    f.core.vault_remove("alice").unwrap();
+    f.core
+        .submit_detached(
+            OperatorCommand::DeleteProfile,
+            crate::Targets::Profile("alice"),
+        )
+        .unwrap()
+        .operation()
+        .expect("the delete opened an operation");
     f.core
         .create_profile(replacement, crate::ArmMirror::none(), "recreate")
         .unwrap();
@@ -2238,12 +2262,7 @@ fn unrelated_writes_never_persist_invalid_native_drafts_or_poison_start() {
                     false,
                 )
                 .unwrap();
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while f.state("alice") != ScriptRunState::Running {
-                assert!(Instant::now() < deadline);
-                f.core.poll();
-                std::thread::yield_now();
-            }
+            wait_core_state(&mut f, "alice", ScriptRunState::Running);
         }
         f.scripts
             .set_compiled_overrides(
@@ -2296,12 +2315,7 @@ fn valid_native_draft_survives_unrelated_writes() {
                     false,
                 )
                 .unwrap();
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while f.state("alice") != ScriptRunState::Running {
-                assert!(Instant::now() < deadline);
-                f.core.poll();
-                std::thread::yield_now();
-            }
+            wait_core_state(&mut f, "alice", ScriptRunState::Running);
         }
         let op = f
             .scripts
@@ -2372,7 +2386,14 @@ fn profile_partner_delivery_survives_unrelated_write() {
         .core
         .save_profile(row, crate::ArmMirror::remember(Some(live)), "form")
         .unwrap();
-    f.core.set_auto_login("alice", true).unwrap();
+    f.core
+        .submit_detached(
+            OperatorCommand::SetAutoLogin(true),
+            crate::Targets::Profile("alice"),
+        )
+        .unwrap()
+        .operation()
+        .expect("the write opened an operation");
     f.core.flush_writes();
     assert_eq!(f.core.play().unwrap().script_native_run("alice"), run);
     assert!(f
@@ -2426,22 +2447,16 @@ fn durable_native_reply_never_configures_a_replacement_run() {
         )
         .unwrap();
     let key = script::compiled_identity_key(script::CompiledId("Sherlock"));
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while f
-        .core
-        .vault()
-        .unwrap()
-        .get("alice")
-        .unwrap()
-        .settings
-        .script_settings[&key]["values"]
-        .get(script::CLUE_DUEL_PARTNER)
-        .is_none()
-    {
-        assert!(Instant::now() < deadline, "validated edit was never staged");
-        f.core.poll();
-        std::thread::yield_now();
-    }
+    pump_core_until(&mut f.core, "validated edit was never staged", |core| {
+        core.vault()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .script_settings[&key]["values"]
+            .get(script::CLUE_DUEL_PARTNER)
+            .is_some()
+    });
     assert_eq!(f.saved_bag("alice", &key).unwrap()["values"], json!({}));
     f.core.stop_script("alice");
     f.scripts.start_profile(&mut f.core, "alice", None).unwrap();
@@ -2476,7 +2491,14 @@ fn deleting_a_profile_cancels_its_unsettled_native_start() {
             false,
         )
         .unwrap();
-    f.core.vault_remove("alice").unwrap();
+    f.core
+        .submit_detached(
+            OperatorCommand::DeleteProfile,
+            crate::Targets::Profile("alice"),
+        )
+        .unwrap()
+        .operation()
+        .expect("the delete opened an operation");
     f.settle();
     f.core.flush_writes();
     assert_eq!(f.state("alice"), ScriptRunState::Idle);
@@ -2689,13 +2711,29 @@ fn single_gatherer_restart_prompt(test: &str) -> Fixture {
     f
 }
 
-fn wait_core_state(f: &mut Fixture, name: &str, want: ScriptRunState) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while f.state(name) != want && Instant::now() < deadline {
-        f.core.poll();
+/// Poll the core (no coordinator) until `done` holds; only `HANG_GUARD` bounds it.
+fn pump_core_until<Io>(
+    core: &mut OperatorSession<Io>,
+    what: &str,
+    mut done: impl FnMut(&OperatorSession<Io>) -> bool,
+) {
+    let guard = Instant::now() + HANG_GUARD;
+    while !done(core) {
+        assert!(Instant::now() < guard, "{what}: hang guard expired");
+        core.poll();
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert_eq!(f.state(name), want, "{name}");
+}
+
+fn wait_core_state(f: &mut Fixture, name: &str, want: ScriptRunState) {
+    pump_core_until(&mut f.core, name, |core| {
+        let state = ScriptRunState::from_script(core.play().unwrap().script_state(name));
+        assert!(
+            state == want || state != ScriptRunState::Error,
+            "{name} ended {state:?}, wanted {want:?}"
+        );
+        state == want
+    });
 }
 
 #[test]
@@ -2729,14 +2767,10 @@ fn restart_prompt_skips_run_that_ends_after_click_check() {
                 return;
             }
             core.play().unwrap().script_stop("alice");
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while ScriptRunState::from_script(core.play().unwrap().script_state("alice"))
-                != ScriptRunState::Idle
-                && Instant::now() < deadline
-            {
-                core.poll();
-                std::thread::sleep(Duration::from_millis(5));
-            }
+            pump_core_until(core, "alice did not stop", |core| {
+                ScriptRunState::from_script(core.play().unwrap().script_state("alice"))
+                    == ScriptRunState::Idle
+            });
             assert_eq!(
                 ScriptRunState::from_script(core.play().unwrap().script_state("alice")),
                 ScriptRunState::Idle
@@ -4281,16 +4315,9 @@ fn a_native_settings_save_needs_the_background_service_only_until_prepared() {
             .and_then(|entry| vault::CompiledSettingsRecord::view(entry).ok())
             .map(|(_, values)| values.get("targetPreference").cloned())
     };
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while staged_value(&f) != Some(Some(json!("Nearest"))) {
-        assert!(
-            Instant::now() < deadline,
-            "native preparation did not settle"
-        );
-        f.core.poll();
-        f.scripts.poll(&mut f.core);
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    f.pump_until("native preparation did not settle", |f| {
+        staged_value(f) == Some(Some(json!("Nearest")))
+    });
     assert_eq!(f.saved_bag("alice", &key), None, "nothing durable yet");
     // The preparation owner reports; the member no longer needs the service.
     book.prepared(save, alice).unwrap();

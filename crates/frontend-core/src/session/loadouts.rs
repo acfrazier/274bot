@@ -58,10 +58,12 @@ impl<Io> OperatorSession<Io> {
                 self.settle_on_form(request, command, surface, submitted, LoadoutForm::edited);
             }
             LoadoutRow::CopyEquipment => {
-                for name in self.admitted_names(request) {
-                    let applied = self.copy_equipment_into_draft(&name, surface);
-                    self.settle_member(request, command, &name, applied, submitted);
+                let names = self.admitted_names(request);
+                for name in &names {
+                    let applied = self.copy_equipment_into_draft(name, surface);
+                    self.settle_member(request, command, name, applied, submitted);
                 }
+                self.release_names(names);
             }
             LoadoutRow::Create => {
                 self.settle_on_form(request, command, surface, submitted, LoadoutForm::create);

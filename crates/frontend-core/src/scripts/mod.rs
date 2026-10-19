@@ -62,7 +62,9 @@ use crate::session::{
 };
 use crate::QueuePlace;
 
-pub use reload::{CatalogError, PendingReload, PendingReloadKind, ReloadOutcome, ReloadWarning};
+pub use reload::{
+    CatalogError, PendingReload, PendingReloadKind, ReloadOutcome, ReloadWarning, TranspileError,
+};
 pub use sync::{RestartPrompt, SyncReport, SyncScope};
 
 /// A card's parameters bound to the run they were edited for.
@@ -2568,12 +2570,13 @@ impl Scripts {
         &mut self,
         core: &mut OperatorSession<Io>,
         entry: TranspileEntry,
-        result: Result<(), String>,
+        result: Result<(), TranspileError>,
     ) {
         self.transpile_done = self.transpile_done.saturating_add(1);
         let (terminal, detail) = match result {
             Ok(()) => (Settlement::Completed(Completion::Done), None),
-            Err(reason) => {
+            Err(error) => {
+                let reason = error.to_string();
                 self.show(format!("Transpile {}: {reason}", entry.lookup));
                 if self.transpile_all_request.is_some() && self.transpile_all_failure.is_none() {
                     self.transpile_all_failure = Some(reason.clone());

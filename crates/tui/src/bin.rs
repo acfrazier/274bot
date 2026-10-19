@@ -1125,7 +1125,9 @@ impl TuiSession {
         if let Some(fleet) = fleet_start {
             self.fill_rs2b0t_cards_for_live_start()?;
             for card in fleet_cards {
-                self.scripts.transpile_blocking(CardSource::Catalog, card)?;
+                self.scripts
+                    .transpile_blocking(CardSource::Catalog, card)
+                    .map_err(|error| error.to_string())?;
             }
             let plan = frontend_core::live::StartPlan::fleet_catalog(
                 &mut self.scripts,
@@ -1169,7 +1171,8 @@ impl TuiSession {
             } else {
                 self.fill_rs2b0t_cards_for_live_start()?;
                 self.scripts
-                    .transpile_blocking(CardSource::Catalog, &card_name)?;
+                    .transpile_blocking(CardSource::Catalog, &card_name)
+                    .map_err(|error| error.to_string())?;
                 self.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, &card_name));
                 let bag = self.pending_settings_bag(CardSource::Catalog, &card_name);
                 let selected = self
@@ -3616,11 +3619,15 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         Err(e) => return Err(format!("instance lock: {e}")),
     };
     let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
-    launcher.configure(
-        args.profile.duplicate(),
-        frontend_core::launch::ProfileEnv::capture(),
-    )?;
-    launcher.bind_with(None)?;
+    launcher
+        .configure(
+            args.profile.duplicate(),
+            frontend_core::launch::ProfileEnv::capture(),
+        )
+        .map_err(|error| error.to_string())?;
+    launcher
+        .bind_with(None)
+        .map_err(|error| error.to_string())?;
     if let Some(number) = args.world {
         let mut worlds = launcher
             .bound()
@@ -3639,17 +3646,23 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     session
         .bound()
         .expect("bound session")
-        .require_bot_operation()?;
+        .require_bot_operation()
+        .map_err(|error| error.to_string())?;
 
     #[cfg(feature = "memory-profile")]
-    if let Some(config) = frontend_core::bench::BenchConfig::from_env()? {
-        frontend_core::bench::require_live_benchmark(session.profile_class())?;
+    if let Some(config) =
+        frontend_core::bench::BenchConfig::from_env().map_err(|error| error.to_string())?
+    {
+        frontend_core::bench::require_live_benchmark(session.profile_class())
+            .map_err(|error| error.to_string())?;
         session.persist_ui = false;
         // Vault/card first; unlock constructs Play once (single load_pack).
-        let run = frontend_core::bench::BenchRun::prepare(config, "tui")?;
+        let run = frontend_core::bench::BenchRun::prepare(config, "tui")
+            .map_err(|error| error.to_string())?;
         session.mainland = true;
         session.unlock_at(run.vault(), run.passphrase())?;
-        run.bind_seed_nav(&session.core)?;
+        run.bind_seed_nav(&session.core)
+            .map_err(|error| error.to_string())?;
         session.names = run.names().to_vec();
         session.load_and_login_all();
         session.focus(&run.names()[0]);
@@ -3689,11 +3702,9 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
                 .vault_path()
                 .to_path_buf();
             let vault_exists = vault_path.is_file();
-            let pass = frontend_core::launch::obtain_passphrase(
-                "tui-play",
-                args.pass_stdin,
-                vault_exists,
-            )?;
+            let pass =
+                frontend_core::launch::obtain_passphrase("tui-play", args.pass_stdin, vault_exists)
+                    .map_err(|error| error.to_string())?;
             if let Err(e) = session.unlock_at(&vault_path, &pass) {
                 return Err(format!("vault {}: {e}", vault_path.display()));
             }
@@ -3810,6 +3821,44 @@ impl Drop for TerminalGuard {
     }
 }
 
+/// One pass of the headless loop: pump the session, print the proof lines,
+/// and return the live run's exit code once it decided.
+fn headless_step(session: &mut TuiSession, app: &mut TuiApp) -> Option<i32> {
+    session.pump(app);
+    let (code, lines) = session.live_status();
+    write_proof_lines(&lines);
+    code
+}
+
+/// One pass of the headed loop before it waits for input: pump the session,
+/// hold the proof lines until the terminal is restored, and draw. Returns
+/// the live run's exit code, without drawing, once it decided.
+fn headed_frame<B: ratatui::backend::Backend>(
+    session: &mut TuiSession,
+    app: &mut TuiApp,
+    terminal: &mut Terminal<B>,
+    deferred: &mut Vec<ProofLine>,
+) -> Result<Option<i32>, String> {
+    session.pump(app);
+    let (code, lines) = session.live_status();
+    deferred.extend(lines);
+    if code.is_some() {
+        return Ok(code);
+    }
+    let _profile_frame = client::profiling::UI_FRAME.start();
+    let params_data = session.bound().and_then(|profile| profile.game_data());
+    session.loadouts_opened(app);
+    terminal
+        .draw(|frame| {
+            let _profile_draw = client::profiling::UI_DRAW.start();
+            app.draw(frame);
+            app.draw_loadouts_overlay(frame, &session.loadouts);
+            app.draw_params_overlay(frame, session.loadouts.store(), params_data.as_deref());
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(None)
+}
+
 /// The crossterm event loop. `--live` runs headed when a controlling
 /// terminal is available (the operator watches the panes) and degrades to
 /// a headless pump loop otherwise, so the PASS/FAIL still lands in CI.
@@ -3820,10 +3869,7 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
     if enable_raw_mode().is_err() {
         // No controlling terminal: pump the runner without drawing.
         loop {
-            session.pump(&mut app);
-            let (code, lines) = session.live_status();
-            write_proof_lines(&lines);
-            if let Some(code) = code {
+            if let Some(code) = headless_step(&mut session, &mut app) {
                 return Ok(code);
             }
             std::thread::sleep(Duration::from_millis(50));
@@ -3846,28 +3892,8 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
 
     let mut deferred = Vec::new();
     let result = (|| loop {
-        session.pump(&mut app);
-        let (code, lines) = session.live_status();
-        deferred.extend(lines);
-        if let Some(code) = code {
+        if let Some(code) = headed_frame(&mut session, &mut app, &mut terminal, &mut deferred)? {
             return Ok(code);
-        }
-        {
-            let _profile_frame = client::profiling::UI_FRAME.start();
-            let params_data = session.bound().and_then(|profile| profile.game_data());
-            session.loadouts_opened(&mut app);
-            terminal
-                .draw(|frame| {
-                    let _profile_draw = client::profiling::UI_DRAW.start();
-                    app.draw(frame);
-                    app.draw_loadouts_overlay(frame, &session.loadouts);
-                    app.draw_params_overlay(
-                        frame,
-                        session.loadouts.store(),
-                        params_data.as_deref(),
-                    );
-                })
-                .map_err(|e| e.to_string())?;
         }
         if event::poll(Duration::from_millis(50)).map_err(|e| e.to_string())? {
             // One routing model: the app decides which pane, popup or
@@ -4145,3 +4171,7 @@ mod tests;
 #[cfg(test)]
 #[path = "manual_click_live_tests.rs"]
 mod manual_click_live_tests;
+
+#[cfg(test)]
+#[path = "bin_loop_tests.rs"]
+mod loop_tests;

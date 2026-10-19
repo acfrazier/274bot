@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::prefs::UiPreferences;
+use host_play::local_state::Update;
 
 /// Shared settings label used by panel and TUI.
 pub const LOAD_PATHS_LABEL: &str = "Load quest Paths from folder";
@@ -80,15 +81,21 @@ impl QuesterPathsView {
     }
 
     /// Write only fields changed by this editor through the shared
-    /// preferences.
-    fn persist_changed(preferences: &UiPreferences, before: &Self, after: &Self) -> io::Result<()> {
+    /// preferences. A write still queued when the bounded wait ends comes
+    /// back [`Update::Queued`].
+    fn persist_changed(
+        preferences: &UiPreferences,
+        before: &Self,
+        after: &Self,
+    ) -> io::Result<Update> {
         let enabled_changed = before.enabled != after.enabled;
         let folder_changed = before.folder != after.folder;
         if !enabled_changed && !folder_changed {
-            return Ok(());
+            return Ok(Update::Durable);
         }
-
-        preferences.update(|document| {
+        let enabled = after.enabled;
+        let folder = after.folder.to_string_lossy().into_owned();
+        preferences.begin_update(move |document| {
             let settings = document
                 .entry("quester_paths")
                 .or_insert_with(|| serde_json::json!({}));
@@ -99,13 +106,10 @@ impl QuesterPathsView {
                 .as_object_mut()
                 .expect("replacement quester_paths value is an object");
             if enabled_changed {
-                settings.insert("enabled".into(), serde_json::Value::Bool(after.enabled));
+                settings.insert("enabled".into(), serde_json::Value::Bool(enabled));
             }
             if folder_changed {
-                settings.insert(
-                    "folder".into(),
-                    serde_json::Value::String(after.folder.to_string_lossy().into_owned()),
-                );
+                settings.insert("folder".into(), serde_json::Value::String(folder.clone()));
             }
             Ok(())
         })
@@ -326,24 +330,29 @@ impl QuesterPathsController {
         &self.settings
     }
 
-    /// Persist (when requested), apply and reload a changed source.
+    /// Persist (when requested), apply and reload a changed source. The
+    /// settings apply once the write is accepted; a write still queued
+    /// when the bounded wait ends comes back [`Update::Queued`] for the
+    /// command to settle from.
     pub(crate) fn apply_changed(
         &mut self,
         preferences: &UiPreferences,
         after: &QuesterPathsView,
         selected: Option<Arc<api::game_data::SelectedGameData>>,
         persist: bool,
-    ) -> Result<(), String> {
+    ) -> Result<Update, String> {
         if after == &self.settings {
-            return Ok(());
+            return Ok(Update::Durable);
         }
+        let mut write = Update::Durable;
         if persist {
-            if let Err(error) =
-                QuesterPathsView::persist_changed(preferences, &self.settings, after)
-            {
-                let message = format!("Quest Paths settings were not saved: {error}");
-                self.set_notice(Err(Arc::from(message.clone())));
-                return Err(message);
+            match QuesterPathsView::persist_changed(preferences, &self.settings, after) {
+                Ok(update) => write = update,
+                Err(error) => {
+                    let message = format!("Quest Paths settings were not saved: {error}");
+                    self.set_notice(Err(Arc::from(message.clone())));
+                    return Err(message);
+                }
             }
         }
 
@@ -357,7 +366,7 @@ impl QuesterPathsController {
             )));
         }
         self.advance(selected);
-        Ok(())
+        Ok(write)
     }
 
     /// Handle an explicit Reload Paths action (`ReloadQuesterPaths`
@@ -630,7 +639,12 @@ mod tests {
             folder: store.dir().join("checkout").join("quest-paths"),
         };
 
-        QuesterPathsView::persist_changed(store.prefs(), &before, &after).unwrap();
+        crate::prefs::settled_for_test(QuesterPathsView::persist_changed(
+            store.prefs(),
+            &before,
+            &after,
+        ))
+        .unwrap();
 
         let saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();

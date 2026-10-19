@@ -272,3 +272,76 @@ fn a_same_name_lifetime_resets_but_a_scene_change_preserves_work() {
     frame(&mut fresh, "alice", SlotFrameInput::default());
     assert!(!shared.walk_arms().lock().unwrap().contains_key("alice"));
 }
+
+/// The phases one slot frame ran, in order.
+#[derive(Default)]
+struct OrderLog(std::sync::Mutex<Vec<&'static str>>);
+
+impl OrderLog {
+    fn push(&self, phase: &'static str) {
+        self.0.lock().unwrap().push(phase);
+    }
+
+    fn take(&self) -> Vec<&'static str> {
+        std::mem::take(&mut *self.0.lock().unwrap())
+    }
+}
+
+struct OrderHook(Arc<OrderLog>);
+
+impl FrameHook for OrderHook {
+    fn frame(&self, _client: &mut dyn Any, _slot: &str, _frame: &FrameContext<'_>) {
+        self.0.push("hook");
+    }
+}
+
+/// T3.3 r4 (review finding 5, property 5): one slot frame runs publication,
+/// the surface hook, the live tick and the admitted walk follow, in that
+/// order; a frame on the same player-info tick sends no second walk leg,
+/// and the next tick sends the next one.
+#[test]
+fn a_slot_frame_publishes_then_hooks_then_ticks_live_then_follows_the_walk_once_per_tick() {
+    let log = Arc::new(OrderLog::default());
+    let shared = Arc::new(FrameShared::new());
+    arm_walk(&shared, "alice");
+    let (published, stepped, ticked) = (Arc::clone(&log), Arc::clone(&log), Arc::clone(&log));
+    let ops = super::ClientOps {
+        here: host_play::player_here_tile,
+        publish: move |last: &mut client::client::ClientGens,
+                       snapshot: &mut api::snapshot::GameSnapshot,
+                       client: &Client| {
+            published.push("publish");
+            host_play::Host::publish_frontend_snapshot(last, snapshot, client)
+        },
+        tick: |client: &Client| client.gens.player,
+        step: move |_: &mut Client,
+                    _: &api::snapshot::GameSnapshot,
+                    _: &mut host_play::WalkArm,
+                    _: Option<&nav::world::NavWorld>,
+                    _: (i32, i32, i32),
+                    _: bool,
+                    _: Option<&str>| {
+            stepped.push("walk");
+            false
+        },
+        live: move |_: &mut Client, _: &str, _: bool| ticked.push("live"),
+    };
+    let frame = per_frame(super::slot_frame(
+        Arc::clone(&shared),
+        Arc::new(OrderHook(Arc::clone(&log))),
+        ops,
+    ));
+    let mut c = ingame_client();
+
+    frame(&mut c, "alice", SlotFrameInput::default());
+    assert_eq!(log.take(), ["publish", "hook", "live", "walk"]);
+    frame(&mut c, "alice", SlotFrameInput::default());
+    assert_eq!(
+        log.take(),
+        ["publish", "hook", "live"],
+        "the same player tick sends no duplicate walk leg"
+    );
+    c.bump_gens(client::io::ServerProt::PLAYER_INFO);
+    frame(&mut c, "alice", SlotFrameInput::default());
+    assert_eq!(log.take(), ["publish", "hook", "live", "walk"]);
+}

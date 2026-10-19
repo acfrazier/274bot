@@ -610,10 +610,7 @@ const CORE: &[(&str, Decision)] = &[
     ),
     ("session.rs::OperatorSession::take_settled_starts", Excluded(RESULT)),
     ("session.rs::OperatorSession::select", Row(C::Select)),
-    ("session.rs::OperatorSession::ensure_slot", Row(C::Load)),
-    ("session.rs::OperatorSession::open_slot", Row(C::Load)),
     ("session.rs::OperatorSession::load", Row(C::Load)),
-    ("session.rs::OperatorSession::load_all", Row(C::Load)),
     ("session.rs::OperatorSession::login", Row(C::Login)),
     // session/map.rs: the map desk stages row inputs and adopts owner results.
     ("session/map.rs::MapDesk::clear_walk_dest", Excluded(PROJECTION)),
@@ -627,6 +624,10 @@ const CORE: &[(&str, Decision)] = &[
     ("session/map.rs::MapDesk::stage_open_demand", Staged(C::OpenMapDemand)),
     ("session/map.rs::MapDesk::stage_bake_now", Staged(C::BakeMapNow)),
     ("session/map.rs::MapDesk::stage_debug_command", Staged(C::DebugCommand)),
+    (
+        "session/map.rs::MapDesk::stage_internal_debug_command",
+        Staged(C::DebugCommand),
+    ),
     (
         "session/map.rs::MapDesk::begin_game_input_frame",
         Staged(C::GameInput),
@@ -654,20 +655,7 @@ const CORE: &[(&str, Decision)] = &[
     ),
     ("driver.rs::HeadlessDriver::submit", Rows(&OperatorCommand::ALL, SEAM_ROWS)),
     ("driver.rs::HeadlessDriver::poll", Excluded(PUMP)),
-    ("session.rs::OperatorSession::login_all", Row(C::Login)),
-    ("session.rs::OperatorSession::login_members", Row(C::Login)),
     ("session.rs::OperatorSession::logout", Row(C::Logout)),
-    ("session.rs::OperatorSession::logout_all", Row(C::Logout)),
-    ("session.rs::OperatorSession::logout_members", Row(C::Logout)),
-    (
-        "session.rs::OperatorSession::set_memory_mode",
-        Row(C::SetMemoryMode(MemoryMode::Low)),
-    ),
-    (
-        "session.rs::OperatorSession::request_memory_relog",
-        Row(C::RelogNow),
-    ),
-    ("session.rs::OperatorSession::remove", Row(C::Remove)),
     ("session.rs::OperatorSession::poll", Excluded(PUMP)),
     ("session.rs::OperatorSession::poll_at", Excluded(PUMP)),
     ("session.rs::OperatorSession::poll_host", Excluded(PUMP)),
@@ -684,7 +672,6 @@ const CORE: &[(&str, Decision)] = &[
         ),
     ),
     ("session.rs::OperatorSession::stop_script", Row(C::StopScript)),
-    ("session.rs::OperatorSession::stop_scripts", Row(C::StopScript)),
     (
         "session.rs::OperatorSession::save_profile",
         Rows(
@@ -697,23 +684,7 @@ const CORE: &[(&str, Decision)] = &[
             WRITER,
         ),
     ),
-    ("session.rs::OperatorSession::create_profile", Row(C::CreateProfile)),
-    ("session.rs::OperatorSession::rename_profile", Row(C::CreateProfile)),
-    ("session.rs::OperatorSession::vault_remove", Row(C::DeleteProfile)),
-    (
-        "session.rs::OperatorSession::set_auto_login",
-        Row(C::SetAutoLogin(true)),
-    ),
-    (
-        "session.rs::OperatorSession::set_random_settings",
-        Row(C::SetGuardian),
-    ),
-    (
-        "session.rs::OperatorSession::set_random_event_policy",
-        Row(C::SetGuardian),
-    ),
     ("session.rs::OperatorSession::take_write_failures", Excluded(RESULT)),
-    ("session.rs::OperatorSession::track_save", Row(C::SaveProfile)),
     ("session.rs::OperatorSession::take_settled_saves", Excluded(RESULT)),
     ("session.rs::OperatorSession::take_settings_writes", Excluded(RESULT)),
     (
@@ -875,8 +846,6 @@ const SURFACE: &[(&str, Decision)] = &[
         Row(C::SetDraw(DrawSwitch::LiveFullRate, true)),
     ),
     ("panel/app.rs::only_render_selected_clicked", Row(C::SetRenderAll(true))),
-    ("panel/session.rs::Session::script_paint_click", Row(C::ScriptPaintInput)),
-    ("panel/session.rs::Session::script_paint_select", Row(C::ScriptPaintInput)),
     // --- panel: map ---
     (
         "panel/input_capture.rs::KeyboardOwner::process_ownership",

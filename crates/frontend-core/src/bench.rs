@@ -45,14 +45,37 @@ pub struct BenchConfig(Box<host_play::memory::Config>);
 
 impl BenchConfig {
     /// The configuration `BOT_MEMORY_*` asks for, if the benchmark is on.
-    pub fn from_env() -> Result<Option<Self>, String> {
-        host_play::memory::Config::from_env().map(|config| config.map(|c| Self(Box::new(c))))
+    pub fn from_env() -> Result<Option<Self>, BenchError> {
+        host_play::memory::Config::from_env()
+            .map(|config| config.map(|c| Self(Box::new(c))))
+            .map_err(BenchError::Config)
     }
 }
 
+/// Why a benchmark step failed. Each variant carries the sentence
+/// `host-play` reports for that step.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum BenchError {
+    /// The `BOT_MEMORY_*` environment is invalid.
+    #[error("{0}")]
+    Config(String),
+    /// The profile is not a live local one.
+    #[error("{0}")]
+    LiveRequired(String),
+    /// Preparing the run's vault and names failed.
+    #[error("{0}")]
+    Prepare(String),
+    /// Seeding the run's navigation failed.
+    #[error("{0}")]
+    SeedNav(String),
+    /// The observation run failed (already recorded per slot).
+    #[error("{0}")]
+    Run(String),
+}
+
 /// Refuse a benchmark run against a profile that is not a live local one.
-pub fn require_live_benchmark(class: ProfileClass) -> Result<(), String> {
-    host_play::memory::require_live_benchmark(class.to_host())
+pub fn require_live_benchmark(class: ProfileClass) -> Result<(), BenchError> {
+    host_play::memory::require_live_benchmark(class.to_host()).map_err(BenchError::LiveRequired)
 }
 
 /// One benchmark run: its temporary vault, minted names and render policy.
@@ -60,8 +83,10 @@ pub struct BenchRun(Box<host_play::memory::Run>);
 
 impl BenchRun {
     /// Prepare the run's vault and names for `frontend` (`"panel"`, `"tui"`).
-    pub fn prepare(config: BenchConfig, frontend: &'static str) -> Result<Self, String> {
-        host_play::memory::Run::prepare_unseeded(*config.0, frontend).map(|run| Self(Box::new(run)))
+    pub fn prepare(config: BenchConfig, frontend: &'static str) -> Result<Self, BenchError> {
+        host_play::memory::Run::prepare_unseeded(*config.0, frontend)
+            .map(|run| Self(Box::new(run)))
+            .map_err(BenchError::Prepare)
     }
 
     /// The run's minted profile names.
@@ -90,19 +115,21 @@ impl BenchRun {
     }
 
     /// Seed the run's navigation from `core`'s play session.
-    pub fn bind_seed_nav<Io>(&self, core: &OperatorSession<Io>) -> Result<(), String> {
-        self.0.bind_seed_nav(host_play::memory::SeedNav::FromPlay {
-            world: core.nav_world(),
-            obj_names: core.obj_names(),
-            map_members: core.map_members(),
-        })
+    pub fn bind_seed_nav<Io>(&self, core: &OperatorSession<Io>) -> Result<(), BenchError> {
+        self.0
+            .bind_seed_nav(host_play::memory::SeedNav::FromPlay {
+                world: core.nav_world(),
+                obj_names: core.obj_names(),
+                map_members: core.map_members(),
+            })
+            .map_err(BenchError::SeedNav)
     }
 
     /// Advance the run against `core`'s play session: `Ok(true)` once the
     /// observation completed; without a play session nothing happens.
-    pub fn poll<Io>(&mut self, core: &OperatorSession<Io>) -> Result<bool, String> {
+    pub fn poll<Io>(&mut self, core: &OperatorSession<Io>) -> Result<bool, BenchError> {
         match core.play() {
-            Some(play) => self.0.poll(play),
+            Some(play) => self.0.poll(play).map_err(BenchError::Run),
             None => Ok(false),
         }
     }
