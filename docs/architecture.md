@@ -891,7 +891,7 @@ authorized exception; they compute and never send a game action.
 
 ## Navigation pack and server profiles
 
-The nav pack is format v16 (magic `274V`). Decoding rejects v15 and older as
+The nav pack is format v17 (magic `274V`). Decoding rejects v16 and older as
 `BadVersion`: rebake custom packs with `nav-pack`. Three sidecars ride beside
 the pack: raw flags (`274F`/1), paint-reach (`274R`/1) and static canlight
 (`274L`/1); `274bot.navpois` (`274P`/1) is the fourth. Application builds bake
