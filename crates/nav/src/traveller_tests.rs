@@ -3994,6 +3994,84 @@ fn follow_shantay_door_edge_drives_the_pass_handover_dialog_before_arriving() {
     );
 }
 
+/// The Ardougne lever (`wilderness_lever.rs2` `[oploc1,wildinlever]`, loc
+/// 1814) first shows a warning `~mesbox` and then `~p_choice3_header`
+/// while `%warning_wilderness_teleport_lever` is false (every new account).
+/// The Door hop must continue the mesbox and answer "Yes I'm brave." (the
+/// first option, which leaves the permanent varp unchanged), then settle
+/// the teleport landing. Before the fix the hop sat on the warning until its
+/// 60-tick budget expired (live `nav_mage_arena_bank` stall at (2561,3311)).
+#[test]
+fn follow_ardougne_lever_answers_the_wilderness_warning_then_arrives() {
+    let mut c = scene_client();
+    plant_loc(
+        &mut c,
+        crate::transport::ARDOUGNE_WILDERNESS_LEVER_LOC_ID,
+        "Lever",
+        "Pull",
+        1,
+        1,
+    );
+    let mut snap = snap_at(&mut c, 0, 1);
+    let mut rec = FollowRec {
+        route: Some((0, 1)),
+        ..FollowRec::default()
+    };
+    let mut t = Traveller::new();
+    let mut edge = shantay_edge();
+    edge.loc_id = crate::transport::ARDOUGNE_WILDERNESS_LEVER_LOC_ID;
+    edge.ticks = 2;
+    edge.consumed_req.clear();
+    let to = edge.to;
+    let route = Route {
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
+        dest: to,
+        ticks: 1.0,
+    };
+    let mut options = TravelOptions::default();
+    assert!(t
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.loc_ops, 1, "the OP_LOC1 Pull went out");
+
+    // "Warning! Pulling the lever will teleport you deep into the wilderness."
+    plant_continue_dialog(&mut c);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(t
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.pause_buttons, 1, "the warning mesbox is continued");
+
+    plant_choice_dialog(
+        &mut c,
+        &[
+            "Yes I'm brave.",
+            "Eep! The wilderness... No thank you.",
+            "Yes please, don't show this message again.",
+        ],
+    );
+    bump_rebuild(&mut c, &mut snap);
+    assert!(t
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(
+        rec.if_button_components,
+        vec![101],
+        "\"Yes I'm brave.\" is answered, not the permanent-varp option"
+    );
+
+    c.chat_modal_id = -1;
+    plant_player(&mut c, 0, 10);
+    bump_rebuild(&mut c, &mut snap);
+    match t.follow(&mut rec, &snap, route, &mut options) {
+        Some(TravelOutcome::Arrived { at }) => assert_eq!(at, to),
+        other => panic!("expected Arrived, got {other:?}"),
+    }
+    assert_eq!(rec.loc_ops, 1, "one Pull, no re-pull during the dialog");
+}
+
 #[test]
 fn follow_shantay_free_exit_uses_its_pinned_takeoff_stand() {
     let mut c = scene_client();

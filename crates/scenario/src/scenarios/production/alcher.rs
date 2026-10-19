@@ -1320,8 +1320,14 @@ pub(crate) fn alcher_scenario() -> Scenario {
 }
 
 /// Start off-scene in the dungeon that makes air-nearest choose Edgeville.
-/// The measured native winner for this members, teleport-off route is Falador
-/// East. Every action after Start belongs to Alcher; the cell only observes.
+/// The native walk-cost winner for this members, teleport-off route is
+/// Falador West. On the reference pack (`bake-r2-a`) the cheapest route to
+/// Falador East (74.5 ticks, south through the mine to the Falador stairs)
+/// crosses the King Scorpion zones (L32, aggressive up to combat 64; the
+/// Magic-55 account is combat 29), so the default Danger routing plans the
+/// safe routes through the Ice Mountain ladder: Falador West (2945,3368)
+/// 92.5 ticks, Edgeville 97 and Falador East (3013,3355) 105.
+/// Every action after Start belongs to Alcher; the cell only observes.
 pub(crate) fn alcher_dwarven_mine_scenario() -> Scenario {
     let origin = WorldTile {
         x: 3016,
@@ -1376,14 +1382,14 @@ pub(crate) fn alcher_dwarven_mine_scenario() -> Scenario {
     steps.push(watch(
         "watch Alcher leave the mine and reach the walk-cost winner",
         Proof::ArrivedNear {
-            x: 3013,
-            z: 3355,
+            x: 2945,
+            z: 3368,
             level: 0,
             radius: 4,
         },
     ));
     steps.push(watch(
-        "watch Alcher open the stocked Falador East bank",
+        "watch Alcher open the stocked Falador West bank",
         Proof::BankItem {
             name: "Rune chainbody",
             count: 30,

@@ -1085,14 +1085,21 @@ pub(crate) const AL_KHARID_TOLL_LEFT_LOC_ID: i32 = 2882;
 /// `border_gate_toll_right` in `pack/loc.pack`: the northern Al Kharid
 /// border gate (m51_50 (4,28) = (3268,3228)).
 pub(crate) const AL_KHARID_TOLL_RIGHT_LOC_ID: i32 = 2883;
+/// `wildinlever` in `pack/loc.pack`: the Ardougne lever (m40_51 (1,47) =
+/// (2561,3311)) that teleports into the Wilderness.
+pub(crate) const ARDOUGNE_WILDERNESS_LEVER_LOC_ID: i32 = 1814;
 
 /// Dialogue-driven Door hops: the Al Kharid border toll (`border_gate.rs2`
-/// `oploc1` → border-guard `p_choice3`) and the Shantay henge
-/// (`shantay_pass.rs2` `oploc1` pass handover / first-crossing disclaimer).
+/// `oploc1` → border-guard `p_choice3`), the Shantay henge
+/// (`shantay_pass.rs2` `oploc1` pass handover / first-crossing disclaimer)
+/// and the Ardougne Wilderness lever (`wilderness_lever.rs2`
+/// `[oploc1,wildinlever]`: while `%warning_wilderness_teleport_lever` is
+/// false, a warning `~mesbox` and a `~p_choice3_header` come before the pull).
 pub(crate) fn is_dialogue_door_loc(loc_id: i32) -> bool {
     loc_id == SHANTAY_HENGE_LOC_ID
         || loc_id == AL_KHARID_TOLL_LEFT_LOC_ID
         || loc_id == AL_KHARID_TOLL_RIGHT_LOC_ID
+        || loc_id == ARDOUGNE_WILDERNESS_LEVER_LOC_ID
 }
 
 #[cfg(test)]
