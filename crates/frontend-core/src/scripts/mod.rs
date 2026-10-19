@@ -1752,6 +1752,7 @@ impl Scripts {
 
     /// Save `profile`'s last successful assignment. Re-starting the same
     /// card writes nothing.
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn persist_assignment<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
