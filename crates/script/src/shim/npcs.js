@@ -1,6 +1,6 @@
 import Tile from '../../geometry/Tile.js';
 import EntityQuery from '../query/Query.js';
-import { snap, queue, proxy, presentOps, opIndex, notImpl } from '../../shim/_kernel.js';
+import { snap, queue, proxy } from '../../shim/_kernel.js';
 
 export class Npc {
     constructor(row) {
@@ -8,54 +8,40 @@ export class Npc {
     }
 
     get name() {
-        return this.snap.name ?? null;
+        return globalThis.__rs2b0t_entities_v8('npc.name', this);
     }
 
     get id() {
-        return this.snap.id;
+        return globalThis.__rs2b0t_entities_v8('npc.id', this);
     }
 
     get index() {
-        return this.snap.index;
+        return globalThis.__rs2b0t_entities_v8('npc.index', this);
     }
 
     get inCombat() {
-        return this.snap.in_combat === true;
+        return globalThis.__rs2b0t_entities_v8('npc.inCombat', this);
     }
 
     get health() {
-        return this.snap.health;
+        return globalThis.__rs2b0t_entities_v8('npc.health', this);
     }
 
     get level() {
-        if (typeof this.snap.combat_level !== 'number') throw notImpl('Npc.level');
-        return this.snap.combat_level;
+        return globalThis.__rs2b0t_entities_v8('npc.level', this);
     }
 
     get size() {
-        if (typeof this.snap.size !== 'number' || !Number.isInteger(this.snap.size) || this.snap.size < 1) {
-            throw notImpl('Npc.size');
-        }
-        return this.snap.size;
+        return globalThis.__rs2b0t_entities_v8('npc.size', this);
     }
 
     networkOrigin() {
-        if (typeof this.snap.size !== 'number' || !Number.isInteger(this.snap.size) || this.snap.size < 1) {
-            throw notImpl('Npc.networkOrigin');
-        }
-        if (!Number.isInteger(this.snap.nx) || !Number.isInteger(this.snap.nz)) {
-            throw notImpl('Npc.networkOrigin');
-        }
-        return Tile.from({ x: this.snap.nx, z: this.snap.nz, level: this.snap.level ?? 0 });
+        return globalThis.__rs2b0t_entities_v8('npc.networkOrigin', this, Tile);
     }
 
     networkTile() {
         // Frozen Npc.ts:55-57 maps a missing network tile to tile().
-        return Tile.from({
-            x: this.snap.network_x ?? this.snap.x,
-            z: this.snap.network_z ?? this.snap.z,
-            level: this.snap.level ?? 0,
-        });
+        return globalThis.__rs2b0t_entities_v8('npc.networkTile', this, Tile);
     }
 
     /**
@@ -63,47 +49,31 @@ export class Npc {
      * not merely when `Game.inCombat()` is true.
      */
     targetsMe() {
-        return (
-            this.snap.target_kind === 2 &&
-            this.snap.target_index === (snap().self_slot ?? 0)
-        );
+        return globalThis.__rs2b0t_entities_v8('npc.targetsMe', this, snap);
     }
 
     targetsAnotherPlayer() {
-        const self = snap().self_slot ?? 0;
-        return this.snap.target_kind === 2 && this.snap.target_index !== self;
+        return globalThis.__rs2b0t_entities_v8('npc.targetsAnotherPlayer', this, snap);
     }
 
     tile() {
-        return Tile.from({ x: this.snap.x, z: this.snap.z, level: this.snap.level ?? 0 });
+        return globalThis.__rs2b0t_entities_v8('npc.tile', this, Tile);
     }
 
     distance() {
-        return typeof this.snap.distance === 'number' ? this.snap.distance : 0;
+        return globalThis.__rs2b0t_entities_v8('npc.distance', this);
     }
 
     actions() {
-        return presentOps(this.snap.actions);
+        return globalThis.__rs2b0t_entities_v8('npc.actions', this);
     }
 
     valid() {
-        return (snap().npcs || []).some(
-            (n) => n && n.index === this.snap.index && n.name === this.snap.name,
-        );
+        return globalThis.__rs2b0t_entities_v8('npc.valid', this, snap);
     }
 
     interact(action) {
-        const slot = opIndex(this.snap.actions, action);
-        if (slot === -1) return false;
-        const verb = String(action);
-        if (!globalThis.__rs2b0t_selected_facts('thieving-ready', this.snap.id, verb)) return false;
-        queue({
-            op: 'npc',
-            name: this.snap.name ?? '',
-            action: verb,
-            index: this.snap.index,
-        });
-        return true;
+        return globalThis.__rs2b0t_entities_v8('npc.interact', this, action, queue);
     }
 }
 
@@ -115,15 +85,13 @@ export const Npcs = proxy('Npcs', {
         );
     },
     all() {
-        return (snap().npcs || []).map((s) => new Npc(s));
+        return globalThis.__rs2b0t_entities_v8('entities.all', snap, 'npcs', Npc);
     },
     nearest(count = 1) {
-        return Npcs.all()
-            .sort((a, b) => a.distance() - b.distance())
-            .slice(0, count);
+        return globalThis.__rs2b0t_entities_v8('npcs.nearest', Npcs, count);
     },
 });
 
 export function talkOp(actions) {
-    return (actions || []).find((a) => /^talk/i.test(String(a))) ?? null;
+    return globalThis.__rs2b0t_entities_v8('talkOp', actions);
 }
