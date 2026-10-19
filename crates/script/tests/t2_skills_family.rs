@@ -78,7 +78,7 @@ fn posted_stats_cover_every_skill_and_all_five_methods() {
             "xp": [0, 0, 0, 1154, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             "levels": [1, 1, 1, 10, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
             "effective": [1, 1, 1, 10, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-            "hpFraction": 1.0,
+            "hpFraction": 1,
             "missing": {
                 "xp": "not impl: Skills.xp",
                 "level": "not impl: Skills.level",
