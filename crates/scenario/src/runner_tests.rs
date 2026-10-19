@@ -1894,7 +1894,7 @@ fn relog_presses_the_logout_button_while_ingame() {
     );
 }
 
-fn relog_before_start() -> (Client, ScenarioRunner) {
+fn relog_before_start_with_arm(arm: Proof) -> (Client, ScenarioRunner) {
     let mut client = seeded_client();
     client.set_iface(
         2458,
@@ -1911,12 +1911,16 @@ fn relog_before_start() -> (Client, ScenarioRunner) {
         Step {
             name: "relog before native Start",
             kind: StepKind::Relog,
-            wait: wait(Proof::SideTabAvailable { index: 3 }, 20),
+            wait: wait(arm, 20),
         },
     );
     let mut runner = ScenarioRunner::new(scenario);
     runner.set_scene_settle(Duration::ZERO);
     (client, runner)
+}
+
+fn relog_before_start() -> (Client, ScenarioRunner) {
+    relog_before_start_with_arm(Proof::SideTabAvailable { index: 3 })
 }
 
 #[test]
@@ -1949,6 +1953,34 @@ fn relog_stale_side_tab_cannot_start_native_before_logout_and_new_login() {
     client.bump_gens(ServerProt::IF_SETICON);
     runner.tick(&mut client);
     assert!(runner.on_start_script());
+}
+
+#[test]
+fn relog_logged_out_arm_advances_on_the_observed_off_world_frame() {
+    let (mut client, mut runner) = relog_before_start_with_arm(Proof::LoggedOut);
+
+    runner.tick(&mut client);
+    assert!(
+        !runner.on_start_script(),
+        "the old online session and its stale available tab cannot complete LoggedOut"
+    );
+    let logout_request_len = client.out.pos;
+    for _ in 0..3 {
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        assert!(!runner.on_start_script());
+    }
+    assert_eq!(client.out.pos, logout_request_len);
+
+    client.ingame = false;
+    client.scene_state = 0;
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert!(
+        runner.on_start_script(),
+        "the explicit LoggedOut arm can enter StartScript before the new login posts colours"
+    );
+    assert_eq!(runner.record_step().2, "start the compiled card");
 }
 
 #[test]

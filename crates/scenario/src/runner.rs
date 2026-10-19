@@ -1051,7 +1051,11 @@ impl ScenarioRunner {
                 && stall_combat_holds;
             let arm_holds = match &self.current_step().kind {
                 StepKind::Await { ready, .. } => ready(&self.snapshot),
-                StepKind::Relog => self.relog_left_session && self.snapshot.ingame() && arm_holds,
+                StepKind::Relog => {
+                    self.relog_left_session
+                        && arm_holds
+                        && (arm == Proof::LoggedOut || self.snapshot.ingame())
+                }
                 _ => arm_holds,
             };
             if native_episode_holds && arm_holds {

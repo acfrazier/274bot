@@ -401,7 +401,9 @@ pub fn quest_colour(
     quests: &QuestCatalog,
     snapshot: SnapshotView<'_>,
 ) -> Option<QuestListStatus> {
-    let facts = quests.quest(path.id.0.as_ref()).ok()?;
+    // A draft Path can have its own ID while retaining the selected quest's binding.
+    let quest = path.progress.binding.0.strip_prefix("journal:")?;
+    let facts = quests.quest(quest).ok()?;
     let rows = snapshot.quest_statuses()?;
     rows.value
         .iter()
