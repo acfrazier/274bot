@@ -152,9 +152,8 @@ import {
     Inventory as RootInventory,
     InvItem as RootInvItem,
     Equipment as RootEquipment,
-    backpackSnapshots as rootBackpackSnapshots,
-    backpackCapacity as rootBackpackCapacity,
 } from '@rs2b0t/api';
+import * as RootInventoryModule from '@rs2b0t/api';
 import {
     Inventory as ModuleInventory,
     InvItem as ModuleInvItem,
@@ -185,9 +184,7 @@ declare const player: Player;
 declare const groundItem: GroundItem;
 
 const moduleRows: InvItemSnapshot[] = backpackSnapshots();
-const rootRows: InvItemSnapshot[] = rootBackpackSnapshots();
 const moduleCapacity: number = backpackCapacity();
-const rootCapacity: number = rootBackpackCapacity();
 const moduleItems: ModuleInvItem[] = ModuleInventory.items();
 const rootItems: RootInvItem[] = RootInventory.items();
 const moduleFirst: ModuleInvItem | null = ModuleInventory.first('Shark');
@@ -255,10 +252,10 @@ const panic: boolean = shouldPanic(0.2, 0.25, 0);
 
 // @ts-expect-error backpack snapshot helpers take no arguments
 backpackSnapshots(1);
-// @ts-expect-error root backpack snapshot helper takes no arguments
-rootBackpackSnapshots(1);
-// @ts-expect-error root backpack capacity helper takes no arguments
-rootBackpackCapacity(28);
+// @ts-expect-error backpackSnapshots is a public-module-only helper
+RootInventoryModule.backpackSnapshots();
+// @ts-expect-error backpackCapacity is a public-module-only helper
+RootInventoryModule.backpackCapacity();
 // @ts-expect-error module backpack capacity helper takes no arguments
 backpackCapacity(28);
 // @ts-expect-error count takes an item name, not an object id
@@ -301,7 +298,7 @@ const wrongMatchingCount: string = countMatching(packRows, ['shark']);
 shouldEat('10', 10, 5, 1);
 
 void [
-    moduleRows, rootRows, moduleCapacity, rootCapacity, moduleItems, rootItems,
+    moduleRows, moduleCapacity, moduleItems, rootItems,
     moduleFirst, rootFirst, moduleContains, rootContains, used, count, countById,
     full, free, moduleEquipmentItems, rootEquipmentItems, equipmentContains,
     rootEquipmentContains, equip, unequip, rootEquip, rootUnequip, rootItem, name,
