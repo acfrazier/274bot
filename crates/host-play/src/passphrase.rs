@@ -697,7 +697,18 @@ mod tests {
                 .stderr(Stdio::piped())
                 .spawn()
                 .unwrap();
-            spawned.stdin.take().unwrap().write_all(input).unwrap();
+            // A child that never reads stdin (for example `no-flag`) can exit
+            // before this write finishes. That closes the read end, so the
+            // write fails with `BrokenPipe`; the bytes it did not read are
+            // bytes it would never have read. Any other write error is a real
+            // failure.
+            if let Err(error) = spawned.stdin.take().unwrap().write_all(input) {
+                assert_eq!(
+                    error.kind(),
+                    std::io::ErrorKind::BrokenPipe,
+                    "write to the piped child's stdin: {error}"
+                );
+            }
             let output = spawned.wait_with_output().unwrap();
             String::from_utf8_lossy(&output.stdout).into_owned()
         }
@@ -722,6 +733,23 @@ mod tests {
             assert!(short.contains("CHILD-RESULT match=false len=1"), "{short}");
             let fine = piped("stdin-create", format!("{TYPED}\n").as_bytes());
             assert!(fine.contains("CHILD-RESULT match=true"), "{fine}");
+        }
+
+        /// A child that exits without reading stdin closes the pipe while a
+        /// write that cannot fit the pipe buffer is still in flight. The
+        /// helper must tolerate that `BrokenPipe` and still return the
+        /// child's output. The small inputs of the piped tests above race the
+        /// same exit under load; this input loses the race every time.
+        #[test]
+        fn a_child_that_exits_without_reading_stdin_does_not_panic_the_piped_helper() {
+            // Far over any pipe buffer, so the write cannot complete before
+            // the child exits and closes the unread read end.
+            let input = vec![b'x'; 2 * 1024 * 1024];
+            let unread = piped("no-flag", &input);
+            assert!(
+                unread.contains("CHILD-RESULT error=no terminal"),
+                "{unread}"
+            );
         }
     }
 }

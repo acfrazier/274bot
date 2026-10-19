@@ -12,6 +12,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- Scripts no longer have WebCrypto (`crypto.subtle`, `Crypto`, `CryptoKey`,
+  `SubtleCrypto`) or the `URL`, `URLSearchParams` and `URLPattern` globals.
+  `crypto.randomUUID()` and `crypto.getRandomValues()` still work.
 - Script operations now share a bounded request seat across native cards and
   JavaScript. A second top-level Gatherer, combat, quest progress or Hunt
   Session reports **busy** while one Session is live. Capability roots started
@@ -335,6 +338,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   look up that name again for the next world. Each such world costs one
   more wait for the name lookup. Before, 274bot took only the cache from
   the next world and kept the first world's game server.
+
+### Performance
+
+- Each running bot copies its route facts (held and worn items, skills,
+  settings and quest progress) only when it prepares a walk request, a bank
+  selection or a route inspection. Before, its script watchdog also copied them on
+  every frame, about 30 times each game tick. In a measured Gatherer bank
+  loop, each bot now allocates about 0.25 MB/s less memory for these facts,
+  about half of the earlier amount.
+
 ### Fixed during development
 
 #### Navigation

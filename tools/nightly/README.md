@@ -270,9 +270,9 @@ administrator, once.
 
 1. Prerequisites already on the host: the Rust toolchain from `rust-toolchain.toml` in
    `C:\Users\BotTest\.cargo`/`.rustup` with the MSVC build tools, Git for Windows,
-   NASM in `C:\Users\BotTest\274bot-tools\nasm-3.02`, CPython 3.14 in
-   `C:\Program Files\Python314`. The host clock is set to Eastern time (the runner uses
-   the host clock: Windows CPython has no tz database).
+   and CPython 3.14 in `C:\Program Files\Python314`. The host clock is set to
+   Eastern time (the runner uses the host clock: Windows CPython has no tz
+   database).
 2. `C:\274bot-nightly\` with `runs\`, `logs\`, `state\`; the venv:
    `& 'C:\Program Files\Python314\python.exe' -m venv C:\274bot-nightly\venv`, then
    `C:\274bot-nightly\venv\Scripts\python.exe -m pip install --require-hashes --only-binary :all: --no-deps -r <runner>\tools\nightly\windows\requirements.txt`.
