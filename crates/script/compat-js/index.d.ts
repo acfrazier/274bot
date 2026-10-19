@@ -27,7 +27,7 @@ SOFTWARE.
 declare module '@rs2b0t/api' {
 export function defineBot<T extends {name: string; create: () => unknown}>(manifest: T): T;
 export { Game } from '*api/game/Game.js';
-export { Inventory, InvItem, backpackSnapshots, backpackCapacity } from '*api/inventory/Inventory.js';
+export { Inventory, InvItem } from '*api/inventory/Inventory.js';
 export { Skills } from '*api/skills/Skills.js';
 export { Bank, withdrawOp } from '*api/bank/Bank.js';
 export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, NEARBY_BANK_RADIUS, resolveBankOpenRoute, parseBankStrategy, shouldBankNow } from '*api/bank/Banking.js';

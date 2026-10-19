@@ -226,12 +226,12 @@ globalThis.__inventoryRootIdentity = {
     InvItem: Root.InvItem === InvItem,
     Inventory: Root.Inventory === Inventory,
     Equipment: Root.Equipment === Equipment,
-    backpackSnapshots: Root.backpackSnapshots === backpackSnapshots,
-    backpackCapacity: Root.backpackCapacity === backpackCapacity,
+    backpackSnapshotsModuleOnly: !('backpackSnapshots' in Root),
+    backpackCapacityModuleOnly: !('backpackCapacity' in Root),
 };
 globalThis.__inventoryRootRead = () => ({
-    names: Root.backpackSnapshots().map(row => row.name),
-    capacity: Root.backpackCapacity(),
+    names: backpackSnapshots().map(row => row.name),
+    capacity: backpackCapacity(),
     inventoryCount: Root.Inventory.count('apple'),
 });
 
@@ -926,7 +926,7 @@ fn item_actions_and_contains_keep_overridable_callees_and_original_rows() {
 }
 
 #[test]
-fn inventory_root_helpers_share_module_values_and_follow_bank_page_transitions() {
+fn inventory_root_identity_and_module_only_helpers_follow_bank_page_transitions() {
     let iso = spawn();
     let identity = iso.probe("__inventoryRootIdentity").unwrap();
     let identity = identity.as_object().unwrap();

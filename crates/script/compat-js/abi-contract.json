@@ -9653,32 +9653,6 @@
       "mapping_kind": "re-export"
     },
     {
-      "public_name": "backpackSnapshots",
-      "source_name": "backpackSnapshots",
-      "module": "api/inventory/Inventory.js",
-      "family_id": "inventory",
-      "shim": "inventory.js",
-      "nav_consuming": false,
-      "source_modules": [
-        "api/inventory/Inventory.js"
-      ],
-      "is_alias": false,
-      "mapping_kind": "re-export"
-    },
-    {
-      "public_name": "backpackCapacity",
-      "source_name": "backpackCapacity",
-      "module": "api/inventory/Inventory.js",
-      "family_id": "inventory",
-      "shim": "inventory.js",
-      "nav_consuming": false,
-      "source_modules": [
-        "api/inventory/Inventory.js"
-      ],
-      "is_alias": false,
-      "mapping_kind": "re-export"
-    },
-    {
       "public_name": "Skills",
       "source_name": "Skills",
       "module": "api/skills/Skills.js",
