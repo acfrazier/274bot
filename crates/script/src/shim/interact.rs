@@ -149,6 +149,10 @@ pub enum InteractReq {
         action: String,
         bank_generation: u64,
     },
+    /// Fill free inventory slots through the native bank seat. The caller's
+    /// bank session generation fences admission and every later poll.
+    #[serde(rename = "withdraw-load")]
+    WithdrawLoad { name: String, bank_generation: u64 },
     /// Interact with a held inventory item by label. When `target_item_id` is
     /// present, `slot` is required and both are revalidated; a partial explicit
     /// id fails closed. Legacy requests without an id use name resolution and

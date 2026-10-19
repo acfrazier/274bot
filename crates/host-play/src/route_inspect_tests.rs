@@ -3271,33 +3271,12 @@ fn real_content_inspection_capture_bytes() {
     let old_snapshot = script::isolate_fb::decode_snapshot(&old_bytes).unwrap();
     let snapshot = script::isolate_fb::decode_snapshot(&bytes).unwrap();
 
-    // The approved I-wire retirement reserves these two old vtable slots.
-    // flatc omits their accessors, so inspect only the authenticated old
-    // capture's little-endian slots: seq at 126 and result at 128.
-    let root = u32::from_le_bytes(old_bytes[..4].try_into().unwrap()) as usize;
-    let distance = i32::from_le_bytes(old_bytes[root..root + 4].try_into().unwrap());
-    let vtable = usize::try_from(i64::try_from(root).unwrap() - i64::from(distance)).unwrap();
-    let slot = |offset: usize| {
-        usize::from(u16::from_le_bytes(
-            old_bytes[vtable + offset..vtable + offset + 2]
-                .try_into()
-                .unwrap(),
-        ))
-    };
-    let seq = slot(126);
-    let result = slot(128);
-    assert_ne!(seq, 0, "old forced-default sequence slot is present");
-    assert_ne!(result, 0, "old forced-default result slot is present");
+    // The public v2 result fields retain their original field ids and defaults.
+    assert_eq!(old_snapshot.withdraw_load_result_seq(), 0);
+    assert!(!old_snapshot.withdraw_load_result());
     assert_eq!(
-        u64::from_le_bytes(old_bytes[root + seq..root + seq + 8].try_into().unwrap()),
-        0,
-        "the retired withdraw-load sequence carries no information"
-    );
-    assert_eq!(old_bytes[root + result], 0, "the retired result is false");
-    assert_eq!(
-        bytes.len() + 16,
-        old_bytes.len(),
-        "only retired padding is removed"
+        bytes, old_bytes,
+        "the restored result slots preserve the exact immutable capture"
     );
 
     // flatc's generated Debug visits every active accessor recursively;

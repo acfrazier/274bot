@@ -11,7 +11,7 @@ use api::script_contract::DecisionSequence;
 use api::selected::SelectedPin;
 use api::snapshot::SnapshotView;
 
-/// Closed, source-backed bank callback point. A string cannot mint a point;
+/// Closed, source-backed callback point. A string cannot mint a point;
 /// callers must name one family/member row in the frozen ABI table.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PromptPoint(&'static HookCharacterization);

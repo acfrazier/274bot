@@ -1,6 +1,6 @@
 //! Local selected-bank catalog queries. Reachable selection runs in the native
 //! seat and delegates its route costs to the bounded host bank-pick service.
-use crate::native_bank::air_distance_squared;
+use crate::native_bank::{air_distance_squared, nearest_eligible_bank};
 use crate::observed;
 use api::named_banks::{BankPreferences, NamedBank, NamedBankFacts};
 use api::snapshot::WorldTile;
@@ -154,12 +154,7 @@ fn nearest_in(
     from: WorldTile,
     preferences: BankPreferences,
 ) -> Option<NamedBank> {
-    facts
-        .banks()
-        .iter()
-        .filter(|bank| eligible(bank, preferences))
-        .min_by_key(|bank| air_distance_squared(from, bank.air_tile()))
-        .copied()
+    nearest_eligible_bank(facts, from, |bank| eligible(bank, preferences))
 }
 
 pub(crate) fn nearest(from: WorldTile) -> Value {

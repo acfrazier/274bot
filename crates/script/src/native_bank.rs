@@ -60,6 +60,19 @@ pub(crate) fn air_distance_squared(a: WorldTile, b: WorldTile) -> i64 {
     dx * dx + dz * dz
 }
 
+pub(crate) fn nearest_eligible_bank(
+    facts: &NamedBankFacts,
+    from: WorldTile,
+    mut eligible: impl FnMut(&NamedBank) -> bool,
+) -> Option<NamedBank> {
+    facts
+        .banks()
+        .iter()
+        .filter(|bank| eligible(*bank))
+        .min_by_key(|bank| air_distance_squared(from, bank.air_tile()))
+        .copied()
+}
+
 #[derive(Clone)]
 pub struct BankSelector {
     facts: Arc<NamedBankFacts>,
@@ -71,7 +84,12 @@ impl BankSelector {
         Self { facts, preferences }
     }
 
-    fn eligible(&self, bank: &NamedBank, stats: &[StatView], quests: &[QuestStatusView]) -> bool {
+    pub(crate) fn eligible(
+        &self,
+        bank: &NamedBank,
+        stats: &[StatView],
+        quests: &[QuestStatusView],
+    ) -> bool {
         bank.eligible(
             |id| {
                 stats

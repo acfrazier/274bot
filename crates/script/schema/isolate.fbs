@@ -422,9 +422,9 @@ table Snapshot {
   count_dialog_open: bool;
   withdraw_x_result_seq: ulong;
   withdraw_x_result: bool;
-  // Retired withdraw-load result slots; reserved and never reused.
-  withdraw_load_result_seq: ulong (deprecated);
-  withdraw_load_result: bool (deprecated);
+  // Public v2 withdraw-load completion, published by the native bank seat.
+  withdraw_load_result_seq: ulong;
+  withdraw_load_result: bool;
   bank_op_result_seq: ulong;
   bank_op_result: bool;
   reach: Reach;
@@ -872,7 +872,7 @@ table SeatResult {
 
 
 // One shim interact request, tagged by `op`:
-// "open-booth" | "open-stand" | "walk" | "walk-near" | "walk-nearest-bank" | "walk-to" | "deposit" | "withdraw" | "withdraw-x" | "close"
+// "open-booth" | "open-stand" | "walk" | "walk-near" | "walk-nearest-bank" | "walk-to" | "deposit" | "withdraw" | "withdraw-x" | "withdraw-load" | "close"
 // | "held" | "npc" | "loc" | "obj" | "player" | "use-on" | "use-widget-on"
 // | "continue" | "answer" | "answer-count" | "if-button" | "close-modal" | "side-tab"
 // | "shop-button" | "make-panel"
