@@ -231,7 +231,12 @@ fn cheap_files(service: &LocalStateService) {
 
 fn cheap_write(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::create_dir_all(path.parent().expect("a state file has a directory"))?;
-    std::fs::write(path, bytes)
+    std::fs::write(path, bytes)?;
+    #[cfg(unix)]
+    {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
 }
 
 /// Restores a directory's mode when the test ends, however it ends.
@@ -1609,7 +1614,7 @@ fn an_outside_write_while_a_write_is_staged_conflicts_and_keeps_the_outside_byte
     service.set_publish_hook(Arc::new(move |path| {
         if !once.swap(true, Ordering::SeqCst) {
             // An editor saving in place, taking no lock.
-            std::fs::write(path, &written).unwrap();
+            cheap_write(path, &written).unwrap();
         }
     }));
 
@@ -1652,7 +1657,8 @@ fn a_form_save_during_a_service_publication_is_never_overwritten() {
         if !once.swap(true, Ordering::SeqCst) {
             // A form of a build before r3 saving in place, taking no lock.
             let rows = [Loadout::new("original"), Loadout::new("frontend-saved")];
-            std::fs::write(path, serde_json::to_string_pretty(&rows).unwrap()).unwrap();
+            let bytes = serde_json::to_string_pretty(&rows).unwrap();
+            cheap_write(path, bytes.as_bytes()).unwrap();
         }
     }));
 
