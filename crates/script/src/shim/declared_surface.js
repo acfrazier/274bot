@@ -11,6 +11,7 @@ export { Bank, withdrawOp } from '../../api/bank/Bank.js';
 export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, NEARBY_BANK_RADIUS, resolveBankOpenRoute, parseBankStrategy, shouldBankNow } from '../../api/bank/Banking.js';
 export { bankDistance, nearestUsableBank } from '../../api/bank/BankLocations.js';
 export { reader } from '../../adapter/ClientAdapter.js';
+export { DEFAULT_BOOTH_NAME, DEFAULT_BOOTH_OP, MAP_SQUARE, sameMapSquare, locationOptions, boothFields, resolveGatheringLocation } from '../../shim/gathering_locations.js';
 export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolAttackLevel, toolsNeedingEquip, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool, bestHeldToolNames, surplusHeldToolNames } from '../../api/acquisition/Tools.js';
 export { Execution } from '../../api/execution/Execution.js';
 export { LoopingBot, TaskBot, TreeBot, AbstractBot } from '../../api/bot/Bot.js';
@@ -55,8 +56,6 @@ export class BranchTask {
     constructor() {}
 }
 export const COINS = notImplValue('COINS');
-export const DEFAULT_BOOTH_NAME = notImplValue('DEFAULT_BOOTH_NAME');
-export const DEFAULT_BOOTH_OP = notImplValue('DEFAULT_BOOTH_OP');
 export const FISHING_LOCATIONS = notImplValue('FISHING_LOCATIONS');
 export const FISHING_LOCATION_OPTIONS = notImplValue('FISHING_LOCATION_OPTIONS');
 export const FISHING_METHODS = notImplValue('FISHING_METHODS');
@@ -71,7 +70,6 @@ export class LeafTask {
     execute() { throw notImpl('LeafTask.execute'); }
     constructor() {}
 }
-export const MAP_SQUARE = notImplValue('MAP_SQUARE');
 export const MINING_LOCATIONS = notImplValue('MINING_LOCATIONS');
 export const MINING_LOCATION_OPTIONS = notImplValue('MINING_LOCATION_OPTIONS');
 export const MINING_LOCATION_OPTION_LABELS = notImplValue('MINING_LOCATION_OPTION_LABELS');
@@ -92,7 +90,6 @@ export function axeShopOffers() { throw notImpl('axeShopOffers'); }
 export function bestAffordableShopTier() { throw notImpl('bestAffordableShopTier'); }
 export function bestOwnedTier() { throw notImpl('bestOwnedTier'); }
 export function bestSmithableAxe() { throw notImpl('bestSmithableAxe'); }
-export function boothFields() { throw notImpl('boothFields'); }
 export function buyPlansCost() { throw notImpl('buyPlansCost'); }
 export function canFundPlan() { throw notImpl('canFundPlan'); }
 export function coinsToWithdraw() { throw notImpl('coinsToWithdraw'); }
@@ -110,7 +107,6 @@ export function hasAll() { throw notImpl('hasAll'); }
 export function hasFishingGear() { throw notImpl('hasFishingGear'); }
 export function held() { throw notImpl('held'); }
 export function isFishingBaitPiece() { throw notImpl('isFishingBaitPiece'); }
-export function locationOptions() { throw notImpl('locationOptions'); }
 export function miningLocationLabel() { throw notImpl('miningLocationLabel'); }
 export function missingFishingGear() { throw notImpl('missingFishingGear'); }
 export function parseToolAcquireMode() { throw notImpl('parseToolAcquireMode'); }
@@ -125,10 +121,8 @@ export function registerScript() { throw notImpl('registerScript'); }
 export function resolveDestination() { throw notImpl('resolveDestination'); }
 export function resolveFishMethod() { throw notImpl('resolveFishMethod'); }
 export function resolveFishingLocation() { throw notImpl('resolveFishingLocation'); }
-export function resolveGatheringLocation() { throw notImpl('resolveGatheringLocation'); }
 export function resolveMiningLocation() { throw notImpl('resolveMiningLocation'); }
 export function resolveWoodcuttingLocation() { throw notImpl('resolveWoodcuttingLocation'); }
-export function sameMapSquare() { throw notImpl('sameMapSquare'); }
 export function shopableMissingFishingGear() { throw notImpl('shopableMissingFishingGear'); }
 export function spotMatchesMethod() { throw notImpl('spotMatchesMethod'); }
 export function withBaitTarget() { throw notImpl('withBaitTarget'); }

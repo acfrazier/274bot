@@ -31,10 +31,12 @@ export default class GatheringProbe extends LoopingBot {
 "#;
 
 fn gathering_isolate() -> LoadIsolate {
-    script::bootstrap_v8_platform().expect("bootstrap V8");
     let isolate = LoadIsolate::spawn(API_BOT.to_owned(), LoadShape::CompatClass, vec![])
         .expect("spawn gathering API isolate");
-    assert_eq!(isolate.probe("typeof globalThis.__gathering").unwrap(), "object");
+    assert_eq!(
+        isolate.probe("typeof globalThis.__gathering").unwrap(),
+        "object"
+    );
     isolate
 }
 
@@ -45,7 +47,7 @@ fn gathering_helpers_are_root_exports_and_match_generic_policy() {
         .probe(
             r#"(() => {
                 const api = globalThis.__gathering;
-                const named = globalThis.__gatheringNamed;
+                const namedExports = globalThis.__gatheringNamed;
                 const start = { x: 63, z: 10, level: 0 };
                 const inside = { name: 'inside', spot: { x: 60, z: 10, level: 0 } };
                 const acrossChunk = { name: 'across', spot: { x: 64, z: 10, level: 0 } };
@@ -86,13 +88,13 @@ fn gathering_helpers_are_root_exports_and_match_generic_policy() {
                 );
                 return {
                     rootIdentity:
-                        api.DEFAULT_BOOTH_NAME === named.namedBoothName
-                        && api.DEFAULT_BOOTH_OP === named.namedBoothOp
-                        && api.MAP_SQUARE === named.namedMapSquare
-                        && api.sameMapSquare === named.namedSameMapSquare
-                        && api.locationOptions === named.namedLocationOptions
-                        && api.boothFields === named.namedBoothFields
-                        && api.resolveGatheringLocation === named.namedResolveGatheringLocation,
+                        api.DEFAULT_BOOTH_NAME === namedExports.namedBoothName
+                        && api.DEFAULT_BOOTH_OP === namedExports.namedBoothOp
+                        && api.MAP_SQUARE === namedExports.namedMapSquare
+                        && api.sameMapSquare === namedExports.namedSameMapSquare
+                        && api.locationOptions === namedExports.namedLocationOptions
+                        && api.boothFields === namedExports.namedBoothFields
+                        && api.resolveGatheringLocation === namedExports.namedResolveGatheringLocation,
                     constants: [api.DEFAULT_BOOTH_NAME, api.DEFAULT_BOOTH_OP, api.MAP_SQUARE],
                     options,
                     booths,
@@ -120,12 +122,27 @@ fn gathering_helpers_are_root_exports_and_match_generic_policy() {
         .unwrap();
 
     assert_eq!(result["rootIdentity"], true);
-    assert_eq!(result["constants"], serde_json::json!(["Bank booth", "Use-quickly", 64]));
+    assert_eq!(
+        result["constants"],
+        serde_json::json!(["Bank booth", "Use-quickly", 64])
+    );
     assert_eq!(
         result["options"],
-        serde_json::json!(["Auto", "Use Closest", "Use Start Position", "Use Custom Position", "None", "Birch", "Birch", ""])
+        serde_json::json!([
+            "Auto",
+            "Use Closest",
+            "Use Start Position",
+            "Use Custom Position",
+            "None",
+            "Birch",
+            "Birch",
+            ""
+        ])
     );
-    assert_eq!(result["booths"], serde_json::json!({ "boothName": "", "boothOp": 0 }));
+    assert_eq!(
+        result["booths"],
+        serde_json::json!({ "boothName": "", "boothOp": 0 })
+    );
     assert_eq!(
         result["defaults"],
         serde_json::json!([
@@ -134,7 +151,10 @@ fn gathering_helpers_are_root_exports_and_match_generic_policy() {
             { "boothName": "Bank booth", "boothOp": "Use-quickly" },
         ])
     );
-    assert_eq!(result["chunks"], serde_json::json!([true, false, false, false, false]));
+    assert_eq!(
+        result["chunks"],
+        serde_json::json!([true, false, false, false, false])
+    );
     for key in [
         "autoPrefersSameChunk",
         "closestCanLeaveChunk",
@@ -263,7 +283,14 @@ fn gathering_helpers_preserve_observation_order_and_thrown_identity() {
     assert_eq!(
         result["events"],
         serde_json::json!([
-            "a.level", "b.level", "a.x", "a.x.number", "b.x", "b.x.number", "a.z", "b.z"
+            "a.level",
+            "b.level",
+            "a.x",
+            "a.x.number",
+            "b.x",
+            "b.x.number",
+            "a.z",
+            "b.z"
         ])
     );
     assert_eq!(
@@ -274,8 +301,14 @@ fn gathering_helpers_preserve_observation_order_and_thrown_identity() {
     assert_eq!(
         result["conversionOrder"],
         serde_json::json!([
-            "bank.x", "start.x", "bank.x.number", "start.x.number",
-            "bank.z", "start.z", "bank.z.number", "start.z.number"
+            "bank.x",
+            "start.x",
+            "bank.x.number",
+            "start.x.number",
+            "bank.z",
+            "start.z",
+            "bank.z.number",
+            "start.z.number"
         ])
     );
     assert_eq!(result["freeform"], true);
@@ -283,7 +316,11 @@ fn gathering_helpers_preserve_observation_order_and_thrown_identity() {
         result["settingOrder"],
         serde_json::json!(["trim.get", "trim.call", "lower.get", "lower.call"])
     );
-    for key in ["mapThrowIdentity", "levelThrowIdentity", "numberThrowIdentity"] {
+    for key in [
+        "mapThrowIdentity",
+        "levelThrowIdentity",
+        "numberThrowIdentity",
+    ] {
         assert_eq!(result[key], true, "{key}: {result}");
     }
 }
