@@ -432,8 +432,8 @@ const REEXPORTS: &[Reexport] = &[
         line: "export { Game } from '../../api/game/Game.js';",
     },
     Reexport {
-        names: &["Inventory", "InvItem", "backpackSnapshots", "backpackCapacity"],
-        line: "export { Inventory, InvItem, backpackSnapshots, backpackCapacity } from '../../api/inventory/Inventory.js';",
+        names: &["Inventory", "InvItem"],
+        line: "export { Inventory, InvItem } from '../../api/inventory/Inventory.js';",
     },
     Reexport {
         names: &["Skills"],
