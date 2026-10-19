@@ -475,19 +475,26 @@ canonical complete directory and validated manifest. Ordinary image open does
 not hash or decode the pyramid. The cache-job owner (`host-play`) owns the
 prepared-cache `Arc`, locks, atomic publication, cancellation and quotas.
 
-Release packages ship the 289 terrain: release packaging bakes the nav
-bundle's pinned client cache through the production map-cache path and ships
-the published image directory as `map/<revision>/images/<key>/` under the
-install resource root (beside `nav/`), described by
+Release packages ship the 289 catalogue and terrain: release packaging bakes the nav
+bundle's pinned client cache through the production map-cache path (the image
+demand derives its catalogue first, so one bake yields both) and ships
+the published directories as `map/<revision>/catalogues/<key>/` and
+`map/<revision>/images/<key>/` under the install resource root (beside
+`nav/`), described by `map/<revision>/274bot.mapcatalogue.json`
+(`ShippedCatalogue`: catalogue identity, key, the catalogue manifest's
+receipt, record and payload totals) and
 `map/<revision>/274bot.mapimages.json` (`ShippedImages`: image identity, key,
-the image manifest's receipt, tile totals). The cache job installs it only for
-exactly the bound client cache's image identity: every tile's length and
-SHA-256 is checked against the pinned manifest as it is copied into the key's
-`.partial` directory, recorded by receipt and published by the same writer and
-rename as a local bake, so readers never see a second loader. A published key
-is never replaced, and shipped files are only read. Foreign shipped terrain is
-ignored; damaged or partial shipped files fail closed (the local bake stays
-behind the operator's consent and adopts the tiles already verified).
+the image manifest's receipt, tile totals). The cache job installs each
+artifact only for exactly the bound client cache's identity for that
+artifact: every tile's length and SHA-256 is checked against the pinned
+image manifest as it is copied into the key's `.partial` directory, and the
+catalogue payload is checked against its pinned manifest's receipt and
+record count; both are recorded by receipt and published by the same writer
+and rename as a local derive or bake, so readers never see a second loader.
+A published key is never replaced, and shipped files are only read. Foreign
+shipped data is ignored; damaged or partial shipped files fail closed (the
+catalogue derive runs locally at once; the local terrain bake stays behind
+the operator's consent and adopts the tiles already verified).
 
 ### script
 
@@ -701,7 +708,7 @@ retained by a consumer.
 | `shot.rs` | window shot files | shared naming for both runners |
 | `catalog.rs` | scenario catalog | names and lookup |
 | `quester.rs` | Path-backed Quester qualification fixtures | `QuesterStage`, `FIXTURE_PROFILES`, miniquest and role stages; never product gameplay |
-| `quest_fast.rs` | shared world tick-speed send and fresh confirmation | one `::speed` command with its chat sequence; Engine Q only |
+| `quest_fast.rs` | shared world tick-speed request and fresh confirmation | one `::speed` command with its chat sequence, sent only for an explicitly requested change; Engine Q only |
 | `tutorial.rs` | post-relog tutorial reseed for fresh live accounts | fresh same-session `tutorial 1000` confirm before the cell continues |
 | `render_betty_views.rs` | fixed-orbit render captures | station times yaw and pitch |
 | `scenarios/mod.rs` | scenario facade | re-exports families |

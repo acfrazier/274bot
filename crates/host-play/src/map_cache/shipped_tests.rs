@@ -1,18 +1,19 @@
-//! Shipped terrain against the real map cache and worker: release packaging
-//! ships exactly what a local bake publishes, and a matching home installs it
-//! byte for byte without baking; foreign, partial or damaged shipped terrain
-//! is never installed or modified; a published user terrain is never replaced.
+//! Shipped map data against the real map cache and worker: release packaging
+//! ships exactly what a local bake or derive publishes, and a matching home
+//! installs it byte for byte without baking or deriving; foreign, partial or
+//! damaged shipped data is never installed or modified (the local derive or
+//! bake runs instead); a published user artifact is never replaced.
 
 use super::super::fixture::{
-    fixture_descriptor, fixture_png, other_cache_descriptor, ship_fixture_terrain,
-    synthetic_client_snapshot, wait_for_status, CountingMapProducer,
+    fixture_descriptor, fixture_png, other_cache_descriptor, ship_fixture_catalogue,
+    ship_fixture_terrain, synthetic_client_snapshot, wait_for_status, CountingMapProducer,
 };
 use super::super::{
     map_bake_test_step_snapshot, ArtifactKind, BakeRequest, MapBakeCursor, MapBakeProducer,
     MapCacheError, MapCacheRoot, MapDemand, MapDemandHandle, MapDemandManager, MapJobStatus,
     MapProfileDescriptor, MapStage, PreparedMapInput,
 };
-use super::ShippedMapImages;
+use super::ShippedMap;
 use crate::map_producer::{map_artifact_policies, NativeMapProducer};
 use nav::map::formats::{ImageManifest, PayloadReceipt, ShippedImages, TileReceipt};
 use nav::map::identity::Digest;
@@ -43,14 +44,19 @@ impl Drop for Scratch {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
-
-/// The production producer, counting the terrain bakes it runs.
+/// The production producer, counting the catalogue derives and terrain
+/// bakes it runs.
 #[derive(Default)]
 struct CountingNative {
+    catalogues: AtomicUsize,
     images: AtomicUsize,
 }
 
 impl CountingNative {
+    fn catalogue_runs(&self) -> usize {
+        self.catalogues.load(Ordering::SeqCst)
+    }
+
     fn image_runs(&self) -> usize {
         self.images.load(Ordering::SeqCst)
     }
@@ -66,8 +72,13 @@ impl MapBakeProducer for CountingNative {
         request: &BakeRequest,
         partial_dir: Arc<PathBuf>,
     ) -> Result<Box<dyn MapBakeCursor>, MapCacheError> {
-        if request.artifact() == ArtifactKind::Images {
-            self.images.fetch_add(1, Ordering::SeqCst);
+        match request.artifact() {
+            ArtifactKind::Catalogue => {
+                self.catalogues.fetch_add(1, Ordering::SeqCst);
+            }
+            ArtifactKind::Images => {
+                self.images.fetch_add(1, Ordering::SeqCst);
+            }
         }
         NativeMapProducer::new().cursor(request, partial_dir)
     }
@@ -112,7 +123,7 @@ fn file_id(path: &Path) -> u64 {
 }
 
 /// The fixture terrain's two tile keys, in manifest order.
-fn fixture_tiles(shipped: &ShippedMapImages) -> [TileKey; 2] {
+fn fixture_tiles(shipped: &ShippedMap) -> [TileKey; 2] {
     let identity = fixture_descriptor().image_identity();
     let bytes = fs::read(shipped.image_dir(identity).unwrap().join("manifest.json")).unwrap();
     let manifest = ImageManifest::decode(&bytes, identity).unwrap();
@@ -120,7 +131,7 @@ fn fixture_tiles(shipped: &ShippedMapImages) -> [TileKey; 2] {
     [tiles[0].key, tiles[1].key]
 }
 
-fn shipped_tile(shipped: &ShippedMapImages, key: TileKey) -> PathBuf {
+fn shipped_tile(shipped: &ShippedMap, key: TileKey) -> PathBuf {
     shipped
         .image_dir(fixture_descriptor().image_identity())
         .unwrap()
@@ -142,8 +153,12 @@ fn shipped_terrain_is_a_local_bake_and_installs_byte_identically_without_baking(
 
     // Release packaging, from the same client cache.
     let package = scratch.0.join("package");
-    let described = crate::map_bind::ship_map_images(input(), &package, |_| {}).unwrap();
-    assert_eq!(described.identity, identity);
+    let described = crate::map_bind::ship_map_bundle(input(), &package, |_| {}).unwrap();
+    assert_eq!(described.images.identity, identity);
+    assert_eq!(
+        described.catalogue.identity,
+        descriptor.catalogue_identity()
+    );
     assert!(
         !package
             .read_dir()
@@ -151,7 +166,7 @@ fn shipped_terrain_is_a_local_bake_and_installs_byte_identically_without_baking(
             .any(|entry| entry.unwrap().file_name() != "map"),
         "packaging leaves only the shipped map directory"
     );
-    let shipped = ShippedMapImages::at(package.join("map"));
+    let shipped = ShippedMap::at(package.join("map"));
 
     // A local bake of that client cache, as the app runs it with consent.
     let local = MapCacheRoot::from_root(scratch.0.join("local"));
@@ -167,11 +182,24 @@ fn shipped_terrain_is_a_local_bake_and_installs_byte_identically_without_baking(
         local_tree,
         "shipped bytes are a local bake's"
     );
+    let catalogue_identity = descriptor.catalogue_identity();
+    let local_catalogue_tree = tree(&local.catalogue_dir(catalogue_identity).unwrap());
+    assert_eq!(
+        local_catalogue_tree.len(),
+        2,
+        "manifest plus the catalogue payload"
+    );
+    assert_eq!(
+        tree(&shipped.catalogue_dir(catalogue_identity).unwrap()),
+        local_catalogue_tree,
+        "shipped catalogue bytes are a local derive's"
+    );
 
-    // A fresh home: the adopt-only demand installs the shipped terrain.
+    // A fresh home: the adopt-only demand installs the shipped terrain and
+    // the shipped catalogue.
     let home = MapCacheRoot::from_root(scratch.0.join("home"));
     let producer = Arc::new(CountingNative::default());
-    let manager = MapDemandManager::with_shipped_images(home.clone(), producer.clone(), shipped);
+    let manager = MapDemandManager::with_shipped_map(home.clone(), producer.clone(), shipped);
     assert!(manager.shipped_images_available(&descriptor));
     let handle = manager
         .request(descriptor.clone(), MapDemand::ReadyImages)
@@ -179,10 +207,16 @@ fn shipped_terrain_is_a_local_bake_and_installs_byte_identically_without_baking(
     wait_ready(&handle);
     assert!(has_terrain(&handle), "installed terrain is served");
     assert_eq!(producer.image_runs(), 0, "installed, never baked");
+    assert_eq!(producer.catalogue_runs(), 0, "installed, never derived");
     assert_eq!(
         tree(&home.image_dir(identity).unwrap()),
         local_tree,
         "installed bytes are a local bake's"
+    );
+    assert_eq!(
+        tree(&home.catalogue_dir(catalogue_identity).unwrap()),
+        local_catalogue_tree,
+        "installed catalogue bytes are a local derive's"
     );
 }
 
@@ -221,7 +255,7 @@ fn terrain_shipped_for_another_client_cache_or_policy_is_ignored_and_left_as_shi
     let shipped = ship_fixture_terrain(&scratch.0);
     let before = tree(shipped.path());
     let producer = Arc::new(CountingMapProducer::default());
-    let manager = MapDemandManager::with_shipped_images(
+    let manager = MapDemandManager::with_shipped_map(
         MapCacheRoot::from_root(scratch.0.join("home")),
         producer.clone(),
         shipped.clone(),
@@ -269,7 +303,7 @@ fn a_damaged_shipped_tile_fails_closed_and_a_consented_bake_adopts_the_verified_
     let root = MapCacheRoot::from_root(scratch.0.join("home"));
     let producer = Arc::new(CountingMapProducer::default());
     let manager =
-        MapDemandManager::with_shipped_images(root.clone(), producer.clone(), shipped.clone());
+        MapDemandManager::with_shipped_map(root.clone(), producer.clone(), shipped.clone());
     let descriptor = fixture_descriptor();
     assert!(
         manager.shipped_images_available(&descriptor),
@@ -317,7 +351,7 @@ fn a_damaged_shipped_tile_fails_closed_and_a_consented_bake_adopts_the_verified_
 
 #[test]
 fn partial_or_corrupt_shipped_files_are_never_installed() {
-    type Damage = fn(&ShippedMapImages);
+    type Damage = fn(&ShippedMap);
     let cases: [(&str, Damage); 5] = [
         ("truncated-tile", |shipped| {
             let [first, _] = fixture_tiles(shipped);
@@ -347,7 +381,7 @@ fn partial_or_corrupt_shipped_files_are_never_installed() {
             .unwrap();
         }),
         ("garbled-description", |shipped| {
-            fs::write(shipped.description_path(289), b"{\"schema\":").unwrap();
+            fs::write(shipped.images_description_path(289), b"{\"schema\":").unwrap();
         }),
     ];
     for (name, damage) in cases {
@@ -356,8 +390,7 @@ fn partial_or_corrupt_shipped_files_are_never_installed() {
         damage(&shipped);
         let root = MapCacheRoot::from_root(scratch.0.join("home"));
         let producer = Arc::new(CountingMapProducer::default());
-        let manager =
-            MapDemandManager::with_shipped_images(root.clone(), producer.clone(), shipped);
+        let manager = MapDemandManager::with_shipped_map(root.clone(), producer.clone(), shipped);
         let handle = manager
             .request(fixture_descriptor(), MapDemand::ReadyImages)
             .unwrap();
@@ -380,7 +413,7 @@ fn partial_or_corrupt_shipped_files_are_never_installed() {
 
 /// Replace the shipped fixture terrain with other valid tiles for the same
 /// identity, updating every receipt: a consistent bundle a home would install.
-fn reship_with_other_tiles(shipped: &ShippedMapImages) {
+fn reship_with_other_tiles(shipped: &ShippedMap) {
     let identity = fixture_descriptor().image_identity();
     let dir = shipped.image_dir(identity).unwrap();
     let mut manifest =
@@ -406,7 +439,11 @@ fn reship_with_other_tiles(shipped: &ShippedMapImages) {
     let bytes = manifest.encode().unwrap();
     fs::write(dir.join("manifest.json"), &bytes).unwrap();
     let description = ShippedImages::describe(&manifest, &bytes).unwrap();
-    fs::write(shipped.description_path(289), description.encode().unwrap()).unwrap();
+    fs::write(
+        shipped.images_description_path(289),
+        description.encode().unwrap(),
+    )
+    .unwrap();
 }
 
 #[test]
@@ -421,7 +458,7 @@ fn a_published_user_terrain_is_never_replaced_by_shipped_terrain() {
 
     // Control: that shipped terrain installs into a fresh home.
     let fresh = MapCacheRoot::from_root(scratch.0.join("fresh"));
-    let fresh_manager = MapDemandManager::with_shipped_images(
+    let fresh_manager = MapDemandManager::with_shipped_map(
         fresh,
         Arc::new(CountingMapProducer::default()),
         shipped.clone(),
@@ -451,7 +488,7 @@ fn a_published_user_terrain_is_never_replaced_by_shipped_terrain() {
         .collect();
 
     let producer = Arc::new(CountingMapProducer::default());
-    let manager = MapDemandManager::with_shipped_images(root.clone(), producer.clone(), shipped);
+    let manager = MapDemandManager::with_shipped_map(root.clone(), producer.clone(), shipped);
     let handle = crate::map_bind::open_map_ready_terrain(&manager, descriptor)
         .unwrap()
         .expect("ready terrain opens");
@@ -479,6 +516,177 @@ fn a_published_user_terrain_is_never_replaced_by_shipped_terrain() {
         "nothing was staged for install"
     );
     assert_eq!(producer.image_runs(), 0);
+}
+
+fn shipped_catalogue_file(shipped: &ShippedMap, name: &str) -> PathBuf {
+    shipped
+        .catalogue_dir(fixture_descriptor().catalogue_identity())
+        .unwrap()
+        .join(name)
+}
+
+#[test]
+fn shipped_catalogue_installs_byte_identically_without_deriving() {
+    let scratch = Scratch::new("catalogue-identical");
+    let shipped = ship_fixture_catalogue(&scratch.0);
+    let descriptor = fixture_descriptor();
+    let identity = descriptor.catalogue_identity();
+
+    // A local derive of the same client cache.
+    let local = MapCacheRoot::from_root(scratch.0.join("local"));
+    let deriver = MapDemandManager::new(local.clone(), Arc::new(CountingMapProducer::default()));
+    let derived = deriver
+        .request(descriptor.clone(), MapDemand::CatalogueOnly)
+        .unwrap();
+    wait_ready(&derived);
+    let local_tree = tree(&local.catalogue_dir(identity).unwrap());
+    assert_eq!(
+        tree(&shipped.catalogue_dir(identity).unwrap()),
+        local_tree,
+        "shipped bytes are a local derive's"
+    );
+
+    // A fresh home installs the shipped catalogue instead of deriving it.
+    let home = MapCacheRoot::from_root(scratch.0.join("home"));
+    let producer = Arc::new(CountingMapProducer::default());
+    let manager = MapDemandManager::with_shipped_map(home.clone(), producer.clone(), shipped);
+    let handle = manager
+        .request(descriptor.clone(), MapDemand::CatalogueOnly)
+        .unwrap();
+    wait_ready(&handle);
+    assert_eq!(
+        handle.ready().unwrap().catalogue.manifest().identity,
+        identity,
+        "installed catalogue is served"
+    );
+    assert_eq!(producer.catalogue_runs(), 0, "installed, never derived");
+    assert_eq!(
+        tree(&home.catalogue_dir(identity).unwrap()),
+        local_tree,
+        "installed bytes are a local derive's"
+    );
+}
+
+#[test]
+fn catalogue_shipped_for_another_client_cache_or_policy_is_ignored_and_left_as_shipped() {
+    let scratch = Scratch::new("catalogue-foreign");
+    let shipped = ship_fixture_catalogue(&scratch.0);
+    let before = tree(shipped.path());
+    let other_policy =
+        MapProfileDescriptor::new(289, Digest([7; 32]), Digest([8; 32]), Digest([5; 32])).unwrap();
+    for (name, descriptor) in [
+        ("other-cache", other_cache_descriptor()),
+        ("other-policy", other_policy),
+    ] {
+        let producer = Arc::new(CountingMapProducer::default());
+        let manager = MapDemandManager::with_shipped_map(
+            MapCacheRoot::from_root(scratch.0.join(name)),
+            producer.clone(),
+            shipped.clone(),
+        );
+        let handle = manager
+            .request(descriptor.clone(), MapDemand::CatalogueOnly)
+            .unwrap();
+        wait_ready(&handle);
+        assert_eq!(
+            handle.ready().unwrap().catalogue.manifest().identity,
+            descriptor.catalogue_identity(),
+            "{name}: the local derive serves its own identity"
+        );
+        assert_eq!(producer.catalogue_runs(), 1, "{name}: derived locally");
+    }
+    assert_eq!(
+        tree(shipped.path()),
+        before,
+        "shipped catalogue stays as shipped"
+    );
+}
+
+#[test]
+fn a_damaged_shipped_catalogue_falls_back_to_the_local_derive() {
+    type Damage = fn(&ShippedMap);
+    let cases: [(&str, Damage); 6] = [
+        ("catalogue-flipped-payload", |shipped| {
+            let path = shipped_catalogue_file(shipped, "client-pois.json");
+            let mut bytes = fs::read(&path).unwrap();
+            let middle = bytes.len() / 2;
+            bytes[middle] ^= 0x5a;
+            fs::write(path, bytes).unwrap();
+        }),
+        ("catalogue-truncated-payload", |shipped| {
+            let path = shipped_catalogue_file(shipped, "client-pois.json");
+            let bytes = fs::read(&path).unwrap();
+            fs::write(path, &bytes[..bytes.len() / 2]).unwrap();
+        }),
+        ("catalogue-missing-payload", |shipped| {
+            fs::remove_file(shipped_catalogue_file(shipped, "client-pois.json")).unwrap();
+        }),
+        ("catalogue-edited-manifest", |shipped| {
+            let path = shipped_catalogue_file(shipped, "manifest.json");
+            let mut bytes = fs::read(&path).unwrap();
+            bytes.push(b'\n');
+            fs::write(path, bytes).unwrap();
+        }),
+        ("catalogue-missing-manifest", |shipped| {
+            fs::remove_file(shipped_catalogue_file(shipped, "manifest.json")).unwrap();
+        }),
+        ("catalogue-garbled-description", |shipped| {
+            fs::write(shipped.catalogue_description_path(289), b"{\"schema\":").unwrap();
+        }),
+    ];
+    for (name, damage) in cases {
+        let scratch = Scratch::new(name);
+        let shipped = ship_fixture_catalogue(&scratch.0);
+        let descriptor = fixture_descriptor();
+        let identity = descriptor.catalogue_identity();
+        let expected = tree(&shipped.catalogue_dir(identity).unwrap());
+        damage(&shipped);
+        let damaged = tree(shipped.path());
+        let root = MapCacheRoot::from_root(scratch.0.join("home"));
+        let producer = Arc::new(CountingMapProducer::default());
+        let manager =
+            MapDemandManager::with_shipped_map(root.clone(), producer.clone(), shipped.clone());
+        let handle = manager
+            .request(descriptor, MapDemand::CatalogueOnly)
+            .unwrap();
+        wait_ready(&handle);
+        assert_eq!(
+            producer.catalogue_runs(),
+            1,
+            "{name}: the local derive runs instead"
+        );
+        assert_eq!(
+            tree(&root.catalogue_dir(identity).unwrap()),
+            expected,
+            "{name}: the local derive publishes the same catalogue"
+        );
+        assert_eq!(
+            tree(shipped.path()),
+            damaged,
+            "{name}: shipped files are only read"
+        );
+    }
+}
+
+#[test]
+fn a_manager_without_a_shipped_source_ignores_shipped_files() {
+    // A dev build wires no shipped source into its manager (nothing ships
+    // beside a worktree binary), so shipped files on disk change nothing:
+    // the catalogue is derived locally as before.
+    let scratch = Scratch::new("catalogue-dev-build");
+    let shipped = ship_fixture_catalogue(&scratch.0);
+    let before = tree(shipped.path());
+    let producer = Arc::new(CountingMapProducer::default());
+    let manager = MapDemandManager::new(
+        MapCacheRoot::from_root(scratch.0.join("home")),
+        producer.clone(),
+    );
+    let handle = manager
+        .request(fixture_descriptor(), MapDemand::CatalogueOnly)
+        .unwrap();
+    wait_ready(&handle);
+    assert_eq!(producer.catalogue_runs(), 1, "derived locally");
+    assert_eq!(tree(shipped.path()), before, "shipped files untouched");
 }
 /// Catalogue-only real-content capture through the host API.
 /// No shipped terrain is supplied by this fixture, so a `ReadyImages` demand

@@ -13991,6 +13991,115 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
     );
 }
 
+/// A queued walk keeps the gating facts of the frame that queued it. The next
+/// frame lends different facts to the same dispatch and watchdog paths; the
+/// waiting request must not see them.
+#[test]
+fn queued_walk_keeps_the_state_of_the_frame_that_queued_it() {
+    let world = Some(Arc::new(open_world(16, 16)));
+    let mut c = bank_client();
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    let mut frame_a = WorldState::empty();
+    frame_a.quests.insert("Frame A".into());
+    frame_a.inv.insert(995, 10);
+    let mut frame_b = WorldState::empty();
+    frame_b.quests.insert("Frame B".into());
+    frame_b.inv.insert(995, 20);
+    let walk_near = || {
+        vec![script::shim::InteractReq::WalkNear {
+            x: 10,
+            z: 10,
+            level: 0,
+            radius: 1,
+            compat_tile_intent: false,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 7,
+            avoid: Vec::new(),
+            cross: Vec::new(),
+        }]
+    };
+    let next_frame_watchdog =
+        |c: &mut Client, navs: &Arc<Mutex<HashMap<String, NavBot>>>, state: &WorldState| {
+            for action in [
+                script::WatchdogAction::None,
+                script::WatchdogAction::WarnHungLoop,
+            ] {
+                apply_watchdog_nav_action(
+                    action,
+                    c,
+                    Some(&snap),
+                    Some((0, 0, 0)),
+                    navs,
+                    &world,
+                    Some(state),
+                    None,
+                    "alice",
+                );
+            }
+        };
+
+    // Interaction dispatch: frame A queues the walk; frame B retransmits the
+    // same request and runs no-op watchdog actions with its own facts.
+    let navs = test_navs("alice");
+    bind_test_route_scope(&navs, "alice");
+    assert!(dispatch_script_interact(
+        &mut c,
+        &snap,
+        None,
+        Some((0, 0, 0)),
+        &navs,
+        &world,
+        Some(frame_a.clone()),
+        "alice",
+        walk_near(),
+    ));
+    dispatch_script_interact(
+        &mut c,
+        &snap,
+        None,
+        Some((0, 0, 0)),
+        &navs,
+        &world,
+        Some(frame_b.clone()),
+        "alice",
+        walk_near(),
+    );
+    next_frame_watchdog(&mut c, &navs, &frame_b);
+    assert_eq!(
+        navs.lock().unwrap()["alice"].pending_route_state_for_test(),
+        Some(&frame_a),
+        "the queued interaction walk must keep frame A's facts"
+    );
+
+    // Watchdog: only ArmWalk captures, and it captures its own frame.
+    let navs = test_navs("alice");
+    bind_test_route_scope(&navs, "alice");
+    apply_watchdog_nav_action(
+        script::WatchdogAction::ArmWalk {
+            x: 10,
+            z: 10,
+            level: 0,
+        },
+        &mut c,
+        Some(&snap),
+        Some((0, 0, 0)),
+        &navs,
+        &world,
+        Some(&frame_a),
+        None,
+        "alice",
+    );
+    next_frame_watchdog(&mut c, &navs, &frame_b);
+    assert_eq!(
+        navs.lock().unwrap()["alice"].pending_route_state_for_test(),
+        Some(&frame_a),
+        "the watchdog recovery walk must keep frame A's facts"
+    );
+}
+
 /// A 5×12 open strip straddling the surface wilderness edge (z 3520),
 /// with the content zone packed on the graph: routing gates wilderness
 /// entry on `graph.wilderness`, so a fixture without zones gates nothing.
@@ -25268,7 +25377,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
                 here: Some((start.x, start.z, start.level)),
                 navs: &navs,
                 world: &world_opt,
-                state: &Some(WorldState::empty()),
+                state: Some(&WorldState::empty()),
                 bank: None,
                 name: "test",
                 compatibility_scope: Some(api::identity::Scope::Slot(

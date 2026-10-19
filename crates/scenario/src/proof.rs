@@ -173,7 +173,10 @@ pub enum Proof {
     /// `getvar` reply must come from this arm. The runner captures the baseline
     /// at step start; a bare [`Proof::check`] without it fails closed.
     FreshChat { needle: &'static str },
-    /// The newest exact system-chat confirmation from `::speed`.
+    /// An exact system-chat confirmation from `::speed` that is newer than
+    /// the runner's pre-send chat baseline. A confirmation already in the
+    /// ring is stale; a bare [`Proof::check`] without the baseline fails
+    /// closed.
     WorldSpeedChanged { ms: u32 },
     /// Skill `id`'s XP rose by at least `min` since StartScript, or since
     /// its first XP watch when the scenario has no script-start boundary.
@@ -255,16 +258,6 @@ fn world_speed_from_line(line: &ChatLineView) -> Option<u32> {
         .strip_suffix("ms")?
         .parse::<u32>()
         .ok()
-}
-
-/// Latest exact engine speed confirmation in the system-chat ring.
-///
-/// Chat snapshots are newest-first. Player messages and every non-exact line
-/// are ignored so only the engine's confirmation can satisfy this predicate.
-pub(crate) fn latest_world_speed_confirmation(snap: &GameSnapshot) -> Option<(u32, i32)> {
-    snap.chat_lines()
-        .iter()
-        .find_map(|line| world_speed_from_line(line).map(|ms| (ms, line.sequence)))
 }
 
 /// Newest speed confirmation newer than a command's chat-sequence baseline.
@@ -684,9 +677,9 @@ impl Proof {
             // Visited-latch needs the runner's per-step observation (see
             // `ScenarioRunner::holds`); a bare snapshot check fails closed.
             Proof::VisitedWithin { .. } => false,
-            Proof::WorldSpeedChanged { ms } => {
-                latest_world_speed_confirmation(snap).is_some_and(|(actual, _)| actual == *ms)
-            }
+            // Freshness needs the runner's pre-send baseline (see
+            // `ScenarioRunner::holds`); a bare snapshot check fails closed.
+            Proof::WorldSpeedChanged { .. } => false,
             Proof::StatXpGain { id, min } => {
                 let Some(baselines) = xp_baselines else {
                     return false;
@@ -2280,7 +2273,7 @@ mod tests {
     }
 
     #[test]
-    fn world_speed_confirmation_requires_the_latest_exact_system_line() {
+    fn world_speed_changed_fails_closed_without_a_runner_baseline() {
         use api::snapshot::ChatLineView;
 
         let line = |text: &str, sequence| ChatLineView {
@@ -2294,18 +2287,15 @@ mod tests {
             line("World speed was changed to 300ms", 12),
             line("World speed was changed to 600ms", 11),
         ]);
-        assert!(Proof::WorldSpeedChanged { ms: 300 }.check(&snapshot, None));
+        assert!(
+            !Proof::WorldSpeedChanged { ms: 300 }.check(&snapshot, None),
+            "a matching line already in the ring cannot prove this run sent the request"
+        );
         assert_eq!(
             world_speed_confirmation_after(&snapshot, 11),
             Some((300, 12))
         );
-
-        snapshot.seed_chat_lines(vec![
-            line("World speed was changed to 600ms", 13),
-            line("World speed was changed to 300ms", 12),
-        ]);
-        assert!(!Proof::WorldSpeedChanged { ms: 300 }.check(&snapshot, None));
-        assert_eq!(world_speed_confirmation_after(&snapshot, 13), None);
+        assert_eq!(world_speed_confirmation_after(&snapshot, 12), None);
 
         snapshot.seed_chat_lines(vec![ChatLineView {
             type_: 2,
@@ -2314,6 +2304,7 @@ mod tests {
             sequence: 14,
         }]);
         assert!(!Proof::WorldSpeedChanged { ms: 300 }.check(&snapshot, None));
+        assert_eq!(world_speed_confirmation_after(&snapshot, 13), None);
 
         snapshot.seed_chat_lines(vec![ChatLineView {
             type_: 0,
@@ -2321,7 +2312,7 @@ mod tests {
             text: "World speed was changed to 300ms".into(),
             sequence: 15,
         }]);
-        assert!(!Proof::WorldSpeedChanged { ms: 300 }.check(&snapshot, None));
+        assert_eq!(world_speed_confirmation_after(&snapshot, 14), None);
     }
 
     #[test]

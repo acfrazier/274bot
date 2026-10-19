@@ -3403,6 +3403,14 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/load/crypto_stub.js",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/load/crypto_stub.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/script/src/load/dialog_v8.rs",
       "owner": "T2"
     },
@@ -4697,6 +4705,10 @@
     {
       "path": "crates/script/tests/cook_location_shape.rs",
       "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/crypto_stub.rs",
+      "owner": "T1"
     },
     {
       "path": "crates/script/tests/death_recovery.rs",

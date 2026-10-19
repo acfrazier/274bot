@@ -1947,7 +1947,7 @@ fn load_gather_watchdog_arm_walk_keeps_load_script_options() {
         Some((3100, 3519, 0)),
         &rig.navs,
         &world,
-        Some(nav::WorldState::empty()),
+        Some(&nav::WorldState::empty()),
         None,
         SLOT,
     );
