@@ -8191,7 +8191,7 @@
       "name": "GatheringLocation",
       "kind": "interface",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/gathering_locations.js",
       "runtime": false,
       "signatures": [],
       "members": [
@@ -8315,53 +8315,61 @@
       ],
       "bases": [],
       "family_id": "gathering",
-      "source_modules": [],
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "DEFAULT_BOOTH_NAME",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/gathering_locations.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "gathering",
       "declaration_type": "string",
-      "source_modules": [],
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "DEFAULT_BOOTH_OP",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/gathering_locations.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "gathering",
       "declaration_type": "string",
-      "source_modules": [],
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "MAP_SQUARE",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/gathering_locations.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "gathering",
       "declaration_type": "number",
-      "source_modules": [],
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "sameMapSquare",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/gathering_locations.js",
       "runtime": true,
       "signatures": [
         {
@@ -8372,14 +8380,16 @@
       ],
       "members": [],
       "family_id": "gathering",
-      "source_modules": [],
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "locationOptions",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/gathering_locations.js",
       "runtime": true,
       "signatures": [
         {
@@ -8390,14 +8400,16 @@
       ],
       "members": [],
       "family_id": "gathering",
-      "source_modules": [],
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "boothFields",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/gathering_locations.js",
       "runtime": true,
       "signatures": [
         {
@@ -8408,14 +8420,16 @@
       ],
       "members": [],
       "family_id": "gathering",
-      "source_modules": [],
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "resolveGatheringLocation",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/gathering_locations.js",
       "runtime": true,
       "signatures": [
         {
@@ -8426,7 +8440,9 @@
       ],
       "members": [],
       "family_id": "gathering",
-      "source_modules": [],
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
       "nav_consuming": false
     },
     {
@@ -9858,6 +9874,97 @@
       "mapping_kind": "re-export"
     },
     {
+      "public_name": "DEFAULT_BOOTH_NAME",
+      "source_name": "DEFAULT_BOOTH_NAME",
+      "module": "shim/gathering_locations.js",
+      "family_id": "gathering",
+      "shim": "gathering_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "DEFAULT_BOOTH_OP",
+      "source_name": "DEFAULT_BOOTH_OP",
+      "module": "shim/gathering_locations.js",
+      "family_id": "gathering",
+      "shim": "gathering_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "MAP_SQUARE",
+      "source_name": "MAP_SQUARE",
+      "module": "shim/gathering_locations.js",
+      "family_id": "gathering",
+      "shim": "gathering_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "sameMapSquare",
+      "source_name": "sameMapSquare",
+      "module": "shim/gathering_locations.js",
+      "family_id": "gathering",
+      "shim": "gathering_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "locationOptions",
+      "source_name": "locationOptions",
+      "module": "shim/gathering_locations.js",
+      "family_id": "gathering",
+      "shim": "gathering_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "boothFields",
+      "source_name": "boothFields",
+      "module": "shim/gathering_locations.js",
+      "family_id": "gathering",
+      "shim": "gathering_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "resolveGatheringLocation",
+      "source_name": "resolveGatheringLocation",
+      "module": "shim/gathering_locations.js",
+      "family_id": "gathering",
+      "shim": "gathering_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
       "public_name": "AXES",
       "source_name": "AXES",
       "module": "api/acquisition/Tools.js",
@@ -11001,28 +11108,6 @@
       "mapping_kind": "direct-value"
     },
     {
-      "public_name": "DEFAULT_BOOTH_NAME",
-      "source_name": "DEFAULT_BOOTH_NAME",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "gathering",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
-    },
-    {
-      "public_name": "DEFAULT_BOOTH_OP",
-      "source_name": "DEFAULT_BOOTH_OP",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "gathering",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
-    },
-    {
       "public_name": "FISHING_LOCATIONS",
       "source_name": "FISHING_LOCATIONS",
       "module": null,
@@ -11144,17 +11229,6 @@
       "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-class"
-    },
-    {
-      "public_name": "MAP_SQUARE",
-      "source_name": "MAP_SQUARE",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "gathering",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
     },
     {
       "public_name": "MINING_LOCATIONS",
@@ -11381,17 +11455,6 @@
       "mapping_kind": "direct-function"
     },
     {
-      "public_name": "boothFields",
-      "source_name": "boothFields",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "gathering",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
       "public_name": "buyPlansCost",
       "source_name": "buyPlansCost",
       "module": null,
@@ -11541,17 +11604,6 @@
       "shim": null,
       "source_modules": [],
       "family_id": "fishing",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "locationOptions",
-      "source_name": "locationOptions",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "gathering",
       "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
@@ -11711,17 +11763,6 @@
       "mapping_kind": "direct-function"
     },
     {
-      "public_name": "resolveGatheringLocation",
-      "source_name": "resolveGatheringLocation",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "gathering",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
       "public_name": "resolveMiningLocation",
       "source_name": "resolveMiningLocation",
       "module": null,
@@ -11741,17 +11782,6 @@
         "data/woodcuttingLocations.js"
       ],
       "family_id": "woodcutting",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "sameMapSquare",
-      "source_name": "sameMapSquare",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "gathering",
       "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
@@ -12370,6 +12400,11 @@
       "module": "shim/_kernel.js",
       "family_id": "compat-runtime",
       "nav_consuming": false
+    },
+    {
+      "module": "shim/gathering_locations.js",
+      "family_id": "gathering",
+      "nav_consuming": false
     }
   ],
   "overlays": [
@@ -12793,6 +12828,16 @@
       "runtime": "crates/script/src/shim/data/woodcutting_locations.js:6",
       "declaration": "export const WOODCUTTING_LOCATION_OPTIONS: never;",
       "family_id": "woodcutting",
+      "nav_consuming": false
+    },
+    {
+      "id": "native-gathering-helper-types",
+      "module": "shim/gathering_locations.js",
+      "selector": "$module",
+      "reason": "The seven root gathering helpers use an internal native name-map adapter, not a new public data module. Preserve the pinned gatheringLocations.ts helper signatures and caller-row generic identity on that adapter.",
+      "runtime": "crates/script/src/shim/gathering_locations.js:1",
+      "declaration": "import type { WorldTile } from '../adapter/ClientAdapter.js'; import Tile from '../geometry/Tile.js'; export interface BaitVendor { readonly keeper: string; readonly stand: Tile; readonly price: number; readonly item: string; } export interface GatheringLocation { name: string; spot: Tile; bankStand: Tile; verified: boolean; boothName?: string; boothOp?: string; obstacles?: string[]; campRadius?: number; chaseRadius?: number; resources?: readonly string[]; readonly avoidSpots?: readonly Tile[]; readonly sweep?: readonly Tile[]; readonly baitVendor?: BaitVendor; notes?: string; } export const DEFAULT_BOOTH_NAME: 'Bank booth'; export const DEFAULT_BOOTH_OP: 'Use-quickly'; export const MAP_SQUARE: 64; export function sameMapSquare(a: WorldTile, b: WorldTile): boolean; export function locationOptions(table: readonly GatheringLocation[]): string[]; export function boothFields(loc: GatheringLocation | null | undefined): { boothName: string; boothOp: string; }; export function resolveGatheringLocation<T extends GatheringLocation>(setting: string, startTile: WorldTile, table: readonly T[]): T | null;",
+      "family_id": "gathering",
       "nav_consuming": false
     },
     {
@@ -24836,24 +24881,6 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "gathering",
-      "member": "DEFAULT_BOOTH_NAME",
-      "selector": "DEFAULT_BOOTH_NAME",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "gathering",
-      "member": "DEFAULT_BOOTH_OP",
-      "selector": "DEFAULT_BOOTH_OP",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "fishing",
       "member": "FISHING_LOCATIONS",
       "selector": "FISHING_LOCATIONS",
@@ -24938,15 +24965,6 @@
       "family_id": "acquisition",
       "member": "HARRY_VENDOR",
       "selector": "HARRY_VENDOR",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "gathering",
-      "member": "MAP_SQUARE",
-      "selector": "MAP_SQUARE",
       "module": null,
       "state": "not-impl",
       "source": "declared_surface.js",
@@ -25106,15 +25124,6 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "gathering",
-      "member": "boothFields",
-      "selector": "boothFields",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "fishing",
       "member": "buyPlansCost",
       "selector": "buyPlansCost",
@@ -25250,15 +25259,6 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "gathering",
-      "member": "locationOptions",
-      "selector": "locationOptions",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "mining",
       "member": "miningLocationLabel",
       "selector": "miningLocationLabel",
@@ -25385,27 +25385,9 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "gathering",
-      "member": "resolveGatheringLocation",
-      "selector": "resolveGatheringLocation",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "mining",
       "member": "resolveMiningLocation",
       "selector": "resolveMiningLocation",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "gathering",
-      "member": "sameMapSquare",
-      "selector": "sameMapSquare",
       "module": null,
       "state": "not-impl",
       "source": "declared_surface.js",
@@ -25443,6 +25425,7 @@
     "bank",
     "cooking",
     "cow",
+    "gathering",
     "runecrafting",
     "skills",
     "world-primitives"
@@ -25686,7 +25669,7 @@
       "type_aliases": 0,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 7
+      "not_impl_debt": 0
     },
     {
       "family_id": "hunt",

@@ -574,14 +574,13 @@ impl<'s> ForOf<'s> {
         iterable: v8::Local<'s, v8::Value>,
         label: &str,
     ) -> JsResult<'s, Self> {
-        let not_iterable = format!("{label} is not iterable");
         if iterable.is_null_or_undefined() {
-            return Err(type_error(scope, &not_iterable));
+            return Err(type_error(scope, &format!("{label} is not iterable")));
         }
         let symbol: v8::Local<v8::Value> = v8::Symbol::get_iterator(scope).into();
         let method = catching(scope, |s| iterable.to_object(s)?.get(s, symbol))?;
         if !method.is_function() {
-            return Err(type_error(scope, &not_iterable));
+            return Err(type_error(scope, &format!("{label} is not iterable")));
         }
         let iterator = call(scope, method, iterable, &[], label)?;
         if !iterator.is_object() {

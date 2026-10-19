@@ -53,7 +53,7 @@ test('the generated ABI contract and family graph are complete', () => {
 
 test('module-only families have explicit non-nav predecessor rows without activation credit', () => {
     assert.equal(predecessors.families.length, 41);
-    assert.equal(predecessors.families.filter(row => row.activation_state === 'not-activated').length, 35);
+    assert.equal(predecessors.families.filter(row => row.activation_state === 'not-activated').length, 34);
     for (const [familyId, modules] of [
         ['magic', ['api/magic/Autocast.js']],
         ['prayer', ['api/prayer/Prayer.js']],
@@ -73,6 +73,18 @@ test('module-only families have explicit non-nav predecessor rows without activa
         contract.typed_modules.map(row => row.module).sort(),
         ['@rs2b0t/api', ...registry.map(row => row.module)].sort(),
     );
+});
+
+test('the internal gathering adapter has complete gathering family coverage', () => {
+    assert.deepEqual(
+        contract.typed_modules.find(row => row.module === 'shim/gathering_locations.js'),
+        { module: 'shim/gathering_locations.js', family_id: 'gathering', nav_consuming: false },
+    );
+    const helpers = new Set([
+        'DEFAULT_BOOTH_NAME', 'DEFAULT_BOOTH_OP', 'MAP_SQUARE', 'sameMapSquare',
+        'locationOptions', 'boothFields', 'resolveGatheringLocation',
+    ]);
+    assert.ok(!contract.not_impl_debt.some(row => helpers.has(row.selector)));
 });
 
 test('every typed module requires a family predecessor row', () => {
@@ -459,7 +471,7 @@ test('types follow the family their ABI describes', () => {
 });
 
 test('refusal debt is unique and names each missing notImplValue export', () => {
-    assert.equal(contract.not_impl_debt.length, 211);
+    assert.equal(contract.not_impl_debt.length, 204);
     const selectors = contract.not_impl_debt.map(row => row.selector);
     assert.equal(new Set(selectors).size, selectors.length);
     for (const selector of [

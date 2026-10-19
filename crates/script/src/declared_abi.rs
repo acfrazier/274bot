@@ -468,6 +468,18 @@ const REEXPORTS: &[Reexport] = &[
         line: "export { reader } from '../../adapter/ClientAdapter.js';",
     },
     Reexport {
+        names: &[
+            "DEFAULT_BOOTH_NAME",
+            "DEFAULT_BOOTH_OP",
+            "MAP_SQUARE",
+            "sameMapSquare",
+            "locationOptions",
+            "boothFields",
+            "resolveGatheringLocation",
+        ],
+        line: "export { DEFAULT_BOOTH_NAME, DEFAULT_BOOTH_OP, MAP_SQUARE, sameMapSquare, locationOptions, boothFields, resolveGatheringLocation } from '../../shim/gathering_locations.js';",
+    },
+    Reexport {
         names: &["AXES", "PICKAXES", "TINDERBOX", "HAMMER", "KNIFE", "CHISEL", "NEEDLE", "exactTool", "tinderboxReq", "axeReq", "pickaxeReq", "toolKeepNames", "hasToolReq", "hasAllTools", "bestAxe", "bestPickaxe", "bestFromTiers", "canWieldTool", "toolAttackLevel", "toolsNeedingEquip", "toolRestockPlan", "missingToolLabels", "toolKitLabel", "bankHasBetterGatherTool", "bestHeldToolNames", "surplusHeldToolNames"],
         line: "export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolAttackLevel, toolsNeedingEquip, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool, bestHeldToolNames, surplusHeldToolNames } from '../../api/acquisition/Tools.js';",
     },
