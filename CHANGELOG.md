@@ -219,8 +219,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - Fixed: a walk no longer gives up when the game ignores a walk click, for
   example right after the bot pays the Al Kharid toll gate on the way from
   the Shantay Pass to Varrock. The walk now sends the click again once the
-  bot has stood on the same tile for five game ticks, even while its
-  on-screen character is still catching up.
+  bot has stood on the same tile for five game ticks after the game cancelled
+  the click. A walk that is still under way is left alone.
 - Fixed: routes no longer go through a door from a tile beside it that a wall
   cuts off from the door. Such a route made the bot walk a long way round,
   and the walk could give up before the bot got there (for example at the
