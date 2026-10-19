@@ -1,4 +1,6 @@
 use super::*;
+use api::snapshot::LocView;
+use std::sync::Mutex;
 pub(crate) const AGILITY_STAT: i32 = 16;
 const GNOME_START: WorldTile = WorldTile {
     x: 2474,
@@ -80,18 +82,67 @@ const BRIMHAVEN_LADDER_LANDING: WorldTile = WorldTile {
 };
 const AGILITY_TICKET_ID: i32 = 2996;
 const AGILITY_ARENA_VARP: i32 = 309;
+/// Search radius the radius cell injects, in tiles.
+const GNOME_COURSE_RADIUS: i32 = 10;
+/// The card's own default `searchRadius` (`AgilityBot.ts:34`).
+const GNOME_DEFAULT_SEARCH_RADIUS: i32 = 20;
 /// AgilityBot `find` keeps a loc within `searchRadius` Chebyshev tiles of the
 /// player, measured to the loc origin (`AgilityBot.ts:141-145`,
-/// `ClientAdapter.ts:881`). The longest course gap is the lap wrap: the pipe
+/// `ClientAdapter.ts:984`). The longest course gap is the lap wrap: the pipe
 /// exit (2484,3437) to the Log balance loc 2295 at (2474,3435) is 10. With 8
 /// the script re-syncs to the pipe loc 154 at (2484,3435), which
 /// `gnome_course.rs2` `[oploc1,loc_154]` refuses from the north, and every
 /// reposition face is blocked or inside the fenced pipe pen. 10 is the
-/// smallest radius that completes a lap and stays below the default 20.
+/// smallest radius that completes a lap and stays below the default 20. The
+/// witness at the start of the cell (`GNOME_RADIUS_WITNESS_TILE`) covers the
+/// other side of that boundary: an obstacle 11 tiles away stays untouched.
 const GNOME_COURSE_RADIUS_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
     id: "searchRadius",
-    value: ScriptInjectValue::Num(10.0),
+    value: ScriptInjectValue::Num(GNOME_COURSE_RADIUS as f64),
 }];
+/// Where the radius cell starts the bot, so that the search radius is the only
+/// thing between the bot and the course.
+/// - `TravelToCourse` walks the bot back only when it stands more than 20
+///   tiles from the course start (`AgilityBot.ts:19-25,113-120`). This tile is
+///   10 away, so the bot keeps searching where it stands.
+/// - The loc search lists only the player's plane (`ClientAdapter.ts:953`).
+///   Level 0 holds these locs named like a course step, each at the origin
+///   tile the client lists (`content/maps/m38_53.jm2`, mapsquare origin
+///   2432,3392): Log balance 2295 at (2474,3435), raw plane 1 over a bridge
+///   tile so plane 0 (`:6606`, `:4339`); Obstacle net 2285 at
+///   (2471|2473|2475,3425) (`:5568`, `:5642`, `:5729`) and 2286 at
+///   (2483|2485|2487,3426) (`:5993`, `:6055`, `:6107`); Obstacle pipe 154 at
+///   (2484,3431|3435) (`:6029`, `:6030`) and 4058 at (2487,3431|3435) (`:6110`,
+///   `:6111`; the 289 cache names it like 154). The tree branches and the rope
+///   are on planes 1 and 2.
+/// - The nearest of those to this tile are the Log balance (11 south) and pipe
+///   154 at (2484,3435) (10 east, 11 south). Radius 10 sees none of them and
+///   every radius from 11 up sees the log. Together with the lap, which needs
+///   10, the cell passes for radius 10 only.
+/// - The tile is open ground (`m38_53.jm2:2744`). The nav pack bake-r2-a calls
+///   it walkable and routes it to the course start in one 13-tick walk leg,
+///   and the engine accepts a loc click from anywhere in the scene (engine
+///   `OpLocHandler.ts:20-33`), so a bot that does click the log walks off.
+pub(crate) const GNOME_RADIUS_WITNESS_TILE: WorldTile = WorldTile {
+    x: 2474,
+    z: 3446,
+    level: 0,
+};
+/// Observed game ticks (`GameSnapshot::tick`, one per PLAYER_INFO) the witness
+/// must see pass without the bot acting. A bot that ignores the radius clicks
+/// the Log balance in its first `loop()`. `onStart` parks one `delayUntil`
+/// (`AgilityBot.ts:50`, `crates/script/src/shim/execution.js:73-82`), so the
+/// first `loop()` runs one tick after the isolate's first and its click leaves
+/// in that same tick (`crates/script/src/load/isolate/thread.rs:1057-1094`).
+/// The engine applies a click in the tick it receives it, and that tick's
+/// PLAYER_INFO already shows the first step (engine `World.ts:352-378,397-408`).
+/// That is 3 ticks after the isolate's first tick; 12 is four times that, so it
+/// also covers an isolate that needs up to 9 ticks (5.4 s) to come up after
+/// Start.
+pub(crate) const GNOME_RADIUS_WITNESS_TICKS: u32 = 12;
+/// Receipt name of the radius witness step.
+pub(crate) const GNOME_RADIUS_WITNESS_EVIDENCE: &str =
+    "gnome_course_log_balance_left_alone_beyond_the_search_radius";
 
 const WILDY_AGILITY_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
@@ -115,11 +166,15 @@ const BRIMHAVEN_AGILITY_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 pub(crate) fn gnome_course_scenario() -> Scenario {
-    gnome_course_variant("gnome_course", None)
+    gnome_course_variant("gnome_course", None, false)
 }
 
 pub(crate) fn gnome_course_radius_scenario() -> Scenario {
-    gnome_course_variant("gnome_course_radius", Some(GNOME_COURSE_RADIUS_INJECT))
+    gnome_course_variant(
+        "gnome_course_radius",
+        Some(GNOME_COURSE_RADIUS_INJECT),
+        true,
+    )
 }
 
 /// Cross the south ridge, complete the five selected wilderness obstacles and
@@ -457,9 +512,17 @@ pub(crate) fn brimhaven_agility_scenario() -> Scenario {
 /// Complete a natural gnome lap, then cross the log again. Selected 274/289
 /// content grants 86.5 XP per lap plus 7.5 for the next log. Stored milestones
 /// are on the ground; snapshot levels follow the actual client plane.
+///
+/// With `radius_witness` the bot starts off the course instead, 11 tiles from
+/// the Log balance, and must leave it alone (`GnomeRadiusWitness`) before the
+/// cell teleports it to the course start for the lap. `StatXpGain` baselines
+/// are taken when the Start step begins (`runner.rs` `begin_step`), whatever
+/// the position, and the witness refuses any Agility XP, so every XP watch
+/// keeps its meaning.
 fn gnome_course_variant(
     name: &'static str,
     inject: Option<&'static [ScriptSettingInject]>,
+    radius_witness: bool,
 ) -> Scenario {
     let first_xp = Proof::StatXpGain {
         id: AGILITY_STAT,
@@ -471,25 +534,45 @@ fn gnome_course_variant(
     };
     let start = GNOME_START;
     let mut steps = script_live_seed_steps();
-    steps.push(Step {
-        name: "tele to the gnome course start before Start",
-        kind: StepKind::Perform {
-            send: Box::new(move |c, _| {
-                cheat(c, &tele_args(start.level, start.x, start.z));
-                true
-            }),
-        },
-        wait: Wait {
-            arm: Proof::ArrivedNear {
-                x: start.x,
-                z: start.z,
-                level: start.level,
-                radius: 2,
+    let start_arm = Proof::ArrivedNear {
+        x: start.x,
+        z: start.z,
+        level: start.level,
+        radius: 2,
+    };
+    if radius_witness {
+        let off_course = GNOME_RADIUS_WITNESS_TILE;
+        // The first tele keeps the budget of the plain cell's: both leave the
+        // seed's landing tile, so the arrival may wait for a scene load.
+        steps.push(gnome_tele_step(
+            "tele off the course, 11 tiles from the Log balance, before Start",
+            off_course,
+            Proof::Arrived {
+                x: off_course.x,
+                z: off_course.z,
+                level: off_course.level,
             },
-            budget_ticks: 200,
-        },
-    });
-    steps.push(start_catalog_step());
+            200,
+        ));
+        steps.push(start_catalog_step());
+        steps.push(gnome_radius_witness_step());
+        // Arrival shows on the PLAYER_INFO of the tick that applies the cheat,
+        // so the standing post-Start watch budget is only a miss detector.
+        steps.push(gnome_tele_step(
+            "tele to the gnome course start after the witness",
+            start,
+            start_arm,
+            SCRIPT_GOLD_WATCH_TICKS,
+        ));
+    } else {
+        steps.push(gnome_tele_step(
+            "tele to the gnome course start before Start",
+            start,
+            start_arm,
+            200,
+        ));
+        steps.push(start_catalog_step());
+    }
     for (step_name, arm) in [
         ("watch Agility XP from the first obstacle", first_xp),
         (
@@ -553,6 +636,166 @@ fn gnome_course_variant(
             terminal_shot: Some(name),
             nav: gold_script_nav(),
             ..Default::default()
+        },
+    }
+}
+
+/// A cheat teleport to `tile`, done when `arm` holds.
+fn gnome_tele_step(name: &'static str, tile: WorldTile, arm: Proof, budget_ticks: u32) -> Step {
+    Step {
+        name,
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, &tele_args(tile.level, tile.x, tile.z));
+                true
+            }),
+        },
+        wait: Wait { arm, budget_ticks },
+    }
+}
+
+/// Obstacle names of the card's default course, lower case and each once
+/// (`AgilityBot.ts:30`). `find` compares the lower-cased loc name
+/// (`AgilityBot.ts:144`).
+const GNOME_COURSE_NAMES: [&str; 5] = [
+    "log balance",
+    "obstacle net",
+    "tree branch",
+    "balancing rope",
+    "obstacle pipe",
+];
+
+/// Selected `gnome_log_balance1`, the first obstacle
+/// (`content/pack/loc.pack:2296`).
+const GNOME_LOG_BALANCE_ID: i32 = 2295;
+
+/// Whether the bot's own obstacle search could take `loc`: a course name and at
+/// least one action (`AgilityBot.ts:144`; `presentOps` drops null and `hidden`,
+/// `Interactable.ts:32-34`). The distance test is the caller's.
+fn is_gnome_course_obstacle(loc: &LocView) -> bool {
+    loc.name.as_deref().is_some_and(|name| {
+        GNOME_COURSE_NAMES
+            .iter()
+            .any(|course| name.eq_ignore_ascii_case(course))
+    }) && loc
+        .actions
+        .iter()
+        .flatten()
+        .any(|action| action != "hidden")
+}
+
+/// What the radius witness has seen of one slot.
+#[derive(Default)]
+struct GnomeRadiusWitness {
+    /// Agility XP on the first tick the bot stood on the witness tile; `None`
+    /// until then.
+    xp: Option<i32>,
+    /// `GameSnapshot::tick` of the latest observation judged. The runner calls
+    /// `ready` on every frame, so a repeated tick is not a new observation.
+    tick: Option<u32>,
+    /// Consecutive judged ticks on which every condition held.
+    still_ticks: u32,
+    /// The bot walked off the tile or earned XP after the watch began, so it
+    /// acted on an obstacle outside its radius. Never cleared: a bot that
+    /// walks back onto the tile is still refused.
+    refused: bool,
+}
+
+impl GnomeRadiusWitness {
+    /// One verdict per observed game tick. Accepts after
+    /// `GNOME_RADIUS_WITNESS_TICKS` consecutive ticks on which the bot stood on
+    /// the witness tile and earned no Agility XP, the scene listed the Log
+    /// balance beyond the injected radius but within the default one, and no
+    /// loc the bot's own search could take was inside the injected radius.
+    /// Distances are Chebyshev from the player tile to the loc origin tile
+    /// (`ClientAdapter.ts:984`), computed here from the tiles.
+    fn observe(&mut self, snapshot: &GameSnapshot) -> bool {
+        if self.refused {
+            return false;
+        }
+        let position = snapshot
+            .tile()
+            .filter(|_| snapshot.ingame() && snapshot.scene_state() == api::interact::SCENE_READY);
+        let Some((x, z, level)) = position else {
+            self.still_ticks = 0;
+            return false;
+        };
+        if self.tick == Some(snapshot.tick()) {
+            return self.still_ticks >= GNOME_RADIUS_WITNESS_TICKS;
+        }
+        self.tick = Some(snapshot.tick());
+        let tile = GNOME_RADIUS_WITNESS_TILE;
+        if (x, z, level) != (tile.x, tile.z, tile.level) {
+            // Before the first tick on the tile this is the teleport still
+            // landing. After it, the bot has walked away.
+            self.refused = self.xp.is_some();
+            self.still_ticks = 0;
+            return false;
+        }
+        let Some(xp) = snapshot
+            .stats()
+            .iter()
+            .find(|stat| stat.index == AGILITY_STAT)
+            .map(|stat| stat.xp)
+        else {
+            self.still_ticks = 0;
+            return false;
+        };
+        let baseline = *self.xp.get_or_insert(xp);
+        if xp > baseline {
+            self.refused = true;
+            self.still_ticks = 0;
+            return false;
+        }
+        let distance = |loc: &LocView| (loc.tile.x - x).abs().max((loc.tile.z - z).abs());
+        let log = snapshot
+            .locs()
+            .iter()
+            .filter(|loc| loc.tile.level == level)
+            .find(|loc| loc.id == GNOME_LOG_BALANCE_ID)
+            .map(distance);
+        let nearest = snapshot
+            .locs()
+            .iter()
+            .filter(|loc| loc.tile.level == level && is_gnome_course_obstacle(loc))
+            .map(distance)
+            .min();
+        let log_beyond_radius = log.is_some_and(|d| d <= GNOME_DEFAULT_SEARCH_RADIUS)
+            && nearest.is_some_and(|d| d > GNOME_COURSE_RADIUS);
+        self.still_ticks = if log_beyond_radius {
+            self.still_ticks + 1
+        } else {
+            0
+        };
+        self.still_ticks >= GNOME_RADIUS_WITNESS_TICKS
+    }
+}
+
+/// The witness step, right after Start: the bot must leave the Log balance
+/// alone for `GNOME_RADIUS_WITNESS_TICKS` observed ticks. A bot that ignores
+/// the radius walks off the tile, which refuses the witness for good, so the
+/// step can then only time out and fail the cell. The success path takes about
+/// 15 dirty snapshots (12 ticks at the 1.2 dirty snapshots per observed tick
+/// measured in `lib.rs:583-585`), so the standing post-Start watch budget runs
+/// out only when the witness was refused or its conditions never held. The
+/// step is named "watch ..." like every first post-Start step. `Await` ignores
+/// the arm; it is the placeholder the other `Await` steps use.
+fn gnome_radius_witness_step() -> Step {
+    let witness = Mutex::new(GnomeRadiusWitness::default());
+    Step {
+        name: "watch the bot leave the Log balance alone beyond its search radius",
+        kind: StepKind::Await {
+            evidence: GNOME_RADIUS_WITNESS_EVIDENCE,
+            ready: Box::new(move |snapshot| {
+                witness
+                    .lock()
+                    .expect("gnome radius witness mutex")
+                    .observe(snapshot)
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Stat { id: 16, min: 0 },
+            budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
         },
     }
 }
