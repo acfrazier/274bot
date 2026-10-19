@@ -388,3 +388,179 @@ fn gathering_alias_classification_keeps_full_utf16_and_non_string_identity() {
     assert_eq!(result["nonStringIdentity"], true);
     assert_eq!(result["noCoercion"], true);
 }
+
+#[test]
+fn shared_resolver_driver_preserves_foreign_pool_rank_and_find_calls() {
+    let isolate = gathering_isolate();
+    let result = isolate
+        .probe(
+            r#"(() => {
+                const resolve = globalThis.__gathering.resolveGatheringLocation;
+                const events = [];
+                const receivers = [];
+                const setting = (value) => {
+                    const lowered = {
+                        get toLowerCase() {
+                            events.push('lower.get');
+                            return function() {
+                                events.push('lower.call');
+                                receivers.push(this === lowered);
+                                return value;
+                            };
+                        },
+                    };
+                    const original = {
+                        get trim() {
+                            events.push('trim.get');
+                            return function() {
+                                events.push('trim.call');
+                                receivers.push(this === original);
+                                return lowered;
+                            };
+                        },
+                    };
+                    return original;
+                };
+                const start = {
+                    get x() { events.push('start.x'); return 0; },
+                    get z() { events.push('start.z'); return 0; },
+                };
+                const row = (label, distance) => ({
+                    get spot() {
+                        events.push(label + '.spot');
+                        return {
+                            get x() { events.push(label + '.x'); return distance; },
+                            get z() { events.push(label + '.z'); return 0; },
+                        };
+                    },
+                });
+                const first = row('first', 5);
+                const second = row('second', 3);
+                const pool = {
+                    get length() { events.push('length'); return 2; },
+                    get 0() { events.push('row.0'); return first; },
+                    get 1() { events.push('row.1'); return second; },
+                    get filter() { throw new Error('closest must not filter'); },
+                    get find() { throw new Error('rank must not find'); },
+                };
+                const table = {
+                    get filter() {
+                        events.push('filter.get');
+                        return function(predicate) {
+                            events.push('filter.call');
+                            receivers.push(this === table && typeof predicate === 'function');
+                            return pool;
+                        };
+                    },
+                };
+                const auto = resolve(setting('auto'), start, table) === second;
+                const autoTrace = events.splice(0);
+                const closest = resolve(setting('use closest'), start, pool) === second;
+                const closestTrace = events.splice(0);
+                const name = {
+                    get toLowerCase() {
+                        events.push('name.lower.get');
+                        return function() {
+                            events.push('name.lower.call');
+                            receivers.push(this === name);
+                            return 'camp';
+                        };
+                    },
+                };
+                const named = {
+                    get name() { events.push('name.get'); return name; },
+                    get spot() { throw new Error('named must not rank'); },
+                };
+                const namedTable = {
+                    get find() {
+                        events.push('find.get');
+                        return function(predicate) {
+                            events.push('find.call');
+                            receivers.push(this === namedTable);
+                            return predicate(named) ? named : undefined;
+                        };
+                    },
+                    get filter() { throw new Error('named must not filter'); },
+                };
+                const found = resolve(setting('camp'), null, namedTable) === named;
+                const findTrace = events.splice(0);
+                const sentinel = {};
+                const throwsSame = (call) => {
+                    try { call(); return false; }
+                    catch (error) { return error === sentinel; }
+                };
+                const errors = [
+                    throwsSame(() => resolve('Auto', null, {
+                        get filter() { throw sentinel; },
+                    })),
+                    throwsSame(() => resolve('Auto', null, {
+                        filter() { throw sentinel; },
+                    })),
+                    throwsSame(() => resolve('Use Closest', start, {
+                        get length() { throw sentinel; },
+                    })),
+                    throwsSame(() => resolve('Use Closest', start, [
+                        first, { get spot() { throw sentinel; } },
+                    ])),
+                    throwsSame(() => resolve('camp', null, {
+                        get find() { throw sentinel; },
+                    })),
+                    throwsSame(() => resolve('camp', null, {
+                        find() { throw sentinel; },
+                    })),
+                    throwsSame(() => resolve('camp', null, [
+                        { get name() { throw sentinel; } },
+                    ])),
+                ];
+                return {
+                    auto, closest, found, autoTrace, closestTrace, findTrace,
+                    receivers: receivers.every(Boolean), errors,
+                };
+            })()"#,
+        )
+        .unwrap();
+    let normalization = ["trim.get", "trim.call", "lower.get", "lower.call"];
+    let ranking = [
+        "length",
+        "row.0",
+        "first.spot",
+        "first.x",
+        "start.x",
+        "first.z",
+        "start.z",
+        "length",
+        "row.1",
+        "second.spot",
+        "second.x",
+        "start.x",
+        "second.z",
+        "start.z",
+        "length",
+    ];
+    let auto_trace: Vec<_> = normalization
+        .into_iter()
+        .chain(["filter.get", "filter.call"])
+        .chain(ranking)
+        .collect();
+    let closest_trace: Vec<_> = normalization.into_iter().chain(ranking).collect();
+    let find_trace: Vec<_> = normalization
+        .into_iter()
+        .chain([
+            "find.get",
+            "find.call",
+            "name.get",
+            "name.lower.get",
+            "name.lower.call",
+        ])
+        .collect();
+    assert_eq!(result["autoTrace"], serde_json::json!(auto_trace));
+    assert_eq!(result["closestTrace"], serde_json::json!(closest_trace));
+    assert_eq!(result["findTrace"], serde_json::json!(find_trace));
+    for key in ["auto", "closest", "found", "receivers"] {
+        assert_eq!(result[key], true, "{key}: {result}");
+    }
+    assert_eq!(
+        result["errors"],
+        serde_json::json!([true, true, true, true, true, true, true])
+    );
+}
