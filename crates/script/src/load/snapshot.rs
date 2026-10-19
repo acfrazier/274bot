@@ -54,9 +54,12 @@ pub(super) fn materialize_snapshot(
     } else {
         None
     };
-    let self_slot = snap
-        .has_self_slot()
-        .then(|| generation.as_ref().expect("self slot captures generation").self_slot);
+    let self_slot = snap.has_self_slot().then(|| {
+        generation
+            .as_ref()
+            .expect("self slot captures generation")
+            .self_slot
+    });
     let mut staged_entity_pages = super::entity_pages::StagedEntityPages {
         generation,
         self_slot,
@@ -1651,13 +1654,7 @@ fn scene_entity_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
     ents: TableVector<'a, crate::isolate_fb::SceneEntity<'a>>,
     npc: bool,
-) -> Result<
-    (
-        v8::Local<'s, v8::Value>,
-        Vec<v8::Global<v8::Object>>,
-    ),
-    String,
-> {
+) -> Result<(v8::Local<'s, v8::Value>, Vec<v8::Global<v8::Object>>), String> {
     let len = ents.as_ref().map_or(0, |ents| ents.len());
     let arr = v8::Array::new(scope, len as i32);
     let mut rows = Vec::with_capacity(len);
