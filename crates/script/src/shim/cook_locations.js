@@ -6,7 +6,10 @@ import {
 
 export { CUSTOM_LOCATION, COOK_LOCATIONS };
 
-export const COOK_LOCATION_OPTIONS = ['Auto', ...COOK_LOCATIONS.map((l) => l.name), CUSTOM_LOCATION];
+export const COOK_LOCATION_OPTIONS = globalThis.__rs2b0t_cook_location_options(
+    COOK_LOCATIONS,
+    CUSTOM_LOCATION,
+);
 
 export function cookLocation(name) {
     return findCookLocation(COOK_LOCATIONS, name);
