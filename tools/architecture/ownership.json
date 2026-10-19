@@ -3443,6 +3443,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/load/inventory_v8.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/load/isolate.rs",
       "owner": "T1"
     },
@@ -5092,6 +5096,10 @@
     },
     {
       "path": "crates/script/tests/t2_gathering_family.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_inventory_family.rs",
       "owner": "T2"
     },
     {
