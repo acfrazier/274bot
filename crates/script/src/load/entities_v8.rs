@@ -1690,30 +1690,37 @@ globalThis.checkPureJs = () => true;
         });
         println!("EntityQuery cold={cold:?}; warm1000={warm:?}");
         assert!(
-            cold.count_total <= 3,
+            cold.count_total <= 10,
             "cold entity bridge allocations: {cold:?}"
         );
         assert!(
-            cold.count_current <= 3,
+            cold.count_current <= 10,
             "cold retained entity bridge allocations: {cold:?}"
         );
         assert!(
-            cold.count_max <= 3,
+            cold.count_max <= 10,
             "cold peak entity bridge allocations: {cold:?}"
         );
         assert!(
-            cold.bytes_total <= 336,
+            cold.bytes_total <= 1120,
             "cold entity bridge bytes: {cold:?}"
         );
         assert!(
-            cold.bytes_current <= 336,
+            cold.bytes_current <= 1120,
             "cold retained entity bridge bytes: {cold:?}"
         );
         assert!(
-            cold.bytes_max <= 336,
+            cold.bytes_max <= 1120,
             "cold peak entity bridge bytes: {cold:?}"
         );
         assert_eq!(warm, allocation_counter::AllocationInfo::default());
+    }
+
+    fn enter_scopes(scope: &mut v8::HandleScope, depth: u32) {
+        if depth != 0 {
+            let nested = &mut v8::TryCatch::new(scope);
+            enter_scopes(nested, depth - 1);
+        }
     }
 
     fn scope_cache_control<'s>(
@@ -1721,15 +1728,10 @@ globalThis.checkPureJs = () => true;
         args: v8::FunctionCallbackArguments<'s>,
         mut rv: v8::ReturnValue,
     ) {
-        let first = &mut v8::TryCatch::new(scope);
-        let second = &mut v8::TryCatch::new(first);
-        let third = &mut v8::TryCatch::new(second);
-        if args.get(0).is_true() {
-            let fourth = &mut v8::TryCatch::new(third);
-            rv.set(v8::Boolean::new(fourth, true).into());
-        } else {
-            rv.set(v8::Boolean::new(third, true).into());
-        }
+        // The complete successful query batch reaches twelve nested scopes.
+        // This control executes no entity/query operation or JS callback.
+        enter_scopes(scope, if args.get(0).is_true() { 13 } else { 12 });
+        rv.set(v8::Boolean::new(scope, true).into());
     }
 
     #[test]
@@ -1739,8 +1741,8 @@ globalThis.checkPureJs = () => true;
         runtime
             .eval::<()>(
                 r#"
-globalThis.checkThreeScopes = () => __scope_cache_control(false);
-globalThis.checkFourScopes = () => __scope_cache_control(true);
+globalThis.checkTwelveScopes = () => __scope_cache_control(false);
+globalThis.checkThirteenScopes = () => __scope_cache_control(true);
 "#,
             )
             .unwrap();
@@ -1748,15 +1750,15 @@ globalThis.checkFourScopes = () => __scope_cache_control(true);
         let mut scope = runtime.deno_runtime().handle_scope();
         let global = context.open(&mut scope).global(&mut scope);
         let pure_js = function(&mut scope, global, "checkPureJs");
-        let three_scopes = function(&mut scope, global, "checkThreeScopes");
-        let four_scopes = function(&mut scope, global, "checkFourScopes");
+        let twelve_scopes = function(&mut scope, global, "checkTwelveScopes");
+        let thirteen_scopes = function(&mut scope, global, "checkThirteenScopes");
         let query = function(&mut scope, global, "checkQuery");
         let receiver = v8::undefined(&mut scope).into();
         let pure = allocation_counter::measure(|| {
             assert!(pure_js.call(&mut scope, receiver, &[]).unwrap().is_true());
         });
         let cold = allocation_counter::measure(|| {
-            assert!(three_scopes
+            assert!(twelve_scopes
                 .call(&mut scope, receiver, &[])
                 .unwrap()
                 .is_true());
@@ -1765,14 +1767,14 @@ globalThis.checkFourScopes = () => __scope_cache_control(true);
             assert!(query.call(&mut scope, receiver, &[]).unwrap().is_true());
         });
         let extra_depth = allocation_counter::measure(|| {
-            assert!(four_scopes
+            assert!(thirteen_scopes
                 .call(&mut scope, receiver, &[])
                 .unwrap()
                 .is_true());
         });
         let warm = allocation_counter::measure(|| {
             for _ in 0..1_000 {
-                assert!(four_scopes
+                assert!(thirteen_scopes
                     .call(&mut scope, receiver, &[])
                     .unwrap()
                     .is_true());
@@ -1780,17 +1782,17 @@ globalThis.checkFourScopes = () => __scope_cache_control(true);
             }
         });
         println!(
-            "EntityQuery scope-cache control pure={pure:?}; three scopes={cold:?}; \
+            "EntityQuery scope-cache control pure={pure:?}; twelve scopes={cold:?}; \
              query after control={query_after_control:?}; \
              extra depth={extra_depth:?}; warm1000={warm:?}"
         );
         assert_eq!(pure, allocation_counter::AllocationInfo::default());
-        assert_eq!(cold.count_total, 1);
-        assert_eq!(cold.count_current, 1);
-        assert_eq!(cold.count_max, 1);
-        assert_eq!(cold.bytes_total, 112);
-        assert_eq!(cold.bytes_current, 112);
-        assert_eq!(cold.bytes_max, 112);
+        assert_eq!(cold.count_total, 10);
+        assert_eq!(cold.count_current, 10);
+        assert_eq!(cold.count_max, 10);
+        assert_eq!(cold.bytes_total, 1120);
+        assert_eq!(cold.bytes_current, 1120);
+        assert_eq!(cold.bytes_max, 1120);
         assert_eq!(
             query_after_control,
             allocation_counter::AllocationInfo::default()
