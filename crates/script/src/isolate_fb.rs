@@ -8688,7 +8688,7 @@ pub(crate) mod tests {
             bank_generation: 7,
         };
         assert_eq!(
-            decode_interact_batch(&encode_interact_batch(&[request.clone()])).unwrap(),
+            decode_interact_batch(&encode_interact_batch(std::slice::from_ref(&request))).unwrap(),
             vec![request]
         );
     }
