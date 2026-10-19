@@ -1,48 +1,36 @@
-import { snap, notImpl } from '../../shim/_kernel.js';
-
 export const CANT_REACH = /^i can't reach that/i;
 export const WRONG_SIDE = /can(?:'t|not) do that from here/i;
 
-function matches(pattern, text) {
-    pattern.lastIndex = 0;
-    return pattern.test(text);
-}
-
-function lines() {
-    return snap().chat_lines || [];
-}
+// Native owns per-context history and page policy; this shim retains the
+// public class, singleton, constants and argument marshaling only.
 
 class GameMessagesImpl {
     record(text) {
-        throw notImpl('GameMessages.record');
+        globalThis.__rs2b0t_game_messages(0, text);
     }
 
     mark() {
-        const rs = lines();
-        if (rs.length === 0) return 0;
-        return rs.reduce((m, l) => Math.max(m, typeof l.seq === 'number' ? l.seq : 0), 0);
+        return globalThis.__rs2b0t_game_messages(1);
     }
 
     since(mark) {
-        return lines()
-            .filter((m) => typeof m.seq === 'number' && m.seq > mark)
-            .map((m) => ({ seq: m.seq, text: m.text }));
+        return globalThis.__rs2b0t_game_messages(2, mark);
     }
 
     sawSince(mark, pattern) {
-        return lines().some((m) => typeof m.seq === 'number' && m.seq > mark && matches(pattern, m.text));
+        return globalThis.__rs2b0t_game_messages(3, mark, pattern);
     }
 
     firstSince(mark, pattern) {
-        throw notImpl('GameMessages.firstSince');
+        return globalThis.__rs2b0t_game_messages(4, mark, pattern);
     }
 
     recent(limit = 8) {
-        throw notImpl('GameMessages.recent');
+        return globalThis.__rs2b0t_game_messages(5, limit);
     }
 
     reset() {
-        throw notImpl('GameMessages.reset');
+        globalThis.__rs2b0t_game_messages(6);
     }
 }
 
