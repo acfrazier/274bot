@@ -999,12 +999,6 @@ impl Guardian {
             self.step_lamp(driver, snap, settings);
             return;
         }
-        // A consumed box can leave its cube modal open after detection ends.
-        // Keep its owner until that modal has closed.
-        if self.acting && self.acting_kind == RandomKind::Box {
-            self.step_box(driver, snap);
-            return;
-        }
         let Some(ev) = ev else {
             if self.acting {
                 self.resolve(
@@ -1503,13 +1497,7 @@ impl Guardian {
             .map(|i| i.count.max(0))
             .sum();
         if count == 0 {
-            if snap.modals().main == CUBE_IF_ROOT {
-                // macro_cube.if:31-40 declares Close Window as buttontype=close.
-                let mut ix = Interactions::new(snap, driver);
-                let _ = ix.close_modal();
-            } else {
-                self.resolve(driver, snap, false);
-            }
+            self.acting = false;
             return;
         }
         // An answer went out: wait for one box to be consumed before

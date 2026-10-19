@@ -14,8 +14,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 - Fixed Quester rejecting quests whose game-journal title differs from the
   script's label, including Rune Mysteries.
-- Fixed scripts stopping after a Mysterious box was solved but its window
-  stayed open.
 - Compat v1 game-message recording and all readers now use one per-context
   Rust history, bounded to 64 records. Only posted type 0 chat lines enter it.
   `mark`, `since`, `sawSince` and `firstSince` read it. `since` returns original
