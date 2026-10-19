@@ -10220,7 +10220,7 @@ fn every_nav_scenario_uses_the_paint_preset() {
 #[test]
 fn nav_shantay_walks_exactly_through_both_henge_branches() {
     let s = get("nav_shantay").expect("nav_shantay");
-    assert_eq!(s.steps.len(), 9);
+    assert_eq!(s.steps.len(), 11);
     for (index, expected) in [
         (
             1,
@@ -10253,11 +10253,22 @@ fn nav_shantay_walks_exactly_through_both_henge_branches() {
         s.settings.nav.engine_speed_ms.is_none(),
         "the live Shantay route must keep the 600ms engine speed without ::speed"
     );
+    // The default Danger routing admits the desert route only above the
+    // Ugthanki combat cap (84): the account's own melee stats are seeded
+    // to 99 before the tail.
+    assert!(matches!(
+        s.steps[4].wait.arm,
+        Proof::Stat {
+            id: HITPOINTS_STAT,
+            min: 99
+        }
+    ));
+    assert!(matches!(s.steps[5].kind, StepKind::DrainDialogs { .. }));
     // Upstream tail (shantay-pass-route-test): the Varrock walk from the
     // desert start with 10 coins must latch the crossing-tile watcher and
     // end inside the Varrock radius, with the toll paid.
-    let StepKind::Walk { dest } = &s.steps[6].kind else {
-        panic!("tail step 6 must be the Varrock WalkTo");
+    let StepKind::Walk { dest } = &s.steps[8].kind else {
+        panic!("tail step 8 must be the Varrock WalkTo");
     };
     assert_eq!(
         *dest,
@@ -10268,7 +10279,7 @@ fn nav_shantay_walks_exactly_through_both_henge_branches() {
         }
     );
     assert!(matches!(
-        s.steps[6].wait.arm,
+        s.steps[8].wait.arm,
         Proof::VisitedWithin {
             min_x: 3300,
             max_x: 3306,
@@ -10278,11 +10289,11 @@ fn nav_shantay_walks_exactly_through_both_henge_branches() {
         }
     ));
     assert!(matches!(
-        s.steps[5].wait.arm,
+        s.steps[7].wait.arm,
         Proof::ItemId { count: 10, .. }
     ));
     assert!(matches!(
-        s.steps[8].wait.arm,
+        s.steps[10].wait.arm,
         Proof::ItemIdAtMost { count: 0, .. }
     ));
 }
@@ -10565,8 +10576,11 @@ fn nav_routes_is_ten_borrowed_ods_with_item_seed() {
     assert!(s.settings.full_rate);
     assert_eq!(
         s.settings.nav,
-        nav_test_paints().with_tick_ms(300),
-        "seam run uses the paint preset and speed 300"
+        ScenarioNav {
+            allow_danger_zones: true,
+            ..nav_test_paints().with_tick_ms(300)
+        },
+        "seam run uses the paint preset, speed 300 and Danger routing Always"
     );
     assert_eq!(s.settings.deadline, Duration::from_secs(3600));
     assert_eq!(s.settings.sustains, nav_energy_sustains());
@@ -12713,6 +12727,46 @@ fn rebuild_npc_chat_snapshot(client: &mut Client) -> GameSnapshot {
     let mut snapshot = GameSnapshot::new();
     snapshot.rebuild(client);
     snapshot
+}
+
+/// LIVE `nav_mage_arena_bank` (FIX-024): the opener walked onto Gundai's
+/// last seen tile every poll and only talked when adjacent, so it chased
+/// the wandering banker around the cellar until the step budget ran out.
+/// A banker in view but not adjacent gets one Talk-to (the engine walks to
+/// it for the op) and no chase walks while the chat is pending.
+#[test]
+fn shop_buyout_npc_opener_talks_to_a_distant_banker_once_instead_of_chasing() {
+    let approach = WorldTile {
+        x: 3220,
+        z: 3220,
+        level: 0,
+    };
+    let step = shop_buyout_open_npc_bank(
+        "open Gundai's bank",
+        Proof::BankOpen,
+        "Gundai",
+        approach,
+        "Talk-to",
+        "Cool, I'd like to access my bank account please.",
+    );
+    let StepKind::Repeat { send } = &step.kind else {
+        panic!("teller open must Repeat");
+    };
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    // Player at scene (20,20); Gundai six tiles east.
+    plant_named_banker(&mut client, "Gundai", 26, 21);
+    let snapshot = rebuild_npc_chat_snapshot(&mut client);
+    assert!(send(&mut client, &snapshot), "the Talk-to must send");
+    let after_talk = client.out.pos;
+    assert!(after_talk > 0, "the opener sends one packet");
+    for _ in 0..3 {
+        assert!(send(&mut client, &snapshot));
+    }
+    assert_eq!(
+        client.out.pos, after_talk,
+        "no chase walk while the engine approaches for the Talk-to"
+    );
 }
 
 /// LIVE livemoj7nw / livevpttcg: Repeat re-Talk-to while the first
