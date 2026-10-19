@@ -1,34 +1,28 @@
-import { snap, queue, proxy } from '../../shim/_kernel.js';
+import { queue, proxy } from '../../shim/_kernel.js';
 import { Inventory } from '../inventory/Inventory.js';
 import { Execution } from '../execution/Execution.js';
 
-const rows = () => snap().equipment || [];
+const rows = () => globalThis.__rs2b0t_inventory('equipmentItems');
 
 export const Equipment = proxy('Equipment', {
     items() {
-        return rows()
-            .filter((r) => r && r.name)
-            .map((r) => ({
-                name: r.name,
-                count: typeof r.count === 'number' ? r.count : 1,
-                id: typeof r.id === 'number' ? r.id : 0,
-            }));
+        return rows();
     },
     contains(name) {
-        const wanted = String(name).toLowerCase();
-        return rows().some((r) => r && typeof r.name === 'string' && r.name.toLowerCase() === wanted);
+        return globalThis.__rs2b0t_inventory('equipmentContains', name);
     },
     // The host `wear` op owns the menu choice (its own Wear, else Wield,
     // else refuse); this module never picks an action label by regex.
     async equip(name) {
-        if (Equipment.contains(name)) return true;
-        if (!Inventory.first(name)) return false;
-        queue({ op: 'wear', name: String(name) });
+        const request = globalThis.__rs2b0t_inventory('equipmentEquip', name, Equipment, Inventory);
+        if (typeof request === 'boolean') return request;
+        queue(request);
         return Execution.delayUntil(() => Equipment.contains(name), 3000);
     },
     async unequip(name) {
-        if (!Equipment.contains(name)) return true;
-        queue({ op: 'unequip', name: String(name) });
+        const request = globalThis.__rs2b0t_inventory('equipmentUnequip', name, Equipment);
+        if (typeof request === 'boolean') return request;
+        queue(request);
         return Execution.delayUntil(() => !Equipment.contains(name), 3000);
     },
 });
