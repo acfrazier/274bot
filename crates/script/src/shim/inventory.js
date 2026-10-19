@@ -1,4 +1,4 @@
-// Inventory row handles are materialized by the native snapshot adapter.
+// Inventory handles preserve the current posted rows and item identities.
 import { host, notImpl, queue } from '../../shim/_kernel.js';
 
 const inventoryIdentity = Symbol('inventoryIdentity');
@@ -22,16 +22,13 @@ export class InvItem {
     }
 
     interact(action) {
-        const request = globalThis.__rs2b0t_inventory(9, this[inventoryRow], action);
+        const request = globalThis.__rs2b0t_inventory(9, this, action);
         queue(request);
         return true;
     }
 
     useOn(target) {
-        const request = globalThis.__rs2b0t_inventory(10, this,
-        this[inventoryRow],
-        target,
-        inventoryIdentity,);
+        const request = globalThis.__rs2b0t_inventory(10, this, target, inventoryIdentity);
         if (!request) return false;
         queue(request);
         return true;
