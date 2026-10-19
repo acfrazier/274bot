@@ -113,7 +113,10 @@ pub(super) fn location_options<'s>(
     let output = v8::Array::new_with_elements(scope, &prefix);
     let map = cb::get(scope, table, "map")?;
     let Some(map_callback) = v8::Function::builder(map_name_callback).build(scope) else {
-        return Err(cb::type_error(scope, "could not create gathering map callback"));
+        return Err(cb::type_error(
+            scope,
+            "could not create gathering map callback",
+        ));
     };
     let map_callback: v8::Local<v8::Value> = map_callback.into();
     let mapped = cb::call(scope, map, table, &[map_callback], "map")?;
@@ -121,17 +124,19 @@ pub(super) fn location_options<'s>(
     let mut index = prefix.len() as u32;
 
     loop {
-        let inner = &mut v8::EscapableHandleScope::new(scope);
-        let flow = match iterator.step(inner) {
-            Ok(Some(value)) => Ok(Flow::Continue(Some(value))),
-            Ok(None) => Ok(Flow::Break(None)),
-            Err(error) => Err(error),
-        };
-        match cb::iteration(inner, flow)? {
+        let flow = {
+            let inner = &mut v8::EscapableHandleScope::new(scope);
+            let flow = match iterator.step(inner) {
+                Ok(Some(value)) => Ok(Flow::Continue(Some(value))),
+                Ok(None) => Ok(Flow::Break(None)),
+                Err(error) => Err(error),
+            };
+            cb::iteration(inner, flow)
+        }?;
+        match flow {
             Flow::Continue(Some(value)) => {
                 if index == u32::MAX {
-                    let error =
-                        cb::type_error(scope, "gathering options exceed V8 array length");
+                    let error = cb::type_error(scope, "gathering options exceed V8 array length");
                     return iterator.body(scope, Err(error));
                 }
                 let append = match cb::catching(scope, |s| output.set_index(s, index, value)) {
@@ -326,7 +331,10 @@ fn find_named_row<'s>(
         .data(normalized)
         .build(scope)
     else {
-        return Err(cb::type_error(scope, "could not create gathering find callback"));
+        return Err(cb::type_error(
+            scope,
+            "could not create gathering find callback",
+        ));
     };
     let predicate: v8::Local<v8::Value> = predicate.into();
     let found = cb::call(scope, find, table, &[predicate], "find")?;
@@ -356,15 +364,7 @@ mod tests {
     use super::*;
     use rustyscript::RuntimeOptions;
 
-    #[test]
-    fn gathering_callbacks_have_measured_cold_and_zero_warm_rust_heap() {
-        crate::load::platform::bootstrap_test_v8_platform();
-        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
-        cb::install_ops(&mut runtime).unwrap();
-        install(&mut runtime).unwrap();
-        runtime
-            .eval::<()>(
-                r#"
+    const GATHERING_SETUP: &str = r#"
 const from = { x: 64, z: 64, level: 0 };
 const rows = [
     { name: 'Far', spot: { x: 74, z: 64, level: 0 } },
@@ -391,9 +391,20 @@ globalThis.checkGathering = () => {
         call('resolveGatheringLocation', 'Use Custom Position', from, rows) === null &&
         call('resolveGatheringLocation', 'unknown', from, rows) === null;
 };
-"#,
-            )
-            .unwrap();
+"#;
+
+    fn setup() -> Runtime {
+        crate::load::platform::bootstrap_test_v8_platform();
+        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+        cb::install_ops(&mut runtime).unwrap();
+        install(&mut runtime).unwrap();
+        runtime.eval::<()>(GATHERING_SETUP).unwrap();
+        runtime
+    }
+
+    #[test]
+    fn gathering_callbacks_bound_cold_bridge_cache_and_keep_zero_warm_rust_heap() {
+        let mut runtime = setup();
         let context = runtime.deno_runtime().main_context();
         let mut scope = runtime.deno_runtime().handle_scope();
         let global = context.open(&mut scope).global(&mut scope);
@@ -410,6 +421,105 @@ globalThis.checkGathering = () => {
             }
         });
         println!("Gathering seven-helper callbacks cold={cold:?}; warm1000={warm:?}");
+        // One existing rusty_v8 ScopeData cache cell; the independent control
+        // below attributes the charge without invoking a Gathering helper.
+        assert!(cold.count_total <= 1);
+        assert!(cold.count_current <= 1);
+        assert!(cold.count_max <= 1);
+        assert!(cold.bytes_total <= 112);
+        assert!(cold.bytes_current <= 112);
+        assert!(cold.bytes_max <= 112);
+        assert_eq!(warm, allocation_counter::AllocationInfo::default());
+    }
+
+    fn scope_cache_control<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        args: v8::FunctionCallbackArguments<'s>,
+        mut rv: v8::ReturnValue,
+    ) {
+        let first = &mut v8::TryCatch::new(scope);
+        let second = &mut v8::TryCatch::new(first);
+        let third = &mut v8::TryCatch::new(second);
+        if args.get(0).is_true() {
+            let fourth = &mut v8::TryCatch::new(third);
+            rv.set(v8::Boolean::new(fourth, true).into());
+        } else {
+            rv.set(v8::Boolean::new(third, true).into());
+        }
+    }
+
+    #[test]
+    fn gathering_cold_charge_reuses_an_independent_scope_cache_cell() {
+        let mut runtime = setup();
+        cb::install(&mut runtime, "__scope_cache_control", scope_cache_control).unwrap();
+        runtime
+            .eval::<()>(
+                r#"
+globalThis.checkPureJs = () => true;
+globalThis.checkThreeScopes = () => __scope_cache_control(false);
+globalThis.checkFourScopes = () => __scope_cache_control(true);
+"#,
+            )
+            .unwrap();
+        let context = runtime.deno_runtime().main_context();
+        let mut scope = runtime.deno_runtime().handle_scope();
+        let global = context.open(&mut scope).global(&mut scope);
+        let key = cb::string(&mut scope, "checkPureJs");
+        let pure_js =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let key = cb::string(&mut scope, "checkThreeScopes");
+        let three_scopes =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let key = cb::string(&mut scope, "checkFourScopes");
+        let four_scopes =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let key = cb::string(&mut scope, "checkGathering");
+        let gathering =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let receiver = v8::undefined(&mut scope).into();
+        let pure = allocation_counter::measure(|| {
+            assert!(pure_js.call(&mut scope, receiver, &[]).unwrap().is_true());
+        });
+        let cold = allocation_counter::measure(|| {
+            assert!(three_scopes
+                .call(&mut scope, receiver, &[])
+                .unwrap()
+                .is_true());
+        });
+        let gathering_after_control = allocation_counter::measure(|| {
+            assert!(gathering.call(&mut scope, receiver, &[]).unwrap().is_true());
+        });
+        let extra_depth = allocation_counter::measure(|| {
+            assert!(four_scopes
+                .call(&mut scope, receiver, &[])
+                .unwrap()
+                .is_true());
+        });
+        let warm = allocation_counter::measure(|| {
+            for _ in 0..1_000 {
+                assert!(four_scopes
+                    .call(&mut scope, receiver, &[])
+                    .unwrap()
+                    .is_true());
+                assert!(gathering.call(&mut scope, receiver, &[]).unwrap().is_true());
+            }
+        });
+        println!(
+            "Gathering scope-cache control pure={pure:?}; three scopes={cold:?}; \
+             gathering after control={gathering_after_control:?}; \
+             extra scope={extra_depth:?}; warm1000={warm:?}"
+        );
+        assert_eq!(pure, allocation_counter::AllocationInfo::default());
+        assert_eq!(cold.count_total, 1);
+        assert_eq!(cold.count_current, 1);
+        assert_eq!(cold.bytes_total, 112);
+        assert_eq!(cold.bytes_total, extra_depth.bytes_total);
+        assert_eq!(
+            gathering_after_control,
+            allocation_counter::AllocationInfo::default()
+        );
+        assert_eq!(extra_depth.count_total, 1);
+        assert_eq!(extra_depth.count_current, 1);
         assert_eq!(warm, allocation_counter::AllocationInfo::default());
     }
 }

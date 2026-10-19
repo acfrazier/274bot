@@ -627,7 +627,10 @@ fn t2_1_abi_contract_covers_exports_families_and_visible_debt() {
             .expect("generated family predecessors");
     assert_eq!(contract["endpoint"], "T2.1");
     assert_eq!(contract["activation_state"], "partially-activated");
-    assert_eq!(contract["active_families"], serde_json::json!(["bank", "gathering"]));
+    assert_eq!(
+        contract["active_families"],
+        serde_json::json!(["bank", "gathering", "world-primitives"])
+    );
 
     let family_rows = graph["families"].as_array().expect("family rows");
     let family_ids: std::collections::HashSet<&str> = family_rows

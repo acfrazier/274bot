@@ -15,6 +15,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - Gathering scripts can use the declared location options, booth defaults,
   map-square checks and location resolver. Rust owns these calculations over
   caller-provided locations, without a second resource catalog.
+- World Tile copying, translation, equality, text conversion and posted-coordinate
+  validation now run in Rust. Area sampling returns a real Tile in the same native
+  call. Existing geometry bounds, plane rules and caller-visible values stay the
+  same.
 - Bank opening, selection, deposits, withdrawals, note mode and close operations
   now run in the native request seat. Compatibility callbacks keep their
   existing call order, return handling and thrown values. Bank snapshot reads
@@ -324,6 +328,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   the total for each, instead of listing every name.
 - Render-all draws up to 128 clients at once. A client past that shows
   "renderer refused: render head cap of 128 is full" in its own tile.
+- Clients without a drawn view retain less render scratch memory. Hiding a view
+  releases that scratch, and showing it again keeps the same game connection.
 
 ### TUI
 
