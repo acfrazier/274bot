@@ -1,3 +1,5 @@
+#![cfg(feature = "load")]
+
 use script::load::{LoadIsolate, LoadShape};
 
 #[path = "common/mod.rs"]
