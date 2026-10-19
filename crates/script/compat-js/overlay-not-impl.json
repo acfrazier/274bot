@@ -180,24 +180,6 @@
     "async": false
   },
   {
-    "id": "not-impl:query:inside",
-    "module": "api/query/Query.js",
-    "selector": "EntityQuery.inside",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl; the native query never inspects an area or produces a successful result.",
-    "runtime": "crates/script/src/shim/query.js:108",
-    "async": false
-  },
-  {
-    "id": "not-impl:query:nearestPreferLocal",
-    "module": "api/query/Query.js",
-    "selector": "EntityQuery.nearestPreferLocal",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl; the native query never inspects a preference radius or produces a successful result.",
-    "runtime": "crates/script/src/shim/query.js:112",
-    "async": false
-  },
-  {
     "id": "not-impl:api/combat/hunting/combat.js:Fight.hasChaseTarget",
     "module": "api/combat/hunting/combat.js",
     "selector": "Fight.hasChaseTarget",
