@@ -465,10 +465,9 @@ fn quest_status(
     quest_id: &str,
     snapshot: &GameSnapshot,
 ) -> Option<QuestListStatus> {
-    let facts = quests.quest(quest_id).ok()?;
     quest_progress::quest_list_status(
         quests,
-        &facts.id,
+        quest_id,
         SnapshotView::new(Some(snapshot), evidence_stamp(snapshot)),
     )
     .map(|observed| observed.value)

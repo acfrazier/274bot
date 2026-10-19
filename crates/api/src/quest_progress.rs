@@ -81,10 +81,10 @@ pub trait EvidenceProvider: Send + Sync {
 /// `None`. An observed row with an unsupported colour returns `Unknown`.
 pub fn quest_list_status(
     quests: &QuestCatalog,
-    quest: &FactKey,
+    quest: &str,
     snapshot: SnapshotView<'_>,
 ) -> Option<Observed<QuestListStatus>> {
-    let facts = quests.quest(quest.0.as_ref()).ok()?;
+    let facts = quests.quest(quest).ok()?;
     let rows = snapshot.quest_statuses()?;
     let status = status_for_display(&facts.display, rows.value)?;
     Some(Observed {
@@ -460,7 +460,7 @@ mod quest_list_tests {
 
         let status = quest_list_status(
             &quests,
-            &quest,
+            quest.0.as_ref(),
             SnapshotView::new(Some(&snapshot), observed),
         )
         .expect("quest row is observed");
