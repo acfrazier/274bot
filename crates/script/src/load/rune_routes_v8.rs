@@ -78,3 +78,69 @@ fn materialize<'s>(
         ],
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustyscript::{Module, RuntimeOptions};
+
+    fn setup() -> Runtime {
+        crate::load::platform::bootstrap_test_v8_platform();
+        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+        callback_v8::install_ops(&mut runtime).unwrap();
+        install(&mut runtime).unwrap();
+        let tile_source = format!(
+            "{}\nglobalThis.RuneTestTile = Tile;\nglobalThis.runeTestCount = {};",
+            include_str!("../shim/tile.js"),
+            RUNE_ROUTES.len()
+        );
+        runtime
+            .load_module(&Module::new("native-rune-tile.js", tile_source))
+            .unwrap();
+        runtime
+            .eval::<()>(
+                r#"
+globalThis.checkRuneCatalog = () => {
+    const { RUNES, RUNE_OPTIONS, DEFAULT_RUNE } =
+        __rs2b0t_rune_craft_locations(RuneTestTile);
+    const keys = Object.keys(RUNES);
+    return keys.length === runeTestCount &&
+        RUNE_OPTIONS.length === keys.length &&
+        DEFAULT_RUNE === keys[0] &&
+        keys.every((name, index) => {
+            const route = RUNES[name];
+            return route.rune === name &&
+                RUNE_OPTIONS[index] === name &&
+                route.ruins instanceof RuneTestTile &&
+                Object.getPrototypeOf(route.ruins) === RuneTestTile.prototype;
+        });
+};
+"#,
+            )
+            .unwrap();
+        runtime
+    }
+
+    #[test]
+    fn rune_catalog_keeps_zero_cold_and_warm_rust_heap() {
+        let mut runtime = setup();
+        let context = runtime.deno_runtime().main_context();
+        let mut scope = runtime.deno_runtime().handle_scope();
+        let global = context.open(&mut scope).global(&mut scope);
+        let key = callback_v8::string(&mut scope, "checkRuneCatalog");
+        let function =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let receiver = v8::undefined(&mut scope).into();
+        let cold = allocation_counter::measure(|| {
+            assert!(function.call(&mut scope, receiver, &[]).unwrap().is_true());
+        });
+        let warm = allocation_counter::measure(|| {
+            for _ in 0..1_000 {
+                assert!(function.call(&mut scope, receiver, &[]).unwrap().is_true());
+            }
+        });
+        println!("Runecrafting production-Tile catalog cold={cold:?}; warm1000={warm:?}");
+        assert_eq!(cold, allocation_counter::AllocationInfo::default());
+        assert_eq!(warm, allocation_counter::AllocationInfo::default());
+    }
+}
