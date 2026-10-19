@@ -505,6 +505,48 @@ where
     }
 }
 
+/// Run the production slot-frame closure once with a caller-owned client.
+/// This test-support entry keeps front ends from needing access to
+/// `FrameContext` or the private slot-frame implementation.
+#[cfg(any(test, feature = "test-support"))]
+pub fn run_frame_for_test<C, G, H, P, T, S>(
+    client: &mut C,
+    name: &str,
+    hook: Arc<dyn FrameHook>,
+    input: SlotFrameInput,
+    here: H,
+    publish: P,
+    step: S,
+    tick: T,
+)
+where
+    C: Any,
+    G: Default + Send + 'static,
+    H: Fn(&C) -> Option<(i32, i32, i32)> + Send + Sync + 'static,
+    P: Fn(&mut G, &mut GameSnapshot, &C) -> host::FrontendPublication + Send + Sync + 'static,
+    T: Fn(&C) -> u64 + Send + Sync + 'static,
+    S: Fn(
+            &mut C,
+            &GameSnapshot,
+            &mut host_play::WalkArm,
+            Option<&NavWorld>,
+            (i32, i32, i32),
+            bool,
+            Option<&str>,
+        ) -> bool
+        + Send
+        + Sync
+        + 'static,
+{
+    let shared = Arc::new(FrameShared::new());
+    let frame = slot_frame::<C, G, H, P, T, S, NoLiveFrame>(
+        shared,
+        hook,
+        ClientOps::new::<C, G>(here, publish, step, tick),
+    );
+    frame(client, name, input);
+}
+
 /// What a speaker-gate step did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioChange {

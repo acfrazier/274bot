@@ -314,6 +314,7 @@ impl frontend_core::frames::FrameHook for TuiFrameHook {
 /// destination for clearing.
 struct TuiSurface<'a> {
     walk_cleared: &'a mut bool,
+    models: frontend_core::Models<'a>,
 }
 
 impl frontend_core::SlotSurface for TuiSurface<'_> {
@@ -336,6 +337,13 @@ impl frontend_core::SlotSurface for TuiSurface<'_> {
     }
 
     fn released(&mut self, _name: &str) {}
+
+    fn models(&mut self) -> frontend_core::Models<'_> {
+        self.models.reborrow()
+    }
+
+    /// The TUI draws no game image and captures no game input.
+    fn draw_changed(&mut self, _switch: frontend_core::command::DrawSwitch, _on: bool) {}
 }
 
 /// The TUI session: the running play, the vault and the per-username walk
@@ -695,6 +703,10 @@ impl TuiSession {
             &mut self.core,
             TuiSurface {
                 walk_cleared: &mut self.walk_reset,
+                models: frontend_core::Models::none()
+                    .with_scripts(&mut self.scripts)
+                    .with_import(&mut self.profile_import)
+                    .with_loadouts(&mut self.loadouts),
             },
         )
     }

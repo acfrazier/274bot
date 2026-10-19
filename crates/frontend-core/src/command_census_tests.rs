@@ -1705,6 +1705,51 @@ fn every_surface_handler_is_one_rows_or_registered() {
     assert!(problems.is_empty(), "\n{}", problems.join("\n"));
 }
 
+/// The seam is complete: no panel/TUI function reaches a row through
+/// anything but the command seam. A call of a core entry that names a row
+/// (other than the seam itself and the staging inputs a row commits) and
+/// an effect probe (a store `.save()`, a vault or file write, a map demand)
+/// are bypasses; only process, harness and startup exclusions may hold
+/// them.
+#[test]
+fn no_surface_mutation_bypasses_the_seam() {
+    let census = census();
+    let core: BTreeMap<&str, Decision> = CORE.iter().copied().collect();
+    let surface: BTreeMap<&str, Decision> = SURFACE.iter().copied().collect();
+    let mut bypasses = Vec::new();
+    for item in &census.surface {
+        let key = surface_key(item);
+        if matches!(surface.get(key.as_str()), Some(Excluded(_))) {
+            continue;
+        }
+        for call in &item.core_calls {
+            if SEAM.contains(&call.key.as_str()) {
+                continue;
+            }
+            if let Some(decision) = core.get(call.key.as_str()) {
+                let rows = rows_of(*decision);
+                if !rows.is_empty() {
+                    bypasses.push(format!(
+                        "{}:{} {key} calls {} {rows:?}",
+                        item.file, call.line, call.key
+                    ));
+                }
+            }
+        }
+        for (probe, line) in &item.probes {
+            bypasses.push(format!("{}:{line} {key} hits probe {probe:?}", item.file));
+        }
+    }
+    for line in &bypasses {
+        println!("BYPASS\t{line}");
+    }
+    assert!(
+        bypasses.is_empty(),
+        "{} surface mutations bypass the command seam",
+        bypasses.len()
+    );
+}
+
 /// The census as a table, for the report: `cargo test -p frontend-core
 /// --lib -- command::census --nocapture`.
 #[test]

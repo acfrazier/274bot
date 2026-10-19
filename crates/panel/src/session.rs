@@ -245,6 +245,7 @@ struct PanelSurface<'a> {
     audio: &'a AudioGate<AudioOut>,
     memory_override: Option<bool>,
     walk_dest: &'a mut Option<Tile>,
+    models: frontend_core::Models<'a>,
 }
 
 impl SlotSurface for PanelSurface<'_> {
@@ -292,6 +293,29 @@ impl SlotSurface for PanelSurface<'_> {
 
     fn released(&mut self, name: &str) {
         self.audio.release(name);
+    }
+
+    fn models(&mut self) -> frontend_core::Models<'_> {
+        self.models.reborrow()
+    }
+
+    /// The render mirror the slot threads read: the focused member's
+    /// renderer, the capture pref and the frame cadences.
+    fn draw_changed(&mut self, switch: frontend_core::command::DrawSwitch, on: bool) {
+        use frontend_core::command::DrawSwitch;
+        let mut focus = self.focus.lock().unwrap();
+        match switch {
+            DrawSwitch::GameRenderer => {
+                focus.renderer = on;
+                if let Some(name) = focus.focused.clone() {
+                    focus.renderer_by.insert(name, on);
+                }
+            }
+            DrawSwitch::CaptureInput => focus.capture = on,
+            DrawSwitch::SidecarFullRate => focus.sidecar_50 = on,
+            DrawSwitch::FocusedFullRate => focus.focused_50 = on,
+            DrawSwitch::LiveFullRate => focus.live_full_rate = on,
+        }
     }
 }
 
@@ -2237,10 +2261,9 @@ impl Session {
         Ok(())
     }
 
-    /// Empty `Play` (shared cache + FIFO + per-frame hook) then spawn the
-    /// first focused profile only. Parked names are started from [`select`].
-    fn start_play(&mut self, path: &Path, pass: &str) -> Result<(), UnlockError> {
-        let hook = PanelFrameHook {
+    /// Build the hook with the panel's per-session state and launch template.
+    fn panel_frame_hook(&self) -> Arc<dyn frontend_core::frames::FrameHook> {
+        Arc::new(PanelFrameHook {
             focus: Arc::clone(&self.focus),
             mainland: Arc::clone(&self.mainland),
             mainland_sent: Arc::clone(&self.mainland_sent),
@@ -2253,9 +2276,15 @@ impl Session {
             audio_fail: Mutex::new(None),
             live_runner: self.core.live_runner().share(),
             scatter_template: self.launcher.template().map(ProfileTemplate::share),
-        };
+        })
+    }
+
+    /// Empty `Play` (shared cache + FIFO + per-frame hook) then spawn the
+    /// first focused profile only. Parked names are started from [`select`].
+    fn start_play(&mut self, path: &Path, pass: &str) -> Result<(), UnlockError> {
+        let hook = self.panel_frame_hook();
         let launch = self.launcher.take_launch().keeping_world_state();
-        self.core.unlock_vault(path, pass, launch, Arc::new(hook))?;
+        self.core.unlock_vault(path, pass, launch, hook)?;
         crate::picker::set_pack(self.core.nav_world());
         self.statuses.refresh(&self.core);
         Ok(())
@@ -2997,7 +3026,8 @@ impl Session {
         saving
     }
 
-    /// Split borrow: the core plus the panel adapter over the other fields.
+    /// Split borrow: the core plus the panel adapter over the other fields,
+    /// with every operator model the panel holds lent to the command.
     fn core_and_surface(&mut self) -> (&mut OperatorSession<SlotIo>, PanelSurface<'_>) {
         (
             &mut self.core,
@@ -3006,6 +3036,14 @@ impl Session {
                 audio: &self.audio,
                 memory_override: self.memory_override,
                 walk_dest: &mut self.walk_dest,
+                models: frontend_core::Models::none()
+                    .with_scripts(&mut self.scripts)
+                    .with_marks(&mut self.fleet_selection)
+                    .with_editor(&mut self.profile_editor)
+                    .with_import(&mut self.profile_import)
+                    .with_loadouts(&mut self.loadouts)
+                    .with_quester(&mut self.quester_paths)
+                    .with_walk_globals(&mut self.walk_permissions),
             },
         )
     }
@@ -3060,6 +3098,7 @@ impl Session {
                 audio: &self.audio,
                 memory_override: self.memory_override,
                 walk_dest: &mut self.walk_dest,
+                models: frontend_core::Models::none(),
             },
         )
     }
