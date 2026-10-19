@@ -674,10 +674,7 @@ fn inventory_interact<'s>(
     let name = cb::get(scope, item, "name")?;
     let action = global_string(scope, action)?;
     let op = cb::string(scope, "held");
-    cb::object(
-        scope,
-        &[("op", op.into()), ("name", name), ("action", action)],
-    )
+    cb::object(scope, &[("op", op), ("name", name), ("action", action)])
 }
 
 fn nullish_or<'s>(
@@ -751,8 +748,8 @@ fn inventory_use_on<'s>(
             let source_slot = optional_identity_field(scope, source_identity, "slot")?;
             let target_id = optional_identity_field(scope, target_identity, "id")?;
             let target_slot = optional_identity_field(scope, target_identity, "slot")?;
-            let op = cb::string(scope, "use-on").into();
-            let kind = cb::string(scope, "inv").into();
+            let op = cb::string(scope, "use-on");
+            let kind = cb::string(scope, "inv");
             let zero = cb::num(scope, 0.0);
             let index = v8::null(scope).into();
             return cb::object(
@@ -838,8 +835,8 @@ fn inventory_use_on<'s>(
         v8::null(scope).into()
     };
 
-    let op = cb::string(scope, "use-on").into();
-    let kind = cb::string(scope, kind).into();
+    let op = cb::string(scope, "use-on");
+    let kind = cb::string(scope, kind);
     cb::object(
         scope,
         &[
@@ -926,7 +923,7 @@ fn equipment_equip<'s>(
         return Ok(v8::Boolean::new(scope, false).into());
     }
     let name = global_string(scope, name)?;
-    let op = cb::string(scope, "wear").into();
+    let op = cb::string(scope, "wear");
     cb::object(scope, &[("op", op), ("name", name)])
 }
 fn equipment_unequip<'s>(
@@ -940,7 +937,7 @@ fn equipment_unequip<'s>(
         return Ok(v8::Boolean::new(scope, true).into());
     }
     let name = global_string(scope, name)?;
-    let op = cb::string(scope, "unequip").into();
+    let op = cb::string(scope, "unequip");
     cb::object(scope, &[("op", op), ("name", name)])
 }
 
