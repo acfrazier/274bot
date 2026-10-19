@@ -1,3 +1,5 @@
+#![cfg(feature = "load")]
+
 //! Served T2 inventory-family behavior through real LoadIsolate V8 instances.
 
 use script::isolate_fb::{

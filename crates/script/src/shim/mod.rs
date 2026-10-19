@@ -25,6 +25,7 @@ pub(crate) use modules::{remap_catalog_imports, shim_modules, BOT_MODULE, MAIN_M
 pub(crate) use modules::{remap_hash_bot, remap_rs2b0t_api};
 pub use paint::{PaintChromeBand, ScriptPaint, ScriptPaintButton};
 
+#[cfg(feature = "load")]
 /// Field writes performed by the native `InvItem` constructor, in order.
 #[derive(Clone, Copy)]
 pub(crate) enum InvItemFieldInit {
@@ -34,6 +35,7 @@ pub(crate) enum InvItemFieldInit {
     NullishMinusOne,
 }
 
+#[cfg(feature = "load")]
 pub(crate) static INV_ITEM_FIELDS: [(&str, InvItemFieldInit); 6] = [
     ("name", InvItemFieldInit::Copy),
     ("count", InvItemFieldInit::Copy),
