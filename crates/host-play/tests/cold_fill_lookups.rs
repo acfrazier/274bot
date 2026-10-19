@@ -6,10 +6,9 @@
 //! library's name lookup calls in place of libc's. [`FAILED_GAME_HOST`]
 //! and [`FAILED_ASSET_HOST`] fail at once. [`SLOW_ASSET_HOST`] resolves to
 //! 127.0.0.1 after [`LOOKUP_DELAY`]. Every other name goes to libc's
-//! `getaddrinfo` unchanged. No system resolver setting changes, and no
-//! external server is contacted. The update servers listen on 127.0.0.1
-//! only. The HTTPS servers use the client's throwaway `localhost`
-//! certificate, which only this test process trusts (`SSL_CERT_FILE`).
+//! `getaddrinfo` unchanged. The update servers listen on 127.0.0.1 only.
+//! HTTPS fixtures use a test-only rustls config trusting a throwaway local
+//! certificate; no system resolver or trust settings are changed.
 #![cfg(target_os = "linux")]
 
 use std::ffi::{c_char, c_int, CStr};
@@ -17,14 +16,16 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, LazyLock, Mutex, Once};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use api::hostlog::{Record, Sink};
 use client::io::{JagFile, Packet};
 use host_play::profile::{ProfileEnvironment, ProfileSelection};
 use host_play::progress::{ProfileProgressObserver, ProfileProgressStage};
+use client_adapter::service::{MaintenanceDriver, NetworkService};
 use host_play::{ProfileOptions, TemplateStep, TEMPLATE_STEP_WAIT};
 
 /// A game host whose lookup fails at once.
@@ -91,21 +92,45 @@ pub unsafe extern "C" fn getaddrinfo(
     unsafe { libc_getaddrinfo(node, service, hints, res) }
 }
 
-const CERT: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../vendor/fr-client-rust/crates/client/tests/fixtures/tls/localhost.cert.pem"
-);
-const KEY: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../vendor/fr-client-rust/crates/client/tests/fixtures/tls/localhost.key.pem"
-);
+struct TestTlsIdentity {
+    certificate: CertificateDer<'static>,
+    server: Arc<rustls::ServerConfig>,
+}
 
-/// Trust the test certificate. Every test calls this first, so the
-/// environment changes once, before any test thread connects or looks up
-/// a name.
+static TEST_TLS: LazyLock<TestTlsIdentity> = LazyLock::new(|| {
+    let identity = rcgen::generate_simple_self_signed(vec![
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+        SLOW_ASSET_HOST.to_string(),
+    ])
+    .unwrap();
+    let certificate = identity.cert.der().clone();
+    let key = PrivateKeyDer::Pkcs8(identity.key_pair.serialize_der().into());
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let server = rustls::ServerConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(vec![certificate.clone()], key)
+        .unwrap();
+    TestTlsIdentity {
+        certificate,
+        server: Arc::new(server),
+    }
+});
+
+/// Install the fixture certificate as a private test root before starting the
+/// process-scoped adapter.
 fn trust_test_certificate() {
     static TRUST: Once = Once::new();
-    TRUST.call_once(|| std::env::set_var("SSL_CERT_FILE", CERT));
+    TRUST.call_once(|| {
+        let config = client_adapter::tls_handshake::build_test_client_config_with_roots(&[
+            TEST_TLS.certificate.clone(),
+        ])
+        .expect("build test client TLS config");
+        NetworkService::install_test_tls_config(config)
+            .expect("install test TLS config before starting the service");
+    });
 }
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -239,14 +264,7 @@ struct UpdateServer {
 
 impl UpdateServer {
     fn start(crc_body: &[u8], tls: bool) -> Self {
-        let acceptor = tls.then(|| {
-            let identity = native_tls::Identity::from_pkcs8(
-                &std::fs::read(CERT).unwrap(),
-                &std::fs::read(KEY).unwrap(),
-            )
-            .unwrap();
-            Arc::new(native_tls::TlsAcceptor::new(identity).unwrap())
-        });
+        let acceptor = tls.then(|| Arc::clone(&TEST_TLS.server));
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let connections = Arc::new(AtomicUsize::new(0));
@@ -305,7 +323,7 @@ impl Drop for UpdateServer {
 
 fn serve(
     socket: TcpStream,
-    acceptor: Option<Arc<native_tls::TlsAcceptor>>,
+    acceptor: Option<Arc<rustls::ServerConfig>>,
     body: &[u8],
     crc: &AtomicUsize,
     upgrades: &AtomicUsize,
@@ -317,10 +335,13 @@ fn serve(
         .set_write_timeout(Some(Duration::from_secs(5)))
         .unwrap();
     let mut stream: Box<dyn ReadWrite> = match acceptor {
-        Some(acceptor) => match acceptor.accept(socket) {
-            Ok(tls) => Box::new(tls),
-            Err(_) => return,
-        },
+        Some(config) => {
+            let connection = match rustls::ServerConnection::new(config) {
+                Ok(connection) => connection,
+                Err(_) => return,
+            };
+            Box::new(rustls::StreamOwned::new(connection, socket))
+        }
         None => Box::new(socket),
     };
     let mut head = Vec::new();
@@ -380,6 +401,7 @@ fn attempt_counter() -> (ProfileProgressObserver, Arc<AtomicUsize>) {
 fn prepare_until(
     selection: &ProfileSelection,
     observer: &ProfileProgressObserver,
+    driver: &MaintenanceDriver,
     done: impl Fn() -> bool,
 ) -> Result<Duration, String> {
     let started = Instant::now();
@@ -389,15 +411,27 @@ fn prepare_until(
             started.elapsed() < Duration::from_secs(10),
             "the preparation stalled"
         );
+        let now = Instant::now();
         if let TemplateStep::Complete(result) =
-            preparation.step(Instant::now() + TEMPLATE_STEP_WAIT, observer)
+            preparation.step(now + TEMPLATE_STEP_WAIT, observer)
         {
             return Err(format!("completed early: {:?}", result.map(|_| ())));
         }
+        driver.maintain(Instant::now());
     }
     let dropped = Instant::now();
     drop(preparation);
     Ok(dropped.elapsed())
+}
+
+/// can admit a network operation. Keep one driver registered for the entire
+/// integration-test process to avoid gaps between concurrently running tests.
+fn start_network_service() -> &'static MaintenanceDriver {
+    static DRIVER: LazyLock<MaintenanceDriver> = LazyLock::new(|| {
+        trust_test_certificate();
+        NetworkService::start_composition().expect("start host network service")
+    });
+    &DRIVER
 }
 
 /// World 1's game host cannot be looked up. World 2 uses the same game
@@ -409,7 +443,7 @@ fn prepare_until(
 /// game endpoint.
 #[test]
 fn a_failed_game_host_moves_the_fill_to_the_next_world_as_a_whole() {
-    trust_test_certificate();
+    let driver = start_network_service();
     let packs = packs();
     let body = crc_body(&packs);
     let world_one = UpdateServer::start(&body, true);
@@ -446,7 +480,7 @@ fn a_failed_game_host_moves_the_fill_to_the_next_world_as_a_whole() {
     let failed_before = FAILED_LOOKUPS.load(Ordering::Relaxed);
 
     // Until the update-server fill connects to world 3's game endpoint.
-    let outcome = prepare_until(&selection, &observer, || {
+    let outcome = prepare_until(&selection, &observer, driver, || {
         world_three_game.upgrade_requests() > 0
     });
 
@@ -493,7 +527,7 @@ fn a_failed_game_host_moves_the_fill_to_the_next_world_as_a_whole() {
 /// world 2's game endpoint, not world 1's.
 #[test]
 fn an_unreachable_asset_server_moves_the_fill_to_the_next_world_as_a_whole() {
-    trust_test_certificate();
+    let driver = start_network_service();
     let packs = packs();
     let body = crc_body(&packs);
     let closed = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -519,7 +553,7 @@ fn an_unreachable_asset_server_moves_the_fill_to_the_next_world_as_a_whole() {
     let (observer, attempts) = attempt_counter();
 
     // Until the update-server fill connects to a game endpoint.
-    let outcome = prepare_until(&selection, &observer, || {
+    let outcome = prepare_until(&selection, &observer, driver, || {
         world_one_game.connections() + world_two_game.upgrade_requests() > 0
     });
 
@@ -556,7 +590,7 @@ fn an_unreachable_asset_server_moves_the_fill_to_the_next_world_as_a_whole() {
 /// attempts world 1 only and passes over worlds 2 and 3.
 #[test]
 fn a_failed_asset_host_is_looked_up_once_in_each_preparation() {
-    trust_test_certificate();
+    let driver = start_network_service();
     let root = TempRoot::new("failed-asset");
     let selection = wss_selection(
         &root,
@@ -578,11 +612,13 @@ fn a_failed_asset_host_is_looked_up_once_in_each_preparation() {
             started.elapsed() < Duration::from_secs(10),
             "the preparation stalled"
         );
+        let now = Instant::now();
         if let TemplateStep::Complete(result) =
-            preparation.step(Instant::now() + TEMPLATE_STEP_WAIT, &observer)
+            preparation.step(now + TEMPLATE_STEP_WAIT, &observer)
         {
             break result.err().expect("the asset host lookup fails");
         }
+        driver.maintain(Instant::now());
     };
     drop(preparation);
     let stepped_lookups = FAILED_ASSET_LOOKUPS.load(Ordering::Relaxed) - before;
@@ -677,7 +713,7 @@ static LOG_SINK: LogSink = LogSink;
 /// installed host-log sink, with the host name and the lookup time.
 #[test]
 fn a_slow_name_lookup_reaches_the_host_log() {
-    trust_test_certificate();
+    let driver = start_network_service();
     assert!(api::hostlog::install_sink(&LOG_SINK));
     let packs = packs();
     let assets = UpdateServer::start(&crc_body(&packs), false);
@@ -711,7 +747,7 @@ fn a_slow_name_lookup_reaches_the_host_log() {
 
     // Until the update-server fill connects to the game endpoint: every
     // step that uses the asset host is done.
-    let outcome = prepare_until(&selection, &observer, || game.connections() > 0);
+    let outcome = prepare_until(&selection, &observer, &driver, || game.connections() > 0);
 
     let lookups = SLOW_LOOKUPS.load(Ordering::Relaxed) - slow_before;
     let logged: Vec<String> = LOGGED

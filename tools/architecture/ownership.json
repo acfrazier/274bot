@@ -267,6 +267,110 @@
       "owner": "T2"
     },
     {
+      "path": "crates/client-adapter/Cargo.toml",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/budget.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/cancel.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/control.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/handoff.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/health.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/host_network.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/http.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/https_handshake.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/ledger.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/lib.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/park.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/reactor.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/records.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/resolver.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/ring.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/shared.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/service.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/stream_handle.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/tcp.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/tcp_endpoint.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/tls_handshake.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/ws_endpoint.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/src/ws_frames.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/tests/game_tls_model.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/tests/https_cell_model.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/e2e/fixtures/native-suite/derive.py",
       "owner": "T1"
     },
@@ -1236,6 +1340,10 @@
     },
     {
       "path": "crates/host-play/tests/bundled_nav_build.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/cache_held_verifier.rs",
       "owner": "T1"
     },
     {

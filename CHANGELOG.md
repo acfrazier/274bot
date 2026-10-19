@@ -5,6 +5,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ## Unreleased
 
+### Network transport
+
+- Game TCP and WSS now share one process-scoped Mio reactor. A fixed
+  game-handshake worker owns each initial WSS TLS handshake and returns the
+  authenticated socket to the reactor for WebSocket upgrade and session I/O.
+  HTTPS asset and public-world key fetches use a separate fixed TLS worker;
+  cancellation and deadlines no longer wait for an OS certificate verifier.
+- A hosted login keeps its prepared endpoint, cancellation identity and
+  queue retirement bound through the final session commit. Embedded callers
+  start the network composition explicitly and retain its maintenance driver.
+
 ### Toolchain
 
 - Pinned the host and client toolchains and CI to Rust 1.98.1, including the

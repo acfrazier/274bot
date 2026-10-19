@@ -620,6 +620,7 @@ fn run_cell() -> Result<(), String> {
     let mut stop_a = None;
     let mut stop_b = None;
     let outcome = loop {
+        play.maintain_services(Instant::now());
         if let Some(error) = play.script_last_error(&names[0]) {
             break Err(format!("script error on {}: {error}", names[0]));
         }

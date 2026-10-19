@@ -924,6 +924,7 @@ fn real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp() {
         .expect("spawn owned live account");
         let deadline = Instant::now() + Duration::from_secs(90);
         let destination = loop {
+            play.maintain_services(Instant::now());
             {
                 let state = state.lock().expect("fixture state");
                 assert!(state.failure.is_none(), "{:?}", state.failure);
@@ -959,6 +960,7 @@ fn real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp() {
         let deadline = Instant::now() + Duration::from_secs(60);
         let mut seen_risk = None;
         let terminal = loop {
+            play.maintain_services(Instant::now());
             {
                 let state = state.lock().expect("fixture state");
                 assert!(state.failure.is_none(), "{:?}", state.failure);
@@ -1079,6 +1081,7 @@ fn real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp() {
         state.lock().expect("fixture state").shot = Some((cell_dir, receipt));
         let deadline = Instant::now() + Duration::from_secs(10);
         while !state.lock().expect("fixture state").captured {
+            play.maintain_services(Instant::now());
             assert!(Instant::now() < deadline, "compat PNG deadline");
             std::thread::sleep(Duration::from_millis(20));
         }

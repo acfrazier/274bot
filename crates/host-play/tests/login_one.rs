@@ -37,6 +37,7 @@ fn login_one() {
     }
     let deadline = std::time::Instant::now() + Duration::from_secs(60);
     loop {
+        play.maintain_services(std::time::Instant::now());
         let s = play.statuses()[0].clone();
         if s.runenergy >= 20 {
             if s.run_sends != 1 {
@@ -57,6 +58,6 @@ fn login_one() {
                 s.runenergy, s.run_sends
             ));
         }
-        std::thread::sleep(Duration::from_millis(250));
+        std::thread::sleep(Duration::from_millis(100));
     }
 }

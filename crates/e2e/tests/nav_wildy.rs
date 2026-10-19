@@ -15,7 +15,7 @@
 
 mod common;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use api::snapshot::WorldTile;
 use common::{fail, live, options, profiles, wait_ingame};
@@ -66,6 +66,7 @@ fn nav_wildy() {
 
     let world = NavWorld::load_pack(&default_pack_path())
         .unwrap_or_else(|e| fail(&format!("nav pack must load for wilderness routing: {e:?}")));
+    play.maintain_services(Instant::now());
     let (tx, tz) = play
         .statuses()
         .iter()

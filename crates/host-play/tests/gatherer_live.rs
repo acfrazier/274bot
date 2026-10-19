@@ -6238,6 +6238,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     let mut soak_stop_requested = false;
     let mut soak_stop_at = Instant::now();
     let result = loop {
+        play.maintain_services(Instant::now());
         let lifecycle_error = play.script_last_error(&account);
         let (phase, start_requested, ready_to_start, slot_error, witness, baseline_xp) = {
             let slot = state.lock().map_err(|_| "live state poisoned")?;
@@ -7395,6 +7396,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             .map_err(|_| "capture request poisoned")? = Some((directory.clone(), receipt));
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
+            play.maintain_services(Instant::now());
             if let Some(completion) = capture_result
                 .lock()
                 .map_err(|_| "capture result poisoned")?
@@ -7571,6 +7573,7 @@ fn run_quester_sheep_shared_core() -> Result<(), String> {
     );
     let outer_deadline = Instant::now() + deadline + Duration::from_secs(15);
     let result = loop {
+        play.maintain_services(Instant::now());
         let script_error = play.script_last_error(&account);
         let native_status = play.script_native_status(&account);
         let run_state = play.script_state(&account);

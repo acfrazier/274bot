@@ -114,6 +114,7 @@ pub fn options() -> PlayOptions {
 pub fn wait_up(play: &Play, want: usize, timeout: Duration, case: &str) {
     let deadline = Instant::now() + timeout;
     loop {
+        play.maintain_services(Instant::now());
         let statuses = play.statuses();
         let ready = statuses.iter().filter(|s| s.is_up()).count();
         if ready >= want {
@@ -131,7 +132,7 @@ pub fn wait_up(play: &Play, want: usize, timeout: Duration, case: &str) {
                 short_status(&statuses)
             );
         }
-        thread::sleep(Duration::from_millis(250));
+        thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -140,6 +141,7 @@ pub fn wait_up(play: &Play, want: usize, timeout: Duration, case: &str) {
 pub fn wait_ingame(play: &Play, want: usize, timeout: Duration, case: &str) {
     let deadline = Instant::now() + timeout;
     loop {
+        play.maintain_services(Instant::now());
         let statuses = play.statuses();
         let ready = statuses
             .iter()
@@ -155,7 +157,7 @@ pub fn wait_ingame(play: &Play, want: usize, timeout: Duration, case: &str) {
                  statuses: {statuses:?}"
             ));
         }
-        thread::sleep(Duration::from_millis(250));
+        thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -172,6 +174,7 @@ pub fn login_starts(statuses: &[SlotStatus]) -> Vec<Instant> {
 pub fn wait_logged_out(play: &Play, want: usize, timeout: Duration, case: &str) {
     let deadline = Instant::now() + timeout;
     loop {
+        play.maintain_services(Instant::now());
         let statuses = play.statuses();
         let out = statuses.iter().filter(|s| !s.ingame).count();
         if out >= want {
@@ -180,11 +183,11 @@ pub fn wait_logged_out(play: &Play, want: usize, timeout: Duration, case: &str) 
         }
         if Instant::now() >= deadline {
             fail(&format!(
-                "{case}: {out}/{want} slot(s) left the game after {timeout:?}; \
+                "{case}: {out}/{want} slots left the game after {timeout:?}; \
                  statuses: {statuses:?}"
             ));
         }
-        thread::sleep(Duration::from_millis(250));
+        thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -194,6 +197,7 @@ pub fn wait_logged_out(play: &Play, want: usize, timeout: Duration, case: &str) 
 pub fn assert_none_ingame_for(play: &Play, duration: Duration, case: &str) {
     let deadline = Instant::now() + duration;
     loop {
+        play.maintain_services(Instant::now());
         let statuses = play.statuses();
         let ingame = statuses.iter().filter(|s| s.ingame).count();
         if ingame > 0 {
@@ -206,6 +210,20 @@ pub fn assert_none_ingame_for(play: &Play, duration: Duration, case: &str) {
             println!("PASS: {case}: no slot ingame for {duration:?}");
             return;
         }
-        thread::sleep(Duration::from_millis(250));
+        thread::sleep(Duration::from_millis(100));
     }
 }
+
+/// Maintain live Play services throughout a bounded observation interval.
+pub fn maintain_for(play: &Play, duration: Duration) {
+    let deadline = Instant::now() + duration;
+    loop {
+        play.maintain_services(Instant::now());
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return;
+        }
+        thread::sleep(remaining.min(Duration::from_millis(100)));
+    }
+}
+

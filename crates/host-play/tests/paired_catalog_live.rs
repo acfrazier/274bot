@@ -1180,6 +1180,7 @@ fn run_cell(case: PairCase) -> Result<(), String> {
     let mut phase = 0_u8;
     let mut deadline = Instant::now() + Duration::from_secs(PREP_DEADLINE_SECS);
     let outcome = loop {
+        play.maintain_services(Instant::now());
         if let Some(error) = play.script_last_error(&names[0]) {
             break Err(format!("script error on {}: {error}", names[0]));
         }

@@ -452,6 +452,18 @@ impl Play {
                 scope,
             )))
         });
+        let process_start = script::work_admission::process_incarnation();
+        let transport_health = process_start.ok().map(|incarnation| {
+            super::transport_health::ServiceHealth::new(
+                incarnation, api::identity::ProcessOrigin::at(std::time::Instant::now()),
+            )
+        });
+        // Play borrows the running process service. Only the composition
+        // starts it (before cache preparation); an unstarted service is a
+        // typed refusal at the first network admission, not construction.
+        let network = client_adapter::service::NetworkService::current_started().ok();
+        let transport = network.as_ref().map(|service| Arc::clone(service.reactor()));
+        let resolver = network.as_ref().map(|service| Arc::clone(service.resolver()));
         Play {
             statuses: Arc::new(Mutex::new(Vec::new())),
             auto_world: None,
@@ -486,6 +498,11 @@ impl Play {
             world,
             wakes: HashMap::new(),
             capacity: Arc::new(host::CapacityMonitor::new()),
+            process_start,
+            transport_health,
+            transport,
+            resolver,
+            _headless_composition_driver: None,
             local_state,
         }
     }
@@ -516,7 +533,15 @@ where
     F: Fn(&str) -> (Option<Arc<SlotInput>>, Option<Arc<FrameBuf>>),
     G: Fn(&mut Client, &str, crate::SlotFrameInput) + Send + Sync + 'static,
 {
+    let driver = match client_adapter::service::NetworkService::start_composition() {
+        Ok(driver) => Some(driver),
+        Err(error) => {
+            host_log!(stderr; Category::Lifecycle, Level::Error, "network startup: {error}");
+            None
+        }
+    };
     let mut play = Play::new(options);
+    play._headless_composition_driver = driver;
     play.per_frame = Arc::new(per_frame);
     for profile in profiles {
         let (slot_input, slot_mailbox) = per_slot(&profile.username);
@@ -538,11 +563,15 @@ where
     F: Fn(&str) -> (Option<Arc<SlotInput>>, Option<Arc<FrameBuf>>),
     G: Fn(&mut Client, &str, crate::SlotFrameInput) + Send + Sync + 'static,
 {
+    let driver = client_adapter::service::NetworkService::start_composition()
+        .map_err(|error| error.to_string())?;
     if !profiles.is_empty() {
         template.profile().require_bot_operation()?;
     }
     let validated = template.validate_for_play()?;
-    run_prepared_template(validated, mainland, profiles, per_slot, per_frame)
+    let mut play = run_prepared_template(validated, mainland, profiles, per_slot, per_frame)?;
+    play._headless_composition_driver = Some(driver);
+    Ok(play)
 }
 
 /// Construct Play from a one-use template handoff. The public checked
@@ -576,24 +605,33 @@ pub fn run_with_profile(
     options: &ProfilePlayOptions,
     profiles: Vec<Profile>,
 ) -> Result<Play, String> {
+    let driver = client_adapter::service::NetworkService::start_composition()
+        .map_err(|error| error.to_string())?;
     if !profiles.is_empty() {
         options.profile.require_bot_operation()?;
     }
     let template = SharedClientTemplate::load(Arc::clone(&options.profile))?;
-    run_with_template(
-        template,
-        options.mainland,
-        profiles,
-        |_| (None, None),
-        |_, _, _| {},
-    )
+    let validated = template.validate_for_play()?;
+    let mut play = run_prepared_template(
+        validated, options.mainland, profiles, |_| (None, None), |_, _, _| {},
+    )?;
+    play._headless_composition_driver = Some(driver);
+    Ok(play)
 }
 
 /// Wall spawn for the e2e ladder: every profile spawns one full `Client`
 /// slot (the old `1 fat + N lean` split is gone). `heads` only selects
 /// whether the first profile gets the login-FIFO front.
 pub fn run_channels(options: &PlayOptions, profiles: Vec<Profile>, heads: usize) -> Play {
+    let driver = match client_adapter::service::NetworkService::start_composition() {
+        Ok(driver) => Some(driver),
+        Err(error) => {
+            host_log!(stderr; Category::Lifecycle, Level::Error, "network startup: {error}");
+            None
+        }
+    };
     let mut play = Play::new(options);
+    play._headless_composition_driver = driver;
     let tv_name = profiles.first().map(|p| p.username.clone());
     for profile in profiles {
         play.spawn_slot(profile, None, None, None);

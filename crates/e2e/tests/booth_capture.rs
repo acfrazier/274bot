@@ -8,12 +8,11 @@ mod common;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use api::snapshot::GameSnapshot;
 use client::render::backend::FrameOutput;
-use common::{fail, live, options, profiles, wait_ingame, wait_logged_out};
+use common::{fail, live, options, profiles, service_wait, wait_ingame, wait_logged_out};
 use host::{FrameBuf, InputEv, SlotInput};
 use host_play::run_with_io;
 
@@ -66,11 +65,12 @@ fn capture_bank_sweep() {
     );
 
     wait_ingame(&play, 1, Duration::from_secs(90), "booth_capture");
-    thread::sleep(Duration::from_secs(3));
+    service_wait(&play, Duration::from_secs(3));
 
     // Take the initial frame.
     let take = |idx: usize| {
         for _ in 0..40 {
+            play.maintain_services(Instant::now());
             match pixels.take() {
                 Some(FrameOutput::Texture(handle)) => {
                     let frame = handle.read_back();
@@ -81,7 +81,7 @@ fn capture_bank_sweep() {
                     save_ppm(&pix.pixels, &format!("/tmp/booth_{idx:02}.ppm"));
                     return;
                 }
-                None => thread::sleep(Duration::from_millis(100)),
+                None => service_wait(&play, Duration::from_millis(100)),
             }
         }
         fail("no frame captured");
@@ -93,11 +93,11 @@ fn capture_bank_sweep() {
     for i in 1..8 {
         for _ in 0..3 {
             tx.send(InputEv::Key { down: true, ch: 1 }).unwrap();
-            thread::sleep(Duration::from_millis(120));
+            service_wait(&play, Duration::from_millis(120));
             tx.send(InputEv::Key { down: false, ch: 1 }).unwrap();
-            thread::sleep(Duration::from_millis(60));
+            service_wait(&play, Duration::from_millis(60));
         }
-        thread::sleep(Duration::from_millis(300));
+        service_wait(&play, Duration::from_millis(300));
         take(i);
     }
 
@@ -233,7 +233,7 @@ fn dump_bank_locs() {
 
     wait_ingame(&play, 1, Duration::from_secs(90), "dump_bank_locs");
     // Let one rebuild land in the hook.
-    thread::sleep(Duration::from_secs(2));
+    service_wait(&play, Duration::from_secs(2));
     if !dumped.load(Ordering::Relaxed) {
         eprintln!("WARN: loc dump did not run (scene never 2 in the hook)");
     }

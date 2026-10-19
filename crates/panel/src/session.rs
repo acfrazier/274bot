@@ -180,6 +180,11 @@ impl ProfilePreparationSteps {
                 completed: 1,
                 total: Some(1),
             },
+            host_play::TemplateStep::ServiceStart(error) => Step::Complete {
+                output: Err(error.to_string()),
+                completed: 1,
+                total: Some(1),
+            },
         }
     }
 }

@@ -20,13 +20,18 @@
 //! `NODE_PRODUCTION` does not 16 us), and it does not burst: at most one
 //! handshake is in flight, attempts start at least [`LOGIN_START_SPACING`]
 //! apart, and each started handshake has a [`HANDSHAKE_HOLD`] deadline.
-//! Expiry produces one cancellation effect after [`LEASE_SLACK`], but its
-//! flight remains `Retiring` and blocks admission until actual return.
+//! Expiry returns one cancellation effect after [`LEASE_SLACK`]. A started
+//! flight remains `Retiring` until physical ack unless a matching initial-TLS
+//! queue-release proof reduces it first.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use client::io::client_stream::{LoginCancel, READ_TIMEOUT};
+use client_adapter::cancel::{AttemptRetire, CancelToken};
+use client_adapter::control::BindingId;
+use client_adapter::handoff::QueueReleaseProof;
+use client_adapter::stream_handle::READ_TIMEOUT;
 
 /// Permit outcome of [`LoginQueue::poll_owner`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,7 +51,66 @@ pub struct PollResult {
     /// The permit decision for this owner.
     pub permit: Permit,
     /// Cancellation effects to fire after releasing the queue lock.
-    pub cancels: Vec<LoginCancel>,
+    pub cancels: Vec<CancelToken>,
+}
+
+/// Exact identity for one queue flight and its transport attempt.
+///
+/// The slot owner alone is not sufficient to identify a started attempt:
+/// binding and cancellation generations fence late returns and acknowledgements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueueAttemptId {
+    owner: u64,
+    binding: BindingId,
+    generation: u64,
+    transfer_seq: Option<u64>,
+}
+
+impl QueueAttemptId {
+    /// Bind a flight to one immutable transport identity.
+    pub fn new(
+        owner: u64,
+        binding: BindingId,
+        generation: u64,
+        transfer_seq: Option<u64>,
+    ) -> Self {
+        Self {
+            owner,
+            binding,
+            generation,
+            transfer_seq,
+        }
+    }
+
+    /// Slot-owner token used to find the unused grant at start.
+    pub fn owner(self) -> u64 {
+        self.owner
+    }
+
+    /// Full reactor binding identity for this attempt.
+    pub fn binding(self) -> BindingId {
+        self.binding
+    }
+
+    /// Cancellation generation for the attempt.
+    pub fn generation(self) -> u64 {
+        self.generation
+    }
+
+    /// Handoff sequence for initial TLS, or `None` for a TCP-only attempt.
+    pub fn transfer_seq(self) -> Option<u64> {
+        self.transfer_seq
+    }
+}
+
+/// Result of Phase Q. `accepted` is true only when this exact return still
+/// owns a live lease. Cancellation effects must run after releasing K1.
+#[derive(Debug)]
+pub struct ReturnResult {
+    /// Whether Phase Q accepted the still-live exact attempt.
+    pub accepted: bool,
+    /// Queue expiry effects to execute after releasing K1.
+    pub cancels: Vec<CancelToken>,
 }
 
 /// Why the eligible queue head may not start its login yet. The deadline is a
@@ -56,7 +120,7 @@ pub struct PollResult {
 pub enum AdmitBlocker {
     /// Another bot's live login handshake has not returned yet.
     Handshake,
-    /// A timed-out handshake has not acknowledged its actual return yet.
+    /// A timed-out or returned handshake awaits physical retirement.
     Retiring,
     /// The minimum gap after a prior login start or this owner's release wait.
     Spacing { until: Instant },
@@ -107,15 +171,14 @@ pub const LOGIN_START_SPACING: Duration = Duration::from_millis(2 * SERVER_TICK.
 /// which stops the connect and every read and write of the handshake at it.
 pub const HANDSHAKE_HOLD: Duration = READ_TIMEOUT;
 
-/// How long after a handshake's deadline the queue waits before requesting
-/// cancellation. The expired flight remains in `Retiring` until its owner
-/// acknowledges the actual return; elapsed time alone never frees its slot.
+/// How long after the original login deadline the queue requests cancellation
+/// when no Q return or initial-TLS release proof has settled the attempt.
+/// Started flights remain in `Retiring` until a matching physical ack.
 pub const LEASE_SLACK: Duration = Duration::from_secs(1);
 
 /// Production `rateLimitDeviceLogin` is 5 in a 15 s TTL (`>= 5` rejects,
 /// so 4 grants then wait the remaining TTL). Each grant refreshes the
-/// host reservation count; cooldown is measured from the latest actual
-/// `client.login` return while any unreturned grant prevents expiry.
+/// host reservation count; cooldown starts at Q return or proven TLS release.
 const UID_GRANT_CAP: usize = 4;
 const UID_COOLDOWN: Duration = Duration::from_secs(15);
 
@@ -147,9 +210,10 @@ pub struct LoginQueue {
     preferred: Option<u64>,
     /// When the latest attempt actually started.
     last_start: Option<Instant>,
-    /// Granted logins that have neither returned nor been abandoned, including
-    /// started flights awaiting an actual-return acknowledgement.
+    /// Granted or started flights; actual socket retirement or initial-TLS
+    /// release proof, never a logical return alone, frees admission.
     flights: Vec<Flight>,
+    /// Address grants currently counted against the server's attempt window.
     ip_count: usize,
     ip_last: Option<Instant>,
     throttle_until: Option<Instant>,
@@ -163,25 +227,30 @@ struct QueueEntry {
     not_before: Option<Instant>,
 }
 
-/// One granted login, owned by its slot owner until it returns.
+/// One granted login, retained until pre-start abandon, valid initial-TLS
+/// queue release, or physical retirement.
 #[derive(Debug, Clone)]
 struct Flight {
     owner: u64,
     uid: i32,
     granted: Instant,
+    /// Exact attempt identity, bound once when the permit starts.
+    identity: Option<QueueAttemptId>,
     /// When the slot worker started the attempt ([`LoginQueue::start_attempt`]).
     started: Option<Instant>,
-    /// Cancellation effect for the started attempt, taken into a poll result
-    /// once when its lease expires.
-    cancel: Option<LoginCancel>,
-    /// The cancellation effect was returned; only the actual return releases
-    /// this flight.
+    /// Cancellation effect to return once when lease expiry selects this flight.
+    cancel: Option<CancelToken>,
+    retirement: Option<Arc<AttemptRetire>>,
+    release_proof: Option<Arc<QueueReleaseProof>>,
+    returned: bool,
+    settled: bool,
+    /// Expired or returned attempts remain admitted until physical retirement.
     retiring: bool,
 }
 
 impl Flight {
-    /// When cancellation is requested. This deadline never removes a started
-    /// flight: it remains in `Retiring` until the owner acknowledges return.
+    /// When lease expiry requests cancellation. A returned flight no longer
+    /// has an active lease, but it still blocks admission until physical ack.
     fn lease_end(&self, hold: Duration) -> Instant {
         self.started.unwrap_or(self.granted) + hold + LEASE_SLACK
     }
@@ -189,6 +258,23 @@ impl Flight {
     /// A grant reserves spacing until the owner actually starts it.
     fn pacing_start(&self) -> Instant {
         self.started.unwrap_or(self.granted)
+    }
+}
+
+fn attempt_cells_match(
+    identity: QueueAttemptId,
+    retirement: &AttemptRetire,
+    release_proof: Option<&QueueReleaseProof>,
+) -> bool {
+    if retirement.generation() != identity.generation {
+        return false;
+    }
+    match (identity.transfer_seq, release_proof) {
+        (None, None) => true,
+        (Some(sequence), Some(proof)) => {
+            proof.identity() == identity.binding && proof.transfer_seq() == sequence
+        }
+        _ => false,
     }
 }
 
@@ -200,11 +286,10 @@ struct UidState {
 
 impl LoginQueue {
     /// Construct a queue with an explicit start spacing, address permit
-    /// cap, and address idle TTL. The default permits one login attempt at a
-    /// time; a started flight that times out continues occupying its slot
-    /// until its actual return is acknowledged. `ip_cap` counts completed
-    /// attempts plus pending reservations, and a full `ip_window` starts at
-    /// the latest actual login return only after no reservation remains.
+    /// cap, and address idle TTL. A started flight blocks through physical
+    /// retirement unless an exact initial-TLS proof releases admission.
+    /// A full `ip_window` starts at the latest Q return or proof release.
+    /// `ip_cap` counts completed attempts and pending reservations.
     pub fn new(spacing: Duration, ip_cap: usize, ip_window: Duration) -> Self {
         assert!(ip_cap > 0, "ip_cap must be positive");
         Self {
@@ -395,48 +480,109 @@ impl LoginQueue {
         }
     }
 
-    /// Mark `owner`'s granted login as started now, its connect about to
-    /// begin. Start spacing counts from here, so a worker delayed between
-    /// its grant and its connect cannot start closer than the spacing to the
-    /// previous attempt. Returns the deadline by which the attempt must stop
-    /// all socket I/O, or `None` if the grant's lease already ran out
-    /// (nothing may be attempted on it; the owner queues again). The queue
-    /// returns a cancellation effect from a later poll if the attempt is
-    /// still running at the lease end, and retains the flight until its
-    /// actual return is acknowledged.
+    /// Bind an exact started attempt to its queue flight. A proof is required
+    /// exactly when this identity has an initial-TLS transfer sequence.
+    ///
+    /// `None` means the grant expired, its token was revoked before start,
+    /// or its identity does not match the cancellation, retirement, or proof
+    /// cells. Refusals leave the unused grant live for `abandon_permit`.
     pub fn start_attempt(
         &mut self,
-        owner: u64,
+        identity: QueueAttemptId,
         now: Instant,
-        cancel: LoginCancel,
+        cancel: CancelToken,
+        retirement: Arc<AttemptRetire>,
+        release_proof: Option<Arc<QueueReleaseProof>>,
     ) -> Option<Instant> {
+        if cancel.is_cancelled()
+            || cancel.generation() != identity.generation
+            || !attempt_cells_match(identity, &retirement, release_proof.as_deref())
+        {
+            return None;
+        }
         let index = self
             .flights
             .iter()
-            .position(|flight| flight.owner == owner && flight.started.is_none())?;
+            .position(|flight| flight.owner == identity.owner && flight.started.is_none())?;
         if self.flights[index].lease_end(self.handshake_hold) <= now {
             let flight = self.flights.remove(index);
             self.release_reservation(flight.uid);
             return None;
         }
         let flight = &mut self.flights[index];
+        flight.identity = Some(identity);
         flight.started = Some(now);
         flight.cancel = Some(cancel);
+        flight.retirement = Some(retirement);
+        flight.release_proof = release_proof;
         self.last_start = Some(self.last_start.map_or(now, |last| last.max(now)));
         Some(now + self.handshake_hold)
     }
 
-    /// Record the actual return of `owner`'s login call. Success, error and
-    /// `Retiring` returns all count once as an attempt. A timeout alone never
-    /// settles or releases the flight.
-    pub fn acknowledge_login_return(&mut self, owner: u64, now: Instant) -> bool {
-        let Some(i) = self.flights.iter().position(|flight| flight.owner == owner) else {
+    /// Return one started login under K1.
+    ///
+    /// Apply the optional server hold and expiry first. `accepted` is true
+    /// only if this exact identity still owned a live lease. A started flight
+    /// remains `Retiring` until its physical retirement cell is acknowledged.
+    pub fn return_attempt(
+        &mut self,
+        identity: QueueAttemptId,
+        now: Instant,
+        server_hold: Option<Duration>,
+    ) -> ReturnResult {
+        if let Some(hold) = server_hold {
+            self.hold_for(now, hold);
+        }
+        let cancels = self.expire(now);
+        let Some(index) = self
+            .flights
+            .iter()
+            .position(|flight| flight.identity == Some(identity))
+        else {
+            return ReturnResult {
+                accepted: false,
+                cancels,
+            };
+        };
+        let accepted = !self.flights[index].retiring;
+        let uid = self.flights[index].uid;
+        if !self.flights[index].settled {
+            self.settle(uid, now);
+            self.flights[index].settled = true;
+        }
+        let flight = &mut self.flights[index];
+        flight.returned = true;
+        flight.retiring = true;
+        flight.cancel.take();
+        ReturnResult { accepted, cancels }
+    }
+
+    /// Reduce a physical acknowledgement after the caller has already called
+    /// `retirement.ack()` outside K1. Both immutable identity and Arc identity
+    /// must match, so a late old ack cannot release a newer owner flight.
+    pub fn acknowledge_retirement(
+        &mut self,
+        identity: QueueAttemptId,
+        retirement: &Arc<AttemptRetire>,
+        now: Instant,
+    ) -> bool {
+        self.release_proven_flights();
+        if !retirement.acknowledged() || retirement.generation() != identity.generation {
+            return false;
+        }
+        let Some(index) = self.flights.iter().position(|flight| {
+            flight.identity == Some(identity)
+                && flight
+                    .retirement
+                    .as_ref()
+                    .is_some_and(|stored| Arc::ptr_eq(stored, retirement))
+        }) else {
             return false;
         };
-        let flight = self.flights.remove(i);
-        let started = flight.pacing_start();
-        self.last_start = Some(self.last_start.map_or(started, |last| last.max(started)));
-        self.settle(flight.uid, now);
+        let flight = self.flights.remove(index);
+        if !flight.settled {
+            self.settle(flight.uid, now);
+        }
         true
     }
 
@@ -498,14 +644,69 @@ impl LoginQueue {
         }
     }
 
+    /// Consume published initial-TLS queue-release proofs before considering
+    /// ordinary expiry or physical acknowledgements.
+    fn release_proven_flights(&mut self) {
+        let mut i = 0;
+        while i < self.flights.len() {
+            let flight = &self.flights[i];
+            let valid_proof = flight
+                .identity
+                .zip(flight.retirement.as_deref())
+                .zip(flight.release_proof.as_deref())
+                .filter(|((identity, retirement), proof)| {
+                    flight.started.is_some()
+                        && attempt_cells_match(*identity, retirement, Some(proof))
+                });
+            let released_at = valid_proof.and_then(|((_, _), proof)| proof.snapshot());
+            let Some(released_at) = released_at else {
+                i += 1;
+                continue;
+            };
+            let uid = flight.uid;
+            if !flight.settled {
+                self.settle(uid, released_at);
+                self.flights[i].settled = true;
+            }
+            self.flights.remove(i);
+        }
+    }
+
+    /// Remove flights whose physical owner has acknowledged actual release.
+    /// Unsettled attempts use this observed release time as their final TTL
+    /// anchor. The caller already performs `AttemptRetire::ack()` unlocked.
+    fn release_acknowledged_flights(&mut self, now: Instant) {
+        let mut i = 0;
+        while i < self.flights.len() {
+            let acknowledged = self.flights[i]
+                .retirement
+                .as_ref()
+                .is_some_and(|retirement| retirement.acknowledged());
+            if !acknowledged {
+                i += 1;
+                continue;
+            }
+            let flight = self.flights.remove(i);
+            if flight.started.is_some() && !flight.settled {
+                self.settle(flight.uid, now);
+            }
+        }
+    }
+
     /// Expire unstarted reservations and move timed-out started flights into
-    /// `Retiring`. The returned cancellation effects are fired by the caller
-    /// only after it releases the queue lock.
-    fn expire(&mut self, now: Instant) -> Vec<LoginCancel> {
+    /// `Retiring`. A returned started flight stays there until physical ack.
+    /// Cancellation effects run only after the caller releases the queue lock.
+    fn expire(&mut self, now: Instant) -> Vec<CancelToken> {
+        self.release_proven_flights();
+        self.release_acknowledged_flights(now);
         let mut cancels = Vec::new();
         let hold = self.handshake_hold;
         let mut i = 0;
         while i < self.flights.len() {
+            if self.flights[i].started.is_some() && self.flights[i].returned {
+                i += 1;
+                continue;
+            }
             if self.flights[i].lease_end(hold) > now {
                 i += 1;
                 continue;
@@ -561,10 +762,11 @@ impl LoginQueue {
             .flights
             .iter()
             .filter(|flight| {
-                let expired = flight.lease_end(self.handshake_hold) <= now;
+                let expired =
+                    !flight.returned && flight.lease_end(self.handshake_hold) <= now;
                 let retiring = flight.retiring || (flight.started.is_some() && expired);
                 has_retiring_flight |= retiring;
-                retiring || !expired
+                flight.started.is_some() || !expired
             })
             .count();
         if in_flight >= self.max_in_flight {
@@ -650,8 +852,13 @@ impl LoginQueue {
             owner,
             uid,
             granted: now,
+            identity: None,
             started: None,
             cancel: None,
+            retirement: None,
+            release_proof: None,
+            returned: false,
+            settled: false,
             retiring: false,
         });
     }
@@ -736,6 +943,9 @@ impl LoginBackoff {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use client_adapter::cancel::CancelSource;
+    use client_adapter::park::Park;
+    use std::sync::{Arc, LazyLock};
 
     #[test]
     fn deferred_owner_keeps_fifo_without_reserving_or_charging_attempts() {
@@ -789,14 +999,14 @@ mod tests {
         assert_eq!(poll_permit(&mut queue, 2, 8, now), Permit::Grant);
         assert_eq!(queue.status_owner(1).unwrap().position, 1);
         assert_eq!(queue.ip_count, 1);
-        assert!(queue.start_attempt(2, now, LoginCancel::new()).is_some());
+        assert!(start_test_tcp(&mut queue, 2, now, test_cancel()).2.is_some());
 
         assert_eq!(
             poll_permit(&mut queue, 1, 7, release),
             Permit::Wait(QUEUE_POLL),
             "the defer ending does not bypass the in-flight handshake"
         );
-        assert!(queue.acknowledge_login_return(2, release));
+        assert!(ack_owner(&mut queue, 2, release));
         assert_eq!(poll_permit(&mut queue, 1, 7, release), Permit::Grant);
         assert_eq!(queue.flights.len(), 1);
         assert_eq!(queue.ip_count, 2);
@@ -814,11 +1024,11 @@ mod tests {
         let mut last_return = exit;
         for _ in 0..UID_GRANT_CAP {
             assert_eq!(poll_permit(&mut queue, 1, 7, eligible), Permit::Grant);
-            assert!(queue
-                .start_attempt(1, eligible, LoginCancel::new())
+            assert!(start_test_tcp(&mut queue, 1, eligible, test_cancel())
+                .2
                 .is_some());
             last_return = eligible + Duration::from_millis(300);
-            assert!(queue.acknowledge_login_return(1, last_return));
+            assert!(ack_owner(&mut queue, 1, last_return));
             queue.enqueue_owner(1, 7);
             eligible = last_return + Duration::from_secs(5);
             queue.defer_owner_until(1, eligible);
@@ -842,10 +1052,14 @@ mod tests {
             Permit::Grant,
             "a different-device sibling may pass a release owner blocked by its own device budget"
         );
-        assert!(queue
-            .start_attempt(2, eligible, LoginCancel::new())
+        assert!(start_test_tcp(&mut queue, 2, eligible, test_cancel())
+            .2
             .is_some());
-        assert!(queue.acknowledge_login_return(2, eligible + Duration::from_millis(300)));
+        assert!(ack_owner(
+            &mut queue,
+            2,
+            eligible + Duration::from_millis(300)
+        ));
         assert_eq!(
             queue.status_owner(1).unwrap().position,
             1,
@@ -866,7 +1080,7 @@ mod tests {
         for (owner, uid) in [(test_owner(7), 7), (test_owner(8), 8)] {
             for _ in 0..UID_GRANT_CAP {
                 assert_eq!(request_owner(&mut queue, owner, uid, now), Permit::Grant);
-                assert!(queue.acknowledge_login_return(owner, now));
+                assert!(ack_owner(&mut queue, owner, now));
             }
         }
 
@@ -897,15 +1111,15 @@ mod tests {
 
         let sibling_start = now + Duration::from_secs(4);
         assert_eq!(poll_permit(&mut queue, 2, 8, sibling_start), Permit::Grant);
-        assert!(queue
-            .start_attempt(2, sibling_start, LoginCancel::new())
+        assert!(start_test_tcp(&mut queue, 2, sibling_start, test_cancel())
+            .2
             .is_some());
         assert!(matches!(
             poll_permit(&mut queue, 3, 9, sibling_start),
             Permit::Wait(_),
         ));
         let sibling_return = sibling_start + Duration::from_millis(100);
-        assert!(queue.acknowledge_login_return(2, sibling_return));
+        assert!(ack_owner(&mut queue, 2, sibling_return));
 
         assert_eq!(
             poll_permit(&mut queue, 3, 9, release - Duration::from_millis(500)),
@@ -948,6 +1162,8 @@ mod tests {
 
     const TEST_OWNER_NAMESPACE: u64 = 1 << 63;
     const TICK: Duration = Duration::from_millis(600);
+    static TEST_CANCEL_SOURCE: LazyLock<CancelSource> =
+        LazyLock::new(|| CancelSource::new(Arc::new(Park::new())));
 
     fn test_owner(uid: i32) -> u64 {
         TEST_OWNER_NAMESPACE | u64::from(uid as u32)
@@ -973,8 +1189,85 @@ mod tests {
         poll_permit(q, owner, uid, now)
     }
 
+    fn test_cancel() -> CancelToken {
+        TEST_CANCEL_SOURCE
+            .child()
+            .expect("test cancellation generations are available")
+    }
+
+    fn test_identity(
+        owner: u64,
+        transfer_seq: Option<u64>,
+        generation: u64,
+    ) -> QueueAttemptId {
+        QueueAttemptId::new(
+            owner,
+            BindingId {
+                incarnation: 1,
+                connection: owner,
+                binding: generation,
+                attempt: generation,
+            },
+            generation,
+            transfer_seq,
+        )
+    }
+
+    fn start_test_attempt(
+        q: &mut LoginQueue,
+        identity: QueueAttemptId,
+        now: Instant,
+        cancel: CancelToken,
+        proof: Option<Arc<QueueReleaseProof>>,
+    ) -> (Arc<AttemptRetire>, Option<Instant>) {
+        let retirement = Arc::new(AttemptRetire::new(identity.generation()));
+        let deadline = q.start_attempt(
+            identity,
+            now,
+            cancel,
+            Arc::clone(&retirement),
+            proof,
+        );
+        (retirement, deadline)
+    }
+
+    fn start_test_tcp(
+        q: &mut LoginQueue,
+        owner: u64,
+        now: Instant,
+        cancel: CancelToken,
+    ) -> (QueueAttemptId, Arc<AttemptRetire>, Option<Instant>) {
+        let identity = test_identity(owner, None, cancel.generation());
+        let (retirement, deadline) =
+            start_test_attempt(q, identity, now, cancel, None);
+        (identity, retirement, deadline)
+    }
+
+    fn ack_owner(q: &mut LoginQueue, owner: u64, now: Instant) -> bool {
+        let Some(flight) = q.flights.iter().find(|flight| flight.owner == owner).cloned() else {
+            return false;
+        };
+        let (identity, retirement) = match (flight.identity, flight.retirement) {
+            (Some(identity), Some(retirement)) => (identity, retirement),
+            (None, None) => {
+                let (identity, retirement, deadline) =
+                    start_test_tcp(q, owner, flight.granted, test_cancel());
+                assert!(deadline.is_some(), "synthetic test start must be live");
+                (identity, retirement)
+            }
+            _ => panic!("started queue flight binds identity and retirement together"),
+        };
+        let result = q.return_attempt(identity, now, None);
+        for effect in result.cancels {
+            effect.cancel();
+        }
+        assert!(retirement.ack(), "synthetic physical ack is unique");
+        q.acknowledge_retirement(identity, &retirement, now);
+        result.accepted
+    }
+
     fn ack(q: &mut LoginQueue, uid: i32, now: Instant) -> bool {
-        q.acknowledge_login_return(test_owner(uid), now)
+        ack_owner(q, test_owner(uid), now)
     }
 
     fn abandon(q: &mut LoginQueue, uid: i32) -> bool {
@@ -1037,9 +1330,11 @@ mod tests {
                     continue;
                 }
                 if poll_permit(&mut q, test_owner(uid), uid, now) == Permit::Grant {
-                    assert!(q
-                        .start_attempt(test_owner(uid), now, LoginCancel::new())
-                        .is_some());
+                    assert!(
+                        start_test_tcp(&mut q, test_owner(uid), now, test_cancel())
+                            .2
+                            .is_some()
+                    );
                     in_flight.push((uid, now + handshake));
                     attempts.push(Attempt {
                         uid,
@@ -1235,7 +1530,7 @@ mod tests {
         assert_eq!(q.queued_uids(), vec![7, 7]);
 
         assert_eq!(poll_permit(&mut q, 11, 7, now), Permit::Grant);
-        assert!(q.acknowledge_login_return(11, now));
+        assert!(ack_owner(&mut q, 11, now));
         assert_eq!(
             q.status_owner(22),
             Some(QueuePos {
@@ -1244,7 +1539,7 @@ mod tests {
             })
         );
         assert_eq!(poll_permit(&mut q, 22, 7, later), Permit::Grant);
-        assert!(q.acknowledge_login_return(22, later));
+        assert!(ack_owner(&mut q, 22, later));
         assert!(q.queued_uids().is_empty());
     }
 
@@ -1257,9 +1552,9 @@ mod tests {
         q.enqueue_owner(11, 1);
         assert_eq!(q.queued_uids(), vec![2, 1]);
         assert_eq!(poll_permit(&mut q, 22, 2, now), Permit::Grant);
-        assert!(q.acknowledge_login_return(22, now));
+        assert!(ack_owner(&mut q, 22, now));
         assert_eq!(poll_permit(&mut q, 11, 1, later), Permit::Grant);
-        assert!(q.acknowledge_login_return(11, later));
+        assert!(ack_owner(&mut q, 11, later));
     }
 
     #[test]
@@ -1363,10 +1658,10 @@ mod tests {
         let base = Instant::now();
         let mut q = unpaced(1);
         assert_eq!(request(&mut q, 1, base), Permit::Grant);
-        let cancel = LoginCancel::new();
-        assert!(q
-            .start_attempt(test_owner(1), base, cancel.clone())
-            .is_some());
+        let cancel = test_cancel();
+        let (identity, retirement, deadline) =
+            start_test_tcp(&mut q, test_owner(1), base, cancel.clone());
+        assert_eq!(deadline, Some(base + HANDSHAKE_HOLD));
         q.enqueue_owner(2, 2);
         let lease_end = base + HANDSHAKE_HOLD + LEASE_SLACK;
 
@@ -1408,8 +1703,11 @@ mod tests {
                 until: None
             })
         );
-        assert!(q.acknowledge_login_return(test_owner(1), returned));
-        assert!(!q.acknowledge_login_return(test_owner(1), returned));
+        let q_return = q.return_attempt(identity, returned, None);
+        assert!(!q_return.accepted, "the expired lease cannot own Phase Q");
+        assert!(q_return.cancels.is_empty());
+        assert!(retirement.ack());
+        assert!(q.acknowledge_retirement(identity, &retirement, returned));
         assert_eq!(q.ip_last, Some(returned));
 
         assert_eq!(
@@ -1432,11 +1730,10 @@ mod tests {
         let hold = Duration::from_millis(100);
         let mut q = LoginQueue::new(spacing, 29, Duration::from_secs(60)).with_handshake_hold(hold);
         assert_eq!(request(&mut q, 1, base), Permit::Grant);
-        let cancel = LoginCancel::new();
-        assert_eq!(
-            q.start_attempt(test_owner(1), base, cancel.clone()),
-            Some(base + hold)
-        );
+        let cancel = test_cancel();
+        let (identity, retirement, deadline) =
+            start_test_tcp(&mut q, test_owner(1), base, cancel.clone());
+        assert_eq!(deadline, Some(base + hold));
         q.enqueue_owner(2, 2);
         let lease_end = base + hold + LEASE_SLACK;
 
@@ -1463,8 +1760,11 @@ mod tests {
         assert_eq!(still_retiring.permit, Permit::Wait(QUEUE_POLL));
         assert!(still_retiring.cancels.is_empty());
         assert_eq!(q.head_blocker(2, returned), Some(AdmitBlocker::Retiring));
-        assert!(q.acknowledge_login_return(test_owner(1), returned));
-        assert!(!q.acknowledge_login_return(test_owner(1), returned));
+        let q_return = q.return_attempt(identity, returned, None);
+        assert!(!q_return.accepted, "a timed-out return cannot recover its lease");
+        assert!(q_return.cancels.is_empty());
+        assert!(retirement.ack());
+        assert!(q.acknowledge_retirement(identity, &retirement, returned));
 
         assert_eq!(
             q.poll_owner(2, 2, returned).permit,
@@ -1500,13 +1800,17 @@ mod tests {
         let hold = Duration::from_millis(100);
         let mut q = unpaced(29).with_max_in_flight(3).with_handshake_hold(hold);
         let mut tokens = Vec::new();
+        let mut retirements = Vec::new();
         for uid in 1..=3 {
             let owner = test_owner(uid);
             q.enqueue_owner(owner, uid);
             assert_eq!(poll_permit(&mut q, owner, uid, base), Permit::Grant);
-            let cancel = LoginCancel::new();
-            assert!(q.start_attempt(owner, base, cancel.clone()).is_some());
+            let cancel = test_cancel();
+            let (identity, retirement, deadline) =
+                start_test_tcp(&mut q, owner, base, cancel.clone());
+            assert_eq!(deadline, Some(base + hold));
             tokens.push(cancel);
+            retirements.push((identity, retirement));
         }
         q.enqueue_owner(test_owner(4), 4);
 
@@ -1528,10 +1832,318 @@ mod tests {
         let again = q.poll_owner(test_owner(4), 4, later);
         assert_eq!(again.permit, Permit::Wait(QUEUE_POLL));
         assert!(again.cancels.is_empty());
-        for uid in 1..=3 {
-            assert!(q.acknowledge_login_return(test_owner(uid), later));
+        for (identity, retirement) in retirements {
+            let q_return = q.return_attempt(identity, later, None);
+            assert!(!q_return.accepted);
+            assert!(q_return.cancels.is_empty());
+            assert!(retirement.ack());
+            assert!(q.acknowledge_retirement(identity, &retirement, later));
         }
         assert_eq!(q.poll_owner(test_owner(4), 4, later).permit, Permit::Grant);
+    }
+
+    #[test]
+    fn g1_g_expired_return_stays_retiring_until_exact_physical_ack() {
+        let base = Instant::now();
+        let hold = Duration::from_millis(100);
+        let mut q = LoginQueue::new(Duration::ZERO, 29, Duration::from_secs(60))
+            .with_handshake_hold(hold);
+        assert_eq!(request_owner(&mut q, 1, 7, base), Permit::Grant);
+        let cancel = test_cancel();
+        let (identity_a, retirement_a, deadline) =
+            start_test_tcp(&mut q, 1, base, cancel.clone());
+        assert_eq!(deadline, Some(base + hold));
+        q.enqueue_owner(2, 8);
+
+        let lease_end = base + hold + LEASE_SLACK;
+        let q_return = q.return_attempt(identity_a, lease_end, None);
+        assert!(!q_return.accepted, "expiry at equality wins Phase Q");
+        assert_eq!(q_return.cancels.len(), 1);
+        assert!(!cancel.is_cancelled(), "K1 returns effects without firing them");
+        for effect in q_return.cancels {
+            effect.cancel();
+        }
+        assert!(cancel.is_cancelled());
+
+        let late = lease_end + Duration::from_secs(5);
+        let blocked = q.poll_owner(2, 8, late);
+        assert_eq!(blocked.permit, Permit::Wait(QUEUE_POLL));
+        assert!(blocked.cancels.is_empty());
+        assert_eq!(q.head_blocker(2, late), Some(AdmitBlocker::Retiring));
+        assert_eq!(q.ip_last, Some(lease_end));
+        assert_eq!(q.flights.len(), 1);
+        assert!(!retirement_a.acknowledged());
+
+        let wrong_retirement = Arc::new(AttemptRetire::new(identity_a.generation()));
+        assert!(!wrong_retirement.acknowledged());
+        assert!(!q.acknowledge_retirement(identity_a, &wrong_retirement, late));
+        assert_eq!(q.flights.len(), 1, "a different cell cannot retire A");
+        assert!(!retirement_a.acknowledged());
+        assert!(retirement_a.ack());
+        assert!(q.acknowledge_retirement(identity_a, &retirement_a, late));
+
+        assert_eq!(q.poll_owner(2, 8, late).permit, Permit::Grant);
+        let (identity_b, retirement_b, deadline_b) =
+            start_test_tcp(&mut q, 2, late, test_cancel());
+        assert_eq!(deadline_b, Some(late + hold));
+        assert_ne!(identity_a, identity_b);
+        assert!(!q.acknowledge_retirement(identity_a, &retirement_a, late));
+        assert_eq!(q.flights.len(), 1);
+        assert_eq!(q.flights[0].identity, Some(identity_b));
+
+        let returned_b = q.return_attempt(identity_b, late + Duration::from_millis(1), None);
+        assert!(returned_b.accepted);
+        assert!(returned_b.cancels.is_empty());
+        assert!(retirement_b.ack());
+        assert!(q.acknowledge_retirement(
+            identity_b,
+            &retirement_b,
+            late + Duration::from_millis(1)
+        ));
+    }
+
+    #[test]
+    fn live_q_return_stays_retiring_until_physical_ack_and_applies_server_hold() {
+        let base = Instant::now();
+        let hold = Duration::from_millis(100);
+        let server_hold = Duration::from_secs(5);
+        let mut q = LoginQueue::new(Duration::ZERO, 29, Duration::from_secs(60))
+            .with_handshake_hold(hold);
+        let owner = 1;
+        assert_eq!(request_owner(&mut q, owner, 7, base), Permit::Grant);
+        let cancel = test_cancel();
+        let (identity, retirement, deadline) =
+            start_test_tcp(&mut q, owner, base, cancel.clone());
+        assert_eq!(deadline, Some(base + hold));
+        q.enqueue_owner(2, 8);
+
+        let wrong_identity = test_identity(owner, None, test_cancel().generation());
+        let wrong_return = q.return_attempt(wrong_identity, base + Duration::from_millis(1), None);
+        assert!(!wrong_return.accepted);
+        assert!(wrong_return.cancels.is_empty());
+        assert_eq!(q.ip_last, None, "owner-only return cannot settle A");
+        assert_eq!(q.flights[0].identity, Some(identity));
+        assert!(!q.flights[0].retiring);
+
+        let returned = base + Duration::from_millis(50);
+        let result = q.return_attempt(identity, returned, Some(server_hold));
+        assert!(result.accepted);
+        assert!(result.cancels.is_empty());
+        assert!(q.flights[0].retiring);
+        assert!(q.flights[0].returned);
+        assert_eq!(q.ip_last, Some(returned));
+
+        let server_hold_end = returned + server_hold;
+        let late = base + Duration::from_secs(2);
+        let blocked = q.poll_owner(2, 8, late);
+        assert_eq!(blocked.permit, Permit::Wait(QUEUE_POLL));
+        assert!(blocked.cancels.is_empty());
+        assert_eq!(q.head_blocker(2, late), Some(AdmitBlocker::Retiring));
+        assert!(!cancel.is_cancelled());
+
+        assert!(retirement.ack());
+        assert!(q.acknowledge_retirement(identity, &retirement, late));
+        assert_eq!(
+            q.poll_owner(2, 8, late).permit,
+            Permit::Wait(server_hold_end - late)
+        );
+        assert_eq!(
+            q.head_blocker(2, late),
+            Some(AdmitBlocker::ServerHold {
+                until: server_hold_end
+            })
+        );
+        assert_eq!(
+            q.poll_owner(2, 8, server_hold_end).permit,
+            Permit::Grant
+        );
+
+        assert!(server_hold_end > late);
+    }
+
+    #[test]
+    fn initial_tls_release_proof_settles_at_publication_without_physical_ack() {
+        let base = Instant::now();
+        let hold = Duration::from_secs(2);
+        let mut q =
+            LoginQueue::new(Duration::ZERO, 29, Duration::from_secs(60)).with_handshake_hold(hold);
+        let owner = 1;
+        let uid = 7;
+        assert_eq!(request_owner(&mut q, owner, uid, base), Permit::Grant);
+
+        let transfer_seq = 17;
+        let cancel = test_cancel();
+        let identity_a = test_identity(owner, Some(transfer_seq), cancel.generation());
+        let proof = Arc::new(QueueReleaseProof::new(
+            identity_a.binding(),
+            transfer_seq,
+        ));
+        let (retirement_a, deadline) = start_test_attempt(
+            &mut q,
+            identity_a,
+            base,
+            cancel.clone(),
+            Some(Arc::clone(&proof)),
+        );
+        let released_at = base + Duration::from_millis(500);
+        assert_eq!(deadline, Some(base + hold));
+        q.enqueue_owner(owner, uid);
+        assert!(proof.publish_for_test(identity_a.binding(), transfer_seq, released_at));
+
+        let next = q.poll_owner(owner, uid, released_at);
+        assert_eq!(next.permit, Permit::Grant);
+        assert!(next.cancels.is_empty());
+        assert_eq!(next.cancels.capacity(), 0);
+        assert!(!retirement_a.acknowledged());
+        assert!(!cancel.is_cancelled());
+        assert_eq!(q.ip_last, Some(released_at));
+        assert_eq!(q.by_uid.get(&uid).unwrap().last, Some(released_at));
+        assert_eq!(q.ip_count, 2);
+
+        let late_return = q.return_attempt(identity_a, released_at + Duration::from_millis(1), None);
+        assert!(!late_return.accepted);
+        assert!(late_return.cancels.is_empty());
+        assert_eq!(q.ip_last, Some(released_at), "old Q cannot settle twice");
+
+        let (identity_b, retirement_b, deadline_b) =
+            start_test_tcp(&mut q, owner, released_at, test_cancel());
+        assert_eq!(deadline_b, Some(released_at + hold));
+        assert_ne!(identity_a, identity_b);
+        assert!(retirement_a.ack());
+        assert!(!q.acknowledge_retirement(
+            identity_a,
+            &retirement_a,
+            released_at + Duration::from_millis(2)
+        ));
+        assert_eq!(q.flights.len(), 1);
+        assert_eq!(q.flights[0].identity, Some(identity_b));
+
+        let returned_b = released_at + Duration::from_millis(2);
+        assert!(q.return_attempt(identity_b, returned_b, None).accepted);
+        assert!(retirement_b.ack());
+        assert!(q.acknowledge_retirement(identity_b, &retirement_b, returned_b));
+    }
+
+    #[test]
+    fn initial_tls_proof_precedes_lease_expiry_at_the_expiry_poll() {
+        let base = Instant::now();
+        let hold = Duration::from_millis(100);
+        let mut q = LoginQueue::new(Duration::ZERO, 29, Duration::from_secs(60))
+            .with_handshake_hold(hold);
+        let owner = 1;
+        assert_eq!(request_owner(&mut q, owner, 7, base), Permit::Grant);
+
+        let transfer_seq = 9;
+        let cancel = test_cancel();
+        let identity = test_identity(owner, Some(transfer_seq), cancel.generation());
+        let proof = Arc::new(QueueReleaseProof::new(identity.binding(), transfer_seq));
+        let (retirement, deadline) = start_test_attempt(
+            &mut q,
+            identity,
+            base,
+            cancel,
+            Some(Arc::clone(&proof)),
+        );
+        q.enqueue_owner(2, 8);
+        let lease_end = deadline.unwrap() + LEASE_SLACK;
+        assert!(proof.publish_for_test(identity.binding(), transfer_seq, deadline.unwrap()));
+
+        let next = q.poll_owner(2, 8, lease_end);
+        assert_eq!(next.permit, Permit::Grant);
+        assert!(next.cancels.is_empty(), "published proof beats timeout");
+        assert!(!retirement.acknowledged());
+        assert_eq!(q.ip_last, Some(deadline.unwrap()));
+    }
+
+    #[test]
+    fn start_rejects_mismatched_proof_and_retirement_identities() {
+        let base = Instant::now();
+        let mut q = unpaced(2);
+        let owner = test_owner(1);
+        assert_eq!(request_owner(&mut q, owner, 1, base), Permit::Grant);
+        let transfer_seq = 4;
+        let cancel = test_cancel();
+        let identity = test_identity(owner, Some(transfer_seq), cancel.generation());
+        let retirement = Arc::new(AttemptRetire::new(identity.generation()));
+        let wrong_sequence = Arc::new(QueueReleaseProof::new(
+            identity.binding(),
+            transfer_seq + 1,
+        ));
+        assert_eq!(
+            q.start_attempt(
+                identity,
+                base,
+                cancel.clone(),
+                Arc::clone(&retirement),
+                Some(wrong_sequence),
+            ),
+            None
+        );
+
+        let wrong_binding =
+            test_identity(owner + 1, Some(transfer_seq), identity.generation()).binding();
+        let wrong_identity = Arc::new(QueueReleaseProof::new(wrong_binding, transfer_seq));
+        assert_eq!(
+            q.start_attempt(
+                identity,
+                base,
+                cancel.clone(),
+                Arc::clone(&retirement),
+                Some(wrong_identity),
+            ),
+            None
+        );
+
+        let right_proof = Arc::new(QueueReleaseProof::new(identity.binding(), transfer_seq));
+        assert_eq!(
+            q.start_attempt(
+                identity,
+                base,
+                test_cancel(),
+                Arc::clone(&retirement),
+                Some(Arc::clone(&right_proof)),
+            ),
+            None,
+            "a token from another attempt generation cannot bind"
+        );
+
+        let wrong_generation = Arc::new(AttemptRetire::new(identity.generation() + 1));
+        assert_eq!(
+            q.start_attempt(
+                identity,
+                base,
+                cancel,
+                wrong_generation,
+                Some(right_proof),
+            ),
+            None
+        );
+        assert_eq!(q.last_start, None);
+        assert!(q.flights[0].started.is_none());
+        assert!(q.abandon_permit(owner));
+        assert_eq!(q.ip_count, 0);
+        assert_eq!(q.ip_last, None);
+    }
+
+    #[test]
+    fn revoked_unused_grant_does_not_start_or_advance_spacing() {
+        let base = Instant::now();
+        let mut q = unpaced(1);
+        let owner = test_owner(1);
+        assert_eq!(request_owner(&mut q, owner, 1, base), Permit::Grant);
+        let cancel = test_cancel();
+        let identity = test_identity(owner, None, cancel.generation());
+        cancel.cancel();
+        let (retirement, started) = start_test_attempt(&mut q, identity, base, cancel, None);
+
+        assert_eq!(started, None);
+        assert!(q.flights[0].started.is_none());
+        assert_eq!(q.last_start, None);
+        assert_eq!(q.ip_last, None);
+        assert!(!retirement.acknowledged());
+        assert!(q.abandon_permit(owner));
+        assert_eq!(q.ip_count, 0);
+        assert_eq!(request(&mut q, 2, base), Permit::Grant);
     }
 
     /// A worker stalled between its grant and its connect loses the grant at
@@ -1552,10 +2164,20 @@ mod tests {
             q.last_start, None,
             "an unused grant does not reserve spacing"
         );
+        let cancel = test_cancel();
+        let identity = test_identity(test_owner(1), None, cancel.generation());
+        let retirement = Arc::new(AttemptRetire::new(identity.generation()));
         assert_eq!(
-            q.start_attempt(test_owner(1), lease_end, LoginCancel::new()),
+            q.start_attempt(
+                identity,
+                lease_end,
+                cancel,
+                Arc::clone(&retirement),
+                None,
+            ),
             None
         );
+        assert!(retirement.ack());
         assert!(!abandon(&mut q, 1));
         assert!(abandon(&mut q, 2));
         assert_eq!(q.ip_count, 0);
@@ -1572,9 +2194,10 @@ mod tests {
         let mut q = LoginQueue::default();
         assert_eq!(request(&mut q, 1, base), Permit::Grant);
         let started = base + Duration::from_secs(2);
-        assert!(q
-            .start_attempt(test_owner(1), started, LoginCancel::new())
-            .is_some());
+        assert_eq!(
+            start_test_tcp(&mut q, test_owner(1), started, test_cancel()).2,
+            Some(started + HANDSHAKE_HOLD)
+        );
         let returned = started + Duration::from_millis(1);
         assert!(ack(&mut q, 1, returned));
         assert_eq!(
@@ -1601,6 +2224,12 @@ mod tests {
             .with_handshake_hold(NO_LEASE_END);
         assert_eq!(request(&mut q, 1, base), Permit::Grant);
         assert_eq!(request(&mut q, 2, base), Permit::Grant);
+        assert!(start_test_tcp(&mut q, test_owner(1), base, test_cancel())
+            .2
+            .is_some());
+        assert!(start_test_tcp(&mut q, test_owner(2), base, test_cancel())
+            .2
+            .is_some());
 
         assert!(ack(&mut q, 2, base + Duration::from_secs(120)));
         assert!(ack(&mut q, 1, base + Duration::from_secs(61)));
@@ -1622,6 +2251,9 @@ mod tests {
             .with_handshake_hold(NO_LEASE_END);
         assert_eq!(request(&mut q, 1, base), Permit::Grant);
         assert_eq!(request(&mut q, 2, base), Permit::Grant);
+        assert!(start_test_tcp(&mut q, test_owner(2), base, test_cancel())
+            .2
+            .is_some());
         assert!(ack(&mut q, 1, base));
 
         assert!(
@@ -1876,7 +2508,7 @@ mod tests {
         q.enqueue_owner(11, 11);
         assert!(matches!(poll_permit(&mut q, 11, 11, base), Permit::Wait(_)));
         assert_eq!(poll_permit(&mut q, 10, 10, base), Permit::Grant);
-        assert!(q.acknowledge_login_return(10, base));
+        assert!(ack_owner(&mut q, 10, base));
         assert_eq!(poll_permit(&mut q, 11, 11, later), Permit::Grant);
     }
 

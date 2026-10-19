@@ -7,6 +7,7 @@ publish = false
 [dependencies]
 api = { path = "../api" }
 client = { workspace = true }
+client-adapter = { path = "../client-adapter" }
 host = { path = "../host" }
 nav = { path = "../nav" }
 scenario = { path = "../scenario", optional = true }
@@ -36,9 +37,11 @@ serde_json = "=1.0.140"
 [dev-dependencies]
 allocation-counter = "=0.8.1"
 bzip2 = "0.4"
-# The local HTTPS update servers of `tests/cold_fill_lookups.rs`; the
-# version that the client already builds.
-native-tls = "=0.2.18"
+# Local HTTPS/WSS fixture servers use the same pure-Rust TLS family as
+# the adapter; test roots are injected only through adapter test-support.
+rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
+rcgen = "0.13"
+client-adapter = { path = "../client-adapter", features = ["test-support"] }
 script = { path = "../script", features = ["test-hooks"] }
 scenario = { path = "../scenario" }
 

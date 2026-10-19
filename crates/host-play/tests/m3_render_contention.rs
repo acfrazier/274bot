@@ -183,11 +183,12 @@ struct Census {
 
 impl Census {
     /// Request `phase` from every slot and wait for `n` rows.
-    fn run(&self, phase: &'static str, n: usize) -> Vec<Value> {
+    fn run(&self, play: &Play, phase: &'static str, n: usize) -> Vec<Value> {
         self.rows.lock().unwrap().clear();
         *self.phase.lock().unwrap() = Some(phase);
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
+            play.maintain_services(Instant::now());
             let done = self.rows.lock().unwrap().len();
             if done >= n {
                 break;
@@ -427,6 +428,7 @@ fn summarize(heads: &[HeadProbe], focused: &[bool], from: &Mark, to: &Mark) -> V
 fn wait_ingame(play: &Play, want: usize, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     loop {
+        play.maintain_services(Instant::now());
         let ready = play
             .statuses()
             .iter()
@@ -439,7 +441,19 @@ fn wait_ingame(play: &Play, want: usize, timeout: Duration) {
             Instant::now() < deadline,
             "{ready}/{want} heads in game with a scene after {timeout:?}"
         );
-        thread::sleep(Duration::from_millis(250));
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn maintain_for(play: &Play, duration: Duration) {
+    let deadline = Instant::now() + duration;
+    loop {
+        play.maintain_services(Instant::now());
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return;
+        }
+        thread::sleep(remaining.min(Duration::from_millis(100)));
     }
 }
 
@@ -601,8 +615,8 @@ fn live_m3_render_contention() {
     let mut phases = serde_json::Map::new();
     for phase in ["headless", "headed"] {
         draw.store(phase == "headed", Relaxed);
-        thread::sleep(warmup);
-        let rows = census.run(phase, n);
+        maintain_for(&play, warmup);
+        let rows = census.run(&play, phase, n);
         let gpu = client::profiling::gpu_bytes();
         phases.insert(
             phase.into(),
@@ -635,13 +649,13 @@ fn live_m3_render_contention() {
         for (head, &focus) in heads.iter().zip(&focused) {
             head.input.set_full_rate(focus);
         }
-        thread::sleep(warmup);
+        maintain_for(&play, warmup);
         let cell = format!("{backend}-n{n}-{policy}");
         let mut samples = std::fs::File::create(out.join(format!("{cell}.samples.jsonl"))).unwrap();
         let start = mark(&heads, &taken);
         let mut last = start.clone();
         while last.at.duration_since(start.at) < observe {
-            thread::sleep(Duration::from_secs(1));
+            maintain_for(&play, Duration::from_secs(1));
             let now = mark(&heads, &taken);
             let ingame = play.statuses().iter().filter(|s| s.ingame).count();
             let mut sample = summarize(&heads, &focused, &last, &now);
@@ -675,7 +689,8 @@ fn live_m3_render_contention() {
     }
     let deadline = Instant::now() + Duration::from_secs(60);
     while play.statuses().iter().any(|s| s.ingame) && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(250));
+        play.maintain_services(Instant::now());
+        thread::sleep(Duration::from_millis(100));
     }
     stop.store(true, Relaxed);
     consumer.join().unwrap();

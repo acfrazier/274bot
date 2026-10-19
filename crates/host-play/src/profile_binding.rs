@@ -320,17 +320,40 @@ impl ProfileSelection {
     ) -> Result<Arc<ServerProfile>, String> {
         let supplied = self.supplied_manifest(runtime)?;
         let runtime_cache = if runtime {
+            client_adapter::service::NetworkService::current_started()
+                .map_err(|error| crate::cache::CachePreparationError::ServiceStart(error).to_string())?;
             observer.report(ProfileProgress::steps(
                 ProfileProgressStage::PreparingCache,
                 0,
                 1,
             ));
-            let prepared = client::unpack::prepare_runtime_cache(&self.runtime_cache_request())
-                .map_err(|error| {
-                    let message = error.to_string();
-                    *fill_error = Some(error);
-                    message
-                })?;
+            // Headless compositions own this blocking loop. Bound each
+            // network/lock wait and maintain from the same caller at every
+            // step boundary, rather than starting an extra caretaker thread.
+            let mut fill = client::unpack::RuntimeCacheFill::begin(&self.runtime_cache_request());
+            let prepared = loop {
+                let now = std::time::Instant::now();
+                let network = client_adapter::service::NetworkService::current_started()
+                    .map_err(|error| crate::cache::CachePreparationError::ServiceStart(error).to_string())?;
+                network.maintain(now);
+                match fill.step(Some(now + TEMPLATE_STEP_WAIT)) {
+                    Ok(client::unpack::RuntimeCacheStep::Continue { written, total }) => {
+                        if let Some(total) = total {
+                            observer.report(ProfileProgress::steps(
+                                ProfileProgressStage::PreparingCache,
+                                u64::from(written),
+                                u64::from(total),
+                            ));
+                        }
+                    }
+                    Ok(client::unpack::RuntimeCacheStep::Ready(prepared)) => break prepared,
+                    Err(error) => {
+                        let message = error.to_string();
+                        *fill_error = Some(error);
+                        return Err(message);
+                    }
+                }
+            };
             observer.report(ProfileProgress::steps(
                 ProfileProgressStage::PreparingCache,
                 1,
@@ -421,7 +444,7 @@ impl ProfileSelection {
                 &self.asset_host,
                 self.asset_port,
                 observer,
-            ))
+            ).map_err(|error| error.to_string())?)
         } else {
             None
         };
@@ -1093,6 +1116,8 @@ pub enum TemplateStep {
         total: Option<u32>,
     },
     Complete(Result<Arc<crate::SharedClientTemplate>, String>),
+    /// The composition has no running network service at cache admission.
+    ServiceStart(client_adapter::service::NetworkStartError),
 }
 
 impl TemplatePreparation {
@@ -1108,6 +1133,9 @@ impl TemplatePreparation {
         };
         match std::mem::replace(&mut self.stage, TemplateStage::Done) {
             TemplateStage::Start => {
+                if let Err(error) = client_adapter::service::NetworkService::current_started() {
+                    return TemplateStep::ServiceStart(error);
+                }
                 let supplied = match self.selected.supplied_manifest(true) {
                     Ok(supplied) => supplied,
                     Err(error) => return TemplateStep::Complete(Err(error)),

@@ -1,0 +1,15 @@
+[package]
+name = "client-adapter"
+version.workspace = true
+edition = "2021"
+
+[features]
+test-support = []
+
+[dependencies]
+client = { workspace = true }
+mio = { version = "=1.2.2", features = ["net", "os-poll"] }
+tungstenite = { version = "=0.24.0", default-features = false, features = ["handshake"] }
+thiserror = "=2.0.20"
+rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
+rustls-platform-verifier = "=0.7.0"

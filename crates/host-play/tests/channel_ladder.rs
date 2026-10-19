@@ -9,7 +9,7 @@ mod common;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use common::{fail, live, options};
+use common::{fail, live, maintain_for, options};
 use host_play::{run_channels, sample_process, Play};
 use vault::{Profile, ProfileSettings, Vault};
 
@@ -58,6 +58,7 @@ fn wait_all_up(play: &Play, n: usize) {
     let timeout = Duration::from_secs(300);
     let deadline = Instant::now() + timeout;
     loop {
+        play.maintain_services(Instant::now());
         let statuses = play.statuses();
         let ready = statuses.iter().filter(|s| s.is_up()).count();
         if ready >= n {
@@ -69,7 +70,7 @@ fn wait_all_up(play: &Play, n: usize) {
                  statuses: {statuses:?}"
             ));
         }
-        thread::sleep(Duration::from_millis(250));
+        thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -87,7 +88,7 @@ fn live_channel_ladder_client_wall() {
     let play = run_channels(&options(), ladder_profiles(n), 1);
     wait_all_up(&play, n);
     // Give the wall a beat to settle before sampling peak RSS.
-    thread::sleep(Duration::from_secs(10));
+    maintain_for(&play, Duration::from_secs(10));
     let (rss, _) = sample_process();
     if rss == 0 {
         fail("channel_ladder: rss=0");
@@ -95,6 +96,7 @@ fn live_channel_ladder_client_wall() {
     println!("channel_ladder n={n} rss={rss}");
     println!("PASS: channel_ladder n={n} rss={rss}");
 }
+
 
 // keep parse_rss unit tests below the live test
 

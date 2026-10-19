@@ -772,6 +772,7 @@ fn stop_slot_aborts_an_unreachable_asset_retry_promptly() {
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     loop {
+        play.maintain_services(std::time::Instant::now());
         let _ = dead_listener.accept();
         if play.statuses().iter().any(|status| {
             status.username == account.username
@@ -833,9 +834,17 @@ fn qualified_revision_289_accepts_an_unarmed_slot_and_script_loading() {
         Some(host_play::SlotArm::new(account.uid, false)),
     )
     .unwrap();
-    served
-        .recv_timeout(std::time::Duration::from_secs(2))
-        .expect("slot did not reach the local /crc fixture");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        play.maintain_services(std::time::Instant::now());
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        assert!(!remaining.is_zero(), "slot did not reach the local /crc fixture");
+        match served.recv_timeout(remaining.min(std::time::Duration::from_millis(100))) {
+            Ok(()) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(error) => panic!("slot did not reach the local /crc fixture: {error}"),
+        }
+    }
     server.join().unwrap();
     assert!(play.arm("fixture").is_some());
     assert!(play.login_queue_uids().is_empty());

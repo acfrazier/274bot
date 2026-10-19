@@ -87,6 +87,7 @@ fn dump(play: &Play, tag: &str) {
 fn wait_focused(play: &Play, want: &str, timeout: Duration, tag: &str) {
     let deadline = Instant::now() + timeout;
     loop {
+        play.maintain_services(Instant::now());
         let ok = play.focused().as_deref() == Some(want)
             && play
                 .statuses()

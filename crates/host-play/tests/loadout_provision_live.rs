@@ -833,6 +833,7 @@ fn run_cell() -> Result<(), String> {
     let prep_deadline = Instant::now() + PREP_DEADLINE;
     let observe_deadline = Instant::now() + PREP_DEADLINE + OBSERVE_DEADLINE;
     let outcome = loop {
+        play.maintain_services(Instant::now());
         if let Some(error) = play.script_last_error(&account) {
             break Err(format!("script error: {error}"));
         }

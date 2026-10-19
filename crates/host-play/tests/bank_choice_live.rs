@@ -975,6 +975,7 @@ fn run_origin(
 
     let test_started = Instant::now();
     let result = loop {
+        play.maintain_services(Instant::now());
         let status = play.script_native_status(&account);
         let run_state = play.script_state(&account);
         let lifecycle = play.script_lifecycle_receipt(&account);
@@ -1496,6 +1497,7 @@ fn run_quester_recovery_live() -> Result<(), String> {
     play.try_spawn_slot(mint_profile(&account, &password, 1)?, None, None, None)?;
     play.focus(&account);
     let result = loop {
+        play.maintain_services(Instant::now());
         let status = play.script_native_status(&account);
         let run_state = play.script_state(&account);
         let mut runner = runner.lock().unwrap();

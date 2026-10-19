@@ -22,6 +22,7 @@ use host_play::cache::CacheAvailability;
 use host_play::profile::{ProfileEnvironment, ProfileSelection};
 use host_play::progress::ProfileProgressObserver;
 use host_play::{ProfileOptions, SharedClientTemplate};
+use client_adapter::service::NetworkService;
 
 /// Update-server checksum slots 1-8 (`title`=1 .. `sounds`=8), the order the
 /// `/crc` body uses.
@@ -176,6 +177,7 @@ fn reject_crc() -> (u16, thread::JoinHandle<String>) {
 
 #[test]
 fn failed_cold_preparation_is_reported_with_missing_archive() {
+    let _driver = NetworkService::start_composition().unwrap();
     let root = TempRoot::new("cache-rejected-crc");
     let cache = root.join("cache");
     assert!(!cache.exists(), "the cache root starts absent");
@@ -261,6 +263,7 @@ fn serve_packs(packs: Arc<Vec<(String, Vec<u8>)>>) -> (u16, thread::JoinHandle<V
 /// the fetched packs.
 #[test]
 fn empty_cache_is_fetched_through_normal_profile_preparation() {
+    let _driver = NetworkService::start_composition().unwrap();
     let root = TempRoot::new("cache-prepare");
     let cache = root.join("cache");
     std::fs::create_dir_all(&cache).unwrap();

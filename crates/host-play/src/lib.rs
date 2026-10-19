@@ -46,8 +46,9 @@ use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Instant;
 #[cfg(test)]
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[cfg(test)]
 use api::interact::Driver;
@@ -86,6 +87,7 @@ mod script_api_live_probe;
 mod script_channels;
 mod script_runtime;
 mod slot_bank_memory;
+mod transport_health;
 mod walk_arm;
 mod walk_permissions;
 mod walk_plan;
@@ -149,7 +151,7 @@ use play_login::{
 use play_login::{publish_queue_place, sync_profile_arm, SharedLoginQueue};
 pub use play_login::{LoginLatchReason, SlotArm};
 use play_slots::SlotFrame;
-pub use play_slots::SlotFrameInput;
+pub use play_slots::{PlaySpawnError, SlotFrameInput};
 #[cfg(test)]
 use play_slots::{
     end_slot_session, observe_slot_catalog_and_paired, reset_slot_session_work, sync_script_login,
@@ -304,6 +306,13 @@ pub struct Play {
     /// Host-capacity registry: each slot thread registers its own record
     /// once and writes only that record per service.
     capacity: Arc<host::CapacityMonitor>,
+    process_start: Result<api::identity::ProcessIncarnation, script::work_admission::WorkStartError>,
+    transport_health: Option<transport_health::ServiceHealth>,
+    transport: Option<Arc<client_adapter::reactor::TransportService>>,
+    resolver: Option<Arc<client_adapter::resolver::Resolver>>,
+    /// Registration transferred from an owned headless `run*` composition.
+    /// Panel/TUI compositions retain their own driver in OperatorSession.
+    _headless_composition_driver: Option<client_adapter::service::MaintenanceDriver>,
     /// The process local-state service and the identities this Play's
     /// slots read and write under (T5.2); `None` for the legacy direct
     /// connection, which has no launch profile.
@@ -314,6 +323,38 @@ impl Play {
     /// Host-capacity registry the operator session evaluates at UI cadence.
     pub fn capacity(&self) -> &host::CapacityMonitor {
         &self.capacity
+    }
+
+    /// Drive both fixed transport owners even when no status consumer runs.
+    /// Each service publishes and wakes outside its own state lock.
+    pub fn maintain_services(&self, now: Instant) {
+        let Some(health) = &self.transport_health else {
+            return;
+        };
+        let network = client_adapter::service::NetworkService::current_started();
+        let observed = network.as_ref().ok().map(|service| service.maintain(now));
+        let reactor = observed.as_ref().map_or(
+            Some(client_adapter::health::ReactorLoss::StartFailed),
+            |observed| observed.reactor,
+        );
+        let resolver = observed.as_ref().map_or_else(
+            || Some(client_adapter::resolver::ResolverUnavailable {
+                cause: client_adapter::resolver::ResolverUnavailableCause::StartFailed,
+                detected_at: now,
+            }),
+            |observed| observed.resolver,
+        );
+        health.observe(now, reactor, resolver);
+    }
+
+    /// Borrow the frozen process ledger for one projection without holding
+    /// either transport service lock. No ledger exists if the OS could not
+    /// name this process before its first admission.
+    pub fn with_process_conditions<R>(
+        &self,
+        inspect: impl FnOnce(&api::process_condition::ProcessConditions) -> R,
+    ) -> Option<R> {
+        self.transport_health.as_ref().map(|health| health.with_conditions(inspect))
     }
 
     /// Applies to new manual and compiled-native walks; compat wiring is unchanged.
@@ -474,6 +515,14 @@ impl Play {
     /// Shared headed pair proof handle. It is disabled by default.
     pub fn paired_core_watch(&self) -> paired_core::PairWatch {
         self.paired_core.clone()
+    }
+
+    /// A headless composition observes this on its owning thread instead of
+    /// blocking in `join`, so it can maintain transport service health while
+    /// slots are alive. The final `join` still reaps completed workers.
+    pub fn all_slots_finished(&self) -> bool {
+        self.handles.values().all(thread::JoinHandle::is_finished)
+            && self.retiring.values().all(thread::JoinHandle::is_finished)
     }
 
     /// Blocks until every slot thread exits (slot threads run forever, so

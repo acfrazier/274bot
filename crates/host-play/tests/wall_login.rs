@@ -48,6 +48,7 @@ fn wall_login_fifo_logout_all() {
     arm_b.arm_explicit_login();
     let fifo_deadline = std::time::Instant::now() + Duration::from_secs(60);
     loop {
+        play.maintain_services(std::time::Instant::now());
         let statuses = play.statuses();
         if statuses
             .iter()
@@ -62,7 +63,7 @@ fn wall_login_fifo_logout_all() {
                  login_started) after 60 s; statuses: {statuses:?}"
             ));
         }
-        std::thread::sleep(Duration::from_millis(250));
+        std::thread::sleep(Duration::from_millis(100));
     }
     wait_ingame(&play, 2, Duration::from_secs(120), "wall_login");
 

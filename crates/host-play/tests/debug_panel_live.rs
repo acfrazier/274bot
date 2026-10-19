@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use api::hostlog::{Record, Sink};
 use api::snapshot::GameSnapshot;
 use host::Pump;
-use host_play::{ProfileClass, ProfileOptions, SharedClientTemplate};
+use host_play::{Play, ProfileClass, ProfileOptions, SharedClientTemplate};
 use parking_lot::Mutex;
 use vault::{Profile, ProfileSettings};
 
@@ -37,9 +37,15 @@ impl Sink for ReplyLog {
     }
 }
 
-fn wait_for(state: &Mutex<Observation>, label: &str, predicate: impl Fn(&Observation) -> bool) {
+fn wait_for(
+    play: &Play,
+    state: &Mutex<Observation>,
+    label: &str,
+    predicate: impl Fn(&Observation) -> bool,
+) {
     let until = Instant::now() + Duration::from_secs(90);
     loop {
+        play.maintain_services(Instant::now());
         {
             let state = state.lock();
             if predicate(&state) {
@@ -132,7 +138,7 @@ fn debug_catalog_commands_and_host_reply_log() {
         },
     };
     play.spawn_slot(slot, None, None, None);
-    wait_for(&state, "local ingame scene 2", |s| s.ready);
+    wait_for(&play, &state, "local ingame scene 2", |s| s.ready);
     let send = |name: &str, arguments: &[&str]| {
         let command = game_data
             .commands()
@@ -150,26 +156,27 @@ fn debug_catalog_commands_and_host_reply_log() {
     };
     send("setvar", &["tutorial", "1000"]);
     send("tele", &["0,50,50,20,20"]);
-    wait_for(&state, "Teleport", |s| {
+    wait_for(&play, &state, "Teleport", |s| {
         s.ready && s.tile == Some((3220, 3220, 0))
     });
     send("~east", &["1"]);
-    wait_for(&state, "Teleport content", |s| {
+    wait_for(&play, &state, "Teleport content", |s| {
         s.ready && s.tile == Some((3221, 3220, 0))
     });
     send("setstat", &["attack", "42"]);
-    wait_for(&state, "Account", |s| s.attack == 42);
+    wait_for(&play, &state, "Account", |s| s.attack == 42);
     send("~1hp", &[]);
-    wait_for(&state, "Account content", |s| s.hitpoints == 1);
+    wait_for(&play, &state, "Account content", |s| s.hitpoints == 1);
     let coins = state.lock().coins;
     send("give", &["coins", "17"]);
-    wait_for(&state, "Item", |s| s.coins == coins + 17);
+    wait_for(&play, &state, "Item", |s| s.coins == coins + 17);
     let air_runes = state.lock().air_runes;
     send("~giverunes", &[]);
-    wait_for(&state, "Item content", |s| s.air_runes == air_runes + 1000);
+    wait_for(&play, &state, "Item content", |s| s.air_runes == air_runes + 1000);
     send("getcoord", &[]);
     let until = Instant::now() + Duration::from_secs(30);
     loop {
+        play.maintain_services(Instant::now());
         if replies.0.lock().iter().any(|(slot, message)| {
             slot == &user && message.contains("getcoord") && message.contains("reply candidate:")
         }) {
@@ -183,7 +190,7 @@ fn debug_catalog_commands_and_host_reply_log() {
     }
     // Read-only quest/debug menus, not complete/reset cheats or world mutation.
     send("~quests", &[]);
-    wait_for(&state, "Quest content", |s| s.quest_menu);
+    wait_for(&play, &state, "Quest content", |s| s.quest_menu);
     play.queue_wire(&user, host_play::WireCmd::Answer(4));
     println!("PASS DebugPanel host path and reply logging for {user}");
     play.stop_slot(&user);

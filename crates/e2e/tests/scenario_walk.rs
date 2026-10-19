@@ -54,6 +54,7 @@ fn scenario_walk() {
     // both exit 1 (rs2b0t harness style).
     let deadline = Instant::now() + Duration::from_secs(180);
     loop {
+        play.maintain_services(Instant::now());
         let (status, evidence) = {
             let r = runner.lock().unwrap();
             (r.status(), r.evidence().cloned())
@@ -74,7 +75,7 @@ fn scenario_walk() {
                         "scenario walk: no terminal status within 180s ({other:?})"
                     ));
                 }
-                std::thread::sleep(Duration::from_millis(250));
+                std::thread::sleep(Duration::from_millis(100));
             }
         }
     }

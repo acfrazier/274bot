@@ -9,11 +9,15 @@ use std::time::{Duration, Instant};
 
 use api::host_log;
 use api::hostlog::{Category, Level};
-use api::lifecycle::Intent;
+use api::lifecycle::{AbortedAttempt, Intent, TransportFailure};
 use api::snapshot::GameSnapshot;
 use client::client::Client;
 use client::config::{Cache, IfType, IfTypeMut};
-use host::login_queue::LoginBackoff;
+use client_adapter::cancel::{AttemptRetire, CancelToken};
+use client_adapter::host_network::{resolve_game, GameTransport, PreparedGameAttempt};
+use client_adapter::resolver::SlotKey;
+use client_adapter::service::NetworkService;
+use host::login_queue::{LoginBackoff, HANDSHAKE_HOLD};
 use host::{
     prepare_client, should_emit_tick, wake_channel, DetectedRandom, FrameBuf, Host, Pump,
     ScriptRunPolicy, SlotInput, SlotPark, SlotWake, TitleWait,
@@ -28,9 +32,11 @@ use crate::play_login::{
     capture_login_authorization, configure_slot_world, drop_queue_place, enqueue_queue_place,
     granted_permit_world_is_current, observe_client_session_exit, plan_login_retry,
     publish_login_latched_from_arm, refresh_slot_world_preference, should_handshake,
-    sync_profile_arm, tick_flags, transfer_countdown_message, wait_for_permit,
-    wait_for_transfer_response, PermitWait, QueuePlaceRetirement, SharedLoginQueue, SlotArm,
-    SlotLogin,
+    sync_profile_arm, tick_flags, transfer_countdown_message, wait_for_permit_with_cancel,
+    wait_for_transfer_response, wait_for_wss_permit, PermitWait,
+    QueuePlaceRetirement,
+    SharedLoginQueue, SlotArm,
+    SlotLogin, SlotLoginOutcome,
 };
 use crate::play_status::{
     apply_startup_phase, clear_startup_progress, copy_stream_bytes, lock_statuses,
@@ -165,6 +171,20 @@ fn stop_retired_script(slot: ScriptSlot) {
     if stopped {
         slot.clear_poison();
     }
+}
+
+/// A slot admission refusal; a failed process nonce draw is not a socket or
+/// login-stage failure and cannot be made retryable in this process.
+#[derive(Debug, thiserror::Error)]
+pub enum PlaySpawnError {
+    #[error("the bot host could not start: the system's secure random source failed")]
+    ServiceStart(#[source] script::work_admission::WorkStartError),
+    #[error("network composition unavailable: {0}")]
+    NetworkStart(#[source] client_adapter::service::NetworkStartError),
+    #[error("{}", .0.code().operator_text())]
+    Unavailable(api::process_condition::ConditionId),
+    #[error("{0}")]
+    Other(#[from] String),
 }
 
 impl Play {
@@ -400,7 +420,21 @@ impl Play {
         input: Option<Arc<SlotInput>>,
         mailbox: Option<Arc<FrameBuf>>,
         arm: Option<Arc<SlotArm>>,
-    ) -> Result<(), String> {
+    ) -> Result<(), PlaySpawnError> {
+        self.process_start.map_err(PlaySpawnError::ServiceStart)?;
+        client_adapter::service::NetworkService::current_started()
+            .map_err(PlaySpawnError::NetworkStart)?;
+        self.maintain_services(Instant::now());
+        if let Some(condition) = self.with_process_conditions(|conditions| {
+            [
+                api::process_condition::ProcessServiceCode::ReactorUnavailable,
+                api::process_condition::ProcessServiceCode::ResolverUnavailable,
+            ]
+            .into_iter()
+            .find_map(|code| conditions.latched(code).map(|condition| condition.id()))
+        }).flatten() {
+            return Err(PlaySpawnError::Unavailable(condition));
+        }
         self.connection.require_bot_operation()?;
         self.reap_finished_workers();
         if self
@@ -408,7 +442,7 @@ impl Play {
             .get(&profile.username)
             .is_some_and(|handle| !handle.is_finished())
         {
-            return Err(format!("slot {} is still stopping", profile.username));
+            return Err(format!("slot {} is still stopping", profile.username).into());
         }
         if let Some(handle) = self.retiring.remove(&profile.username) {
             let _ = handle.join();
@@ -854,6 +888,53 @@ fn capacity_service_class(
     }
 }
 
+/// DNS and the exact transport binding are prepared before queue entry, not
+/// inside K1's charged start. The slot publishes cancellation before DNS and
+/// rechecks captured authorization before queue entry and K4 start.
+fn prepare_game_transport(
+    client: &Client,
+    arm: &SlotArm,
+    token: &CancelToken,
+) -> Result<PreparedGameAttempt, String> {
+    let network = NetworkService::current_started().map_err(|error| error.to_string())?;
+    let park = arm.park();
+    let addresses = resolve_game(
+        network.resolver(), network.reactor(), SlotKey(arm.queue_owner), token.generation(),
+        &client.config.host, client.config.port, Arc::clone(&park), token,
+    ).map_err(|error| format!("login DNS: {error}"))?;
+    let retirement = Arc::new(AttemptRetire::new(token.generation()));
+    let transport = match client.session_transport() {
+        client::Transport::Tcp => GameTransport::Tcp,
+        client::Transport::Wss => GameTransport::Wss,
+    };
+    let service = Arc::clone(network.reactor());
+    let host = client.config.host.as_str();
+    let port = client.config.port;
+    match client.hosted_stream_binding() {
+        Some(previous) => PreparedGameAttempt::new_for_rebind(
+            service, &previous, park, token.clone(), retirement, transport, host, port, addresses,
+        ),
+        None => PreparedGameAttempt::new(
+            service, park, token.clone(), retirement, transport, host, port, addresses,
+        ),
+    }
+    .map_err(|error| format!("game transport admission: {error}"))
+}
+
+/// A prequeue token stays published from DNS through queue admission. Early
+/// exits clear only the exact generation that this guard installed.
+struct PrequeueCancelGuard<'a> {
+    arm: &'a SlotArm,
+    token: CancelToken,
+}
+
+impl Drop for PrequeueCancelGuard<'_> {
+    fn drop(&mut self) {
+        self.arm.clear_prequeue_cancel(&self.token);
+    }
+}
+
+
 /// Every profile spawns one slot thread; shared handles are threaded through
 /// because the closure moves most of them (allowed: see `script_observe`).
 // The worker body keeps its hand layout: rustfmt used to skip it (an
@@ -1106,7 +1187,7 @@ fn spawn_slot_thread(
                         let worlds = connection.profile().and_then(|p| p.public_worlds())
                             .expect("bound public worlds");
                         let world = &worlds.worlds[round.index];
-                        if let Err(error) = configure_slot_world(&mut client, world, refresh_key, &arm.stop) {
+                        if let Err(error) = configure_slot_world(&mut client, world, refresh_key, &arm) {
                             if arm.stop.load(Ordering::Relaxed) {
                                 return;
                             }
@@ -1117,6 +1198,14 @@ fn spawn_slot_thread(
                             }
                             clear_startup_progress(&slot_statuses, &username);
                             return;
+                        }
+                        if !arm.login_attempt_is_current(login_command, login_world_generation)
+                            || !granted_permit_world_is_current(world_round.as_ref(), &arm)
+                        {
+                            // A cancelled key fetch is not permission to publish
+                            // the old world's endpoint under the new command.
+                            if arm.stop.load(Ordering::Acquire) { return; }
+                            continue;
                         }
                         if let Some(slot) = script_slot(&slot_scripts, &username) {
                             slot.lock().unwrap().pair_world_changed(&client.config.host, client.config.port);
@@ -1136,36 +1225,157 @@ fn spawn_slot_thread(
                         world_dirty = false;
                         refresh_key = false;
                     }
+                    let token = match arm.new_cancel_token() {
+                        Some(token) => token,
+                        None => {
+                            if arm.stop.load(Ordering::Acquire) { return; }
+                            let error = "login cancellation generation exhausted".to_owned();
+                            host_log!(Category::Login, Level::Warn, "login transport preparation failed: {error}");
+                            if let Some(row) = lock_statuses(&slot_statuses).iter_mut().find(|s| s.username == username) {
+                                row.startup_phase = StartupPhase::Error;
+                                row.startup_phase_started = Instant::now();
+                                row.error = Some(error);
+                            }
+                            arm.wait_for_retry(
+                                Duration::from_secs(1),
+                                None,
+                                &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
+                            );
+                            continue;
+                        }
+                    };
+                    if !arm.publish_prequeue_cancel(token.clone(), login_command, login_world_generation) {
+                        continue;
+                    }
+                    let _prequeue_cancel_guard = PrequeueCancelGuard { arm: &arm, token: token.clone() };
+                    let prepared = match prepare_game_transport(&client, &arm, &token) {
+                        Ok(prepared) => prepared,
+                        Err(error) => {
+                            if arm.stop.load(Ordering::Acquire) { return; }
+                            if token.is_cancelled()
+                                || !arm.login_attempt_is_current(login_command, login_world_generation)
+                            {
+                                continue;
+                            }
+                            host_log!(Category::Login, Level::Warn, "login transport preparation failed: {error}");
+                            if let Some(row) = lock_statuses(&slot_statuses).iter_mut().find(|s| s.username == username) {
+                                row.startup_phase = StartupPhase::Error;
+                                row.startup_phase_started = Instant::now();
+                                row.error = Some(error);
+                            }
+                            arm.wait_for_retry(
+                                Duration::from_secs(1),
+                                None,
+                                &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
+                            );
+                            continue;
+                        }
+                    };
+                    if arm.stop.load(Ordering::Acquire) { return; }
+                    if token.is_cancelled()
+                        || arm.uid.load(Ordering::Acquire) != uid
+                        || !arm.login_attempt_is_current(login_command, login_world_generation)
+                        || !granted_permit_world_is_current(world_round.as_ref(), &arm)
+                    {
+                        continue;
+                    }
                     // Publish only the command that selected this world.
                     arm.prepared();
-                    enqueue_queue_place(&slot_queue, &slot_statuses, &username, uid, &arm);
-                    #[cfg(test)]
-                    arm.panic_after_queue_for_test();
-                    if let Some(until) = arm.clean_release_admission_at(
-                        &client.config.host,
-                        client.config.port,
-                        Instant::now(),
-                    ) {
-                        slot_queue.lock().defer_owner_until(arm.queue_owner, until);
-                    }
+                    // WSS capacity is a socket-free, pre-K1 FIFO. TCP and a
+                    // clean adopted WSS Rebind retain the ordinary queue path.
+                    let mut wss_deadline = None;
+                    let mut wss_health = None;
+                    let lane_wait = if prepared.needs_initial_tls() {
+                        let network_health = prepared.network_health();
+                        let deadline = Instant::now() + HANDSHAKE_HOLD;
+                        wss_deadline = Some(deadline);
+                        wss_health = Some(Arc::clone(&network_health));
+                        let ticket = match prepared.game_tls_waiter(arm.park(), deadline) {
+                            Ok(ticket) => ticket,
+                            Err(error) => {
+                                if network_health.loss().is_some() {
+                                    arm.publish_handshake_aborted(
+                                        AbortedAttempt::Transport(TransportFailure::Closed),
+                                        login_command,
+                                        login_world_generation,
+                                        token.generation(),
+                                    );
+                                    return;
+                                }
+                                if arm.stop.load(Ordering::Acquire) { return; }
+                                if token.is_cancelled()
+                                    || !arm.login_attempt_is_current(login_command, login_world_generation)
+                                {
+                                    continue;
+                                }
+                                let message = format!("game TLS capacity: {error}");
+                                host_log!(Category::Login, Level::Warn, "{message}");
+                                if let Some(row) = lock_statuses(&slot_statuses).iter_mut().find(|s| s.username == username) {
+                                    row.startup_phase = StartupPhase::Error;
+                                    row.startup_phase_started = Instant::now();
+                                    row.error = Some(message);
+                                }
+                                arm.wait_for_retry(
+                                    Duration::from_secs(1), None,
+                                    &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
+                                );
+                                continue;
+                            }
+                        };
+                        Some((ticket, network_health))
+                    } else {
+                        None
+                    };
                     host_log!(Category::Login, Level::Info, "relog decision wait queue");
                     show_title_message(&mut client, "", "Waiting to log in...");
-                    let wait = wait_for_permit(
-                        &slot_queue,
-                        &slot_statuses,
-                        &username,
-                        uid,
-                        &arm,
-                        &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
-                    );
-                    // The reservation is owned from the granting poll on:
-                    // every `continue`/`return` (or unwind) below that drops
-                    // it unused gives the grant back.
-                    let PermitWait::Granted(mut permit) = wait else {
-                        if arm.stop.load(Ordering::Relaxed) {
+                    let wait = if let Some((ticket, network_health)) = lane_wait {
+                        let (host, port) = prepared.endpoint();
+                        wait_for_wss_permit(
+                            &slot_queue, &slot_statuses, &username, uid, &arm,
+                            login_command, login_world_generation, token.clone(), ticket, network_health,
+                            || arm.clean_release_admission_at(host, port, Instant::now()),
+                            &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
+                        )
+                    } else {
+                        enqueue_queue_place(&slot_queue, &slot_statuses, &username, uid, &arm);
+                        #[cfg(test)]
+                        arm.panic_after_queue_for_test();
+                        if let Some(until) = arm.clean_release_admission_at(
+                            &client.config.host, client.config.port, Instant::now(),
+                        ) {
+                            slot_queue.lock().defer_owner_until(arm.queue_owner, until);
+                        }
+                        wait_for_permit_with_cancel(
+                            &slot_queue, &slot_statuses, &username, uid, &arm, &token,
+                            &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
+                        )
+                    };
+                    let mut permit = match wait {
+                        PermitWait::Granted(permit) => permit,
+                        PermitWait::Cancelled => {
+                            if arm.stop.load(Ordering::Relaxed) {
+                                return;
+                            }
+                            continue;
+                        }
+                        PermitWait::Deadline => {
+                            arm.publish_handshake_aborted(
+                                AbortedAttempt::Deadline,
+                                login_command,
+                                login_world_generation,
+                                token.generation(),
+                            );
+                            continue;
+                        }
+                        PermitWait::Unavailable => {
+                            arm.publish_handshake_aborted(
+                                AbortedAttempt::Transport(TransportFailure::Closed),
+                                login_command,
+                                login_world_generation,
+                                token.generation(),
+                            );
                             return;
                         }
-                        continue;
                     };
                     if !granted_permit_world_is_current(world_round.as_ref(), &arm) {
                         drop(permit);
@@ -1207,28 +1417,61 @@ fn spawn_slot_thread(
                     let handshake_lowmem = client.config.lowmem;
                     // Publication is still an unused permit. A Logout or Stop
                     // before it must not charge start spacing or UID/IP TTLs.
+                    let generation = prepared.token().generation();
+                    let mut slot_login = SlotLogin {
+                        client: &mut client,
+                        arm: &arm,
+                        command: login_command,
+                        world_generation: login_world_generation,
+                        username: &username,
+                        password: &password,
+                        reconnect,
+                        backoff: &backoff,
+                    };
                     let hold = Cell::new(None);
-                    let Some(login) = permit.attempt(
-                        |cancel| arm.begin_attempt(login_command, login_world_generation, cancel),
+                    let Some(candidate) = permit.attempt(
+                        prepared,
+                        || {
+                            arm.uid.load(Ordering::Acquire) != uid
+                                || !arm.login_attempt_is_current(
+                                    login_command,
+                                    login_world_generation,
+                                )
+                        },
+                        |cancel, generation| arm.begin_attempt_with_generation(
+                            login_command, login_world_generation, cancel, generation,
+                        ),
                         |deadline, cancel| {
                             mark_login_started(&slot_statuses, &username);
-                            let (result, server_hold) = SlotLogin {
-                                client: &mut client,
-                                arm: &arm,
-                                command: login_command,
-                                world_generation: login_world_generation,
-                                username: &username,
-                                password: &password,
-                                reconnect,
-                                backoff: &backoff,
-                            }
-                            .run(deadline, cancel, |_| {});
+                            let (result, server_hold) = slot_login.run(deadline, cancel, |_| {});
                             hold.set(server_hold);
                             result
                         },
                         |_| hold.get(),
                     ) else {
-                        arm.clear_unused_attempt();
+                        drop(slot_login);
+                        if wss_health.as_ref().is_some_and(|health| health.loss().is_some()) {
+                            arm.publish_handshake_aborted(
+                                AbortedAttempt::Transport(TransportFailure::Closed),
+                                login_command,
+                                login_world_generation,
+                                generation,
+                            );
+                            arm.clear_unused_attempt(generation);
+                            return;
+                        }
+                        if !token.is_cancelled()
+                            && arm.login_attempt_is_current(login_command, login_world_generation)
+                            && wss_deadline.is_some_and(|deadline| Instant::now() >= deadline)
+                        {
+                            arm.publish_handshake_aborted(
+                                AbortedAttempt::Deadline,
+                                login_command,
+                                login_world_generation,
+                                generation,
+                            );
+                        }
+                        arm.clear_unused_attempt(generation);
                         drop(permit);
                         // Refusal returns the unused grant before a bounded
                         // park; a stable stale capture cannot spin the queue.
@@ -1239,9 +1482,19 @@ fn spawn_slot_thread(
                         );
                         continue;
                     };
+                    let login = slot_login.finish_after_q(candidate);
+                    drop(slot_login);
                     match login {
-                        Ok(false) => continue,
-                        Ok(true) => {
+                        Ok(SlotLoginOutcome::Aborted) => continue,
+                        Ok(SlotLoginOutcome::CommittedSessionExit(cause)) => {
+                            host_log!(Category::Lifecycle, Level::Warn, "post-commit session exit: {cause:?}");
+                            publish_slot_disconnected(&slot_statuses, &username);
+                            if let Some(row) = lock_statuses(&slot_statuses).iter_mut().find(|s| s.username == username) {
+                                row.error = Some(format!("session exit: {cause:?}"));
+                            }
+                            return;
+                        }
+                        Ok(SlotLoginOutcome::Promoted) => {
                             show_title_message(&mut client, "", "");
                             backoff.reset();
                             if let Some(round) = world_round.as_mut() { round.reset(); }

@@ -678,6 +678,7 @@ fn run_cell() -> Result<(), String> {
 
     let outer_deadline = Instant::now() + deadline + Duration::from_secs(5);
     let outcome = loop {
+        play.maintain_services(Instant::now());
         let script_lifecycle = play.script_lifecycle_receipt(&account);
         let script_error = play.script_last_error(&account);
         let mut state = state.lock().unwrap();

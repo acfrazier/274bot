@@ -1631,6 +1631,7 @@ fn run_cells(
     let mut family_receipt = None;
 
     let mut result: Result<(), String> = 'run: loop {
+        play.maintain_services(Instant::now());
         let mut observations = Vec::with_capacity(names.len());
         for account in &names {
             observations.push(PollActor {
@@ -2617,6 +2618,7 @@ fn run_cells(
     }
     let capture_deadline = Instant::now() + Duration::from_secs(10);
     loop {
+        play.maintain_services(Instant::now());
         let all_captured = shared
             .lock()
             .map_err(|_| "live state poisoned")?

@@ -261,12 +261,22 @@ fn selection(root: &TempRoot, revision: &str, asset_port: u16) -> ProfileSelecti
     options.resolve_with_env(None, &environment).unwrap()
 }
 
+fn network_driver() -> &'static client_adapter::service::MaintenanceDriver {
+    static DRIVER: std::sync::LazyLock<client_adapter::service::MaintenanceDriver> =
+        std::sync::LazyLock::new(|| {
+            client_adapter::service::NetworkService::start_composition()
+                .expect("runtime bind test network service")
+        });
+    &DRIVER
+}
+
 /// Local packed CRCs differ from the endpoint's; the negotiated packs are
 /// refreshed into a runtime-owned directory, the operator cache is untouched,
 /// the frozen expected CRC is the server array, and the content id is the
 /// decoded identity of the negotiated assets.
 #[test]
 fn runtime_bind_negotiates_and_freezes_server_identity() {
+    let _driver = network_driver();
     let root = TempRoot::new("negotiate");
     let cache = root.join("cache");
     let local = packs(1);
@@ -344,6 +354,7 @@ fn runtime_bind_negotiates_and_freezes_server_identity() {
 /// must not bind.
 #[test]
 fn runtime_bind_refuses_wrong_archive_same_revision_manifest() {
+    let _driver = network_driver();
     let root = TempRoot::new("wrong-manifest");
     let cache = root.join("cache");
     let local = packs(1);
@@ -379,6 +390,7 @@ fn runtime_bind_refuses_wrong_archive_same_revision_manifest() {
 
 #[test]
 fn runtime_external_nav_binds_without_rehashing_selected_content() {
+    let _driver = network_driver();
     let root = TempRoot::new("nav-source");
     let p = packs(1);
     write_packs(&root.join("cache"), &p);
@@ -498,6 +510,7 @@ fn runtime_external_nav_binds_without_rehashing_selected_content() {
 /// a fabricated Ready.
 #[test]
 fn offline_bind_freezes_local_files_without_network() {
+    let _driver = network_driver();
     let root = TempRoot::new("offline");
     let cache = root.join("cache");
     let local = packs(1);
@@ -564,6 +577,7 @@ fn hold_lock(path: &Path, held: std::time::Duration) -> thread::JoinHandle<()> {
 /// not the disk's fsync latency.
 #[test]
 fn template_preparation_steps_stay_bounded_while_the_cache_lock_is_held() {
+    let _driver = network_driver();
     use host_play::progress::ProfileProgressObserver;
     use std::time::{Duration, Instant};
     let (root, public, lock) = stepped_fixture("stepped-lock");
@@ -603,6 +617,7 @@ fn template_preparation_steps_stay_bounded_while_the_cache_lock_is_held() {
 /// preparation binds normally.
 #[test]
 fn cancelled_template_preparation_ends_promptly_and_the_next_one_binds() {
+    let _driver = network_driver();
     use host_play::progress::ProfileProgressObserver;
     use script::preparation::CooperativePreparationStep as Step;
     use std::time::{Duration, Instant};
@@ -622,6 +637,11 @@ fn cancelled_template_preparation_ends_promptly_and_the_next_one_binds() {
             }
             host_play::TemplateStep::Complete(output) => Step::Complete {
                 output: output.map(|_| ()),
+                completed: 1,
+                total: Some(1),
+            },
+            host_play::TemplateStep::ServiceStart(error) => Step::Complete {
+                output: Err(error.to_string()),
                 completed: 1,
                 total: Some(1),
             },

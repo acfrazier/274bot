@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 use api::host_log;
 use api::hostlog::{Category, Level, Source};
 use api::identity::SessionKey;
+use client_adapter::service::{MaintenanceDriver, NetworkService};
 use host::{CapacityEval, FrameBuf, SlotInput};
 use host_play::{InstancePermit, Play, SlotArm, SlotStatus, WalkArms};
 use vault::{Profile, ProfileSettings, RandomEventPolicy, Vault, VaultChange};
@@ -609,7 +610,9 @@ pub struct OperatorSession<Io> {
     /// The process local-state service the front end's composition root
     /// opened; every `Play` this session adopts uses it, so the process has
     /// one writer for its state files.
-    local_state: Option<Arc<host_play::local_state::LocalStateService>>,
+    /// Registration that keeps process network maintenance under this
+    /// composition's event loop from construction onward.
+    network_driver: Option<MaintenanceDriver>,
     /// Process-lifetime single-instance lock (or an explicit skip).
     _instance: InstancePermit,
     /// Shared host-capacity warning; both front ends read [`Self::capacity_notice`].
@@ -636,6 +639,10 @@ enum CapacityKind {
 impl<Io> OperatorSession<Io> {
     pub fn new(instance: InstancePermit) -> Self {
         crate::log::global();
+        // Start before the session can prepare profiles or admit network work.
+        // Startup failure is cached by the service and later admissions report
+        // its typed error; construction remains infallible.
+        let network_driver = NetworkService::start_composition().ok();
         Self {
             vault: None,
             play: None,
@@ -678,6 +685,7 @@ impl<Io> OperatorSession<Io> {
             walk_globals: host_play::WalkGlobals::default(),
             walk_globals_store: None,
             local_state: None,
+            network_driver,
             _instance: instance,
             capacity: None,
             capacity_kind: CapacityKind::Clear,
@@ -1551,6 +1559,15 @@ impl<Io> OperatorSession<Io> {
         // Commands dispatched since the last poll come before the status
         // changes they caused; settlements follow them.
         self.log_operations();
+        // Health belongs to the composition's event loop, not the resource
+        // meter or work admission. Before Play exists, this driver is the
+        // only maintenance owner; once installed, Play preserves its health
+        // publication semantics and maintains the same process service.
+        if let Some(play) = self.play.as_ref() {
+            play.maintain_services(now);
+        } else if let Some(driver) = self.network_driver.as_ref() {
+            driver.maintain(now);
+        }
         if let Some(play) = self.play.as_ref() {
             play.pump_script_lifecycles();
             play.statuses_into(&mut self.polled);

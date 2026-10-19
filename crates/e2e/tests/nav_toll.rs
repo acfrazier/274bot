@@ -322,6 +322,7 @@ fn nav_shantay_follow() {
 
     let deadline = Instant::now() + Duration::from_secs(420);
     loop {
+        play.maintain_services(Instant::now());
         let (status, evidence) = {
             let r = runner.lock().unwrap();
             (r.status(), r.evidence().cloned())
@@ -342,7 +343,7 @@ fn nav_shantay_follow() {
                         "nav_shantay_follow: no terminal status within 420s ({other:?})"
                     ));
                 }
-                std::thread::sleep(Duration::from_millis(250));
+                std::thread::sleep(Duration::from_millis(100));
             }
         }
     }
@@ -402,6 +403,7 @@ fn run_shantay_walk_from(start: WorldTile, case: &str) {
 
     let deadline = Instant::now() + Duration::from_secs(300);
     loop {
+        play.maintain_services(Instant::now());
         let (status, evidence) = {
             let r = runner.lock().unwrap();
             (r.status(), r.evidence().cloned())
@@ -422,7 +424,7 @@ fn run_shantay_walk_from(start: WorldTile, case: &str) {
                         "{case}: no terminal status within 300s ({other:?})"
                     ));
                 }
-                std::thread::sleep(Duration::from_millis(250));
+                std::thread::sleep(Duration::from_millis(100));
             }
         }
     }

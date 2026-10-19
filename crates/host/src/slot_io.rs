@@ -1,107 +1,15 @@
 use std::collections::VecDeque;
-use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use api::native_input::{NativeInputAuthority, NativeInputPermit};
 
-#[cfg(unix)]
-use std::os::unix::io::{AsRawFd, RawFd};
-#[cfg(unix)]
-use std::os::unix::net::UnixStream;
-
-#[cfg(windows)]
-use std::net::TcpStream;
-#[cfg(windows)]
-use std::os::windows::io::{AsRawSocket, RawSocket};
+use client_adapter::park::{Park, ParkOutcome};
 
 use client::client::{present::pack_rgb, GameShell, APPLET_H, APPLET_W};
 use client::render::backend::FrameOutput;
-
-/// OS socket handle used by the idle park (`poll` / `WSAPoll`).
-#[cfg(unix)]
-pub(crate) type WaitHandle = RawFd;
-#[cfg(windows)]
-pub(crate) type WaitHandle = RawSocket;
-
-/// Maximum handles one wait/park may observe (control + client socket).
-/// Fixed so wait/park stay stack-only — no heap per idle park.
-pub(crate) const MAX_WAIT_HANDLES: usize = 2;
-
-/// Wait until any of `handles` is readable (data, hangup, or error), or
-/// `timeout` elapses. Only the first `handles.len()` entries of the returned
-/// stack array are meaningful. Empty `handles` is a pure sleep (all false).
-///
-/// Stack-only: fixed `[pollfd|WSAPOLLFD; MAX_WAIT_HANDLES]` + `[bool; N]`.
-/// Unix: `poll(2)`. Windows: `WSAPoll` on pointer-width `SOCKET` values —
-/// never truncates to 32-bit fds and never busy-spins.
-#[allow(unsafe_code)]
-pub(crate) fn wait_readable(handles: &[WaitHandle], timeout: Duration) -> [bool; MAX_WAIT_HANDLES] {
-    debug_assert!(
-        handles.len() <= MAX_WAIT_HANDLES,
-        "wait_readable supports at most {MAX_WAIT_HANDLES} handles"
-    );
-    let n = handles.len().min(MAX_WAIT_HANDLES);
-    let mut out = [false; MAX_WAIT_HANDLES];
-    if n == 0 {
-        std::thread::sleep(timeout);
-        return out;
-    }
-    let ms = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
-
-    #[cfg(unix)]
-    {
-        let mut fds = [libc::pollfd {
-            fd: -1,
-            events: 0,
-            revents: 0,
-        }; MAX_WAIT_HANDLES];
-        for i in 0..n {
-            fds[i] = libc::pollfd {
-                fd: handles[i],
-                events: libc::POLLIN,
-                revents: 0,
-            };
-        }
-        let rc = unsafe { libc::poll(fds.as_mut_ptr(), n as libc::nfds_t, ms) };
-        if rc > 0 {
-            let mask = libc::POLLIN | libc::POLLHUP | libc::POLLERR | libc::POLLNVAL;
-            for i in 0..n {
-                out[i] = fds[i].revents & mask != 0;
-            }
-        }
-    }
-
-    #[cfg(windows)]
-    {
-        use windows_sys::Win32::Networking::WinSock::{
-            WSAPoll, POLLERR, POLLHUP, POLLIN, POLLNVAL, SOCKET, WSAPOLLFD,
-        };
-        let mut fds = [WSAPOLLFD {
-            fd: SOCKET::MAX, // unused slots ignored; WSAPoll sees only `n`
-            events: 0,
-            revents: 0,
-        }; MAX_WAIT_HANDLES];
-        for i in 0..n {
-            fds[i] = WSAPOLLFD {
-                fd: handles[i] as SOCKET,
-                events: POLLIN,
-                revents: 0,
-            };
-        }
-        let rc = unsafe { WSAPoll(fds.as_mut_ptr(), n as u32, ms) };
-        if rc > 0 {
-            let mask = POLLIN | POLLHUP | POLLERR | POLLNVAL;
-            for i in 0..n {
-                out[i] = fds[i].revents & mask != 0;
-            }
-        }
-    }
-
-    out
-}
 
 /// Policy state attached by the producer to the actual journal-fixture paint.
 #[cfg(feature = "journal-paint-proof")]
@@ -766,134 +674,140 @@ impl SlotInput {
     }
 }
 
-#[cfg(unix)]
-type WakeStream = UnixStream;
-#[cfg(windows)]
-type WakeStream = TcpStream;
-
 /// Per-slot control wake: the panel/host-play side holds [`SlotWake`] ends
-/// and `wake()`s a parked slot thread (focus/draw/stop/spawn); the slot
-/// thread hands the [`SlotPark`] end to [`Host::run_client`], which polls
-/// its wait handle next to the client socket inside the idle park. Unix
-/// uses a socketpair; Windows uses an owned nonblocking loopback TCP pair
-/// with peer identity checked. The payload is an empty kick — the parker
-/// re-reads the shared state (`client.draw`, capture, the probe's stop
-/// flag) after waking.
+/// and `wake()`s the slot thread after committing shared control state.
+/// It publishes the committed epoch to the currently associated Park without
+/// holding the association lock. The host binds that Park to the game's
+/// `ClientStream::park()` so inbound and control events share one K2 wait.
 #[derive(Clone)]
 pub struct SlotWake {
-    tx: Arc<WakeStream>,
+    state: Arc<WakeState>,
 }
 
-/// The slot-thread end of the control channel. Not shared: one per parked
-/// thread, polled by [`Host::run_client`].
+/// Shared Park association and control generation for one slot.
+struct WakeState {
+    park: Mutex<Arc<Park>>,
+    epoch: AtomicU64,
+}
+
+/// Slot-thread view of its shared Park and control epoch.
 pub struct SlotPark {
-    rx: WakeStream,
+    state: Arc<WakeState>,
+    readable_epoch: AtomicU64,
 }
 
-/// Create a control-wake channel pair. A [`SlotWake::wake`] writes a byte
-/// that fires a readability wait on [`SlotPark`].
+impl WakeState {
+    fn new() -> Self {
+        Self {
+            park: Mutex::new(Arc::new(Park::new())),
+            epoch: AtomicU64::new(0),
+        }
+    }
+}
+
+/// Create a control-wake pair with no OS descriptors.
 pub fn wake_channel() -> (SlotWake, SlotPark) {
-    #[cfg(unix)]
-    {
-        let (tx, rx) = UnixStream::pair().expect("socketpair for slot wake");
-        let _ = tx.set_nonblocking(true);
-        let _ = rx.set_nonblocking(true);
-        (SlotWake { tx: Arc::new(tx) }, SlotPark { rx })
-    }
-    #[cfg(windows)]
-    {
-        // Fail loudly: a blocking wake pair can stall kick/drain.
-        let (tx, rx) = loopback_tcp_pair().expect("loopback TCP pair for slot wake");
-        (SlotWake { tx: Arc::new(tx) }, SlotPark { rx })
-    }
-}
-
-/// Owned nonblocking loopback TCP pair. The accepted peer address must
-/// match the connector's local address so a stray connection cannot own
-/// the park end. Both ends are nonblocking + TCP_NODELAY (Nagle off) so
-/// kick latency is not delayed-ACK bound.
-#[cfg(windows)]
-fn loopback_tcp_pair() -> std::io::Result<(TcpStream, TcpStream)> {
-    use std::net::TcpListener;
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let addr = listener.local_addr()?;
-    let client = TcpStream::connect(addr)?;
-    let client_local = client.local_addr()?;
-    let (server, peer) = listener.accept()?;
-    if peer != client_local {
-        return Err(std::io::Error::other(format!(
-            "wake pair peer mismatch: accepted {peer}, expected {client_local}"
-        )));
-    }
-    if server.peer_addr()? != client_local {
-        return Err(std::io::Error::other("wake pair server peer_addr mismatch"));
-    }
-    // Writer end is `client` (SlotWake); set both ends.
-    client.set_nodelay(true)?;
-    server.set_nodelay(true)?;
-    client.set_nonblocking(true)?;
-    server.set_nonblocking(true)?;
-    Ok((client, server))
+    let state = Arc::new(WakeState::new());
+    (
+        SlotWake {
+            state: Arc::clone(&state),
+        },
+        SlotPark {
+            state,
+            readable_epoch: AtomicU64::new(0),
+        },
+    )
 }
 
 impl SlotWake {
-    /// Wake a parked slot thread: one byte on the control stream. Nonblocking
-    /// and best-effort — a full wake buffer (only possible if the parker
-    /// stopped draining) or a dead slot just drops the kick.
+    /// Publish a control change after its shared state has been committed.
+    /// The Park notification happens after releasing the association lock.
     pub fn wake(&self) {
-        let _ = (&*self.tx).write(&[1]);
+        self.state.epoch.fetch_add(1, Ordering::Release);
+        let park = {
+            let associated = self.state.park.lock().unwrap();
+            Arc::clone(&associated)
+        };
+        park.publish();
     }
 }
 
 impl SlotPark {
-    /// The wake end's fd, for the slot thread's `poll(2)`.
-    #[cfg(unix)]
-    pub fn fd(&self) -> RawFd {
-        self.rx.as_raw_fd()
+    /// Bind control wakes to the same Park used by this slot's game stream.
+    pub fn bind_park(&self, park: Arc<Park>) {
+        *self.state.park.lock().unwrap() = park;
     }
 
-    /// The wake end as a Windows `SOCKET` for `WSAPoll`.
-    #[cfg(windows)]
-    pub fn raw_socket(&self) -> RawSocket {
-        self.rx.as_raw_socket()
+    /// Clone the currently associated Park. The association lock is dropped
+    /// before callers wait or publish.
+    pub fn park(&self) -> Arc<Park> {
+        let associated = self.state.park.lock().unwrap();
+        Arc::clone(&associated)
     }
 
-    /// Handle used by the host idle park.
-    pub(crate) fn wait_handle(&self) -> WaitHandle {
-        #[cfg(unix)]
-        {
-            self.fd()
-        }
-        #[cfg(windows)]
-        {
-            self.raw_socket()
-        }
+    /// Current committed control-wake epoch. The host compares this inside
+    /// the K2 readiness predicate and advances its cursor only after return.
+    pub(crate) fn wake_epoch(&self) -> u64 {
+        self.state.epoch.load(Ordering::Acquire)
     }
 
-    /// Block until a wake byte is readable or `timeout` elapses.
-    /// Returns true when the control end is readable (including hangup).
-    /// Wraps one stack wait entry — no heap.
+    /// Wait for a control epoch after the last compatibility wait or drain.
+    /// The normal host loop uses its own cursor and the game stream's Park.
     pub fn wait_readable(&self, timeout: Duration) -> bool {
-        wait_readable(&[self.wait_handle()], timeout)[0]
-    }
-
-    /// Drain any queued wake bytes so a burst of kicks cannot fill the
-    /// control-stream buffer.
-    pub fn drain(&self) {
-        let mut b = [0u8; 64];
-        while let Ok(n) = (&self.rx).read(&mut b) {
-            if n == 0 {
-                break;
+        let epoch = self.wake_epoch();
+        if epoch != self.readable_epoch.load(Ordering::Acquire) {
+            self.readable_epoch.store(epoch, Ordering::Release);
+            return true;
+        }
+        let park = self.park();
+        let deadline = Instant::now() + timeout;
+        let mut observed_epoch = None;
+        match park.wait(
+            deadline,
+            Instant::now,
+            || false,
+            || false,
+            || false,
+            || {
+                let epoch = self.wake_epoch();
+                if epoch != self.readable_epoch.load(Ordering::Acquire) {
+                    observed_epoch = Some(epoch);
+                    Some(true)
+                } else {
+                    None
+                }
+            },
+            false,
+            None,
+        ) {
+            ParkOutcome::Ready(true) => {
+                if let Some(epoch) = observed_epoch {
+                    self.readable_epoch.store(epoch, Ordering::Release);
+                }
+                true
+            }
+            ParkOutcome::Deadline => false,
+            ParkOutcome::Unavailable
+            | ParkOutcome::SelectedIntent
+            | ParkOutcome::Revoked
+            | ParkOutcome::Ready(false) => {
+                unreachable!("compatibility Park has no terminal or false-ready result")
             }
         }
+    }
+
+    /// Mark control epochs observed by another slot consumer as drained.
+    pub fn drain(&self) {
+        self.readable_epoch
+            .store(self.wake_epoch(), Ordering::Release);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        map_image_to_applet, wait_readable, wake_channel, FrameBuf, InputEv, ManualMoveIntent,
-        MouseOwner, SlotInput,
+        map_image_to_applet, wake_channel, FrameBuf, InputEv, ManualMoveIntent, MouseOwner,
+        SlotInput,
     };
     use client::client::GameShell;
     use client::graphics::PixMap;
@@ -1933,7 +1847,7 @@ mod tests {
     }
 
     #[test]
-    fn wake_channel_fires_a_polling_parker_and_drains() {
+    fn wake_channel_observes_and_drains_control_epoch() {
         let (wake, park) = wake_channel();
         assert!(
             !park.wait_readable(Duration::from_millis(0)),
@@ -1942,7 +1856,7 @@ mod tests {
         wake.wake();
         assert!(
             park.wait_readable(Duration::from_millis(1000)),
-            "a wake byte must fire the wait"
+            "a pending wake epoch must be observed"
         );
         park.drain();
         assert!(
@@ -1977,58 +1891,10 @@ mod tests {
     }
 
     #[test]
-    fn wait_readable_reports_socket_data_and_close() {
-        use std::io::Write;
-        use std::net::{Shutdown, TcpListener, TcpStream};
-
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let client = TcpStream::connect(addr).unwrap();
-        let (mut server, _) = listener.accept().unwrap();
-
-        #[cfg(unix)]
-        let handle = {
-            use std::os::unix::io::AsRawFd;
-            client.as_raw_fd()
-        };
-        #[cfg(windows)]
-        let handle = {
-            use std::os::windows::io::AsRawSocket;
-            client.as_raw_socket()
-        };
-
-        assert!(
-            !wait_readable(&[handle], Duration::from_millis(0))[0],
-            "idle TCP pair must not be readable"
-        );
-        server.write_all(&[7]).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(2);
-        loop {
-            if wait_readable(&[handle], Duration::from_millis(0))[0] {
-                break;
-            }
-            assert!(Instant::now() < deadline, "socket never became readable");
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        // Consume the byte so only close remains to wake the next wait.
-        {
-            use std::io::Read;
-            let mut b = [0u8; 1];
-            let _ = (&client).read(&mut b);
-        }
-        server.shutdown(Shutdown::Both).unwrap();
-        assert!(
-            wait_readable(&[handle], Duration::from_millis(1000))[0],
-            "peer close must wake readability"
-        );
-    }
-
-    #[test]
     fn wait_readable_honors_bounded_timeout() {
         let (_wake, park) = wake_channel();
         let start = Instant::now();
-        let fired = wait_readable(&[park.wait_handle()], Duration::from_millis(80));
-        assert!(!fired[0]);
+        assert!(!park.wait_readable(Duration::from_millis(80)));
         let elapsed = start.elapsed();
         assert!(
             elapsed >= Duration::from_millis(60),

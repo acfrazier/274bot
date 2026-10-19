@@ -324,6 +324,7 @@ fn wait_until(
 ) {
     let deadline = Instant::now() + timeout;
     loop {
+        live.play.maintain_services(Instant::now());
         let state = live
             .fixture
             .lock()

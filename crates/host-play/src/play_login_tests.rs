@@ -36,6 +36,219 @@ fn granted_for_arm(queue: &SharedLoginQueue, arm: &SlotArm, uid: i32) -> Granted
     drop(q);
     GrantedReservation::new(queue, arm.queue_owner)
 }
+fn test_cells(permit: &GrantedReservation, binding: u64) -> QueueAttemptCells {
+    synthetic_queue_attempt(permit.owner, binding)
+}
+
+fn acknowledge_test_return<T, E>(outcome: &LoginAttemptReturn<T, E>) {
+    assert!(
+        outcome.acknowledge_after_physical_release(Instant::now()),
+        "the exact test flight remains until physical release"
+    );
+}
+
+fn finish_test_login(
+    arm: &SlotArm,
+    client: &mut Client,
+    command: IntentCommand,
+    world_generation: u64,
+    outcome: LoginAttemptReturn<(), LoginError>,
+) -> Result<SlotLoginOutcome, LoginError> {
+    let backoff = LoginBackoff::new();
+    SlotLogin {
+        client,
+        arm,
+        command,
+        world_generation,
+        username: "alice",
+        password: "secret",
+        reconnect: false,
+        backoff: &backoff,
+    }
+    .finish_after_q(outcome)
+}
+
+#[test]
+fn invalidating_intent_cancels_active_key_fetch_outside_k4() {
+    let arm = SlotArm::new(7, true);
+    let cancel = LoginCancel::new();
+    let callback_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let callback_unlocked = Arc::new(AtomicBool::new(false));
+    let callback_arm = Arc::clone(&arm);
+    let callback_count_ref = Arc::clone(&callback_count);
+    let callback_unlocked_ref = Arc::clone(&callback_unlocked);
+    cancel.register_cancel_callback(move || {
+        callback_count_ref.fetch_add(1, Ordering::Relaxed);
+        callback_unlocked_ref.store(
+            callback_arm.lifecycle.try_lock().is_some(),
+            Ordering::Relaxed,
+        );
+    });
+
+    assert!(arm.publish_key_fetch_cancel(&cancel));
+    let receipt = arm.post_intent(Intent::Logout).expect("slot remains open");
+    assert!(receipt.invalidated_attempt());
+    assert!(cancel.is_cancelled());
+    assert_eq!(callback_count.load(Ordering::Relaxed), 1);
+    assert!(callback_unlocked.load(Ordering::Relaxed));
+    arm.clear_key_fetch_cancel();
+    assert!(arm.key_fetch_cancel.lock().is_none());
+}
+
+#[test]
+fn slot_stop_cancels_active_key_fetch_once_outside_k4() {
+    let arm = SlotArm::new(7, true);
+    let cancel = LoginCancel::new();
+    let callback_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let callback_unlocked = Arc::new(AtomicBool::new(false));
+    let callback_arm = Arc::clone(&arm);
+    let callback_count_ref = Arc::clone(&callback_count);
+    let callback_unlocked_ref = Arc::clone(&callback_unlocked);
+    cancel.register_cancel_callback(move || {
+        callback_count_ref.fetch_add(1, Ordering::Relaxed);
+        callback_unlocked_ref.store(
+            callback_arm.lifecycle.try_lock().is_some(),
+            Ordering::Relaxed,
+        );
+    });
+
+    assert!(arm.publish_key_fetch_cancel(&cancel));
+    arm.post_intent(Intent::RemoveSlot)
+        .expect("remove intent is accepted");
+    assert!(arm.stop.load(Ordering::Acquire));
+    assert!(cancel.is_cancelled());
+    assert_eq!(callback_count.load(Ordering::Relaxed), 1);
+    assert!(callback_unlocked.load(Ordering::Relaxed));
+    arm.clear_key_fetch_cancel();
+    assert!(arm.key_fetch_cancel.lock().is_none());
+}
+
+#[test]
+fn prequeue_cancel_is_exact_and_invalidating_intents_fire_outside_k4() {
+    let arm = SlotArm::new(7, true);
+    let (command, world_generation) = capture_login_authorization(&arm, false).unwrap();
+    let first = arm.new_cancel_token().expect("first prequeue token");
+    assert!(arm.publish_prequeue_cancel(first.clone(), command, world_generation));
+    arm.clear_prequeue_cancel(&first);
+
+    let current = arm.new_cancel_token().expect("current prequeue token");
+    assert!(arm.publish_prequeue_cancel(
+        current.clone(),
+        command,
+        world_generation,
+    ));
+    arm.clear_prequeue_cancel(&first);
+    assert!(
+        arm.lifecycle
+            .lock()
+            .prequeue_cancel
+            .as_ref()
+            .is_some_and(|pending| pending.same_attempt(&current)),
+        "clearing an older prequeue attempt must not remove the current one"
+    );
+
+    arm.assert_cancel_order.store(true, Ordering::Relaxed);
+    let receipt = arm.post_intent(Intent::Logout).expect("slot remains open");
+    assert!(receipt.invalidated_attempt());
+    assert!(current.is_cancelled());
+    assert!(arm.lifecycle.lock().prequeue_cancel.is_none());
+
+    let stopped = SlotArm::new(8, true);
+    let (command, world_generation) = capture_login_authorization(&stopped, false).unwrap();
+    let pending = stopped.new_cancel_token().expect("stop prequeue token");
+    assert!(stopped.publish_prequeue_cancel(pending.clone(), command, world_generation));
+    stopped.assert_cancel_order.store(true, Ordering::Relaxed);
+    stopped
+        .post_intent(Intent::RemoveSlot)
+        .expect("remove intent is accepted");
+    assert!(stopped.stop.load(Ordering::Acquire));
+    assert!(pending.is_cancelled());
+    assert!(stopped.lifecycle.lock().prequeue_cancel.is_none());
+}
+
+#[test]
+fn identity_change_cancels_prequeue_dns_token_outside_k4() {
+    let arm = SlotArm::new(7, true);
+    let (command, world_generation) = capture_login_authorization(&arm, false).unwrap();
+    let token = arm.new_cancel_token().expect("prequeue cancellation token");
+    assert!(arm.publish_prequeue_cancel(token.clone(), command, world_generation));
+    arm.assert_cancel_order.store(true, Ordering::Relaxed);
+
+    arm.sync_login_identity(8, "updated-password");
+
+    assert!(token.is_cancelled());
+    assert!(arm.lifecycle.lock().prequeue_cancel.is_none());
+    assert_eq!(arm.uid.load(Ordering::Acquire), 8);
+}
+
+#[test]
+fn prestart_handshake_abort_requires_the_exact_active_generation() {
+    let arm = SlotArm::new(7, true);
+    let (command, world_generation) = capture_login_authorization(&arm, false).unwrap();
+    let token = arm.new_cancel_token().expect("prequeue cancellation token");
+    let generation = token.generation();
+    assert!(arm.publish_prequeue_cancel(token, command, world_generation));
+    let cancel = LoginCancel::new();
+    assert!(arm.begin_attempt_with_generation(
+        command,
+        world_generation,
+        cancel,
+        generation,
+    ));
+
+    assert!(arm.lifecycle.lock().prequeue_cancel.is_none());
+
+    arm.publish_handshake_aborted(
+        AbortedAttempt::Deadline,
+        command,
+        world_generation,
+        generation + 1,
+    );
+    assert!(matches!(
+        arm.latest_lifecycle_event().unwrap().payload(),
+        SessionEventOut::AttemptStarted { .. }
+    ));
+
+    arm.publish_handshake_aborted(
+        AbortedAttempt::Deadline,
+        command,
+        world_generation,
+        generation,
+    );
+    assert_eq!(
+        arm.latest_lifecycle_event().unwrap().payload(),
+        &SessionEventOut::HandshakeAborted {
+            reason: AbortedAttempt::Deadline,
+        }
+    );
+    assert!(arm.lifecycle.lock().attempt_generation.is_none());
+}
+
+#[test]
+fn stop_cancels_prequeue_wait_and_withdraws_its_fifo_place() {
+    let queue: SharedLoginQueue = Arc::new(QueueMutex::new(LoginQueue::default()));
+    let statuses = Arc::new(Mutex::new(Vec::new()));
+    let arm = SlotArm::new(7, true);
+    let (command, world_generation) = capture_login_authorization(&arm, false).unwrap();
+    let token = arm.new_cancel_token().expect("prequeue cancellation token");
+    assert!(arm.publish_prequeue_cancel(token.clone(), command, world_generation));
+    enqueue_queue_place(&queue, &statuses, "alice", 7, &arm);
+
+    arm.post_intent(Intent::RemoveSlot).expect("slot removal is accepted");
+    assert!(token.is_cancelled());
+    let result = wait_for_permit_with_cancel(
+        &queue,
+        &statuses,
+        "alice",
+        7,
+        &arm,
+        &token,
+        &mut || Duration::from_millis(1),
+    );
+
+    assert!(matches!(result, PermitWait::Cancelled));
+    assert!(queue.lock().status_owner(arm.queue_owner).is_none());
+}
 
 #[test]
 fn logout_after_grant_before_publication_does_not_charge_spacing_or_settlement() {
@@ -45,8 +258,10 @@ fn logout_after_grant_before_publication_does_not_charge_spacing_or_settlement()
     let (command, world) = capture_login_authorization(&arm, false).unwrap();
     arm.request_logout();
     let mut network = false;
-    let result = permit.attempt(
-        |cancel| arm.begin_attempt(command, world, cancel),
+    let cells = test_cells(&permit, 1);
+    let result = permit.attempt_with_test_cells(
+        cells,
+        |cancel, generation| arm.begin_attempt_with_generation(command, world, cancel, generation),
         |deadline, cancel| {
             network = true;
             arm.finish_attempt(command, world, deadline, &cancel, &Ok(()));
@@ -54,7 +269,7 @@ fn logout_after_grant_before_publication_does_not_charge_spacing_or_settlement()
         },
         |_| None,
     );
-    assert_eq!(result, None);
+    assert!(result.is_none());
     assert!(!network);
     drop(permit);
     let mut q = queue.lock();
@@ -71,15 +286,17 @@ fn old_authorization_cannot_be_refreshed_after_logout_then_login() {
     arm.arm_explicit_login();
     let mut permit = granted_for_arm(&queue, &arm, 7);
     let mut connected = false;
-    let result = permit.attempt(
-        |cancel| arm.begin_attempt(command, world, cancel),
+    let cells = test_cells(&permit, 1);
+    let result = permit.attempt_with_test_cells(
+        cells,
+        |cancel, generation| arm.begin_attempt_with_generation(command, world, cancel, generation),
         |_, _| {
             connected = true;
             Ok::<_, ()>(())
         },
         |_| None,
     );
-    assert_eq!(result, None);
+    assert!(result.is_none());
     assert!(!connected);
     drop(permit);
     let mut q = queue.lock();
@@ -88,40 +305,41 @@ fn old_authorization_cannot_be_refreshed_after_logout_then_login() {
 }
 
 #[test]
-fn cancelling_published_token_before_start_settles_once_without_connect() {
+fn cancelling_published_attempt_before_k1_start_does_not_charge_queue_or_connect() {
     let queue: SharedLoginQueue = Arc::new(QueueMutex::new(LoginQueue::default()));
     let arm = SlotArm::new(7, true);
     let (command, world) = capture_login_authorization(&arm, false).unwrap();
     let mut permit = granted_for_arm(&queue, &arm, 7);
-    let mut connected = false;
-    let result = permit.attempt(
-        |cancel| {
-            assert!(arm.begin_attempt(command, world, cancel.clone()));
+    let mut login_called = false;
+    let cells = test_cells(&permit, 1);
+    let result = permit.attempt_with_test_cells(
+        cells,
+        |cancel, generation| {
+            assert!(arm.begin_attempt_with_generation(
+                command,
+                world,
+                cancel.clone(),
+                generation
+            ));
             arm.request_logout();
             assert!(cancel.is_cancelled());
             true
         },
-        |deadline, cancel| {
-            if cancel.is_cancelled() {
-                assert!(!arm.finish_attempt(command, world, deadline, &cancel, &Ok(())));
-                return Ok::<_, ()>(false);
-            }
-            connected = true;
-            Ok(true)
+        |_, cancel| {
+            login_called = true;
+            assert!(cancel.is_cancelled());
+            Ok::<_, ()>(false)
         },
         |_| None,
     );
-    assert_eq!(result, Some(Ok(false)));
-    assert!(!connected);
+    assert!(result.is_none());
+    assert!(!login_called);
     drop(permit);
     let mut q = queue.lock();
     q.enqueue_owner(99, 8);
-    assert!(matches!(
-        q.head_blocker(99, Instant::now()),
-        Some(AdmitBlocker::Spacing { .. })
-    ));
+    assert_eq!(q.head_blocker(99, Instant::now()), None);
 }
-
+ 
 #[test]
 fn cancelling_after_queue_start_before_connect_does_not_open_socket() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -132,8 +350,10 @@ fn cancelling_after_queue_start_before_connect_does_not_open_socket() {
     let mut permit = granted_for_arm(&queue, &arm, 7);
     let mut client = tcp_client(listener.local_addr().unwrap().port());
     let backoff = LoginBackoff::new();
-    let result = permit.attempt(
-        |cancel| arm.begin_attempt(command, world, cancel),
+    let cells = test_cells(&permit, 1);
+    let result = permit.attempt_with_test_cells(
+        cells,
+        |cancel, generation| arm.begin_attempt_with_generation(command, world, cancel, generation),
         |deadline, cancel| {
             arm.request_logout();
             assert!(cancel.is_cancelled());
@@ -147,14 +367,16 @@ fn cancelling_after_queue_start_before_connect_does_not_open_socket() {
                 reconnect: false,
                 backoff: &backoff,
             }
-            .run(deadline, cancel, |_| {
-                panic!("cancelled before Client::login")
-            })
+            .run(deadline, cancel, |_| panic!("cancelled before Client::login"))
             .0
         },
         |_| None,
     );
-    assert!(matches!(result, Some(Ok(false))), "{result:?}");
+    let outcome = result.expect("started attempt returns exact Q facts");
+    assert!(matches!(
+        finish_test_login(&arm, &mut client, command, world, outcome),
+        Ok(SlotLoginOutcome::Aborted)
+    ));
     assert!(listener.accept().is_err(), "cancelled attempt connected");
     assert_eq!(
         arm.latest_lifecycle_event().unwrap().payload(),
@@ -178,12 +400,14 @@ fn switch_world_after_capture_refuses_unused_grant_without_charge() {
     let (command, world) = capture_login_authorization(&arm, false).unwrap();
     let mut permit = granted_for_arm(&queue, &arm, 7);
     arm.switch_world(5);
-    let result = permit.attempt(
-        |cancel| arm.begin_attempt(command, world, cancel),
+    let cells = test_cells(&permit, 1);
+    let result = permit.attempt_with_test_cells(
+        cells,
+        |cancel, generation| arm.begin_attempt_with_generation(command, world, cancel, generation),
         |_, _| panic!("stale world reached Connect"),
         |_: &Result<(), ()>| None,
     );
-    assert_eq!(result, None);
+    assert!(result.is_none());
     drop(permit);
     let mut q = queue.lock();
     q.enqueue_owner(99, 8);
@@ -209,7 +433,7 @@ fn password_read_does_not_acquire_slot_lock_in_reverse_order() {
 }
 
 #[test]
-fn logout_interrupts_blocked_login_read_and_closes_before_queue_return() {
+fn logout_interrupts_blocked_login_read_and_closes_before_retirement_ack() {
     use std::io::Read;
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -239,8 +463,10 @@ fn logout_interrupts_blocked_login_read_and_closes_before_queue_return() {
         })
     };
     let began = Instant::now();
-    let result = permit.attempt(
-        |cancel| arm.begin_attempt(command, world, cancel),
+    let cells = test_cells(&permit, 1);
+    let result = permit.attempt_with_test_cells(
+        cells,
+        |cancel, generation| arm.begin_attempt_with_generation(command, world, cancel, generation),
         |deadline, cancel| {
             SlotLogin {
                 client: &mut client,
@@ -255,17 +481,19 @@ fn logout_interrupts_blocked_login_read_and_closes_before_queue_return() {
             .run(deadline, cancel, |_| {})
             .0
         },
-        |_| {
-            assert_eq!(eof_rx.recv_timeout(Duration::from_secs(60)).unwrap(), 0);
-            None
-        },
-    );
+        |_| None,
+    )
+    .expect("started attempt returns exact Q facts");
+    assert!(matches!(
+        finish_test_login(&arm, &mut client, command, world, result),
+        Ok(SlotLoginOutcome::Aborted)
+    ));
+    assert_eq!(eof_rx.recv_timeout(Duration::from_secs(60)).unwrap(), 0);
     poster.join().unwrap();
     server.join().unwrap();
-    assert!(matches!(result, Some(Ok(false))), "{result:?}");
     assert!(began.elapsed() < Duration::from_secs(60));
     assert_eq!(arm.session_key(), None);
-    assert!(client.stream.is_none());
+    assert!(!client.has_stream());
     assert_eq!(
         arm.login_latch_reason(),
         Some(LoginLatchReason::OperatorLogout)
@@ -290,12 +518,14 @@ fn password_revision_change_refuses_old_authorization_without_charging_queue() {
         ..initial
     };
     sync_profile_arm(&arm, &revised);
-    let result = permit.attempt(
-        |cancel| arm.begin_attempt(command, world, cancel),
+    let cells = test_cells(&permit, 1);
+    let result = permit.attempt_with_test_cells(
+        cells,
+        |cancel, generation| arm.begin_attempt_with_generation(command, world, cancel, generation),
         |_, _| panic!("stale credentials cannot reach the network"),
         |_: &Result<(), ()>| None,
     );
-    assert_eq!(result, None);
+    assert!(result.is_none());
     drop(permit);
     let mut q = queue.lock();
     q.enqueue_owner(99, 8);
@@ -351,12 +581,14 @@ fn cancelling_rows_after_unused_grant_abandon_without_settlement() {
         let (command, world) = capture_login_authorization(&arm, false).unwrap();
         let mut permit = granted_for_arm(&queue, &arm, 7);
         arm.post_intent(row);
-        let result = permit.attempt(
-            |cancel| arm.begin_attempt(command, world, cancel),
+        let cells = test_cells(&permit, 1);
+        let result = permit.attempt_with_test_cells(
+            cells,
+            |cancel, generation| arm.begin_attempt_with_generation(command, world, cancel, generation),
             |_, _| panic!("no socket work for {row:?}"),
             |_: &Result<(), ()>| None,
         );
-        assert_eq!(result, None, "{row:?}");
+        assert!(result.is_none(), "{row:?}");
         drop(permit);
         let mut q = queue.lock();
         q.enqueue_owner(99, 8);
@@ -405,6 +637,32 @@ fn success_at_deadline_without_queue_poll_does_not_publish_session() {
 }
 
 #[test]
+fn revocation_precedes_deadline_for_success_and_failure() {
+    for result in [Ok(()), Err(LoginError::response(16, "", ""))] {
+        let arm = SlotArm::new(7, true);
+        let command = arm.login_command(false).unwrap();
+        let world = arm.world_generation();
+        let cancel = LoginCancel::new();
+        assert!(arm.begin_attempt(command, world, cancel.clone()));
+        cancel.cancel();
+        assert!(!arm.finish_attempt(
+            command,
+            world,
+            Instant::now(),
+            &cancel,
+            &result,
+        ));
+        assert_eq!(arm.session_key(), None);
+        assert!(matches!(
+            arm.latest_lifecycle_event().unwrap().payload(),
+            SessionEventOut::HandshakeAborted {
+                reason: AbortedAttempt::Cancelled
+            }
+        ));
+    }
+}
+
+#[test]
 fn response_sixteen_after_logout_keeps_server_hold() {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -425,27 +683,36 @@ fn response_sixteen_after_logout_keeps_server_hold() {
     let backoff = LoginBackoff::new();
     let hold = std::cell::Cell::new(None);
     let mut client = tcp_client(port);
-    let result = permit.attempt(
-        |cancel| arm.begin_attempt(command, world, cancel),
-        |deadline, cancel| {
-            let (result, server_hold) = SlotLogin {
-                client: &mut client,
-                arm: &arm,
-                command,
-                world_generation: world,
-                username: "alice",
-                password: "secret",
-                reconnect: false,
-                backoff: &backoff,
-            }
-            .run(deadline, cancel, |_| arm.request_logout());
-            hold.set(server_hold);
-            result
-        },
-        |_| hold.get(),
-    );
+    let cells = test_cells(&permit, 1);
+    let outcome = permit
+        .attempt_with_test_cells(
+            cells,
+            |cancel, generation| {
+                arm.begin_attempt_with_generation(command, world, cancel, generation)
+            },
+            |deadline, cancel| {
+                let (result, server_hold) = SlotLogin {
+                    client: &mut client,
+                    arm: &arm,
+                    command,
+                    world_generation: world,
+                    username: "alice",
+                    password: "secret",
+                    reconnect: false,
+                    backoff: &backoff,
+                }
+                .run(deadline, cancel, |_| arm.request_logout());
+                hold.set(server_hold);
+                result
+            },
+            |_| hold.get(),
+        )
+        .expect("started attempt returns exact Q facts");
+    assert!(matches!(
+        finish_test_login(&arm, &mut client, command, world, outcome),
+        Ok(SlotLoginOutcome::Aborted)
+    ));
     server.join().unwrap();
-    assert!(matches!(result, Some(Ok(false))));
     let mut q = queue.lock();
     q.enqueue_owner(99, 8);
     assert!(matches!(
@@ -490,35 +757,53 @@ fn refused_client_stream_closes_before_queue_retirement() {
         client.set_external_reconnect_owner(true);
         let backoff = LoginBackoff::new();
         let hold = std::cell::Cell::new(None);
-        let result = permit.attempt(
-            |cancel| arm.begin_attempt(command, world, cancel),
-            |deadline, cancel| {
-                let (result, server_hold) = SlotLogin {
-                    client: &mut client,
-                    arm: &arm,
-                    command,
-                    world_generation: world,
-                    username: "alice",
-                    password: "secret",
-                    reconnect: false,
-                    backoff: &backoff,
-                }
-                .run(deadline, cancel, |_| {});
-                hold.set(server_hold);
-                result
-            },
-            |_| {
-                assert_eq!(
-                    eof_rx.recv_timeout(Duration::from_secs(3)).unwrap(),
-                    0,
-                    "socket must close before queue return acknowledgement"
-                );
-                hold.get()
-            },
+        let cells = test_cells(&permit, 1);
+        let outcome = permit
+            .attempt_with_test_cells(
+                cells,
+                |cancel, generation| {
+                    arm.begin_attempt_with_generation(command, world, cancel, generation)
+                },
+                |deadline, cancel| {
+                    let (result, server_hold) = SlotLogin {
+                        client: &mut client,
+                        arm: &arm,
+                        command,
+                        world_generation: world,
+                        username: "alice",
+                        password: "secret",
+                        reconnect: false,
+                        backoff: &backoff,
+                    }
+                    .run(deadline, cancel, |_| {});
+                    hold.set(server_hold);
+                    result
+                },
+                |_| hold.get(),
+            )
+            .expect("started attempt returns exact Q facts");
+        assert!(matches!(
+            outcome.result(),
+            Err(error) if error.code == code
+        ));
+        {
+            let mut q = queue.lock();
+            q.enqueue_owner(99, 8);
+            assert_eq!(
+                q.head_blocker(99, Instant::now()),
+                Some(AdmitBlocker::Retiring),
+                "return Q retains the flight until the client stream is closed"
+            );
+        }
+        let error = finish_test_login(&arm, &mut client, command, world, outcome).unwrap_err();
+        assert_eq!(error.code, code);
+        assert_eq!(
+            eof_rx.recv_timeout(Duration::from_secs(3)).unwrap(),
+            0,
+            "socket must close before exact retirement acknowledgement"
         );
-        assert!(matches!(&result, Some(Err(error)) if error.code == code));
         assert!(!client.ingame);
-        assert!(client.stream.is_none());
+        assert!(!client.has_stream());
         server.join().unwrap();
     }
 }
@@ -554,38 +839,45 @@ fn cancelled_late_success_logs_out_and_closes_real_socket_before_retirement() {
     let mut client = tcp_client(port);
     let backoff = LoginBackoff::new();
     let hold = std::cell::Cell::new(None);
-    let result = permit.attempt(
-        |cancel| arm.begin_attempt(command, world, cancel),
-        |deadline, cancel| {
-            let (result, server_hold) = SlotLogin {
-                client: &mut client,
-                arm: &arm,
-                command,
-                world_generation: world,
-                username: "alice",
-                password: "secret",
-                reconnect: false,
-                backoff: &backoff,
-            }
-            .run(deadline, cancel, |returned| {
-                assert!(returned.ingame && returned.stream.is_some());
-                arm.request_logout();
-            });
-            hold.set(server_hold);
-            result
-        },
-        |_| {
-            assert_eq!(
-                eof_rx.recv_timeout(Duration::from_secs(3)).unwrap(),
-                0,
-                "late-success close must precede retirement"
-            );
-            hold.get()
-        },
+    let cells = test_cells(&permit, 1);
+    let outcome = permit
+        .attempt_with_test_cells(
+            cells,
+            |cancel, generation| {
+                arm.begin_attempt_with_generation(command, world, cancel, generation)
+            },
+            |deadline, cancel| {
+                let (result, server_hold) = SlotLogin {
+                    client: &mut client,
+                    arm: &arm,
+                    command,
+                    world_generation: world,
+                    username: "alice",
+                    password: "secret",
+                    reconnect: false,
+                    backoff: &backoff,
+                }
+                .run(deadline, cancel, |returned| {
+                    assert!(returned.ingame && returned.has_stream());
+                    arm.request_logout();
+                });
+                hold.set(server_hold);
+                result
+            },
+            |_| hold.get(),
+        )
+        .expect("started attempt returns exact Q facts");
+    assert!(matches!(
+        finish_test_login(&arm, &mut client, command, world, outcome),
+        Ok(SlotLoginOutcome::Aborted)
+    ));
+    assert_eq!(
+        eof_rx.recv_timeout(Duration::from_secs(3)).unwrap(),
+        0,
+        "late-success close must precede retirement"
     );
-    assert!(matches!(result, Some(Ok(false))));
     assert!(!client.ingame);
-    assert!(client.stream.is_none());
+    assert!(!client.has_stream());
     assert_eq!(arm.session_key(), None);
     server.join().unwrap();
 }
@@ -895,15 +1187,35 @@ fn poll_permit(queue: &mut LoginQueue, owner: u64, uid: i32, now: Instant) -> Pe
     polled.permit
 }
 
-fn queue_attempt(queue: &mut LoginQueue, arm: &SlotArm, now: Instant) {
+fn queue_attempt(
+    queue: &mut LoginQueue,
+    arm: &SlotArm,
+    now: Instant,
+    binding: u64,
+) -> QueueAttemptCells {
     queue.enqueue_owner(arm.queue_owner, 7);
     if let Some(until) = arm.clean_release_admission_at(HOST, PORT, now) {
         queue.defer_owner_until(arm.queue_owner, until);
     }
     assert_eq!(poll_permit(queue, arm.queue_owner, 7, now), Permit::Grant);
-    assert!(queue
-        .start_attempt(arm.queue_owner, now, LoginCancel::new())
-        .is_some());
+    let cells = synthetic_queue_attempt(arm.queue_owner, binding);
+    assert!(cells.start(queue, now).is_some());
+    cells
+}
+
+fn return_and_release_queue_attempt(
+    queue: &mut LoginQueue,
+    cells: &QueueAttemptCells,
+    now: Instant,
+    hold: Option<Duration>,
+) -> bool {
+    let returned = queue.return_attempt(cells.identity(), now, hold);
+    for cancel in returned.cancels {
+        cancel.cancel();
+    }
+    cells.mark_physical_release();
+    assert!(cells.acknowledge_after_physical_release(queue, now));
+    returned.accepted
 }
 
 #[test]
@@ -920,17 +1232,26 @@ fn clean_exit_paces_from_exit_not_old_handshake_and_release_then_admits() {
         Permit::Wait(_)
     ));
     assert_eq!(queue.status_owner(arm.queue_owner).unwrap().position, 1);
-    queue_attempt(&mut queue, &arm, until);
+    let first = queue_attempt(&mut queue, &arm, until, 1);
     let command = arm.login_command(false).unwrap();
-    assert!(queue.acknowledge_login_return(arm.queue_owner, until));
+    assert!(return_and_release_queue_attempt(
+        &mut queue,
+        &first,
+        until,
+        None
+    ));
     assert_eq!(
         arm.defer_clean_release_at(&busy(), command, HOST, PORT, until),
         Some(CLEAN_RELEASE_CADENCE)
     );
     let retry = until + CLEAN_RELEASE_CADENCE;
-    queue_attempt(&mut queue, &arm, retry);
-    assert!(queue.acknowledge_login_return(arm.queue_owner, retry));
-    on_login_success(&arm, command);
+    let second = queue_attempt(&mut queue, &arm, retry, 2);
+    assert!(return_and_release_queue_attempt(
+        &mut queue,
+        &second,
+        retry,
+        None
+    ));
     assert!(arm.session_online());
     assert!(arm.clean_release_admission_at(HOST, PORT, retry).is_none());
     assert_eq!(
@@ -944,19 +1265,24 @@ fn skipped_device_owner_publishes_its_device_limit_reason() {
     let now = Instant::now();
     let mut queue = LoginQueue::new(Duration::ZERO, 29, Duration::from_secs(60));
     let owner = 1;
-    for _ in 0..4 {
+    for binding in 1..=4 {
         queue.enqueue_owner(owner, 7);
         assert_eq!(poll_permit(&mut queue, owner, 7, now), Permit::Grant);
-        assert!(queue
-            .start_attempt(owner, now, LoginCancel::new())
-            .is_some());
-        assert!(queue.acknowledge_login_return(owner, now));
+        let cells = synthetic_queue_attempt(owner, binding);
+        assert!(cells.start(&mut queue, now).is_some());
+        assert!(return_and_release_queue_attempt(
+            &mut queue,
+            &cells,
+            now,
+            None
+        ));
     }
 
     queue.enqueue_owner(owner, 7);
     queue.enqueue_owner(2, 8);
     assert_eq!(poll_permit(&mut queue, 2, 8, now), Permit::Grant);
-    assert!(queue.start_attempt(2, now, LoginCancel::new()).is_some());
+    let cells = synthetic_queue_attempt(2, 5);
+    assert!(cells.start(&mut queue, now).is_some());
     queue.enqueue_owner(3, 9);
 
     let mut rows = vec![SlotStatus {
@@ -1156,9 +1482,8 @@ fn release_wait_owns_fifo_place_not_handshake_and_never_overlaps_attempts() {
     queue.enqueue_owner(arm.queue_owner, 7);
     queue.defer_owner_until(arm.queue_owner, now + CLEAN_RELEASE_CADENCE);
     assert_eq!(poll_permit(&mut queue, u64::MAX, 9, now), Permit::Grant);
-    queue
-        .start_attempt(u64::MAX, now, LoginCancel::new())
-        .unwrap();
+    let sibling = synthetic_queue_attempt(u64::MAX, 1);
+    assert!(sibling.start(&mut queue, now).is_some());
     let later = now + CLEAN_RELEASE_CADENCE;
     assert!(
         matches!(
@@ -1167,20 +1492,29 @@ fn release_wait_owns_fifo_place_not_handshake_and_never_overlaps_attempts() {
         ),
         "still one handshake even after release deadline"
     );
-    assert!(queue.acknowledge_login_return(u64::MAX, later));
+    assert!(return_and_release_queue_attempt(
+        &mut queue,
+        &sibling,
+        later,
+        None
+    ));
     assert_eq!(
         poll_permit(&mut queue, arm.queue_owner, 7, later),
         Permit::Grant
     );
-    queue
-        .start_attempt(arm.queue_owner, later, LoginCancel::new())
-        .unwrap();
+    let relog = synthetic_queue_attempt(arm.queue_owner, 2);
+    assert!(relog.start(&mut queue, later).is_some());
     queue.enqueue_owner(u64::MAX - 1, 10);
     assert!(matches!(
         poll_permit(&mut queue, u64::MAX - 1, 10, later),
         Permit::Wait(_)
     ));
-    assert!(queue.acknowledge_login_return(arm.queue_owner, later));
+    assert!(return_and_release_queue_attempt(
+        &mut queue,
+        &relog,
+        later,
+        None
+    ));
     assert_eq!(
         poll_permit(&mut queue, u64::MAX - 1, 10, later),
         Permit::Grant
@@ -1362,18 +1696,19 @@ fn password_save_during_fifo_wait_refuses_grant_and_rejoins_at_back() {
         let PermitWait::Granted(mut permit) = wait else {
             panic!("release={release}: expected the original FIFO grant");
         };
+        let cells = test_cells(&permit, 1);
+        let result = permit.attempt_with_test_cells(
+            cells,
+            |cancel, generation| {
+                arm.begin_attempt_with_generation(command, world, cancel, generation)
+            },
+            |_, _| Ok::<bool, ()>(true),
+            |_| None,
+        );
         assert!(
-            permit
-                .attempt(
-                    |cancel| arm.begin_attempt(command, world, cancel),
-                    |_, _| Ok::<bool, ()>(true),
-                    |_| None,
-                )
-                .is_none(),
+            result.is_none(),
             "release={release}: old password authorization must be refused"
         );
-        arm.clear_unused_attempt();
-        drop(permit);
         if release {
             assert!(
                 arm.clean_release_admission_at(HOST, PORT, Instant::now())
@@ -1438,30 +1773,28 @@ fn queue_expiry_cancellation_fires_only_after_k1_unlock() {
     ));
     let statuses = Arc::new(Mutex::new(Vec::new()));
     let expired_at = Instant::now() - Duration::from_secs(2);
-    let cancel = LoginCancel::new();
+    let cells = synthetic_queue_attempt(u64::MAX, 1);
     {
         let mut q = queue.lock();
         q.enqueue_owner(u64::MAX, 9);
         assert_eq!(q.poll_owner(u64::MAX, 9, expired_at).permit, Permit::Grant);
-        assert!(q
-            .start_attempt(u64::MAX, expired_at, cancel.clone())
-            .is_some());
+        assert!(cells.start(&mut q, expired_at).is_some());
         q.enqueue_owner(arm.queue_owner, 7);
     }
     arm.assert_cancel_order.store(true, Ordering::Relaxed);
     let mut retired = false;
     let wait = wait_for_permit(&queue, &statuses, "alice", 7, &arm, &mut || {
         if !retired {
-            assert!(cancel.is_cancelled());
-            retired = queue
-                .lock()
-                .acknowledge_login_return(u64::MAX, Instant::now());
+            assert!(cells.cancel().is_cancelled());
+            cells.mark_physical_release();
+            let mut q = queue.lock();
+            retired = cells.acknowledge_after_physical_release(&mut q, Instant::now());
         }
         Duration::from_millis(1)
     });
     assert!(matches!(wait, PermitWait::Granted(_)));
     assert!(retired);
-    assert!(cancel.is_cancelled());
+    assert!(cells.cancel().is_cancelled());
 }
 
 #[test]

@@ -10,9 +10,11 @@
 )]
 
 use std::path::PathBuf;
+use std::sync::LazyLock;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use client_adapter::service::{MaintenanceDriver, NetworkService};
 use host_play::{Play, PlayOptions};
 use scenario::ScenarioRunner;
 use vault::{Profile, ProfileSettings, Vault};
@@ -23,10 +25,25 @@ pub fn fail(msg: &str) -> ! {
     std::process::exit(1);
 }
 
-/// `LIVE=1` gates the ignored tests.
+/// `LIVE=1` gates the ignored tests and starts the process network service
+/// before this harness can construct a Play or prepare a client cache.
 pub fn live() -> bool {
-    std::env::var("LIVE").as_deref() == Ok("1")
+    if std::env::var("LIVE").as_deref() != Ok("1") {
+        return false;
+    }
+    network_driver();
+    true
 }
+
+static NETWORK_DRIVER: LazyLock<MaintenanceDriver> = LazyLock::new(|| {
+    NetworkService::start_composition()
+        .unwrap_or_else(|error| fail(&format!("network service startup failed: {error:?}")))
+});
+
+fn network_driver() -> &'static MaintenanceDriver {
+    &NETWORK_DRIVER
+}
+
 
 /// A throwaway encrypted vault holding `user`/`pass` profiles with stable
 /// distinct uids. The engine auto-registers unknown accounts. Accepts
@@ -100,6 +117,7 @@ pub fn options() -> PlayOptions {
 pub fn wait_ingame(play: &Play, want: usize, timeout: Duration, case: &str) {
     let deadline = Instant::now() + timeout;
     loop {
+        play.maintain_services(Instant::now());
         let statuses = play.statuses();
         let ready = statuses
             .iter()
@@ -115,7 +133,7 @@ pub fn wait_ingame(play: &Play, want: usize, timeout: Duration, case: &str) {
                  statuses: {statuses:?}"
             ));
         }
-        thread::sleep(Duration::from_millis(250));
+        thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -123,6 +141,7 @@ pub fn wait_ingame(play: &Play, want: usize, timeout: Duration, case: &str) {
 pub fn wait_logged_out(play: &Play, want: usize, timeout: Duration, case: &str) {
     let deadline = Instant::now() + timeout;
     loop {
+        play.maintain_services(Instant::now());
         let statuses = play.statuses();
         let out = statuses.iter().filter(|s| !s.ingame).count();
         if out >= want {
@@ -131,10 +150,24 @@ pub fn wait_logged_out(play: &Play, want: usize, timeout: Duration, case: &str) 
         }
         if Instant::now() >= deadline {
             fail(&format!(
-                "{case}: {out}/{want} slot(s) left the game after {timeout:?}; \
+                "{case}: {out}/{want} slot(s) left the game after logout; \
                  statuses: {statuses:?}"
             ));
         }
-        thread::sleep(Duration::from_millis(250));
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Keep the headless composition's service observer running during a bounded wait.
+pub fn service_wait(play: &Play, duration: Duration) {
+    let deadline = Instant::now() + duration;
+    loop {
+        let now = Instant::now();
+        play.maintain_services(now);
+        let remaining = deadline.saturating_duration_since(now);
+        if remaining.is_zero() {
+            return;
+        }
+        thread::sleep(remaining.min(Duration::from_millis(100)));
     }
 }

@@ -132,13 +132,14 @@ fn nav_collision() {
     wait_ingame(&play, 1, Duration::from_secs(150), "nav_collision");
     let deadline = Instant::now() + Duration::from_secs(150);
     let cap_data = loop {
+        play.maintain_services(Instant::now());
         if let Some(c) = captured.lock().unwrap().clone() {
             break c;
         }
         if Instant::now() >= deadline {
             fail("nav_collision: never captured the mainland scene collision");
         }
-        std::thread::sleep(Duration::from_millis(250));
+        std::thread::sleep(Duration::from_millis(100));
     };
 
     println!(

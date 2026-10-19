@@ -76,6 +76,7 @@ fn live_draw_area_and_capture_walk() {
     // backend's `PixMap` packs directly.
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
+        play.maintain_services(Instant::now());
         let non_zero = match pixels.take() {
             Some(FrameOutput::PixMap(pix)) => pix.pixels.iter().filter(|&&p| p != 0).count(),
             Some(FrameOutput::Texture(handle)) => {
@@ -99,7 +100,7 @@ fn live_draw_area_and_capture_walk() {
         if Instant::now() >= deadline {
             fail("panel_view: draw_area stayed empty after set_draw(true) and scene 2");
         }
-        thread::sleep(Duration::from_millis(250));
+        thread::sleep(Duration::from_millis(100));
     }
 
     // Capture on (`Session::capture_on`): attach the channel and enable
@@ -117,6 +118,7 @@ fn live_draw_area_and_capture_walk() {
     .unwrap();
     thread::sleep(Duration::from_millis(100));
 
+    play.maintain_services(Instant::now());
     let before = play.statuses()[0].clone();
     tx.send(InputEv::Down {
         button: 1,
@@ -129,6 +131,7 @@ fn live_draw_area_and_capture_walk() {
     // change the tile while capture and renderer are on is a default FAIL.
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
+        play.maintain_services(Instant::now());
         let s = play.statuses()[0].clone();
         if (s.tile_x, s.tile_z) != (before.tile_x, before.tile_z) {
             println!(
@@ -147,6 +150,6 @@ fn live_draw_area_and_capture_walk() {
                 mouse_applied.load(Ordering::Relaxed)
             ));
         }
-        thread::sleep(Duration::from_millis(250));
+        thread::sleep(Duration::from_millis(100));
     }
 }

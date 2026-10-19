@@ -338,6 +338,7 @@ impl TlsIo {
         self.budget.write_stop = WorkStop::Returned;
         Ok(())
     }
+}
 
 #[derive(Debug, Clone)]
 struct TlsStreamHandle(Arc<Mutex<TlsIo>>);
@@ -364,6 +365,7 @@ impl Write for TlsStreamHandle {
     }
 }
 
+#[derive(Debug)]
 enum UpgradeState {
     Writing(HandshakeMachine<TlsStreamHandle>),
     Reading(HandshakeMachine<TlsStreamHandle>),

@@ -25,6 +25,7 @@ use api::snapshot::GameSnapshot;
 use auto_run::{auto_run_ready, auto_run_tick, resolve_run_policy, RunPolicy};
 use client::client::{Client, ClientConfig};
 use client::config::{Cache, IfType, IfTypeMut};
+use client_adapter::park::ParkOutcome;
 use client::render::backend::{BackendKind, FrameOutput};
 use client::render::Renderer;
 use vault::{Profile, ProfileSettings};
@@ -350,10 +351,13 @@ impl Host {
         // must see the observe hook's draw/capture/busy mirror, which only
         // exists after a tick has run.
         let mut busy = true;
-        // A socket wake that consumed no bytes leaves the socket readable,
-        // so re-polling it would busy-spin; skip the socket until a tick
+        // A socket wake that consumed no bytes leaves the ring readable,
+        // so rechecking readiness would busy-spin; skip it until a tick
         // consumes bytes again.
         let mut socket_stalled = false;
+        // Control changes are committed before SlotWake publishes this
+        // monotonic epoch to the stream's shared Park.
+        let mut control_epoch = 0_u64;
         // The loop's own timed waits since the previous service, each up to
         // its deadline: not time the host kept the bot waiting.
         let mut slept = Duration::ZERO;
@@ -412,7 +416,13 @@ impl Host {
             };
             let parked = Instant::now();
             let slept_over = wake_overshoot(slot.next_wake.take(), parked);
-            let reason = park(client, ctl.as_deref(), !socket_stalled, timeout);
+            let reason = park(
+                client,
+                ctl.as_deref(),
+                &mut control_epoch,
+                !socket_stalled,
+                timeout,
+            );
             let now = Instant::now();
             slept += now.saturating_duration_since(parked).min(timeout);
             let overshoot = slept_over + wake_overshoot(Some(parked + timeout), now);
@@ -930,7 +940,7 @@ fn wake_overshoot(deadline: Option<Instant>, now: Instant) -> Duration {
 /// Why a park returned.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ParkWake {
-    /// The client socket became readable (data, EOF, or a socket error).
+    /// ClientStream bytes became available, or the stream closed/errored.
     Socket,
     /// A control kick landed (focus/draw/stop/spawn).
     Control,
@@ -938,177 +948,98 @@ enum ParkWake {
     Timeout,
 }
 
-/// Readiness includes WS leftovers and TLS/tungstenite buffers, not just
-/// kernel bytes. `available` is nonblocking; an error wakes the ordinary
-/// client transport-loss path. A stalled partial packet remains suppressed.
-fn buffered_socket_ready(client: &mut Client, poll_socket: bool) -> bool {
-    poll_socket
+/// Readiness includes bytes already in the client ring, including buffered
+/// WebSocket/TLS payloads. An error or closed stream takes the normal client
+/// transport-loss path. A stalled partial packet remains suppressed.
+fn buffered_socket_ready(client: &Client, check_stream: bool) -> bool {
+    check_stream
         && client
             .stream
-            .as_mut()
+            .as_ref()
             .is_some_and(|stream| stream.available().map_or(true, |bytes| bytes != 0))
 }
 
-/// Block until the client socket is readable, a control wake lands, or
-/// `timeout` elapses. The socket is polled only when `poll_socket` — a
-/// previous no-consumption wake (EOF or a packet still mid-flight) leaves
-/// the socket permanently readable, so re-polling it would busy-spin.
-/// No socket and no control channel falls back to sleeping the timeout.
+/// Block on the game's connection Park until inbound data, a control change,
+/// or the absolute tick/stall deadline. Both the fast check and the K2
+/// readiness predicate inspect ring availability/terminal state; the Park
+/// publication is only the wakeup mechanism, never readiness evidence.
 ///
-/// Unix production body is stack `[pollfd; 2]` + inline `libc::poll` (no
-/// heap). Windows counterpart uses fixed `[WSAPOLLFD; 2]` + `WSAPoll`.
-#[cfg(unix)]
-#[allow(unsafe_code)]
+/// A socket wake that consumes no bytes remains suppressed until a tick
+/// consumes bytes, avoiding repeated readiness from a partial packet or
+/// terminal stream state.
 fn park(
-    client: &mut Client,
+    client: &Client,
     ctl: Option<&SlotPark>,
-    poll_socket: bool,
+    control_epoch: &mut u64,
+    check_stream: bool,
     timeout: Duration,
 ) -> ParkWake {
-    if buffered_socket_ready(client, poll_socket) {
+    // Play binds this slot's control Park to the adapter's game Park before
+    // transport admission. The fork exposes only bytes, never a host Park.
+    let park = ctl.map(SlotPark::park);
+
+    if buffered_socket_ready(client, check_stream) {
         if let Some(ctl) = ctl {
             ctl.drain();
         }
         return ParkWake::Socket;
     }
-    let mut fds = [libc::pollfd {
-        fd: -1,
-        events: 0,
-        revents: 0,
-    }; 2];
-    let mut n = 0usize;
-    if let Some(ctl) = ctl {
-        fds[n] = libc::pollfd {
-            fd: ctl.fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        n += 1;
-    }
-    let socket = if poll_socket {
-        client.stream.as_ref().map(|stream| {
-            fds[n] = libc::pollfd {
-                fd: stream.fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            };
-            let idx = n;
-            n += 1;
-            idx
-        })
-    } else {
-        None
-    };
-    if n == 0 {
-        thread::sleep(timeout);
-        return ParkWake::Timeout;
-    }
-    let ms = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
-    let rc = unsafe { libc::poll(fds.as_mut_ptr(), n as libc::nfds_t, ms) };
-    if rc > 0 {
-        let fired = |i: usize| {
-            fds[i].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0
-        };
-        let control_fired = ctl.is_some() && fired(0);
-        if control_fired {
-            // Consume the kick bytes: an undrained control fd stays
-            // readable and would re-fire every park (busy loop).
-            ctl.unwrap().drain();
-        }
-        if let Some(i) = socket {
-            if fired(i) {
-                return ParkWake::Socket;
-            }
-        }
-        if control_fired {
-            return ParkWake::Control;
-        }
-    }
-    ParkWake::Timeout
-}
 
-/// Windows park: fixed-size stack `WSAPoll` arrays (max 2 handles), same
-/// control-drain / socket-priority / timeout semantics as the Unix body.
-#[cfg(windows)]
-#[allow(unsafe_code)]
-fn park(
-    client: &mut Client,
-    ctl: Option<&SlotPark>,
-    poll_socket: bool,
-    timeout: Duration,
-) -> ParkWake {
-    if buffered_socket_ready(client, poll_socket) {
-        if let Some(ctl) = ctl {
+    if let Some(ctl) = ctl {
+        let epoch = ctl.wake_epoch();
+        if epoch != *control_epoch {
+            *control_epoch = epoch;
             ctl.drain();
-        }
-        return ParkWake::Socket;
-    }
-    use windows_sys::Win32::Networking::WinSock::{
-        WSAPoll, POLLERR, POLLHUP, POLLIN, POLLNVAL, SOCKET, WSAPOLLFD,
-    };
-    let mut fds = [WSAPOLLFD {
-        fd: SOCKET::MAX,
-        events: 0,
-        revents: 0,
-    }; 2];
-    let mut n = 0usize;
-    if let Some(ctl) = ctl {
-        fds[n] = WSAPOLLFD {
-            fd: ctl.raw_socket() as SOCKET,
-            events: POLLIN,
-            revents: 0,
-        };
-        n += 1;
-    }
-    let socket = if poll_socket {
-        client.stream.as_ref().map(|stream| {
-            fds[n] = WSAPOLLFD {
-                fd: stream.raw_socket() as SOCKET,
-                events: POLLIN,
-                revents: 0,
-            };
-            let idx = n;
-            n += 1;
-            idx
-        })
-    } else {
-        None
-    };
-    if n == 0 {
-        thread::sleep(timeout);
-        return ParkWake::Timeout;
-    }
-    let ms = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
-    let rc = unsafe { WSAPoll(fds.as_mut_ptr(), n as u32, ms) };
-    if rc > 0 {
-        let fired = |i: usize| fds[i].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL) != 0;
-        let control_fired = ctl.is_some() && fired(0);
-        if control_fired {
-            // Consume the kick bytes: an undrained control handle stays
-            // readable and would re-fire every park (busy loop).
-            ctl.unwrap().drain();
-        }
-        if let Some(i) = socket {
-            if fired(i) {
-                return ParkWake::Socket;
-            }
-        }
-        if control_fired {
             return ParkWake::Control;
         }
     }
-    ParkWake::Timeout
-}
 
-#[cfg(test)]
-fn stream_wait_handle(stream: &client::io::ClientStream) -> slot_io::WaitHandle {
-    #[cfg(unix)]
-    {
-        stream.fd()
-    }
-    #[cfg(windows)]
-    {
-        stream.raw_socket()
+    let Some(park) = park else {
+        thread::sleep(timeout);
+        return ParkWake::Timeout;
+    };
+
+    let deadline = Instant::now() + timeout;
+    let mut selected_control_epoch = None;
+    let outcome = park.wait(
+        deadline,
+        Instant::now,
+        || false,
+        || false,
+        || false,
+        || {
+            if buffered_socket_ready(client, check_stream) {
+                return Some(ParkWake::Socket);
+            }
+            let ctl = ctl?;
+            let epoch = ctl.wake_epoch();
+            if epoch != *control_epoch {
+                selected_control_epoch = Some(epoch);
+                Some(ParkWake::Control)
+            } else {
+                None
+            }
+        },
+        false,
+        None,
+    );
+
+    match outcome {
+        ParkOutcome::Ready(reason) => {
+            if reason == ParkWake::Control {
+                if let Some(epoch) = selected_control_epoch {
+                    *control_epoch = epoch;
+                }
+            }
+            if let Some(ctl) = ctl {
+                ctl.drain();
+            }
+            reason
+        }
+        ParkOutcome::Deadline => ParkWake::Timeout,
+        ParkOutcome::Unavailable | ParkOutcome::SelectedIntent | ParkOutcome::Revoked => {
+            unreachable!("host idle Park has no terminal predicates")
+        }
     }
 }
 

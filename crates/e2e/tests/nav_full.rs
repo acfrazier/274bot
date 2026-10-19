@@ -71,6 +71,7 @@ fn nav_full() {
     // both exit 1 (rs2b0t harness style).
     let deadline = Instant::now() + RUN_DEADLINE;
     loop {
+        play.maintain_services(Instant::now());
         let (status, evidence) = {
             let r = runner.lock().unwrap();
             (r.status(), r.evidence().cloned())
@@ -91,7 +92,7 @@ fn nav_full() {
                         "nav_full: no terminal status within {RUN_DEADLINE:?} ({other:?})"
                     ));
                 }
-                std::thread::sleep(Duration::from_millis(250));
+                std::thread::sleep(Duration::from_millis(100));
             }
         }
     }

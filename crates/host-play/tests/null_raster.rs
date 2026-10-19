@@ -18,10 +18,9 @@ mod common;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::Duration;
 
-use common::{fail, live, options, profiles, wait_ingame};
+use common::{fail, live, maintain_for, options, profiles, wait_ingame};
 use host::FrameBuf;
 use host_play::run_with_io;
 
@@ -68,7 +67,7 @@ fn live_draw_off_never_paints() {
     let g0 = test_pixels.generation();
     // Draw-on rasters at 1 fps (no capture/full-rate), so 3 s is a few
     // paints; draw-off must stay at exactly 0 the whole time.
-    thread::sleep(Duration::from_secs(3));
+    maintain_for(&play, Duration::from_secs(3));
     let after = frames.lock().unwrap().clone();
     let g1 = test_pixels.generation();
     let g2 = test2_pixels.generation();

@@ -451,6 +451,7 @@ fn wait_for(
 ) {
     let deadline = Instant::now() + timeout;
     loop {
+        play.maintain_services(Instant::now());
         let error = fixture.lock().unwrap().error.clone();
         assert!(error.is_none(), "fixture error: {error:?}");
         if ready(play) {

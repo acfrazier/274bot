@@ -128,6 +128,7 @@ fn wait_all_scene2(play: &Play, n: usize) {
     let timeout = Duration::from_secs(180);
     let deadline = Instant::now() + timeout;
     loop {
+        play.maintain_services(Instant::now());
         let statuses = play.statuses();
         let ready = statuses
             .iter()
@@ -141,7 +142,7 @@ fn wait_all_scene2(play: &Play, n: usize) {
                 "rss_ladder: {ready}/{n} slot(s) ingame scene 2 after 180s"
             ));
         }
-        thread::sleep(Duration::from_millis(250));
+        thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -231,6 +232,7 @@ fn live_rss_ladder_headless() {
             .iter()
             .any(|name| play.script_state(name) != script::RunState::Running)
         {
+            play.maintain_services(Instant::now());
             if Instant::now() >= until {
                 fail(&format!(
                     "rss_ladder: {n} Load scripts did not all reach Running"
@@ -240,7 +242,7 @@ fn live_rss_ladder_headless() {
         }
     }
     // Give the wall a beat to settle before sampling peak RSS.
-    thread::sleep(Duration::from_secs(10));
+    common::maintain_for(&play, Duration::from_secs(10));
     let (rss, _) = sample_process();
     if rss == 0 {
         fail("rss_ladder: rss=0");

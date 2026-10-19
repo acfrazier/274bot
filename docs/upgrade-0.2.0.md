@@ -43,6 +43,16 @@ The bot no longer guesses where a local game engine is. Give it with
 `login_key.engine_dir` in `servers.json`; without one, a local profile stops
 with a message saying how to set it. Public (rs2b2t) profiles need nothing.
 
+## Embedded network startup
+
+If your application constructs a `Play` directly, call
+`client_adapter::service::NetworkService::start_composition()` first and retain the
+returned maintenance driver for the lifetime of its network clients. Call
+`maintain(Instant::now())` from the owner event loop at intervals of at most
+100 ms while network work is live. Constructing `Play` no longer starts
+network threads implicitly; missing or failed startup returns a typed error.
+The panel, TUI, and headless frontends register their own driver.
+
 ## Graphics
 
 On Windows the panel tries Vulkan first and falls back to Direct3D 12. On

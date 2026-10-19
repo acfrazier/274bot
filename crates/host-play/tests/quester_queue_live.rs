@@ -472,6 +472,7 @@ fn run_quester_queue() -> Result<(), String> {
     let outer_deadline = Instant::now() + deadline + Duration::from_secs(15);
     let mut evidence = QueueEvidence::default();
     let result = loop {
+        play.maintain_services(Instant::now());
         let script_error = play.script_last_error(&account);
         let native_status = play.script_native_status(&account);
         let run_state = play.script_state(&account);

@@ -47,6 +47,38 @@ fn request_test_owner(queue: &mut LoginQueue, uid: i32, now: Instant) -> Permit 
 fn request_shared(queue: &SharedLoginQueue, uid: i32, now: Instant) -> Permit {
     request_test_owner(&mut queue.lock(), uid, now)
 }
+fn start_test_attempt(
+    queue: &mut LoginQueue,
+    owner: u64,
+    binding: u64,
+    now: Instant,
+) -> QueueAttemptCells {
+    let cells = synthetic_queue_attempt(owner, binding);
+    assert!(cells.start(queue, now).is_some());
+    cells
+}
+
+fn return_and_release_test_attempt(
+    queue: &mut LoginQueue,
+    cells: &QueueAttemptCells,
+    now: Instant,
+    hold: Option<Duration>,
+) -> bool {
+    let returned = queue.return_attempt(cells.identity(), now, hold);
+    for cancel in returned.cancels {
+        cancel.cancel();
+    }
+    cells.mark_physical_release();
+    assert!(cells.acknowledge_after_physical_release(queue, now));
+    returned.accepted
+}
+
+fn release_test_login<T, E>(outcome: &LoginAttemptReturn<T, E>) {
+    assert!(
+        outcome.acknowledge_after_physical_release(Instant::now()),
+        "the exact test flight remains until simulated physical close"
+    );
+}
 
 fn wait_for_permit_bounded(
     queue: &SharedLoginQueue,
@@ -1000,10 +1032,12 @@ fn spawned_worker_response_21_retries_same_endpoint_without_fifo_ownership() {
         Permit::Grant,
         "a follower can enter while the transfer countdown runs"
     );
-    assert!(play
-        .queue
-        .lock()
-        .acknowledge_login_return(test_queue_owner(43), paced));
+    assert!(
+        play.queue
+            .lock()
+            .abandon_permit(test_queue_owner(43)),
+        "an unused test grant is abandoned, never returned as a started flight"
+    );
 
     let (second_number, second_attempt, second_endpoint) =
         attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
@@ -1285,9 +1319,12 @@ fn running_slot_profile_world_change_reseats_next_login_handshake() {
     // Keep this proof entirely local: pre-seat the key cache so production
     // world configuration never attempts an HTTPS fetch.
     for world in &worlds.worlds {
-        public_worlds::modulus_for(world, false, |_, _| {
-            Some(client::PROD_LOGIN_RSAN.to_string())
-        });
+        public_worlds::modulus_for(
+            world,
+            false,
+            &LoginCancel::new(),
+            |_, _| Some(client::PROD_LOGIN_RSAN.to_string()),
+        );
     }
 
     let session_profile = Arc::new(
@@ -3037,19 +3074,18 @@ fn refused_logout_stays_pending_with_command_latch() {
 }
 
 /// Fill the default 29-grant / 60 s idle address limit so the next request has
-/// to wait instead of being granted on arrival. The grants are paced like
-/// real starts and the last one returns now.
+/// to wait instead of being granted on arrival. Each exact test flight returns
+/// and is physically acknowledged before the next paced start.
 fn fill_address_window(queue: &SharedLoginQueue) -> Instant {
     let now = Instant::now();
     let spacing = host::login_queue::LOGIN_START_SPACING;
     let mut at = now.checked_sub(spacing * 28).expect("host uptime");
     let mut q = queue.lock();
     for i in 0..29 {
-        assert!(matches!(
-            request_test_owner(&mut q, 1000 + i, at),
-            Permit::Grant
-        ));
-        assert!(q.acknowledge_login_return(test_queue_owner(1000 + i), at));
+        let owner = test_queue_owner(1000 + i);
+        assert_eq!(request_test_owner(&mut q, 1000 + i, at), Permit::Grant);
+        let cells = start_test_attempt(&mut q, owner, (i + 1) as u64, at);
+        assert!(return_and_release_test_attempt(&mut q, &cells, at, None));
         at += spacing;
     }
     now
@@ -3186,19 +3222,29 @@ fn login_error_return_acknowledges_the_reserved_attempt() {
     )));
     assert_eq!(request_shared(&queue, 7, base), Permit::Grant);
     let mut permit = GrantedReservation::new(&queue, test_queue_owner(7));
-    let login: Option<Result<(), &str>> =
-        permit.attempt(|_| true, |_, _| Err("connect failed"), |_| None);
-    assert_eq!(login, Some(Err("connect failed")));
+    let cells = synthetic_queue_attempt(test_queue_owner(7), 1);
+    let login = permit
+        .attempt_with_test_cells(
+            cells,
+            |_, _| true,
+            |_, _| Err("connect failed"),
+            |_| None,
+        )
+        .expect("started attempt returns Q facts");
+    assert_eq!(login.test_result(), &Err("connect failed"));
+    release_test_login(&login);
+    assert_eq!(login.into_test_result(), Err("connect failed"));
     drop(permit);
     assert!(
         !queue.lock().abandon_permit(test_queue_owner(7)),
-        "an error return spent and acknowledged the permit"
+        "an error return spent the permit"
     );
     assert_eq!(
         request_shared(&queue, 8, base + Duration::from_secs(61)),
         Permit::Grant,
         "the conservative completion clock eventually expires"
     );
+    assert!(queue.lock().abandon_permit(test_queue_owner(8)));
 }
 
 #[test]
@@ -3211,10 +3257,12 @@ fn panic_in_login_attempt_resolves_the_reservation() {
     )));
     assert_eq!(request_shared(&queue, 7, base), Permit::Grant);
 
+    let release_cells = synthetic_queue_attempt(test_queue_owner(7), 1);
     let unwind = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let mut permit = GrantedReservation::new(&queue, test_queue_owner(7));
-        let _: Option<Result<(), ()>> = permit.attempt(
-            |_| true,
+        let _ = permit.attempt_with_test_cells(
+            release_cells.clone(),
+            |_, _| true,
             |_, _| panic!("synthetic client.login unwind"),
             |_| None,
         );
@@ -3222,12 +3270,21 @@ fn panic_in_login_attempt_resolves_the_reservation() {
     assert!(unwind.is_err());
     assert!(
         !queue.lock().abandon_permit(test_queue_owner(7)),
-        "the unwind guard resolved the pending reservation"
+        "the unwind guard returned a started reservation"
     );
+    release_cells.mark_physical_release();
+    {
+        let mut q = queue.lock();
+        assert!(release_cells.acknowledge_after_physical_release(
+            &mut q,
+            Instant::now()
+        ));
+    }
     assert_eq!(
         request_shared(&queue, 8, base + Duration::from_secs(61)),
         Permit::Grant
     );
+    assert!(queue.lock().abandon_permit(test_queue_owner(8)));
 }
 
 /// The reservation a granted permit wait carries.
@@ -3235,17 +3292,19 @@ fn granted(wait: PermitWait) -> GrantedReservation {
     match wait {
         PermitWait::Granted(permit) => permit,
         PermitWait::Cancelled => panic!("expected a grant"),
+        PermitWait::Deadline => panic!("unexpected WSS deadline"),
+        PermitWait::Unavailable => panic!("network became unavailable"),
     }
 }
 
-/// Run a granted login that returns at once with `Ok`.
 fn complete(mut permit: GrantedReservation) {
-    assert_eq!(
-        permit.attempt(|_| true, |_, _| Ok::<(), ()>(()), |_| None),
-        Some(Ok(()))
-    );
+    let cells = synthetic_queue_attempt(permit.test_owner(), 1);
+    let result = permit
+        .attempt_with_test_cells(cells, |_, _| true, |_, _| Ok::<(), ()>(()), |_| None)
+        .expect("started attempt returns Q facts");
+    assert_eq!(result.test_result(), &Ok(()));
+    release_test_login(&result);
 }
-
 /// A failure in the work between the grant and the connect (world check,
 /// script sync, password, memory mode) unwinds with the reservation already
 /// owned, so the grant goes back and the next bot starts.
@@ -3303,10 +3362,12 @@ fn spawned_worker_unwinding_after_its_grant_frees_the_next_login() {
         panic!("poison the script wall");
     })
     .join();
-    assert!(play
-        .queue
-        .lock()
-        .acknowledge_login_return(test_queue_owner(99), Instant::now()));
+    assert!(
+        play.queue
+            .lock()
+            .abandon_permit(test_queue_owner(99)),
+        "the unused sibling grant is returned before Alice's queue turn"
+    );
     assert!(
         wait_settled(|| play.queue.lock().status_owner(arm.queue_owner).is_none()),
         "alice is granted, then unwinds"
@@ -3330,7 +3391,7 @@ fn spawned_worker_unwinding_after_its_grant_frees_the_next_login() {
 /// while the tail asserts, however long loaded schedulers stall the threads.
 #[test]
 fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
-    use client::io::client_stream::ClientStream;
+    use std::net::Shutdown;
     use std::sync::mpsc;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -3350,31 +3411,39 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
     let alice = SlotArm::new(7, true);
     let bob = SlotArm::new(8, true);
     let mut permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &alice));
+    let alice_cells = synthetic_queue_attempt(alice.queue_owner, 1);
     let (deadline_tx, deadline_rx) = mpsc::channel();
     let (read_ended_tx, read_ended_rx) = mpsc::channel();
     let (return_tx, return_rx) = mpsc::channel();
     let stuck = thread::spawn(move || {
-        permit.attempt(
-            |_| true,
-            |deadline, cancel| {
-                deadline_tx.send(deadline).unwrap();
-                // A client that ignores the queue's deadline: its own is a
-                // minute away, so only the cancel can end this read.
-                let mut stream = ClientStream::connect_until(
-                    client::Transport::Tcp,
-                    &endpoint.ip().to_string(),
-                    endpoint.port(),
-                    Instant::now() + Duration::from_secs(60),
-                    Some(&cancel),
-                )?;
-                stream.write(&[14, 0], 2)?;
-                let read = stream.read();
-                read_ended_tx.send(()).unwrap();
-                return_rx.recv_timeout(Duration::from_secs(60)).unwrap();
-                read
-            },
-            |_| None,
-        )
+        permit
+            .attempt_with_test_cells(
+                alice_cells,
+                |_| true,
+                |deadline, cancel| {
+                    deadline_tx.send(deadline).unwrap();
+                    // This native socket deliberately ignores the queue
+                    // deadline. Only the exact cancel callback can end it.
+                    let mut socket = TcpStream::connect(endpoint)
+                        .map_err(|error| error.to_string())?;
+                    let close_socket = socket.try_clone().map_err(|error| error.to_string())?;
+                    cancel.register_cancel_callback(move || {
+                        let _ = close_socket.shutdown(Shutdown::Both);
+                    });
+                    socket.write_all(&[14, 0]).map_err(|error| error.to_string())?;
+                    let mut byte = [0; 1];
+                    let read = socket.read(&mut byte);
+                    read_ended_tx.send(()).unwrap();
+                    return_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+                    match read {
+                        Ok(0) => Err("socket closed by attempt cancellation".to_owned()),
+                        Ok(_) => Ok(()),
+                        Err(error) => Err(error.to_string()),
+                    }
+                },
+                |_| None,
+            )
+            .expect("alice's started attempt returns Q facts")
     });
     let deadline = deadline_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     let mut alice_socket = server.join().unwrap();
@@ -3397,17 +3466,20 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
         // stays occupied across the assertions below no matter how long a
         // loaded scheduler stalls these threads. An unstarted grant expires
         // hold + slack after its poll and would free the slot instead.
-        let result = permit.attempt(
-            |_| true,
-            |_, _| {
-                bob_started_tx.send(()).unwrap();
-                bob_release_rx
-                    .recv_timeout(Duration::from_secs(60))
-                    .unwrap();
-                Ok::<(), String>(())
-            },
-            |_| None,
-        );
+        let result = permit
+            .attempt_with_test_cells(
+                synthetic_queue_attempt(bob_arm.queue_owner, 2),
+                |_| true,
+                |_, _| {
+                    bob_started_tx.send(()).unwrap();
+                    bob_release_rx
+                        .recv_timeout(Duration::from_secs(60))
+                        .unwrap();
+                    Ok::<(), String>(())
+                },
+                |_| None,
+            )
+            .expect("bob's started attempt returns Q facts");
         bob_done_tx.send(result).unwrap();
     });
     read_ended_rx
@@ -3432,15 +3504,25 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
         "the server reads alice's end of stream before the return acknowledgement"
     );
     return_tx.send(()).unwrap();
-    let error = stuck
-        .join()
-        .unwrap()
-        .expect("alice's attempt started")
-        .unwrap_err();
-    assert_eq!(error.to_string(), "login cancelled by its host");
+    let login = stuck.join().unwrap();
+    assert_eq!(
+        login.test_result().as_ref().unwrap_err(),
+        "socket closed by attempt cancellation"
+    );
+    let returned_at = Instant::now();
+    assert_eq!(
+        queue.lock().head_blocker(bob.queue_owner, returned_at),
+        Some(host::login_queue::AdmitBlocker::Retiring),
+        "the late Q return cannot release the flight before physical acknowledgement"
+    );
+    assert!(matches!(
+        bob_started_rx.recv_timeout(Duration::from_millis(100)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    release_test_login(&login);
     bob_started_rx
         .recv_timeout(Duration::from_secs(60))
-        .expect("bob starts behind alice's actual return");
+        .expect("bob starts only after alice's physical acknowledgement");
     let now = Instant::now();
     assert!(matches!(request_shared(&queue, 9, now), Permit::Wait(_)));
     assert_eq!(
@@ -3449,11 +3531,11 @@ fn a_hung_login_is_shut_at_its_lease_end_before_the_next_bot_starts() {
         "alice's late return does not free bob's slot"
     );
     bob_release_tx.send(()).unwrap();
-    bob_done_rx
+    let bob_login = bob_done_rx
         .recv_timeout(Duration::from_secs(60))
-        .expect("bob returns after release")
-        .expect("bob's attempt started")
-        .unwrap();
+        .expect("bob returns after release");
+    assert_eq!(bob_login.test_result(), &Ok(()));
+    release_test_login(&bob_login);
     bob_waiter.join().unwrap();
 }
 
@@ -3630,26 +3712,36 @@ fn a_worker_delayed_after_its_grant_is_spaced_from_its_real_start() {
     let mut permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &alice));
     thread::sleep(spacing + Duration::from_millis(200));
     let mut alice_start = None;
-    let login = permit.attempt(
-        |_| true,
-        |_, _| {
-            alice_start = Some(Instant::now());
-            Err::<(), _>("refused at once")
-        },
-        |_| None,
-    );
-    assert_eq!(login, Some(Err("refused at once")));
+    let alice_owner = permit.test_owner();
+    let alice_result = permit
+        .attempt_with_test_cells(
+            synthetic_queue_attempt(alice_owner, 1),
+            |_| true,
+            |_, _| {
+                alice_start = Some(Instant::now());
+                Err::<(), _>("refused at once")
+            },
+            |_| None,
+        )
+        .expect("alice's attempt returns Q facts");
+    assert_eq!(alice_result.test_result(), &Err("refused at once"));
+    release_test_login(&alice_result);
     let mut permit = granted(wait_for_permit_bounded(&queue, &statuses, "bob", 8, &bob));
     let mut bob_start = None;
-    let login = permit.attempt(
-        |_| true,
-        |_, _| {
-            bob_start = Some(Instant::now());
-            Ok::<(), ()>(())
-        },
-        |_| None,
-    );
-    assert_eq!(login, Some(Ok(())));
+    let bob_owner = permit.test_owner();
+    let bob_result = permit
+        .attempt_with_test_cells(
+            synthetic_queue_attempt(bob_owner, 2),
+            |_| true,
+            |_, _| {
+                bob_start = Some(Instant::now());
+                Ok::<(), ()>(())
+            },
+            |_| None,
+        )
+        .expect("bob's attempt returns Q facts");
+    assert_eq!(bob_result.test_result(), &Ok(()));
+    release_test_login(&bob_result);
     let gap = bob_start.unwrap().duration_since(alice_start.unwrap());
     assert!(
         gap >= spacing,
@@ -3682,23 +3774,26 @@ fn response_16_hold_reaches_siblings_before_the_slot_frees() {
         .status_owner(bob.queue_owner)
         .is_some()));
     let backoff = LoginBackoff::new();
-    let login = permit.attempt(
-        |_| true,
-        |_, _| {
-            Err::<(), _>(LoginError::response(
+    let attempt_owner = permit.test_owner();
+    let login = permit
+        .attempt_with_test_cells(
+            synthetic_queue_attempt(attempt_owner, 1),
+            |_| true,
+            |_, _| Err::<(), _>(LoginError::response(
                 16,
                 "Login attempts exceeded.",
                 "Please wait 1 minute and try again.",
-            ))
-        },
-        |result| {
-            let hold = server_hold(result, &backoff);
-            // Bob polls every 20 ms all through this.
-            thread::sleep(Duration::from_millis(200));
-            hold
-        },
-    );
-    assert!(matches!(&login, Some(Err(error)) if error.code == 16));
+            )),
+            |result| {
+                let hold = server_hold(result, &backoff);
+                // Bob polls every 20 ms all through this.
+                thread::sleep(Duration::from_millis(200));
+                hold
+            },
+        )
+        .expect("alice's refusal returns Q facts");
+    assert!(matches!(login.test_result(), Err(error) if error.code == 16));
+    release_test_login(&login);
     assert!(matches!(
         queue.lock().head_blocker(bob.queue_owner, Instant::now()),
         Some(host::login_queue::AdmitBlocker::ServerHold { .. })
@@ -3836,10 +3931,10 @@ fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
         request_shared(&play.queue, 8, window_started + Duration::from_secs(61)),
         Permit::Grant
     );
-    assert!(play.queue.lock().acknowledge_login_return(
-        test_queue_owner(8),
-        window_started + Duration::from_secs(61)
-    ));
+    assert!(play
+        .queue
+        .lock()
+        .abandon_permit(test_queue_owner(8)));
 
     assert_eq!(play.reap_finished_workers(), vec!["dead"]);
     assert!(play.arm("dead").is_none());

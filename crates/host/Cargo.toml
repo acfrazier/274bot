@@ -7,6 +7,7 @@ publish = false
 [dependencies]
 api = { path = "../api" }
 client = { workspace = true }
+client-adapter = { path = "../client-adapter" }
 num-bigint = "0.4"
 thiserror = "=2.0.20"
 vault = { path = "../vault" }

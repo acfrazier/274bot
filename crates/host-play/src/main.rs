@@ -1,6 +1,8 @@
 //! `host-play` CLI: resolve and bind one immutable server profile, load its
 //! shared client template, then unlock the selected vault and run its accounts.
 
+use std::thread;
+use std::time::{Duration, Instant};
 use std::env;
 use std::process::ExitCode;
 
@@ -189,6 +191,11 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    while !play.all_slots_finished() {
+        play.maintain_services(Instant::now());
+        thread::sleep(Duration::from_millis(50));
+    }
+    play.maintain_services(Instant::now());
     play.join();
     ExitCode::SUCCESS
 }

@@ -48,6 +48,13 @@ impl CachePreparation {
     }
 }
 
+/// A preparation refused before a network operation can be admitted.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum CachePreparationError {
+    #[error("cache network service startup: {0}")]
+    ServiceStart(client_adapter::service::NetworkStartError),
+}
+
 /// Check the selected version's snapshot and, when it is not already complete,
 /// fetch genuinely missing pack files (the real CRC-checked update-server
 /// fetch) and prepare it: unpack from the local store, or report the degraded
@@ -62,7 +69,11 @@ pub fn prepare(
     asset_host: &str,
     asset_port: u16,
     observer: &ProfileProgressObserver,
-) -> CachePreparation {
+) -> Result<CachePreparation, CachePreparationError> {
+    // Even a warm snapshot is a profile-cache preparation. The composition
+    // must already own the running network service before it starts.
+    let network = client_adapter::service::NetworkService::current_started()
+        .map_err(CachePreparationError::ServiceStart)?;
     let cache = cache_dir.to_string_lossy().into_owned();
     let unpack_root = unpack_dir.to_string_lossy().into_owned();
 
@@ -79,7 +90,7 @@ pub fn prepare(
     ));
 
     if let Ok(SnapshotState::Ready(manifest)) = state {
-        return CachePreparation {
+        return Ok(CachePreparation {
             availability: CacheAvailability::Ready {
                 version: manifest.version,
                 published: false,
@@ -90,7 +101,7 @@ pub fn prepare(
                 },
             },
             fetched: Vec::new(),
-        };
+        });
     }
 
     observer.report(ProfileProgress::steps(
@@ -98,7 +109,7 @@ pub fn prepare(
         0,
         1,
     ));
-    let prepared = unpack::prepare_snapshot(
+    let prepared = unpack::prepare_snapshot_with_maintenance(
         &cache,
         &unpack_root,
         Some(FetchEndpoint {
@@ -110,6 +121,7 @@ pub fn prepare(
         // protocol can fill is reported here and completed at client boot,
         // where the session's OnDemand worker supplies the entries.
         None,
+        |now| { network.maintain(now); },
     );
     observer.report(ProfileProgress::steps(
         ProfileProgressStage::PreparingCache,
@@ -117,7 +129,7 @@ pub fn prepare(
         1,
     ));
 
-    match &*prepared {
+    Ok(match &*prepared {
         SnapshotPreparation::Ready {
             version,
             published,
@@ -136,5 +148,5 @@ pub fn prepare(
             availability: CacheAvailability::Degraded(reason.clone()),
             fetched: Vec::new(),
         },
-    }
+    })
 }
