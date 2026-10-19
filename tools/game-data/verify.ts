@@ -799,7 +799,9 @@ async function verifyRevision(revision: number) {
     assertEqual(JSON.stringify(committedHidden[String(revision)]), JSON.stringify(hiddenSitesRecord(siteResult.hidden)), `${revision} ${HIDDEN_SITES_FILE}`);
     // The published wire shape: exactly the TS GatherSiteWire fields, with region keys in writer order.
     for (const row of siteRows) {
-        assertEqual(JSON.stringify(Object.keys(row).sort()), JSON.stringify(['id', 'keys', 'label', 'region', 'requires', 'skill']), `${revision} ${row.id} wire fields`);
+        const fields = ['id', 'keys', 'label', 'region', 'requires', 'skill'];
+        if (row.banking_unavailable !== undefined) fields.unshift('banking_unavailable');
+        assertEqual(JSON.stringify(Object.keys(row).sort()), JSON.stringify(fields), `${revision} ${row.id} wire fields`);
         assertEqual(JSON.stringify(Object.keys(row.region).sort()), JSON.stringify(['level', 'max_x', 'max_z', 'min_x', 'min_z']), `${revision} ${row.id} region fields`);
     }
     publishedSiteIds.set(revision, siteRows.map((row) => row.id));
