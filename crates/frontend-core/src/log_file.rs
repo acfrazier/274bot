@@ -244,7 +244,7 @@ fn create_private_dir(dir: &Path) -> io::Result<()> {
 
 /// The shared preference: `session_log_file`, off when the file or the key
 /// is absent (every 0.1.8.1 prefs file) or the preferences cannot be read.
-pub fn session_log_setting(preferences: &host_play::local_state::Preferences) -> bool {
+pub fn session_log_setting(preferences: &crate::prefs::UiPreferences) -> bool {
     preferences
         .value(SESSION_LOG_KEY)
         .and_then(|value| value.as_bool())
@@ -252,17 +252,39 @@ pub fn session_log_setting(preferences: &host_play::local_state::Preferences) ->
 }
 
 /// Store the preference durably, keeping every other one. A preferences
-/// file the service refused is never written: that is an error.
-pub fn persist_session_log_setting(
-    preferences: &host_play::local_state::Preferences,
+/// file the service refused is never written: that is an error. A write
+/// still queued when the bounded wait ends comes back
+/// [`host_play::local_state::Update::Queued`].
+pub(crate) fn persist_session_log_setting(
+    preferences: &crate::prefs::UiPreferences,
     on: bool,
-) -> io::Result<()> {
-    preferences.set(SESSION_LOG_KEY, serde_json::Value::Bool(on))
+) -> io::Result<host_play::local_state::Update> {
+    preferences.begin_set(SESSION_LOG_KEY, serde_json::Value::Bool(on))
+}
+
+/// Startup: open this process's session file when the saved preference
+/// is on; the open file's path. (Changing the preference is the
+/// `SetSessionLog` command.)
+pub fn restore_session_log(preferences: &crate::prefs::UiPreferences) -> Option<PathBuf> {
+    session_log_setting(preferences)
+        .then(|| apply_session_log(true))
+        .flatten()
+}
+
+/// The open session file's path, if one is open.
+pub fn session_log_path() -> Option<PathBuf> {
+    global().file_path()
+}
+
+/// Fixture seam: [`apply_session_log`] for integration tests.
+#[cfg(any(test, feature = "test-support"))]
+pub fn apply_session_log_for_test(on: bool) -> Option<PathBuf> {
+    apply_session_log(on)
 }
 
 /// Open (on) or close (off) this process's session file on the global
 /// store. Idempotent; returns the open file's path.
-pub fn apply_session_log(on: bool) -> Option<PathBuf> {
+pub(crate) fn apply_session_log(on: bool) -> Option<PathBuf> {
     let store = global();
     match (on, store.file_path()) {
         (true, Some(path)) => Some(path),

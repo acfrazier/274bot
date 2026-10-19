@@ -6,13 +6,13 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use frontend_core::{
-    load_map_bake_choice, persist_map_bake_choice, MapBakeChoice, MapBakeGate, MapBakePrompt,
-};
+use frontend_core::walk_map::WalkMapDemand;
+use frontend_core::{load_map_bake_choice, MapBakeChoice, MapBakeGate, MapBakePrompt};
 use host_play::map_cache::fixture::{
-    fixture_descriptor, other_cache_descriptor, ship_fixture_terrain, CountingMapProducer,
+    fixture_descriptor, other_cache_descriptor, ship_fixture_terrain, wait_for_status,
+    CountingMapProducer,
 };
 use host_play::map_cache::{
     MapCacheRoot, MapDemand, MapDemandHandle, MapDemandManager, MapJobStatus, ShippedMap,
@@ -83,20 +83,13 @@ fn tree(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     out
 }
 
+/// Wait on the demand's own terminal status. `wait_for_status` parks on the
+/// work service's publication change, fails the test when the demand ends in
+/// any terminal other than Ready, and keeps only a deadlock guard: there is no
+/// wall-clock pass condition, because the demand queues behind other tests'
+/// map jobs in this process (see the guard's comment in the fixture).
 fn wait_ready(handle: &MapDemandHandle) {
-    let start = Instant::now();
-    loop {
-        match handle.status() {
-            MapJobStatus::Ready => return,
-            MapJobStatus::Queued | MapJobStatus::Running(_) => {}
-            other => panic!("map demand ended {other:?}"),
-        }
-        assert!(
-            start.elapsed() < Duration::from_secs(10),
-            "map demand never ready"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    wait_for_status(handle, MapJobStatus::Ready);
 }
 
 fn has_terrain(handle: &MapDemandHandle) -> bool {
@@ -109,13 +102,13 @@ fn a_cold_images_open_asks_and_bakes_only_the_catalogue() {
     let (manager, producer) = manager(&scratch);
     let mut gate = MapBakeGate::new(MapBakeChoice::Ask);
     let handle = gate
-        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
     assert_eq!(gate.prompt(), MapBakePrompt::None, "check readiness first");
     assert_eq!(handle.demand(), MapDemand::ReadyImages, "adopt, never bake");
     wait_ready(&handle);
     assert!(!has_terrain(&handle));
-    gate.note_ready_without_terrain(handle.demand());
+    gate.note_ready_without_terrain(WalkMapDemand::ReadyImages);
     assert_eq!(gate.prompt(), MapBakePrompt::Asking);
     assert_eq!(producer.catalogue_runs(), 1);
     assert_eq!(producer.image_runs(), 0, "no terrain bake");
@@ -127,21 +120,21 @@ fn not_now_keeps_the_map_catalogue_only_across_reopens() {
     let (manager, producer) = manager(&scratch);
     let mut gate = MapBakeGate::new(MapBakeChoice::Ask);
     let first = gate
-        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
     wait_ready(&first);
     assert!(!has_terrain(&first));
-    gate.note_ready_without_terrain(first.demand());
+    gate.note_ready_without_terrain(WalkMapDemand::ReadyImages);
     assert_eq!(gate.prompt(), MapBakePrompt::Asking);
-    gate.decline();
+    gate.decline_for_test();
     assert_eq!(gate.prompt(), MapBakePrompt::Declined);
     drop(first);
     manager.reap();
     let reopened = gate
-        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
     wait_ready(&reopened);
-    gate.note_ready_without_terrain(reopened.demand());
+    gate.note_ready_without_terrain(WalkMapDemand::ReadyImages);
     assert_eq!(gate.prompt(), MapBakePrompt::Declined, "no second question");
     assert!(!has_terrain(&reopened));
     assert_eq!(producer.image_runs(), 0, "no terrain bake");
@@ -153,11 +146,11 @@ fn accepting_bakes_the_terrain_and_joins_the_open_catalogue_demand() {
     let (manager, producer) = manager(&scratch);
     let mut gate = MapBakeGate::new(MapBakeChoice::Ask);
     let asking = gate
-        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
-    gate.accept();
+    gate.accept_for_test();
     let baking = gate
-        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
     drop(asking);
     assert_eq!(gate.prompt(), MapBakePrompt::None);
@@ -175,14 +168,14 @@ fn a_fresh_manager_with_a_complete_cache_never_asks() {
     {
         let (installer, _) = manager(&scratch);
         let handle = MapBakeGate::new(MapBakeChoice::Always)
-            .open(&installer, fixture_descriptor(), MapDemand::Images)
+            .open_for_test(&installer, fixture_descriptor(), MapDemand::Images)
             .unwrap();
         wait_ready(&handle);
     }
     let (manager, producer) = manager(&scratch);
     let mut gate = MapBakeGate::new(MapBakeChoice::Ask);
     let handle = gate
-        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
     assert_eq!(
         gate.prompt(),
@@ -192,7 +185,7 @@ fn a_fresh_manager_with_a_complete_cache_never_asks() {
     assert_eq!(handle.demand(), MapDemand::ReadyImages, "adopt, never bake");
     wait_ready(&handle);
     if !has_terrain(&handle) {
-        gate.note_ready_without_terrain(handle.demand());
+        gate.note_ready_without_terrain(WalkMapDemand::ReadyImages);
     }
     assert_eq!(gate.prompt(), MapBakePrompt::None, "the cache is complete");
     assert_eq!(handle.status(), MapJobStatus::Ready, "admitted cache hit");
@@ -208,7 +201,7 @@ fn ready_terrain_with_a_missing_catalogue_derives_it_without_asking_or_baking_te
     let (manager, producer) = manager(&scratch);
     let mut gate = MapBakeGate::new(MapBakeChoice::Ask);
     let handle = gate
-        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
     assert_eq!(gate.prompt(), MapBakePrompt::None, "terrain is ready");
     assert_eq!(handle.demand(), MapDemand::ReadyImages, "adopt, never bake");
@@ -226,7 +219,7 @@ fn publish_terrain_without_catalogue(scratch: &Scratch) {
     {
         let (installer, _) = manager(scratch);
         let handle = MapBakeGate::new(MapBakeChoice::Always)
-            .open(&installer, fixture_descriptor(), MapDemand::Images)
+            .open_for_test(&installer, fixture_descriptor(), MapDemand::Images)
             .unwrap();
         wait_ready(&handle);
     }
@@ -244,7 +237,7 @@ fn shipped_terrain_for_the_bound_cache_opens_without_asking_or_baking_in_both_fr
     // The TUI's catalogue-only open.
     let mut tui = MapBakeGate::new(MapBakeChoice::Ask);
     let catalogue = tui
-        .open(&manager, fixture_descriptor(), MapDemand::CatalogueOnly)
+        .open_for_test(&manager, fixture_descriptor(), MapDemand::CatalogueOnly)
         .unwrap();
     assert_eq!(tui.prompt(), MapBakePrompt::None);
     wait_ready(&catalogue);
@@ -253,7 +246,7 @@ fn shipped_terrain_for_the_bound_cache_opens_without_asking_or_baking_in_both_fr
     // The panel's terrain open installs the shipped terrain.
     let mut panel = MapBakeGate::new(MapBakeChoice::Ask);
     let handle = panel
-        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
     assert_eq!(panel.prompt(), MapBakePrompt::None, "no bake question");
     assert_eq!(handle.demand(), MapDemand::ReadyImages, "adopt, never bake");
@@ -270,13 +263,13 @@ fn shipped_terrain_for_the_bound_cache_opens_without_asking_or_baking_in_both_fr
     manager.reap();
     // Both front ends reopen warm, still without asking.
     let reopened = panel
-        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
     wait_ready(&reopened);
     assert_eq!(reopened.status(), MapJobStatus::Ready, "served, not queued");
     assert!(has_terrain(&reopened));
     let catalogue = tui
-        .open(&manager, fixture_descriptor(), MapDemand::CatalogueOnly)
+        .open_for_test(&manager, fixture_descriptor(), MapDemand::CatalogueOnly)
         .unwrap();
     wait_ready(&catalogue);
     assert_eq!(catalogue.status(), MapJobStatus::Ready);
@@ -294,13 +287,13 @@ fn terrain_shipped_for_another_client_cache_is_ignored_and_the_bake_asks() {
     let before = tree(shipped.path());
     let mut gate = MapBakeGate::new(MapBakeChoice::Ask);
     let handle = gate
-        .open(&manager, other_cache_descriptor(), MapDemand::Images)
+        .open_for_test(&manager, other_cache_descriptor(), MapDemand::Images)
         .unwrap();
     assert_eq!(gate.prompt(), MapBakePrompt::None, "check readiness first");
     assert_eq!(handle.demand(), MapDemand::ReadyImages, "adopt, never bake");
     wait_ready(&handle);
     assert!(!has_terrain(&handle));
-    gate.note_ready_without_terrain(handle.demand());
+    gate.note_ready_without_terrain(WalkMapDemand::ReadyImages);
     assert_eq!(gate.prompt(), MapBakePrompt::Asking);
     assert_eq!(producer.image_runs(), 0);
     assert_eq!(tree(shipped.path()), before, "shipped terrain left on disk");
@@ -321,7 +314,7 @@ fn damaged_shipped_terrain_raises_the_prompt_instead_of_baking() {
     std::fs::write(&tile, bytes).unwrap();
     let mut gate = MapBakeGate::new(MapBakeChoice::Ask);
     let handle = gate
-        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
     assert_eq!(handle.demand(), MapDemand::ReadyImages);
     wait_ready(&handle);
@@ -329,28 +322,28 @@ fn damaged_shipped_terrain_raises_the_prompt_instead_of_baking() {
         !has_terrain(&handle),
         "the damaged terrain is not installed"
     );
-    gate.note_ready_without_terrain(handle.demand());
+    gate.note_ready_without_terrain(WalkMapDemand::ReadyImages);
     assert_eq!(gate.prompt(), MapBakePrompt::Asking);
     assert_eq!(producer.image_runs(), 0, "no bake without consent");
     drop(handle);
     manager.reap();
     // A reopen probes again, without starting a local bake.
-    gate.decline();
+    gate.decline_for_test();
     let mut again = MapBakeGate::new(MapBakeChoice::Ask);
     let reopened = again
-        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
     assert_eq!(again.prompt(), MapBakePrompt::None, "check readiness first");
     assert_eq!(reopened.demand(), MapDemand::ReadyImages);
     wait_ready(&reopened);
     assert!(!has_terrain(&reopened));
-    again.note_ready_without_terrain(reopened.demand());
+    again.note_ready_without_terrain(WalkMapDemand::ReadyImages);
     assert_eq!(again.prompt(), MapBakePrompt::Asking);
     assert_eq!(producer.image_runs(), 0, "no bake before consent");
     // Consent bakes locally, as without shipped terrain.
-    again.accept();
+    again.accept_for_test();
     let baking = again
-        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
     wait_ready(&baking);
     assert!(has_terrain(&baking));
@@ -421,7 +414,7 @@ fn over_the_cache_cap_the_admitted_terrain_is_not_pruned_or_rebaked() {
     let (manager, producer) = manager(&scratch);
     let mut gate = MapBakeGate::new(MapBakeChoice::Ask);
     let handle = gate
-        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
     assert_eq!(gate.prompt(), MapBakePrompt::None, "terrain is ready");
     wait_ready(&handle);
@@ -447,11 +440,11 @@ fn an_adopt_only_demand_without_terrain_never_bakes_and_raises_the_prompt() {
     assert_eq!(producer.catalogue_runs(), 1);
     assert_eq!(producer.image_runs(), 0, "fails closed instead of baking");
     let mut gate = MapBakeGate::new(MapBakeChoice::Ask);
-    gate.note_ready_without_terrain(handle.demand());
+    gate.note_ready_without_terrain(WalkMapDemand::ReadyImages);
     assert_eq!(gate.prompt(), MapBakePrompt::Asking);
-    gate.accept();
+    gate.accept_for_test();
     let baking = gate
-        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
     wait_ready(&baking);
     assert!(has_terrain(&baking), "consent then bakes");
@@ -464,7 +457,7 @@ fn catalogue_only_demand_never_asks_even_when_cold() {
     let (manager, producer) = manager(&scratch);
     let mut gate = MapBakeGate::new(MapBakeChoice::Ask);
     let handle = gate
-        .open(&manager, fixture_descriptor(), MapDemand::CatalogueOnly)
+        .open_for_test(&manager, fixture_descriptor(), MapDemand::CatalogueOnly)
         .unwrap();
     assert_eq!(gate.prompt(), MapBakePrompt::None);
     wait_ready(&handle);
@@ -473,23 +466,21 @@ fn catalogue_only_demand_never_asks_even_when_cold() {
 }
 
 /// The process service's preferences at the isolated home's state root.
-fn preferences(iso: &script::IsolatedEnv) -> host_play::local_state::Preferences {
-    host_play::local_state::LocalStateService::open_process(host_play::local_state::StateRoot::new(
-        iso.home.join(".274bot"),
-    ))
-    .preferences()
+fn preferences(iso: &script::IsolatedEnv) -> frontend_core::UiPreferences {
+    frontend_core::UiPreferences::open_for_test(iso.home.join(".274bot"))
 }
 
 #[test]
 fn the_remembered_always_choice_bakes_without_asking() {
     let iso = script::IsolatedEnv::enter("map-bake-always");
     let preferences = preferences(&iso);
-    persist_map_bake_choice(&preferences, MapBakeChoice::Always).unwrap();
+    frontend_core::map_bake::persist_map_bake_choice_for_test(&preferences, MapBakeChoice::Always)
+        .unwrap();
     let scratch = Scratch::new("always");
     let (manager, producer) = manager(&scratch);
     let mut gate = MapBakeGate::new(load_map_bake_choice(&preferences));
     let handle = gate
-        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
     assert_eq!(gate.prompt(), MapBakePrompt::None);
     wait_ready(&handle);
@@ -516,7 +507,8 @@ fn the_choice_is_ask_when_absent_or_unknown_and_persists_beside_other_prefs() {
     .unwrap();
     preferences.reload().unwrap();
     assert_eq!(load_map_bake_choice(&preferences), MapBakeChoice::Ask);
-    persist_map_bake_choice(&preferences, MapBakeChoice::Always).unwrap();
+    frontend_core::map_bake::persist_map_bake_choice_for_test(&preferences, MapBakeChoice::Always)
+        .unwrap();
     assert_eq!(load_map_bake_choice(&preferences), MapBakeChoice::Always);
     let prefs: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(prefs["last_focus"], "alice");

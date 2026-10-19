@@ -12,6 +12,8 @@ host = { path = "../host" }
 host-play = { path = "../host-play" }
 nav = { path = "../nav" }
 script = { path = "../script" }
+# The live harness's scenario runner (ruling D2(a)); only with `live-harness`.
+scenario = { path = "../scenario", optional = true }
 parking_lot = "0.12"
 serde = "=1.0.219"
 serde_json = "=1.0.140"
@@ -35,3 +37,11 @@ scenario = { path = "../scenario" }
 # Test-only lifecycle and capacity fixture seams; enabled from dev-dependencies,
 # never production builds.
 test-support = ["host-play/test-support", "host/test-support"]
+# Forwarded from the front ends (ruling D3): the opt-in Debug command
+# catalogue, the `--live`/`--smoke` harness, the memory benchmark and the
+# render diagnostics.
+debug-catalog = ["host-play/debug-catalog"]
+live-harness = ["host-play/live-harness", "dep:scenario"]
+memory-profile = ["host-play/memory-profile"]
+memory-profile-no-alloc = ["memory-profile", "host-play/memory-profile-no-alloc"]
+render-diagnostics = ["host/render-diagnostics"]

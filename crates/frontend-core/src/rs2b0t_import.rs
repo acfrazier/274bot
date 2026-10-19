@@ -5,10 +5,11 @@
 //! plain text. [`parse_profile_file`] checks it as strictly as rs2b0t's own
 //! `parseProfileFile` does (kind, version, shapes; `storage` may be absent,
 //! as there). Its errors name a field and the type of value found, never
-//! the value. [`plan_import`] maps every account onto a 274bot profile
-//! without writing anything: the preview. [`apply_import`] writes the
-//! planned rows through the session's ordinary profile writes. Every item
-//! the import does not carry over is listed with its reason, in the
+//! without writing anything: the preview. The front ends stage its planned
+//! rows, then the existing CreateProfile and SaveProfile commands write each
+//! account through the session's ordinary profile writers. Every item the
+//! import does not carry over is listed with its reason in the preview and
+//! final report.
 //! preview and in the final report.
 //!
 //! Password handling, and what it does not cover:
@@ -56,9 +57,10 @@ use serde_json::{Number, Value};
 use vault::{Profile, ProfileSettings, RasterMode, ScriptAssignment, Secret, Vault};
 use zeroize::{Zeroize, Zeroizing};
 
+use crate::command::OperatorCommand;
 use crate::operations::OperationId;
 use crate::scripts::Scripts;
-use crate::session::{ArmMirror, OperatorSession};
+use crate::session::{ArmMirror, OperatorSession, StagedProfileWrite};
 
 /// rs2b0t's `PROFILE_FILE_KIND`.
 pub const PROFILE_FILE_KIND: &str = "rs2b0t-multibox-profiles";
@@ -216,6 +218,26 @@ enum ImportFailure {
     StorageValue { owner: StorageOwner },
     #[error("the vault is locked: unlock it before importing")]
     VaultLocked,
+    #[error("type the path of the {PROFILE_FILE_NAME} file rs2b0t exported")]
+    EmptyPath,
+    #[error("the export file was not confirmed for deletion")]
+    DeleteNotConfirmed,
+    #[error("the export file is no longer available for deletion")]
+    DeleteUnavailable,
+    #[error("there is no parsed profile preview to confirm")]
+    NoPreview,
+    #[error("an imported profile account is already staged")]
+    AccountAlreadyStaged,
+    #[error("profile import account {index} is not a pending write")]
+    AccountNotPending { index: usize },
+    #[error("profile import account {index} was not submitted")]
+    AccountNotSubmitted { index: usize },
+    #[error("profile import account {index} requires {expected:?}, not {actual:?}")]
+    WrongWriter {
+        index: usize,
+        expected: OperatorCommand,
+        actual: OperatorCommand,
+    },
     #[error("cannot delete {}: {source}", path.display())]
     Delete {
         path: PathBuf,
@@ -1716,8 +1738,20 @@ fn convert_setting(def: &script::SettingDef, raw: &str) -> Result<Converted, Str
     }
 }
 
-// ---- apply and report ------------------------------------------------------
+/// A prepared account write; the profile is consumed by its writer row.
+pub(crate) struct StagedImportAccount {
+    pub(crate) index: usize,
+    pub(crate) username: String,
+    pub(crate) write: StagedProfileWrite,
+}
 
+struct ImportWrite {
+    index: usize,
+    username: String,
+    command: OperatorCommand,
+    profile: Option<Profile>,
+    summary: String,
+}
 /// One account's write.
 struct RunEntry {
     username: String,
@@ -1794,80 +1828,7 @@ impl StoredAccountResult {
     }
 }
 
-/// Write the plan's rows through the session's profile writes (a new
-/// profile never replaces one that appeared since the preview) and log one
-/// line per write. Returns at once; [`ImportRun::settled`] tells when every
-/// write has settled and [`ImportRun::succeeded`] whether each is durable.
-pub fn apply_import<Io>(
-    core: &mut OperatorSession<Io>,
-    plan: ImportPlan,
-) -> Result<ImportRun, ImportError> {
-    if core.vault().is_none() {
-        return Err(ImportFailure::VaultLocked.into());
-    }
-    let mut entries = Vec::with_capacity(plan.accounts.len());
-    let mut skips = Vec::new();
-    for account in plan.accounts {
-        let details = account.detail_lines();
-        for skip in account.skipped {
-            skips.push((account.username.clone(), skip));
-        }
-        let mut entry = RunEntry {
-            username: account.username,
-            status: account.status,
-            op: None,
-            refused: None,
-            details,
-        };
-        if let Some(row) = account.row {
-            let summary = change_summary(account.old.as_ref(), &row);
-            let (action, result) = match account.status {
-                AccountStatus::New => (
-                    "create",
-                    core.create_profile_with_log_action(
-                        row,
-                        ArmMirror::remember(None),
-                        LABEL,
-                        LABEL,
-                    ),
-                ),
-                _ => (
-                    "overwrite",
-                    core.save_profile_with_log_action(row, ArmMirror::remember(None), LABEL, LABEL),
-                ),
-            };
-            match result {
-                Ok(op) => {
-                    host_log!(
-                        Category::Lifecycle,
-                        Level::Info,
-                        slot = &entry.username,
-                        "{LABEL}: {action} profile {} op#{}: {summary}",
-                        entry.username,
-                        op.0
-                    );
-                    entry.op = Some(op);
-                }
-                Err(error) => entry.refused = Some(shown(error)),
-            }
-        }
-        entries.push(entry);
-    }
-    let skipped = skips
-        .into_iter()
-        .chain(
-            plan.file_skipped
-                .into_iter()
-                .map(|s| ("file".to_owned(), s)),
-        )
-        .collect();
-    let seen = (0..entries.len()).map(|_| OnceCell::new()).collect();
-    Ok(ImportRun {
-        entries,
-        skipped,
-        seen,
-    })
-}
+// ---- apply and report ------------------------------------------------------
 
 /// `old -> new` for every field the import writes; the password only as
 /// set/changed/unchanged.
@@ -2027,7 +1988,7 @@ impl ImportRun {
 
 /// Delete the export file once the import succeeded (explicit confirmation
 /// in the front end). Logs one line.
-pub fn delete_export_file(path: &Path) -> Result<(), ImportError> {
+fn delete_export_file(path: &Path) -> Result<(), ImportError> {
     std::fs::remove_file(path).map_err(|source| ImportFailure::Delete {
         path: path.to_path_buf(),
         source: Box::new(source),
@@ -2064,6 +2025,8 @@ pub struct ProfileImport {
     choices: ImportChoices,
     plan: Option<ImportPlan>,
     run: Option<(PathBuf, ImportRun)>,
+    writes: Vec<ImportWrite>,
+    staged_account: Option<usize>,
     delete_asked: bool,
     deleted: Option<PathBuf>,
 }
@@ -2083,6 +2046,8 @@ impl ProfileImport {
             choices: ImportChoices::default(),
             plan: None,
             run: None,
+            writes: Vec::new(),
+            staged_account: None,
             delete_asked: false,
             deleted: None,
         }
@@ -2131,32 +2096,45 @@ impl ProfileImport {
     }
 
     /// Read and map the file at the typed path. Writes nothing.
-    pub fn preview<Io>(&mut self, core: &OperatorSession<Io>, scripts: &Scripts) {
+    pub(crate) fn preview<Io>(
+        &mut self,
+        core: &OperatorSession<Io>,
+        scripts: &Scripts,
+    ) -> Result<(), ImportError> {
         self.error = None;
         self.plan = None;
         self.file = None;
+        self.run = None;
+        self.writes.clear();
+        self.staged_account = None;
+        self.deleted = None;
+        self.delete_asked = false;
         let path = PathBuf::from(self.path.trim());
         if path.as_os_str().is_empty() {
-            self.refuse(format!(
-                "Type the path of the {PROFILE_FILE_NAME} file rs2b0t exported."
-            ));
-            return;
+            let error: ImportError = ImportFailure::EmptyPath.into();
+            self.refuse(error.to_string());
+            return Err(error);
         }
         let Some(vault) = core.vault() else {
-            self.refuse(ImportFailure::VaultLocked.to_string());
-            return;
+            let error: ImportError = ImportFailure::VaultLocked.into();
+            self.refuse(error.to_string());
+            return Err(error);
         };
         match read_profile_file(&path) {
             Ok(file) => {
-                self.plan = Some(plan_import(&file, vault, scripts.js(), self.choices));
+                self.plan = Some(plan_import(&file, vault, scripts.library(), self.choices));
                 self.file = Some((path, file));
+                Ok(())
             }
-            Err(error) => self.refuse(error.to_string()),
+            Err(error) => {
+                self.refuse(error.to_string());
+                Err(error)
+            }
         }
     }
 
     /// Choose what happens to existing profiles; the preview follows.
-    pub fn set_policy<Io>(
+    pub(crate) fn set_policy<Io>(
         &mut self,
         core: &OperatorSession<Io>,
         scripts: &Scripts,
@@ -2168,7 +2146,7 @@ impl ProfileImport {
 
     /// Choose whether accounts the 289 client cannot log in with are
     /// imported anyway; the preview follows.
-    pub fn set_include_unusable<Io>(
+    pub(crate) fn set_include_unusable<Io>(
         &mut self,
         core: &OperatorSession<Io>,
         scripts: &Scripts,
@@ -2180,7 +2158,7 @@ impl ProfileImport {
 
     fn replan<Io>(&mut self, core: &OperatorSession<Io>, scripts: &Scripts) {
         if let (Some((_, file)), Some(vault)) = (self.file.as_ref(), core.vault()) {
-            self.plan = Some(plan_import(file, vault, scripts.js(), self.choices));
+            self.plan = Some(plan_import(file, vault, scripts.library(), self.choices));
         }
     }
 
@@ -2192,28 +2170,217 @@ impl ProfileImport {
             .unwrap_or_default()
     }
 
-    /// Write the previewed import. The plan is re-made against the vault as
-    /// it is now, so a profile added since the preview is never replaced
-    /// under Skip. The parsed file (and its passwords) is dropped.
-    pub fn confirm<Io>(&mut self, core: &mut OperatorSession<Io>, scripts: &Scripts) {
-        let Some((path, file)) = self.file.take() else {
-            return;
-        };
-        self.plan = None;
+    /// Replan against the current vault and stage the report and account
+    /// writes. The front end submits one CreateProfile or SaveProfile row
+    /// for each item from [`Self::planned_writes`].
+    pub fn prepare_confirmation<Io>(
+        &mut self,
+        core: &OperatorSession<Io>,
+        scripts: &Scripts,
+    ) -> Result<(), ImportError> {
+        if self.run.is_some() || self.staged_account.is_some() {
+            let error: ImportError = ImportFailure::NoPreview.into();
+            self.refuse(error.to_string());
+            return Err(error);
+        }
         let Some(vault) = core.vault() else {
-            self.refuse(ImportFailure::VaultLocked.to_string());
+            let error: ImportError = ImportFailure::VaultLocked.into();
+            self.refuse(error.to_string());
+            return Err(error);
+        };
+        let Some((path, file)) = self.file.take() else {
+            let error: ImportError = ImportFailure::NoPreview.into();
+            self.refuse(error.to_string());
+            return Err(error);
+        };
+        let plan = plan_import(&file, vault, scripts.library(), self.choices);
+        drop(file);
+
+        self.start_run(path, plan);
+        Ok(())
+    }
+    fn start_run(&mut self, path: PathBuf, plan: ImportPlan) {
+        let mut entries = Vec::with_capacity(plan.accounts.len());
+        let mut skipped: Vec<(String, Skipped)> = Vec::new();
+        let mut writes = Vec::new();
+        for (index, account) in plan.accounts.into_iter().enumerate() {
+            let details = account.detail_lines();
+            let username = account.username;
+            let status = account.status;
+            let profile = account.row;
+            for skip in account.skipped {
+                skipped.push((username.clone(), skip));
+            }
+            let entry = RunEntry {
+                username: username.clone(),
+                status,
+                op: None,
+                refused: None,
+                details,
+            };
+            if let Some(profile) = profile {
+                let summary = change_summary(account.old.as_ref(), &profile);
+                let command = if status == AccountStatus::New {
+                    OperatorCommand::CreateProfile
+                } else {
+                    OperatorCommand::SaveProfile
+                };
+                writes.push(ImportWrite {
+                    index,
+                    username,
+                    command,
+                    profile: Some(profile),
+                    summary,
+                });
+            }
+            entries.push(entry);
+        }
+        skipped.extend(
+            plan.file_skipped
+                .into_iter()
+                .map(|skip| ("file".to_owned(), skip)),
+        );
+        self.plan = None;
+        self.writes = writes;
+        self.staged_account = None;
+        self.run = Some((
+            path,
+            ImportRun {
+                seen: (0..entries.len()).map(|_| OnceCell::new()).collect(),
+                entries,
+                skipped,
+            },
+        ));
+    }
+
+    /// Planned account writes in file order: account index, profile name,
+    /// and the matching writer command.
+    pub fn planned_writes(&self) -> impl Iterator<Item = (usize, &str, OperatorCommand)> + '_ {
+        self.writes
+            .iter()
+            .filter(|write| write.profile.is_some())
+            .map(|write| (write.index, write.username.as_str(), write.command))
+    }
+
+    /// Stage a planned new account for `CreateProfile`.
+    pub fn stage_create_account(&mut self, index: usize) -> Result<(), ImportError> {
+        self.stage_account_for(index, OperatorCommand::CreateProfile)
+    }
+
+    /// Stage a planned existing account for `SaveProfile`.
+    pub fn stage_save_account(&mut self, index: usize) -> Result<(), ImportError> {
+        self.stage_account_for(index, OperatorCommand::SaveProfile)
+    }
+
+    fn stage_account_for(
+        &mut self,
+        index: usize,
+        command: OperatorCommand,
+    ) -> Result<(), ImportError> {
+        if self.staged_account.is_some() {
+            return Err(ImportFailure::AccountAlreadyStaged.into());
+        }
+        let Some(expected) = self
+            .writes
+            .iter()
+            .find(|write| write.index == index && write.profile.is_some())
+            .map(|write| write.command)
+        else {
+            return Err(ImportFailure::AccountNotPending { index }.into());
+        };
+        if expected != command {
+            return Err(ImportFailure::WrongWriter {
+                index,
+                expected,
+                actual: command,
+            }
+            .into());
+        }
+        self.staged_account = Some(index);
+        Ok(())
+    }
+
+    /// Clear a staged input after its submit did not dispatch it.
+    pub fn cancel_staged_account(&mut self, index: usize) {
+        if self.staged_account == Some(index) {
+            self.staged_account = None;
+            self.record_write_result(
+                index,
+                Err(&ImportFailure::AccountNotSubmitted { index }.to_string()),
+            );
+        }
+    }
+
+    /// Take the staged imported account for its writer row.
+    pub(crate) fn take_staged_account(
+        &mut self,
+        command: OperatorCommand,
+    ) -> Result<Option<StagedImportAccount>, ImportError> {
+        let Some(index) = self.staged_account.take() else {
+            return Ok(None);
+        };
+        let Some(write) = self.writes.iter_mut().find(|write| write.index == index) else {
+            return Err(ImportFailure::AccountNotPending { index }.into());
+        };
+        if write.command != command {
+            let error = ImportFailure::WrongWriter {
+                index,
+                expected: write.command,
+                actual: command,
+            };
+            self.record_write_result(index, Err(&error.to_string()));
+            return Err(error.into());
+        }
+        let Some(profile) = write.profile.take() else {
+            return Err(ImportFailure::AccountNotPending { index }.into());
+        };
+        Ok(Some(StagedImportAccount {
+            index,
+            username: write.username.clone(),
+            write: StagedProfileWrite::new(
+                profile,
+                None,
+                command == OperatorCommand::CreateProfile,
+                ArmMirror::remember(None),
+                LABEL,
+            ),
+        }))
+    }
+
+    /// Save this writer's result in the import report.
+    pub(crate) fn record_write_result(&mut self, index: usize, result: Result<OperationId, &str>) {
+        let Some((_, run)) = self.run.as_mut() else {
             return;
         };
-        let plan = plan_import(&file, vault, scripts.js(), self.choices);
-        drop(file);
-        match apply_import(core, plan) {
-            Ok(run) => self.run = Some((path, run)),
-            Err(error) => self.refuse(error.to_string()),
+        let Some(entry) = run.entries.get_mut(index) else {
+            return;
+        };
+        match result {
+            Ok(op) => {
+                entry.op = Some(op);
+                if let Some(write) = self.writes.iter().find(|write| write.index == index) {
+                    let action = if write.command == OperatorCommand::CreateProfile {
+                        "create"
+                    } else {
+                        "overwrite"
+                    };
+                    host_log!(
+                        Category::Lifecycle,
+                        Level::Info,
+                        slot = &write.username,
+                        "{LABEL}: {action} profile {} op#{}: {}",
+                        write.username,
+                        op.0,
+                        write.summary
+                    );
+                }
+            }
+            Err(reason) => entry.refused = Some(shown(reason.to_owned())),
         }
     }
 
     /// Back to the path field, dropping the parsed file and its passwords.
-    pub fn back(&mut self) {
+    pub(crate) fn back(&mut self) {
         self.file = None;
         self.plan = None;
         self.error = None;
@@ -2266,7 +2433,7 @@ impl ProfileImport {
     }
 
     /// Ask to delete the export file; [`Self::confirm_delete`] deletes it.
-    pub fn ask_delete(&mut self) {
+    pub(crate) fn ask_delete(&mut self) {
         self.delete_asked = true;
     }
 
@@ -2274,7 +2441,7 @@ impl ProfileImport {
         self.delete_asked
     }
 
-    pub fn cancel_delete(&mut self) {
+    pub(crate) fn cancel_delete(&mut self) {
         self.delete_asked = false;
     }
 
@@ -2284,18 +2451,31 @@ impl ProfileImport {
     }
 
     /// Delete the export file after the operator confirmed.
-    pub fn confirm_delete<Io>(&mut self, core: &OperatorSession<Io>) {
-        self.delete_asked = false;
+    pub(crate) fn confirm_delete<Io>(
+        &mut self,
+        core: &OperatorSession<Io>,
+    ) -> Result<(), ImportError> {
+        if !std::mem::take(&mut self.delete_asked) {
+            let error: ImportError = ImportFailure::DeleteNotConfirmed.into();
+            self.refuse(error.to_string());
+            return Err(error);
+        }
         if !self.can_delete(core) {
-            return;
+            let error: ImportError = ImportFailure::DeleteUnavailable.into();
+            self.refuse(error.to_string());
+            return Err(error);
         }
         let Some((path, _)) = self.run.as_ref() else {
-            return;
+            let error: ImportError = ImportFailure::DeleteUnavailable.into();
+            self.refuse(error.to_string());
+            return Err(error);
         };
-        match delete_export_file(path) {
-            Ok(()) => self.deleted = Some(path.clone()),
-            Err(error) => self.refuse(error.to_string()),
+        if let Err(error) = delete_export_file(path) {
+            self.refuse(error.to_string());
+            return Err(error);
         }
+        self.deleted = Some(path.clone());
+        Ok(())
     }
 }
 

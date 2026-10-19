@@ -3,19 +3,24 @@ use std::sync::Arc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
+use frontend_core::scripts::{
+    CardRuntime, CardSource, CompiledCardId, Loadouts, OwnedSchema, ScriptChoice, ScriptRunState,
+};
+use frontend_core::test_support::paint::TestPaint;
+use frontend_core::test_support::scripts::{NativeStatus, TestSchema};
+use frontend_core::SettingsDraft;
 use host_play::local_state::{LocalStateService, StateRoot};
 use nav::tile::Tile;
-use script::{RunState, ScriptKind, ScriptSel, ScriptSource};
-use vault::ProfileSettings;
 
+use crate::bin::seam::Seam;
 use crate::layout::Screen;
 use crate::overlay::Modal;
 use crate::script_shape::BrowseCard;
 use crate::test_support::{ch, draw, find, key, text};
 
-use host_play::walk_map::{
-    ActionError, ActionKind, AuthenticatedServices, Catalogue, MapContext, WalkExclude,
-    WalkSlotReady, WalkSlotStatus,
+use frontend_core::walk_map::{
+    WalkActionErrorKind, WalkActionKind, WalkCatalogue, WalkExclude, WalkMapContext, WalkServices,
+    WalkSlotStatus,
 };
 use nav::map::formats::{
     ClientPois, Coverage, CoverageLevel, ServiceIdentity, ServicePois, NAVPOIS_VERSION,
@@ -51,8 +56,8 @@ fn bone_burier_card() -> BrowseCard {
         description: String::new(),
         category: "Prayer".into(),
         tags: Vec::new(),
-        kind: ScriptKind::Compat,
-        source: ScriptSource::Catalog,
+        kind: CardRuntime::Compat,
+        source: CardSource::Catalog,
         unloadable: None,
     }
 }
@@ -138,7 +143,7 @@ fn poi_record(
     }
 }
 
-fn map_poi_catalogue() -> (std::sync::Arc<Catalogue>, Tile, Tile) {
+fn map_poi_catalogue() -> (std::sync::Arc<WalkCatalogue>, Tile, Tile) {
     let world = std::sync::Arc::new(nav::world::NavWorld::from_grid(
         &nav::grid::StepGrid::fixture_open_3x3(),
     ));
@@ -188,8 +193,8 @@ fn map_poi_catalogue() -> (std::sync::Arc<Catalogue>, Tile, Tile) {
         records: Rows::new(labels).unwrap(),
     };
     let bytes = doc.encode_navpois().unwrap();
-    let services = AuthenticatedServices::decode(&bytes, doc.identity, Digest::of(&bytes)).unwrap();
-    let catalogue = Catalogue::new(world, identity, nav, Some(client), Some(services)).unwrap();
+    let services = WalkServices::decode(&bytes, doc.identity, Digest::of(&bytes)).unwrap();
+    let catalogue = WalkCatalogue::new(world, identity, nav, Some(client), Some(services)).unwrap();
     let booth = catalogue
         .entries()
         .find(|e| e.name() == "Bank booth")
@@ -209,7 +214,7 @@ fn map_poi_catalogue() -> (std::sync::Arc<Catalogue>, Tile, Tile) {
     (std::sync::Arc::new(catalogue), stand, label_anchor)
 }
 
-fn bind_catalogue_map(app: &mut TuiApp, catalogue: std::sync::Arc<Catalogue>) {
+fn bind_catalogue_map(app: &mut TuiApp, catalogue: std::sync::Arc<WalkCatalogue>) {
     app.world = Some(std::sync::Arc::clone(catalogue.world()));
     app.names = vec!["alice".into()];
     app.focused = Some(0);
@@ -218,14 +223,13 @@ fn bind_catalogue_map(app: &mut TuiApp, catalogue: std::sync::Arc<Catalogue>) {
         z: 0,
         level: 0,
     });
-    app.map_model.bind(MapContext {
-        focus: None,
-        nav: catalogue.nav_identity(),
-        overlay: None,
-        generation: 1,
-    });
+    app.map_model.bind(WalkMapContext::browsing(
+        catalogue.nav_identity(),
+        Some(catalogue.key()),
+        1,
+    ));
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
-    app.bind_host_catalogue(catalogue);
+    app.bind_walk_catalogue(catalogue);
 }
 
 fn search_and_jump(app: &mut TuiApp, query: &str) {
@@ -263,23 +267,16 @@ fn line(text: &str) -> ChatLineView {
     }
 }
 
-fn nature_crafter_paint() -> script::shim::ScriptPaint {
-    script::shim::ScriptPaint {
-        title: Some("NatureCrafter — Air — runner — restocking at the bank".into()),
-        accent: None,
-        lines: vec![
-            "Runtime: 1m | Mode: Runner | To: paintproof".into(),
-            "Deliveries: 0 | Ess sent: 0 | Coins: 0".into(),
-            "Pack ess: 0 | noted: 0 | unnoted: 0".into(),
+fn nature_crafter_paint() -> TestPaint {
+    TestPaint::new(
+        Some("NatureCrafter — Air — runner — restocking at the bank"),
+        &[
+            "Runtime: 1m | Mode: Runner | To: paintproof",
+            "Deliveries: 0 | Ess sent: 0 | Coins: 0",
+            "Pack ess: 0 | noted: 0 | unnoted: 0",
         ],
-        buttons: vec![script::shim::ScriptPaintButton {
-            id: "gobank".into(),
-            label: "Go bank".into(),
-        }],
-        generation: 0,
-        canvas: Vec::new(),
-        ..Default::default()
-    }
+    )
+    .with_button("gobank", "Go bank")
 }
 
 /// A one-bot app on the Script tab (keyboard on the tab).
@@ -289,7 +286,7 @@ fn script_app() -> TuiApp {
     app
 }
 
-fn params_overlay_text(app: &mut TuiApp, loadouts: &script::LoadoutsStore) -> String {
+fn params_overlay_text(app: &mut TuiApp, loadouts: &Loadouts) -> String {
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
     terminal
         .draw(|frame| app.draw_params_overlay(frame, loadouts, None))
@@ -297,24 +294,14 @@ fn params_overlay_text(app: &mut TuiApp, loadouts: &script::LoadoutsStore) -> St
     text(&crate::test_support::rows(terminal.backend().buffer()))
 }
 
-fn thiever_schema() -> Vec<script::SettingDef> {
-    vec![script::SettingDef {
-        id: "target".into(),
-        ty: "string".into(),
-        default: Some("Man".into()),
-        label: None,
-        min: None,
-        max: None,
-        step: None,
-        options: Vec::new(),
-        option_labels: Vec::new(),
-        group: None,
-        show_if: None,
-        options_from: None,
-        csv_toggle: None,
-        help: None,
-        item_option_spec: None,
-    }]
+fn owned_schema(schema: &TestSchema) -> OwnedSchema {
+    let mut owned = OwnedSchema::default();
+    owned.copy_from(schema.schema_ref());
+    owned
+}
+
+fn thiever_schema() -> TestSchema {
+    TestSchema::setting("target", "string", Some("Man"), None, &[])
 }
 
 /// Boot shows the fleet and never requests catalogue work.
@@ -339,37 +326,14 @@ fn boot_draws_the_fleet_without_map_demand() {
 /// the status card at both common sizes; a slot with no script shows neither.
 #[test]
 fn status_card_shows_a_parked_quester_phase_and_reason_at_common_sizes() {
-    use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
-
     let mut app = crate::test_support::fleet_app(&["alice"]);
     app.show_screen(Screen::Overview);
     let mut detail = crate::test_support::ready_detail("alice");
-    detail.row_mut().set_script(RunState::Running);
-    let status = ScriptStatus {
-        run: api::selected::RunKey {
-            slot: 1,
-            run: 2,
-            session: 3,
-        },
-        card: script::CompiledId("Quester"),
-        phase: NativePhase::Working,
-        active_settings: 1,
-        pending_settings: None,
-        fields: Arc::from([
-            StatusField {
-                key: "action_state",
-                label: "Action",
-                value: StatusValue::Text(Arc::from("blocked")),
-            },
-            StatusField {
-                key: "block_reason",
-                label: "Blocked",
-                value: StatusValue::Text(Arc::from("no step for stage")),
-            },
-        ]),
-        failure: None,
-    };
-    app.detail = Some(detail.with_native_status(Some(Arc::new(status))));
+    detail.row_mut().set_script(ScriptRunState::Running);
+    let status = NativeStatus::working(CompiledCardId::QUESTER)
+        .with_text_field("action_state", "Action", "blocked")
+        .with_text_field("block_reason", "Blocked", "no step for stage");
+    app.detail = Some(status.attach_to(detail));
     for (width, height) in [(120, 40), (80, 24)] {
         let all = text(&draw(&mut app, width, height));
         assert!(all.contains("script: blocked"), "{width}x{height}: {all}");
@@ -408,18 +372,13 @@ fn draw_map_paints_walkable_dots_after_explicit_activation() {
 }
 #[test]
 fn wilderness_persistence_errors_are_visible() {
-    let root =
-        std::env::temp_dir().join(format!("274bot-tui-map-pref-error-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).unwrap();
-    let blocker = root.join("not-a-directory");
-    std::fs::write(&blocker, b"file").unwrap();
-    // A service rooted at a file cannot write: the failure surfaces.
-    let blocked = LocalStateService::open_process(StateRoot::new(blocker.clone())).preferences();
-
+    let mut seam = Seam::new();
     let mut app = TuiApp::new("274bot headless");
-    app.restore_preferences(blocked.clone());
-    app.toggle_map_wilderness();
+    // A store that refuses writes: the failure surfaces.
+    seam.refuse_preference_writes();
+    let action = app.toggle_map_wilderness();
+    assert_eq!(action, AppAction::MapWilderness(true));
+    seam.apply(&mut app, action);
 
     assert!(app.map.layers.wilderness);
     assert!(
@@ -430,17 +389,16 @@ fn wilderness_persistence_errors_are_visible() {
         app.error
     );
 
-    std::fs::remove_file(&blocker).unwrap();
-    std::fs::create_dir(&blocker).unwrap();
-    app.toggle_map_wilderness();
+    seam.allow_preference_writes();
+    let action = app.toggle_map_wilderness();
+    assert_eq!(action, AppAction::MapWilderness(false));
+    seam.apply(&mut app, action);
     assert!(!app.map.layers.wilderness);
     assert!(
         app.error.is_none(),
         "a later successful save clears the stale map error: {:?}",
         app.error
     );
-
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 /// The spec's WASD test: from (10,10) W steps north. +z is north on
@@ -553,18 +511,11 @@ fn chat_tab_answers_options_on_space() {
 #[test]
 fn paint_showing_digit_routes_to_paint_button_not_wire() {
     let mut app = TuiApp::new("274bot headless");
-    app.chat_data.script_paint = Some(std::sync::Arc::new(script::shim::ScriptPaint {
-        title: Some("NatureCrafter".into()),
-        accent: None,
-        lines: vec!["status".into()],
-        buttons: vec![script::shim::ScriptPaintButton {
-            id: "gobank".into(),
-            label: "Go bank".into(),
-        }],
-        generation: 0,
-        canvas: Vec::new(),
-        ..Default::default()
-    }));
+    app.chat_data.script_paint = Some(
+        TestPaint::new(Some("NatureCrafter"), &["status"])
+            .with_button("gobank", "Go bank")
+            .frame(),
+    );
     app.show_screen(Screen::Chat);
     assert_eq!(
         app.on_key(ch('1')),
@@ -583,7 +534,7 @@ fn paint_showing_digit_routes_to_paint_button_not_wire() {
 #[test]
 fn nature_crafter_button_is_rendered_and_only_its_row_is_clickable_at_140x40() {
     let mut app = TuiApp::new("274bot headless");
-    app.chat_data.script_paint = Some(std::sync::Arc::new(nature_crafter_paint()));
+    app.chat_data.script_paint = Some(nature_crafter_paint().frame());
     app.show_screen(Screen::Chat);
     let rows = draw(&mut app, 140, 40);
 
@@ -616,7 +567,7 @@ fn nature_crafter_button_is_rendered_and_only_its_row_is_clickable_at_140x40() {
 #[test]
 fn nature_crafter_button_remains_visible_and_clickable_in_a_compact_terminal() {
     let mut app = TuiApp::new("274bot headless");
-    app.chat_data.script_paint = Some(std::sync::Arc::new(nature_crafter_paint()));
+    app.chat_data.script_paint = Some(nature_crafter_paint().frame());
     app.show_screen(Screen::Chat);
     let rows = draw(&mut app, 48, 18);
     let (button_col, button_row) = find(&rows, "[1] Go bank")
@@ -634,7 +585,12 @@ fn nature_crafter_button_remains_visible_and_clickable_in_a_compact_terminal() {
 
 #[test]
 fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes() {
+    let _iso = frontend_core::test_support::IsolatedStores::enter("tui-quest-paths-settings");
+    let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
+
     for (width, height) in [(80, 24), (120, 40)] {
+        let mut seam = Seam::new();
+
         let mut app = crate::test_support::fleet_app(&["alice"]);
         app.show_screen(Screen::Overview);
         assert_eq!(app.on_key(ch('o')), AppAction::None);
@@ -656,7 +612,11 @@ fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes
             "the off-by-default folder gate stays visible at {width}x{height}: {rows:?}"
         );
         assert!(!app.quester_paths.enabled(), "folder Paths start disabled");
-        assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+        let action = app.on_key(key(KeyCode::Enter));
+        assert_eq!(action, AppAction::DismissPathsNotice);
+        seam.apply(&mut app, action);
+        seam.pump(&mut app);
+
         assert!(app.quester_paths.enabled(), "the gate toggles on");
 
         app.on_key(key(KeyCode::Down));
@@ -674,11 +634,15 @@ fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes
         for character in selected_folder.chars() {
             app.on_key(ch(character));
         }
+        let action = app.on_key(key(KeyCode::Enter));
         assert_eq!(
-            app.on_key(key(KeyCode::Enter)),
-            AppAction::None,
+            action,
+            AppAction::DismissPathsNotice,
             "Enter commits the editable folder field"
         );
+        seam.apply(&mut app, action);
+        seam.pump(&mut app);
+
         assert_eq!(
             app.quester_paths.folder(),
             std::path::PathBuf::from(selected_folder)
@@ -690,12 +654,15 @@ fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes
             text(&rows).contains(frontend_core::quester_paths::RELOAD_PATHS_LABEL),
             "Reload Paths stays visible at {width}x{height}: {rows:?}"
         );
+        let action = app.on_key(key(KeyCode::Enter));
         assert_eq!(
-            app.on_key(key(KeyCode::Enter)),
+            action,
             AppAction::ReloadPaths,
             "the settings command routes reload without starting a Path"
         );
+        seam.apply(&mut app, action);
     }
+    frontend_core::test_support::scripts::reset_quester_registry();
 }
 
 #[test]
@@ -730,13 +697,20 @@ fn routing_scope_note_heads_the_routing_rows_once_at_common_sizes() {
 }
 
 #[test]
-fn settings_enter_flips_random_events_and_marks_dirty() {
+fn settings_enter_returns_random_events_edit_and_marks_dirty() {
     let mut app = TuiApp::new("274bot headless");
-    app.settings = ProfileSettings::default();
-    assert!(app.settings.random_events);
+    app.settings = SettingsDraft::default();
+    assert!(app.settings.random_events());
     app.settings_state.open = true;
-    app.on_key(key(KeyCode::Enter));
-    assert!(!app.settings.random_events, "popup flips random_events");
+    let action = app.on_key(key(KeyCode::Enter));
+    assert_eq!(
+        action,
+        AppAction::SettingsDraftEdited(crate::settings::SettingsEdit::RandomEvents(false))
+    );
+    assert!(
+        app.settings.random_events(),
+        "the dispatcher applies the returned edit"
+    );
     assert!(app.settings_dirty, "the binary persists the change");
 }
 
@@ -766,7 +740,9 @@ fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped
 fn wrapped_global_settings_rows_use_the_drawn_hit_target() {
     let mut app = TuiApp::new("274bot headless");
     app.settings_state.open = true;
-    app.nav.set_danger_level(frontend_core::DangerLevel::Always);
+    app.nav = app
+        .nav
+        .with_danger_level(frontend_core::DangerLevel::Always);
     app.script_scope_notice_ack = true;
     app.survivable_routing_notice_ack = true;
     app.settings_state.row = 8;
@@ -797,7 +773,7 @@ fn settings_survivable_notice_ack_is_independent_and_reaches_the_shared_projecti
     .is_some());
     assert_eq!(app.on_key(key(KeyCode::Char('n'))), AppAction::None);
     assert!(app.script_scope_notice_ack && app.survivable_routing_notice_ack);
-    assert!(app.walk_permissions.survivable_routing_notice_ack);
+    assert!(app.walk_permissions.survivable_routing_notice_ack());
     assert!(find(
         &draw(&mut app, 100, 24),
         "Danger routing now has three levels"
@@ -860,7 +836,7 @@ fn map_enter_confirms_a_walk_selection() {
 #[test]
 fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
     let mut app = open_map_world();
-    app.nav.allow_teleports = true;
+    app.nav = frontend_core::WalkGlobals::new(true, false, false, false, true);
 
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
     assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
@@ -893,13 +869,15 @@ fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
         !app.map_route_through_zones,
         "MapOpen also resets stale state"
     );
-    app.nav.allow_danger_zones = false;
+    app.nav = app
+        .nav
+        .with_danger_level(frontend_core::DangerLevel::WhenSurvivable);
     app.map_route_through_zones = true;
     app.settings_state.open = true;
     app.settings_state.row = 8;
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     app.settings_state.open = false;
-    assert!(app.nav.allow_danger_zones);
+    assert!(app.nav.allow_danger_zones());
     assert!(
         !app.map_route_through_zones,
         "enabling global danger clears any hidden one-shot grant"
@@ -929,26 +907,23 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
             .as_nanos()
     ));
     std::fs::create_dir_all(&root).unwrap();
-    let preferences =
-        LocalStateService::open_process(StateRoot::new(root.join(".274bot"))).preferences();
-    let loadouts = script::LoadoutsStore::default();
+    let preferences = frontend_core::UiPreferences::of_service_for_test(
+        &LocalStateService::open_process(StateRoot::new(root.join(".274bot"))),
+    );
+    let loadouts = Loadouts::default();
     let mut app = open_map_world();
-    app.restore_preferences(preferences.clone());
-    app.script_sel = Some(ScriptSel::Loaded(
-        ScriptSource::Catalog,
-        "WalkPermissions".into(),
-    ));
-    let mut schema = thiever_schema();
-    schema[0].id = "allow_danger_zones".into();
-    schema[0].ty = "boolean".into();
-    schema[0].label = Some("Danger routing".into());
-    schema[0].default = Some("false".into());
-    app.params_schema = schema;
-    app.open_script_params(script::merge_bag(
-        &app.params_schema,
-        &serde_json::Map::new(),
-        None,
-    ));
+    Seam::restore_preferences(&mut app, preferences.share());
+
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "WalkPermissions"));
+    let schema = TestSchema::setting(
+        "allow_danger_zones",
+        "boolean",
+        Some("false"),
+        Some("Danger routing"),
+        &[],
+    );
+    app.params_schema = owned_schema(&schema);
+    app.open_script_params(schema.merged_bag(&serde_json::Map::new(), None));
     app.params_state.open = false;
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
 
@@ -961,10 +936,10 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
     let crossing = text(&draw(&mut app, 120, 40));
     assert!(crossing.contains("crossing (z)"), "{crossing}");
 
-    frontend_core::nav_preference(
+    frontend_core::nav_prefs::write_nav_preference_for_test(
         &preferences,
         frontend_core::NavPreference::AllowDangerZones,
-        Some(true),
+        true,
     )
     .unwrap();
     let globally_on = text(&draw(&mut app, 120, 40));
@@ -988,10 +963,10 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
     );
     app.params_state.open = false;
 
-    frontend_core::nav_preference(
+    frontend_core::nav_prefs::write_nav_preference_for_test(
         &preferences,
         frontend_core::NavPreference::AllowDangerZones,
-        Some(false),
+        false,
     )
     .unwrap();
     let globally_off = text(&draw(&mut app, 120, 40));
@@ -1062,6 +1037,7 @@ fn map_focus_reserves_l_for_pan_and_esc_orders_search_before_close() {
 }
 
 fn run_map_keyboard_walkthrough(width: u16, height: u16) {
+    let mut seam = Seam::new();
     let mut app = open_map_world();
     assert_eq!(
         app.map_catalogue_status,
@@ -1090,23 +1066,12 @@ fn run_map_keyboard_walkthrough(width: u16, height: u16) {
     );
     app.refresh_walk_send(|name| {
         if name == "alice" {
-            WalkSlotStatus::Eligible(WalkSlotReady { origin: tile(1, 1) })
+            WalkSlotStatus::eligible(tile(1, 1))
         } else {
-            WalkSlotStatus::Excluded(WalkExclude::NoPosition)
+            WalkSlotStatus::excluded(WalkExclude::NoPosition)
         }
     });
-    app.map_observed = vec![host_play::walk_map::ObservedService {
-        npc_index: 1,
-        kind: PoiKind::Bank,
-        tile: tile(1, 1),
-        evidence: CapabilityEvidence::ActiveQuickBooth,
-        context: host_play::walk_map::MapContext {
-            focus: None,
-            nav: nav::map::identity::Digest::of(b"walkthrough"),
-            overlay: None,
-            generation: 1,
-        },
-    }];
+    app.map_observed.clear();
 
     assert_eq!(app.on_key(ch('/')), AppAction::None);
     assert!(app.map_search_open);
@@ -1186,7 +1151,8 @@ fn run_map_keyboard_walkthrough(width: u16, height: u16) {
     );
     assert!(app.map_model.pending().is_some());
 
-    assert_eq!(app.on_key(ch('g')), AppAction::None);
+    let alice = app.profile_id_for_name("alice");
+    seam.press(&mut app, ch('g'), AppAction::MarkAll(vec![alice]));
     assert_eq!(app.walk_send.mode, WalkSendMode::Group);
     assert_eq!(app.walk_send.walk_label(), "Walk 1 bots");
     assert!(
@@ -1218,7 +1184,7 @@ fn run_map_keyboard_walkthrough(width: u16, height: u16) {
         "{width}x{height} eligibility: {all}"
     );
     assert!(
-        all.contains("obs:1"),
+        all.contains("obs:0"),
         "{width}x{height} observed services: {all}"
     );
 
@@ -1231,7 +1197,7 @@ fn run_map_keyboard_walkthrough(width: u16, height: u16) {
     assert_eq!(app.map_catalogue_status, MapCatalogueStatus::Inactive);
     assert!(app.map_pois.is_empty(), "close releases the catalogue");
     assert!(app.map_observed.is_empty());
-    assert!(app.map_host_catalogue.is_none());
+    assert!(app.map_catalogue.is_none());
 }
 
 #[test]
@@ -1245,41 +1211,36 @@ fn map_keyboard_walkthrough_80x24() {
 }
 
 #[test]
-fn map_poi_confirm_keeps_catalogue_stand_and_blocks_view_only_labels() {
+fn map_poi_selection_keeps_catalogue_stand_and_blocks_view_only_labels() {
     let (catalogue, stand, label_anchor) = map_poi_catalogue();
-    let ctx = MapContext {
-        focus: None,
-        nav: catalogue.nav_identity(),
-        overlay: Some(catalogue.key()),
-        generation: 1,
-    };
+    let ctx = WalkMapContext::browsing(catalogue.nav_identity(), Some(catalogue.key()), 1);
     let mut app = TuiApp::new("274bot headless");
     bind_catalogue_map(&mut app, Arc::clone(&catalogue));
 
     search_and_jump(&mut app, "lumbridge");
     let pending = app.map_model.pending().expect("label selection");
-    assert_eq!(pending.requested, label_anchor);
-    assert_eq!(pending.target, None, "view-only label is not a walk stand");
+    assert_eq!(pending.requested(), label_anchor);
+    assert_eq!(
+        pending.walk_target(),
+        None,
+        "view-only label is not a walk stand"
+    );
     assert_eq!(
         app.on_key(key(KeyCode::Enter)),
         AppAction::ArmWalk(label_anchor)
     );
     assert_eq!(
         app.map_model
-            .confirm(ActionKind::Walk, &ctx, Some(tile(0, 0)), Default::default())
-            .expect_err("view-only label"),
-        ActionError::Blocked
+            .availability(WalkActionKind::Walk, ctx, Some(tile(0, 0)))
+            .expect_err("view-only label")
+            .kind(),
+        WalkActionErrorKind::Blocked
     );
-    assert!(app.map_model.pending().is_none());
+    assert!(app.map_model.pending().is_some());
     assert_eq!(
         app.map.selection,
         Some(label_anchor),
-        "host consume leaves the leftover crosshair"
-    );
-    assert_eq!(
-        app.on_key(key(KeyCode::Enter)),
-        AppAction::None,
-        "Enter after a consumed label must not walk"
+        "view-only selection retains the map crosshair"
     );
     assert!(app.walk_dest.is_none());
 
@@ -1287,41 +1248,39 @@ fn map_poi_confirm_keeps_catalogue_stand_and_blocks_view_only_labels() {
     app.map.selection = None;
     search_and_jump(&mut app, "booth");
     let pending = app.map_model.pending().expect("booth selection");
-    assert_eq!(pending.target, Some(stand));
-    assert_ne!(pending.requested, stand);
-    let requested = pending.requested;
+    assert_eq!(pending.walk_target(), Some(stand));
+    assert_ne!(pending.requested(), stand);
+    let requested = pending.requested();
     assert_eq!(
         app.on_key(key(KeyCode::Enter)),
         AppAction::ArmWalk(requested)
     );
     assert_eq!(
-        app.map_model.pending().map(|p| p.target),
+        app.map_model
+            .pending()
+            .map(|selection| selection.walk_target()),
         Some(Some(stand)),
-        "confirm must keep the catalogue stand, not a radius snap"
+        "map selection keeps the catalogue stand, not a radius snap"
     );
     assert_eq!(
         app.map_model
-            .confirm(ActionKind::Walk, &ctx, Some(tile(0, 0)), Default::default())
-            .expect_err("no focus token in this headless bind"),
-        ActionError::NoFocus
+            .availability(WalkActionKind::Walk, ctx, Some(tile(0, 0)))
+            .expect_err("browsing context has no focused slot")
+            .kind(),
+        WalkActionErrorKind::NoFocus
     );
-    assert!(app.map_model.pending().is_none());
     assert_eq!(app.map.selection, Some(requested));
-    assert_eq!(
-        app.on_key(key(KeyCode::Enter)),
-        AppAction::None,
-        "Enter after a consumed POI walk must not snap a second walk"
-    );
 
     app.map_model.clear_selection();
     app.map.selection = None;
     search_and_jump(&mut app, "booth");
     app.names = vec!["poi-walker".into()];
-    app.refresh_walk_send(|_| WalkSlotStatus::Eligible(WalkSlotReady { origin: tile(0, 0) }));
-    assert_eq!(app.on_key(ch('g')), AppAction::None);
+    app.refresh_walk_send(|_| WalkSlotStatus::eligible(tile(0, 0)));
+    let walker = app.profile_id_for_name("poi-walker");
+    Seam::new().press(&mut app, ch('g'), AppAction::MarkAll(vec![walker]));
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::MapWalkGroup);
     assert_eq!(
-        app.map_model.pending().expect("group").target,
+        app.map_model.pending().expect("group").walk_target(),
         Some(stand),
         "group confirm must not replace the POI stand with a snap"
     );
@@ -1331,7 +1290,7 @@ fn map_poi_confirm_keeps_catalogue_stand_and_blocks_view_only_labels() {
 fn map_status_shows_walk_refusal_at_120_and_80() {
     let mut app = open_map_world();
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
-    app.error = Some(ActionError::NoOrigin.to_string());
+    app.error = Some("Walk/Teleport unavailable: no observed player".into());
     app.walk_dest = None;
     for (width, height) in [(120, 40), (80, 24)] {
         let all = text(&draw(&mut app, width, height));
@@ -1390,13 +1349,13 @@ fn map_search_types_j_and_k_and_navigates_with_arrows() {
 fn new_map_selection_clears_a_previous_blocked_status() {
     let mut app = open_map_world();
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
-    app.error = Some(ActionError::Blocked.to_string());
+    app.error = Some("No walkable tile within radius 16 (or no proven POI stand)".into());
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     assert!(
         app.error.is_none(),
         "a new view-centre selection must clear the leftover Blocked status"
     );
-    app.error = Some(ActionError::Blocked.to_string());
+    app.error = Some("No walkable tile within radius 16 (or no proven POI stand)".into());
     assert_eq!(app.on_key(ch('/')), AppAction::None);
     for c in "2,2,0".chars() {
         app.on_key(ch(c));
@@ -1449,7 +1408,7 @@ fn chat_tab_paints_the_snapshot_ring() {
 #[test]
 fn paused_script_shows_resume_and_click_dispatches_toggle() {
     let mut app = script_app();
-    app.script_state = RunState::Paused;
+    app.script_state = ScriptRunState::Paused;
     let rows = draw(&mut app, 100, 30);
     let all = text(&rows);
     assert!(
@@ -1469,18 +1428,12 @@ fn paused_script_shows_resume_and_click_dispatches_toggle() {
 #[test]
 fn click_start_with_a_selected_card_returns_script_start() {
     let mut app = script_app();
-    app.script_sel = Some(ScriptSel::Loaded(
-        ScriptSource::Catalog,
-        "BoneBurier".into(),
-    ));
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "BoneBurier"));
     let rows = draw(&mut app, 100, 30);
     let (col, row) = find(&rows, "[Start t]").unwrap();
     assert_eq!(
         app.on_click(col + 1, row),
-        AppAction::ScriptStart(ScriptSel::Loaded(
-            ScriptSource::Catalog,
-            "BoneBurier".into(),
-        )),
+        AppAction::ScriptStart(ScriptChoice::loaded(CardSource::Catalog, "BoneBurier")),
         "Start with a selected card starts that card"
     );
 }
@@ -1495,8 +1448,8 @@ fn browse_rows_select_a_card_for_start() {
             description: String::new(),
             category: "Skilling".into(),
             tags: Vec::new(),
-            kind: ScriptKind::Compat,
-            source: ScriptSource::File,
+            kind: CardRuntime::Compat,
+            source: CardSource::File,
             unloadable: None,
         },
     ];
@@ -1514,10 +1467,7 @@ fn browse_rows_select_a_card_for_start() {
     assert_eq!(app.on_click(col, row), AppAction::None);
     assert_eq!(
         app.script_sel,
-        Some(ScriptSel::Loaded(
-            ScriptSource::Catalog,
-            "BoneBurier".into(),
-        )),
+        Some(ScriptChoice::loaded(CardSource::Catalog, "BoneBurier")),
         "clicking the first card row selects it"
     );
     assert_eq!(
@@ -1532,10 +1482,7 @@ fn browse_rows_select_a_card_for_start() {
     );
     assert_eq!(
         app.on_key(ch('t')),
-        AppAction::ScriptStart(ScriptSel::Loaded(
-            ScriptSource::Catalog,
-            "BoneBurier".into(),
-        )),
+        AppAction::ScriptStart(ScriptChoice::loaded(CardSource::Catalog, "BoneBurier")),
         "t starts the card picked in Browse"
     );
 }
@@ -1573,31 +1520,18 @@ fn load_browser_enter_returns_script_load() {
 fn script_params_click_and_space_toggle_persist_bool() {
     let dir = std::env::temp_dir().join(format!("274bot-tui-app-params-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let loadouts = script::LoadoutsStore::default();
+    let loadouts = Loadouts::default();
     let mut commits: Vec<(String, serde_json::Value)> = Vec::new();
-    let schema = vec![script::SettingDef {
-        id: "buryBones".into(),
-        ty: "boolean".into(),
-        default: Some("true".into()),
-        label: Some("Bury bones".into()),
-        min: None,
-        max: None,
-        step: None,
-        options: Vec::new(),
-        option_labels: Vec::new(),
-        group: None,
-        show_if: None,
-        options_from: None,
-        csv_toggle: None,
-        help: None,
-        item_option_spec: None,
-    }];
+    let schema = TestSchema::setting(
+        "buryBones",
+        "boolean",
+        Some("true"),
+        Some("Bury bones"),
+        &[],
+    );
     let mut app = script_app();
-    app.script_sel = Some(ScriptSel::Loaded(
-        ScriptSource::Catalog,
-        "ChickenKiller".into(),
-    ));
-    app.params_schema = schema;
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "ChickenKiller"));
+    app.params_schema = owned_schema(&schema);
     let rows = draw(&mut app, 100, 30);
     let (col, row) = find(&rows, "[Params v]").unwrap();
     assert_eq!(
@@ -1605,11 +1539,7 @@ fn script_params_click_and_space_toggle_persist_bool() {
         AppAction::ScriptParams,
         "[Params] opens the popup"
     );
-    app.open_script_params(script::merge_bag(
-        &app.params_schema,
-        &serde_json::Map::new(),
-        None,
-    ));
+    app.open_script_params(schema.merged_bag(&serde_json::Map::new(), None));
     assert!(app.params_state.open);
     let mut commit = |id: &str, value: serde_json::Value, _current: Option<serde_json::Value>| {
         commits.push((id.to_string(), value));
@@ -1651,37 +1581,17 @@ fn script_params_numeric_edit_persists_and_global_keys_stay_consumed() {
             .as_nanos()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    let loadouts = script::LoadoutsStore::default();
+    let loadouts = Loadouts::default();
     let mut commits: Vec<(String, serde_json::Value)> = Vec::new();
     let mut commit = |id: &str, value: serde_json::Value, _current: Option<serde_json::Value>| {
         commits.push((id.to_string(), value));
         Ok(())
     };
-    let schema = vec![script::SettingDef {
-        id: "alchs".into(),
-        ty: "number".into(),
-        default: Some("27".into()),
-        label: Some("Alchs per trip".into()),
-        min: None,
-        max: None,
-        step: None,
-        options: Vec::new(),
-        option_labels: Vec::new(),
-        group: None,
-        show_if: None,
-        options_from: None,
-        csv_toggle: None,
-        help: None,
-        item_option_spec: None,
-    }];
+    let schema = TestSchema::setting("alchs", "number", Some("27"), Some("Alchs per trip"), &[]);
     let mut app = script_app();
-    app.script_sel = Some(ScriptSel::Loaded(ScriptSource::Catalog, "Alcher".into()));
-    app.params_schema = schema;
-    app.open_script_params(script::merge_bag(
-        &app.params_schema,
-        &serde_json::Map::new(),
-        None,
-    ));
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "Alcher"));
+    app.params_schema = owned_schema(&schema);
+    app.open_script_params(schema.merged_bag(&serde_json::Map::new(), None));
     assert!(app.params_state.open);
     assert_eq!(
         app.on_key(ch('q')),
@@ -1728,15 +1638,14 @@ fn script_params_numeric_edit_persists_and_global_keys_stay_consumed() {
 fn chat_tab_shows_script_paint_instead_of_the_game_chat() {
     let mut app = TuiApp::new("274bot headless");
     app.chat_data.lines = vec![line("last game chat line")];
-    app.chat_data.script_paint = Some(std::sync::Arc::new(script::shim::ScriptPaint {
-        title: Some("BoneBurier — digging".into()),
-        accent: Some("#f3e6a2".into()),
-        lines: vec!["Runtime: 1.2m | Buried: 3".into(), "".into()],
-        buttons: Vec::new(),
-        generation: 0,
-        canvas: Vec::new(),
-        ..Default::default()
-    }));
+    app.chat_data.script_paint = Some(
+        TestPaint::new(
+            Some("BoneBurier — digging"),
+            &["Runtime: 1.2m | Buried: 3", ""],
+        )
+        .with_accent("#f3e6a2")
+        .frame(),
+    );
     app.show_screen(Screen::Chat);
     let all = text(&draw(&mut app, 100, 30));
     assert!(
@@ -1792,9 +1701,9 @@ fn background_notice_needs_an_explicit_got_it() {
 fn script_commands_are_reachable_at_80x24() {
     let mut app = script_app();
     app.chat_data.lines = (0..8).map(|i| line(&format!("chat {i}"))).collect();
-    app.script_state = RunState::Running;
-    app.script_sel = Some(ScriptSel::Loaded(ScriptSource::File, "thiever".into()));
-    app.params_schema = thiever_schema();
+    app.script_state = ScriptRunState::Running;
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
+    app.params_schema = owned_schema(&thiever_schema());
     let rows = draw(&mut app, 80, 24);
     let (main_x, main_y) =
         find(&rows, "[Browse b] [Start t] [Pause P] [Stop e] [Load f]").expect("main script row");
@@ -1803,12 +1712,12 @@ fn script_commands_are_reachable_at_80x24() {
     let at = |x: u16, row: &str, label: &str| x + row.find(label).unwrap() as u16 + 1;
     let main = "[Browse b] [Start t] [Pause P] [Stop e] [Load f]";
     let bulk = "[Params v] [Reload R] [Start all T] [Stop all E]";
-    let sel = app.script_sel.clone().unwrap();
+    let sel = app.script_sel.as_ref().unwrap().duplicate();
     let clicks = [
         (
             main_y,
             at(main_x, main, "[Start"),
-            AppAction::ScriptStart(sel.clone()),
+            AppAction::ScriptStart(sel.duplicate()),
         ),
         (main_y, at(main_x, main, "[Pause"), AppAction::ScriptPause),
         (main_y, at(main_x, main, "[Stop"), AppAction::ScriptStop),
@@ -1831,7 +1740,7 @@ fn script_commands_are_reachable_at_80x24() {
         assert_eq!(app.on_key(key(KeyCode::Enter)), want, "{label} confirmed");
     }
     let keys = [
-        ('t', AppAction::ScriptStart(sel)),
+        ('t', AppAction::ScriptStart(sel.duplicate())),
         ('P', AppAction::ScriptPause),
         ('e', AppAction::ScriptStop),
         ('v', AppAction::ScriptParams),

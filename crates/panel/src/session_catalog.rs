@@ -6,21 +6,57 @@
 
 use std::path::{Path, PathBuf};
 
+use frontend_core::{
+    command::OperatorCommand,
+    launch::ProfileError,
+    scripts::{paths, CardSource, CatalogActionKind, ScriptChoice},
+};
+
+use frontend_core::Targets;
+
 use crate::session::{PanelWindow, Session};
 
 fn default_catalog_browse_dir(last: Option<&Path>) -> PathBuf {
     crate::script_picker::default_load_browse_dir(last)
 }
 
+/// Why the catalogue root could not be determined: the bound or configured
+/// profile failed to resolve, or the persisted root file is unusable.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum CatalogRootFailure {
+    #[error(transparent)]
+    Profile(#[from] ProfileError),
+    #[error(transparent)]
+    Root(#[from] paths::CatalogRootError),
+}
+
 impl Session {
-    pub(crate) fn catalog_root(&self) -> Result<Option<PathBuf>, String> {
-        match self.server_profile.as_ref() {
-            Some(profile) => Ok(profile.catalog_root().map(Path::to_path_buf)),
-            None if self.profile_options.is_some() => self
-                .resolve_profile()
-                .map(|selection| selection.catalog_root().map(Path::to_path_buf)),
-            None => script::rs2b0t_root_checked(),
+    pub(crate) fn catalog_root(&self) -> Result<Option<PathBuf>, CatalogRootFailure> {
+        if self.launcher.bound().is_some() || self.launcher.configured() {
+            Ok(self.launcher.catalog_root(self.ui.server_revision)?)
+        } else {
+            Ok(paths::rs2b0t_root_checked()?)
         }
+    }
+
+    pub(crate) fn submit_script_command(
+        &mut self,
+        command: OperatorCommand,
+        targets: Targets<'_>,
+    ) -> Option<frontend_core::Submitted> {
+        let submitted = self.submit(command, targets)?;
+        let error = submitted
+            .operation()
+            .and_then(|operation| self.core.failure(operation))
+            .or_else(|| {
+                self.core
+                    .command_failure(submitted.request())
+                    .map(str::to_owned)
+            });
+        if let Some(error) = error {
+            self.error = Some(error);
+        }
+        Some(submitted)
     }
 
     /// First Load/Browse: fill the JS library from the `$RS2B0T` catalog
@@ -34,23 +70,30 @@ impl Session {
             return;
         }
         match self.catalog_root() {
-            Ok(root) => self.scripts.fill_catalog_once(root.as_deref()),
+            Ok(root) => {
+                self.scripts.stage_catalog_action(
+                    CatalogActionKind::Fill,
+                    root,
+                    self.rs2b0t_path_file(),
+                );
+                self.submit_script_command(OperatorCommand::ImportCatalog, Targets::Application);
+            }
             Err(error) => self.error = Some(format!("server profile: {error}")),
         }
     }
 
     fn rs2b0t_import_file(&self) -> PathBuf {
-        script::default_rs2b0t_import_file()
+        paths::rs2b0t_import_file()
     }
 
     pub(crate) fn rs2b0t_path_file(&self) -> PathBuf {
-        script::default_rs2b0t_path_file()
+        paths::rs2b0t_path_file()
     }
 
     /// Opening Browse: fill from `$RS2B0T`/persisted root, or prompt for a
     /// clone root, or honour a prior defer.
     pub fn on_script_browse_open(&mut self) {
-        if self.scripts.catalog_filled() {
+        if self.scripts.catalog_filled() || self.rs2b0t_browse_prompted {
             return;
         }
         let selected = match self.catalog_root() {
@@ -60,12 +103,17 @@ impl Session {
                 return;
             }
         };
-        if let Some(root) = selected {
-            self.scripts.fill_catalog_once(Some(&root));
+        if selected.is_some() {
+            self.scripts.stage_catalog_action(
+                CatalogActionKind::Fill,
+                selected,
+                self.rs2b0t_path_file(),
+            );
+            self.submit_script_command(OperatorCommand::ImportCatalog, Targets::Application);
             return;
         }
-        self.scripts.mark_catalog_filled();
-        if script::rs2b0t_import_deferred_at(&self.rs2b0t_import_file()) {
+        self.rs2b0t_browse_prompted = true;
+        if paths::rs2b0t_import_deferred_at(&self.rs2b0t_import_file()) {
             return;
         }
         self.open_rs2b0t_catalog_picker(true);
@@ -86,7 +134,8 @@ impl Session {
 
     /// Operator chose **Not now** on the first-run catalog prompt.
     pub fn defer_rs2b0t_catalog(&mut self) {
-        let _ = script::set_rs2b0t_import_deferred_at(&self.rs2b0t_import_file());
+        self.scripts.stage_defer_catalog(self.rs2b0t_import_file());
+        self.submit_script_command(OperatorCommand::DeferCatalogImport, Targets::Application);
         self.rs2b0t_catalog_open = false;
     }
 
@@ -97,160 +146,69 @@ impl Session {
         if !crate::script_picker::rs2b0t_root_has_index(root) {
             return Err(format!(
                 "no catalog at {}",
-                script::registry_index_path(root).display()
+                paths::registry_index_path(root).display()
             ));
         }
-        self.scripts
-            .request_catalog_import(root, &self.rs2b0t_path_file())
-            .map_err(|error| error.to_string())
+        self.scripts.stage_catalog_action(
+            CatalogActionKind::Import,
+            Some(root.to_path_buf()),
+            self.rs2b0t_path_file(),
+        );
+        let Some(submitted) =
+            self.submit_script_command(OperatorCommand::ImportCatalog, Targets::Application)
+        else {
+            return Err(self
+                .error
+                .clone()
+                .unwrap_or_else(|| "catalog import was not submitted".into()));
+        };
+        self.core
+            .command_failure(submitted.request())
+            .map_or(Ok(()), |error| Err(error.to_owned()))
     }
 
     /// The card currently at the front of the warmup queue, if any.
-    pub fn transpile_front(&self) -> Option<(script::ScriptSource, &str)> {
-        self.transpile_queue
-            .front()
-            .map(|(source, name)| (*source, name.as_str()))
+    pub fn transpile_front(&self) -> Option<(CardSource, &str)> {
+        self.scripts.transpile_front()
+    }
+
+    pub fn transpile_progress(&self) -> (usize, usize) {
+        self.scripts.transpile_progress()
     }
 
     /// Select a shared Browse card. Compiled cards only update the pending
     /// selection; loaded cards also queue their source for transpile.
-    pub fn select_script_selection(&mut self, sel: script::ScriptSel) {
-        self.script_sel = Some(sel.clone());
-        if let Some(profile) = self.focused_name() {
-            self.set_pending_browse(&profile, sel.clone());
+    pub fn select_script_selection(&mut self, sel: ScriptChoice) {
+        self.scripts.stage_browse_pick(sel.duplicate());
+        let Some(picked) =
+            self.submit_script_command(OperatorCommand::PickBrowseCard, Targets::Application)
+        else {
+            return;
+        };
+        if self.core.command_failure(picked.request()).is_some() {
+            return;
         }
-        if let script::ScriptSel::Loaded(source, lookup) = sel {
-            self.enqueue_transpile(source, lookup, true);
+        self.script_sel = Some(sel.duplicate());
+        if let Some(profile) = self.focused_name() {
+            self.submit_script_command(
+                OperatorCommand::SelectScriptCard,
+                Targets::Profile(&profile),
+            );
+        }
+        if let Some((source, lookup)) = sel.loaded_card() {
+            self.scripts.stage_transpile_target(source, lookup);
+            self.submit_script_command(OperatorCommand::PrepareScriptCard, Targets::Application);
         }
     }
 
     /// Select a loaded card by its library lookup identity.
-    pub fn select_script_card(&mut self, source: script::ScriptSource, name: impl Into<String>) {
-        self.select_script_selection(script::ScriptSel::Loaded(source, name.into()));
+    pub fn select_script_card(&mut self, source: CardSource, name: impl AsRef<str>) {
+        self.select_script_selection(ScriptChoice::loaded(source, name.as_ref()));
     }
 
-    /// Operator opted into warming every unwarmed card. Each card is
-    /// prepared through the shared WorkAdmission worker.
+    /// Operator opted into warming every unwarmed card.
     pub fn queue_transpile_all(&mut self) {
-        let need = self.scripts.js().cards_needing_transpile();
-        if need.is_empty() {
-            return;
-        }
-        self.transpile_done = 0;
-        self.transpile_total = need.len();
-        for (source, name) in need {
-            if !self
-                .transpile_queue
-                .iter()
-                .any(|(s, n)| *s == source && n == &name)
-            {
-                self.transpile_queue.push_back((source, name));
-            }
-        }
-    }
-
-    fn settle_catalog_import(&mut self) {
-        let Some((root, result)) = self.scripts.take_catalog_import_result() else {
-            return;
-        };
-        match result {
-            Ok(_) => {
-                let _ = script::clear_rs2b0t_import_at(&self.rs2b0t_import_file());
-                self.ui.script_catalog_last_dir = Some(root);
-                if self.persist_ui {
-                    crate::ui_state::save(&self.preferences, &self.ui);
-                }
-                self.rs2b0t_catalog_open = false;
-                self.error = None;
-            }
-            Err(error) => self.error = Some(error.to_string()),
-        }
-    }
-
-    /// Advance one queue request and collect any completed preparation.
-    /// Submission Full is retained by `Scripts` and retried from its frame
-    /// poll; no card compilation runs on this UI thread.
-    pub fn pump_script_transpile(&mut self) {
-        self.settle_catalog_import();
-        if let Some((source, name, result)) = self.scripts.take_transpile_result() {
-            if let Some(index) =
-                self.transpile_queue
-                    .iter()
-                    .position(|(queued_source, queued_name)| {
-                        *queued_source == source && queued_name == &name
-                    })
-            {
-                self.transpile_queue.remove(index);
-                match result {
-                    Ok(()) => {
-                        if self.scripts.js().load_failures().is_empty() {
-                            self.error = None;
-                        }
-                        self.transpile_done = self.transpile_done.saturating_add(1);
-                    }
-                    Err(error) => self.error = Some(format!("transpile {name}: {error}")),
-                }
-            }
-        }
-        if self.transpile_armed {
-            self.transpile_armed = false;
-            if !self.scripts.transpile_pending() {
-                if let Some((source, name)) = self.transpile_queue.front().cloned() {
-                    if let Err(error) = self.scripts.request_transpile(source, &name) {
-                        self.transpile_queue.pop_front();
-                        self.error = Some(format!("transpile {name}: {error}"));
-                    }
-                }
-            }
-        }
-        if !self.transpile_queue.is_empty() {
-            self.transpile_armed = true;
-        } else {
-            self.transpile_done = 0;
-            self.transpile_total = 0;
-        }
-    }
-
-    pub(crate) fn enqueue_transpile(
-        &mut self,
-        source: script::ScriptSource,
-        name: String,
-        to_front: bool,
-    ) {
-        if self.scripts.js().js_is_ready(source, &name)
-            || self.scripts.js().get(source, &name).is_none()
-        {
-            return;
-        }
-        if let Some(idx) = self
-            .transpile_queue
-            .iter()
-            .position(|(s, n)| *s == source && n == &name)
-        {
-            if to_front && idx > 0 {
-                if let Some(item) = self.transpile_queue.remove(idx) {
-                    self.transpile_queue.push_front(item);
-                }
-            }
-            return;
-        }
-        if self.transpile_total == 0 {
-            self.transpile_total = 1;
-            self.transpile_done = 0;
-        }
-        if to_front {
-            self.transpile_queue.push_front((source, name));
-        } else {
-            self.transpile_queue.push_back((source, name));
-        }
-    }
-
-    /// Same-folder `./Foo.js` siblings cached for isolate Start.
-    pub(crate) fn sibling_modules_for_card(
-        &self,
-        card: &script::JsCard,
-    ) -> Result<Vec<(String, String)>, String> {
-        host_play::live_start::card_siblings(self.scripts.js(), card)
+        self.submit_script_command(OperatorCommand::TranspileAll, Targets::Application);
     }
 
     /// Load a local JS/TS file into the library (registers a picker card,
@@ -261,24 +219,33 @@ impl Session {
             self.error = Some(format!("script: not a file: {}", path.display()));
             return;
         }
-        match self.scripts.js_mut().load(path) {
-            Ok(card) => {
-                self.error = None;
-                let sel = script::ScriptSel::Loaded(card.source, card.identity_id());
-                self.script_sel = Some(sel.clone());
-                if let Some(profile) = self.focused_name() {
-                    self.set_pending_browse(&profile, sel);
-                }
-                if let Some(parent) = path.parent() {
-                    self.ui.script_load_last_dir = Some(parent.to_path_buf());
-                    if self.persist_ui {
-                        crate::ui_state::save(&self.preferences, &self.ui);
-                    }
-                }
-                self.script_load_open = false;
-            }
-            Err(e) => self.error = Some(format!("load: {e}")),
+        self.scripts.stage_load_file(path.to_path_buf());
+        let Some(submitted) =
+            self.submit_script_command(OperatorCommand::LoadScriptFile, Targets::Application)
+        else {
+            return;
+        };
+        if self.core.command_failure(submitted.request()).is_some() {
+            return;
         }
+        let Some(selection) = self.scripts.browse_selection().map(ScriptChoice::duplicate) else {
+            return;
+        };
+        self.error = None;
+        self.script_sel = Some(selection.duplicate());
+        if let Some(profile) = self.focused_name() {
+            self.submit_script_command(
+                OperatorCommand::SelectScriptCard,
+                Targets::Profile(&profile),
+            );
+        }
+        if let Some(parent) = path.parent() {
+            self.ui.script_load_last_dir = Some(parent.to_path_buf());
+            if self.persist_ui {
+                crate::ui_state::save(&self.preferences, &self.ui);
+            }
+        }
+        self.script_load_open = false;
     }
 
     /// Open the Load file browser at the last visited directory, else the

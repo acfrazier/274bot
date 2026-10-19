@@ -41,16 +41,17 @@ use dear_imgui_rs::{
     DockNodeFlags, DragDropTargetFlags, Id, Key, MouseButton, SplitDirection, StyleColor, StyleVar,
     TableColumnFlags, TableFlags, TreeNodeFlags, Ui, WindowClass, WindowFlags,
 };
-use host::debug_enabled;
-use host_play::progress::{
-    ProfileProgress, ProfileProgressObserver, ProfileProgressStage, ProfileProgressUnit,
+use frontend_core::launch::{
+    InstanceConflict, InstanceKind, InstancePermit, Passphrase, PreparationCompletion,
+    PreparationJob, ProfilePreparation, ProgressStage, ProgressUnit, ProgressView, ValidationJob,
+    ValidationPending,
 };
+use frontend_core::process::debug_enabled;
 
 use crate::input_capture::{discard_unconsumed_native_capture, stream_capture, KeyboardOwner};
 use crate::session::{
     debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, script_active,
-    script_pause_enabled, script_stop_enabled, PanelWindow, ProfilePreparation,
-    ProfilePreparationCompletion, ProfilePreparationSteps, Session,
+    script_pause_enabled, script_stop_enabled, PanelWindow, Session,
 };
 use crate::theme::{
     applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title, native_applet,
@@ -58,8 +59,11 @@ use crate::theme::{
     DOCKHOST_PADDING, ERROR, GREEN, PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW, TEXT, TEXT_DIM, WARN,
 };
 use frontend_core::resources::{background_ack_text, format_background, format_bots};
-use frontend_core::scripts::BrowseCard;
-use frontend_core::{FleetRow, Phase, ResourceView};
+use frontend_core::scripts::{
+    format_setting_value, BrowseCard, CardSource, CompiledCardId, PaintFrame, SchemaRef,
+    ScriptChoice, ScriptRunState, SettingView,
+};
+use frontend_core::{FleetRow, OperatorCommand, Phase, ResourceView, Targets};
 
 #[path = "live_harness.rs"]
 mod live_harness;
@@ -143,7 +147,7 @@ enum DockLayout {
 /// running slots, focus).
 struct PanelState {
     #[cfg(feature = "memory-profile")]
-    memory: Option<host_play::memory::Run>,
+    memory: Option<frontend_core::bench::BenchRun>,
     game_view: Option<GameView>,
     session: Session,
     keyboard: KeyboardOwner,
@@ -214,49 +218,24 @@ struct PanelState {
 #[derive(Debug)]
 enum Boot {
     #[cfg(feature = "memory-profile")]
-    Memory(host_play::memory::Config),
+    Memory(frontend_core::bench::BenchConfig),
     /// The vault passphrase from the in-panel prompt or `--vault-pass-stdin`.
     /// Failure is non-fatal: the in-panel prompt covers typing. `Debug` never
     /// prints it.
-    Unlock { pass: vault::Secret },
+    Unlock { pass: Passphrase },
     /// Live harness spawns. Failure is fatal (`FAIL:` + exit).
     Live(LiveBoot),
 }
 
-struct ProfilePrepareJob {
-    generation: u64,
-    task: script::preparation::PreparedTask<Result<Arc<host_play::SharedClientTemplate>, String>>,
-    progress: LatestProgress,
-}
-
 struct ProfileValidateJob {
-    generation: u64,
     boot: Boot,
-    task: script::preparation::PreparedTask<Result<host_play::ValidatedTemplate, String>>,
-    progress: LatestProgress,
-}
-struct ProfilePreparePending {
-    generation: u64,
-    preparation: Arc<ProfilePreparation>,
-    observer: ProfileProgressObserver,
-    progress: LatestProgress,
+    job: ValidationJob,
 }
 
 struct ProfileValidatePending {
-    generation: u64,
     boot: Boot,
-    template: Arc<host_play::SharedClientTemplate>,
-    observer: ProfileProgressObserver,
-    progress: LatestProgress,
+    pending: ValidationPending,
 }
-
-/// One capped process-profile reservation for captured inputs, decode scratch,
-/// and the prepared shared-client template.
-const PROFILE_PREPARATION_INPUT_BYTES: usize = 64 * 1024 * 1024;
-const PROFILE_PREPARATION_SCRATCH_BYTES: usize = 32 * 1024 * 1024;
-const PROFILE_PREPARATION_RESULT_BYTES: usize = 32 * 1024 * 1024;
-
-type LatestProgress = Arc<Mutex<Option<ProfileProgress>>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProgressPhase {
@@ -267,23 +246,12 @@ enum ProgressPhase {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct StartupProgressView {
     phase: ProgressPhase,
-    progress: ProfileProgress,
-}
-
-fn progress_channel(initial: ProfileProgress) -> (ProfileProgressObserver, LatestProgress) {
-    let latest = Arc::new(Mutex::new(Some(initial)));
-    let worker_latest = Arc::clone(&latest);
-    let observer = ProfileProgressObserver::new(move |progress| {
-        if let Ok(mut latest) = worker_latest.try_lock() {
-            *latest = Some(progress);
-        }
-    });
-    (observer, latest)
+    progress: ProgressView,
 }
 
 struct StartupPreparation {
-    prepare: Option<ProfilePrepareJob>,
-    prepare_pending: Option<ProfilePreparePending>,
+    prepare: Option<PreparationJob>,
+    prepare_pending: Option<ProfilePreparation>,
     validate: Option<ProfileValidateJob>,
     validate_pending: Option<ProfileValidatePending>,
     pending_boot: Option<Boot>,
@@ -311,40 +279,42 @@ impl StartupPreparation {
 }
 
 fn startup_progress(startup: &StartupPreparation, generation: u64) -> Option<StartupProgressView> {
-    let (phase, latest) = if let Some(job) = startup
+    let (phase, progress) = if let Some(job) = startup
         .validate
         .as_ref()
-        .filter(|job| job.generation == generation)
+        .filter(|job| job.job.generation() == generation)
     {
-        (ProgressPhase::FinalChecks, &job.progress)
+        (ProgressPhase::FinalChecks, job.job.progress())
     } else if let Some(pending) = startup
         .validate_pending
         .as_ref()
-        .filter(|pending| pending.generation == generation)
+        .filter(|pending| pending.pending.generation() == generation)
     {
-        (ProgressPhase::FinalChecks, &pending.progress)
+        (ProgressPhase::FinalChecks, pending.pending.progress())
     } else if let Some(job) = startup
         .prepare
         .as_ref()
-        .filter(|job| job.generation == generation)
+        .filter(|job| job.generation() == generation)
     {
-        (ProgressPhase::Preparing, &job.progress)
+        (ProgressPhase::Preparing, job.progress())
     } else {
         let pending = startup
             .prepare_pending
             .as_ref()
-            .filter(|pending| pending.generation == generation)?;
-        (ProgressPhase::Preparing, &pending.progress)
+            .filter(|pending| pending.generation() == generation)?;
+        (ProgressPhase::Preparing, pending.progress())
     };
-    let progress = latest.lock().ok()?.as_ref().copied()?;
-    Some(StartupProgressView { phase, progress })
+    Some(StartupProgressView {
+        phase,
+        progress: progress?,
+    })
 }
 
 /// The deferred boot for a [`run_panel`] call, derived from the run mode and
 /// the passphrase read from `--vault-pass-stdin` — pure, so the mapping is
 /// testable (the boot itself runs after GPU init; nothing here spawns or
 /// unlocks).
-fn boot_for(mode: &RunMode, vault_pass: Option<vault::Secret>) -> Option<Boot> {
+fn boot_for(mode: &RunMode, vault_pass: Option<Passphrase>) -> Option<Boot> {
     if mode.is_smoke() {
         return Some(Boot::Live(LiveBoot::Smoke));
     }
@@ -366,12 +336,19 @@ fn boot_for(mode: &RunMode, vault_pass: Option<vault::Secret>) -> Option<Boot> {
 /// fatal `FAIL:` message for live-harness failures; the vault unlock
 /// failure is non-fatal (the in-panel prompt covers typing).
 fn boot_execute(state: &mut PanelState, boot: Boot) -> Result<(), String> {
-    state.session.ensure_profile_bound()?;
-    state.session.require_bot_operation()?;
+    state
+        .session
+        .ensure_profile_bound()
+        .map_err(|error| error.to_string())?;
+    state
+        .session
+        .require_bot_operation()
+        .map_err(|error| error.to_string())?;
     match boot {
         #[cfg(feature = "memory-profile")]
         Boot::Memory(config) => {
-            let run = host_play::memory::Run::prepare_unseeded(config, "panel")?;
+            let run = frontend_core::bench::BenchRun::prepare(config, "panel")
+                .map_err(|error| error.to_string())?;
             state.session.prepare_memory(&run)?;
             state.memory = Some(run);
             Ok(())
@@ -401,7 +378,7 @@ fn boot_failure_is_fatal(boot: &Boot) -> bool {
 }
 
 fn exit_after_work_shutdown(code: i32) -> ! {
-    let code = match script::work_admission::WorkService::shutdown_if_started() {
+    let code = match frontend_core::process::shutdown_background_work() {
         Ok(()) => code,
         Err(error) => {
             api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "background work shutdown: {error}");
@@ -451,11 +428,11 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
     if startup
         .prepare
         .as_ref()
-        .is_some_and(|job| job.generation != generation)
+        .is_some_and(|job| job.generation() != generation)
         || startup
             .prepare_pending
             .as_ref()
-            .is_some_and(|pending| pending.generation != generation)
+            .is_some_and(|pending| pending.generation() != generation)
     {
         startup.prepare = None;
         startup.prepare_pending = None;
@@ -466,23 +443,20 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
     let prepared = startup
         .prepare
         .as_ref()
-        .is_some_and(|job| job.task.is_finished());
+        .is_some_and(PreparationJob::is_finished);
     if prepared {
         let job = startup.prepare.take().expect("polled preparation job");
-        let result = job
-            .task
-            .join()
-            .map_err(|error| error.to_string())
-            .and_then(|result| result);
+        let job_generation = job.generation();
+        let result = job.join();
         match state
             .session
-            .finish_profile_preparation(job.generation, result)
+            .finish_profile_preparation(job_generation, result)
         {
-            ProfilePreparationCompletion::Installed | ProfilePreparationCompletion::Stale => {
+            PreparationCompletion::Installed | PreparationCompletion::Stale => {
                 startup.failed_generation = None;
             }
-            ProfilePreparationCompletion::Failed => {
-                startup.failed_generation = Some(job.generation);
+            PreparationCompletion::Failed => {
+                startup.failed_generation = Some(job_generation);
                 let fatal = startup
                     .pending_boot
                     .as_ref()
@@ -499,16 +473,13 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
     let validated = startup
         .validate
         .as_ref()
-        .is_some_and(|job| job.task.is_finished());
+        .is_some_and(|job| job.job.is_finished());
     if validated {
         let job = startup.validate.take().expect("polled validation job");
-        let result = job
-            .task
-            .join()
-            .map_err(|error| error.to_string())
-            .and_then(|result| result);
+        let job_generation = job.job.generation();
+        let result = job.job.join();
         state.session.set_profile_preparing(false);
-        if job.generation != state.session.profile_generation() {
+        if job_generation != state.session.profile_generation() {
             return;
         }
         let fatal = boot_failure_is_fatal(&job.boot);
@@ -518,7 +489,7 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
                     fail_startup(&mut state.session, fatal, error);
                 }
             }
-            Err(error) => fail_startup(&mut state.session, fatal, error),
+            Err(error) => fail_startup(&mut state.session, fatal, error.to_string()),
         }
     }
 
@@ -528,20 +499,10 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
     {
         if startup.prepare_pending.is_none() {
             match state.session.profile_preparation() {
-                Ok((generation, preparation)) => {
-                    let (observer, progress) = progress_channel(ProfileProgress::steps(
-                        ProfileProgressStage::SelectingServerProfile,
-                        0,
-                        1,
-                    ));
+                Ok(preparation) => {
                     state.session.error = None;
                     state.session.set_profile_preparing(true);
-                    startup.prepare_pending = Some(ProfilePreparePending {
-                        generation,
-                        preparation: Arc::new(preparation),
-                        observer,
-                        progress,
-                    });
+                    startup.prepare_pending = Some(preparation);
                 }
                 Err(error) => {
                     startup.failed_generation = Some(generation);
@@ -549,53 +510,18 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
                         .pending_boot
                         .as_ref()
                         .is_some_and(boot_failure_is_fatal);
-                    fail_startup(&mut state.session, fatal, error);
+                    fail_startup(&mut state.session, fatal, error.to_string());
                 }
             }
         }
 
         if let Some(pending) = startup.prepare_pending.as_ref() {
-            let generation = pending.generation;
-            let preparation = Arc::clone(&pending.preparation);
-            let observer = pending.observer.clone();
-            let progress = Arc::clone(&pending.progress);
-            let input = script::preparation::PreparationInput::new(
-                generation,
-                PROFILE_PREPARATION_INPUT_BYTES,
-                PROFILE_PREPARATION_SCRATCH_BYTES,
-                PROFILE_PREPARATION_RESULT_BYTES,
-            );
-            match input {
-                Ok(input) => match script::preparation::submit_cooperative(
-                    script::preparation::PreparationKind::Profile,
-                    api::identity::Scope::Process,
-                    input,
-                    {
-                        let mut steps = ProfilePreparationSteps::new(preparation, observer);
-                        move |_| steps.step()
-                    },
-                ) {
-                    Ok(task) => {
-                        startup.prepare_pending = None;
-                        startup.prepare = Some(ProfilePrepareJob {
-                            generation,
-                            task,
-                            progress,
-                        });
-                    }
-                    Err(script::preparation::PreparationError::Refused(
-                        api::work::SubmissionRefusal::Full,
-                    )) => {}
-                    Err(error) => {
-                        startup.prepare_pending = None;
-                        startup.failed_generation = Some(generation);
-                        let fatal = startup
-                            .pending_boot
-                            .as_ref()
-                            .is_some_and(boot_failure_is_fatal);
-                        fail_startup(&mut state.session, fatal, error.to_string());
-                    }
-                },
+            match pending.submit() {
+                Ok(job) => {
+                    startup.prepare_pending = None;
+                    startup.prepare = Some(job);
+                }
+                Err(error) if error.is_full() => {}
                 Err(error) => {
                     startup.prepare_pending = None;
                     startup.failed_generation = Some(generation);
@@ -618,67 +544,30 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
         let fatal = boot_failure_is_fatal(&boot);
         match state.session.template_for_validation() {
             Ok(template) => {
-                let (observer, progress) = progress_channel(ProfileProgress::steps(
-                    ProfileProgressStage::FinalChecks,
-                    0,
-                    1,
-                ));
                 state.session.error = None;
                 state.session.set_profile_preparing(true);
                 startup.validate_pending = Some(ProfileValidatePending {
-                    generation,
                     boot,
-                    template,
-                    observer,
-                    progress,
+                    pending: ValidationPending::new(generation, template),
                 });
             }
-            Err(error) => fail_startup(&mut state.session, fatal, error),
+            Err(error) => fail_startup(&mut state.session, fatal, error.to_string()),
         }
     }
 
     if let Some(pending) = startup.validate_pending.as_ref() {
-        let generation = pending.generation;
-        let template = Arc::clone(&pending.template);
-        let observer = pending.observer.clone();
-        let progress = Arc::clone(&pending.progress);
-        let input = script::preparation::PreparationInput::new(
-            generation,
-            std::mem::size_of::<Arc<host_play::SharedClientTemplate>>(),
-            0,
-            std::mem::size_of::<host_play::ValidatedTemplate>(),
-        );
-        match input {
-            Ok(input) => match script::preparation::submit(
-                script::preparation::PreparationKind::Profile,
-                api::identity::Scope::Process,
-                input,
-                move |_| template.validate_for_play_with_progress(&observer),
-            ) {
-                Ok(task) => {
-                    let pending = startup
-                        .validate_pending
-                        .take()
-                        .expect("validation demand retained");
-                    startup.validate = Some(ProfileValidateJob {
-                        generation,
-                        boot: pending.boot,
-                        task,
-                        progress,
-                    });
-                }
-                Err(script::preparation::PreparationError::Refused(
-                    api::work::SubmissionRefusal::Full,
-                )) => {}
-                Err(error) => {
-                    let pending = startup
-                        .validate_pending
-                        .take()
-                        .expect("validation demand retained");
-                    let fatal = boot_failure_is_fatal(&pending.boot);
-                    fail_startup(&mut state.session, fatal, error.to_string());
-                }
-            },
+        match pending.pending.submit() {
+            Ok(job) => {
+                let pending = startup
+                    .validate_pending
+                    .take()
+                    .expect("validation demand retained");
+                startup.validate = Some(ProfileValidateJob {
+                    boot: pending.boot,
+                    job,
+                });
+            }
+            Err(error) if error.is_full() => {}
             Err(error) => {
                 let pending = startup
                     .validate_pending
@@ -834,10 +723,10 @@ pub enum RunMode {
     PrepareFixture(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PanelArgs {
     pub mode: RunMode,
-    pub profile: host_play::ProfileOptions,
+    pub profile: frontend_core::launch::ProfileArgs,
     /// Dedicated catalog_watch proof bridge; ordinary panel-play stays false.
     pub catalog_core: bool,
     /// Dedicated pair_watch proof bridge; ordinary panel-play stays false.
@@ -868,8 +757,8 @@ pub fn parse_args(
 ) -> Result<PanelArgs, (i32, String)> {
     let (memory_override, args) = parse_memory_override(args)?;
     let (vault_pass_stdin, args) = parse_vault_pass_flags(args)?;
-    let (profile, rest) =
-        host_play::parse_profile_args(args).map_err(|msg| (2, format!("panel-play: {msg}")))?;
+    let (profile, rest) = frontend_core::launch::parse_profile_args(args)
+        .map_err(|msg| (2, format!("panel-play: {msg}")))?;
     let (nav_paints, rest) = parse_nav_paints(rest)?;
     let (external_ts, rest) = parse_external_ts(rest)?;
     let (fixture_flags, live_args) = parse_fixture_flags(rest)?;
@@ -917,8 +806,11 @@ fn parse_vault_pass_flags(args: Vec<String>) -> Result<(bool, Vec<String>), (i32
     let mut from_stdin = false;
     let mut rest = Vec::with_capacity(args.len());
     for arg in args {
-        if host_play::passphrase::is_removed_flag(&arg) {
-            return Err((2, host_play::passphrase::removed_flag_error("panel-play")));
+        if frontend_core::launch::is_removed_passphrase_flag(&arg) {
+            return Err((
+                2,
+                frontend_core::launch::removed_passphrase_flag_error("panel-play"),
+            ));
         }
         if arg == "--vault-pass-stdin" {
             from_stdin = true;
@@ -950,7 +842,7 @@ fn parse_fixture_flags(args: Vec<String>) -> Result<(FixtureFlags, Vec<String>),
                         "panel-play: --prepare-fixture needs a scenario name".into(),
                     ));
                 };
-                if scenario::get(&name).is_none() {
+                if frontend_core::live::Scenario::get(&name).is_none() {
                     return Err((
                         2,
                         format!("panel-play: unknown prepare-fixture scenario {name}"),
@@ -1082,7 +974,7 @@ impl RunMode {
 /// shot files sort chronologically). Already in the 377 safe alphabet, so
 /// `safe_label` is a no-op on it.
 fn manual_shot_label(now: SystemTime) -> String {
-    format!("manual-{}", scenario::shot::stamp_utc(now))
+    format!("manual-{}", frontend_core::live::shot_stamp_utc(now))
 }
 
 /// F12 whole-window shot: pair the pixels with the focused slot's last
@@ -1096,23 +988,25 @@ fn enqueue_manual_shot(state: &mut PanelState) {
         eprintln!("[panel] F12: no focused slot has a live snapshot");
         return;
     };
-    let json = {
-        let states = state.session.nav_states.lock().unwrap();
-        let Some((snapshot, _)) = states.get(&focused) else {
+    let json = state.session.core.with_slot_snapshot(&focused, |snapshot| {
+        if !snapshot.ingame() || snapshot.tile().is_none() {
+            return Err(format!(
+                "focused slot {focused} has no live player snapshot"
+            ));
+        }
+        serde_json::to_string_pretty(snapshot)
+            .map_err(|error| format!("snapshot serialization failed: {error}"))
+    });
+    let json = match json {
+        None => {
             eprintln!("[panel] F12: focused slot {focused} has no live snapshot");
             return;
-        };
-        if !snapshot.ingame() || snapshot.tile().is_none() {
-            eprintln!("[panel] F12: focused slot {focused} has no live player snapshot");
+        }
+        Some(Err(error)) => {
+            eprintln!("[panel] F12: {error}");
             return;
         }
-        match serde_json::to_string_pretty(snapshot) {
-            Ok(json) => json,
-            Err(error) => {
-                eprintln!("[panel] F12: snapshot serialization failed: {error}");
-                return;
-            }
-        }
+        Some(Ok(json)) => json,
     };
     state
         .shot_state
@@ -1150,7 +1044,8 @@ pub fn parse_live_args(
     }
     if let Some(name) = live.as_deref() {
         let script_ok = name.strip_prefix("script_").is_some_and(|n| {
-            n == host_play::external_loader::LIVE_SCENARIO || scenario::is_registered(n)
+            n == frontend_core::live::external_loader_scenario_name()
+                || frontend_core::live::Scenario::is_registered(n)
         });
         if name != "null_raster"
             && name != "stress50"
@@ -1167,30 +1062,31 @@ pub fn parse_live_args(
 /// The selected slot's script paint, as the shared `Arc` (no copy):
 /// `None` when the slot has no status row, `Some(None)` when it paints
 /// nothing.
-fn focused_paint(session: &Session) -> Option<Option<Arc<script::shim::ScriptPaint>>> {
+fn focused_paint(session: &Session) -> Option<Option<PaintFrame>> {
     let name = session.core.selected()?;
-    session
-        .statuses()
-        .iter()
-        .find(|s| s.username == name)
-        .map(|s| s.script_paint.clone())
+    if !session.core.has_status(name) {
+        return None;
+    }
+    Some(session.core.script_paint(name))
 }
 
 fn overlay_script_paint(
     ui: &Ui,
     gpu: &mut Gpu,
     state: &mut PanelState,
-    paint: Option<Option<Arc<script::shim::ScriptPaint>>>,
+    paint: Option<Option<PaintFrame>>,
     min: [f32; 2],
     size: [f32; 2],
 ) {
     match paint {
         Some(paint) => {
-            if let Some((hit, generation)) =
-                state
-                    .paint
-                    .frame(ui, Some(gpu), paint.as_deref(), min, size)
-            {
+            if let Some((hit, generation)) = state.paint.frame(
+                ui,
+                Some(gpu),
+                paint.as_ref().map(PaintFrame::view),
+                min,
+                size,
+            ) {
                 match hit {
                     crate::paint::PaintFrameHit::Button(id) => {
                         state.session.script_paint_click(&id, generation);
@@ -1551,7 +1447,7 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             let mouse = ui.io().mouse_pos();
             let min = ui.item_rect_min();
             stream_capture(
-                &state.session.capture_tx,
+                &mut state.session.map_desk,
                 mouse[0] - min[0],
                 mouse[1] - min[1],
                 size[0],
@@ -1562,9 +1458,7 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                 ui.is_mouse_released(MouseButton::Right),
                 &[],
             );
-            state
-                .keyboard
-                .capture_keys(ui, state.session.capture_tx.as_ref());
+            state.keyboard.capture_keys(ui, &mut state.session.map_desk);
         }
     } else {
         ui.text_disabled("renderer off");
@@ -1633,7 +1527,11 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             },
             &mut marked,
         );
-        state.session.fleet_selection.set(identity, marked);
+        if marked != state.session.fleet_selection.contains(identity) {
+            state
+                .session
+                .submit(OperatorCommand::SetMark(marked), Targets::Profile(name));
+        }
         let mut body_clicked = false;
         if preview {
             let after = ui.cursor_pos();
@@ -1649,7 +1547,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                 let mouse = ui.io().mouse_pos();
                 let min = image_min;
                 stream_capture(
-                    &state.session.capture_tx,
+                    &mut state.session.map_desk,
                     mouse[0] - min[0],
                     mouse[1] - min[1],
                     size[0],
@@ -1660,9 +1558,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                     ui.is_mouse_released(MouseButton::Right),
                     &[],
                 );
-                state
-                    .keyboard
-                    .capture_keys(ui, state.session.capture_tx.as_ref());
+                state.keyboard.capture_keys(ui, &mut state.session.map_desk);
             }
             state.queue_cards.frame(ui, name, row.queue(), image_min);
             if is_focused {
@@ -1795,34 +1691,43 @@ struct LoadingText {
     caption: String,
 }
 
-fn loading_text(phase: ProgressPhase, progress: &ProfileProgress) -> LoadingText {
+fn loading_text(phase: ProgressPhase, progress: &ProgressView) -> LoadingText {
     const CELLS: u64 = 20;
-    let completed = progress.completed.min(progress.total);
-    let percent = if progress.total == 0 {
+    let completed = progress.completed().min(progress.total());
+    let percent = if progress.total() == 0 {
         100
     } else {
-        ((u128::from(completed) * 100) / u128::from(progress.total)) as u8
+        ((u128::from(completed) * 100) / u128::from(progress.total())) as u8
     };
     let filled = (u64::from(percent) * CELLS / 100) as usize;
-    let description = match (phase, progress.stage) {
-        (ProgressPhase::FinalChecks, ProfileProgressStage::FinalChecks) => {
-            ProfileProgressStage::FinalChecks.description().to_string()
+    let description = match (phase, progress.stage()) {
+        (ProgressPhase::FinalChecks, ProgressStage::FinalChecks) => {
+            ProgressStage::FinalChecks.description().to_string()
         }
         (ProgressPhase::FinalChecks, stage) => {
             format!("Final checks: {}", stage.description())
         }
         (ProgressPhase::Preparing, stage) => stage.description().to_string(),
     };
-    let caption = match progress.unit {
-        ProfileProgressUnit::Bytes => {
-            format!("{} of {} bytes checked", progress.completed, progress.total)
+    let caption = match progress.unit() {
+        ProgressUnit::Bytes => {
+            format!(
+                "{} of {} bytes checked",
+                progress.completed(),
+                progress.total()
+            )
         }
-        ProfileProgressUnit::Files => {
-            format!("{} of {} files checked", progress.completed, progress.total)
+        ProgressUnit::Files => {
+            format!(
+                "{} of {} files checked",
+                progress.completed(),
+                progress.total()
+            )
         }
-        ProfileProgressUnit::Steps => format!(
+        ProgressUnit::Steps => format!(
             "{} of {} steps complete",
-            progress.completed, progress.total
+            progress.completed(),
+            progress.total()
         ),
     };
     LoadingText {
@@ -1834,7 +1739,7 @@ fn loading_text(phase: ProgressPhase, progress: &ProfileProgress) -> LoadingText
     }
 }
 
-fn loading_banner(ui: &Ui, phase: ProgressPhase, progress: &ProfileProgress) {
+fn loading_banner(ui: &Ui, phase: ProgressPhase, progress: &ProgressView) {
     let text = loading_text(phase, progress);
     ui.text_colored(ACCENT, &text.description);
     ui.text_colored(ACCENT, format!("[{}", text.filled));
@@ -1859,7 +1764,7 @@ fn banner(ui: &Ui, session: &Session, progress: Option<StartupProgressView>) {
             loading_banner(
                 ui,
                 ProgressPhase::Preparing,
-                &ProfileProgress::steps(ProfileProgressStage::SelectingServerProfile, 0, 1),
+                &ProgressView::steps(ProgressStage::SelectingServerProfile, 0, 1),
             );
         }
     } else if let Some(detail) = session.core.fleet_view().detail() {
@@ -2065,7 +1970,7 @@ fn submit_vault_pass(session: &mut Session, exists: bool) {
         !typed.trim().is_empty()
     };
     if usable {
-        let pass = vault::Secret::from(typed);
+        let pass = Passphrase::from(typed);
         session.request_unlock(pass);
         session.pass_scratch.clear();
     }
@@ -2078,7 +1983,7 @@ fn profile_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "profile") {
         return;
     }
-    if session.core.vault().is_none() {
+    if !session.core.vault_open() {
         vault_unlock_prompt(ui, session);
         return;
     }
@@ -2161,7 +2066,7 @@ fn logout_enabled(
 fn login_logout_row(ui: &Ui, session: &mut Session) {
     let avail = ui.content_region_avail()[0];
     let cells = scaled_button_cells(ui, avail, 2);
-    let vault_open = session.core.vault().is_some();
+    let vault_open = session.core.vault_open();
     let focused = session.focused_name();
     let can_login = vault_open && focused.is_some();
     let focused_queued = focused
@@ -2345,24 +2250,23 @@ fn script_section(ui: &Ui, session: &mut Session) {
     }
     let state = session.focused_script_state();
     let active = script_active(state);
-    let paused = state == script::RunState::Paused;
+    let paused = state == ScriptRunState::Paused;
 
     let name = session
         .script_sel
         .as_ref()
-        .map(|sel| match sel {
-            script::ScriptSel::Loaded(source, identity) => session
+        .map(|sel| match sel.loaded_card() {
+            Some((source, identity)) => session
                 .scripts
-                .js()
-                .get(*source, identity)
-                .map(|card| card.name.clone())
+                .card(source, identity)
+                .map(|card| card.name().to_owned())
                 .unwrap_or_else(|| {
                     std::path::Path::new(identity)
                         .file_name()
                         .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| identity.clone())
+                        .unwrap_or_else(|| identity.to_owned())
                 }),
-            script::ScriptSel::Compiled(_) => sel.label(),
+            None => sel.label().to_owned(),
         })
         .unwrap_or_else(|| "(none)".to_string());
     ui.text_colored(ACCENT, name);
@@ -2373,16 +2277,19 @@ fn script_section(ui: &Ui, session: &mut Session) {
         ui.same_line();
         ui.text_disabled("(pending)");
     }
-    if let (Some(script::ScriptSel::Loaded(source, sel_name)), Some((front_src, front_name))) = (
-        session.script_sel.clone(),
-        session.transpile_front().map(|(s, n)| (s, n.to_string())),
+    if let (Some((source, sel_name)), Some(front)) = (
+        session
+            .script_sel
+            .as_ref()
+            .and_then(ScriptChoice::loaded_card),
+        session.transpile_front(),
     ) {
         if let Some(line) = card_transpile_label(
-            Some((front_src, front_name.as_str())),
+            Some(front),
             source,
-            &sel_name,
-            session.transpile_done,
-            session.transpile_total,
+            sel_name,
+            session.transpile_progress().0,
+            session.transpile_progress().1,
         ) {
             ui.same_line();
             ui.text_disabled(line);
@@ -2623,12 +2530,13 @@ fn browse_script_card(
     session: &Session,
     card: BrowseCard<'_>,
     w: f32,
-) -> Option<script::ScriptSel> {
+) -> Option<ScriptChoice> {
     let selection = card.selection();
     let selected = session.script_sel.as_ref() == Some(&selection);
-    let id = match card {
-        BrowseCard::Compiled(card) => format!("##scard-compiled-{}", card.id.0),
-        BrowseCard::Loaded(card) => format!("##scard-{}", card.identity_key()),
+    let id = match (card.compiled_id(), card.loaded()) {
+        (Some(id), _) => format!("##scard-compiled-{}", id.as_str()),
+        (None, Some(loaded)) => format!("##scard-{}", loaded.identity_key()),
+        (None, None) => format!("##scard-{}", card.name()),
     };
     let _border = selected.then(|| ui.push_style_color(StyleColor::Border, ACCENT));
     ui.child_window(&id)
@@ -2689,16 +2597,16 @@ fn browse_script_card(
             if let Some(loaded) = card.loaded() {
                 if let Some(line) = card_transpile_label(
                     session.transpile_front(),
-                    loaded.source,
-                    &loaded.name,
-                    session.transpile_done,
-                    session.transpile_total,
+                    loaded.source(),
+                    loaded.name(),
+                    session.transpile_progress().0,
+                    session.transpile_progress().1,
                 ) {
                     let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
                     ui.text_disabled(line);
                 }
-                if let Some(failure) = session.scripts.js().load_failure(&loaded.identity_key()) {
-                    ui.text_colored(ERROR, format!("failed {}", failure.stage.as_str()));
+                if let Some(failure) = session.scripts.load_failure(&loaded.identity_key()) {
+                    ui.text_colored(ERROR, format!("failed {}", failure.stage().as_str()));
                     if selected {
                         ui.text_wrapped(failure.named_line());
                     }
@@ -2741,11 +2649,7 @@ fn browse_script_card(
     .then_some(selection)
 }
 
-fn browse_card_grid(
-    ui: &Ui,
-    session: &Session,
-    cards: &[&BrowseCard<'_>],
-) -> Option<script::ScriptSel> {
+fn browse_card_grid(ui: &Ui, session: &Session, cards: &[&BrowseCard<'_>]) -> Option<ScriptChoice> {
     let avail = ui.content_region_avail()[0];
     let scale = ui_scale(ui);
     let cols = card_columns(avail / scale, CARD_MIN_W, CARD_GAP);
@@ -2781,7 +2685,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         session.cancel_reload();
     }
     ui.spacing();
-    if script::rs2b0t_import_deferred() {
+    if frontend_core::scripts::paths::rs2b0t_import_deferred() {
         if ui.button_with_size("Import catalog…", [w, 0.0]) {
             session.open_rs2b0t_catalog_picker(false);
         }
@@ -2803,8 +2707,8 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         script_category_chips(ui, session, &order);
         ui.spacing();
     }
-    let busy = !session.transpile_queue.is_empty();
-    let need = session.scripts.js().cards_needing_transpile().len();
+    let busy = session.transpile_front().is_some();
+    let need = session.scripts.cards_needing_transpile().len();
     if need > 0 || busy {
         let w = ui.content_region_avail()[0];
         let _off = busy.then(|| ui.begin_disabled());
@@ -2818,8 +2722,8 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
                     Some((source, name)),
                     source,
                     name,
-                    session.transpile_done,
-                    session.transpile_total,
+                    session.transpile_progress().0,
+                    session.transpile_progress().1,
                 ) {
                     ui.text_disabled(line);
                 }
@@ -2827,7 +2731,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         }
         ui.spacing();
     }
-    let named_failures = session.scripts.js().named_failure_output();
+    let named_failures = session.scripts.named_failure_output();
     if !named_failures.is_empty() {
         // Collapsed by default: the list is long (dim catalog cards are
         // expected misses) and pushes the script browser off screen.
@@ -2835,7 +2739,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         let open = ui.collapsing_header(
             format!(
                 "{} failed###script-failures",
-                session.scripts.js().load_failures().len()
+                session.scripts.load_failure_count()
             ),
             TreeNodeFlags::NONE,
         );
@@ -2978,7 +2882,7 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
     let side_w = scale_px(ui, 150.0)
         .min(avail[0] * 0.28)
         .max(scale_px(ui, 120.0));
-    let home = script::bot_home();
+    let home = frontend_core::scripts::paths::bot_home();
     ui.child_window("##fd-side")
         .size([
             side_w,
@@ -3288,11 +3192,8 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
         .flags(WindowFlags::NO_COLLAPSE)
         .size(scale_size(ui, [360.0, 480.0]), Condition::FirstUseEver)
         .build(|| {
-            let previous_permissions = session.walk_permissions;
             let previous_nav = session.ui.nav.clone();
             let mut nav = previous_nav.clone();
-            let previous_pause_script_on_manual_walk_abort =
-                previous_nav.pause_script_on_manual_walk_abort;
             let mut changed = false;
             changed |= routing_group(ui, &mut nav);
             if !nav.script_scope_notice_ack {
@@ -3365,7 +3266,8 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
 
             ui.spacing();
             ui.text_colored(ACCENT, "WalkTo map");
-            let mut ask = session.map_bake.choice() == frontend_core::MapBakeChoice::Ask;
+            let mut ask =
+                session.map_desk.bake_gate().choice() == frontend_core::MapBakeChoice::Ask;
             if ui.checkbox("ask before baking terrain", &mut ask) {
                 session.set_map_bake_choice(if ask {
                     frontend_core::MapBakeChoice::Ask
@@ -3375,30 +3277,9 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             }
 
             if changed {
-                session.ui.nav = nav;
-                let after_permissions = frontend_core::WalkGlobalsView {
-                    globals: session.ui.nav.walk_globals(),
-                    script_scope_notice_ack: session.ui.nav.script_scope_notice_ack,
-                    survivable_routing_notice_ack: session.ui.nav.survivable_routing_notice_ack,
-                };
-                session.route_through_zones =
-                    after_permissions.danger_this_walk(session.route_through_zones);
-                if previous_pause_script_on_manual_walk_abort
-                    != session.ui.nav.pause_script_on_manual_walk_abort
-                {
-                    session.core.set_pause_script_on_manual_walk_abort(
-                        session.ui.nav.pause_script_on_manual_walk_abort,
-                    );
-                }
-                let save_result =
-                    crate::ui_state::save_to_checked(&session.preferences, &session.ui);
-                let routing_result = frontend_core::WalkGlobalsView::persist_changed(
-                    &session.preferences,
-                    previous_permissions,
-                    after_permissions,
-                );
-                match (save_result, routing_result) {
-                    (Ok(()), Ok(())) => {
+                let result = commit_nav_settings(session, &previous_nav, nav);
+                match result {
+                    Ok(()) => {
                         if session
                             .error
                             .as_deref()
@@ -3408,13 +3289,94 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                         }
                         session.refresh_walk_permissions();
                     }
-                    (Err(error), _) | (_, Err(error)) => {
+                    Err(error) => {
                         session.error = Some(format!("Nav config: {error}"));
                     }
                 }
             }
         });
     session.nav_settings_open = open;
+}
+
+/// Commit an edited Nav config: every operator preference that changed
+/// is its own command (`SetNavPreference`, `SetDangerLevel`); the rest of
+/// `after` is the panel's path paint and display state, saved as its own
+/// presentation preferences.
+fn commit_nav_settings(
+    session: &mut Session,
+    before: &crate::nav_settings::NavSettings,
+    after: crate::nav_settings::NavSettings,
+) -> Result<(), String> {
+    use frontend_core::NavPreference as P;
+    let mut failure = None;
+    let mut submit = |session: &mut Session, command: OperatorCommand| {
+        if let Some(submitted) = session.submit(command, Targets::Application) {
+            if let Some(error) = session.core.command_failure(submitted.request()) {
+                failure.get_or_insert_with(|| error.to_string());
+            }
+        }
+    };
+    let flags = [
+        (
+            P::AllowTeleports,
+            before.allow_teleports,
+            after.allow_teleports,
+        ),
+        (
+            P::AllowWilderness,
+            before.allow_wilderness,
+            after.allow_wilderness,
+        ),
+        (
+            P::AllowBankFetch,
+            before.allow_bank_fetch,
+            after.allow_bank_fetch,
+        ),
+        (
+            P::ScriptScopeNoticeAck,
+            before.script_scope_notice_ack,
+            after.script_scope_notice_ack,
+        ),
+        (
+            P::SurvivableRoutingNoticeAck,
+            before.survivable_routing_notice_ack,
+            after.survivable_routing_notice_ack,
+        ),
+        (
+            P::PauseScriptOnManualWalkAbort,
+            before.pause_script_on_manual_walk_abort,
+            after.pause_script_on_manual_walk_abort,
+        ),
+        (
+            P::ShowSpecialAreas,
+            before.show_special_areas,
+            after.show_special_areas,
+        ),
+    ];
+    for (preference, was, now) in flags {
+        if was != now {
+            submit(session, OperatorCommand::SetNavPreference(preference, now));
+        }
+    }
+    if before.danger_level() != after.danger_level() {
+        submit(
+            session,
+            OperatorCommand::SetDangerLevel(after.danger_level()),
+        );
+    }
+    session.route_through_zones = frontend_core::WalkGlobalsView::new(
+        after.walk_globals(),
+        after.script_scope_notice_ack,
+        after.survivable_routing_notice_ack,
+    )
+    .danger_this_walk(session.route_through_zones);
+    session.ui.nav = after;
+    let saved = crate::ui_state::save_to_checked(&session.preferences, &session.ui)
+        .map_err(|error| error.to_string());
+    match failure {
+        Some(error) => Err(error),
+        None => saved,
+    }
 }
 
 /// Nav paint colour: imgui color-edit (preview square opens the picker)
@@ -3449,70 +3411,72 @@ fn parameters_section(ui: &Ui, session: &mut Session) {
         ui.text_disabled(placeholder);
         return;
     }
-    match &session.script_sel {
-        Some(script::ScriptSel::Loaded(source, name)) => {
-            if let Some(card) = session.scripts.js().get(*source, name) {
-                let bag = session.merged_settings_bag(*source, name, &card.settings_schema);
-                for (label, value) in script::parameter_rows(&card.settings_schema, &bag) {
-                    kv_row(ui, &label, &value);
-                }
+    let Some(sel) = &session.script_sel else {
+        return;
+    };
+    if let Some((source, name)) = sel.loaded_card() {
+        if let Some(card) = session.scripts.card(source, name) {
+            let bag = session.merged_settings_bag(source, name, card.schema());
+            for (label, value) in card.schema().parameter_rows(&bag) {
+                kv_row(ui, &label, &value);
             }
         }
-        Some(script::ScriptSel::Compiled(id)) => {
-            if let frontend_core::scripts::SchemaView::Ready { fields, .. } = session
-                .scripts
-                .compiled_schema(&session.core, session.focused_name().as_deref(), *id)
-            {
-                match session.scripts.compiled_edit_bag(
-                    &session.core,
-                    session.focused_name().as_deref(),
-                    *id,
-                ) {
-                    Ok(bag) => {
-                        for (label, value) in script::parameter_rows(fields, &bag) {
-                            kv_row(ui, &label, &value);
-                        }
+    } else if let Some(id) = sel.compiled_id() {
+        if let frontend_core::scripts::SchemaView::Ready { fields, .. } = session
+            .scripts
+            .compiled_schema(&session.core, session.focused_name().as_deref(), id)
+        {
+            match session.scripts.compiled_edit_bag(
+                &session.core,
+                session.focused_name().as_deref(),
+                id,
+            ) {
+                Ok(bag) => {
+                    for (label, value) in fields.parameter_rows(&bag) {
+                        kv_row(ui, &label, &value);
                     }
-                    Err(error) => ui.text_disabled(error),
                 }
+                Err(error) => ui.text_disabled(error),
             }
         }
-        None => {}
     }
 }
 
 /// All parameter controls share the same account-scoped persistence path.
 fn persist_profile_setting(
     session: &mut Session,
-    selection: &script::ScriptSel,
+    selection: &ScriptChoice,
     id: &str,
     value: serde_json::Value,
 ) {
-    match selection {
-        script::ScriptSel::Compiled(card) => {
-            let Some(profile) = session.focused_name() else {
-                session.error = Some("parameters: select a profile first".into());
-                return;
-            };
-            if let Err(error) =
-                session
-                    .scripts
-                    .set_compiled_setting(&mut session.core, &profile, *card, id, value)
-            {
-                session.error = Some(error);
-            }
-        }
-        script::ScriptSel::Loaded(source, lookup) => {
-            let Some(card) = session.scripts.js().get(*source, lookup).cloned() else {
-                return;
-            };
-            if let Some(profile) = session.focused_name() {
-                session.set_profile_setting(&profile, *source, &card.name, &card.path, id, value);
-            } else {
-                let legacy = session.scripts.legacy_mut();
-                legacy.set_value(*source, &card.name, id, value);
-                let _ = legacy.save();
-            }
+    if selection.compiled_id().is_some() {
+        let Some(profile) = session.focused_name() else {
+            session.error = Some("parameters: select a profile first".into());
+            return;
+        };
+        session
+            .scripts
+            .stage_setting(Some(&profile), selection, id, value);
+        session.submit_script_command(
+            OperatorCommand::SaveScriptSettings(frontend_core::command::CardKind::Native),
+            Targets::Profile(&profile),
+        );
+    } else if let Some((source, lookup)) = selection.loaded_card() {
+        let Some((name, path)) = session
+            .scripts
+            .card(source, lookup)
+            .map(|card| (card.name().to_owned(), card.path().to_path_buf()))
+        else {
+            return;
+        };
+        if let Some(profile) = session.focused_name() {
+            session.set_profile_setting(&profile, source, &name, &path, id, value);
+        } else {
+            session.scripts.stage_setting(None, selection, id, value);
+            session.submit_script_command(
+                OperatorCommand::SaveLegacyScriptSettings,
+                Targets::Application,
+            );
         }
     }
 }
@@ -3530,18 +3494,18 @@ fn filtered_parameter_indices<'a>(
 
 fn unavailable_parameter_text(
     label: &str,
-    def: &script::SettingDef,
+    def: SettingView<'_>,
     bag: &serde_json::Map<String, serde_json::Value>,
     options: &frontend_core::scripts::ParameterOptions,
 ) -> String {
-    if def.options_from.as_deref() == Some("loadouts") {
+    if def.options_from() == Some("loadouts") {
         return format!("{label} (no loadouts available)");
     }
-    if def.ty == "string" && options.preserved() > 0 {
+    if def.ty() == "string" && options.preserved() > 0 {
         let current = bag
-            .get(&def.id)
+            .get(def.id())
             .and_then(serde_json::Value::as_str)
-            .or(def.default.as_deref())
+            .or(def.default())
             .unwrap_or("");
         return format!(
             "{label} (options unavailable · {})",
@@ -3552,13 +3516,13 @@ fn unavailable_parameter_text(
 }
 
 fn parameter_array_editor_enabled(
-    def: &script::SettingDef,
+    def: SettingView<'_>,
     bag: &serde_json::Map<String, serde_json::Value>,
     options: &frontend_core::scripts::ParameterOptions,
 ) -> bool {
-    def.ty == "string[]"
+    def.ty() == "string[]"
         && options.can_edit_array(
-            bag.get(&def.id)
+            bag.get(def.id())
                 .and_then(serde_json::Value::as_array)
                 .into_iter()
                 .flatten()
@@ -3569,27 +3533,27 @@ fn parameter_array_editor_enabled(
 fn script_parameter_text_input(
     ui: &Ui,
     session: &mut Session,
-    selection: &script::ScriptSel,
+    selection: &ScriptChoice,
     profile: Option<&str>,
-    def: &script::SettingDef,
+    def: SettingView<'_>,
     options: &[String],
     current: Option<serde_json::Value>,
 ) {
-    let label = def.label.as_deref().unwrap_or(&def.id);
+    let label = def.display_label();
     let initial_text = current
         .as_ref()
-        .map(script::format_setting_value)
-        .or_else(|| def.default.clone())
+        .map(format_setting_value)
+        .or_else(|| def.default().map(str::to_owned))
         .unwrap_or_default();
     let changed = {
         let text = session.scripts.parameter_text_mut_for(
             profile,
             selection,
-            &def.id,
+            def.id(),
             &initial_text,
             current.clone(),
         );
-        ui.input_text(format!("{label}##param-{id}", id = def.id), text)
+        ui.input_text(format!("{label}##param-{id}", id = def.id()), text)
             .build()
     };
     let active = ui.is_item_active();
@@ -3598,37 +3562,45 @@ fn script_parameter_text_input(
     let escape = ui.is_key_pressed(Key::Escape) && (active || deactivated);
     let commit = !escape && (deactivated || enter);
     if escape {
-        session
-            .scripts
-            .discard_parameter_text_for(profile, selection, &def.id);
+        let key = frontend_core::scripts::ParameterEditKey::new(profile, selection, def.id());
+        session.scripts.stage_parameter_discard(key);
+        session.submit_script_command(OperatorCommand::DiscardParameterText, Targets::Application);
     } else if changed || commit {
-        let value = session.scripts.validate_parameter_buffer_for(
-            profile,
+        if commit && profile.is_none() && selection.compiled_id().is_some() {
+            session.error = Some("parameters: select a profile first".into());
+            return;
+        }
+        let key = frontend_core::scripts::ParameterEditKey::new(profile, selection, def.id());
+        session.scripts.stage_parameter_validation(
+            key,
             selection,
-            &def.id,
-            (&initial_text, current.clone()),
+            &initial_text,
+            current.clone(),
             def,
             options,
         );
-        if commit {
-            if let Ok(value) = value {
-                let edit_key =
-                    frontend_core::scripts::ParameterEditKey::new(profile, selection, &def.id);
-                let _ = session.scripts.commit_parameter_value(
-                    &mut session.core,
-                    &edit_key,
-                    selection,
-                    &def.id,
-                    value,
-                    current,
-                );
-                session.apply_script_notice();
-            }
+        if !commit {
+            session.submit_script_command(OperatorCommand::EditParameterText, Targets::Application);
+        } else if let Some(profile) = profile {
+            let kind = if selection.compiled_id().is_some() {
+                frontend_core::command::CardKind::Native
+            } else {
+                frontend_core::command::CardKind::Script
+            };
+            session.submit_script_command(
+                OperatorCommand::SaveScriptSettings(kind),
+                Targets::Profile(profile),
+            );
+        } else {
+            session.submit_script_command(
+                OperatorCommand::SaveLegacyScriptSettings,
+                Targets::Application,
+            );
         }
     }
     if let Some(error) = session
         .scripts
-        .parameter_text_error_for(profile, selection, &def.id)
+        .parameter_text_error_for(profile, selection, def.id())
     {
         ui.same_line();
         ui.text_colored(ERROR, error);
@@ -3638,7 +3610,7 @@ fn script_parameter_text_input(
 /// Script prefs window: text buffers and commit state are shared with TUI.
 fn script_parameter_editors(ui: &Ui, session: &mut Session) {
     session.refresh_walk_permissions();
-    let Some(selection) = session.script_sel.clone() else {
+    let Some(selection) = session.script_sel.as_ref().map(ScriptChoice::duplicate) else {
         ui.text_wrapped("select a script with a parameter schema");
         return;
     };
@@ -3649,59 +3621,77 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
     {
         ui.text_disabled("Restart required to apply saved settings.");
     }
-    let (schema, mut bag): (std::borrow::Cow<'_, [script::SettingDef]>, _) = match &selection {
-        script::ScriptSel::Loaded(source, name) => {
-            let Some(card) = session.scripts.js().get(*source, name).cloned() else {
-                ui.text_disabled("(parameters unavailable)");
-                return;
-            };
-            let bag = if let Some(profile) = profile.as_deref() {
-                session.merged_profile_bag(
-                    profile,
-                    *source,
-                    &card.name,
-                    &card.path,
-                    &card.settings_schema,
-                )
-            } else {
-                session.merged_settings_bag(*source, name, &card.settings_schema)
-            };
-            (std::borrow::Cow::Owned(card.settings_schema), bag)
+    // The editors below need `session` mutably while they walk the schema,
+    // so the schema is copied into a retained buffer (unchanged schemas copy
+    // nothing) and put back afterwards.
+    let mut schema = std::mem::take(&mut session.script_param_schema);
+    if let Some(bag) =
+        script_parameter_schema(ui, session, &selection, profile.as_deref(), &mut schema)
+    {
+        script_parameter_rows(ui, session, &selection, profile, schema.as_ref(), bag);
+    }
+    session.script_param_schema = schema;
+}
+
+/// Fill `schema` with the selected card's fields and return its bag, or say
+/// why the parameters are unavailable.
+fn script_parameter_schema(
+    ui: &Ui,
+    session: &mut Session,
+    selection: &ScriptChoice,
+    profile: Option<&str>,
+    schema: &mut frontend_core::scripts::OwnedSchema,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    if let Some((source, name)) = selection.loaded_card() {
+        let Some((card_name, path)) = session.scripts.card(source, name).map(|card| {
+            schema.copy_from(card.schema());
+            (card.name().to_owned(), card.path().to_path_buf())
+        }) else {
+            ui.text_disabled("(parameters unavailable)");
+            return None;
+        };
+        return Some(if let Some(profile) = profile {
+            session.merged_profile_bag(profile, source, &card_name, &path, schema.as_ref())
+        } else {
+            session.merged_settings_bag(source, name, schema.as_ref())
+        });
+    }
+    let id = selection.compiled_id()?;
+    match session.scripts.compiled_schema(&session.core, profile, id) {
+        frontend_core::scripts::SchemaView::Ready { fields, .. } => schema.copy_from(fields),
+        frontend_core::scripts::SchemaView::Unavailable(reason) => {
+            ui.text_disabled(reason);
+            return None;
         }
-        script::ScriptSel::Compiled(id) => {
-            let fields =
-                match session
-                    .scripts
-                    .compiled_schema(&session.core, profile.as_deref(), *id)
-                {
-                    frontend_core::scripts::SchemaView::Ready { fields, .. } => fields,
-                    frontend_core::scripts::SchemaView::Unavailable(reason) => {
-                        ui.text_disabled(reason);
-                        return;
-                    }
-                };
-            let bag =
-                match session
-                    .scripts
-                    .compiled_edit_bag(&session.core, profile.as_deref(), *id)
-                {
-                    Ok(bag) => bag,
-                    Err(error) => {
-                        ui.text_disabled(error);
-                        return;
-                    }
-                };
-            (std::borrow::Cow::Borrowed(fields), bag)
+    }
+    match session
+        .scripts
+        .compiled_edit_bag(&session.core, profile, id)
+    {
+        Ok(bag) => Some(bag),
+        Err(error) => {
+            ui.text_disabled(error);
+            None
         }
-    };
+    }
+}
+
+/// The typed editor rows for `schema`.
+fn script_parameter_rows(
+    ui: &Ui,
+    session: &mut Session,
+    selection: &ScriptChoice,
+    profile: Option<String>,
+    schema: SchemaRef<'_>,
+    mut bag: serde_json::Map<String, serde_json::Value>,
+) {
     let filter_field_visible = session
         .script_parameter_filter_id
         .as_ref()
         .is_some_and(|id| {
-            schema.iter().any(|def| {
-                def.id.as_str() == id.as_str()
-                    && script::setting_visible(def.show_if.as_deref(), &bag)
-            })
+            schema
+                .iter()
+                .any(|def| def.id() == id.as_str() && def.visible(&bag))
         });
     if !filter_field_visible {
         session.script_parameter_filter.clear();
@@ -3715,14 +3705,14 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
     let game_data_ref = game_data.as_deref();
     let mut last_group: Option<&str> = None;
     for def in schema.iter() {
-        if !script::setting_visible(def.show_if.as_deref(), &bag) {
+        if !def.visible(&bag) {
             continue;
         }
-        let permission_global = session.walk_permissions.permission_enabled(&def.id);
+        let permission_global = session.walk_permissions.permission_enabled(def.id());
         let group = if permission_global.is_some() {
             Some("Walk permissions")
         } else {
-            def.group.as_deref()
+            def.group()
         };
         if group != last_group {
             last_group = group;
@@ -3731,29 +3721,29 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                 ui.text(group);
             }
         }
-        let label = def.label.as_deref().unwrap_or(&def.id).to_string();
+        let label = def.display_label().to_string();
         let resolved = frontend_core::scripts::resolve_parameter_options(
             def,
             &bag,
-            &session.loadouts,
+            session.loadouts.store(),
             game_data_ref,
         );
         let array_editable = parameter_array_editor_enabled(def, &bag, &resolved);
-        if def.options_from.is_some() && resolved.is_empty() && !array_editable {
+        if def.options_from().is_some() && resolved.is_empty() && !array_editable {
             ui.text_disabled(unavailable_parameter_text(&label, def, &bag, &resolved));
-            if session.script_parameter_filter_id.as_deref() == Some(def.id.as_str()) {
+            if session.script_parameter_filter_id.as_deref() == Some(def.id()) {
                 session.script_parameter_filter.clear();
                 session.script_parameter_filter_id = None;
             }
             continue;
         }
-        match def.ty.as_str() {
+        match def.ty() {
             "boolean" => {
                 let global = permission_global;
                 let mut value = bag
-                    .get(&def.id)
+                    .get(def.id())
                     .and_then(|v| v.as_bool())
-                    .unwrap_or_else(|| def.default.as_deref() == Some("true"));
+                    .unwrap_or_else(|| def.default() == Some("true"));
                 if global == Some(true) {
                     ui.text_wrapped(format!(
                         "{label}: On — inherited globally; this script cannot veto the permission."
@@ -3767,11 +3757,11 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     if ui.checkbox(&label, &mut value) {
                         persist_profile_setting(
                             session,
-                            &selection,
-                            &def.id,
+                            selection,
+                            def.id(),
                             serde_json::json!(value),
                         );
-                        bag.insert(def.id.clone(), serde_json::json!(value));
+                        bag.insert(def.id().to_owned(), serde_json::json!(value));
                     }
                 }
             }
@@ -3779,34 +3769,34 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                 script_parameter_text_input(
                     ui,
                     session,
-                    &selection,
+                    selection,
                     profile.as_deref(),
                     def,
                     resolved.selectable(),
-                    bag.get(&def.id).cloned(),
+                    bag.get(def.id()).cloned(),
                 );
             }
             "string" if !resolved.is_empty() => {
                 ui.text(&label);
                 let opts = resolved.selectable();
                 let stored = bag
-                    .get(&def.id)
+                    .get(def.id())
                     .and_then(|v| v.as_str())
-                    .or(def.default.as_deref())
+                    .or(def.default())
                     .unwrap_or("");
                 let current = resolved.value_for(stored);
                 ui.set_next_item_width(-1.0);
                 let combo_opts = ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
                 let preview = resolved.label_for(&current);
                 if let Some(_popup) = ui.begin_combo_with_flags(
-                    format!("##param-{id}", id = def.id),
+                    format!("##param-{id}", id = def.id()),
                     preview,
                     combo_opts,
                 ) {
                     let first_open =
-                        session.script_parameter_filter_id.as_deref() != Some(def.id.as_str());
+                        session.script_parameter_filter_id.as_deref() != Some(def.id());
                     if first_open {
-                        session.script_parameter_filter_id = Some(def.id.clone());
+                        session.script_parameter_filter_id = Some(def.id().to_owned());
                         session.script_parameter_filter.clear();
                         ui.set_keyboard_focus_here();
                     }
@@ -3814,7 +3804,7 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     let searchable = opts.len() > 16;
                     if searchable {
                         ui.set_next_item_width(-1.0);
-                        ui.input_text(format!("##param-filter-{id}", id = def.id), &mut filter)
+                        ui.input_text(format!("##param-filter-{id}", id = def.id()), &mut filter)
                             .hint("Filter options")
                             .build();
                         ui.separator();
@@ -3833,18 +3823,18 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                             let value = resolved.value_for(opt);
                             persist_profile_setting(
                                 session,
-                                &selection,
-                                &def.id,
+                                selection,
+                                def.id(),
                                 serde_json::json!(value),
                             );
-                            bag.insert(def.id.clone(), serde_json::json!(value));
+                            bag.insert(def.id().to_owned(), serde_json::json!(value));
                         }
                     }
                     if searchable && matches == 0 {
                         ui.text_disabled("no matching options");
                     }
                     session.script_parameter_filter = filter;
-                } else if session.script_parameter_filter_id.as_deref() == Some(def.id.as_str()) {
+                } else if session.script_parameter_filter_id.as_deref() == Some(def.id()) {
                     session.script_parameter_filter.clear();
                     session.script_parameter_filter_id = None;
                 }
@@ -3852,7 +3842,7 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
             "string[]" if array_editable => {
                 ui.text(&label);
                 let mut selected: Vec<String> = bag
-                    .get(&def.id)
+                    .get(def.id())
                     .and_then(|value| value.as_array())
                     .map(|items| {
                         items
@@ -3871,33 +3861,32 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     let _off =
                         (!on && !resolved.is_selectable_index(index)).then(|| ui.begin_disabled());
                     let shown = resolved.label_for(opt);
-                    if ui.checkbox(format!("{shown}##param-{id}-{opt}", id = def.id), &mut on) {
+                    if ui.checkbox(format!("{shown}##param-{id}-{opt}", id = def.id()), &mut on) {
                         changed |= resolved.toggle_array_choice(&mut selected, index);
                     }
                 }
                 if changed {
-                    let coerced =
-                        script::coerce_setting_value(&def.ty, &serde_json::json!(selected));
-                    persist_profile_setting(session, &selection, &def.id, coerced.clone());
-                    bag.insert(def.id.clone(), coerced);
+                    let coerced = def.coerce(&serde_json::json!(selected));
+                    persist_profile_setting(session, selection, def.id(), coerced.clone());
+                    bag.insert(def.id().to_owned(), coerced);
                 }
             }
             "string" | "tile" | "list" | "string[]" => {
                 script_parameter_text_input(
                     ui,
                     session,
-                    &selection,
+                    selection,
                     profile.as_deref(),
                     def,
                     resolved.selectable(),
-                    bag.get(&def.id).cloned(),
+                    bag.get(def.id()).cloned(),
                 );
             }
             _ => {
-                ui.text_disabled(format!("{label} (unsupported type {})", def.ty));
+                ui.text_disabled(format!("{label} (unsupported type {})", def.ty()));
             }
         }
-        if let Some(help) = def.help.as_deref() {
+        if let Some(help) = def.help() {
             ui.set_item_tooltip(help);
         }
     }
@@ -3957,7 +3946,7 @@ fn restart_settings_popup(ui: &Ui, session: &mut Session) {
         }
         ui.same_line();
         if ui.button("Later##script-settings") {
-            session.scripts.dismiss_restart_prompt();
+            session.defer_settings_restart();
             ui.close_current_popup();
         }
     });
@@ -3997,10 +3986,9 @@ fn script_prefs_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             } else {
                 ui.text_disabled("parameter editors not available");
             }
-            if matches!(
-                &session.script_sel,
-                Some(script::ScriptSel::Compiled(id)) if *id == script::quester::card::CARD.id
-            ) {
+            if session.script_sel.as_ref().and_then(ScriptChoice::compiled_id)
+                == Some(CompiledCardId::QUESTER)
+            {
                 quest_paths_section(ui, session);
             }
         });
@@ -4072,8 +4060,8 @@ enum MissingCard {
 }
 
 impl MissingCard {
-    fn of(session: &Session, source: script::ScriptSource) -> Self {
-        if source == script::ScriptSource::Catalog && !session.scripts.catalog_filled() {
+    fn of(session: &Session, source: CardSource) -> Self {
+        if source == CardSource::Catalog && !session.scripts.catalog_filled() {
             Self::CatalogUnavailable
         } else {
             Self::CardUnavailable
@@ -4098,52 +4086,55 @@ impl MissingCard {
 /// The parameters rail's placeholder when there are no rows to list, else
 /// `None` (the rail then lists the selected card's merged settings).
 fn parameters_rail_placeholder(session: &Session) -> Option<&'static str> {
-    match &session.script_sel {
-        None => Some("(no script selected)"),
-        Some(script::ScriptSel::Loaded(source, name)) => {
-            match session.scripts.js().get(*source, name) {
-                None => Some(MissingCard::of(session, *source).rail_text()),
-                Some(card) if card.settings_schema.is_empty() => Some("(no parameters)"),
-                Some(_) => None,
-            }
+    let Some(sel) = &session.script_sel else {
+        return Some("(no script selected)");
+    };
+    if let Some((source, name)) = sel.loaded_card() {
+        return match session.scripts.card(source, name) {
+            None => Some(MissingCard::of(session, source).rail_text()),
+            Some(card) if card.schema().is_empty() => Some("(no parameters)"),
+            Some(_) => None,
+        };
+    }
+    let id = sel.compiled_id()?;
+    match session
+        .scripts
+        .compiled_schema(&session.core, session.focused_name().as_deref(), id)
+    {
+        frontend_core::scripts::SchemaView::Unavailable(_) => Some("(parameters unavailable)"),
+        frontend_core::scripts::SchemaView::Ready { fields, .. } if fields.is_empty() => {
+            Some("(no parameters)")
         }
-        Some(script::ScriptSel::Compiled(id)) => match session.scripts.compiled_schema(
-            &session.core,
-            session.focused_name().as_deref(),
-            *id,
-        ) {
-            frontend_core::scripts::SchemaView::Unavailable(_) => Some("(parameters unavailable)"),
-            frontend_core::scripts::SchemaView::Ready { fields: [], .. } => Some("(no parameters)"),
-            frontend_core::scripts::SchemaView::Ready { .. } => None,
-        },
+        frontend_core::scripts::SchemaView::Ready { .. } => None,
     }
 }
 
 /// Tooltip when Script prefs is disabled (empty schema, unavailable card, or no selection).
 fn script_prefs_disabled_hint(session: &Session) -> Option<&'static str> {
-    match &session.script_sel {
-        None => Some("select a script first"),
-        Some(script::ScriptSel::Compiled(id)) => match session.scripts.compiled_schema(
+    let Some(sel) = &session.script_sel else {
+        return Some("select a script first");
+    };
+    if let Some(id) = sel.compiled_id() {
+        return match session.scripts.compiled_schema(
             &session.core,
             session.focused_name().as_deref(),
-            *id,
+            id,
         ) {
             frontend_core::scripts::SchemaView::Unavailable(reason) => Some(reason),
-            frontend_core::scripts::SchemaView::Ready { fields: [], .. } => {
+            frontend_core::scripts::SchemaView::Ready { fields, .. } if fields.is_empty() => {
                 Some("selected script has no parameters")
             }
             frontend_core::scripts::SchemaView::Ready { .. } => None,
-        },
-        Some(script::ScriptSel::Loaded(source, name)) => {
-            let Some(card) = session.scripts.js().get(*source, name) else {
-                return Some(MissingCard::of(session, *source).prefs_hint());
-            };
-            if card.settings_schema.is_empty() {
-                Some("selected script has no parameters")
-            } else {
-                None
-            }
-        }
+        };
+    }
+    let (source, name) = sel.loaded_card()?;
+    let Some(card) = session.scripts.card(source, name) else {
+        return Some(MissingCard::of(session, source).prefs_hint());
+    };
+    if card.schema().is_empty() {
+        Some("selected script has no parameters")
+    } else {
+        None
     }
 }
 
@@ -4175,8 +4166,7 @@ fn slot_config_row(ui: &Ui, session: &mut Session) {
                     if ui.button_with_size("Loadouts", [w, 0.0])
                         && session.open_window(PanelWindow::Loadouts)
                     {
-                        session.loadouts_sel = 0;
-                        crate::loadouts::sync_draft(session);
+                        crate::loadouts::select(session, 0);
                     }
                     ui.set_item_tooltip("equipment and inventory presets");
                 }
@@ -4407,20 +4397,35 @@ fn raster_picker(ui: &Ui, session: &mut Session) {
     let cur = session.focused_raster();
     let avail = ui.content_region_avail()[0];
     let cells = scaled_button_cells(ui, avail, 3);
-    if inverted_button(ui, "none", cur == vault::RasterMode::Off, [cells[0].0, 0.0]) {
-        session.request_focused_raster(vault::RasterMode::Off);
+    if inverted_button(
+        ui,
+        "none",
+        cur == frontend_core::command::RasterMode::Off,
+        [cells[0].0, 0.0],
+    ) {
+        session.request_focused_raster(frontend_core::command::RasterMode::Off);
     }
     if cells[1].1 {
         gap_line(ui);
     }
-    if inverted_button(ui, "GPU", cur == vault::RasterMode::Gpu, [cells[1].0, 0.0]) {
-        session.request_focused_raster(vault::RasterMode::Gpu);
+    if inverted_button(
+        ui,
+        "GPU",
+        cur == frontend_core::command::RasterMode::Gpu,
+        [cells[1].0, 0.0],
+    ) {
+        session.request_focused_raster(frontend_core::command::RasterMode::Gpu);
     }
     if cells[2].1 {
         gap_line(ui);
     }
-    if inverted_button(ui, "CPU", cur == vault::RasterMode::Cpu, [cells[2].0, 0.0]) {
-        session.request_focused_raster(vault::RasterMode::Cpu);
+    if inverted_button(
+        ui,
+        "CPU",
+        cur == frontend_core::command::RasterMode::Cpu,
+        [cells[2].0, 0.0],
+    ) {
+        session.request_focused_raster(frontend_core::command::RasterMode::Cpu);
     }
     let mem = if session.focused_lowmem() {
         "lowmem"
@@ -4584,7 +4589,7 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
     if ui.checkbox("only render focused", &mut only) {
         only_render_selected_clicked(session, only);
     }
-    let live = session.scenario.lock().unwrap().is_some();
+    let live = session.core.live_runner().status().is_some();
     if live {
         let mut full = session.focus.lock().unwrap().live_full_rate;
         if ui.checkbox("full rate (this run)", &mut full) {
@@ -4614,54 +4619,86 @@ fn slot_render_section(ui: &Ui, session: &mut Session) {
 const AUTO_LOGIN_TOOLTIP: &str = "Log in as soon as this bot starts (after unlocking the vault or loading the profile), and log back in after a disconnect. Off: the bot waits at the login screen until you press Log in; a running script still logs in.";
 
 fn slot_capture_section(ui: &Ui, session: &mut Session) {
-    let mut auto_cur = session.cred_settings.auto_login;
+    let mut auto_cur = session.profile_editor.draft().settings().auto_login();
     // Label only: the saved setting stays `ProfileSettings.auto_login`.
     let toggled = ui.checkbox("Log in automatically", &mut auto_cur);
     ui.set_item_tooltip(AUTO_LOGIN_TOOLTIP);
     if toggled {
-        session.cred_settings.auto_login = auto_cur;
-        if let Some(name) = session.chooser_edit.as_deref().filter(|n| !n.is_empty()) {
-            let name = name.to_string();
-            session.set_auto_login(&name, auto_cur);
+        *session
+            .profile_editor
+            .draft_mut()
+            .settings_mut()
+            .auto_login_mut() = auto_cur;
+        if let Some(name) = session
+            .profile_editor
+            .target()
+            .filter(|n| !n.is_empty())
+            .map(str::to_owned)
+        {
+            if let Some(submitted) = session.submit(
+                OperatorCommand::SetAutoLogin(auto_cur),
+                Targets::Profile(&name),
+            ) {
+                session.error = session
+                    .core
+                    .command_failure(submitted.request())
+                    .map(|reason| reason.to_string());
+            }
         }
-        session.note_chooser_edited();
+        let _ = session.submit(
+            OperatorCommand::EditProfileDraft(frontend_core::command::ProfileDraftField::Settings),
+            Targets::Application,
+        );
     }
     let mut world_changed = false;
     if let Some(worlds) = session
-        .server_profile
-        .as_ref()
-        .and_then(|p| p.public_worlds())
+        .launcher
+        .bound()
+        .and_then(|p| p.public_world_numbers())
     {
         let preview = session
-            .cred_settings
-            .world
+            .profile_editor
+            .draft()
+            .settings()
+            .world()
             .map_or_else(|| "auto".to_string(), |number| format!("w{number}"));
         ui.text_disabled("world (next slot start)");
         ui.set_next_item_width(-1.0);
         if let Some(_open) = ui.begin_combo("##account-world", &preview) {
             if ui
                 .selectable_config("auto")
-                .selected(session.cred_settings.world.is_none())
+                .selected(session.profile_editor.draft().settings().world().is_none())
                 .build()
             {
-                session.cred_settings.world = None;
+                *session
+                    .profile_editor
+                    .draft_mut()
+                    .settings_mut()
+                    .world_mut() = None;
                 world_changed = true;
             }
-            for world in &worlds.worlds {
-                let label = format!("w{}", world.number);
+            for number in worlds {
+                let label = format!("w{number}");
                 if ui
                     .selectable_config(&label)
-                    .selected(session.cred_settings.world == Some(world.number))
+                    .selected(session.profile_editor.draft().settings().world() == Some(number))
                     .build()
                 {
-                    session.cred_settings.world = Some(world.number);
+                    *session
+                        .profile_editor
+                        .draft_mut()
+                        .settings_mut()
+                        .world_mut() = Some(number);
                     world_changed = true;
                 }
             }
         }
     }
     if world_changed {
-        session.note_chooser_edited();
+        let _ = session.submit(
+            OperatorCommand::EditProfileDraft(frontend_core::command::ProfileDraftField::Settings),
+            Targets::Application,
+        );
     }
     ui.text_wrapped("this profile; handshake on spawn unless latched out");
 }
@@ -4716,11 +4753,12 @@ fn only_render_selected_clicked(session: &mut Session, checked: bool) {
     let current = session.focus.lock().unwrap().only_render_selected;
     let (next, open_warn) =
         apply_only_render_selected(current, checked, session.ui.render_all_warning_ack);
-    session.focus.lock().unwrap().only_render_selected = next;
+    if next != current {
+        session.set_render_all(!next);
+    }
     if open_warn {
         session.wall.render_all_warn_open = true;
     }
-    session.wake_all_slots();
 }
 
 /// Sticky bulk row: Login all / Logout all, then the only-render-selected
@@ -5021,7 +5059,11 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
             },
             &mut marked,
         );
-        state.session.fleet_selection.set(identity, marked);
+        if marked != state.session.fleet_selection.contains(identity) {
+            state
+                .session
+                .submit(OperatorCommand::SetMark(marked), Targets::Profile(name));
+        }
         let body_clicked = if preview {
             rail_body(ui, gpu, state, name, draw)
         } else {
@@ -5443,14 +5485,14 @@ fn on_screen_avail(ui: &Ui, right: f32) -> f32 {
 /// shows over the result it warned about.
 fn edit_switch_popup(ui: &Ui, session: &mut Session) {
     let open = ui.is_popup_open(PROFILE_EDIT_SWITCH_POPUP);
-    if session.pending_edit_switch.is_none() && !open {
+    if session.profile_editor.pending().is_none() && !open {
         return;
     }
     if !open {
         ui.open_popup(PROFILE_EDIT_SWITCH_POPUP);
     }
     ui.popup(PROFILE_EDIT_SWITCH_POPUP, || {
-        let Some(switch) = session.pending_edit_switch.as_ref() else {
+        let Some(switch) = session.profile_editor.pending() else {
             ui.close_current_popup();
             return;
         };
@@ -5459,7 +5501,7 @@ fn edit_switch_popup(ui: &Ui, session: &mut Session) {
             ui.close_current_popup();
             return;
         }
-        popup_text(ui, &switch.prompt);
+        popup_text(ui, switch.prompt());
         ui.spacing();
         let avail = ui.content_region_avail()[0];
         let (w, stack) = scaled_button_row_layout(ui, avail, 2);
@@ -5537,7 +5579,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             let wrap =
                 ui.cursor_screen_pos()[0] + on_screen_avail(ui, right) - ui.window_pos()[0];
             let _wrap = ui.push_text_wrap_pos(wrap);
-            if session.core.vault().is_none() {
+            if !session.core.vault_open() {
                 vault_unlock_prompt(ui, session);
             } else {
                 profiles_toolbar(ui, session, right);
@@ -5647,7 +5689,7 @@ fn profiles_footer_height(ui: &Ui, session: &Session) -> f32 {
 /// stacked below it. Returns what the list was asked to do.
 fn profiles_regions(ui: &Ui, session: &mut Session, right: f32, region_h: f32) -> ListPick {
     let w = on_screen_avail(ui, right);
-    if session.chooser_edit.is_none() && !session.profile_import_open {
+    if !session.profile_editor.is_open() && !session.profile_import_open {
         return profile_list(ui, session, right, [w, region_h]);
     }
     let divider = scale_px(ui, PROFILES_DIVIDER);
@@ -5690,11 +5732,7 @@ fn profiles_regions(ui: &Ui, session: &mut Session, right: f32, region_h: f32) -
 
 /// The height the whole profile list needs: its heading and every row.
 fn profile_list_height(ui: &Ui, session: &Session) -> f32 {
-    let rows = session
-        .core
-        .vault()
-        .map_or(0, |v| v.profiles().count())
-        .max(1);
+    let rows = session.core.profiles().count().max(1);
     ui.text_line_height_with_spacing() + scale_px(ui, rows as f32 * PROFILE_ROW_H + 8.0)
 }
 
@@ -5732,9 +5770,9 @@ fn profiles_divider(ui: &Ui, id: &str, size: [f32; 2], vertical: bool) -> Option
 fn profile_list(ui: &Ui, session: &Session, right: f32, size: [f32; 2]) -> ListPick {
     let names: Vec<String> = session
         .core
-        .vault()
-        .map(|v| v.profiles().map(|p| p.username.clone()).collect())
-        .unwrap_or_default();
+        .profiles()
+        .map(|p| p.username().to_string())
+        .collect();
     let focused = session.focused_name();
     let members = session.core.members();
     let multibox = session.multibox;
@@ -5792,7 +5830,7 @@ fn profiles_editor(ui: &Ui, session: &mut Session, size: [f32; 2]) {
             .child_flags(ChildFlags::NAV_FLATTENED)
             .build(ui, || preview = profile_import_body(ui, session));
         profile_import_bar(ui, session, w, preview);
-    } else if session.chooser_edit.is_some() {
+    } else if session.profile_editor.is_open() {
         let bar = profile_form_bar_height(ui, session, w);
         ui.child_window("##profiles-editor")
             .size([w, (h - bar).max(min_h)])
@@ -5805,7 +5843,7 @@ fn profiles_editor(ui: &Ui, session: &mut Session, size: [f32; 2]) {
 /// The edit form's fields, in the editor pane.
 fn profile_form_body(ui: &Ui, session: &mut Session) {
     {
-        let edit = session.chooser_edit.as_deref().unwrap_or("");
+        let edit = session.profile_editor.target().unwrap_or("");
         if edit.is_empty() {
             ui.text_colored(ACCENT, "New profile");
         } else {
@@ -5816,23 +5854,29 @@ fn profile_form_body(ui: &Ui, session: &mut Session) {
     }
     // One id scope per opened target: a text field still active from the
     // previous target cannot write its edit buffer into this one's fields.
-    let _form = ui.push_id(session.chooser_form);
+    let _form = ui.push_id(session.profile_editor.generation());
     ui.text_disabled("user");
-    if ui
-        .input_text("##cred-user", &mut session.cred_user)
+    let username_changed = ui
+        .input_text("##cred-user", session.profile_editor.username_mut())
         .hint("username")
-        .build()
-    {
-        session.note_chooser_edited();
+        .build();
+    if username_changed {
+        let _ = session.submit(
+            OperatorCommand::EditProfileDraft(frontend_core::command::ProfileDraftField::Username),
+            Targets::Application,
+        );
     }
     ui.text_disabled("pass");
     if ui
-        .input_text("##cred-pass", &mut session.cred_pass)
+        .input_text("##cred-pass", session.profile_editor.password_mut())
         .password(true)
         .hint("password")
         .build()
     {
-        session.note_chooser_edited();
+        let _ = session.submit(
+            OperatorCommand::EditProfileDraft(frontend_core::command::ProfileDraftField::Password),
+            Targets::Application,
+        );
     }
     slot_capture_section(ui, session);
     slot_random_section(ui, session);
@@ -5857,7 +5901,7 @@ fn button_rows(ui: &Ui, width: f32) -> f32 {
 }
 
 fn profile_form_bar_height(ui: &Ui, session: &Session, width: f32) -> f32 {
-    let notice = match session.chooser_save.notice() {
+    let notice = match session.profile_editor.save_state().notice() {
         Some(notice) if notice.is_saved() => wrapped_height(ui, notice.text(), width),
         Some(notice) => notice.error().map_or(0.0, |reason| {
             wrapped_height(ui, reason, width)
@@ -5870,11 +5914,11 @@ fn profile_form_bar_height(ui: &Ui, session: &Session, width: f32) -> f32 {
 
 /// Save's outcome and Save / Cancel, under the form's body.
 fn profile_form_bar(ui: &Ui, session: &mut Session, width: f32) {
-    let _form = ui.push_id(session.chooser_form);
+    let _form = ui.push_id(session.profile_editor.generation());
     // Save's outcome, next to Save: a refusal or a write that failed after
     // it was queued (nothing was written; the banner is hidden while
     // Profiles is open) or, once the write is durable, `Saved <name>.`.
-    match session.chooser_save.notice() {
+    match session.profile_editor.save_state().notice() {
         Some(notice) if notice.is_saved() => ui.text_colored(GREEN, notice.text()),
         Some(notice) => {
             if let Some(reason) = notice.error() {
@@ -5919,11 +5963,16 @@ fn profile_import_body(ui: &Ui, session: &mut Session) -> bool {
                  The preview lists every account and setting before anything is written."
             ));
             ui.set_next_item_width(-1.0);
-            entered = ui
+            let path_changed = ui
                 .input_text("##rs2b0t-import-path", session.profile_import.path_mut())
                 .hint(PROFILE_FILE_NAME)
                 .enter_returns_true(true)
                 .build();
+            if path_changed {
+                let _ =
+                    session.submit(OperatorCommand::EditProfileImportPath, Targets::Application);
+            }
+            entered = path_changed;
         }
         Stage::Preview => {
             ui.text_disabled("Existing profiles:");
@@ -5949,10 +5998,10 @@ fn profile_import_body(ui: &Ui, session: &mut Session) -> bool {
                 next = ConflictPolicy::Overwrite;
             }
             if next != policy {
-                session
-                    .profile_import
-                    .set_policy(&session.core, &session.scripts, next);
-                session.refresh_profile_import();
+                let _ = session.submit(
+                    OperatorCommand::SetProfileImportPolicy(next),
+                    Targets::Application,
+                );
             }
             // The preview's lines say which accounts and why.
             let unusable = session
@@ -5962,12 +6011,10 @@ fn profile_import_body(ui: &Ui, session: &mut Session) -> bool {
             if unusable > 0 {
                 let mut include = session.profile_import.include_unusable();
                 if ui.checkbox("Import unusable accounts", &mut include) {
-                    session.profile_import.set_include_unusable(
-                        &session.core,
-                        &session.scripts,
-                        include,
+                    let _ = session.submit(
+                        OperatorCommand::SetProfileImportIncludeUnusable(include),
+                        Targets::Application,
                     );
-                    session.refresh_profile_import();
                 }
             }
         }
@@ -6003,10 +6050,8 @@ fn profile_import_bar(ui: &Ui, session: &mut Session, width: f32, entered: bool)
             if ui.button_with_size("Preview", [bw, 0.0]) || entered {
                 // Script names map through the catalog: register it from its
                 // known root first (no folder prompt).
-                session.fill_rs2b0t_cards_once();
-                session
-                    .profile_import
-                    .preview(&session.core, &session.scripts);
+                let _ = session.submit(OperatorCommand::ImportCatalog, Targets::Application);
+                let _ = session.submit(OperatorCommand::PreviewProfileImport, Targets::Application);
                 changed = true;
             }
             if !stack {
@@ -6019,16 +6064,64 @@ fn profile_import_bar(ui: &Ui, session: &mut Session, width: f32, entered: bool)
         }
         Stage::Preview => {
             if ui.button_with_size("Import", [bw, 0.0]) {
-                session
+                match session
                     .profile_import
-                    .confirm(&mut session.core, &session.scripts);
+                    .prepare_confirmation(&session.core, &session.scripts)
+                {
+                    Ok(()) => {
+                        let planned = session
+                            .profile_import
+                            .planned_writes()
+                            .map(|(index, name, command)| (index, name.to_owned(), command))
+                            .collect::<Vec<_>>();
+                        for (index, name, planned_command) in planned {
+                            match planned_command {
+                                OperatorCommand::CreateProfile => {
+                                    if let Err(error) =
+                                        session.profile_import.stage_create_account(index)
+                                    {
+                                        session.error = Some(error.to_string());
+                                        break;
+                                    }
+                                    let _ = session.submit(
+                                        OperatorCommand::CreateProfile,
+                                        Targets::Application,
+                                    );
+                                }
+                                OperatorCommand::SaveProfile => {
+                                    if let Err(error) =
+                                        session.profile_import.stage_save_account(index)
+                                    {
+                                        session.error = Some(error.to_string());
+                                        break;
+                                    }
+                                    let _ = session.submit(
+                                        OperatorCommand::SaveProfile,
+                                        Targets::Profile(&name),
+                                    );
+                                }
+                                _ => {
+                                    session.error = Some(format!(
+                                        "Profile import account {name} has an unsupported writer."
+                                    ));
+                                    break;
+                                }
+                            }
+                            session.profile_import.cancel_staged_account(index);
+                        }
+                    }
+                    Err(error) => session.error = Some(error.to_string()),
+                }
                 changed = true;
             }
             if !stack {
                 gap_line(ui);
             }
             if ui.button_with_size("Back##rs2b0t-import", [bw, 0.0]) {
-                session.profile_import.back();
+                let _ = session.submit(
+                    OperatorCommand::ReturnToProfileImportPath,
+                    Targets::Application,
+                );
                 changed = true;
             }
         }
@@ -6036,7 +6129,13 @@ fn profile_import_bar(ui: &Ui, session: &mut Session, width: f32, entered: bool)
             if session.profile_import.can_delete(&session.core) {
                 if ui.button_with_size("Delete export file…", [bw, 0.0]) {
                     session.import_delete_understood = false;
-                    ui.open_popup(IMPORT_DELETE_POPUP);
+                    let _ = session.submit(
+                        OperatorCommand::SetProfileImportDeletePrompt(true),
+                        Targets::Application,
+                    );
+                    if session.profile_import.delete_asked() {
+                        ui.open_popup(IMPORT_DELETE_POPUP);
+                    }
                 }
                 if !stack {
                     gap_line(ui);
@@ -6050,6 +6149,7 @@ fn profile_import_bar(ui: &Ui, session: &mut Session, width: f32, entered: bool)
                     return;
                 }
             }
+            let delete_prompt_asked = session.profile_import.delete_asked();
             let body = match session.profile_import.export_path() {
                 Some(path) => format!(
                     "Delete {}? It holds your rs2b0t passwords in plain text. This cannot be undone.",
@@ -6064,8 +6164,16 @@ fn profile_import_bar(ui: &Ui, session: &mut Session, width: f32, entered: bool)
                 "Delete",
                 &mut session.import_delete_understood,
             ) {
-                session.profile_import.confirm_delete(&session.core);
+                let _ = session.submit(
+                    OperatorCommand::DeleteProfileImportExport,
+                    Targets::Application,
+                );
                 changed = true;
+            } else if delete_prompt_asked && !ui.is_popup_open(IMPORT_DELETE_POPUP) {
+                let _ = session.submit(
+                    OperatorCommand::SetProfileImportDeletePrompt(false),
+                    Targets::Application,
+                );
             }
         }
     }
@@ -6147,12 +6255,19 @@ fn slot_clue_section(ui: &Ui, session: &mut Session) {
     if ui
         .input_text(
             "##clue-duel-partner",
-            &mut session.cred_settings.clue_duel_partner,
+            session
+                .profile_editor
+                .draft_mut()
+                .settings_mut()
+                .clue_duel_partner_mut(),
         )
         .hint("other account name")
         .build()
     {
-        session.note_chooser_edited();
+        let _ = session.submit(
+            OperatorCommand::EditProfileDraft(frontend_core::command::ProfileDraftField::Settings),
+            Targets::Application,
+        );
     }
     ui.text_wrapped(
         "run this account in Duel Arena Clue helper mode when clue 3554 needs the crossing",
@@ -6163,19 +6278,44 @@ fn slot_clue_section(ui: &Ui, session: &mut Session) {
 /// Profile choices use the same vault save path as the existing random-event
 /// and lamp controls.
 fn slot_random_section(ui: &Ui, session: &mut Session) {
-    let mut events = session.cred_settings.random_events;
+    let mut events = session.profile_editor.draft().settings().random_events();
     if ui.checkbox("random events", &mut events) {
-        session.cred_settings.random_events = events;
-        if let Some(name) = session.chooser_edit.as_deref().filter(|n| !n.is_empty()) {
-            let name = name.to_string();
-            session.set_random_settings(
-                &name,
-                events,
-                &session.cred_settings.lamp_skill.clone(),
-                session.cred_settings.lamp_auto,
-            );
+        *session
+            .profile_editor
+            .draft_mut()
+            .settings_mut()
+            .random_events_mut() = events;
+        if let Some(name) = session
+            .profile_editor
+            .target()
+            .filter(|n| !n.is_empty())
+            .map(str::to_owned)
+        {
+            let skill = session
+                .profile_editor
+                .draft()
+                .settings()
+                .lamp_skill()
+                .to_string();
+            let lamp_auto = session.profile_editor.draft().settings().lamp_auto();
+            session
+                .core
+                .stage_guardian(frontend_core::GuardianEdit::fields(
+                    events, &skill, lamp_auto,
+                ));
+            if let Some(submitted) =
+                session.submit(OperatorCommand::SetGuardian, Targets::Profile(&name))
+            {
+                session.error = session
+                    .core
+                    .command_failure(submitted.request())
+                    .map(|reason| reason.to_string());
+            }
         }
-        session.note_chooser_edited();
+        let _ = session.submit(
+            OperatorCommand::EditProfileDraft(frontend_core::command::ProfileDraftField::Settings),
+            Targets::Application,
+        );
     }
     ui.text_wrapped("Off: show event status only; do not handle or hold events.");
     let policies_open = ui.collapsing_header("Policies", TreeNodeFlags::NONE);
@@ -6183,50 +6323,125 @@ fn slot_random_section(ui: &Ui, session: &mut Session) {
         "Per-event response: Flee is available; Fight and Ignore are disabled, and saved choices are treated as Flee.",
     );
     if policies_open {
-        for (event, label) in vault::RANDOM_EVENT_POLICY_EVENTS {
+        for (event, label) in frontend_core::GUARDIAN_EVENTS {
             ui.text_disabled(label);
             ui.same_line();
-            let mut policy = session.cred_settings.random_event_policy(event);
+            let mut policy = session
+                .profile_editor
+                .draft()
+                .settings()
+                .random_event_policy(event);
             if random_event_policy_combo(ui, event, &mut policy) {
-                session.cred_settings.set_random_event_policy(event, policy);
-                if let Some(name) = session.chooser_edit.as_deref().filter(|n| !n.is_empty()) {
-                    let name = name.to_string();
-                    session.set_random_event_policy(&name, event, policy);
+                session
+                    .profile_editor
+                    .draft_mut()
+                    .settings_mut()
+                    .set_random_event_policy(event, policy);
+                if let Some(name) = session
+                    .profile_editor
+                    .target()
+                    .filter(|n| !n.is_empty())
+                    .map(str::to_owned)
+                {
+                    session
+                        .core
+                        .stage_guardian(frontend_core::GuardianEdit::policy(event, policy));
+                    if let Some(submitted) =
+                        session.submit(OperatorCommand::SetGuardian, Targets::Profile(&name))
+                    {
+                        session.error = session
+                            .core
+                            .command_failure(submitted.request())
+                            .map(|reason| reason.to_string());
+                    }
                 }
-                session.note_chooser_edited();
+                let _ = session.submit(
+                    OperatorCommand::EditProfileDraft(
+                        frontend_core::command::ProfileDraftField::Settings,
+                    ),
+                    Targets::Application,
+                );
             }
         }
     }
-    let mut auto = session.cred_settings.lamp_auto;
+    let mut auto = session.profile_editor.draft().settings().lamp_auto();
     if ui.checkbox("lamp auto", &mut auto) {
-        session.cred_settings.lamp_auto = auto;
-        if let Some(name) = session.chooser_edit.as_deref().filter(|n| !n.is_empty()) {
-            let name = name.to_string();
-            session.set_random_settings(
-                &name,
-                session.cred_settings.random_events,
-                &session.cred_settings.lamp_skill.clone(),
-                auto,
-            );
+        *session
+            .profile_editor
+            .draft_mut()
+            .settings_mut()
+            .lamp_auto_mut() = auto;
+        if let Some(name) = session
+            .profile_editor
+            .target()
+            .filter(|n| !n.is_empty())
+            .map(str::to_owned)
+        {
+            let events = session.profile_editor.draft().settings().random_events();
+            let skill = session
+                .profile_editor
+                .draft()
+                .settings()
+                .lamp_skill()
+                .to_string();
+            session
+                .core
+                .stage_guardian(frontend_core::GuardianEdit::fields(events, &skill, auto));
+            if let Some(submitted) =
+                session.submit(OperatorCommand::SetGuardian, Targets::Profile(&name))
+            {
+                session.error = session
+                    .core
+                    .command_failure(submitted.request())
+                    .map(|reason| reason.to_string());
+            }
         }
-        session.note_chooser_edited();
+        let _ = session.submit(
+            OperatorCommand::EditProfileDraft(frontend_core::command::ProfileDraftField::Settings),
+            Targets::Application,
+        );
     }
     ui.text_wrapped(
         "this profile; claim a lamp reward without a confirmation click (guardian rubs when lamp auto is on).",
     );
-    let mut skill = session.cred_settings.lamp_skill.clone();
+    let mut skill = session
+        .profile_editor
+        .draft()
+        .settings()
+        .lamp_skill()
+        .to_string();
     if lamp_skill_combo(ui, &mut skill) {
-        session.cred_settings.lamp_skill = skill.clone();
-        if let Some(name) = session.chooser_edit.as_deref().filter(|n| !n.is_empty()) {
-            let name = name.to_string();
-            session.set_random_settings(
-                &name,
-                session.cred_settings.random_events,
-                &skill,
-                session.cred_settings.lamp_auto,
-            );
+        *session
+            .profile_editor
+            .draft_mut()
+            .settings_mut()
+            .lamp_skill_mut() = skill.clone();
+        if let Some(name) = session
+            .profile_editor
+            .target()
+            .filter(|n| !n.is_empty())
+            .map(str::to_owned)
+        {
+            let events = session.profile_editor.draft().settings().random_events();
+            let lamp_auto = session.profile_editor.draft().settings().lamp_auto();
+            session
+                .core
+                .stage_guardian(frontend_core::GuardianEdit::fields(
+                    events, &skill, lamp_auto,
+                ));
+            if let Some(submitted) =
+                session.submit(OperatorCommand::SetGuardian, Targets::Profile(&name))
+            {
+                session.error = session
+                    .core
+                    .command_failure(submitted.request())
+                    .map(|reason| reason.to_string());
+            }
         }
-        session.note_chooser_edited();
+        let _ = session.submit(
+            OperatorCommand::EditProfileDraft(frontend_core::command::ProfileDraftField::Settings),
+            Targets::Application,
+        );
     }
 }
 
@@ -6255,8 +6470,12 @@ fn lamp_skill_combo(ui: &Ui, skill: &mut String) -> bool {
     changed
 }
 
-fn random_event_policy_combo(ui: &Ui, event: &str, policy: &mut vault::RandomEventPolicy) -> bool {
-    use vault::RandomEventPolicy::{Fight, Flee, Ignore};
+fn random_event_policy_combo(
+    ui: &Ui,
+    event: &str,
+    policy: &mut frontend_core::GuardianPolicy,
+) -> bool {
+    use frontend_core::GuardianPolicy::{Fight, Flee, Ignore};
 
     let preview = match *policy {
         Flee => "Flee",
@@ -6335,12 +6554,13 @@ fn chooser_row(
 /// Offline prepare: mint isolated identity, write server-native `.sav` via
 /// `tools/harness`, write durable fixture identity — no live engine/window.
 fn run_offline_prepare_fixture(args: &PanelArgs, scenario: &str) -> Result<(), String> {
-    let sc = scenario::get(scenario).ok_or_else(|| format!("unknown scenario {scenario}"))?;
-    let profile_count = sc.seed.profiles.len();
+    let scenario_value = frontend_core::live::Scenario::get(scenario)
+        .ok_or_else(|| format!("unknown scenario {scenario}"))?;
+    let view = scenario_value.view();
+    let profile_count = view.profile_count();
     if profile_count == 0 {
         return Err(format!("scenario {scenario} has zero seed profiles"));
     }
-    let fixture_preset = scenario::fixture_preset_for(scenario)?;
     let server_root = args
         .server_root
         .clone()
@@ -6355,38 +6575,34 @@ fn run_offline_prepare_fixture(args: &PanelArgs, scenario: &str) -> Result<(), S
     let identity_path = args
         .fixture_path
         .clone()
-        .unwrap_or_else(|| scenario::default_fixture_path(scenario));
+        .unwrap_or_else(|| scenario_value.default_fixture_path());
     let sav_dir = identity_path
         .parent()
-        .map(|p| p.join(scenario))
-        .unwrap_or_else(|| scenario::default_fixture_sav_dir(scenario));
-    let names = host_play::mint_live_names(profile_count);
-    let entries = host_play::mint_live_entries(&names);
-    let pass = host_play::live_vault_passphrase();
-    let passwords: Vec<String> = entries.iter().map(|(_, p)| p.clone()).collect();
-    let identity = scenario::prepare_offline_fixture(scenario::OfflinePrepareOpts {
-        scenario: scenario.to_string(),
-        fixture_preset: fixture_preset.to_string(),
-        profile: "main".into(),
+        .map(|path| path.join(view.name()))
+        .unwrap_or_else(|| scenario_value.default_fixture_sav_dir());
+    let profiles = frontend_core::live::LiveProfiles::mint(profile_count);
+    let passwords = profiles
+        .entries()
+        .iter()
+        .map(|(_, password)| password.clone())
+        .collect();
+    let identity = scenario_value.prepare_offline_fixture(
         server_root,
-        identity_path: identity_path.clone(),
+        identity_path.clone(),
         sav_dir,
-        usernames: names,
+        profiles.names().to_vec(),
         passwords,
-        vault_passphrase: pass,
-        overwrite: true,
-    })?;
+        profiles.passphrase().to_owned(),
+    )?;
+    let accounts = identity.accounts();
     println!(
         "[panel] offline fixture prepared: scenario={} identity={} accounts={}",
-        identity.scenario,
+        identity.scenario_name(),
         identity_path.display(),
-        identity.accounts.len()
+        accounts.len()
     );
-    for a in &identity.accounts {
-        println!(
-            "[panel]   {} sav={} sha256={} bytes={}",
-            a.username, a.sav_path, a.sav_sha256, a.sav_bytes
-        );
+    for (username, sav_path, sha256, bytes) in accounts {
+        println!("[panel]   {username} sav={sav_path} sha256={sha256} bytes={bytes}");
     }
     println!("PASS: offline prepare fixture {scenario}");
     Ok(())
@@ -6395,7 +6611,7 @@ fn run_offline_prepare_fixture(args: &PanelArgs, scenario: &str) -> Result<(), S
 fn init_panel_running(
     args: &PanelArgs,
     shot_state: Arc<Mutex<crate::window::ShotState>>,
-    permit: host_play::InstancePermit,
+    permit: InstancePermit,
 ) -> Result<(PanelState, StartupPreparation), window::PanelError> {
     let mut state = PanelState::with_session(Session::with_instance(permit), shot_state);
     state.session.set_memory_override(args.memory_override);
@@ -6406,27 +6622,23 @@ fn init_panel_running(
     state.session.set_external_ts(args.external_ts.clone());
     crate::log_pane::apply_session_log_pref(&mut state.session);
     let fixture_mode = if args.run_prepared {
-        scenario::FixtureMode::RunPrepared
+        frontend_core::live::FixtureMode::RunPrepared
     } else {
-        scenario::FixtureMode::Default
+        frontend_core::live::FixtureMode::Default
     };
     state
         .session
         .set_fixture_boot(fixture_mode, args.fixture_path.clone());
     state
         .session
-        .configure_profile(args.profile.clone())
-        .map_err(window::PanelError::ServerProfile)?;
+        .configure_profile(args.profile.duplicate())
+        .map_err(|error| window::PanelError::ServerProfile(error.to_string()))?;
     let vault_pass = if args.vault_pass_stdin && matches!(args.mode, RunMode::Interactive) {
         let exists = state
             .session
             .default_vault_exists()
-            .map_err(window::PanelError::ServerProfile)?;
-        match host_play::passphrase::obtain(
-            "panel-play",
-            true,
-            host_play::passphrase::Purpose::for_vault(exists),
-        ) {
+            .map_err(|error| window::PanelError::ServerProfile(error.to_string()))?;
+        match frontend_core::launch::obtain_passphrase("panel-play", true, exists) {
             Ok(pass) => Some(pass),
             Err(msg) => {
                 eprintln!("FAIL: {msg}");
@@ -6438,16 +6650,20 @@ fn init_panel_running(
     };
     let boot = boot_for(&args.mode, vault_pass);
     #[cfg(feature = "memory-profile")]
-    let boot = match host_play::memory::Config::from_env() {
+    let boot = match frontend_core::bench::BenchConfig::from_env() {
         Ok(Some(config)) => {
             client::profiling::enable();
             // The profile is not bound yet (an unbound session reads as
             // Remote), so check the class of the profile it will bind.
             let class = state
                 .session
-                .resolve_profile()
-                .map(|profile| profile.profile_class());
-            if let Err(error) = class.and_then(host_play::memory::require_live_benchmark) {
+                .launcher
+                .configured_class(state.session.ui.server_revision);
+            let live = class.map_err(|error| error.to_string()).and_then(|class| {
+                frontend_core::bench::require_live_benchmark(class)
+                    .map_err(|error| error.to_string())
+            });
+            if let Err(error) = live {
                 eprintln!("FAIL: {error}");
                 exit_after_work_shutdown(1);
             }
@@ -6463,7 +6679,7 @@ fn init_panel_running(
 }
 
 /// `Some(true)` continue, `Some(false)` exit, `None` still open.
-fn instance_conflict_choice(ui: &Ui, holder: &host_play::InstanceHolder) -> Option<bool> {
+fn instance_conflict_choice(ui: &Ui, conflict: &InstanceConflict) -> Option<bool> {
     let mut open = true;
     let mut choice = None;
     ui.window("Another 274bot is running")
@@ -6475,7 +6691,7 @@ fn instance_conflict_choice(ui: &Ui, holder: &host_play::InstanceHolder) -> Opti
         )
         .build(|| {
             let _wrap = ui.push_text_wrap_pos(scale_px(ui, DIALOG_W - 16.0));
-            ui.text_wrapped(host_play::instance_conflict_message(holder));
+            ui.text_wrapped(conflict.message());
             ui.spacing();
             let avail = ui.content_region_avail()[0];
             let (w, stack) = scaled_button_row_layout(ui, avail, 2);
@@ -6534,19 +6750,19 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     let skip_lock = !matches!(args.mode, RunMode::Interactive);
     #[cfg(feature = "memory-profile")]
     let skip_lock = skip_lock
-        || host_play::memory::Config::from_env()
+        || frontend_core::bench::BenchConfig::from_env()
             .ok()
             .flatten()
             .is_some();
     let shot_state = Arc::new(Mutex::new(crate::window::ShotState::default()));
     let mut instance_prompt = None;
     let mut running = None;
-    match host_play::resolve_instance_permit(host_play::InstanceKind::Panel, skip_lock) {
-        Ok(host_play::InstancePermitOutcome::Ready(permit)) => {
+    match frontend_core::launch::acquire_instance(InstanceKind::Panel, skip_lock) {
+        Ok(Ok(permit)) => {
             running = Some(init_panel_running(&args, Arc::clone(&shot_state), permit)?);
         }
-        Ok(host_play::InstancePermitOutcome::NeedsConfirm(holder)) => {
-            instance_prompt = Some(holder);
+        Ok(Err(conflict)) => {
+            instance_prompt = Some(conflict);
         }
         Err(e) => {
             eprintln!("panel: instance lock: {e}");
@@ -6588,7 +6804,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
                         match init_panel_running(
                             &args,
                             Arc::clone(&shot_state),
-                            host_play::InstancePermit::skip(),
+                            InstancePermit::skip(),
                         ) {
                             Ok(ready) => *frame_running.borrow_mut() = Some(ready),
                             Err(e) => {
@@ -6659,7 +6875,7 @@ fn pump_shots(state: &mut PanelState) -> usize {
     let mut written = 0;
     for cap in done {
         if state.shot_dir.is_none() {
-            match scenario::shot::create_run_dir() {
+            match frontend_core::live::create_shot_run_dir() {
                 Ok(dir) => state.shot_dir = Some(dir),
                 Err(error) => {
                     let message = format!("shot directory unavailable: {error}");
@@ -6674,7 +6890,7 @@ fn pump_shots(state: &mut PanelState) -> usize {
             }
         }
         if let Some(dir) = state.shot_dir.as_deref() {
-            match scenario::shot::write_shot(
+            match frontend_core::live::write_shot(
                 dir,
                 &cap.label,
                 &cap.rgba,
@@ -6761,15 +6977,8 @@ fn pump_shots(state: &mut PanelState) -> usize {
 fn pump_record(state: &mut PanelState) {
     if state.record.needs_arm() && state.live.is_some() {
         if let Some(dir) = state.shot_dir.clone() {
-            let scenario = state
-                .session
-                .scenario
-                .lock()
-                .unwrap()
-                .as_ref()
-                .map(|runner| runner.scenario_name().to_string());
-            if let Some(scenario) = scenario {
-                state.record.arm(&dir, &scenario);
+            if let Some(scenario) = state.session.core.live_runner().scenario_name() {
+                state.record.arm(&dir, scenario);
             }
         }
     }
@@ -6802,18 +7011,14 @@ fn pump_record(state: &mut PanelState) {
 /// frames actually staged, so the lock never costs a non-recording frame.
 fn record_step_info(session: &Session) -> StepInfo {
     session
-        .scenario
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|runner| {
-            let (step, total, name) = runner.record_step();
-            StepInfo {
-                step,
-                total,
-                name: name.to_string(),
-                tick: runner.total_ticks(),
-            }
+        .core
+        .live_runner()
+        .record_step()
+        .map(|(step, total, name, tick)| StepInfo {
+            step,
+            total,
+            name: name.to_string(),
+            tick,
         })
         .unwrap_or(StepInfo {
             step: 0,
@@ -6886,12 +7091,15 @@ fn pair_actor_capture_ready(state: &PanelState, actor: &str) -> Option<String> {
 }
 
 fn current_pair_actor_sidecar(session: &Session, actor: &str) -> Option<String> {
-    let states = session.nav_states.lock().unwrap();
-    let (snapshot, _) = states.get(actor)?;
-    if !snapshot.ingame() || snapshot.scene_state() != 2 {
-        return None;
-    }
-    actor_snapshot_json(actor, snapshot).ok()
+    session
+        .core
+        .with_slot_snapshot(actor, |snapshot| {
+            if !snapshot.ingame() || snapshot.scene_state() != 2 {
+                return None;
+            }
+            actor_snapshot_json(actor, snapshot).ok()
+        })
+        .flatten()
 }
 
 fn record_presented_upload(
@@ -6905,15 +7113,13 @@ fn record_presented_upload(
     }
 }
 
-/// The per-frame UI body: session pump, live harness ticks, dock host,
-/// chrome, game pane, rail.
-fn ui_frame(
-    ui: &Ui,
-    gpu: &mut Gpu,
-    state: &mut PanelState,
-    progress: Option<StartupProgressView>,
-    live_failure: &Mutex<Option<String>>,
-) -> bool {
+/// The ordered, non-drawing front of the per-frame UI body: theme, shots,
+/// recording, the session pump, Quester Paths and the live harness tick.
+/// Returns `true` when the live harness ends the run. `ui_frame` calls it
+/// right after it resets the input staging and before it draws anything; the
+/// order of these calls is the frame's contract (the pump publishes the
+/// status the live tick reads).
+fn frame_pumps(state: &mut PanelState, live_failure: &Mutex<Option<String>>) -> bool {
     apply_amber_current(&state.session.ui.chrome);
     let wrote_shots = pump_shots(state);
     pump_record(state);
@@ -6921,40 +7127,29 @@ fn ui_frame(
     #[cfg(feature = "memory-profile")]
     if let Some(run) = state.memory.as_mut() {
         state.session.memory_focus(run);
-        if let Some(play) = state.session.core.play() {
-            match run.poll(play) {
-                Ok(true) => {
-                    eprintln!("PASS: memory panel observation complete");
-                    exit_after_work_shutdown(0);
-                }
-                Ok(false) => {}
-                Err(error) => {
-                    eprintln!("FAIL: memory panel: {error}");
-                    exit_after_work_shutdown(1);
-                }
+        match run.poll(&state.session.core) {
+            Ok(true) => {
+                eprintln!("PASS: memory panel observation complete");
+                exit_after_work_shutdown(0);
+            }
+            Ok(false) => {}
+            Err(error) => {
+                eprintln!("FAIL: memory panel: {error}");
+                exit_after_work_shutdown(1);
             }
         }
     }
     state.session.poll_quester_paths_reload();
-    state.session.pump_script_transpile();
     if let Some(live) = state.live.as_mut() {
-        // Harness runs only: an interactive frame copies no status rows.
-        let statuses = state.session.statuses().to_vec();
-        let terminal_shot_status = {
-            let label = state
-                .session
-                .scenario
-                .lock()
-                .unwrap()
-                .as_ref()
-                .and_then(|runner| runner.terminal_shot());
-            label
-                .map(|label| state.shot_state.lock().unwrap().status(label))
-                .unwrap_or(ShotStatus::Missing)
-        };
+        let terminal_shot_status = state
+            .session
+            .core
+            .live_runner()
+            .terminal_shot()
+            .map(|label| state.shot_state.lock().unwrap().status(label))
+            .unwrap_or(ShotStatus::Missing);
         let failure = live.tick(
             &mut state.session,
-            &statuses,
             &terminal_shot_status,
             Some(&state.shot_state),
             wrote_shots,
@@ -6972,6 +7167,22 @@ fn ui_frame(
             }
             return true;
         }
+    }
+    false
+}
+
+/// The per-frame UI body: the pump phase ([`frame_pumps`]), dock host,
+/// chrome, game pane, the staged GameInput submit, rail.
+fn ui_frame(
+    ui: &Ui,
+    gpu: &mut Gpu,
+    state: &mut PanelState,
+    progress: Option<StartupProgressView>,
+    live_failure: &Mutex<Option<String>>,
+) -> bool {
+    state.session.map_desk.begin_game_input_frame();
+    if frame_pumps(state, live_failure) {
+        return true;
     }
     // Interactive whole-window capture: F12 enqueues one shot per press
     // (a rising edge, no repeat) with no scenario involved. Harness runs
@@ -6991,11 +7202,6 @@ fn ui_frame(
     crate::fleet::window(ui, &mut state.session);
     {
         let focus = state.session.focus.lock().unwrap();
-        let tx = if should_capture(&focus) {
-            state.session.capture_tx.as_ref()
-        } else {
-            None
-        };
         if let Some(slot) = focus
             .focused
             .as_deref()
@@ -7006,7 +7212,7 @@ fn ui_frame(
         }
         state
             .keyboard
-            .process_ownership(ui, tx, focus.focused.as_deref());
+            .process_ownership(ui, &mut state.session.map_desk, focus.focused.as_deref());
     }
     ui.set_next_window_class(&game_class);
     // Frame owner: identity replacement and close-release happen outside
@@ -7029,6 +7235,16 @@ fn ui_frame(
         }
     }
     game_window(ui, gpu, state, &title);
+    if state.session.map_desk.has_staged_game_input() {
+        if let Some(submitted) = state
+            .session
+            .submit(OperatorCommand::GameInput, Targets::Selected)
+        {
+            if let Some(error) = state.session.core.command_failure(submitted.request()) {
+                state.session.error = Some(error.to_owned());
+            }
+        }
+    }
     if state.session.multibox && !state.session.wall.grid {
         ui.set_next_window_class(&rail_window_class());
         rail_window(ui, gpu, state);
@@ -7052,15 +7268,28 @@ fn ui_frame(
 #[cfg(test)]
 mod parameter_options_tests {
     use super::*;
+    fn compiled_schema(
+        session: &crate::session::Session,
+        name: &str,
+    ) -> frontend_core::scripts::SchemaRef<'static> {
+        let id = frontend_core::scripts::CompiledCardId::lookup(name)
+            .unwrap_or_else(|| panic!("compiled card {name} is registered"));
+        match session.scripts.compiled_schema(&session.core, None, id) {
+            frontend_core::scripts::SchemaView::Ready { fields, .. } => fields,
+            frontend_core::scripts::SchemaView::Unavailable(reason) => {
+                panic!("compiled card {name} schema unavailable: {reason}")
+            }
+        }
+    }
 
     #[test]
     fn panel_site_filter_uses_selectable_shared_search_results() {
+        let session = crate::session::Session::new();
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let loadouts = script::LoadoutsStore::default();
-        let schema = script::gatherer::settings::schema();
+        let loadouts = frontend_core::scripts::Loadouts::default();
+        let schema = compiled_schema(&session, "Gatherer");
         let site = schema
-            .iter()
-            .find(|field| field.id == "site")
+            .get("site")
             .expect("Gatherer schema includes the Site setting");
         let mut bag = serde_json::Map::new();
         bag.insert("skill".into(), serde_json::json!("Woodcutting"));
@@ -7092,12 +7321,12 @@ mod parameter_options_tests {
 
     #[test]
     fn disabled_panel_site_keeps_the_saved_reason_read_only() {
+        let session = crate::session::Session::new();
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let loadouts = script::LoadoutsStore::default();
-        let schema = script::gatherer::settings::schema();
+        let loadouts = frontend_core::scripts::Loadouts::default();
+        let schema = compiled_schema(&session, "Gatherer");
         let site = schema
-            .iter()
-            .find(|field| field.id == "site")
+            .get("site")
             .expect("Gatherer schema includes the Site setting");
         let mut bag = serde_json::Map::new();
         bag.insert("skill".into(), serde_json::json!("Mining"));
@@ -7123,11 +7352,11 @@ mod parameter_options_tests {
 
     #[test]
     fn preserved_only_priority_array_is_editable_for_removal() {
-        let loadouts = script::LoadoutsStore::default();
-        let schema = (script::quester::card::CARD.schema)();
+        let session = crate::session::Session::new();
+        let loadouts = frontend_core::scripts::Loadouts::default();
+        let schema = compiled_schema(&session, "Quester");
         let priority = schema
-            .iter()
-            .find(|field| field.id == "order_override")
+            .get("order_override")
             .expect("Quester has an order override array");
         let mut bag = serde_json::Map::new();
         bag.insert("quests".into(), serde_json::json!(["hauntedmine"]));
@@ -7153,8 +7382,8 @@ mod parameter_options_tests {
             "the same preserved row cannot be selected again"
         );
 
-        let persisted = script::coerce_setting_value(&priority.ty, &serde_json::json!(selected));
-        bag.insert(priority.id.clone(), persisted.clone());
+        let persisted = priority.coerce(&serde_json::json!(selected));
+        bag.insert(priority.id().to_owned(), persisted.clone());
         assert_eq!(persisted, serde_json::json!([]));
         let options =
             frontend_core::scripts::resolve_parameter_options(priority, &bag, &loadouts, None);
@@ -7176,3 +7405,7 @@ mod window_tests;
 #[cfg(test)]
 #[path = "app_teardown_tests.rs"]
 mod teardown_tests;
+
+#[cfg(test)]
+#[path = "app_frame_tests.rs"]
+mod frame_tests;

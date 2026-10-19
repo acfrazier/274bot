@@ -16,9 +16,9 @@ use std::fmt::{self, Write as _};
 use std::sync::{Arc, Mutex, TryLockError};
 use std::time::Instant;
 
+use crate::scripts::{ScriptRunState as RunState, StatusView};
 use host::login_queue::AdmitBlocker;
 use host_play::{Play, SlotArm, SlotStatus, StartupPhase, WalkArm};
-use script::RunState;
 
 use api::hostlog::{Level, Source};
 
@@ -690,12 +690,12 @@ impl SlotDetail {
 impl SlotDetail {
     /// The retained native status of the focused slot; `None` for a slot
     /// that runs no native script.
-    pub fn native_status(&self) -> Option<&script::native::ScriptStatus> {
-        self.native_status.as_deref()
+    pub fn native_status(&self) -> Option<StatusView<'_>> {
+        self.native_status.as_deref().map(StatusView::new)
     }
 
-    /// Replaces the retained native status. The poll sets it; fixtures use
-    /// it too, since the field is private.
+    /// Replaces the retained native status (fixtures; the field is private).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn with_native_status(mut self, status: Option<Arc<script::native::ScriptStatus>>) -> Self {
         self.native_status = status;
         self
@@ -704,12 +704,13 @@ impl SlotDetail {
     /// The phase and park reason the Status card shows for this slot's
     /// script. `None` when no script runs and no terminal failure remains.
     pub fn script_phase(&self) -> Option<ScriptPhase<'_>> {
-        let status = self.native_status()?;
+        let view = self.native_status()?;
+        let status = view.status();
         if self.row.script == RunState::Idle && status.failure.is_none() {
             return None;
         }
         Some(ScriptPhase {
-            label: script_status_label(self.row.script, Some(status)),
+            label: script_status_label(self.row.script, Some(view)),
             phase: if parked(status) {
                 Some("blocked")
             } else {
@@ -1087,7 +1088,7 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
         _ => input.start_places.get(row.name.as_str()).copied(),
     };
     let script = match (input.play, arm.is_some()) {
-        (Some(play), true) => play.script_state(&row.name),
+        (Some(play), true) => RunState::from_script(play.script_state(&row.name)),
         _ => RunState::Idle,
     };
     let mut changed = false;
@@ -1382,10 +1383,8 @@ pub const fn run_state_label(state: RunState) -> &'static str {
 
 /// Terminal native failures remain visible after the lifecycle stops.
 /// Waiting is a live phase; it does not retire the run.
-pub fn script_status_label(
-    state: RunState,
-    status: Option<&script::native::ScriptStatus>,
-) -> &'static str {
+pub fn script_status_label(state: RunState, status: Option<StatusView<'_>>) -> &'static str {
+    let status = status.map(|status| status.status());
     if state == RunState::Idle
         && status.is_some_and(|status| {
             status.phase == script::native::NativePhase::Blocked && status.failure.is_some()
@@ -1412,7 +1411,8 @@ pub fn script_status_label(
 }
 
 /// The current refusal or wait takes priority over a normal action caption.
-pub fn script_status_reason(status: &script::native::ScriptStatus) -> Option<&str> {
+pub fn script_status_reason(status: StatusView<'_>) -> Option<&str> {
+    let status = status.status();
     park_reason(status)
         .or_else(|| text_field(status, "waiting_for"))
         .or_else(|| text_field(status, "action_state"))
@@ -1472,9 +1472,8 @@ fn field_text<'a>(field: &'a script::native::StatusField, key: &str) -> Option<&
 
 /// The short text rows both front ends show under the status line, as
 /// `(label, value)`. Folder Path comments are shown only with a source marker.
-pub fn script_status_rows(
-    status: &script::native::ScriptStatus,
-) -> impl Iterator<Item = (&str, &str)> {
+pub fn script_status_rows(status: StatusView<'_>) -> impl Iterator<Item = (&str, &str)> {
+    let status = status.status();
     status.fields.iter().filter_map(|field| match &field.value {
         script::native::StatusValue::Text(value)
             if matches!(

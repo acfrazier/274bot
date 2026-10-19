@@ -16,7 +16,9 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
+use super::{CardSource, CompiledCardId, ScriptChoice, SyncCommandInput};
 use super::{LiveDeliveryKind, LiveSettings, Scripts, SettingsWrite};
+use crate::command::CardKind;
 use crate::operations::{ActionKind, OperationId, Outcome};
 use crate::session::{ArmMirror, NativeCopyCancellation, OperatorSession};
 
@@ -911,14 +913,15 @@ impl Scripts {
     /// source that has not used the card yet contributes the legacy
     /// overrides its first read would migrate, without claiming them.
     /// Nothing is written until [`Self::apply_settings_sync`].
-    pub fn prepare_settings_sync<Io>(
+    pub(crate) fn prepare_settings_sync<Io>(
         &mut self,
         core: &OperatorSession<Io>,
         source: &str,
-        card_source: script::ScriptSource,
+        card_source: CardSource,
         card_name: &str,
         card_path: &Path,
     ) -> &SyncScope {
+        let card_source = card_source.to_script();
         let card = script::card_identity_key(card_source, card_path, card_name);
         self.sync.start_hold = core.play().map(|play| {
             play.hold_script_starts(format!(
@@ -959,13 +962,14 @@ impl Scripts {
         })
     }
 
-    pub fn prepare_compiled_settings_sync<Io>(
+    pub(crate) fn prepare_compiled_settings_sync<Io>(
         &mut self,
         core: &OperatorSession<Io>,
         source: &str,
-        id: script::CompiledId,
+        id: CompiledCardId,
         field: Option<&str>,
     ) -> Result<&SyncScope, String> {
+        let id = id.to_script();
         self.clear_prepared_settings_sync();
         let descriptor = script::compiled_card(id).ok_or("compiled card unavailable")?;
         let mut excluded_fields: Vec<String> = descriptor
@@ -993,7 +997,7 @@ impl Scripts {
             }
         }
         let card = script::compiled_identity_key(id);
-        let overrides = self.compiled_overrides(core, source, id)?;
+        let overrides = self.compiled_overrides(core, source, CompiledCardId::from_script(id))?;
         let mut targets = Vec::new();
         let mut skipped = Vec::new();
         for member in core.members().iter().filter(|member| *member != source) {
@@ -1034,6 +1038,28 @@ impl Scripts {
         self.sync.prepared.as_ref()
     }
 
+    /// Stage a profile's selected script settings for the Apply-to-all
+    /// preparation row.
+    pub fn stage_settings_sync_prepare(&mut self, source: &str, selection: &ScriptChoice) {
+        self.stage_sync_command(SyncCommandInput::Prepare, source, selection);
+    }
+
+    /// Stage the frozen prepared scope for the Apply-to-all confirmation row.
+    pub fn stage_settings_sync_apply(&mut self) -> Option<CardKind> {
+        let (source, selection, kind) = {
+            let scope = self.prepared_settings_sync()?;
+            let selection = ScriptChoice::from_script(scope.selection.clone());
+            let kind = if selection.compiled_id().is_some() {
+                CardKind::Native
+            } else {
+                CardKind::Script
+            };
+            (scope.source.clone(), selection, kind)
+        };
+        self.stage_sync_command(SyncCommandInput::Apply, &source, &selection);
+        Some(kind)
+    }
+
     /// Narrow the prepared sync to the marked rows; see
     /// [`SyncScope::restrict_to_marked`]. No effect when nothing is prepared.
     pub(crate) fn restrict_prepared_settings_sync(&mut self, marked: &[String], gone: Vec<String>) {
@@ -1047,7 +1073,7 @@ impl Scripts {
         self.sync.start_hold = None;
     }
 
-    pub fn cancel_settings_sync(&mut self) {
+    pub(crate) fn cancel_settings_sync(&mut self) {
         let confirming = self.sync.prepared.is_some();
         self.clear_prepared_settings_sync();
         if !confirming {
@@ -1074,7 +1100,7 @@ impl Scripts {
     /// merged bag once its write is durable, fenced to that run. Native copies
     /// also hold new Starts through preparation and persistence; JS copies
     /// release after their bag has been staged. Returns the sync operation.
-    pub fn apply_settings_sync<Io>(
+    pub(crate) fn apply_settings_sync<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
     ) -> Result<OperationId, String> {
@@ -1140,7 +1166,7 @@ impl Scripts {
                         .iter()
                         .find(|(member, _)| member == &target)
                         .map_or(&[][..], |(_, fields)| fields.as_slice());
-                    match self.compiled_overrides(core, &target, *id) {
+                    match self.compiled_overrides(core, &target, CompiledCardId::from_script(*id)) {
                         Ok(current) => {
                             let values =
                                 bulk_values(&overrides, &current, fields, field.as_deref());

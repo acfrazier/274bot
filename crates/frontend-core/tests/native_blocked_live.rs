@@ -7,11 +7,27 @@ use std::time::{Duration, Instant, SystemTime};
 use api::interact::{cheat, tele_args};
 use api::snapshot::GameSnapshot;
 use frontend_core::log::{global, LogScope, LogView};
+use frontend_core::scripts::{ScriptRunState, StatusView};
 use frontend_core::views::{script_status_label, script_status_reason};
 use host::Pump;
 use host_play::{ProfileOptions, SharedClientTemplate};
 use scenario::{Proof, RunnerStatus, ScenarioRunner, Step, StepKind, Wait};
 use serde_json::json;
+
+fn run_state(play: &host_play::Play, account: &str) -> ScriptRunState {
+    match play.script_state(account) {
+        script::RunState::Idle => ScriptRunState::Idle,
+        script::RunState::Starting => ScriptRunState::Starting,
+        script::RunState::Running => ScriptRunState::Running,
+        script::RunState::Paused => ScriptRunState::Paused,
+        script::RunState::Stopping => ScriptRunState::Stopping,
+        script::RunState::Error => ScriptRunState::Error,
+    }
+}
+
+fn status_view(status: &script::native::ScriptStatus) -> StatusView<'_> {
+    StatusView::from_script(status)
+}
 
 struct LiveState {
     runner: ScenarioRunner,
@@ -230,11 +246,11 @@ fn gatherer_blocked_stops_with_shared_status() {
         assert_eq!(play.script_state(&account), script::RunState::Idle);
         assert!(play.script_native_run(&account).is_none());
         assert_eq!(
-            script_status_label(play.script_state(&account), Some(&blocked)),
+            script_status_label(run_state(&play, &account), Some(status_view(&blocked))),
             "stopped (blocked)"
         );
         assert_eq!(
-            script_status_reason(&blocked),
+            script_status_reason(status_view(&blocked)),
             Some(failure.message.as_ref())
         );
         let mut log = LogView::new(LogScope::slot(account.clone()));
@@ -251,8 +267,8 @@ fn gatherer_blocked_stops_with_shared_status() {
         let receipt = json!({
             "request": "BLOCKED-STOP-2", "account": account,
             "outcome": "PASS", "run_state": "Idle", "native_run": null,
-            "frontend_core_label": script_status_label(play.script_state(&account), Some(&blocked)),
-            "panel_tui_reason": script_status_reason(&blocked),
+            "frontend_core_label": script_status_label(run_state(&play, &account), Some(status_view(&blocked))),
+            "panel_tui_reason": script_status_reason(status_view(&blocked)),
             "failure_code": failure.code, "log": log.to_text(),
             "reason_logged": reason_logged,
             "tile": snapshot.tile(), "scene_state": snapshot.scene_state(),

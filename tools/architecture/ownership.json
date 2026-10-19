@@ -555,6 +555,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/frontend-core/src/session/map.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/frontend-core/src/session/native_settings.rs",
       "owner": "T3"
     },
@@ -572,6 +576,10 @@
     },
     {
       "path": "crates/frontend-core/src/views_tests.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/walk_map.rs",
       "owner": "T3"
     },
     {
@@ -2136,6 +2144,10 @@
     },
     {
       "path": "crates/panel/src/app.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/panel/src/app_frame_tests.rs",
       "owner": "T3"
     },
     {
@@ -5407,6 +5419,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/tui/src/bin_loop_tests.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/tui/src/bin_tests.rs",
       "owner": "T3"
     },
@@ -6785,6 +6801,138 @@
     {
       "path": "crates/script/tests/script_seam_engine.rs",
       "owner": "T2"
+    },
+    {
+      "path": "crates/frontend-core/src/driver.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/driver_tests.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/session/commands.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/tests/command_book_alloc.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/profile_draft.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/profile_editor.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/prefs.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/scripts/vocab.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/scripts/paint.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/scripts/loadouts.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/scripts/paths.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/slot_view.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/frames.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/launch.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/process.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/frames_tests.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/launch_tests.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/bench.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/live/mod.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/test_support/mod.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/test_support/live.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/test_support/paint.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/test_support/scripts.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/test_support/session.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/test_support/tui.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/models.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/session/fleet.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/session/form.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/session/loadouts.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/session/loadouts_tests.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/session/prefs.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/session/scripts.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/session/vault_rows.rs",
+      "owner": "T3"
     }
   ]
 }

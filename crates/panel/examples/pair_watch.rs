@@ -2,7 +2,7 @@
 //! Both slots stay visible. Ordinary panel-play leaves pair_core off.
 
 fn main() {
-    script::bootstrap_v8_platform().expect("protected V8 bootstrap on process main thread");
+    frontend_core::process::bootstrap().expect("protected V8 bootstrap on process main thread");
     let mut args = match panel::parse_args(std::env::args().skip(1), None) {
         Ok(args) => args,
         Err((code, message)) => {
@@ -39,11 +39,14 @@ fn main() {
     // The legacy pair cells use the native witness. The clue/Jive gold
     // cells are qualified by their multi-slot ScenarioRunner proofs.
     args.pair_core = pair_core;
-    let catalog_root = script::rs2b0t_env();
-    let stores = script::IsolatedEnv::enter(&format!("pair-watch-{}", std::process::id()));
+    let catalog_root = frontend_core::test_support::catalog_root();
+    let stores = frontend_core::test_support::IsolatedStores::enter(&format!(
+        "pair-watch-{}",
+        std::process::id()
+    ));
     // Isolate mutable stores while retaining the explicitly selected catalog.
     if let Some(root) = catalog_root {
-        stores.set_rs2b0t(&root);
+        stores.set_catalog_root(&root);
     }
     if let Err(error) = panel::run_panel(args) {
         eprintln!("FAIL: pair_watch: {error}");
