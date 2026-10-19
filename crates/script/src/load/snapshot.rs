@@ -26,8 +26,45 @@ pub(super) fn materialize_snapshot(
     snap: &crate::isolate_fb::Snapshot<'_>,
     host_hold: bool,
 ) -> Result<(), String> {
+    super::entity_pages::ensure(runtime)?;
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
+    let pages_state = super::entity_pages::state(&scope)
+        .expect("entity page mapping installed before snapshot materialization");
+    let generation = if snap.has_npcs()
+        || snap.has_locs()
+        || snap.has_players()
+        || snap.has_ground()
+        || snap.has_self_slot()
+    {
+        let mut generation = crate::scene_query::entity_generation();
+        if !snap.has_npcs() {
+            generation.npcs = None;
+        }
+        if !snap.has_locs() {
+            generation.locs = None;
+        }
+        if !snap.has_players() {
+            generation.players = None;
+        }
+        if !snap.has_ground() {
+            generation.ground = None;
+        }
+        Some(generation)
+    } else {
+        None
+    };
+    let self_slot = snap.has_self_slot().then(|| {
+        generation
+            .as_ref()
+            .expect("self slot captures generation")
+            .self_slot
+    });
+    let mut staged_entity_pages = super::entity_pages::StagedEntityPages {
+        generation,
+        self_slot,
+        ..super::entity_pages::StagedEntityPages::default()
+    };
     let global = context.open(&mut scope).global(&mut scope);
     let host_key = js_string(&mut scope, "__rs2b0t_host")?;
     let host = global
@@ -355,19 +392,6 @@ pub(super) fn materialize_snapshot(
     } else if !had {
         set(&mut scope, obj, "withdraw_x_result", falsy)?;
     }
-    if snap.has_withdraw_load_result_seq() {
-        let seq = num(&mut scope, snap.withdraw_load_result_seq() as f64);
-        set(&mut scope, obj, "withdraw_load_result_seq", seq)?;
-    } else if !had {
-        let seq = num(&mut scope, 0.0);
-        set(&mut scope, obj, "withdraw_load_result_seq", seq)?;
-    }
-    if snap.has_withdraw_load_result() {
-        let result = v8::Boolean::new(&mut scope, snap.withdraw_load_result());
-        set(&mut scope, obj, "withdraw_load_result", result.into())?;
-    } else if !had {
-        set(&mut scope, obj, "withdraw_load_result", falsy)?;
-    }
     if snap.has_bank_op_result_seq() {
         let seq = num(&mut scope, snap.bank_op_result_seq() as f64);
         set(&mut scope, obj, "bank_op_result_seq", seq)?;
@@ -692,25 +716,29 @@ pub(super) fn materialize_snapshot(
         set_readonly(&mut scope, host, "ours", falsy)?;
     }
     if snap.has_npcs() {
-        let npcs = scene_entity_array(&mut scope, snap.npcs(), true)?;
+        let (npcs, rows) = scene_entity_array(&mut scope, snap.npcs(), true)?;
+        staged_entity_pages.npcs = Some(rows);
         set(&mut scope, obj, "npcs", npcs)?;
     } else if !had {
         set(&mut scope, obj, "npcs", empty_rows)?;
     }
     if snap.has_locs() {
-        let locs = scene_entity_array(&mut scope, snap.locs(), false)?;
+        let (locs, rows) = scene_entity_array(&mut scope, snap.locs(), false)?;
+        staged_entity_pages.locs = Some(rows);
         set(&mut scope, obj, "locs", locs)?;
     } else if !had {
         set(&mut scope, obj, "locs", empty_rows)?;
     }
     if snap.has_players() {
-        let players = scene_entity_array(&mut scope, snap.players(), false)?;
+        let (players, rows) = scene_entity_array(&mut scope, snap.players(), false)?;
+        staged_entity_pages.players = Some(rows);
         set(&mut scope, obj, "players", players)?;
     } else if !had {
         set(&mut scope, obj, "players", empty_rows)?;
     }
     if snap.has_ground() {
-        let ground = scene_entity_array(&mut scope, snap.ground(), false)?;
+        let (ground, rows) = scene_entity_array(&mut scope, snap.ground(), false)?;
+        staged_entity_pages.ground = Some(rows);
         set(&mut scope, obj, "ground", ground)?;
     } else if !had {
         set(&mut scope, obj, "ground", empty_rows)?;
@@ -914,7 +942,9 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "combat", none)?;
     }
     let snapshot = obj.into();
-    set(&mut scope, host, "snapshot", snapshot)
+    set(&mut scope, host, "snapshot", snapshot)?;
+    staged_entity_pages.commit(&pages_state);
+    Ok(())
 }
 /// `{ token, phase, status }` of a live API session page (gather or combat),
 /// or `null` once the host clears it.
@@ -1518,7 +1548,7 @@ fn scene_entity_object<'s>(
     scope: &mut v8::HandleScope<'s>,
     ent: &crate::isolate_fb::SceneEntity<'_>,
     npc: bool,
-) -> Result<v8::Local<'s, v8::Value>, String> {
+) -> Result<v8::Local<'s, v8::Object>, String> {
     let o = v8::Object::new(scope);
     let index = num(scope, ent.index() as f64);
     set(scope, o, "index", index)?;
@@ -1604,21 +1634,24 @@ fn scene_entity_object<'s>(
         let network_z = num(scope, ent.nz().saturating_add(offset) as f64);
         set(scope, o, "network_z", network_z)?;
     }
-    Ok(o.into())
+    Ok(o)
 }
 
 fn scene_entity_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
     ents: TableVector<'a, crate::isolate_fb::SceneEntity<'a>>,
     npc: bool,
-) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, ents.as_ref().map_or(0, |ents| ents.len()) as i32);
+) -> Result<(v8::Local<'s, v8::Value>, Vec<v8::Global<v8::Object>>), String> {
+    let len = ents.as_ref().map_or(0, |ents| ents.len());
+    let arr = v8::Array::new(scope, len as i32);
+    let mut rows = Vec::with_capacity(len);
     for (i, ent) in ents.into_iter().flat_map(|ents| ents.iter()).enumerate() {
         let ent = scene_entity_object(scope, &ent, npc)?;
-        arr.set_index(scope, i as u32, ent)
+        rows.push(v8::Global::new(scope, ent));
+        arr.set_index(scope, i as u32, ent.into())
             .ok_or_else(|| "v8 array set failed".to_string())?;
     }
-    Ok(arr.into())
+    Ok((arr.into(), rows))
 }
 
 fn chat_option_array<'s, 'a>(

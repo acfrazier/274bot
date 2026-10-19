@@ -73,7 +73,7 @@ Unsupported `request` ops throw `not impl: request.<op>`.
 ### Supported requests
 
 `held`, `open-booth`, `open-stand`, `close`, `set-note-mode`, `deposit`,
-`withdraw`, `withdraw-x`, `withdraw-load`, `walk`, `walk-near`,
+`withdraw`, `withdraw-x`, `walk`, `walk-near`,
 `walk-nearest-bank`, `inspect-route`, `puzzle-move`.
 
 Completion is the next snapshots' seq/result fields, not a Promise.
@@ -88,18 +88,10 @@ Completion is the next snapshots' seq/result fields, not a Promise.
   (`false` for any of them). `true` requires the matched row's bank-side
   count to drop within the bounded deposit window.
 
-- Pass `snapshot.bank_generation` into `withdraw-load` / `withdraw-x`.
-  A changed generation is stale, not bank exhaustion.
-  `request({ op: 'withdraw-load', name, bank_generation })` fills free
-  inventory slots through the native seat's `WithdrawLoad` operation.
-  Completion changes `snapshot.withdraw_load_result_seq` and publishes
-  `snapshot.withdraw_load_result`. A stale generation completes with `false`
-  and sends no further bank action. A later bank operation that replaces the
-  request, a failed start, or a session boundary that cancels it also completes
-  with `false`. The sequence stays unchanged across session boundaries without
-  pending work and resets only for a fresh script runtime.
-  The awaited `Bank.withdrawLoad(name)` uses the same operation and captures
-  the current session in Rust.
+- Pass `snapshot.bank_generation` to `withdraw-x`. Set `count` to the
+  number of free inventory slots. A changed generation is stale, not bank
+  exhaustion. Or use compatibility `Bank.withdrawLoad(name)`, which captures
+  the current bank session in Rust.
 - `puzzle-move` clicks one piece of the posted board. It takes the posted
   row's own `id`, `slot` and `component` plus
   `snapshot.puzzle_board_generation`. The host re-resolves that exact row on
