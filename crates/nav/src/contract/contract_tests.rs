@@ -1607,6 +1607,8 @@ fn real_pack_transport_legs_match_the_router_and_admission_facts() {
         let proving = WorldState {
             inv,
             worn,
+            inventory_ready: true,
+            equipment_ready: true,
             stats: hop.skill_requirements().iter().copied().collect(),
             varps: edge.varp_req.iter().copied().collect(),
             quests: edge.quest_req.iter().cloned().collect(),

@@ -169,6 +169,8 @@ const NON_MOVING_COMMANDS: &[&str] = &[
     "p_arrivedelay",
     "facesquare",
     "anim",
+    // LocOps.ts LOC_ANIM only emits an animation for the active loc.
+    "loc_anim",
     "stat_advance",
     "spotanim_pl",
     "obj_add",
@@ -198,6 +200,9 @@ const NON_MOVING_COMMANDS: &[&str] = &[
     "stat",
     "stat_base",
     "inv_total",
+    // InvOps.ts INV_GETOBJ and ObjConfigOps.ts OC_CATEGORY only read values.
+    "inv_getobj",
+    "oc_category",
     "testbit",
     "getbit_range",
     "setbit",
@@ -299,12 +304,55 @@ struct Block {
     reads_members: bool,
 }
 
+/// A green journal row proves `progress >= complete`. Equality additionally
+/// needs an upper bound across every script, including queues and dialogue.
+/// This deliberately over-approximates writes: comparisons also count, and
+/// any dynamic or multi-target assignment removes the equality proof.
+fn retain_quest_upper_bounds(
+    text: &str,
+    quests: &HashMap<String, (api::selected::FactKey, i32)>,
+    constants: &HashMap<String, i32>,
+    exact: &mut HashSet<String>,
+) {
+    let Some(tokens) = lex(text) else {
+        exact.clear();
+        return;
+    };
+    for (index, token) in tokens.iter().enumerate() {
+        let Tok::Word(name) = token else { continue; };
+        let Some(varp) = name.strip_prefix('%').filter(|varp| exact.contains(*varp)) else { continue; };
+        let mut after = index + 1;
+        while tokens.get(after) == Some(&Tok::Punct(","))
+            && matches!(tokens.get(after + 1), Some(Tok::Word(name)) if name.starts_with('%') || name.starts_with('$'))
+        {
+            after += 2;
+        }
+        if tokens.get(after) != Some(&Tok::Punct("=")) { continue; }
+        let scalar = match tokens.get(after + 1) {
+            Some(Tok::Num(value)) => Some(*value),
+            Some(Tok::Word(name)) => name.strip_prefix('^').and_then(|name| constants.get(name)).copied(),
+            _ => None,
+        };
+        let scalar_ends = matches!(tokens.get(after + 2),
+            Some(Tok::Punct(";" | ")" | "&" | "|" | ",")));
+        if after != index + 1
+            || index.checked_sub(1).and_then(|index| tokens.get(index)) == Some(&Tok::Punct(","))
+            || !scalar_ends
+            || !scalar.is_some_and(|value| value <= quests[varp].1)
+        {
+            exact.remove(varp);
+        }
+    }
+}
+
 /// The script facts an opener evaluation reads.
 struct Sources {
     oplocs: [HashMap<String, Vec<Option<Block>>>; 5],
     oplocu: HashMap<String, Vec<Option<Block>>>,
     quest_family: Option<crate::quest_gates::QuestFamilyId>,
     quest_complete: HashMap<String, (api::selected::FactKey, i32)>,
+    /// Varp names whose every possible source write is bounded by completion.
+    quest_exact: HashSet<String>,
     labels: HashMap<String, Vec<Option<Block>>>,
     timers: HashMap<String, Vec<Option<Block>>>,
     /// Proc name → each definition's normalized header parameters + body,
@@ -328,7 +376,14 @@ impl Sources {
         let mut labels: HashMap<String, Vec<Option<Block>>> = HashMap::new();
         let mut timers: HashMap<String, Vec<Option<Block>>> = HashMap::new();
         let mut procs: HashMap<String, Vec<ProcDef>> = HashMap::new();
-        visit_rs2(&content_root.join("scripts"), &mut |text| {
+        let constants = script_constants(content_root);
+        let quest_complete: HashMap<_, _> = quests.into_iter().flat_map(|quests| &quests.facts.rows)
+            .filter(|row| !row.varp.is_empty() && row.varp_id >= 0 && row.complete > 0)
+            .map(|row| (row.varp.clone(), (api::selected::FactKey::new(&row.id), row.complete)))
+            .collect();
+        let mut quest_exact = quest_complete.keys().cloned().collect();
+        let all_scripts_read = visit_rs2(&content_root.join("scripts"), &mut |text| {
+            retain_quest_upper_bounds(text, &quest_complete, &constants, &mut quest_exact);
             for (kind, name, params, body) in header_blocks(text) {
                 let reads_members = body.contains("map_members");
                 if kind == "oplocu" {
@@ -377,16 +432,14 @@ impl Sources {
                 }
             }
         });
-        let constants = script_constants(content_root);
+        if !all_scripts_read { quest_exact.clear(); }
         let objs = obj_ids_by_name(content_root);
         let worn_slots = worn_slot_facts(content_root, &objs, &constants);
         Self {
             oplocs,
             quest_family: quests.map(|quests| quests.family),
-            quest_complete: quests.into_iter().flat_map(|quests| &quests.facts.rows)
-                .filter(|row| !row.varp.is_empty() && row.varp_id >= 0 && row.complete > 0)
-                .map(|row| (row.varp.clone(), (api::selected::FactKey::new(&row.id), row.complete)))
-                .collect(),
+            quest_complete,
+            quest_exact,
             oplocu,
             labels,
             timers,

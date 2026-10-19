@@ -6901,7 +6901,15 @@ async fn run_search_request(
                                 graph.teleports.get(index as usize)
                             }
                             .ok_or(SearchCursorError::ResultNotRepresentable)?;
-                            if let Some(failure) = state.exclusion_failure(edge) {
+                            let failure = state.exclusion_failure(edge).or_else(|| {
+                                edge.worn_all_req.iter()
+                                    .find(|id| !state.worn.contains(id))
+                                    .map(|&id| crate::world_state::EntranceRequirement::MissingWorn {
+                                        id,
+                                        at: edge.at,
+                                    })
+                            });
+                            if let Some(failure) = failure {
                                 first_failure = Some(failure);
                                 break;
                             }
@@ -7742,8 +7750,8 @@ enum Relax {
     /// The quest-evidence diagnosis ([`find_unresolved_quest_gates`]): a
     /// stage gate the evidence leaves `Unknown` is crossed; `False` closes.
     UnknownQuest,
-    /// Entrance diagnosis ignores only held/worn exclusions and their
-    /// observation readiness. Every positive and quest gate stays strict.
+    /// Entrance diagnosis names exclusions, unknown absence observations,
+    /// and missing conjunctive worn items. Other positive gates stay strict.
     EntranceExclusions,
     /// Both diagnosis arms' fallback: `item_req`/`worn_req` gates are ignored
     /// and `Unknown` stage gates crossed, so a crossing that needs a fetched

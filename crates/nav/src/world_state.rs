@@ -70,9 +70,9 @@ pub struct WorldState {
     pub quest_evidence: Option<QuestEvidence>,
 }
 
-/// A content exclusion that the route state cannot prove at an entrance.
-/// These are not bank-fetch requirements: the router never deposits or
-/// unequips an item to make an excluded state acceptable.
+/// A content entrance requirement that the route state cannot prove.
+/// These are not bank-fetch requirements: diagnosis never changes the
+/// player's held or worn items to make the entrance acceptable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
 pub enum EntranceRequirement {
     /// The inventory observation cannot establish absence.
@@ -87,6 +87,9 @@ pub enum EntranceRequirement {
     /// A forbidden item is equipped.
     #[error("item {id} must not be worn through entrance {at:?}")]
     ForbiddenWorn { id: i32, at: api::WorldTile },
+    /// A conjunctive equipment prerequisite is not currently worn.
+    #[error("item {id} must be worn through entrance {at:?}")]
+    MissingWorn { id: i32, at: api::WorldTile },
 }
 
 /// Checked map-capacity accounting for a bounded bank-state update.
@@ -387,9 +390,9 @@ impl WorldState {
             && self.worn_req_allows(e)
             && self.worn_all_req_allows(e)
     }
-    /// Check every snapshot requirement except the content exclusions.
-    /// Entrance diagnosis uses this predicate to find a route that differs
-    /// from the live state only at an excluded entrance.
+    /// Check the snapshot gates used by entrance diagnosis. Exclusions and
+    /// conjunctive worn prerequisites are reported as typed failures, never
+    /// relaxed by ordinary routing or bank/item diagnostics.
     pub(crate) fn snapshot_allows_ignoring_exclusions(&self, e: &TransportEdge) -> bool {
         self.fixed_reqs_allow_ignoring_exclusions(e)
             && e.item_req
@@ -400,7 +403,6 @@ impl WorldState {
                 carried >= e.consumption_count(id, packed_count, carried)
             })
             && self.worn_req_allows(e)
-            && self.worn_all_req_allows(e)
     }
 
 

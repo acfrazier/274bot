@@ -291,6 +291,8 @@ fn allows_requires_every_req_kind() {
         inv: HashMap::from([(995, 10)]),
         worn: HashSet::from([1712]),
         allow_fetchable_worn: false,
+        inventory_ready: true,
+        equipment_ready: true,
         stats: HashMap::from([(6, 25)]),
         varps: HashMap::from([(150, 160)]),
         quests: HashSet::from(["Rune Mysteries".to_string()]),

@@ -3,7 +3,9 @@
 //! a possible refusal or different landing rejects that state alternative.
 use super::*;
 
-const MAX_ALTERNATIVES: usize = 16_384;
+// The real camp gate reads 11 items, four independent NPC queries, and one
+// completion interval. Bound that complete Cartesian product at 2^16.
+const MAX_ALTERNATIVES: usize = 65_536;
 const MAX_READ_BLOCKS: usize = 64;
 
 #[derive(Clone, Copy)]
@@ -14,6 +16,8 @@ pub(super) struct Inputs<'a> {
     npc_queries: &'a [Expr],
     npc_mask: usize,
     complete: bool,
+    above_queries: &'a [String],
+    above_mask: usize,
 }
 
 #[derive(Default)]
@@ -154,7 +158,9 @@ impl Motion<'_> {
                 let Some(block) = proc_block(self.base.src, &name[1..]) else { return Some(None); };
                 if !self.base.src.proc_non_moving(&name[1..]) { return Some(None); }
                 let saved = self.returned.take();
+                let value_query = std::mem::replace(&mut self.value_query, true);
                 let end = self.invoke(block, args, env);
+                self.value_query = value_query;
                 let value = self.returned.take();
                 self.returned = saved;
                 Some((end != End::Refused).then_some(value).flatten())
@@ -169,9 +175,32 @@ impl Motion<'_> {
             if varp.starts_with('%') {
                 let Some((quest, complete)) = self.base.src.quest_complete.get(&varp[1..]) else { return Some(Cond::unknown()); };
                 let Some(Val::Int(value)) = self.value(rhs, env) else { return Some(Cond::unknown()); };
-                if value != *complete || !matches!(op, CmpOp::Eq | CmpOp::Ne) { return Some(Cond::unknown()); }
+                let (min, max) = if !input.complete {
+                    (i32::MIN, complete.checked_sub(1)?)
+                } else if input.above_queries.iter().position(|name| name == varp)
+                    .is_some_and(|index| input.above_mask & (1usize << index) != 0)
+                {
+                    (complete.checked_add(1)?, i32::MAX)
+                } else {
+                    (*complete, *complete)
+                };
+                let value = match op {
+                    CmpOp::Eq if min == max => Some(min == value),
+                    CmpOp::Eq if value < min || value > max => Some(false),
+                    CmpOp::Ne if min == max => Some(min != value),
+                    CmpOp::Ne if value < min || value > max => Some(true),
+                    CmpOp::Lt if max < value => Some(true),
+                    CmpOp::Lt if min >= value => Some(false),
+                    CmpOp::Le if max <= value => Some(true),
+                    CmpOp::Le if min > value => Some(false),
+                    CmpOp::Gt if min > value => Some(true),
+                    CmpOp::Gt if max <= value => Some(false),
+                    CmpOp::Ge if min >= value => Some(true),
+                    CmpOp::Ge if max < value => Some(false),
+                    _ => None,
+                };
                 return Some(Cond {
-                    value: Some(input.complete == (op == CmpOp::Eq)),
+                    value,
                     needs: if input.complete { Needs {
                         quests: vec![api::selected::QuestGate::Complete(quest.clone())],
                         quest_family: self.base.src.quest_family,
@@ -218,7 +247,8 @@ impl Motion<'_> {
 
     pub(super) fn entrance_call(&mut self, name: &str, args: &[Expr], env: &Env) -> Option<End> {
         let proc = name.strip_prefix('~');
-        if self.timer.is_some() && (matches!(name, "p_teleport" | "p_telejump" | "p_exactmove")
+        if self.timer.is_some() && (matches!(name, "p_teleport" | "p_telejump" | "p_exactmove"
+            | "~forcemove" | "~agility_exactmove" | "~agility_force_move")
             || proc.is_some_and(|name| OPEN_PROCS.iter().any(|spec| spec.name == name))) {
             return Some(End::Refused);
         }
@@ -272,16 +302,21 @@ fn weaker_than(weaker: &Needs, stronger: &Needs) -> bool {
 #[expect(clippy::too_many_arguments, reason = "all inputs are immutable content and one placement")]
 fn trajectory<'a>(src: &'a Sources, facts: &'a Facts, positions: &'a HashMap<i32, Vec<Placement>>,
     proofs: &'a HashSet<String>, supported: &'a HashSet<String>, selectors: &'a HashMap<String, Vec<Tool>>,
-    handler: &Block, id: i32, placement: &Placement, stand: WorldTile, absent: &'a [i32], npc: &'a [Expr], complete: bool,
+    handler: &Block, id: i32, placement: &Placement, stand: WorldTile, absent: &'a [i32], npc: &'a [Expr], above: &'a [String], complete: bool,
 ) -> Option<Trajectory> {
     let at = WorldTile { x: placement.x, z: placement.z, level: placement.level };
     let mut result: Option<Trajectory> = None;
-    for npc_mask in 0..(1usize << npc.len()) {
+    let above = if complete { above } else { &[] };
+    // Above-completion values and NPC presence are independent unknowns.
+    // Every combination must prove the same landing.
+    for mask in 0..(1usize << (npc.len() + above.len())) {
+        let npc_mask = mask & ((1usize << npc.len()) - 1);
+        let above_mask = mask >> npc.len();
         let mut motion = Motion {
             base: Eval { src, supported, at, stand: Some(stand), angle: placement.angle, needs: Needs::default(), relative_landing_safe: false, jumps: 0 },
             facts: facts.locs.get(&id)?.as_ref()?, proofs, selectors, tool: None, here: stand,
             loc_id: id, loc_modified: false, shape: placement.shape, moved: false, ticks: 1, gate_read: false,
-            entrance: Some(Inputs { facts, positions, absent, npc_queries: npc, npc_mask, complete }), returned: None, timer: None,
+            entrance: Some(Inputs { facts, positions, absent, npc_queries: npc, npc_mask, complete, above_queries: above, above_mask }), returned: None, value_query: false, timer: None,
         };
         if motion.run(&handler.body, &mut Env::new()) == End::Refused || !motion.moved || motion.here == stand { return None; }
         if let Some(result) = &mut result {
@@ -300,6 +335,7 @@ pub(super) fn edges(src: &Sources, positions: &HashMap<i32, Vec<Placement>>, def
     observable: &ObservableGates, audit: &mut VarpGateAudit, facts: &Facts, proofs: &HashSet<String>,
     supported: &HashSet<String>, selectors: &HashMap<String, Vec<Tool>>,
 ) {
+    let first_new_edge = graph.edges.len();
     let covered: HashSet<_> = graph.edges.iter().filter(|edge| matches!(edge.kind, TransportKind::Door | TransportKind::Ladder | TransportKind::Stairs | TransportKind::AgilityShortcut))
         .map(|edge| (edge.loc_id, edge.option)).collect();
     let mut locs: Vec<_> = positions.keys().copied().collect(); locs.sort_unstable();
@@ -320,13 +356,18 @@ pub(super) fn edges(src: &Sources, positions: &HashMap<i32, Vec<Placement>>, def
             };
             let calls = reachable_calls(handler, src);
             if !calls.iter().any(|call| {
-                matches!(call.as_str(), "p_teleport" | "p_telejump")
+                matches!(call.as_str(), "p_teleport" | "p_telejump" | "~forcemove"
+                    | "~agility_exactmove" | "~agility_force_move" | "p_exactmove")
                     || call.strip_prefix('~')
                         .is_some_and(|name| OPEN_PROCS.iter().any(|spec| spec.name == name))
             }) { continue; }
             let mut reads = Reads { valid: true, ..Reads::default() }; reads.body(&handler.body, src);
             reads.items.sort_unstable(); reads.items.dedup();
-            let Some(bits) = reads.items.len().checked_add(reads.npc.len()) else { continue; };
+            let mut above: Vec<_> = reads.quests.iter()
+                .filter(|name| !src.quest_exact.contains(&name[1..])
+                    && src.quest_complete[&name[1..]].1 < i32::MAX).cloned().collect();
+            above.sort_unstable();
+            let Some(bits) = reads.items.len().checked_add(reads.npc.len()).and_then(|bits| bits.checked_add(above.len())) else { continue; };
             if !reads.valid || bits >= usize::BITS as usize || (1usize << bits) > MAX_ALTERNATIVES {
                 bump(skipped, "loc entrance exceeds bounded content alternatives", 1); continue;
             }
@@ -346,10 +387,16 @@ pub(super) fn edges(src: &Sources, positions: &HashMap<i32, Vec<Placement>>, def
                 for stand in stands.into_iter().filter(|stand| collision.standable(*stand)) {
                     for mask in 0..(1usize << reads.items.len()) {
                         let absent: Vec<_> = reads.items.iter().enumerate().filter_map(|(index, &id)| (mask & (1usize << index) != 0).then_some(id)).collect();
-                        let complete = trajectory(src, facts, positions, proofs, supported, selectors, handler, id, placement, stand, &absent, &reads.npc, true);
-                        let incomplete = (reads.quests.len() <= 1).then(|| trajectory(src, facts, positions, proofs, supported, selectors, handler, id, placement, stand, &absent, &reads.npc, false)).flatten();
+                        let complete = trajectory(src, facts, positions, proofs, supported, selectors, handler, id, placement, stand, &absent, &reads.npc, &above, true);
+                        let incomplete = (reads.quests.len() == 1).then(|| trajectory(src, facts, positions, proofs, supported, selectors, handler, id, placement, stand, &absent, &reads.npc, &above, false)).flatten();
                         let incomplete = incomplete.filter(|candidate| complete.as_ref().is_some_and(|other| other.to == candidate.to && weaker_than(&other.needs, &candidate.needs)));
                         for result in [complete, incomplete].into_iter().flatten() {
+                            if result.needs.quests.is_empty()
+                                && result.needs.forbidden_held.is_empty()
+                                && result.needs.forbidden_worn.is_empty()
+                                && result.needs.items.is_empty()
+                                && result.needs.worn.is_empty()
+                            { continue; }
                             if !collision.standable(result.to) { continue; }
                             let mut edge = gated_edge(TransportKind::Ladder, id, at, result.to, result.needs);
                             edge.takeoff = Some(stand); edge.option = option; edge.ticks = result.ticks;
@@ -360,4 +407,38 @@ pub(super) fn edges(src: &Sources, positions: &HashMap<i32, Vec<Placement>>, def
             }
         }
     }
+    // Irrelevant item assignments can prove the same trajectory. Compact
+    // only this producer's suffix without another allocation or old edits.
+    graph.edges[first_new_edge..].sort_by(edge_order);
+    let mut write = first_new_edge;
+    for read in first_new_edge..graph.edges.len() {
+        if write > first_new_edge
+            && edge_order(&graph.edges[write - 1], &graph.edges[read]).is_eq()
+        { continue; }
+        if write != read { graph.edges.swap(write, read); }
+        write += 1;
+    }
+    graph.edges.truncate(write);
+}
+
+#[test]
+#[ignore = "requires NAV_ENTRANCE_CONTENT pointing to the pinned real content"]
+fn real_camp_gate_read_set_stays_within_the_entrance_bound() {
+    let root = std::path::PathBuf::from(std::env::var_os("NAV_ENTRANCE_CONTENT").expect("real content root"));
+    let selected = api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
+    let (facts, identity) = selected.quest_identity_for_bake().expect("verified quest family");
+    let quests = QuestSource {
+        family: crate::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+        facts: &facts,
+    };
+    let src = Sources::read(&root, &loc_ids_by_name(&root), Some(&quests));
+    let name = src.ids.iter().find_map(|(name, &id)| (id == 2673).then_some(name)).expect("camp gate loc");
+    let Lookup::Found(handler) = Sources::one(&src.oplocs[0], name) else { panic!("camp gate handler"); };
+    let mut reads = Reads { valid: true, ..Reads::default() };
+    reads.body(&handler.body, &src);
+    reads.items.sort_unstable();
+    reads.items.dedup();
+    let bits = reads.items.len() + reads.npc.len() + reads.quests.len();
+    assert!(reads.valid && bits < usize::BITS as usize && (1usize << bits) <= MAX_ALTERNATIVES,
+        "camp gate reads {} blocks, {} items, {} NPC queries, {} quests", reads.seen.len(), reads.items.len(), reads.npc.len(), reads.quests.len());
 }

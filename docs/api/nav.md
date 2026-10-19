@@ -360,10 +360,13 @@ cannot establish absence, else `ForbiddenHeld { id, at }` or `ForbiddenWorn
 { id, at }` with the actual item. These are not bank-fetch requirements:
 the router never deposits or unequips an item to make an excluded state
 acceptable, and a bank trip cannot relax them. The diagnosis arm
-(`SearchRequest::EntranceRequirements`) searches while ignoring exclusions
-and returns the first failed exclusion as
-`SearchOutcome::EntranceRequirements`, without returning or retaining a
-route.
+(`SearchRequest::EntranceRequirements`) can also name a missing conjunctive
+worn piece as `MissingWorn { id, at }`. It ignores only these entrance
+requirements, returns the first failure as `SearchOutcome::EntranceRequirements`,
+and retains no route. It keeps the router's fixed `NODE_BUDGET` ceiling of
+4,000,000 settled nodes, or the caller's smaller bound, to prevent an
+unreachable entrance from causing an unbounded flood. Ordinary routes,
+bank-fetch probes and item diagnostics keep `worn_all_req` strict.
 
 ### Members gating at runtime
 
@@ -516,7 +519,7 @@ family identities (digest plus extractor schema) must be present and equal,
 so a different revision family fails closed. It proves `QuestGate::Complete`
 only — `Complete` reads `True`, `NotStarted`/`InProgress` read `False` — and
 every `StageWindow` stays `Unknown`, however far the quest has progressed.
-Snapshot varps and green quest rows never open a stage gate on their own,
+Snapshot varps and green quest rows never establish a `StageWindow`,
 and nav reads no journal: there is no server-only raw-varp inference.
 
 The two diagnoses see across each other. When the BankBudget diagnosis
@@ -533,9 +536,10 @@ so `encode` never writes a binding its decoder refuses. Runtime admission
 compares the pack with the selected manifest:
 `TransportGraph::admit_quest_family(&manifest_family)` refuses a pack baked
 against another family digest or extractor schema, or against none. The
-current bake consumes no quest family yet, so it binds none and emits no stage
-gates; exact and upper-bound stage crossings stay unavailable until the
-selected quest family feeds the bake.
+standard bake verifies the selected `quests` family artifact before deriving
+content entrances and binds its digest and schema into the graph. Supported
+quest-complete predicates become canonical `QuestGate::Complete` requirements;
+an intermediate or exact hidden quest stage is not inferred from completion.
 
 ## Router (`nav::router`)
 

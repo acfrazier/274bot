@@ -95,7 +95,7 @@ const DUSTY_KEY_ANCHORS: &[WorldTile] = &[WorldTile {
 enum EntranceCase {
     GrandTreeMine,
     DesertMiningCamp,
-    DesertMiningCampNorth,
+    DesertMiningCampUnderground,
     TaverleyLavaEels,
 }
 
@@ -104,7 +104,7 @@ impl EntranceCase {
         match self {
             Self::GrandTreeMine => "grand-tree-mine",
             Self::DesertMiningCamp => "desert-mining-camp",
-            Self::DesertMiningCampNorth => "desert-mining-camp-underground-north",
+            Self::DesertMiningCampUnderground => "desert-mining-camp-underground",
             Self::TaverleyLavaEels => "taverley-lava-eels",
         }
     }
@@ -120,7 +120,7 @@ impl EntranceCase {
         match self {
             Self::GrandTreeMine => "mining.grand_tree.underground",
             Self::DesertMiningCamp => "mining.desert_mining_camp",
-            Self::DesertMiningCampNorth => "mining.desert_mining_camp.underground.n",
+            Self::DesertMiningCampUnderground => "mining.desert_mining_camp.underground",
             Self::TaverleyLavaEels => "fishing.dark_wizards_tower.underground.nw",
         }
     }
@@ -129,7 +129,7 @@ impl EntranceCase {
         match self {
             Self::GrandTreeMine => &[GRAND_TREE_TRAPDOOR_ID],
             Self::DesertMiningCamp => DESERT_SURFACE_GATE_IDS,
-            Self::DesertMiningCampNorth => DESERT_UNDERGROUND_GATE_IDS,
+            Self::DesertMiningCampUnderground => DESERT_UNDERGROUND_GATE_IDS,
             Self::TaverleyLavaEels => &[DUSTY_KEY_DOOR_ID],
         }
     }
@@ -138,7 +138,7 @@ impl EntranceCase {
         match self {
             Self::GrandTreeMine => GRAND_TREE_ANCHORS,
             Self::DesertMiningCamp => DESERT_SURFACE_ANCHORS,
-            Self::DesertMiningCampNorth => DESERT_UNDERGROUND_ANCHORS,
+            Self::DesertMiningCampUnderground => DESERT_UNDERGROUND_ANCHORS,
             Self::TaverleyLavaEels => DUSTY_KEY_ANCHORS,
         }
     }
@@ -153,14 +153,14 @@ impl EntranceCase {
 
     fn required_worn(self) -> &'static [i32] {
         match self {
-            Self::DesertMiningCampNorth => DESERT_KIT_IDS,
+            Self::DesertMiningCampUnderground => DESERT_KIT_IDS,
             _ => &[],
         }
     }
 
     fn quest_varp(self) -> Option<(&'static str, i32)> {
         match self {
-            Self::DesertMiningCamp | Self::DesertMiningCampNorth => Some(("desertrescue", 30)),
+            Self::DesertMiningCamp | Self::DesertMiningCampUnderground => Some(("desertrescue", 30)),
             _ => None,
         }
     }
@@ -1315,13 +1315,13 @@ fn run_case(case: EntranceCase) {
             "planned entrance does not require selected item {required_item}: {edge:?}"
         );
     }
-    if case == EntranceCase::DesertMiningCampNorth {
+    if case == EntranceCase::DesertMiningCampUnderground {
         let mut expected = DESERT_KIT_IDS.to_vec();
         expected.sort_unstable();
         let mut actual = edge.worn_all_req.clone();
         actual.sort_unstable();
-        assert_eq!(actual, expected, "north entrance must require all three worn kit pieces");
-        assert!(route_moves_beyond_entrance(&route, case), "north site route must continue beyond the entrance");
+        assert_eq!(actual, expected, "underground entrance must require all three worn kit pieces");
+        assert!(route_moves_beyond_entrance(&route, case), "lower mine resource route must continue beyond the entrance");
     }
     if case == EntranceCase::TaverleyLavaEels {
         assert_eq!(edge.option, 0, "dusty-key door must use its content item-on-loc option");
@@ -1335,7 +1335,7 @@ fn run_case(case: EntranceCase) {
         let mut missing = final_state.clone().with_quest_evidence(pre_quest_evidence.clone());
         missing.quests.remove("The Grand Tree");
         find_route(&world, planned.start, target.stand, &missing)
-    } else if case == EntranceCase::DesertMiningCampNorth {
+    } else if case == EntranceCase::DesertMiningCampUnderground {
         let mut missing = final_state.clone();
         for id in DESERT_KIT_IDS {
             missing.worn.remove(id);
@@ -1351,7 +1351,7 @@ fn run_case(case: EntranceCase) {
     let precondition_no_path = matches!(missing_result, Err(RouteError::NoPath));
     receipt["precondition_probe"] = json!({
         "missing": if case == EntranceCase::GrandTreeMine { "Grand Tree completion" }
-            else if case == EntranceCase::DesertMiningCampNorth { "all three worn kit pieces" }
+            else if case == EntranceCase::DesertMiningCampUnderground { "all three worn kit pieces" }
             else { "required held key" },
         "result": format!("{missing_result:?}"),
         "no_path": precondition_no_path,
@@ -1603,8 +1603,8 @@ fn live_desert_mining_camp_requires_metal_key_and_refuses_excluded_items() {
 
 #[test]
 #[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, BOT_LIVE_NAME_PREFIX=ngte, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_NAV_BUILD=skip, and NAV_GATED_ENTRANCES_EVIDENCE"]
-fn live_desert_mining_camp_underground_north_requires_worn_slave_kit() {
-    run_case(EntranceCase::DesertMiningCampNorth);
+fn live_desert_mining_camp_lower_mine_requires_worn_slave_kit() {
+    run_case(EntranceCase::DesertMiningCampUnderground);
 }
 
 #[test]

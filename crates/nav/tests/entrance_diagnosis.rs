@@ -7,7 +7,7 @@ use api::quest_progress::{EvidenceProvider, EvidenceStamp};
 use api::selected::{FactKey, QuestGate, RunKey, Truth};
 use api::snapshot::WorldTile;
 use api::work::{
-    InspectionPhase, SharedCancellation, SliceBudget, StepContext, SystemClock,
+    InspectionPhase, MonotonicClock, SharedCancellation, SliceBudget, StepContext, SystemClock,
 };
 use nav::contract::NavLease;
 use nav::grid::StepGrid;
@@ -172,7 +172,6 @@ enum PositiveGate {
     Item,
     Consumed,
     WornAny,
-    WornAll,
     Skill,
     Members,
     CompletedQuest,
@@ -207,7 +206,6 @@ fn install_positive_gate(world: &mut NavWorld, gate: PositiveGate) {
         PositiveGate::Item => edge.item_req = vec![(POSITIVE_ITEM, 1)],
         PositiveGate::Consumed => edge.consumed_req = vec![(POSITIVE_ITEM, 1)],
         PositiveGate::WornAny => edge.worn_req = vec![POSITIVE_ITEM],
-        PositiveGate::WornAll => edge.worn_all_req = vec![POSITIVE_ITEM],
         PositiveGate::Skill => edge.skill_req = vec![(1, 99)],
         PositiveGate::Members => edge.members_req = true,
         PositiveGate::CompletedQuest => edge.quest_req = vec![String::from("Test Quest")],
@@ -248,7 +246,6 @@ fn diagnosis_does_not_relax_positive_or_unknown_gates() {
         ("item", PositiveGate::Item, None),
         ("consumed item", PositiveGate::Consumed, None),
         ("worn alternative", PositiveGate::WornAny, None),
-        ("conjunctive worn item", PositiveGate::WornAll, None),
         ("skill", PositiveGate::Skill, None),
         ("world membership", PositiveGate::Members, None),
         ("completed quest", PositiveGate::CompletedQuest, None),
@@ -285,6 +282,76 @@ fn proven_quest_gate_stays_open_and_reports_the_route_exclusion() {
 }
 
 #[test]
+fn missing_worn_diagnosis_never_authorizes_an_ordinary_or_item_route() {
+    let lease = fixture(|world| {
+        let edge = &mut world.graph.edges[0];
+        edge.forbidden_held.clear();
+        edge.worn_all_req = vec![1844, 1845, 1846];
+    });
+    for missing_is_carried in [false, true] {
+        let mut state = observed_state();
+        state.worn.extend([1844, 1846]);
+        if missing_is_carried {
+            state.inv.insert(1845, 1);
+        }
+        assert_eq!(
+            run_entrance(lease.clone(), state.clone()),
+            Some(EntranceRequirement::MissingWorn { id: 1845, at: FROM }),
+            "holding the missing piece does not make it worn",
+        );
+        for request in [
+            SearchRequest::First {
+                from: FROM,
+                targets: Box::new([TO]),
+                fallback: Box::default(),
+                options: FindOptions::default(),
+                avoid: Box::default(),
+                max_settles: MAX_SETTLES,
+            },
+            SearchRequest::MissingItemReqs {
+                from: FROM,
+                targets: Box::new([TO]),
+                fallback: Box::default(),
+                options: FindOptions::default(),
+                avoid: Box::default(),
+                max_settles: MAX_SETTLES,
+            },
+        ] {
+            let cursor = SearchCursor::new(request, lease.clone(), Arc::new(state.clone()))
+                .expect("bounded strict/item diagnostic");
+            let (outcome, _) = drive_cursor(cursor).into_parts();
+            match outcome {
+                SearchOutcome::First { search } => {
+                    assert_eq!(search.route().unwrap_err(), nav::router::RouteError::NoPath);
+                }
+                SearchOutcome::MissingItemReqs(missing) => assert!(missing.is_none()),
+                _ => panic!("wrong strict/item diagnostic outcome"),
+            }
+        }
+    }
+    let mut complete = observed_state();
+    complete.worn.extend([1844, 1845, 1846]);
+    assert_eq!(run_entrance(lease.clone(), complete.clone()), None);
+    let cursor = SearchCursor::new(
+        SearchRequest::First {
+            from: FROM,
+            targets: Box::new([TO]),
+            fallback: Box::default(),
+            options: FindOptions::default(),
+            avoid: Box::default(),
+            max_settles: MAX_SETTLES,
+        },
+        lease,
+        Arc::new(complete),
+    ).expect("bounded complete-kit route");
+    let (outcome, _) = drive_cursor(cursor).into_parts();
+    let SearchOutcome::First { search } = outcome else {
+        panic!("complete-kit route returned the wrong result shape")
+    };
+    assert!(search.route().is_ok(), "all kit pieces worn authorize the ordinary route");
+}
+
+#[test]
 fn cooperative_admission_and_result_reservations_cover_the_new_request() {
     let lease = fixture(|_| {});
     let mut state = observed_state();
@@ -316,7 +383,7 @@ fn cooperative_admission_and_result_reservations_cover_the_new_request() {
     );
     assert!(preflight.reservation().peak_bytes > preflight.reservation().result_bytes);
 
-    let cursor = SearchCursor::new_preflighted(request, lease, state, preflight)
+    let cursor = SearchCursor::new_preflighted(request, lease.clone(), state, preflight)
         .expect("materialized request fits its admission reservation");
     assert_eq!(cursor.input_bytes(), std::mem::size_of::<WorldTile>());
     assert!(cursor.future_layout_bytes() > 0);

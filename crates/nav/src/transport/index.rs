@@ -398,18 +398,27 @@ pub(super) fn door_config_names(
     out
 }
 
-pub(super) fn visit_rs2(dir: &Path, cb: &mut impl FnMut(&str)) {
+/// Visit every script and report whether all directories and files were read.
+/// Producers that need a whole-content invariant must reject a partial scan.
+pub(super) fn visit_rs2(dir: &Path, cb: &mut impl FnMut(&str)) -> bool {
     let Ok(entries) = fs::read_dir(dir) else {
-        return;
+        return false;
     };
-    for ent in entries.flatten() {
-        let path = ent.path();
+    let mut complete = true;
+    for entry in entries {
+        let Ok(entry) = entry else {
+            complete = false;
+            continue;
+        };
+        let path = entry.path();
         if path.is_dir() {
-            visit_rs2(&path, cb);
+            complete &= visit_rs2(&path, cb);
         } else if path.extension().and_then(|s| s.to_str()) == Some("rs2") {
-            if let Ok(text) = fs::read_to_string(&path) {
-                cb(&text);
+            match fs::read_to_string(&path) {
+                Ok(text) => cb(&text),
+                Err(_) => complete = false,
             }
         }
     }
+    complete
 }
