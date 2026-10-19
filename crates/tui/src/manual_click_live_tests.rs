@@ -19,7 +19,7 @@ use nav::WorldState;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 
-use super::{dispatch, temp_live_vault, TuiApp, TuiSession};
+use super::{dispatch, TuiApp, TuiSession};
 
 const LOCAL_GAME_PORT: u16 = 45_594;
 const LOCAL_ASSET_PORT: u16 = 2_080;
@@ -223,11 +223,14 @@ fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> 
     .resolve(None)?
     .bind()?;
     let template = host_play::SharedClientTemplate::load(profile)?;
-    let names = host_play::mint_live_names(1);
-    let credentials = host_play::mint_live_entries(&names);
-    let name = names.first().ok_or("no minted live account")?.clone();
-    let passphrase = host_play::live_vault_passphrase();
-    let vault_path = temp_live_vault(&credentials, &passphrase);
+    let profiles = frontend_core::live::LiveProfiles::mint(1);
+    let name = profiles
+        .names()
+        .first()
+        .ok_or("no minted live account")?
+        .clone();
+    let passphrase = profiles.passphrase().to_owned();
+    let vault_path = profiles.tui_vault();
 
     let mut session = TuiSession::new_bound(template);
     session.mainland = true;

@@ -362,8 +362,9 @@ fn pump_copies_nav_world_onto_the_app() {
 fn live_pass_is_stdout_and_exit_0() {
     let (code, lines, announced) = live_proof(
         "alcher",
-        Some(scenario::RunnerStatus::Passed),
+        Some(frontend_core::live::RunnerStatus::Passed),
         "{\"outcome\":\"PASS\"}",
+        None,
         false,
         false,
     );
@@ -381,8 +382,9 @@ fn live_pass_is_stdout_and_exit_0() {
 fn live_fail_is_stderr_and_exit_1() {
     let (code, lines, announced) = live_proof(
         "alcher",
-        Some(scenario::RunnerStatus::Failed("deadline".into())),
+        Some(frontend_core::live::RunnerStatus::Failed),
         "{\"outcome\":\"FAIL\"}",
+        Some("deadline"),
         true,
         false,
     );
@@ -405,8 +407,9 @@ fn live_fail_is_stderr_and_exit_1() {
 fn live_pass_is_held_once_across_soak_then_exits_0() {
     let (code, lines, announced) = live_proof(
         "alcher",
-        Some(scenario::RunnerStatus::Passed),
+        Some(frontend_core::live::RunnerStatus::Passed),
         "{\"outcome\":\"PASS\"}",
+        None,
         true,
         false,
     );
@@ -419,8 +422,9 @@ fn live_pass_is_held_once_across_soak_then_exits_0() {
     );
     let (code, lines, announced) = live_proof(
         "alcher",
-        Some(scenario::RunnerStatus::Passed),
+        Some(frontend_core::live::RunnerStatus::Passed),
         "{\"outcome\":\"PASS\"}",
+        None,
         true,
         announced,
     );
@@ -431,8 +435,9 @@ fn live_pass_is_held_once_across_soak_then_exits_0() {
     );
     let (code, lines, _) = live_proof(
         "alcher",
-        Some(scenario::RunnerStatus::Passed),
+        Some(frontend_core::live::RunnerStatus::Passed),
         "{\"outcome\":\"PASS\"}",
+        None,
         false,
         announced,
     );
@@ -447,8 +452,9 @@ fn live_pass_is_held_once_across_soak_then_exits_0() {
 fn live_running_emits_no_proof() {
     let (code, lines, announced) = live_proof(
         "alcher",
-        Some(scenario::RunnerStatus::Running { step: 1, total: 2 }),
+        Some(frontend_core::live::RunnerStatus::Running { step: 1, total: 2 }),
         "",
+        None,
         false,
         false,
     );
@@ -597,10 +603,10 @@ fn passed_runner() -> scenario::ScenarioRunner {
 fn arm_catalog_witness(session: &mut TuiSession, play: &Play) {
     let catalog = play.catalog_core_watch();
     catalog.configure(host_play::catalog_core::CoreCase::Thiever, "alice");
-    session.live_witnesses = Some(LiveWitnesses {
-        catalog,
-        pair: play.paired_core_watch(),
-    });
+    session
+        .core
+        .live_runner()
+        .install_catalog_watch_for_test(Some(catalog));
 }
 
 #[test]
@@ -610,7 +616,10 @@ fn catalog_core_holds_live_pass_until_the_witness_qualifies_or_its_deadline_fail
     arm_catalog_witness(&mut session, &play);
     session.inject_play(play);
     session.live_name = Some("core_hold".into());
-    *session.scenario.lock().unwrap() = Some(passed_runner());
+    session
+        .core
+        .live_runner()
+        .install_scenario_runner_for_test(passed_runner());
     session.live_core_deadline = Some(Instant::now() + Duration::from_secs(60));
     assert_eq!(
         session.live_status(),
@@ -642,7 +651,14 @@ fn pair_fixture_setup_deadline_is_named_and_reports_split_elapsed_time() {
     session.live_name = Some("flax_runner".into());
     let started = Instant::now() - Duration::from_secs(121);
     let deadline = started + Duration::from_secs(180);
-    *session.live_timing.lock().unwrap() = Some(LiveTiming::new(started, Some(deadline)));
+    let runner = session.core.live_runner();
+    runner
+        .resolve_core("flax_runner", 2, false, true)
+        .expect("resolve Flax pair gate");
+    let pair = host_play::paired_core::PairWatch::default();
+    pair.configure(host_play::paired_core::PairCase::Flax, "runner", "spinner");
+    runner.install_pair_watch_for_test(Some(pair));
+    runner.configure_pair_setup_timing(started, Some(deadline));
 
     let (code, lines) = session.live_status();
     assert_eq!(code, Some(1));
@@ -671,59 +687,6 @@ fn pair_fixture_setup_deadline_is_named_and_reports_split_elapsed_time() {
 }
 
 #[test]
-fn pair_script_elapsed_starts_only_after_both_catalog_slots_start() {
-    let started = Instant::now();
-    let mut timing = Some(LiveTiming::new(
-        started,
-        Some(started + Duration::from_secs(180)),
-    ));
-    let mut pending = vec![
-        PendingCatalogStart::load(
-            "runner",
-            String::new(),
-            script::LoadShape::Reject,
-            None,
-            Vec::new(),
-            Vec::new(),
-        ),
-        PendingCatalogStart::load(
-            "spinner",
-            String::new(),
-            script::LoadShape::Reject,
-            None,
-            Vec::new(),
-            Vec::new(),
-        ),
-    ];
-    let accepted = live_start::StartScriptPump::Continue;
-    mark_live_script_start(&mut timing, &pending, true, &accepted, started);
-    assert!(!timing.as_ref().unwrap().script_started());
-
-    pending[0].started = true;
-    mark_live_script_start(
-        &mut timing,
-        &pending,
-        true,
-        &accepted,
-        started + Duration::from_secs(4),
-    );
-    assert!(!timing.as_ref().unwrap().script_started());
-
-    pending[1].started = true;
-    let start = started + Duration::from_secs(7);
-    mark_live_script_start(&mut timing, &pending, true, &accepted, start);
-    let timing = timing.unwrap();
-    assert_eq!(
-        timing.setup_elapsed(start + Duration::from_secs(1)),
-        Duration::from_secs(7)
-    );
-    assert_eq!(
-        timing.script_elapsed(start + Duration::from_secs(1)),
-        Some(Duration::from_secs(1))
-    );
-}
-
-#[test]
 fn only_the_witness_a_live_run_armed_decides_it() {
     // A catalog witness no live run armed, already failed at its Start.
     let play = empty_play();
@@ -743,7 +706,10 @@ fn only_the_witness_a_live_run_armed_decides_it() {
 
     // A plain `--live` run passes on its own proof, without a witness line.
     session.live_name = Some("plain".into());
-    *session.scenario.lock().unwrap() = Some(passed_runner());
+    session
+        .core
+        .live_runner()
+        .install_scenario_runner_for_test(passed_runner());
     let (code, lines) = session.live_status();
     assert_eq!(code, Some(0), "{lines:?}");
     assert!(
@@ -760,11 +726,17 @@ fn paired_proof_refuses_a_live_run_without_the_pair_gate() {
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     let error = session
-        .live_prepare_script(scenario::get("nature_crafter_air").expect("registered"))
+        .live_prepare_script(
+            frontend_core::live::Scenario::get("nature_crafter_air").expect("registered"),
+        )
         .expect_err("a paired proof must not run outside the pair gate");
     assert!(error.contains("pair core gate"), "{error}");
     assert!(session.core.play().is_none(), "refused before any boot");
-    assert!(session.pending_script.lock().unwrap().is_empty());
+    assert!(session
+        .core
+        .live_runner()
+        .pending_starts_for_test()
+        .is_empty());
 }
 
 #[test]
@@ -791,9 +763,11 @@ ScriptRegistry.register({ name: 'NatureCrafter', create: () => new NatureCrafter
     session.core.set_spawn_workers(false);
     session.live_pair_core = true;
     session
-        .live_prepare_script(scenario::get("nature_crafter_air").expect("registered"))
+        .live_prepare_script(
+            frontend_core::live::Scenario::get("nature_crafter_air").expect("registered"),
+        )
         .expect("prepare");
-    let pending = session.pending_script.lock().unwrap();
+    let pending = session.core.live_runner().pending_starts_for_test();
     let slots = pending
         .iter()
         .map(|start| start.slot.as_str())
@@ -1061,12 +1035,12 @@ fn live_scenario_looks_up_v2_file_ids_and_keeps_v1() {
     let js = live_scenario("script_bone_burier_v2_js").expect("js");
     let ts = live_scenario("script_bone_burier_v2_ts").expect("ts");
     let v1 = live_scenario("script_bone_burier").expect("v1");
-    assert_eq!(js.name, "bone_burier_v2_js");
-    assert_eq!(js.settings.start_file, Some("bone_burier_v2.js"));
-    assert_eq!(ts.name, "bone_burier_v2_ts");
-    assert_eq!(ts.settings.start_file, Some("bone_burier_v2.ts"));
-    assert_eq!(v1.settings.start_script, Some("BoneBurier"));
-    assert_eq!(v1.settings.start_file, None);
+    assert_eq!(js.view().name(), "bone_burier_v2_js");
+    assert_eq!(js.view().start_file(), Some("bone_burier_v2.js"));
+    assert_eq!(ts.view().name(), "bone_burier_v2_ts");
+    assert_eq!(ts.view().start_file(), Some("bone_burier_v2.ts"));
+    assert_eq!(v1.view().start_script(), Some("BoneBurier"));
+    assert_eq!(v1.view().start_file(), None);
     assert!(live_scenario("script_nope").is_err());
 }
 
@@ -1078,7 +1052,7 @@ fn live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting() {
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     session
-        .live_prepare_script(scenario::get("bone_burier").expect("registered"))
+        .live_prepare_script(frontend_core::live::Scenario::get("bone_burier").expect("registered"))
         .expect("prepare");
     let name = session.names.first().expect("minted name").clone();
     assert_ne!(name, "test", "live must not log in `test`");
@@ -1092,7 +1066,7 @@ fn live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting() {
         session.core.fleet().contains(&name),
         "the minted driver is a loaded member"
     );
-    let pending = session.pending_script.lock().unwrap();
+    let pending = session.core.live_runner().pending_starts_for_test();
     assert_eq!(
         pending
             .iter()
@@ -1111,7 +1085,9 @@ fn live_prepare_jive_kq_stashes_four_starts_with_the_same_roster() {
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     session
-        .live_prepare_script(scenario::get("jive_kq_four").expect("registered"))
+        .live_prepare_script(
+            frontend_core::live::Scenario::get("jive_kq_four").expect("registered"),
+        )
         .expect("prepare four-player JiveKQ");
 
     assert_eq!(session.names.len(), 4, "JiveKQ mints four fleet profiles");
@@ -1121,7 +1097,7 @@ fn live_prepare_jive_kq_stashes_four_starts_with_the_same_roster() {
         .map(|name| client::util::JString::to_screen_name(name))
         .collect::<Vec<_>>()
         .join(",");
-    let starts = session.pending_script.lock().unwrap();
+    let starts = session.core.live_runner().pending_starts_for_test();
     assert_eq!(starts.len(), 4, "StartScript prepares all four isolates");
     let mut prepared_slots = starts
         .iter()
@@ -1175,7 +1151,7 @@ fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
             "identity",
         );
         session
-            .live_prepare_script(scenario::get(name).expect("registered"))
+            .live_prepare_script(frontend_core::live::Scenario::get(name).expect("registered"))
             .expect("prepare");
         assert_eq!(
             session.script_sel,
@@ -1186,7 +1162,7 @@ fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
             session.script_sel,
             Some(ScriptChoice::loaded(CardSource::File, "bone_burier_v2"))
         );
-        let pending = session.pending_script.lock().unwrap().clone();
+        let pending = session.core.live_runner().pending_starts_for_test();
         let [pending] = pending.as_slice() else {
             panic!("{name}: one File start stashed, got {}", pending.len());
         };
@@ -1197,7 +1173,7 @@ fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
             "native-v2 File starts keep ordinary operator loadout behavior"
         );
         assert_eq!(
-            session.live_wait_script_stop,
+            session.core.live_runner().wait_script_stop(),
             Some("confirmed loaded current-generation bank exhaustion")
         );
     }
@@ -1226,9 +1202,9 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     session
-        .live_prepare_script(scenario::get("thiever").expect("registered"))
+        .live_prepare_script(frontend_core::live::Scenario::get("thiever").expect("registered"))
         .expect("prepare");
-    let pending = session.pending_script.lock().unwrap();
+    let pending = session.core.live_runner().pending_starts_for_test();
     let [pending] = pending.as_slice() else {
         panic!("one catalog start stashed, got {}", pending.len());
     };

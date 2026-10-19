@@ -16,6 +16,8 @@
 //! stay in `host-play`; this crate adds no second world or script runtime
 //! and never copies a `GameSnapshot`.
 
+#[cfg(feature = "memory-profile")]
+pub mod bench;
 pub mod bulk;
 pub mod capacity;
 pub mod command;
@@ -24,6 +26,8 @@ pub mod fleet;
 pub mod frames;
 pub mod group_walk;
 pub mod launch;
+#[cfg(feature = "live-harness")]
+pub mod live;
 pub mod log;
 pub mod log_file;
 pub mod map_bake;

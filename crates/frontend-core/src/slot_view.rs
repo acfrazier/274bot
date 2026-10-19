@@ -25,6 +25,15 @@ impl StatusBuf {
         }
     }
 
+    /// Construct test status rows without creating a live Play.
+    #[cfg(feature = "test-support")]
+    pub fn from_rows_for_test<I>(rows: I) -> Self
+    where
+        I: IntoIterator<Item = SlotStatus>,
+    {
+        Self(rows.into_iter().collect())
+    }
+
     /// The row for `name`.
     pub fn get(&self, name: &str) -> Option<SlotView<'_>> {
         self.0.iter().find(|s| s.username == name).map(SlotView)
@@ -44,8 +53,8 @@ impl StatusBuf {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
-
-    /// The raw rows, for the live harness until it moves behind the seam.
+    /// The raw rows, for tests which still exercise the adapter boundary.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn live_rows(&self) -> &[SlotStatus] {
         &self.0
     }
@@ -83,6 +92,15 @@ impl<'a> SlotView<'a> {
     /// Whether the slot is up (connected or logging in).
     pub fn is_up(&self) -> bool {
         self.0.is_up()
+    }
+    /// Bytes received on the current stream.
+    pub fn bytes_in(&self) -> u64 {
+        self.0.bytes_in
+    }
+
+    /// Bytes sent on the current stream.
+    pub fn bytes_out(&self) -> u64 {
+        self.0.bytes_out
     }
 
     /// The player's tile `(x, z, level)` once the slot is in a loaded scene.
@@ -122,5 +140,10 @@ impl<'a> SlotView<'a> {
     /// The slot's error text, if any.
     pub fn error(&self) -> Option<&'a str> {
         self.0.error.as_deref()
+    }
+
+    /// Terminal profile-asset startup failure, if this row owns one.
+    pub fn terminal_startup_error(&self) -> Option<&'a str> {
+        self.0.terminal_startup_error()
     }
 }

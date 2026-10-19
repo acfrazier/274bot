@@ -677,6 +677,21 @@ impl Scripts {
             .ok_or_else(|| format!("loaded card {lookup} is missing from the library"))
     }
 
+    /// Load one exact in-tree example and return its canonical File-card identity.
+    pub fn load_live_example_identity(&mut self, file_name: &str) -> Result<String, String> {
+        let path = script::live_example_path(file_name)
+            .ok_or_else(|| format!("no in-tree example {file_name}"))?;
+        let loaded = self
+            .js
+            .load(&path)
+            .map_err(|error| format!("load {file_name}: {error}"))?;
+        let identity = loaded.identity_id();
+        self.js
+            .get(script::ScriptSource::File, &identity)
+            .map(|_| identity.clone())
+            .ok_or_else(|| format!("file example {file_name} missing after identity load"))
+    }
+
     /// Same-folder `./Foo.js` sibling modules a loaded card imports, read
     /// for an isolate Start.
     pub fn card_siblings(
@@ -704,7 +719,7 @@ impl Scripts {
     }
 
     /// Disjoint library, legacy store and inject bag for live Start.
-    pub fn live_start_parts(
+    pub(crate) fn live_start_parts(
         &mut self,
     ) -> (
         &mut script::JsLibrary,

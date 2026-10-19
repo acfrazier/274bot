@@ -154,19 +154,19 @@ pub fn apply_paint_override(saved: &NavSettings, choice: Option<bool>) -> NavSet
 
 /// Map a scenario's session-only nav bag onto panel settings. Colours stay
 /// the rs2b0t Path-paint defaults (the scenario does not author HTML).
-pub fn from_scenario(n: &scenario::ScenarioNav, saved: &NavSettings) -> NavSettings {
+pub fn from_scenario(n: &frontend_core::live::ScenarioNav, saved: &NavSettings) -> NavSettings {
     NavSettings {
-        allow_teleports: n.allow_teleports,
-        allow_wilderness: n.allow_wilderness,
+        allow_teleports: n.allow_teleports(),
+        allow_wilderness: n.allow_wilderness(),
         allow_bank_fetch: false,
-        show_nav_path: n.show_nav_path,
-        hop_labels: n.hop_labels,
-        hop_label_px: n.hop_label_px,
-        collision_fill: n.collision_fill,
-        nsew_labels: n.nsew_labels,
-        client_trail: n.client_trail,
-        component_flood: n.component_flood,
-        camera_follow: n.camera_follow,
+        show_nav_path: n.show_nav_path(),
+        hop_labels: n.hop_labels(),
+        hop_label_px: n.hop_label_px(),
+        collision_fill: n.collision_fill(),
+        nsew_labels: n.nsew_labels(),
+        client_trail: n.client_trail(),
+        component_flood: n.component_flood(),
+        camera_follow: n.camera_follow(),
         pause_script_on_manual_walk_abort: saved.pause_script_on_manual_walk_abort,
         ..NavSettings::default()
     }
@@ -304,7 +304,10 @@ mod tests {
             pause_script_on_manual_walk_abort: false,
             ..NavSettings::default()
         };
-        let scenario_nav = scenario::nav_test_paints();
+        let scenario_nav = frontend_core::live::Scenario::get("nav_full")
+            .expect("nav_full scenario")
+            .view()
+            .nav();
         let scenario_overlay = super::from_scenario(&scenario_nav, &saved);
         assert!(!scenario_overlay.pause_script_on_manual_walk_abort);
         assert!(!effective(&saved, true).pause_script_on_manual_walk_abort);

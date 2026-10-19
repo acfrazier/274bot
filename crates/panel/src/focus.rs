@@ -85,7 +85,7 @@ pub fn should_capture(f: &Focus) -> bool {
     should_draw(f) && f.capture
 }
 
-/// Opt-in benchmark draw policy from the requested [`host_play::memory::RenderPolicy`].
+/// Opt-in benchmark draw policy from the requested [`frontend_core::bench::RenderPolicy`].
 /// New low-end modes force Game pane, wall membership, cadence knobs and per-slot
 /// renderer bits so adverse persisted prefs cannot change the requested cell.
 /// Legacy fixed-one / rotating-all paths keep their historical field writes.
@@ -93,9 +93,9 @@ pub fn should_capture(f: &Focus) -> bool {
 pub fn memory_draw_policy(
     f: &mut Focus,
     names: &[String],
-    policy: host_play::memory::RenderPolicy,
+    policy: frontend_core::bench::RenderPolicy,
 ) {
-    use host_play::memory::RenderPolicy;
+    use frontend_core::bench::RenderPolicy;
     f.renderer = true;
     match policy {
         RenderPolicy::RotatingAll => {
@@ -189,7 +189,7 @@ mod tests {
     #[cfg(feature = "memory-profile")]
     #[test]
     fn memory_single_renderer_keeps_other_thirty_one_heads_off() {
-        use host_play::memory::RenderPolicy;
+        use frontend_core::bench::RenderPolicy;
         let names: Vec<_> = (0..32).map(|i| format!("bot{i}")).collect();
         let mut f = Focus {
             focused: Some(names[0].clone()),
@@ -224,7 +224,7 @@ mod tests {
     #[cfg(feature = "memory-profile")]
     #[test]
     fn memory_focused_one_is_deterministic_for_one_and_sixteen() {
-        use host_play::memory::RenderPolicy;
+        use frontend_core::bench::RenderPolicy;
         for n in [1usize, 16] {
             let names: Vec<_> = (0..n).map(|i| format!("bot{i}")).collect();
             let mut f = adverse_focus(&names);
@@ -249,7 +249,7 @@ mod tests {
     #[cfg(feature = "memory-profile")]
     #[test]
     fn memory_focused_plus_background_is_deterministic_for_one_and_sixteen() {
-        use host_play::memory::RenderPolicy;
+        use frontend_core::bench::RenderPolicy;
         for n in [1usize, 16] {
             let names: Vec<_> = (0..n).map(|i| format!("bot{i}")).collect();
             let mut f = adverse_focus(&names);
@@ -280,7 +280,7 @@ mod tests {
     #[cfg(feature = "memory-profile")]
     #[test]
     fn memory_stress_policies_match_the_existing_panel_wall_shapes() {
-        use host_play::memory::RenderPolicy;
+        use frontend_core::bench::RenderPolicy;
         let names: Vec<_> = (0..50).map(|i| format!("bot{i}")).collect();
         let mut f = adverse_focus(&names);
         super::memory_draw_policy(&mut f, &names, RenderPolicy::Stress50);
@@ -304,7 +304,7 @@ mod tests {
     #[cfg(feature = "memory-profile")]
     #[test]
     fn memory_policy_switch_between_modes() {
-        use host_play::memory::RenderPolicy;
+        use frontend_core::bench::RenderPolicy;
         let names: Vec<_> = (0..16).map(|i| format!("bot{i}")).collect();
         let mut f = adverse_focus(&names);
         super::memory_draw_policy(&mut f, &names, RenderPolicy::FocusedOne);

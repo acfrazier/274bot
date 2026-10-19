@@ -33,15 +33,9 @@ use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use host_play::catalog_core::CoreWatch;
-use host_play::live_gate::{self, CoreGate, LiveCore, LiveTiming, PassHold};
-use host_play::live_start::{self, PendingCatalogStart, StartArming};
-use host_play::paired_core::PairWatch;
-use host_play::{live_vault_passphrase, mint_live_entries, mint_live_names, profile_password};
 use nav::tile::Tile;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
-use vault::{Profile, Vault};
 
 use frontend_core::resources::background_ack_text;
 use frontend_core::scripts::{
@@ -60,6 +54,8 @@ use frontend_core::{
 };
 #[cfg(test)]
 use host_play::{run_with_io, PlayOptions, SharedClientTemplate};
+#[cfg(test)]
+use vault::{Profile, Vault};
 
 use crate::app::{AppAction, ChatData, MapCatalogueStatus, TuiApp};
 use crate::chat::ChatAction;
@@ -112,7 +108,7 @@ const USAGE: &str = "usage: tui-play [--profile NAME|--rs2b2t] [--revision 274|2
          --unpack SNAPSHOT_ROOT (bakes the shipped WalkTo map bundle into OUT/map/<revision>)";
 
 fn exit_after_work_shutdown(code: i32) -> ! {
-    let code = match script::work_admission::WorkService::shutdown_if_started() {
+    let code = match frontend_core::process::shutdown_background_work() {
         Ok(()) => code,
         Err(error) => {
             api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "background work shutdown: {error}");
@@ -234,42 +230,12 @@ pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Resul
 
 /// The `--live` scenario, `Err` when the name is not a `script_<name>`.
 /// Unknown names fail the run (same usage contract as panel-play).
-pub fn live_scenario(name: &str) -> Result<scenario::Scenario, String> {
+pub fn live_scenario(name: &str) -> Result<frontend_core::live::Scenario, String> {
     let script = name
         .strip_prefix("script_")
         .ok_or_else(|| format!("tui-play: --live {name}: only script_<name> is supported"))?;
-    scenario::get(script).ok_or_else(|| format!("tui-play: --live {name}: unknown scenario"))
-}
-
-/// Throwaway encrypted vault for `--live` (minted names, target-aware pass).
-fn temp_live_vault(entries: &[(String, String)], vault_pass: &str) -> PathBuf {
-    static SERIAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let serial = SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let dir = env::temp_dir().join(format!(
-        "274bot-tui-live-{}-{}-{serial}",
-        std::process::id(),
-        entries.len()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("vault");
-    if path.exists() {
-        std::fs::remove_file(&path).unwrap();
-    }
-    let mut vault = Vault::create(&path, vault_pass).unwrap();
-    for (i, (user, pass)) in entries.iter().enumerate() {
-        vault
-            .upsert(Profile {
-                username: user.clone(),
-                password: pass.clone().into(),
-                uid: 274_000_001 + i as i32,
-                settings: vault::ProfileSettings {
-                    auto_login: true,
-                    ..vault::ProfileSettings::default()
-                },
-            })
-            .unwrap();
-    }
-    path
+    frontend_core::live::Scenario::get(script)
+        .ok_or_else(|| format!("tui-play: --live {name}: unknown scenario"))
 }
 
 /// Claim the one mainland seed for a slot's cold login. Reconnects retain
@@ -300,18 +266,12 @@ fn seed_mainland_on_ready<D: api::interact::Driver>(
 }
 
 /// The TUI's per-frame client work on every slot. The core already
-/// published the frame's snapshot, cancelled a walk on manual input and
-/// follows the armed walk afterwards; this adds mainland seeding and the
-/// shared `--live script_*` runner.
+/// publishes the frame and runs the shared live harness; this adds TUI-owned
+/// mainland seeding.
 struct TuiFrameHook {
-    /// Hop a fresh slot to the mainland once in a loaded scene. TUI-owned so
-    /// host-play cannot re-arm it when a scenario logout starts a new run.
+    /// Hop a fresh slot to the mainland once in a loaded scene.
     mainland: bool,
     mainland_sent: Mutex<HashSet<String>>,
-    scenario: Arc<Mutex<Option<scenario::ScenarioRunner>>>,
-    pending_script: Arc<Mutex<Vec<PendingCatalogStart>>>,
-    start_arming: Arc<Mutex<StartArming>>,
-    live_timing: Arc<Mutex<Option<LiveTiming>>>,
 }
 
 impl frontend_core::frames::FrameHook for TuiFrameHook {
@@ -327,19 +287,10 @@ impl frontend_core::frames::FrameHook for TuiFrameHook {
         let Self {
             mainland,
             mainland_sent,
-            scenario,
-            pending_script,
-            start_arming,
-            live_timing,
         } = self;
-        let hold = frame.hold();
-        // The picked walk destination clears at every session boundary.
         if frame.session_boundary() {
             frame.mark_walk_clear();
         }
-
-        // TUI owns mainland seeding so host-play cannot re-arm it when
-        // an intentional scenario logout starts a new run_client stretch.
         if seed_mainland_on_ready(
             c,
             mainland_sent,
@@ -354,122 +305,6 @@ impl frontend_core::frames::FrameHook for TuiFrameHook {
                 slot = name,
                 "mainland hop queued"
             );
-        }
-
-        // The shared `--live script_*` runner: tick the driven
-        // slot and its companions before the local-player gate
-        // (seeding must observe frames with no player decode).
-        // Hold freezes scenario follow like `step_nav_bot`.
-        if let Some(runner) = scenario.lock().unwrap().as_mut() {
-            if runner.drives(name) {
-                if runner.wants_script_paint() {
-                    let paint = start_arming
-                        .lock()
-                        .unwrap()
-                        .handle
-                        .as_ref()
-                        .and_then(|handle| handle.paint(name));
-                    if let Some(paint) = paint {
-                        runner.observe_script_paint(paint.lines.iter().map(String::as_str));
-                    }
-                }
-                let on_start_script = runner.on_start_script();
-                let pump = {
-                    let mut pending = pending_script.lock().unwrap();
-                    let mut timing = live_timing.lock().unwrap();
-                    if timing.as_ref().is_some_and(|timing| {
-                        timing.setup_expired(live_gate::PAIR_FIXTURE_SETUP_DEADLINE, Instant::now())
-                    }) {
-                        runner.fail_start("paired fixture setup deadline expired before Start");
-                        live_start::StartScriptPump::Hold
-                    } else {
-                        let pump = live_start::fire_pending_catalog_start(
-                            &mut pending,
-                            on_start_script,
-                            runner.on_stop_script(),
-                            || start_arming.lock().unwrap().clone(),
-                        );
-                        mark_live_script_start(
-                            &mut timing,
-                            &pending,
-                            on_start_script,
-                            &pump,
-                            Instant::now(),
-                        );
-                        pump
-                    }
-                };
-                match pump {
-                    live_start::StartScriptPump::Hold => {}
-                    live_start::StartScriptPump::CompiledFailed(error) => {
-                        runner.fail_start(&error);
-                    }
-                    live_start::StartScriptPump::Continue
-                    | live_start::StartScriptPump::CompiledRunning => {
-                        if pump == live_start::StartScriptPump::CompiledRunning {
-                            runner.observe_script_running();
-                        }
-                        if runner.on_stop_script() {
-                            runner.observe_script_idle(start_arming.lock().is_ok_and(|arming| {
-                                arming
-                                    .handle
-                                    .as_ref()
-                                    .is_some_and(|handle| handle.idle(name))
-                            }));
-                        }
-                        runner.tick_with_hold(c, hold);
-                        // A relog can enter Start on the final off-world frame.
-                        // Arm it now rather than after the reconnect posts colour.
-                        if runner.on_start_script() {
-                            if let Ok(mut pending) = pending_script.lock() {
-                                let mut timing = live_timing.lock().unwrap();
-                                let pump = if timing.as_ref().is_some_and(|timing| {
-                                    timing.setup_expired(
-                                        live_gate::PAIR_FIXTURE_SETUP_DEADLINE,
-                                        Instant::now(),
-                                    )
-                                }) {
-                                    runner.fail_start(
-                                        "paired fixture setup deadline expired before Start",
-                                    );
-                                    live_start::StartScriptPump::Hold
-                                } else {
-                                    let pump = live_start::fire_pending_catalog_start(
-                                        &mut pending,
-                                        true,
-                                        false,
-                                        || {
-                                            start_arming
-                                                .lock()
-                                                .map(|arming| arming.clone())
-                                                .unwrap_or_default()
-                                        },
-                                    );
-                                    mark_live_script_start(
-                                        &mut timing,
-                                        &pending,
-                                        true,
-                                        &pump,
-                                        Instant::now(),
-                                    );
-                                    pump
-                                };
-                                match pump {
-                                    live_start::StartScriptPump::CompiledRunning => {
-                                        runner.observe_script_running();
-                                    }
-                                    live_start::StartScriptPump::CompiledFailed(error) => {
-                                        runner.fail_start(&error);
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                    }
-                }
-            } else if let Some(index) = runner.companion_for(name) {
-                runner.companion_tick(index, c);
-            }
         }
     }
 }
@@ -503,64 +338,11 @@ impl frontend_core::SlotSurface for TuiSurface<'_> {
     fn released(&mut self, _name: &str) {}
 }
 
-fn scenario_fixture_loadouts(settings: &scenario::ScenarioSettings) -> Vec<api::loadout::Loadout> {
-    settings
-        .fixture_loadouts
-        .unwrap_or(&[])
-        .iter()
-        .map(|row| {
-            row.carry.iter().fold(
-                api::loadout::Loadout::new(row.name),
-                |loadout, &(item, qty)| loadout.with_carry(item, qty),
-            )
-        })
-        .collect()
-}
-
-/// The isolate Starts a live card stashes: both slots with their role bags
-/// under the pair gate, else the driven slot alone.
-fn live_card_starts(
-    live_core: LiveCore,
-    names: &[String],
-    card: &script::JsCard,
-    bag: Option<serde_json::Map<String, serde_json::Value>>,
-    siblings: Vec<(String, String)>,
-    loadouts: Vec<api::loadout::Loadout>,
-    pair_watch: &PairWatch,
-) -> Result<Vec<PendingCatalogStart>, String> {
-    match live_core {
-        LiveCore::Pair(case) => live_start::pair_starts(
-            names,
-            case,
-            card.js.clone(),
-            card.shape,
-            &card.settings_schema,
-            siblings,
-            pair_watch,
-        ),
-        LiveCore::Off | LiveCore::Catalog(_) => Ok(vec![PendingCatalogStart::load(
-            names[0].clone(),
-            card.js.clone(),
-            card.shape,
-            bag,
-            siblings,
-            loadouts,
-        )]),
-    }
-}
-
-/// The Play-owned witness handles a core-gated `--live` run polls, taken
-/// once at prepare so each poll borrows them instead of cloning `Play`'s.
-struct LiveWitnesses {
-    catalog: CoreWatch,
-    pair: PairWatch,
-}
-
 /// The TUI session: the running play, the vault and the per-username walk
 /// arms (the core owns the per-slot snapshot publication).
 pub struct TuiSession {
     #[cfg(feature = "memory-profile")]
-    memory: Option<host_play::memory::Run>,
+    memory: Option<frontend_core::bench::BenchRun>,
     /// Shared operator lifecycle (vault, play, fleet, selection, removals,
     /// status polling and operation results). Headless: no per-slot IO.
     core: OperatorSession<()>,
@@ -587,32 +369,17 @@ pub struct TuiSession {
     /// destination clears on the next pump.
     walk_reset: bool,
 
-    /// The shared `--live script_*` runner (slot threads tick it from the
-    /// per-frame hook; the UI loop reads its status/evidence).
-    scenario: Arc<Mutex<Option<scenario::ScenarioRunner>>>,
-    /// Catalog card `live_prepare_script` stashes; the live pump Starts
-    /// them once on [`scenario::StepKind::StartScript`].
-    pending_script: Arc<Mutex<Vec<PendingCatalogStart>>>,
-    /// Isolate-start handle and core watches the per-frame hook arms Start
-    /// with (filled after Play).
-    start_arming: Arc<Mutex<StartArming>>,
     /// The `--live` run's scenario name, for the PASS/FAIL label.
     live_name: Option<String>,
     /// `--catalog-core` / `--pair-core`: the shared witness the next
     /// `--live` prepare arms.
     live_catalog_core: bool,
     live_pair_core: bool,
-    /// The witnesses a `--catalog-core` / `--pair-core` run armed. `None`
-    /// for interactive use and plain `--live` runs, which poll no gate.
-    live_witnesses: Option<LiveWitnesses>,
     /// The armed witness's own ceiling (`None` without a core gate).
     live_core_deadline: Option<Instant>,
-    /// Pair fixture elapsed time, latched through the first shared Start.
-    live_timing: Arc<Mutex<Option<LiveTiming>>>,
     /// `BUDGET_S` soak: keep pumping after proof PASS until this instant.
     live_soak_until: Option<Instant>,
     live_announced_pass: bool,
-    live_wait_script_stop: Option<&'static str>,
     live_stop_wait_started: Option<Instant>,
     /// The Browse-selected card (catalog Start after seed, or operator Start).
     script_sel: Option<ScriptChoice>,
@@ -725,18 +492,12 @@ impl TuiSession {
             map_catalogue_named: false,
             last_focused: None,
             walk_reset: false,
-            scenario: Arc::new(Mutex::new(None)),
-            pending_script: Arc::new(Mutex::new(Vec::new())),
-            start_arming: Arc::new(Mutex::new(StartArming::default())),
             live_name: None,
             live_catalog_core: false,
             live_pair_core: false,
-            live_witnesses: None,
             live_core_deadline: None,
-            live_timing: Arc::new(Mutex::new(None)),
             live_soak_until: None,
             live_announced_pass: false,
-            live_wait_script_stop: None,
             live_stop_wait_started: None,
             script_sel: None,
             scripts,
@@ -765,11 +526,11 @@ impl TuiSession {
     }
 
     #[cfg(feature = "memory-profile")]
-    fn profile_class(&self) -> host_play::ProfileClass {
-        match self.bound().map(|profile| profile.class()) {
-            Some(frontend_core::launch::ProfileClass::Local) => host_play::ProfileClass::Local,
-            _ => host_play::ProfileClass::Remote,
-        }
+    fn profile_class(&self) -> frontend_core::launch::ProfileClass {
+        self.bound()
+            .map_or(frontend_core::launch::ProfileClass::Remote, |profile| {
+                profile.class()
+            })
     }
 
     fn app_title(&self) -> String {
@@ -844,10 +605,6 @@ impl TuiSession {
         let hook = Arc::new(TuiFrameHook {
             mainland: self.mainland,
             mainland_sent: Mutex::new(HashSet::new()),
-            scenario: Arc::clone(&self.scenario),
-            pending_script: Arc::clone(&self.pending_script),
-            start_arming: Arc::clone(&self.start_arming),
-            live_timing: Arc::clone(&self.live_timing),
         });
         let mut launch = self.launcher.take_launch();
         if let Some(number) = self.auto_world {
@@ -856,12 +613,11 @@ impl TuiSession {
         (launch, hook)
     }
 
-    /// The started play's debug trace and the Start handle and core watches
-    /// the `--live` runner arms its Starts with.
+    /// Log the started play's debug trace when requested.
     fn play_started(&mut self) {
-        let Some(play) = self.core.play() else {
+        if !self.core.has_play() {
             return;
-        };
+        }
         if std::env::var_os("BOT_DEBUG").is_some() {
             let game_data = self.core.game_data();
             let lobster_heal = game_data
@@ -877,11 +633,6 @@ impl TuiSession {
                 }
             );
         }
-        *self.start_arming.lock().unwrap() = StartArming {
-            handle: Some(play.script_start_handle()),
-            catalog: Some(play.catalog_core_watch()),
-            pair: Some(play.paired_core_watch()),
-        };
     }
 
     /// Load `name` into the fleet and log it in (the TUI boot and `--live`
@@ -1078,177 +829,128 @@ impl TuiSession {
     /// `--live script_*` boot: minted ephemeral vault + spawn + runner. With
     /// `--catalog-core` / `--pair-core` the Play-owned witness is armed
     /// before either slot publishes, exactly like the panel watches.
-    fn live_prepare_script(&mut self, scenario: scenario::Scenario) -> Result<(), String> {
+    fn live_prepare_script(
+        &mut self,
+        scenario: frontend_core::live::Scenario,
+    ) -> Result<(), String> {
         self.persist_ui = false;
-        *self.live_timing.lock().unwrap() = None;
-        let live_core = LiveCore::resolve(
-            scenario.name,
-            scenario.seed.profiles.len(),
+        let view = scenario.view();
+        let name = view.name().to_owned();
+        let profile_count = view.profile_count();
+        let scenario_deadline = view.deadline();
+        let start_script = view.start_script().map(str::to_owned);
+        let start_file = view.start_file().map(str::to_owned);
+        let fleet_start = view.fleet_start();
+        let inject_companion_as = view.inject_companion_as().map(str::to_owned);
+        let settings_inject = scenario.settings_inject();
+        let fixture_loadouts = scenario.fixture_loadouts();
+        self.core.resolve_live_core(
+            &name,
+            profile_count,
             self.live_catalog_core,
             self.live_pair_core,
         )?;
-        let name = scenario.name.to_string();
-        let start_script = scenario.settings.start_script;
-        let fleet_start = scenario.settings.fleet_start;
-        let start_file = scenario.settings.start_file;
-        let wait_script_stop = scenario.settings.wait_script_stop;
-        let settings_inject = scenario.settings.script_settings_inject;
-        let scenario_deadline = scenario.settings.deadline;
-        let fixture_loadouts = scenario_fixture_loadouts(&scenario.settings);
-        let names = mint_live_names(scenario.seed.profiles.len());
-        let entries = mint_live_entries(&names);
-        let pass = live_vault_passphrase();
-        let path = temp_live_vault(&entries, &pass);
-        self.unlock_at(&path, &pass)?;
-        let play = self
-            .core
-            .play()
-            .ok_or_else(|| "live prepare needs the unlocked play".to_string())?;
-        live_core.configure(play, &names)?;
-        let pair_watch = play.paired_core_watch();
-        self.live_witnesses = (live_core != LiveCore::Off).then(|| LiveWitnesses {
-            catalog: play.catalog_core_watch(),
-            pair: pair_watch.clone(),
-        });
+        let profiles = frontend_core::live::LiveProfiles::mint(profile_count);
+        let names = profiles.names();
+        let fleet_cards = scenario.fleet_cards(names)?;
+        let path = profiles.tui_vault();
+        self.unlock_at(&path, profiles.passphrase())?;
+        self.core.configure_live_core(names)?;
         self.live_name = Some(name);
-        self.live_wait_script_stop = wait_script_stop;
         self.live_stop_wait_started = None;
-        let world = play.world();
-        let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
         let play_config = self.launcher.play_config();
-        runner.set_tick_speed_endpoint(play_config.host(), play_config.port());
-        runner.set_map_members(play.map_members());
-        let budget = scenario::budget_s_from_env();
+        let budget = frontend_core::live::budget_s_from_env();
         if let Some(budget) = budget {
-            runner.set_deadline(budget);
             self.live_soak_until = Some(Instant::now() + budget);
             self.live_announced_pass = false;
         }
-        runner.set_live_names(&names);
-        runner.set_obj_names(play.obj_names());
-        *self.scenario.lock().unwrap() = Some(runner);
-        self.scripts
-            .set_inject(scenario::settings_inject_map(settings_inject));
-        self.names = names.clone();
-        for n in &names {
-            self.load_and_login(n);
+        let runner = self.core.live_scenario_runner(
+            scenario,
+            names,
+            play_config.host(),
+            play_config.port(),
+            budget,
+        );
+        self.core.live_runner().install(runner);
+        self.scripts.set_inject(settings_inject);
+        self.names = names.to_vec();
+        for name in names {
+            self.load_and_login(name);
         }
         self.focus(&names[0]);
-        // A scenario that names a script card selects the real `$RS2B0T`
-        // catalog script on the driven slot (same as the panel): fill the
-        // catalog from `$RS2B0T`, then Start on StartScript after seed.
-        // A fleet launch Starts the scenario's own card on each member slot.
         if let Some(fleet) = fleet_start {
             self.fill_rs2b0t_cards_for_live_start()?;
-            for member in fleet.members(&names)? {
-                self.scripts
-                    .transpile_blocking(CardSource::Catalog, member.card)?;
+            for card in fleet_cards {
+                self.scripts.transpile_blocking(CardSource::Catalog, card)?;
             }
-            let scripts = &mut self.scripts;
-            let (js, legacy, inject) = scripts.live_start_parts();
-            let starts = live_start::fleet_catalog_starts(
+            let plan = frontend_core::live::StartPlan::fleet_catalog(
+                &mut self.scripts,
                 fleet,
-                &names,
-                js,
-                legacy,
-                inject,
+                names,
                 &fixture_loadouts,
             )?;
-            *self.pending_script.lock().unwrap() = starts;
-        // Exact example files Load as File cards and select by identity_id.
+            self.core.live_runner().stage(plan);
         } else if let Some(file_name) = start_file {
-            let path = script::live_example_path(file_name)
-                .ok_or_else(|| format!("no in-tree example {file_name}"))?;
+            let identity = self.scripts.load_live_example_identity(&file_name)?;
             let choice = self
                 .scripts
-                .load_file(&path)
-                .map_err(|e| format!("load {file_name}: {e}"))?
+                .card(CardSource::File, &identity)
+                .ok_or_else(|| format!("file example {file_name} missing after identity load"))?
                 .choice();
-            let identity = choice.label().to_owned();
-            let (js, _, _) = self.scripts.live_start_parts();
-            let card = js
-                .get(script::ScriptSource::File, &identity)
-                .cloned()
-                .ok_or_else(|| format!("file example {file_name} missing after identity load"))?;
             self.script_sel = Some(choice);
             let bag = self.pending_settings_bag(CardSource::File, &identity);
-            let siblings = self.sibling_modules_for_card(&card)?;
-            *self.pending_script.lock().unwrap() = live_card_starts(
-                live_core,
-                &names,
-                &card,
+            let selected = self
+                .script_sel
+                .as_ref()
+                .expect("live loaded-card selection is set");
+            self.core.live_runner().stage_loaded_card(
+                &mut self.scripts,
+                names,
+                selected,
                 bag,
-                siblings,
+                inject_companion_as.as_deref(),
                 fixture_loadouts,
-                &pair_watch,
             )?;
         } else if let Some(card_name) = start_script {
-            if let (Some(id), Some(start_id)) = (
-                CompiledCardId::lookup(card_name),
-                script::compiled_id(card_name),
-            ) {
+            if let Some(id) = CompiledCardId::lookup(&card_name) {
                 self.script_sel = Some(ScriptChoice::compiled(id));
                 let bag = self.scripts.compiled_bag(&self.core, &names[0], id)?;
-                *self.pending_script.lock().unwrap() = vec![PendingCatalogStart::compiled(
-                    names[0].clone(),
-                    start_id,
-                    bag,
-                )];
+                self.core
+                    .live_runner()
+                    .stage(frontend_core::live::StartPlan::compiled(
+                        names[0].clone(),
+                        id,
+                        bag,
+                    ));
             } else {
                 self.fill_rs2b0t_cards_for_live_start()?;
                 self.scripts
-                    .transpile_blocking(CardSource::Catalog, card_name)?;
-                let (js, _, _) = self.scripts.live_start_parts();
-                let card = js
-                    .get(script::ScriptSource::Catalog, card_name)
-                    .cloned()
-                    .ok_or_else(|| {
-                        format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
-                    })?;
-                self.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, card_name));
-                let bag = self.pending_settings_bag(CardSource::Catalog, card_name);
-                let siblings = self.sibling_modules_for_card(&card)?;
-                *self.pending_script.lock().unwrap() = live_card_starts(
-                    live_core,
-                    &names,
-                    &card,
+                    .transpile_blocking(CardSource::Catalog, &card_name)?;
+                self.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, &card_name));
+                let bag = self.pending_settings_bag(CardSource::Catalog, &card_name);
+                let selected = self
+                    .script_sel
+                    .as_ref()
+                    .expect("live loaded-card selection is set");
+                self.core.live_runner().stage_loaded_card(
+                    &mut self.scripts,
+                    names,
+                    selected,
                     bag,
-                    siblings,
+                    inject_companion_as.as_deref(),
                     fixture_loadouts,
-                    &pair_watch,
                 )?;
             }
         }
         let live_started = Instant::now();
-        self.live_core_deadline = self.live_witnesses.as_ref().and_then(|armed| {
-            live_gate::core_deadline(
-                Some(&armed.catalog),
-                Some(&armed.pair),
-                budget,
-                scenario_deadline,
-                live_started,
-            )
-        });
-        *self.live_timing.lock().unwrap() = self
-            .live_witnesses
-            .as_ref()
-            .filter(|armed| {
-                matches!(
-                    live_core,
-                    LiveCore::Pair(host_play::paired_core::PairCase::Flax)
-                ) && armed.pair.configured()
-            })
-            .map(|_| LiveTiming::new(live_started, self.live_core_deadline));
+        self.live_core_deadline =
+            self.core
+                .live_runner()
+                .core_deadline(budget, scenario_deadline, live_started);
+        self.core
+            .live_runner()
+            .configure_pair_setup_timing(live_started, self.live_core_deadline);
         Ok(())
-    }
-
-    /// The sibling modules a card's isolate resolves at Start.
-    fn sibling_modules_for_card(
-        &mut self,
-        card: &script::JsCard,
-    ) -> Result<Vec<(String, String)>, String> {
-        let (js, _, _) = self.scripts.live_start_parts();
-        live_start::card_siblings(js, card)
     }
 
     fn map_context(&self, app: &TuiApp) -> Option<frontend_core::walk_map::WalkMapContext> {
@@ -2340,20 +2042,18 @@ impl TuiSession {
         #[cfg(feature = "memory-profile")]
         if let Some(run) = self.memory.as_mut() {
             app.focused = Some(run.focus_index());
-            self.core.select(&run.names[run.focus_index()]);
-            if let Some(play) = self.core.play_mut() {
-                match run.poll(play) {
-                    Ok(true) => {
-                        restore_terminal();
-                        eprintln!("PASS: memory tui observation complete");
-                        exit_after_work_shutdown(0);
-                    }
-                    Ok(false) => {}
-                    Err(error) => {
-                        restore_terminal();
-                        eprintln!("FAIL: memory tui: {error}");
-                        exit_after_work_shutdown(1);
-                    }
+            self.core.select(&run.names()[run.focus_index()]);
+            match run.poll(&self.core) {
+                Ok(true) => {
+                    restore_terminal();
+                    eprintln!("PASS: memory tui observation complete");
+                    exit_after_work_shutdown(0);
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    restore_terminal();
+                    eprintln!("FAIL: memory tui: {error}");
+                    exit_after_work_shutdown(1);
                 }
             }
         }
@@ -2661,17 +2361,9 @@ impl TuiSession {
     }
 
     fn script_self_stop_observed(&self, needle: &str) -> bool {
-        let Some(name) = self.names.first() else {
-            return false;
-        };
-        let Some(play) = self.core.play() else {
-            return false;
-        };
-        live_gate::script_self_stop_observed(
-            play.script_state(name),
-            play.script_lifecycle_receipt(name).as_ref(),
-            needle,
-        )
+        self.names
+            .first()
+            .is_some_and(|name| self.core.live_script_self_stop_observed(name, needle))
     }
 
     /// The `--live` terminal state: `Some(exit code)` when the runner
@@ -2681,68 +2373,39 @@ impl TuiSession {
     /// panel watches do: the witness this run armed fails the run when it
     /// fails, and holds the PASS while Pending, before the clean-stop grace.
     fn live_status(&mut self) -> (Option<i32>, Vec<ProofLine>) {
-        // The UI loop polls this every frame, interactive use included:
-        // without a `--live` run there is nothing to decide, so read no
-        // clock, take no lock and touch no witness.
         let Some(name) = self.live_name.as_deref() else {
             return (None, Vec::new());
         };
         let now = Instant::now();
-        let timing = self.live_timing.lock().unwrap().as_ref().copied();
-        if let Some(timing) = timing
-            .filter(|timing| timing.setup_expired(live_gate::PAIR_FIXTURE_SETUP_DEADLINE, now))
-        {
-            return (
-                Some(1),
-                vec![
-                    ProofLine::Stderr(live_timing_record(name, timing, now)),
-                    ProofLine::Stderr(format!(
-                        "FAIL: live {name} setup: paired fixture did not reach successful relog and scene readiness before its bounded pre-Start deadline"
-                    )),
-                ],
-            );
+        let runner = self.core.live_runner();
+        let timing = runner.timing_view(now);
+        if runner.pair_setup_expired(now) {
+            let mut lines = Vec::new();
+            if let Some(timing) = timing {
+                lines.push(ProofLine::Stderr(live_timing_record(name, timing)));
+            }
+            lines.push(ProofLine::Stderr(format!(
+                "FAIL: live {name} setup: paired fixture did not reach successful relog and scene readiness before its bounded pre-Start deadline"
+            )));
+            return (Some(1), lines);
         }
-        // Build the JSON receipt only on a terminal or first-PASS poll.
-        // Only the witness this run armed can decide it, borrowed from the
-        // run; a plain `--live` run has none and evaluates no gate.
-        let (core_gate, pair_gate) = match &self.live_witnesses {
-            None => (CoreGate::Disabled, CoreGate::Disabled),
-            Some(armed) => (
-                live_gate::catalog_core_gate(Some(&armed.catalog), self.live_core_deadline, now),
-                live_gate::pair_core_gate(Some(&armed.pair), self.live_core_deadline, now),
-            ),
-        };
-        let catalog = self.live_witnesses.as_ref().map(|armed| &armed.catalog);
-        let pair = self.live_witnesses.as_ref().map(|armed| &armed.pair);
-        // The witness receipts ride with the terminal line: stdout before a
-        // PASS, stderr before a FAIL, labelled with the `--live` token.
+        let decision = runner.watch_decision(self.live_core_deadline, now);
         let witnesses = |ok: bool| {
-            let label = format!("script_{name}");
-            [
-                (
-                    live_gate::CATALOG_CORE_TAG,
-                    live_gate::catalog_core_record(catalog, &core_gate),
-                ),
-                (
-                    live_gate::PAIRED_CORE_TAG,
-                    live_gate::pair_core_record(pair, &pair_gate),
-                ),
-            ]
-            .into_iter()
-            .filter_map(|(tag, witness)| witness.map(|witness| format!("{tag}: {label} {witness}")))
-            .map(|line| {
-                if ok {
+            let mut lines = Vec::new();
+            decision.for_each_record(|tag, witness| {
+                let line = format!("{tag}: script_{name} {witness}");
+                lines.push(if ok {
                     ProofLine::Stdout(line)
                 } else {
                     ProofLine::Stderr(line)
-                }
-            })
-            .collect::<Vec<_>>()
+                });
+            });
+            lines
         };
         let fail = |receipt: String, message: &str| {
             let mut lines = witnesses(false);
             if let Some(timing) = timing {
-                lines.push(ProofLine::Stderr(live_timing_record(name, timing, now)));
+                lines.push(ProofLine::Stderr(live_timing_record(name, timing)));
             }
             lines.push(ProofLine::Stderr(receipt));
             lines.push(ProofLine::Stderr(format!("FAIL: {message}")));
@@ -2751,42 +2414,45 @@ impl TuiSession {
         if let Some(message) = self.terminal_startup_failure() {
             return fail(format!("FAIL: live {name} startup: {message}"), &message);
         }
-        for gate in [&core_gate, &pair_gate] {
-            if let CoreGate::Failed(message) = gate {
+        for gate in [decision.catalog(), decision.pair()] {
+            if let Some(message) = gate.failure_message() {
                 return fail(format!("FAIL: live {name} {message}"), message);
             }
         }
-        let status = self.scenario.lock().unwrap().as_ref().map(|r| r.status());
-        if let Some(scenario::RunnerStatus::Passed) = &status {
+        let status = runner.status();
+        if status == Some(frontend_core::live::RunnerStatus::Passed) {
             let mut grace = self.live_stop_wait_started;
-            let hold = live_gate::pass_hold(
-                &[&core_gate, &pair_gate],
-                self.live_wait_script_stop,
+            let hold = decision.pass_hold(
+                runner.wait_script_stop(),
                 |needle| self.script_self_stop_observed(needle),
                 &mut grace,
                 now,
             );
             self.live_stop_wait_started = grace;
-            match hold {
-                PassHold::Core | PassHold::CleanStop => return (None, Vec::new()),
-                PassHold::TimedOut(message) => {
-                    return fail(format!("FAIL: live {name} {message}"), &message);
+            match hold.kind() {
+                frontend_core::live::PassHoldKind::Core
+                | frontend_core::live::PassHoldKind::CleanStop => return (None, Vec::new()),
+                frontend_core::live::PassHoldKind::TimedOut => {
+                    let message = hold
+                        .failure_message()
+                        .expect("timed-out clean-stop holds carry their failure reason");
+                    return fail(format!("FAIL: live {name} {message}"), message);
                 }
-                PassHold::Release { .. } => {}
+                frontend_core::live::PassHoldKind::Release => {}
             }
         }
-        let evidence = self
-            .scenario
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|r| r.evidence().cloned())
-            .map(|ev| ev.to_json())
-            .unwrap_or_default();
+        let evidence = runner.evidence_json().unwrap_or_default();
+        let failure = runner.failure_message();
         let soaking = self.live_soak_until.is_some_and(|t| now < t);
         let was_announced = self.live_announced_pass;
-        let (code, proof, announced) =
-            live_proof(name, status, &evidence, soaking, self.live_announced_pass);
+        let (code, proof, announced) = live_proof(
+            name,
+            status,
+            &evidence,
+            failure.as_deref(),
+            soaking,
+            self.live_announced_pass,
+        );
         let timing_due = code.is_some() || (announced && !was_announced);
         let mut lines = match code {
             Some(1) => witnesses(false),
@@ -2795,7 +2461,7 @@ impl TuiSession {
         };
         if timing_due {
             if let Some(timing) = timing {
-                let receipt = live_timing_record(name, timing, now);
+                let receipt = live_timing_record(name, timing);
                 lines.push(if code == Some(1) {
                     ProofLine::Stderr(receipt)
                 } else {
@@ -2806,11 +2472,10 @@ impl TuiSession {
         lines.extend(proof);
         self.live_announced_pass = announced;
         if code == Some(1) && std::env::var_os("BOT_DEBUG").is_some() {
-            if let (Some(slot), Some(play)) = (self.names.first(), self.core.play()) {
-                if let Some(receipt) = play.script_lifecycle_receipt(slot) {
+            if let Some(slot) = self.names.first() {
+                if let Some(details) = self.core.live_script_lifecycle_debug(slot) {
                     lines.push(ProofLine::Stderr(format!(
-                        "[tui-play] script lifecycle slot={slot:?} generation={} state={:?} tick={} reason={:?}",
-                        receipt.runtime_generation, receipt.state, receipt.tick, receipt.reason
+                        "[tui-play] script lifecycle slot={slot:?} {details}"
                     )));
                 }
             }
@@ -2821,11 +2486,7 @@ impl TuiSession {
     /// Return a producer-marked terminal asset-init failure for a slot owned
     /// by this scenario. Retryable login errors intentionally remain pending.
     fn terminal_startup_failure(&self) -> Option<String> {
-        let runner = self.scenario.lock().unwrap();
-        let runner = runner.as_ref()?;
-        let owned = runner.owned_profile_names();
-        let statuses = self.core.play()?.statuses();
-        host_play::owned_terminal_startup_error(&statuses, &owned)
+        self.core.live_terminal_startup_failure()
     }
 
     fn ack_background_bots(&mut self, app: &mut TuiApp) {
@@ -2932,33 +2593,11 @@ impl ProofLine {
     }
 }
 
-fn mark_live_script_start(
-    timing: &mut Option<LiveTiming>,
-    pending: &[PendingCatalogStart],
-    on_start_script: bool,
-    pump: &live_start::StartScriptPump,
-    now: Instant,
-) {
-    if !on_start_script
-        || !matches!(
-            pump,
-            live_start::StartScriptPump::Continue | live_start::StartScriptPump::CompiledRunning
-        )
-        || pending.is_empty()
-        || pending.iter().any(|card| !card.started)
-    {
-        return;
-    }
-    if let Some(timing) = timing {
-        timing.mark_script_started(now);
-    }
-}
-
-fn live_timing_record(name: &str, timing: LiveTiming, now: Instant) -> String {
+fn live_timing_record(name: &str, timing: frontend_core::live::LiveTimingView) -> String {
     let millis = |duration: Duration| duration.as_millis().min(u128::from(u64::MAX)) as u64;
     let receipt = serde_json::json!({
-        "setup_elapsed_ms": millis(timing.setup_elapsed(now)),
-        "script_elapsed_ms": timing.script_elapsed(now).map(millis),
+        "setup_elapsed_ms": millis(timing.setup_elapsed()),
+        "script_elapsed_ms": timing.script_elapsed().map(millis),
     });
     format!("LIVE_TIMING: script_{name} {receipt}")
 }
@@ -2973,13 +2612,14 @@ fn write_proof_lines(lines: &[ProofLine]) {
 /// caller's latch so a `BUDGET_S` soak does not reprint PASS.
 fn live_proof(
     name: &str,
-    status: Option<scenario::RunnerStatus>,
+    status: Option<frontend_core::live::RunnerStatus>,
     evidence: &str,
+    failure: Option<&str>,
     soaking: bool,
     announced_pass: bool,
 ) -> (Option<i32>, Vec<ProofLine>, bool) {
     match status {
-        Some(scenario::RunnerStatus::Passed) => {
+        Some(frontend_core::live::RunnerStatus::Passed) => {
             let mut lines = Vec::new();
             let announced = if announced_pass {
                 true
@@ -2993,14 +2633,17 @@ fn live_proof(
                 (Some(0), lines, announced)
             }
         }
-        Some(scenario::RunnerStatus::Failed(msg)) => (
-            Some(1),
-            vec![
-                ProofLine::Stderr(format!("FAIL: live {name} {evidence}")),
-                ProofLine::Stderr(format!("FAIL: {msg}")),
-            ],
-            announced_pass,
-        ),
+        Some(frontend_core::live::RunnerStatus::Failed) => {
+            let message = failure.expect("failed runner exposes its failure reason");
+            (
+                Some(1),
+                vec![
+                    ProofLine::Stderr(format!("FAIL: live {name} {evidence}")),
+                    ProofLine::Stderr(format!("FAIL: {message}")),
+                ],
+                announced_pass,
+            )
+        }
         _ => (None, Vec::new(), announced_pass),
     }
 }
@@ -3042,7 +2685,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     let memory = {
         #[cfg(feature = "memory-profile")]
         {
-            host_play::memory::Config::from_env()
+            frontend_core::bench::BenchConfig::from_env()
                 .ok()
                 .flatten()
                 .is_some()
@@ -3094,21 +2737,17 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         .require_bot_operation()?;
 
     #[cfg(feature = "memory-profile")]
-    if let Some(config) = host_play::memory::Config::from_env()? {
-        host_play::memory::require_live_benchmark(session.profile_class())?;
+    if let Some(config) = frontend_core::bench::BenchConfig::from_env()? {
+        frontend_core::bench::require_live_benchmark(session.profile_class())?;
         session.persist_ui = false;
         // Vault/card first; unlock constructs Play once (single load_pack).
-        let run = host_play::memory::Run::prepare_unseeded(config, "tui")?;
+        let run = frontend_core::bench::BenchRun::prepare(config, "tui")?;
         session.mainland = true;
-        session.unlock_at(&run.vault, &run.pass)?;
-        run.bind_seed_nav(host_play::memory::SeedNav::FromPlay {
-            world: session.core.play().and_then(|p| p.world()),
-            obj_names: session.core.play().map(|p| p.obj_names()),
-            map_members: session.core.play().is_some_and(|p| p.map_members()),
-        })?;
-        session.names = run.names.clone();
+        session.unlock_at(run.vault(), run.passphrase())?;
+        run.bind_seed_nav(&session.core)?;
+        session.names = run.names().to_vec();
         session.load_and_login_all();
-        session.focus(&run.names[0]);
+        session.focus(&run.names()[0]);
         let mut app = new_app(
             format!(
                 "{} memory benchmark · {}",
@@ -3117,7 +2756,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             ),
             &session.preferences,
         );
-        app.names = run.names.clone();
+        app.names = run.names().to_vec();
         app.focused = Some(0);
         session.memory = Some(run);
         return run_loop(session, app);
@@ -3126,7 +2765,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     match mode {
         RunMode::Live(name) => {
             let scenario = live_scenario(&name)?;
-            session.mainland = scenario.seed.mainland;
+            session.mainland = scenario.view().mainland();
             session.live_catalog_core = args.catalog_core;
             session.live_pair_core = args.pair_core;
             session.live_prepare_script(scenario)?;
@@ -3208,7 +2847,7 @@ impl TuiSession {
         // here keeps a failed first-run profile a startup error.
         let submitted = self
             .core
-            .create_profile_named(username, &profile_password(username))
+            .create_profile_named(username, &frontend_core::live::profile_password(username))
             .map_err(|error| format!("profile: {error}"))?;
         if let Some(reason) = self.core.command_failure(submitted.request()) {
             return Err(reason.to_string());

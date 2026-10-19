@@ -371,7 +371,7 @@ pub(crate) struct FollowFacts {
 /// This crate cannot name the client type, so [`slot_frame`] takes them as
 /// values and the call site passes host-play's own functions, whose types
 /// fix `C` (and the client-generation type `G`).
-pub(crate) struct ClientOps<H, P, T, S> {
+pub(crate) struct ClientOps<H, P, T, S, L = NoLiveFrame> {
     /// The player's world tile, once a local player decodes.
     pub(crate) here: H,
     /// Publish the frame into the slot's snapshot against its generations.
@@ -380,9 +380,29 @@ pub(crate) struct ClientOps<H, P, T, S> {
     pub(crate) tick: T,
     /// Send the armed walk's next leg.
     pub(crate) step: S,
+    live: L,
 }
 
-impl<H, P, T, S> ClientOps<H, P, T, S> {
+pub(crate) struct NoLiveFrame;
+
+pub(crate) trait LiveClientFrame<C>: Send + Sync + 'static {
+    fn run(&self, client: &mut C, name: &str, hold: bool);
+}
+
+impl<C> LiveClientFrame<C> for NoLiveFrame {
+    fn run(&self, _: &mut C, _: &str, _: bool) {}
+}
+
+impl<C, F> LiveClientFrame<C> for F
+where
+    F: Fn(&mut C, &str, bool) + Send + Sync + 'static,
+{
+    fn run(&self, client: &mut C, name: &str, hold: bool) {
+        self(client, name, hold);
+    }
+}
+
+impl<H, P, T, S> ClientOps<H, P, T, S, NoLiveFrame> {
     /// Bundle the operations; the bounds give a closure argument (`tick`)
     /// its client type from the host-play functions passed beside it.
     pub(crate) fn new<C, G>(here: H, publish: P, step: S, tick: T) -> Self
@@ -405,15 +425,28 @@ impl<H, P, T, S> ClientOps<H, P, T, S> {
             publish,
             tick,
             step,
+            live: NoLiveFrame,
+        }
+    }
+}
+
+impl<H, P, T, S, L> ClientOps<H, P, T, S, L> {
+    pub(crate) fn with_live_frame<F>(self, live: F) -> ClientOps<H, P, T, S, F> {
+        ClientOps {
+            here: self.here,
+            publish: self.publish,
+            tick: self.tick,
+            step: self.step,
+            live,
         }
     }
 }
 
 /// The per-frame closure the core hands host-play for every slot.
-pub(crate) fn slot_frame<C, G, H, P, T, S>(
+pub(crate) fn slot_frame<C, G, H, P, T, S, L>(
     shared: Arc<FrameShared>,
     hook: Arc<dyn FrameHook>,
-    ops: ClientOps<H, P, T, S>,
+    ops: ClientOps<H, P, T, S, L>,
 ) -> impl Fn(&mut C, &str, SlotFrameInput) + Send + Sync + 'static
 where
     C: Any,
@@ -433,6 +466,7 @@ where
         + Send
         + Sync
         + 'static,
+    L: LiveClientFrame<C>,
 {
     // The client generations each slot last published against. Kept here,
     // on the slot threads, because only they read them.
@@ -454,6 +488,7 @@ where
             name,
             &shared.context(name, hold, session_boundary, walk_cancelled),
         );
+        ops.live.run(client, name, hold);
         let Some(here) = (ops.here)(client) else {
             return;
         };

@@ -1968,6 +1968,214 @@
       "classification": "owning",
       "owner": "T3",
       "reason": "T3.3 test-support receiving end of an input feed."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/bench.rs|RenderPolicy",
+      "path": "crates/frontend-core/src/bench.rs",
+      "symbol": "RenderPolicy",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/bench.rs|BenchConfig",
+      "path": "crates/frontend-core/src/bench.rs",
+      "symbol": "BenchConfig",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/bench.rs|BenchRun",
+      "path": "crates/frontend-core/src/bench.rs",
+      "symbol": "BenchRun",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/bench.rs|StartupMark",
+      "path": "crates/frontend-core/src/bench.rs",
+      "symbol": "StartupMark",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/bench.rs|AdapterIdentity",
+      "path": "crates/frontend-core/src/bench.rs",
+      "symbol": "AdapterIdentity",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/bench.rs|PanelFrameTimer",
+      "path": "crates/frontend-core/src/bench.rs",
+      "symbol": "PanelFrameTimer",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/process.rs|StartError",
+      "path": "crates/frontend-core/src/process.rs",
+      "symbol": "StartError",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/process.rs|ShutdownError",
+      "path": "crates/frontend-core/src/process.rs",
+      "symbol": "ShutdownError",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/process.rs|BenchmarkAllocator",
+      "path": "crates/frontend-core/src/process.rs",
+      "symbol": "BenchmarkAllocator",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/live/mod.rs|Scenario",
+      "path": "crates/frontend-core/src/live/mod.rs",
+      "symbol": "Scenario",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 live harness seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/live/mod.rs|ScenarioView",
+      "path": "crates/frontend-core/src/live/mod.rs",
+      "symbol": "ScenarioView",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 live harness seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/live/mod.rs|ScenarioNav",
+      "path": "crates/frontend-core/src/live/mod.rs",
+      "symbol": "ScenarioNav",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 live harness seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/live/mod.rs|FleetStart",
+      "path": "crates/frontend-core/src/live/mod.rs",
+      "symbol": "FleetStart",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 live harness seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/live/mod.rs|FixtureMode",
+      "path": "crates/frontend-core/src/live/mod.rs",
+      "symbol": "FixtureMode",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 live harness seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/live/mod.rs|FixtureIdentity",
+      "path": "crates/frontend-core/src/live/mod.rs",
+      "symbol": "FixtureIdentity",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 live harness seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/live/mod.rs|Runner",
+      "path": "crates/frontend-core/src/live/mod.rs",
+      "symbol": "Runner",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 live harness seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/live/mod.rs|RunnerHandle",
+      "path": "crates/frontend-core/src/live/mod.rs",
+      "symbol": "RunnerHandle",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 live harness seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/live/mod.rs|RunnerStatus",
+      "path": "crates/frontend-core/src/live/mod.rs",
+      "symbol": "RunnerStatus",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 live harness seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/live/mod.rs|LiveTimingView",
+      "path": "crates/frontend-core/src/live/mod.rs",
+      "symbol": "LiveTimingView",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 live harness seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/live/mod.rs|LiveCoreMode",
+      "path": "crates/frontend-core/src/live/mod.rs",
+      "symbol": "LiveCoreMode",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 live harness seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/live/mod.rs|ProofGate",
+      "path": "crates/frontend-core/src/live/mod.rs",
+      "symbol": "ProofGate",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 live harness seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/live/mod.rs|WatchDecision",
+      "path": "crates/frontend-core/src/live/mod.rs",
+      "symbol": "WatchDecision",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 live harness seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/live/mod.rs|PassHoldKind",
+      "path": "crates/frontend-core/src/live/mod.rs",
+      "symbol": "PassHoldKind",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 live harness seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/live/mod.rs|PassHold",
+      "path": "crates/frontend-core/src/live/mod.rs",
+      "symbol": "PassHold",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 live harness seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/live/mod.rs|StartPlan",
+      "path": "crates/frontend-core/src/live/mod.rs",
+      "symbol": "StartPlan",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 live harness seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/live/mod.rs|LiveProfiles",
+      "path": "crates/frontend-core/src/live/mod.rs",
+      "symbol": "LiveProfiles",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 live harness seam."
     }
   ],
   "violations": [],

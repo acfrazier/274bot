@@ -37,7 +37,7 @@ fn panel_exit_status_child() {
             let mut live = LiveHarness::Script(live);
             assert_eq!(live_exit_code(&live, Some(&first_failure)), Some(1));
 
-            let repeated_failure = live.tick(&mut session, &[], &ShotStatus::Missing, None, 0);
+            let repeated_failure = live.tick(&mut session, &ShotStatus::Missing, None, 0);
             assert!(repeated_failure.is_none());
             assert_eq!(live_exit_code(&live, repeated_failure.as_deref()), Some(1));
             let result = finish_panel_run(Ok(()), live.failure().map(str::to_owned));
@@ -155,7 +155,10 @@ fn failed_live_script() -> (crate::session::Session, LiveScript, String) {
     assert!(matches!(runner.status(), scenario::RunnerStatus::Failed(_)));
 
     let mut session = crate::session::Session::new();
-    *session.scenario.lock().unwrap() = Some(runner);
+    session
+        .core
+        .live_runner()
+        .install_scenario_runner_for_test(runner);
     let mut live = LiveScript {
         name: "script_live_failure".into(),
         passed: false,
@@ -2369,7 +2372,9 @@ fn live_script_tick_holds_pass_until_clean_script_stop() {
         runner.wait_script_stop(),
         Some("confirmed loaded current-generation bank exhaustion")
     );
-    *s.scenario.lock().unwrap() = Some(runner);
+    s.core
+        .live_runner()
+        .install_scenario_runner_for_test(runner);
     let mut live = LiveScript {
         name: "script_bone_stop".into(),
         passed: false,
@@ -2556,7 +2561,9 @@ fn live_script_tick_latches_pass_reports_soak_readbacks_and_fail() {
         runner.tick(&mut c);
     }
     assert_eq!(runner.status(), RunnerStatus::Passed);
-    *s.scenario.lock().unwrap() = Some(runner);
+    s.core
+        .live_runner()
+        .install_scenario_runner_for_test(runner);
     let mut live = LiveScript {
         name: "script_t".into(),
         passed: false,
@@ -2599,12 +2606,7 @@ fn live_script_tick_latches_pass_reports_soak_readbacks_and_fail() {
     live.failed = None;
     live.native_failure_capture_requested = false;
     live.core_deadline = Some(Instant::now() + Duration::from_secs(60));
-    s.scenario
-        .lock()
-        .unwrap()
-        .as_mut()
-        .unwrap()
-        .set_terminal_shot("core-pass");
+    s.core.live_runner().set_terminal_shot_for_test("core-pass");
     s.set_focus_for_test("catalogtest");
     let mut terminal_snapshot = api::snapshot::GameSnapshot::new();
     terminal_snapshot.rebuild(&script_client());
@@ -2703,12 +2705,7 @@ fn live_script_tick_latches_pass_reports_soak_readbacks_and_fail() {
 
     // A failed post-pass readback is a real harness failure, not a
     // successful soak with missing evidence.
-    s.scenario
-        .lock()
-        .unwrap()
-        .as_mut()
-        .unwrap()
-        .set_terminal_shot("fail-soak");
+    s.core.live_runner().set_terminal_shot_for_test("fail-soak");
     shots.lock().unwrap().mark_written("fail-soak");
     let mut failed_soak = LiveScript {
         name: "script_fail_soak".into(),
@@ -2765,7 +2762,9 @@ fn live_script_tick_latches_pass_reports_soak_readbacks_and_fail() {
         runner.tick(&mut c);
     }
     assert!(matches!(runner.status(), RunnerStatus::Failed(_)));
-    *s.scenario.lock().unwrap() = Some(runner);
+    s.core
+        .live_runner()
+        .install_scenario_runner_for_test(runner);
     let mut live = LiveScript {
         name: "script_f".into(),
         passed: false,
@@ -2824,7 +2823,9 @@ fn live_script_tick_holds_a_terminal_shot_fail_until_the_shot_writes() {
         runner.tick(&mut c);
     }
     assert!(matches!(runner.status(), RunnerStatus::Failed(_)));
-    *s.scenario.lock().unwrap() = Some(runner);
+    s.core
+        .live_runner()
+        .install_scenario_runner_for_test(runner);
     let mut live = LiveScript {
         name: "nav_full".into(),
         passed: false,
@@ -2893,7 +2894,9 @@ fn live_script_tick_holds_a_terminal_shot_pass_until_the_shot_writes() {
         runner.tick(&mut c);
     }
     assert_eq!(runner.status(), RunnerStatus::Passed);
-    *s.scenario.lock().unwrap() = Some(runner);
+    s.core
+        .live_runner()
+        .install_scenario_runner_for_test(runner);
     let mut live = LiveScript {
         name: "script_t".into(),
         passed: false,
@@ -3085,7 +3088,9 @@ fn pair_terminal_decision_requests_scene2_snapshots_for_both_actors() {
     let scenario = scenario::get("nature_crafter_air").expect("paired cell");
     let mut runner = scenario::ScenarioRunner::new(scenario);
     runner.set_live_names(&["alice".into(), "bob".into()]);
-    *s.scenario.lock().unwrap() = Some(runner);
+    s.core
+        .live_runner()
+        .install_scenario_runner_for_test(runner);
 
     let watch = host_play::paired_core::PairWatch::default();
     watch.configure(host_play::paired_core::PairCase::Air, "alice", "bob");
@@ -3406,7 +3411,9 @@ fn pair_deadline_fails_remaining_queued_actors() {
     let scenario = scenario::get("nature_crafter_air").expect("paired cell");
     let mut runner = scenario::ScenarioRunner::new(scenario);
     runner.set_live_names(&["alice".into(), "bob".into()]);
-    *s.scenario.lock().unwrap() = Some(runner);
+    s.core
+        .live_runner()
+        .install_scenario_runner_for_test(runner);
     let watch = host_play::paired_core::PairWatch::default();
     watch.configure(host_play::paired_core::PairCase::Air, "alice", "bob");
     s.install_paired_core_watch(Some(watch));
@@ -3558,7 +3565,9 @@ fn drive_external_watch_to_capture(watch: &host_play::external_loader::ExternalW
 
 fn alice_scene2_session() -> crate::session::Session {
     let mut s = crate::session::Session::new();
-    *s.scenario.lock().unwrap() = Some(passed_prereq_runner());
+    s.core
+        .live_runner()
+        .install_scenario_runner_for_test(passed_prereq_runner());
     let mut client = script_client();
     let mut player = client::dash3d::ClientPlayer::at(20, 20);
     player.name = Some("Alice".into());
@@ -3724,10 +3733,9 @@ fn smoke_at(started: Instant) -> LiveSmoke {
 fn live_smoke_tick_passes_when_the_shot_is_written() {
     let mut s = crate::session::Session::new();
     let mut live = smoke_at(Instant::now());
-    let statuses = [st("test", true, 2)];
     // A written shot (pump_shots drained `done`) exits the smoke: the
     // tick latches passed and the caller turns it into exit 0.
-    assert_eq!(live_smoke_tick(&mut live, &mut s, &statuses, 1), None);
+    assert_eq!(live_smoke_tick(&mut live, &mut s, 1), None);
     assert!(live.passed, "the written scene2 shot passes the smoke");
 }
 
@@ -3737,18 +3745,16 @@ fn live_smoke_tick_latches_scene2_once_and_reports_a_missing_write() {
     s.set_focus_for_test("test");
     let mut live = smoke_at(Instant::now());
     // Before scene 2 nothing latches.
-    assert_eq!(
-        live_smoke_tick(&mut live, &mut s, &[st("test", true, 1)], 0),
-        None
-    );
+    set_statuses(&mut s, [st("test", true, 1)]);
+    assert_eq!(live_smoke_tick(&mut live, &mut s, 0), None);
     assert!(!live.saw_scene2_at.is_some());
     // Scene 2 on the focused slot latches exactly once (the pure
     // trigger), and a late deadline names the missing write.
-    let scene2 = [st("test", true, 2)];
-    assert_eq!(live_smoke_tick(&mut live, &mut s, &scene2, 0), None);
+    set_statuses(&mut s, [st("test", true, 2)]);
+    assert_eq!(live_smoke_tick(&mut live, &mut s, 0), None);
     assert!(live.saw_scene2_at.is_some());
     live.started = Instant::now() - SMOKE_DEADLINE;
-    let err = live_smoke_tick(&mut live, &mut s, &scene2, 0).expect("deadline");
+    let err = live_smoke_tick(&mut live, &mut s, 0).expect("deadline");
     assert!(err.contains("never written within 300s"), "err: {err}");
 }
 
@@ -3757,7 +3763,8 @@ fn live_smoke_tick_deadline_reports_scene2_never_reached() {
     let mut s = crate::session::Session::new();
     s.set_focus_for_test("test");
     let mut live = smoke_at(Instant::now() - SMOKE_DEADLINE);
-    let err = live_smoke_tick(&mut live, &mut s, &[st("test", false, 0)], 0).expect("deadline");
+    set_statuses(&mut s, [st("test", false, 0)]);
+    let err = live_smoke_tick(&mut live, &mut s, 0).expect("deadline");
     assert!(
         err.contains("never reached scene 2 within 300s"),
         "err: {err}"
@@ -3773,6 +3780,16 @@ fn st(name: &str, ingame: bool, scene: i32) -> host_play::SlotStatus {
         ..Default::default()
     }
 }
+fn status_buf(rows: impl IntoIterator<Item = host_play::SlotStatus>) -> frontend_core::StatusBuf {
+    frontend_core::StatusBuf::from_rows_for_test(rows)
+}
+
+fn set_statuses(
+    session: &mut crate::session::Session,
+    rows: impl IntoIterator<Item = host_play::SlotStatus>,
+) {
+    session.statuses = status_buf(rows);
+}
 
 fn live_at(started: Instant) -> LiveNull {
     LiveNull {
@@ -3785,7 +3802,7 @@ fn live_at(started: Instant) -> LiveNull {
 #[test]
 fn live_null_tick_waits_until_two_scene2() {
     let mut live = live_at(Instant::now());
-    let statuses = [st("test", true, 1), st("test2", false, 0)];
+    let statuses = status_buf([st("test", true, 1), st("test2", false, 0)]);
     assert_eq!(live_null_tick(&mut live, &statuses), None);
     assert!(!live.saw_scene2);
 }
@@ -3793,7 +3810,7 @@ fn live_null_tick_waits_until_two_scene2() {
 #[test]
 fn live_null_tick_timeout_before_scene2() {
     let mut live = live_at(Instant::now() - Duration::from_secs(120));
-    let statuses = [st("test", true, 2)];
+    let statuses = status_buf([st("test", true, 2)]);
     let err = live_null_tick(&mut live, &statuses).expect("timeout");
     assert!(err.contains("1/2"), "{err}");
     assert!(err.contains("120s"), "{err}");
@@ -3802,7 +3819,7 @@ fn live_null_tick_timeout_before_scene2() {
 #[test]
 fn live_null_tick_passes_at_scene2_without_freeze() {
     let mut live = live_at(Instant::now());
-    let scene2 = [st("test", true, 2), st("test2", true, 2)];
+    let scene2 = status_buf([st("test", true, 2), st("test2", true, 2)]);
     assert_eq!(live_null_tick(&mut live, &scene2), None);
     assert!(live.passed);
     assert!(live.saw_scene2);
@@ -3827,23 +3844,23 @@ fn ready_n(n: usize) -> Vec<host_play::SlotStatus> {
 #[test]
 fn live_stress_tick_announces_1_10_50_and_stays_passed() {
     let mut live = stress_at(Instant::now());
-    assert_eq!(live_stress_tick(&mut live, &[]), None);
+    assert_eq!(live_stress_tick(&mut live, &status_buf(Vec::new())), None);
     assert_eq!(live.last_announced, 0);
     assert!(!live.passed);
 
-    assert_eq!(live_stress_tick(&mut live, &ready_n(1)), None);
+    assert_eq!(live_stress_tick(&mut live, &status_buf(ready_n(1))), None);
     assert_eq!(live.last_announced, 1);
     assert!(!live.passed);
 
-    assert_eq!(live_stress_tick(&mut live, &ready_n(10)), None);
+    assert_eq!(live_stress_tick(&mut live, &status_buf(ready_n(10))), None);
     assert_eq!(live.last_announced, 10);
     assert!(!live.passed);
 
-    assert_eq!(live_stress_tick(&mut live, &ready_n(50)), None);
+    assert_eq!(live_stress_tick(&mut live, &status_buf(ready_n(50))), None);
     assert_eq!(live.last_announced, 50);
     assert!(live.passed);
     assert_eq!(
-        live_stress_tick(&mut live, &ready_n(50)),
+        live_stress_tick(&mut live, &status_buf(ready_n(50))),
         None,
         "stay passed"
     );
@@ -3853,7 +3870,7 @@ fn live_stress_tick_announces_1_10_50_and_stays_passed() {
 #[test]
 fn live_stress_tick_timeout_before_50() {
     let mut live = stress_at(Instant::now() - Duration::from_secs(600));
-    let err = live_stress_tick(&mut live, &ready_n(1)).expect("timeout");
+    let err = live_stress_tick(&mut live, &status_buf(ready_n(1))).expect("timeout");
     assert_eq!(err, "live stress50: 1/50 up after 600s");
     assert!(!live.passed);
     assert_eq!(live.last_announced, 1);
@@ -3869,7 +3886,7 @@ fn live_stress_tick_full_name_in_timeout() {
         host: "127.0.0.1".into(),
         port: 43594,
     };
-    let err = live_stress_tick(&mut live, &ready_n(1)).expect("timeout");
+    let err = live_stress_tick(&mut live, &status_buf(ready_n(1))).expect("timeout");
     assert_eq!(err, "live stress50_full: 1/50 up after 600s");
 }
 
@@ -3882,13 +3899,19 @@ fn live_stress_tick_counts_full_clients_up() {
     for i in 1..50 {
         rows.push(st(&format!("s{i:02}"), true, 1));
     }
-    assert_eq!(live_stress_tick(&mut live, &rows), None);
+    assert_eq!(
+        live_stress_tick(&mut live, &status_buf(rows.iter().cloned())),
+        None
+    );
     assert!(!live.passed, "49 loading Clients are not 50 up");
     assert_eq!(live.last_announced, 1);
     for r in rows.iter_mut() {
         r.scene_state = 2;
     }
-    assert_eq!(live_stress_tick(&mut live, &rows), None);
+    assert_eq!(
+        live_stress_tick(&mut live, &status_buf(rows.iter().cloned())),
+        None
+    );
     assert!(live.passed, "50 scene-2 Clients pass");
     assert_eq!(live.last_announced, 50);
 }
