@@ -339,6 +339,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/client-adapter/src/soak_observer.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/client-adapter/src/stream_handle.rs",
       "owner": "T1"
     },
@@ -363,11 +367,39 @@
       "owner": "T1"
     },
     {
+      "path": "crates/client-adapter/tests/g3_backpressure.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/client-adapter/tests/game_tls_model.rs",
       "owner": "T1"
     },
     {
       "path": "crates/client-adapter/tests/https_cell_model.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/tests/production_transport_state.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/tests/rustls_authenticated_control.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/tests/rustls_backend_real.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/tests/rustls_linux_trust.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/tests/rustls_platform_trust.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/tests/wss_g5e_allocator.rs",
       "owner": "T1"
     },
     {
@@ -1287,6 +1319,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/src/transport_health.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/src/walk_arm.rs",
       "owner": "T5"
     },
@@ -1352,6 +1388,10 @@
     },
     {
       "path": "crates/host-play/tests/cache_prepare.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/cache_service_refusal.rs",
       "owner": "T1"
     },
     {
@@ -1567,6 +1607,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/tests/support/t14_candidate_observers.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/tests/support/two_slot_isolation.rs",
       "owner": "T1"
     },
@@ -1580,6 +1624,10 @@
     },
     {
       "path": "crates/host-play/tests/survivable_admission_regressions.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/t14_soak_live.rs",
       "owner": "T1"
     },
     {
@@ -1608,6 +1656,10 @@
     },
     {
       "path": "crates/host-play/tests/world_boundary_live.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/wss_product_startup.rs",
       "owner": "T1"
     },
     {
@@ -5835,6 +5887,18 @@
       "owner": "T1"
     },
     {
+      "path": "tools/t14_soak_proxy.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/t14_soak_run.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/t14_soak_summary.py",
+      "owner": "T1"
+    },
+    {
       "path": "vendor/fr-client-rust/crates/client-play/src/main.rs",
       "owner": "T1"
     },
@@ -6167,6 +6231,10 @@
       "owner": "T1"
     },
     {
+      "path": "vendor/fr-client-rust/crates/client/src/io/host_network.rs",
+      "owner": "T1"
+    },
+    {
       "path": "vendor/fr-client-rust/crates/client/src/io/isaac.rs",
       "owner": "T1"
     },
@@ -6196,6 +6264,10 @@
     },
     {
       "path": "vendor/fr-client-rust/crates/client/src/io/server_prot_sizes_289.inc.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/src/io/transport/mod.rs",
       "owner": "T1"
     },
     {
@@ -6659,11 +6731,19 @@
       "owner": "T1"
     },
     {
+      "path": "vendor/fr-client-rust/crates/client/tests/support/local_stream.rs",
+      "owner": "T1"
+    },
+    {
       "path": "vendor/fr-client-rust/crates/client/tests/support/startup_snapshot.rs",
       "owner": "T1"
     },
     {
       "path": "vendor/fr-client-rust/crates/client/tests/title.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/tests/transport_models.rs",
       "owner": "T1"
     },
     {

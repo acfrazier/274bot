@@ -1031,6 +1031,8 @@ fn fresh_vault_starts_empty_without_a_seeded_test_profile() {
 /// starts, with no world.
 #[test]
 fn tui_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
+    let _network_driver =
+        host_play::PlayComposition::start().expect("TUI fixture starts its network composition");
     let home = upgrade_home::UpgradeHome::new();
     let start = |profile: Arc<host_play::ServerProfile>, vault: &str| {
         let template = SharedClientTemplate::load(profile).unwrap();
@@ -1069,6 +1071,8 @@ fn tui_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
 
 #[test]
 fn tui_reach_layer_uses_shared_lazy_sidecar_and_releases_its_lease() {
+    let _network_driver =
+        host_play::PlayComposition::start().expect("TUI fixture starts its network composition");
     let home = upgrade_home::UpgradeHome::new();
     let profile = home.bind(None);
     let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();

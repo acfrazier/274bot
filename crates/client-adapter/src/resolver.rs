@@ -215,6 +215,11 @@ impl ResolveTicket {
 
     /// Polls the result and runs due ticket/service maintenance first.
     pub fn poll(&self) -> ResolvePoll {
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            !super::park::in_k2_predicate(),
+            "resolver ticket poll must never take its state lock under K2"
+        );
         if let Some(inner) = self.resolver.upgrade() {
             maintain_inner(&inner);
         }
@@ -1630,6 +1635,26 @@ mod tests {
             deadline,
             Instant::now,
             || resolver.health().unavailable.is_some(),
+            || false,
+            || false,
+            || Some(()),
+            false,
+            None,
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "resolver ticket poll must never take its state lock under K2")]
+    fn resolver_ticket_rejects_a_nested_park_predicate() {
+        let (resolver, _, _) = immediate(1);
+        let (wake, _) = wake_channel();
+        let ticket = ticket(&resolver, 1, 1, "localhost", &wake).unwrap();
+        let park = super::super::park::Park::new();
+        park.wait(
+            Instant::now() + Duration::from_secs(1),
+            Instant::now,
+            || matches!(ticket.poll(), ResolvePoll::Ready(_)),
             || false,
             || false,
             || Some(()),

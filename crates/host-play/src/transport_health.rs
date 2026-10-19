@@ -2,6 +2,7 @@
 //! event-loop health turn. The client services report typed causes, but never
 //! borrow the host's condition ledger or log on service worker threads.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -11,7 +12,7 @@ use api::identity::{ProcessIncarnation, ProcessOrigin};
 use api::process_condition::{
     ConditionCause, ConditionId, ProcessConditions, ProcessServiceCode, ProcessServiceCondition,
 };
-use client_adapter::health::ReactorLoss;
+use client_adapter::health::{ReactorLoss, WakeFailure};
 use client_adapter::resolver::{ResolverUnavailable, ResolverUnavailableCause};
 
 /// Only new publications need a one-time Park wake after every owner lock is
@@ -25,6 +26,7 @@ pub struct HealthEffects {
 pub struct ServiceHealth {
     origin: ProcessOrigin,
     conditions: Mutex<ProcessConditions>,
+    last_wake_failure: AtomicU64,
 }
 
 impl ServiceHealth {
@@ -32,6 +34,7 @@ impl ServiceHealth {
         Self {
             origin,
             conditions: Mutex::new(ProcessConditions::new(incarnation)),
+            last_wake_failure: AtomicU64::new(0),
         }
     }
 
@@ -43,6 +46,7 @@ impl ServiceHealth {
         now: Instant,
         reactor: Option<ReactorLoss>,
         resolver: Option<ResolverUnavailable>,
+        wake_failure: Option<WakeFailure>,
     ) -> HealthEffects {
         let mut effects = HealthEffects::default();
         let mut conditions = self.conditions.lock().unwrap();
@@ -94,6 +98,22 @@ impl ServiceHealth {
                 self.origin.elapsed(loss.detected_at).as_duration().as_millis(),
             );
         }
+        if let Some(failure) = wake_failure {
+            let previous = self
+                .last_wake_failure
+                .fetch_max(failure.total, Ordering::AcqRel);
+            if failure.total > previous {
+                host_log!(
+                    Category::Lifecycle,
+                    Level::Warn,
+                    "game reactor wake failed count={} total={} kind={:?} os_error={:?}; committed writes remain accepted",
+                    failure.total - previous,
+                    failure.total,
+                    failure.kind,
+                    failure.raw_os_error,
+                );
+            }
+        }
         effects
     }
 
@@ -142,7 +162,8 @@ mod tests {
             health.observe(
                 start + Duration::from_millis(200),
                 Some(ReactorLoss::ProgressLost),
-                Some(resolver)
+                Some(resolver),
+                None,
             ),
             HealthEffects {
                 reactor_unavailable: true,
@@ -153,7 +174,8 @@ mod tests {
             health.observe(
                 start + Duration::from_secs(3),
                 Some(ReactorLoss::StartFailed),
-                Some(resolver)
+                Some(resolver),
+                None,
             ),
             HealthEffects::default(),
         );
@@ -173,6 +195,34 @@ mod tests {
                     .as_duration(),
                 Duration::from_millis(125),
             );
+        });
+    }
+
+    #[test]
+    fn committed_wake_failure_is_observed_once_without_a_loss_condition() {
+        let start = Instant::now();
+        let health = ServiceHealth::new(
+            ProcessIncarnation::from_start_nonce(NonZeroU64::new(10).unwrap()),
+            ProcessOrigin::at(start),
+        );
+        let failure = WakeFailure {
+            total: 2,
+            kind: std::io::ErrorKind::BrokenPipe,
+            raw_os_error: Some(32),
+        };
+        assert_eq!(
+            health.observe(start, None, None, Some(failure)),
+            HealthEffects::default()
+        );
+        assert_eq!(health.last_wake_failure.load(Ordering::Acquire), 2);
+        assert_eq!(
+            health.observe(start, None, None, Some(failure)),
+            HealthEffects::default()
+        );
+        health.with_conditions(|conditions| {
+            assert!(conditions
+                .latched(ProcessServiceCode::ReactorUnavailable)
+                .is_none());
         });
     }
 }

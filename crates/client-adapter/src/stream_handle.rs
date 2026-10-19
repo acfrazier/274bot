@@ -20,12 +20,15 @@ enum ReadResult {
     End,
 }
 
-fn session_append_result(result: AppendResult) -> io::Result<()> {
+fn session_append_result(result: AppendResult, health: &ReactorHealth) -> io::Result<()> {
     match result {
         AppendResult::Accepted => Ok(()),
-        // The record already belongs to the reactor. Poll wakes it within
-        // 100 ms; health maintenance reports lasting loss.
-        AppendResult::AcceptedWakeFailed(_error) => Ok(()),
+        // The reactor owns the committed record. Its next poll drains it.
+        // Record the failed wake in the health path without retrying bytes.
+        AppendResult::AcceptedWakeFailed(error) => {
+            health.record_wake_failure(&error);
+            Ok(())
+        }
         AppendResult::Refused(AppendRefusal::Backpressured) => {
             Err(io::ErrorKind::WouldBlock.into())
         }
@@ -318,11 +321,10 @@ impl ConnectionHandle {
                     "game transport unavailable",
                 ));
             }
-            return session_append_result(self.shared.append_record(
-                self.binding,
-                record,
-                &self.bus,
-            ));
+            return session_append_result(
+                self.shared.append_record(self.binding, record, &self.bus),
+                &self.health,
+            );
         }
         let deadline = self.deadline.expect("uncommitted session cannot write");
         let token = self.token.as_ref();
@@ -413,17 +415,21 @@ mod tests {
 
     #[test]
     fn committed_record_survives_failed_wake_without_client_retry() {
-        assert!(
-            session_append_result(AppendResult::AcceptedWakeFailed(io::Error::other(
-                "injected waker failure"
-            )))
-            .is_ok()
-        );
+        let health = ReactorHealth::new(Instant::now());
+        assert!(session_append_result(
+            AppendResult::AcceptedWakeFailed(io::Error::from_raw_os_error(32)),
+            &health,
+        )
+        .is_ok());
+        assert_eq!(health.wake_failure().unwrap().total, 1);
+        assert_eq!(health.wake_failure().unwrap().raw_os_error, Some(32));
+        assert_eq!(health.loss(), None);
         assert_eq!(
-            session_append_result(AppendResult::Refused(AppendRefusal::Backpressured))
+            session_append_result(AppendResult::Refused(AppendRefusal::Backpressured), &health)
                 .unwrap_err()
                 .kind(),
             io::ErrorKind::WouldBlock
         );
+        assert_eq!(health.wake_failure().unwrap().total, 1);
     }
 }

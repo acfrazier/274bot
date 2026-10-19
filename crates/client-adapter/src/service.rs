@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
-use crate::health::ReactorLoss;
+use crate::health::{ReactorLoss, WakeFailure};
 use crate::host_network::AdapterNetwork;
 use crate::https_handshake::HttpsLane;
 use crate::reactor::TransportService;
@@ -60,6 +60,7 @@ pub struct NetworkService {
 pub struct NetworkHealth {
     pub reactor: Option<ReactorLoss>,
     pub resolver: Option<ResolverUnavailable>,
+    pub wake_failure: Option<WakeFailure>,
 }
 
 /// A registration owned by an actual panel/TUI/headless/embedder event loop.
@@ -224,6 +225,7 @@ impl NetworkService {
         NetworkHealth {
             reactor: self.reactor.maintain(now),
             resolver: self.resolver.maintain().unavailable,
+            wake_failure: self.reactor.health().wake_failure(),
         }
     }
 }

@@ -1558,6 +1558,8 @@ fn external_real_v10_pack_degrades_to_unavailable_without_deleting_user_file() {
 /// bundle, and binds with navigation unavailable and a rebake diagnostic.
 #[test]
 fn packaged_v16_bundle_supersedes_a_stale_v10_home_pack() {
+    let _network_driver = host_play::PlayComposition::start()
+        .expect("packaged profile fixture starts its network composition");
     let home = upgrade_home::UpgradeHome::new();
     let profile = home.bind(None);
     assert!(

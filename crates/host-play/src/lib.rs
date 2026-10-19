@@ -346,7 +346,12 @@ impl Play {
             },
             |observed| observed.resolver,
         );
-        health.observe(now, reactor, resolver);
+        health.observe(
+            now,
+            reactor,
+            resolver,
+            observed.and_then(|health| health.wake_failure),
+        );
     }
 
     /// Borrow the frozen process ledger for one projection without holding

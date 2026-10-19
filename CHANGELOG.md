@@ -521,9 +521,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 - A busy reactor no longer disconnects a bot when its record queue or output
   ring fills. The client retains encoded packets and sends them once capacity
-  returns. An exhausted packet buffer still ends the session.
-- A pause of the whole application no longer looks like a stalled network
-  reactor. A stalled reactor while the application runs still requires restart.
+  returns, without sending a keepalive on every blocked pass. A failed wake
+  after a committed write is reported without retrying its bytes. An exhausted
+  packet buffer still ends the session.
+- A pause of the whole application, including one shorter than five seconds,
+  no longer looks like a stalled network reactor. A stalled reactor while
+  the application runs still requires restart.
 
 #### Login
 

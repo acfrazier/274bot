@@ -4,7 +4,9 @@
 //! their elapsed time is never interpreted as reactor loss. An actual reactor
 //! stall, start failure, or panic latches permanently until process restart.
 
+use std::io;
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 pub const REACTOR_POLL_MAX: Duration = Duration::from_millis(100);
@@ -35,20 +37,31 @@ impl ReactorLoss {
         }
     }
 }
+/// A committed record stays accepted when its wake fails. Health reports
+/// this diagnostic without latching a process-wide reactor failure.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct WakeFailure {
+    pub total: u64,
+    pub kind: io::ErrorKind,
+    pub raw_os_error: Option<i32>,
+}
 
 /// `epoch` is one fixed process incarnation origin. A single reactor writer
-/// updates progress; the composition owner samples it on independent turns.
+/// updates progress; composition checkers serialize their observation window.
 #[derive(Debug)]
 pub struct ReactorHealth {
     epoch: Instant,
     progress_ns: AtomicU64,
-    /// Previous checker turn, encoded as elapsed nanoseconds plus one. Zero
-    /// means no checker has sampled this reactor yet.
-    last_check_ns: AtomicU64,
-    /// A whole-process pause cannot establish a reactor-only stall. Resume
-    /// the observation window at the first checker turn after that gap.
-    check_window_ns: AtomicU64,
+    checker: Mutex<CheckerWindow>,
+    wake_failure: Mutex<Option<WakeFailure>>,
     latched: AtomicU8,
+}
+
+#[derive(Debug, Default)]
+struct CheckerWindow {
+    last_turn: Option<Instant>,
+    progress_ns: u64,
+    observed_stale: Duration,
 }
 
 impl ReactorHealth {
@@ -56,8 +69,8 @@ impl ReactorHealth {
         Self {
             epoch,
             progress_ns: AtomicU64::new(0),
-            last_check_ns: AtomicU64::new(0),
-            check_window_ns: AtomicU64::new(0),
+            checker: Mutex::new(CheckerWindow::default()),
+            wake_failure: Mutex::new(None),
             latched: AtomicU8::new(0),
         }
     }
@@ -73,29 +86,60 @@ impl ReactorHealth {
         self.progress_ns.store(nanos, Ordering::Release);
     }
 
-    /// The checker must sample continuously for a full stall window before
-    /// declaring that the reactor alone stopped. A long gap between checker
-    /// turns is a process pause, not evidence of a reactor stall.
+    pub fn record_wake_failure(&self, error: &io::Error) {
+        let mut last = self
+            .wake_failure
+            .lock()
+            .expect("wake failure mutex is not poisoned");
+        let total = last.map_or(1, |failure| {
+            failure
+                .total
+                .checked_add(1)
+                .expect("wake failure count exhausted")
+        });
+        *last = Some(WakeFailure {
+            total,
+            kind: error.kind(),
+            raw_os_error: error.raw_os_error(),
+        });
+    }
+
+    pub fn wake_failure(&self) -> Option<WakeFailure> {
+        *self
+            .wake_failure
+            .lock()
+            .expect("wake failure mutex is not poisoned")
+    }
+
+    /// The checker must observe five seconds without reactor progress. A gap
+    /// longer than two reactor poll intervals is not continuous observation:
+    /// even a sub-limit process pause restarts the window.
     pub fn maintain(&self, now: Instant) -> Option<ReactorLoss> {
         if let Some(loss) = self.loss() {
             return Some(loss);
         }
-        let elapsed_ns = now.saturating_duration_since(self.epoch).as_nanos();
-        let sample = u64::try_from(elapsed_ns.min(u128::from(u64::MAX - 1)))
-            .expect("sample clamped to u64 range");
-        let previous = self.last_check_ns.fetch_max(sample + 1, Ordering::AcqRel);
-        if previous == 0
-            || elapsed_ns.saturating_sub(u128::from(previous - 1)) > REACTOR_STALL_LIMIT.as_nanos()
-        {
-            self.check_window_ns.fetch_max(sample, Ordering::AcqRel);
+        let mut checker = self.checker.lock().expect("checker window is not poisoned");
+        if checker.last_turn.is_some_and(|last| now <= last) {
             return self.loss();
         }
-        let observed = self.progress_ns.load(Ordering::Acquire);
-        let window = self.check_window_ns.load(Ordering::Acquire);
-        let stale = elapsed_ns.saturating_sub(u128::from(observed.max(window)))
-            >= REACTOR_STALL_LIMIT.as_nanos();
-        if stale {
-            self.latch(ReactorLoss::ProgressLost);
+        let progress = self.progress_ns.load(Ordering::Acquire);
+        let gap = checker
+            .last_turn
+            .map(|last| now.saturating_duration_since(last));
+        if progress != checker.progress_ns || gap.is_none_or(|gap| gap > REACTOR_POLL_MAX * 2) {
+            checker.observed_stale = Duration::ZERO;
+        } else if let Some(gap) = gap {
+            checker.observed_stale += gap;
+        }
+        checker.progress_ns = progress;
+        checker.last_turn = Some(now);
+        if checker.observed_stale >= REACTOR_STALL_LIMIT {
+            // Do not latch a progress mark published during this check.
+            if self.progress_ns.load(Ordering::Acquire) == progress {
+                self.latch(ReactorLoss::ProgressLost);
+            } else {
+                checker.observed_stale = Duration::ZERO;
+            }
         }
         self.loss()
     }
@@ -123,6 +167,12 @@ mod tests {
         let health = ReactorHealth::new(base);
         health.progress(base);
         assert_eq!(health.maintain(base), None);
+        for tenth in 1..50 {
+            assert_eq!(
+                health.maintain(base + Duration::from_millis(tenth * 100)),
+                None
+            );
+        }
         assert_eq!(
             health.maintain(
                 (base + REACTOR_STALL_LIMIT)
@@ -150,9 +200,13 @@ mod tests {
         assert_eq!(health.maintain(base), None);
         let resumed = base + Duration::from_secs(20);
         assert_eq!(health.maintain(resumed), None);
-        health.progress(resumed + Duration::from_millis(50));
-        assert_eq!(health.maintain(resumed + Duration::from_secs(4)), None);
-        assert_eq!(health.maintain(resumed + Duration::from_secs(5)), None);
+        for tenth in 1..=40 {
+            assert_eq!(
+                health.maintain(resumed + Duration::from_millis(tenth * 100)),
+                None
+            );
+        }
+        assert_eq!(health.maintain(resumed + REACTOR_STALL_LIMIT), None);
 
         let stalled = ReactorHealth::new(base);
         stalled.progress(base);
@@ -161,6 +215,51 @@ mod tests {
             let now = base + Duration::from_millis(tenth * 100);
             assert_eq!(
                 stalled.maintain(now),
+                (tenth == 50).then_some(ReactorLoss::ProgressLost)
+            );
+        }
+    }
+
+    #[test]
+    fn sub_limit_process_pause_does_not_count_as_observed_stall() {
+        use std::sync::{Arc, Barrier};
+
+        let base = Instant::now();
+        let health = Arc::new(ReactorHealth::new(base));
+        health.progress(base);
+        for tick in 0..=5 {
+            assert_eq!(
+                health.maintain(base + Duration::from_millis(tick * 20)),
+                None
+            );
+        }
+        health.progress(base + Duration::from_millis(100));
+        for tick in 6..=15 {
+            assert_eq!(
+                health.maintain(base + Duration::from_millis(tick * 10)),
+                None
+            );
+        }
+        // The reactor mark is 50 ms older than the last checker turn.
+        // Both checkers resume after a 4.97 s process-wide pause.
+        let resumed = base + Duration::from_millis(5120);
+        let barrier = Arc::new(Barrier::new(3));
+        std::thread::scope(|scope| {
+            for _ in 0..2 {
+                let barrier = Arc::clone(&barrier);
+                let health = Arc::clone(&health);
+                scope.spawn(move || {
+                    barrier.wait();
+                    assert_eq!(health.maintain(resumed), None);
+                });
+            }
+            barrier.wait();
+        });
+        assert_eq!(health.loss(), None);
+        // Continuous checks after the pause still catch a real stalled reactor.
+        for tenth in 1..=50 {
+            assert_eq!(
+                health.maintain(resumed + Duration::from_millis(tenth * 100)),
                 (tenth == 50).then_some(ReactorLoss::ProgressLost)
             );
         }

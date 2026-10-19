@@ -1,17 +1,20 @@
 //! G3-F: the real Client pump retains encoded bytes when the adapter queue
 //! refuses, and the reactor's later drain receives every byte exactly once.
 
-use client::client::{Client, ClientConfig, ClientRevision};
+use client::client::{CheatAdmission, CheatSend, Client, ClientConfig, ClientRevision};
 use client::io::client_stream::ClientStream;
 use client::io::host_network::{
     HostAttemptIdentity, HostCloseDisposition, HostGameStream, HostStreamExit, HostStreamIdentity,
     SealReceipt,
 };
 use client::io::Isaac;
-use client_adapter::control::BindingId;
+use client_adapter::control::{BindingId, CommandBus};
+use client_adapter::health::ReactorHealth;
 use client_adapter::park::Park;
 use client_adapter::records::RECORD_SLOTS;
-use client_adapter::shared::{AppendRefusal, SharedConnection};
+use client_adapter::shared::SharedConnection;
+use client_adapter::stream_handle::ConnectionHandle;
+use mio::{Poll, Token, Waker};
 use std::io;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -23,8 +26,8 @@ fn one_second_ago() -> Instant {
 }
 
 struct HeldReactor {
-    shared: Arc<SharedConnection>,
-    binding: BindingId,
+    handle: ConnectionHandle,
+    _poll: Poll,
 }
 
 impl HostGameStream for HeldReactor {
@@ -39,19 +42,16 @@ impl HostGameStream for HeldReactor {
     fn wait_available(&mut self, _: usize, _: Instant) {}
 
     fn write_record(&mut self, record: &[u8]) -> io::Result<()> {
-        match self.shared.publish_record(self.binding, record) {
-            Ok(()) => Ok(()),
-            Err(AppendRefusal::Backpressured) => Err(io::ErrorKind::WouldBlock.into()),
-            Err(reason) => Err(io::Error::other(format!("unexpected refusal: {reason:?}"))),
-        }
+        self.handle.write(record, record.len())
     }
 
-    fn set_deadline(&mut self, _: Option<Instant>) -> io::Result<()> {
+    fn set_deadline(&mut self, deadline: Option<Instant>) -> io::Result<()> {
+        self.handle.set_deadline(deadline);
         Ok(())
     }
 
     fn binding_identity(&self) -> HostStreamIdentity {
-        HostStreamIdentity::new(self.binding)
+        HostStreamIdentity::new(self.handle.identity())
     }
 
     fn attach_cancel(
@@ -67,7 +67,7 @@ impl HostGameStream for HeldReactor {
     }
 
     fn close(&mut self, _: HostCloseDisposition) {
-        self.shared.publish_closed();
+        self.handle.close();
     }
 
     fn take_exit_reason(&mut self) -> Option<HostStreamExit> {
@@ -104,7 +104,25 @@ fn held_client() -> (Client, Arc<SharedConnection>, BindingId) {
     };
     let shared = SharedConnection::new(binding.connection, Arc::new(Park::new()));
     shared.accept_binding(binding);
-    assert!(shared.commit_session(binding));
+    let poll = Poll::new().expect("create held reactor poll");
+    let bus = Arc::new(CommandBus::new(Arc::new(
+        Waker::new(poll.registry(), Token(0)).expect("register held reactor waker"),
+    )));
+    let mut handle = ConnectionHandle::new(
+        Arc::clone(&shared),
+        bus,
+        Arc::new(ReactorHealth::new(Instant::now())),
+        binding,
+        None,
+        None,
+        None,
+    );
+    handle
+        .confirm_binding(binding)
+        .expect("confirm held client binding");
+    handle
+        .commit_session(binding)
+        .expect("commit held client session");
     let mut client = Client::new_with_revision(
         ClientConfig {
             host: "127.0.0.1".into(),
@@ -118,8 +136,8 @@ fn held_client() -> (Client, Arc<SharedConnection>, BindingId) {
     client.ingame = true;
     client.ptype = -1;
     client.stream = Some(ClientStream::from_host(Box::new(HeldReactor {
-        shared: Arc::clone(&shared),
-        binding,
+        handle,
+        _poll: poll,
     })));
     (client, shared, binding)
 }
@@ -128,31 +146,36 @@ fn held_client() -> (Client, Arc<SharedConnection>, BindingId) {
 fn starved_reactor_over_64_flushes_retains_encoded_bytes_and_session() {
     let (mut client, shared, _) = held_client();
     client.out.random = Some(Isaac::new(&[1, 2, 3, 4]));
+    client.set_cheat_admission(CheatAdmission::Granted);
     let mut expected_cipher = client.out.random.as_ref().unwrap().clone();
-    let mut expected = Vec::with_capacity(RECORD_SLOTS + 14);
-    for pass in 0..RECORD_SLOTS + 13 {
+    let mut expected = Vec::with_capacity((RECORD_SLOTS + 12) * 4 + 2);
+    client.last_outbound = one_second_ago();
+    // Each pass encodes a real CLIENT_CHEAT action. Only the first pass adds
+    // NO_TIMEOUT; the 63rd adds the periodic anticheat packet.
+    for pass in 0..RECORD_SLOTS + 12 {
+        assert_eq!(client.send_cheat("x"), CheatSend::Sent);
+        expected.extend_from_slice(&[
+            34_i32.wrapping_add(expected_cipher.next_int()) as u8,
+            2,
+            b'x',
+            10,
+        ]);
         if pass == 62 {
-            // R289 emits its cyclelogic7 anticheat opcode before this pass's
-            // NO_TIMEOUT, so the 63rd published record is two bytes long.
             expected.push(232_i32.wrapping_add(expected_cipher.next_int()) as u8);
         }
-        expected.push(181_i32.wrapping_add(expected_cipher.next_int()) as u8);
-    }
-    // The reactor does not consume anything for 76 consecutive Client passes.
-    // Each pass emits a real NO_TIMEOUT action through the output gate.
-    for pass in 0..RECORD_SLOTS + 12 {
-        client.last_outbound = one_second_ago();
+        if pass == 0 {
+            expected.push(181_i32.wrapping_add(expected_cipher.next_int()) as u8);
+        }
         client.game_loop();
         assert!(client.ingame, "queue capacity must not end pass {pass}");
         assert!(client.take_session_exit_reason().is_none());
     }
     assert_eq!(shared.records.len(), RECORD_SLOTS);
-    assert_eq!(client.out.pos, 12, "the rejected suffix remains encoded");
-    assert_eq!(shared.bytes_out(), (RECORD_SLOTS + 1) as u64);
+    assert_eq!(client.out.pos, 48, "the rejected suffix remains encoded");
+    assert_eq!(shared.bytes_out(), (RECORD_SLOTS * 4 + 2) as u64);
     let retained_cipher = client.out.random.as_ref().unwrap().clone().next_int();
-    client.last_outbound = Instant::now();
     client.game_loop();
-    assert_eq!(client.out.pos, 12);
+    assert_eq!(client.out.pos, 48);
     assert_eq!(
         client.out.random.as_ref().unwrap().clone().next_int(),
         retained_cipher,
@@ -160,8 +183,7 @@ fn starved_reactor_over_64_flushes_retains_encoded_bytes_and_session() {
     );
     let mut received = Vec::new();
     drain(&shared, &mut received);
-    assert_eq!(&received, &expected[..RECORD_SLOTS + 1]);
-    client.last_outbound = one_second_ago();
+    assert_eq!(&received, &expected[..RECORD_SLOTS * 4 + 2]);
     client.game_loop();
     assert!(client.ingame);
     assert_eq!(client.out.pos, 0);
@@ -169,6 +191,21 @@ fn starved_reactor_over_64_flushes_retains_encoded_bytes_and_session() {
     assert_eq!(received, expected);
     assert_eq!(shared.bytes_out(), received.len() as u64);
     assert!(shared.records.is_empty());
+}
+
+#[test]
+fn hosted_backpressure_queues_one_keepalive_not_one_per_pass() {
+    let (mut client, shared, binding) = held_client();
+    for _ in 0..RECORD_SLOTS {
+        shared.publish_record(binding, &[0]).unwrap();
+    }
+    client.last_outbound = one_second_ago();
+    for pass in 0..10 {
+        client.game_loop();
+        assert_eq!(client.out.pos, 1, "pass {pass} appended another keepalive");
+        assert!(client.ingame);
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 #[test]
@@ -181,19 +218,19 @@ fn full_byte_ring_retains_the_encoded_action_until_drain() {
     assert!(client.ingame);
     assert_eq!(client.out.pos, 0);
     assert_eq!(shared.outbound.len(), 5000);
-    client.last_outbound = one_second_ago();
+    client.set_cheat_admission(CheatAdmission::Granted);
+    assert_eq!(client.send_cheat("x"), CheatSend::Sent);
     client.game_loop();
     assert!(client.ingame);
-    assert_eq!(client.out.pos, 1);
+    assert_eq!(client.out.pos, 4);
 
     let mut received = Vec::new();
     drain(&shared, &mut received);
     assert_eq!(&received[..4999], &prefix);
     assert_eq!(received[4999], 181);
-    client.last_outbound = one_second_ago();
     client.game_loop();
     drain(&shared, &mut received);
-    assert_eq!(&received[4999..], &[181, 181, 181]);
+    assert_eq!(&received[4999..], &[181, 34, 2, b'x', 10]);
     assert!(client.ingame);
 }
 
