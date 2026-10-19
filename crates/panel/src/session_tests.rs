@@ -695,6 +695,8 @@ fn unlock_upgrade_home(template: &Arc<map_host::SharedClientTemplate>) -> Sessio
 /// alone; an explicit override to the old file still unlocks, with no world.
 #[test]
 fn panel_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
+    let _composition =
+        map_host::PlayComposition::start().expect("panel fixture starts Play composition");
     let home = UpgradeHome::new();
     let profile = home.bind(None);
     assert!(profile.nav_origin().is_bundled());
@@ -724,6 +726,8 @@ fn panel_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
 #[test]
 fn panel_profile_install_does_not_decode_reach_until_layer_demand() {
     let _guard = crate::picker::lock_nav_statics();
+    let _composition =
+        map_host::PlayComposition::start().expect("panel fixture starts Play composition");
     let home = UpgradeHome::new();
     let profile = home.bind(None);
     let template = map_host::SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
@@ -752,6 +756,8 @@ fn panel_profile_install_does_not_decode_reach_until_layer_demand() {
 #[test]
 fn panel_map_uses_the_shared_lazy_sidecar_and_releases_its_binding() {
     let _guard = crate::picker::lock_nav_statics();
+    let _composition =
+        map_host::PlayComposition::start().expect("panel fixture starts Play composition");
     let home = UpgradeHome::new();
     let profile = home.bind(None);
     let template = map_host::SharedClientTemplate::load(Arc::clone(&profile)).unwrap();

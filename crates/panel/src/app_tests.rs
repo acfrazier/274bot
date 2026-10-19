@@ -797,6 +797,11 @@ fn settle_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
 
 fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
     let mut state = PanelState::default();
+    state
+        .session
+        .core
+        .start_network_composition()
+        .expect("panel fixture starts Play network composition");
     let (root, options, env) = startup_profile_inputs();
     let template = options
         .resolve_with_env(None, &env)
