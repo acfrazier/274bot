@@ -1340,7 +1340,10 @@ fn run_case(case: EntranceCase) {
         "map_members": state.map_members,
         "entrance_allowed": edges.iter().map(|(_, edge)| state.allows(edge)).collect::<Vec<_>>(),
     });
-    let options = route_options(&world, case, &state, snapshot.tile());
+    let from = ReadContext::new(&snapshot)
+        .world_tile()
+        .expect("the live account has an observed world tile");
+    let options = route_options(&world, case, &state, from);
     receipt["route_options"] = json!({
         "crossZones": case.cross_zones(),
         "allow_teleports": options.allow_teleports,
