@@ -365,6 +365,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 #### Scripts
 
+- The compatibility family table now includes magic, prayer, and selected-content
+  data modules. Generation rejects a typed module without a family row.
+  This corrects coverage reporting and does not activate new behavior.
 - A v2 `withdraw-load` request now completes with `false` if a later bank
   operation replaces it, its start fails, or a session boundary cancels it.
   Its result sequence stays unchanged across session boundaries without
