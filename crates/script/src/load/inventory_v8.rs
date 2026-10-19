@@ -128,25 +128,22 @@ fn inventory_item_init<'s>(
         let zero = cb::num(scope, 0.0);
         cb::ge(scope, slot, zero)?
     };
-    for field in ["name", "count"] {
+    for (field, initialization) in crate::shim::INV_ITEM_FIELDS {
         let value = cb::get(scope, row, field)?;
+        let value = match initialization {
+            crate::shim::InvItemFieldInit::NullishZero if value.is_null_or_undefined() => {
+                cb::num(scope, 0.0)
+            }
+            crate::shim::InvItemFieldInit::NullishMinusOne if value.is_null_or_undefined() => {
+                cb::num(scope, -1.0)
+            }
+            crate::shim::InvItemFieldInit::StrictTrue => {
+                v8::Boolean::new(scope, value.is_true()).into()
+            }
+            _ => value,
+        };
         assign_item_field(scope, target, field, value)?;
     }
-    for field in ["id", "slot"] {
-        let mut value = cb::get(scope, row, field)?;
-        if value.is_null_or_undefined() {
-            value = cb::num(scope, 0.0);
-        }
-        assign_item_field(scope, target, field, value)?;
-    }
-    let noted = cb::get(scope, row, "noted")?;
-    let noted = v8::Boolean::new(scope, noted.is_true()).into();
-    assign_item_field(scope, target, "noted", noted)?;
-    let mut cert = cb::get(scope, row, "cert")?;
-    if cert.is_null_or_undefined() {
-        cert = cb::num(scope, -1.0);
-    }
-    assign_item_field(scope, target, "cert", cert)?;
     let identity = if has_identity {
         let id = cb::get(scope, row, "id")?;
         let slot = cb::get(scope, row, "slot")?;
