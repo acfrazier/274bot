@@ -80,9 +80,17 @@ const BRIMHAVEN_LADDER_LANDING: WorldTile = WorldTile {
 };
 const AGILITY_TICKET_ID: i32 = 2996;
 const AGILITY_ARENA_VARP: i32 = 309;
+/// AgilityBot `find` keeps a loc within `searchRadius` Chebyshev tiles of the
+/// player, measured to the loc origin (`AgilityBot.ts:141-145`,
+/// `ClientAdapter.ts:881`). The longest course gap is the lap wrap: the pipe
+/// exit (2484,3437) to the Log balance loc 2295 at (2474,3435) is 10. With 8
+/// the script re-syncs to the pipe loc 154 at (2484,3435), which
+/// `gnome_course.rs2` `[oploc1,loc_154]` refuses from the north, and every
+/// reposition face is blocked or inside the fenced pipe pen. 10 is the
+/// smallest radius that completes a lap and stays below the default 20.
 const GNOME_COURSE_RADIUS_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
     id: "searchRadius",
-    value: ScriptInjectValue::Num(8.0),
+    value: ScriptInjectValue::Num(10.0),
 }];
 
 const WILDY_AGILITY_INJECT: &[ScriptSettingInject] = &[
