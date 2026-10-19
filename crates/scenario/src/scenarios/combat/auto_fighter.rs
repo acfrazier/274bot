@@ -1,6 +1,6 @@
 use super::*;
 pub(crate) const BONES_ID: i32 = 526;
-const NOTED_BONES_ID: i32 = 527;
+pub(crate) const NOTED_BONES_ID: i32 = 527;
 pub(crate) const AUTO_FIGHTER_FOOD: i32 = 8;
 const AUTO_FIGHTER_BANK_RESTOCK: i32 = 10;
 const AUTO_FIGHTER_MAGE_LEVEL: i32 = 13;
