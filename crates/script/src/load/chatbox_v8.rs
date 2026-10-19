@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 const CAPACITY: usize = 64;
-const CALLBACK_NAME: &str = "__rs2b0t_game_messages";
+const NAME: &str = "__rs2b0t_game_messages";
 const NEGATE_SOURCE: &str = "(value) => -value";
 
 const OP_RECORD: i32 = 0;
@@ -23,11 +23,10 @@ const OP_RECENT: i32 = 5;
 const OP_RESET: i32 = 6;
 
 const ARRAY_INDEXES: [&str; CAPACITY] = [
-    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13",
-    "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26",
-    "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39",
-    "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "52",
-    "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63",
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16",
+    "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32",
+    "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48",
+    "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63",
 ];
 
 struct History {
@@ -110,7 +109,7 @@ pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     if !runtime.deno_runtime().v8_isolate().set_slot(state) {
         return Err("GameMessages state already installed".to_string());
     }
-    cb::install(runtime, CALLBACK_NAME, game_messages_callback)
+    cb::install(runtime, NAME, game_messages_callback)
 }
 
 /// Ingest the newly materialized posted page. The caller invokes this only
@@ -119,7 +118,7 @@ pub(crate) fn ingest_posted(runtime: &mut Runtime) -> Result<(), String> {
     let mut scope = runtime.deno_runtime().handle_scope();
     let state = state_for_scope(&scope)
         .ok_or_else(|| "GameMessages native state is not installed".to_string())?;
-    let page = current_lines(&mut scope).map_err(host_access_error)?;
+    let page = current_lines(&mut scope).map_err(host_throw_error)?;
     let page = v8::Local::<v8::Array>::try_from(page)
         .map_err(|_| "GameMessages posted chat page is not an array".to_string())?;
     let mut cursor = state.history.borrow().host_cursor;
@@ -206,9 +205,7 @@ fn dispatch<'s>(
 
 /// Read `globalThis.__rs2b0t_host || {}`, then its snapshot and chat page,
 /// with the shim's short-circuiting truthiness and observable property reads.
-fn current_lines<'s>(
-    scope: &mut v8::HandleScope<'s>,
-) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+fn current_lines<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let global = scope.get_current_context().global(scope);
     let global_this = cb::get(scope, global.into(), "globalThis")?;
     let host = cb::get(scope, global_this, "__rs2b0t_host")?;
@@ -245,10 +242,7 @@ fn append_record<'s>(
     let dto = cb::object(scope, &[("seq", seq), ("text", text)])?;
     let dto = v8::Local::<v8::Object>::try_from(dto)
         .map_err(|_| cb::type_error(scope, "could not create GameMessages record"))?;
-    state
-        .history
-        .borrow_mut()
-        .push(v8::Global::new(scope, dto));
+    state.history.borrow_mut().push(v8::Global::new(scope, dto));
     Ok(())
 }
 
@@ -265,7 +259,13 @@ fn mark<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, v8::Local<'s, v8::V
         .build(scope)
         .ok_or_else(|| cb::type_error(scope, "could not create GameMessages reduce callback"))?;
     let initial = v8::Integer::new(scope, 0).into();
-    cb::call(scope, reduce, lines, &[callback.into(), initial], "rs.reduce")
+    cb::call(
+        scope,
+        reduce,
+        lines,
+        &[callback.into(), initial],
+        "rs.reduce",
+    )
 }
 
 fn since<'s>(
@@ -279,13 +279,7 @@ fn since<'s>(
         .length(1)
         .build(scope)
         .ok_or_else(|| cb::type_error(scope, "could not create GameMessages filter callback"))?;
-    let filtered = cb::call(
-        scope,
-        filter,
-        lines,
-        &[predicate.into()],
-        "lines.filter",
-    )?;
+    let filtered = cb::call(scope, filter, lines, &[predicate.into()], "lines.filter")?;
     let map = cb::get(scope, filtered, "map")?;
     let mapper = v8::Function::builder(page_dto_callback)
         .length(1)
@@ -326,13 +320,7 @@ fn first_since<'s>(
         .build(scope)
         .ok_or_else(|| cb::type_error(scope, "could not create GameMessages find callback"))?;
     refresh_view_if_current(scope, &state, rows, generation)?;
-    cb::call(
-        scope,
-        find,
-        rows.into(),
-        &[predicate.into()],
-        "ring.find",
-    )
+    cb::call(scope, find, rows.into(), &[predicate.into()], "ring.find")
 }
 
 fn recent<'s>(
@@ -361,13 +349,7 @@ fn recent<'s>(
         "unary minus",
     )?;
     refresh_view_if_current(scope, &state, rows, generation)?;
-    let sliced = cb::call(
-        scope,
-        slice,
-        rows.into(),
-        &[negative_limit],
-        "ring.slice",
-    )?;
+    let sliced = cb::call(scope, slice, rows.into(), &[negative_limit], "ring.slice")?;
     cb::call_method(scope, sliced, "reverse", &[], "sliced.reverse")
 }
 
@@ -379,10 +361,12 @@ fn history_view<'s>(
     let rows = v8::Array::new(scope, history.len as i32);
     for offset in 0..history.len {
         let index = (history.oldest + offset) % CAPACITY;
-        let row = history.rows[index]
-            .as_ref()
-            .expect("occupied GameMessages ring slot")
-            .open(scope);
+        let row = v8::Local::new(
+            scope,
+            history.rows[index]
+                .as_ref()
+                .expect("occupied GameMessages ring slot"),
+        );
         set_array_data(scope, rows, offset, row.into())?;
     }
     Ok((rows, history.generation))
@@ -404,14 +388,19 @@ fn refresh_view_if_current<'s>(
         rows.set(scope, length.into(), length_value.into())
     })?;
     if !changed {
-        return Err(cb::type_error(scope, "could not refresh GameMessages history view"));
+        return Err(cb::type_error(
+            scope,
+            "could not refresh GameMessages history view",
+        ));
     }
     for offset in 0..history.len {
         let index = (history.oldest + offset) % CAPACITY;
-        let row = history.rows[index]
-            .as_ref()
-            .expect("occupied GameMessages ring slot")
-            .open(scope);
+        let row = v8::Local::new(
+            scope,
+            history.rows[index]
+                .as_ref()
+                .expect("occupied GameMessages ring slot"),
+        );
         set_array_data(scope, rows, offset, row.into())?;
     }
     Ok(())
@@ -423,15 +412,18 @@ fn set_array_data<'s>(
     index: usize,
     value: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, ()> {
-    let key = v8::String::new(scope, ARRAY_INDEXES[index])
-        .unwrap_or_else(|| v8::String::empty(scope));
+    let key =
+        v8::String::new(scope, ARRAY_INDEXES[index]).unwrap_or_else(|| v8::String::empty(scope));
     let created = cb::catching(scope, |scope| {
         array.create_data_property(scope, key.into(), value)
     })?;
     if created {
         Ok(())
     } else {
-        Err(cb::type_error(scope, "could not materialize GameMessages history"))
+        Err(cb::type_error(
+            scope,
+            "could not materialize GameMessages history",
+        ))
     }
 }
 
@@ -462,13 +454,7 @@ fn mark_reduce_callback<'s>(
         } else {
             cb::num(scope, 0.0)
         };
-        cb::call(
-            scope,
-            max,
-            math,
-            &[args.get(0), seq],
-            "Math.max",
-        )
+        cb::call(scope, max, math, &[args.get(0), seq], "Math.max")
     })();
     cb::finish(scope, rv, result);
 }
@@ -559,17 +545,11 @@ fn matches<'s>(
     text: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, bool> {
     let zero = v8::Integer::new(scope, 0).into();
-    cb::assign(scope, pattern, "lastIndex", zero)?;
+    let last_index = cb::string(scope, "lastIndex");
+    cb::assign(scope, pattern, last_index, zero)?;
     let test = cb::get(scope, pattern, "test")?;
     let result = cb::call(scope, test, pattern, &[text], "pattern.test")?;
     Ok(cb::truthy(scope, result))
-}
-
-fn host_access_error<'s, T>(error: Throw<'s>) -> Result<T, String> {
-    Err(match error {
-        Throw::Value(_) => "GameMessages posted chat access threw".to_string(),
-        Throw::Terminated => "GameMessages posted chat access terminated".to_string(),
-    })
 }
 
 fn host_throw_error<'s>(error: Throw<'s>) -> String {
@@ -736,9 +716,7 @@ mod tests {
         ingest_posted(&mut runtime).unwrap();
         assert_eq!(
             runtime
-                .eval::<serde_json::Value>(
-                    "__rs2b0t_game_messages(5, 8).map(row => row.text)",
-                )
+                .eval::<serde_json::Value>("__rs2b0t_game_messages(5, 8).map(row => row.text)",)
                 .unwrap(),
             serde_json::json!(["newest", "oldest"])
         );
@@ -747,9 +725,7 @@ mod tests {
         ingest_posted(&mut runtime).unwrap();
         assert_eq!(
             runtime
-                .eval::<serde_json::Value>(
-                    "__rs2b0t_game_messages(5, 8).map(row => row.text)",
-                )
+                .eval::<serde_json::Value>("__rs2b0t_game_messages(5, 8).map(row => row.text)",)
                 .unwrap(),
             serde_json::json!([])
         );
@@ -758,9 +734,7 @@ mod tests {
         ingest_posted(&mut runtime).unwrap();
         assert_eq!(
             runtime
-                .eval::<serde_json::Value>(
-                    "__rs2b0t_game_messages(5, 8).map(row => row.text)",
-                )
+                .eval::<serde_json::Value>("__rs2b0t_game_messages(5, 8).map(row => row.text)",)
                 .unwrap(),
             serde_json::json!(["newest", "oldest"])
         );
@@ -770,9 +744,7 @@ mod tests {
     fn ring_evicts_and_reset_releases_every_native_reference() {
         let mut runtime = runtime();
         runtime
-            .eval::<()>(
-                "for (let i = 0; i < 130; i++) __rs2b0t_game_messages(0, 'line ' + i);",
-            )
+            .eval::<()>("for (let i = 0; i < 130; i++) __rs2b0t_game_messages(0, 'line ' + i);")
             .unwrap();
         let state = runtime
             .deno_runtime()

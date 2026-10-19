@@ -511,7 +511,10 @@ fn host_page_dedup_public_reset_and_session_reset_use_distinct_cursors() {
     input.tick = 3;
     tick(&iso, &input);
     assert_eq!(
-        value(&iso, "__gameMessages.recent(8).map(row => [row.seq, row.text])"),
+        value(
+            &iso,
+            "__gameMessages.recent(8).map(row => [row.seq, row.text])"
+        ),
         json!([[1, "host newer again"]])
     );
 
@@ -521,7 +524,10 @@ fn host_page_dedup_public_reset_and_session_reset_use_distinct_cursors() {
     input.tick = 4;
     tick(&iso, &input);
     assert_eq!(
-        value(&iso, "__gameMessages.recent(8).map(row => [row.seq, row.text])"),
+        value(
+            &iso,
+            "__gameMessages.recent(8).map(row => [row.seq, row.text])"
+        ),
         json!([[2, "host newer again"], [1, "host newest"]])
     );
 
@@ -531,7 +537,10 @@ fn host_page_dedup_public_reset_and_session_reset_use_distinct_cursors() {
     input.tick = 5;
     tick(&iso, &input);
     assert_eq!(
-        value(&iso, "__gameMessages.recent(8).map(row => [row.seq, row.text])"),
+        value(
+            &iso,
+            "__gameMessages.recent(8).map(row => [row.seq, row.text])"
+        ),
         json!([[2, "host newer again"], [1, "host newest"]])
     );
     iso.join();
@@ -541,7 +550,9 @@ fn host_page_dedup_public_reset_and_session_reset_use_distinct_cursors() {
 fn each_runtime_owns_an_independent_history() {
     let first = spawn();
     let second = spawn();
-    first.probe("__gameMessages.record('first runtime'), true").unwrap();
+    first
+        .probe("__gameMessages.record('first runtime'), true")
+        .unwrap();
 
     assert_eq!(
         value(
@@ -551,7 +562,9 @@ fn each_runtime_owns_an_independent_history() {
         json!([[1, "first runtime"]])
     );
     assert_eq!(value(&second, "__gameMessages.recent()"), json!([]));
-    second.probe("__gameMessages.record('second runtime'), true").unwrap();
+    second
+        .probe("__gameMessages.record('second runtime'), true")
+        .unwrap();
     assert_eq!(
         value(
             &second,
@@ -560,10 +573,7 @@ fn each_runtime_owns_an_independent_history() {
         json!([[1, "second runtime"]])
     );
     assert_eq!(
-        value(
-            &first,
-            "__gameMessages.recent(1).map(row => row.text)"
-        ),
+        value(&first, "__gameMessages.recent(1).map(row => row.text)"),
         json!(["first runtime"])
     );
     second
