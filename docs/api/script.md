@@ -1765,6 +1765,10 @@ flight settles false (a deposit loop does nothing).
   and the bank session generation moved on, within `timeoutMs` (4 s when
   omitted). A reopened or logged-out session is false.
 
+NativeApi v2 scripts can use `withdraw-x` with the number of free inventory
+slots, or compatibility `Bank.withdrawLoad(name)`.
+
+
 ## Hard no
 
 No dummy tick-end opcode. No `Arc<World>` on extras. No bot action API in the

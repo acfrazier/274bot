@@ -921,8 +921,6 @@ pub struct NativeFactsInput<'a> {
     /// post without Collision). `Some(UNAVAILABLE)` posts a clear.
     pub collision: Option<CollisionViewInput<'a>>,
     pub bank_selection: BankSelectionInput,
-    /// Public v2 load completion from the slot-owned native bank seat.
-    pub withdraw_load_result: (u64, bool),
     /// The local player's primary animation id (frozen `reader.selfAnim()`,
     /// `-1` idle or no local player). `None` omits the slot (callers that
     /// do not observe it); the isolate keeps its last value.
@@ -1336,8 +1334,6 @@ impl<'a> Snapshot<'a> {
         has_count_dialog_open => VT_COUNT_DIALOG_OPEN,
         has_withdraw_x_result_seq => VT_WITHDRAW_X_RESULT_SEQ,
         has_withdraw_x_result => VT_WITHDRAW_X_RESULT,
-        has_withdraw_load_result_seq => VT_WITHDRAW_LOAD_RESULT_SEQ,
-        has_withdraw_load_result => VT_WITHDRAW_LOAD_RESULT,
         has_bank_op_result_seq => VT_BANK_OP_RESULT_SEQ,
         has_bank_op_result => VT_BANK_OP_RESULT,
         has_reach => VT_REACH,
@@ -1833,8 +1829,6 @@ pub struct SnapshotFingerprint {
     pub count_dialog_open: bool,
     pub withdraw_x_result_seq: u64,
     pub withdraw_x_result: bool,
-    pub withdraw_load_result_seq: u64,
-    pub withdraw_load_result: bool,
     pub hold: bool,
     pub ours: bool,
     pub npcs: Vec<SceneEntityFp>,
@@ -2076,8 +2070,6 @@ impl SnapshotFingerprint {
             count_dialog_open: input.count_dialog_open,
             withdraw_x_result_seq: input.withdraw_x_result_seq,
             withdraw_x_result: input.withdraw_x_result,
-            withdraw_load_result_seq: native.withdraw_load_result.0,
-            withdraw_load_result: native.withdraw_load_result.1,
             bank_op_result_seq: input.bank_op_result_seq,
             bank_op_result: input.bank_op_result,
             hold: input.hold,
@@ -2316,8 +2308,6 @@ pub struct DeltaMask {
     pub count_dialog_open: bool,
     pub withdraw_x_result_seq: bool,
     pub withdraw_x_result: bool,
-    pub withdraw_load_result_seq: bool,
-    pub withdraw_load_result: bool,
     pub bank_op_result_seq: bool,
     pub bank_op_result: bool,
     pub hold: bool,
@@ -2434,8 +2424,6 @@ impl DeltaMask {
             count_dialog_open: true,
             withdraw_x_result_seq: true,
             withdraw_x_result: true,
-            withdraw_load_result_seq: true,
-            withdraw_load_result: true,
             bank_op_result_seq: true,
             bank_op_result: true,
             hold: true,
@@ -2543,9 +2531,6 @@ impl DeltaMask {
             count_dialog_open: next.count_dialog_open != last.count_dialog_open,
             withdraw_x_result_seq: next.withdraw_x_result_seq != last.withdraw_x_result_seq,
             withdraw_x_result: next.withdraw_x_result != last.withdraw_x_result,
-            withdraw_load_result_seq: next.withdraw_load_result_seq
-                != last.withdraw_load_result_seq,
-            withdraw_load_result: next.withdraw_load_result != last.withdraw_load_result,
             bank_op_result_seq: next.bank_op_result_seq != last.bank_op_result_seq,
             bank_op_result: next.bank_op_result != last.bank_op_result,
             // SEC-004: re-post hold every tick so JS cannot clear
@@ -2663,8 +2648,6 @@ impl DeltaMask {
             || self.count_dialog_open
             || self.withdraw_x_result_seq
             || self.withdraw_x_result
-            || self.withdraw_load_result_seq
-            || self.withdraw_load_result
             || self.bank_op_result_seq
             || self.bank_op_result
             || self.ours
@@ -3462,12 +3445,6 @@ fn encode_snapshot_masked_into(
     }
     if mask.withdraw_x_result {
         table.add_withdraw_x_result(input.withdraw_x_result);
-    }
-    if mask.withdraw_load_result_seq {
-        table.add_withdraw_load_result_seq(native.withdraw_load_result.0);
-    }
-    if mask.withdraw_load_result {
-        table.add_withdraw_load_result(native.withdraw_load_result.1);
     }
     if mask.bank_op_result_seq {
         table.add_bank_op_result_seq(input.bank_op_result_seq);
@@ -6008,15 +5985,6 @@ fn decode_interact_rows<'a>(
                     .bank_generation()
                     .ok_or_else(|| "withdraw-x has no bank_generation".to_string())?,
             }),
-            "withdraw-load" => out.push(crate::shim::InteractReq::WithdrawLoad {
-                name: row
-                    .name()
-                    .ok_or_else(|| "withdraw-load has no name".to_string())?
-                    .to_string(),
-                bank_generation: row
-                    .bank_generation()
-                    .ok_or_else(|| "withdraw-load has no bank_generation".to_string())?,
-            }),
             "held" => out.push(crate::shim::InteractReq::Held {
                 name: row
                     .name()
@@ -6830,7 +6798,6 @@ fn interact_off<'b>(
         InteractReq::Deposit { .. } => "deposit",
         InteractReq::Withdraw { .. } => "withdraw",
         InteractReq::WithdrawX { .. } => "withdraw-x",
-        InteractReq::WithdrawLoad { .. } => "withdraw-load",
         InteractReq::Held { .. } => "held",
         InteractReq::InvButton { .. } => "inv-button",
         InteractReq::PuzzleMove { .. } => "puzzle-move",
@@ -6886,7 +6853,6 @@ fn interact_off<'b>(
         InteractReq::Deposit { name }
         | InteractReq::Withdraw { name, .. }
         | InteractReq::WithdrawX { name, .. }
-        | InteractReq::WithdrawLoad { name, .. }
         | InteractReq::Held { name, .. }
         | InteractReq::Npc { name, .. }
         | InteractReq::Player { name, .. }
@@ -7220,12 +7186,6 @@ fn interact_off<'b>(
             table.add_bank_item_id(*bank_item_id);
             table.add_lands_as_id(*lands_as_id);
             table.add_action(action_off.unwrap());
-            table.add_bank_generation(*bank_generation);
-        }
-        InteractReq::WithdrawLoad {
-            bank_generation, ..
-        } => {
-            table.add_name(name_off.unwrap());
             table.add_bank_generation(*bank_generation);
         }
         InteractReq::Held { slot, .. } => {
@@ -8655,41 +8615,6 @@ pub(crate) mod tests {
         assert!(
             decode_interact_batch(b"not a batch").is_err(),
             "unknown bytes fail closed"
-        );
-    }
-
-    #[test]
-    fn withdraw_load_requires_its_name_and_bank_generation() {
-        for (name, missing) in [(None, "name"), (Some("Lobster"), "bank_generation")] {
-            let mut builder = FlatBufferBuilder::new();
-            let op = builder.create_string("withdraw-load");
-            let name = name.map(|name| builder.create_string(name));
-            let mut row = InteractBuilder::new(&mut builder);
-            row.add_op(op);
-            if let Some(name) = name {
-                row.add_name(name);
-            }
-            let row = row.finish();
-            let reqs = builder.create_vector(&[row]);
-            let mut batch = InteractBatchBuilder::new(&mut builder);
-            batch.add_reqs(reqs);
-            let root = batch.finish();
-            builder.finish(root, None);
-
-            let error = decode_interact_batch(builder.finished_data())
-                .expect_err("withdraw-load without its required fields must fail");
-            assert!(
-                error.contains(&format!("withdraw-load has no {missing}")),
-                "{error}"
-            );
-        }
-        let request = InteractReq::WithdrawLoad {
-            name: "Lobster".into(),
-            bank_generation: 7,
-        };
-        assert_eq!(
-            decode_interact_batch(&encode_interact_batch(std::slice::from_ref(&request))).unwrap(),
-            vec![request]
         );
     }
 

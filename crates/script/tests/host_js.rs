@@ -192,35 +192,6 @@ fn interface_block<'a>(src: &'a str, name: &str) -> &'a str {
     &rest[..=end]
 }
 
-/// One `export type X = …;` block from the rendered declarations.
-fn type_block<'a>(src: &'a str, name: &str) -> &'a str {
-    let start = src
-        .find(&format!("export type {name} ="))
-        .unwrap_or_else(|| panic!("missing {name}"));
-    let rest = &src[start..];
-    let end = rest
-        .find(";\n")
-        .unwrap_or_else(|| panic!("unclosed {name}"));
-    &rest[..end]
-}
-
-/// The author queue keeps public v2 bank requests. The native seat owns their
-/// work. The isolate's consume-only inspect acknowledgement stays private.
-#[test]
-fn interact_union_publishes_only_live_bank_queue_ops() {
-    let src = render_host_js_dts();
-    let union = type_block(&src, "InteractReq");
-    assert!(union.contains("| { op: 'walk-nearest-bank'}"), "{union}");
-    assert!(
-        union.contains("| { op: 'withdraw-load'; name: string; bank_generation: number}"),
-        "the public v2 load request keeps its documented fields: {union}"
-    );
-    assert!(
-        !union.contains("inspect-ack"),
-        "the isolate consume-ack stays off the published queue: {union}"
-    );
-}
-
 /// The declared MakeButton key is the posted one: `make_product_array` posts
 /// `comId` on each button and the ClientAdapter reader maps `b.comId`. A
 /// `com_id` declaration types a field no posted row carries.

@@ -3271,12 +3271,9 @@ fn real_content_inspection_capture_bytes() {
     let old_snapshot = script::isolate_fb::decode_snapshot(&old_bytes).unwrap();
     let snapshot = script::isolate_fb::decode_snapshot(&bytes).unwrap();
 
-    // The public v2 result fields retain their original field ids and defaults.
-    assert_eq!(old_snapshot.withdraw_load_result_seq(), 0);
-    assert!(!old_snapshot.withdraw_load_result());
-    assert_eq!(
+    assert_ne!(
         bytes, old_bytes,
-        "the restored result slots preserve the exact immutable capture"
+        "retired v2 withdraw-load result fields are not republished"
     );
 
     // flatc's generated Debug visits every active accessor recursively;
