@@ -25,6 +25,6 @@ export class Area {
 
     getRandomTile() {
         const area = nativeAreas.get(this);
-        return Tile.from(globalThis.__rs2b0t_area(3, area?.nativeArea, area?.center));
+        return globalThis.__rs2b0t_area(3, area?.nativeArea, area?.center, Tile);
     }
 }

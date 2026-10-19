@@ -1,3 +1,4 @@
+use super::callback_v8 as cb;
 use rand::random;
 use rustyscript::Runtime;
 
@@ -154,69 +155,76 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     Ok(())
 }
 
-fn area_callback(
-    scope: &mut v8::HandleScope,
-    args: v8::FunctionCallbackArguments,
-    mut rv: v8::ReturnValue,
+fn area_callback<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
 ) {
-    match run_area(scope, &args) {
-        Ok(value) => rv.set(value),
-        Err(err) => {
-            let msg = match v8::String::new(scope, &err) {
-                Some(s) => s,
-                None => {
-                    rv.set(v8::null(scope).into());
-                    return;
-                }
-            };
-            let exc = v8::Exception::error(scope, msg);
-            scope.throw_exception(exc);
-        }
-    }
+    let result = run_area(scope, &args);
+    cb::finish(scope, rv, result);
+}
+
+fn area_error<'s>(scope: &mut v8::HandleScope<'s>, error: String) -> cb::Throw<'s> {
+    let message = v8::String::new(scope, &error).unwrap_or_else(|| v8::String::empty(scope));
+    cb::Throw::Value(v8::Exception::error(scope, message))
 }
 
 fn run_area<'s>(
     scope: &mut v8::HandleScope<'s>,
-    args: &v8::FunctionCallbackArguments,
-) -> Result<v8::Local<'s, v8::Value>, String> {
+    args: &v8::FunctionCallbackArguments<'s>,
+) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
     let operation = args
         .get(0)
         .int32_value(scope)
-        .ok_or_else(|| "invalid area operation".to_string())?;
+        .ok_or_else(|| area_error(scope, "invalid area operation".to_string()))?;
     match operation {
         0 => {
-            let a = required_tile(scope, args.get(1), "a")?;
-            let b = required_tile(scope, args.get(2), "b")?;
-            area_value(scope, Area::rectangular(a, b))
+            let a =
+                required_tile(scope, args.get(1), "a").map_err(|error| area_error(scope, error))?;
+            let b =
+                required_tile(scope, args.get(2), "b").map_err(|error| area_error(scope, error))?;
+            area_value(scope, Area::rectangular(a, b)).map_err(|error| area_error(scope, error))
         }
         1 => {
-            let center = required_tile(scope, args.get(1), "center")?;
-            let radius = required_number(scope, args.get(2), "radius")?;
+            let center = required_tile(scope, args.get(1), "center")
+                .map_err(|error| area_error(scope, error))?;
+            let radius = required_number(scope, args.get(2), "radius")
+                .map_err(|error| area_error(scope, error))?;
             area_value(scope, Area::circular(center, radius))
+                .map_err(|error| area_error(scope, error))
         }
         2 => {
-            let area = required_area(scope, args.get(1))?;
-            let Some(tile) = contains_tile(scope, args.get(2), "tile")? else {
+            let area =
+                required_area(scope, args.get(1)).map_err(|error| area_error(scope, error))?;
+            let Some(tile) = contains_tile(scope, args.get(2), "tile")
+                .map_err(|error| area_error(scope, error))?
+            else {
                 return Ok(v8::Boolean::new(scope, false).into());
             };
             let live_center = if matches!(area, Area::Circular { .. }) {
-                Some(required_tile(scope, args.get(3), "center")?)
+                Some(
+                    required_tile(scope, args.get(3), "center")
+                        .map_err(|error| area_error(scope, error))?,
+                )
             } else {
                 None
             };
             Ok(v8::Boolean::new(scope, area.contains(tile, live_center)).into())
         }
         3 => {
-            let area = required_area(scope, args.get(1))?;
+            let area =
+                required_area(scope, args.get(1)).map_err(|error| area_error(scope, error))?;
             let live_center = if matches!(area, Area::Circular { .. }) {
-                Some(required_tile(scope, args.get(2), "center")?)
+                Some(
+                    required_tile(scope, args.get(2), "center")
+                        .map_err(|error| area_error(scope, error))?,
+                )
             } else {
                 None
             };
-            tile_value(scope, area.random_tile(live_center))
+            tile_value(scope, args.get(3), area.random_tile(live_center))
         }
-
-        _ => Err("invalid area operation".to_string()),
+        _ => Err(area_error(scope, "invalid area operation".to_string())),
     }
 }
 
@@ -375,13 +383,13 @@ fn set_number_field(
 
 fn tile_value<'s>(
     scope: &mut v8::HandleScope<'s>,
+    constructor: v8::Local<'s, v8::Value>,
     tile: Tile,
-) -> Result<v8::Local<'s, v8::Value>, String> {
-    let value = v8::Object::new(scope);
-    set_number_field(scope, value, "x", tile.x)?;
-    set_number_field(scope, value, "z", tile.z)?;
-    set_number_field(scope, value, "level", tile.level)?;
-    Ok(value.into())
+) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
+    let x = cb::num(scope, tile.x);
+    let z = cb::num(scope, tile.z);
+    let level = cb::num(scope, tile.level);
+    cb::construct(scope, constructor, &[x, z, level], "Tile")
 }
 
 #[cfg(test)]
@@ -470,5 +478,33 @@ mod tests {
         };
         assert_eq!(area.random_tile_with(None, &mut sample), center);
         assert_eq!(calls, RANDOM_ATTEMPTS * 2);
+    }
+
+    #[test]
+    fn geometry_core_has_fixed_stack_ownership_and_zero_cold_or_warm_heap() {
+        assert_eq!(std::mem::size_of::<Tile>(), 24);
+        assert_eq!(std::mem::size_of::<Area>(), 48);
+        assert!(!std::mem::needs_drop::<Tile>());
+        assert!(!std::mem::needs_drop::<Area>());
+        let cold = allocation_counter::measure(|| {
+            let area = Area::rectangular(tile(10.0, 20.0, 1.0), tile(12.0, 22.0, 1.0));
+            let result = area.random_tile_with(None, &mut || 0.5);
+            assert!(area.contains(result, None));
+            std::hint::black_box((area, result));
+        });
+        let center = tile(40.0, 50.0, 2.0);
+        let area = Area::circular(center, 5.0);
+        let warm = allocation_counter::measure(|| {
+            for _ in 0..1_000 {
+                let result = area.random_tile_with(Some(center), &mut || 0.5);
+                assert!(area.contains(result, Some(center)));
+                std::hint::black_box(result);
+            }
+        });
+        eprintln!("world geometry core: Tile=24B Area=48B cold={cold:?} warm_1000={warm:?}");
+        assert_eq!(cold.count_total, 0);
+        assert_eq!(cold.bytes_current, 0);
+        assert_eq!(warm.count_total, 0);
+        assert_eq!(warm.bytes_current, 0);
     }
 }
