@@ -276,8 +276,8 @@ pub struct ScenarioNav {
     pub camera_follow: bool,
     /// Explicit world-speed request (`::speed N`) once the seed releases.
     /// `None` — the default — sends nothing and keeps the engine at its
-    /// own tick. A request for the speed the engine's newest confirmation
-    /// already reports is also not sent.
+    /// own tick. A request is always sent; the runner confirms it with a
+    /// system-chat line newer than that send.
     pub engine_speed_ms: Option<u32>,
 }
 
