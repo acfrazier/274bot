@@ -1,6 +1,6 @@
 //! Private per-isolate pairing between materialized entity rows and native facts.
 
-use crate::scene_query::EntityGeneration;
+use crate::scene_query::{EntityCategory, EntityGeneration};
 use rustyscript::deno_core::v8;
 use rustyscript::Runtime;
 use std::cell::RefCell;
@@ -10,6 +10,7 @@ use std::rc::Rc;
 ///
 /// Only the exact materialized row objects and shared native page owners live
 /// here. The mutable JavaScript arrays and wrapper/query objects are not cached.
+#[derive(Default)]
 pub(super) struct EntityPages {
     pub generation: EntityGeneration,
     pub npcs: Vec<v8::Global<v8::Object>>,
@@ -18,14 +19,13 @@ pub(super) struct EntityPages {
     pub ground: Vec<v8::Global<v8::Object>>,
 }
 
-impl Default for EntityPages {
-    fn default() -> Self {
-        Self {
-            generation: EntityGeneration::default(),
-            npcs: Vec::new(),
-            locs: Vec::new(),
-            players: Vec::new(),
-            ground: Vec::new(),
+impl EntityPages {
+    pub(super) fn rows(&self, category: EntityCategory) -> &[v8::Global<v8::Object>] {
+        match category {
+            EntityCategory::Npcs => &self.npcs,
+            EntityCategory::Players => &self.players,
+            EntityCategory::Locs => &self.locs,
+            EntityCategory::Ground => &self.ground,
         }
     }
 }
@@ -66,7 +66,7 @@ impl StagedEntityPages {
             locs: native_locs,
             players: native_players,
             ground: native_ground,
-            self_slot: native_self_slot,
+            self_slot: _,
         } = generation.expect("entity page updates capture their posting generation");
 
         // Defer releasing old V8 globals until after the RefCell borrow ends.
@@ -211,14 +211,22 @@ mod tests {
             &first_npcs
         ));
         assert!(Rc::ptr_eq(
-            pages.generation.locs.as_ref().expect("replacement loc page"),
+            pages
+                .generation
+                .locs
+                .as_ref()
+                .expect("replacement loc page"),
             &second_locs
         ));
         assert_eq!(pages.npcs.capacity(), npc_capacity);
         assert_eq!(pages.locs.capacity(), next_loc_capacity);
         assert_eq!(pages.generation.self_slot, 99);
         assert!(!Rc::ptr_eq(
-            pages.generation.locs.as_ref().expect("replacement loc page"),
+            pages
+                .generation
+                .locs
+                .as_ref()
+                .expect("replacement loc page"),
             &first_locs
         ));
     }

@@ -1,6 +1,6 @@
 import Tile from '../../geometry/Tile.js';
 import EntityQuery from '../query/Query.js';
-import { snap, queue, proxy } from '../../shim/_kernel.js';
+import { queue, proxy } from '../../shim/_kernel.js';
 
 export class Loc {
     constructor(row) {
@@ -34,9 +34,6 @@ export class Loc {
 
 export const Locs = proxy('Locs', {
     query() {
-        return EntityQuery.fromSnapshots(
-            () => snap().locs || [],
-            (s) => new Loc(s),
-        );
+        return globalThis.__rs2b0t_entities_v8(58 /* native query */, 2, EntityQuery, Loc);
     },
 });

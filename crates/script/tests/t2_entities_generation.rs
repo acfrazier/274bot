@@ -75,6 +75,7 @@ import { GroundItems } from '../../api/grounditems/GroundItems.js';
 import EntityQuery from '../../api/query/Query.js';
 
 const area = { minX: 3220, maxX: 3230, minZ: 3220, maxZ: 3230 };
+const origin = { x: 3222, z: 3222, level: 3 };
 const hostSnapshot = () => globalThis.__rs2b0t_host.snapshot;
 const sameRows = (entities, rows) => entities.length === rows.length
     && entities.every((entity, index) => entity.snap === rows[index]);
@@ -169,10 +170,10 @@ function nativeSummary() {
         ground: GroundItems.query().results(),
     };
     const selected = [
-        Npcs.query().name('Goblin').action('Attack').within(2).inside(area).results(),
-        Locs.query().name('Door').action('Open').within(2).inside(area).results(),
-        Players.query().name('Alice').action('Trade').within(2).inside(area).results(),
-        GroundItems.query().name('Bones').action('Take').within(2).inside(area).results(),
+        Npcs.query().name('Goblin').action('Attack').within(2).inside(area).withinOf(origin, 4).results(),
+        Locs.query().name('Door').action('Open').within(2).inside(area).withinOf(origin, 4).results(),
+        Players.query().name('Alice').action('Trade').within(2).inside(area).withinOf(origin, 4).results(),
+        GroundItems.query().name('Bones').action('Take').within(2).inside(area).withinOf(origin, 4).results(),
     ];
     const predicateOrder = [];
     const predicateResult = Npcs.query().where((npc) => {
@@ -229,18 +230,19 @@ function nativeSummary() {
             sameRows(rows.players, base.pages.players),
             sameRows(rows.ground, base.pages.ground),
         ],
-        filteredIds: [
-            selected[0].map((npc) => npc.id),
-            selected[1].map((loc) => loc.id),
-            selected[2].map((player) => player.index),
-            selected[3].map((item) => item.id),
+        filteredOrder: [
+            selected[0].map((npc) => identityLabel(npc, base.pages.npcs)),
+            selected[1].map((loc) => identityLabel(loc, base.pages.locs)),
+            selected[2].map((player) => identityLabel(player, base.pages.players)),
+            selected[3].map((item) => identityLabel(item, base.pages.ground)),
         ],
         nearest: [
-            Npcs.query().nearest().id,
-            Locs.query().nearest().id,
-            Players.query().nearest().index,
-            GroundItems.query().nearest().id,
-            Npcs.nearest(1)[0].id,
+            identityLabel(Npcs.query().nearest(), base.pages.npcs),
+            identityLabel(Locs.query().nearest(), base.pages.locs),
+            identityLabel(Players.query().nearest(), base.pages.players),
+            identityLabel(GroundItems.query().nearest(), base.pages.ground),
+            identityLabel(Npcs.nearest(1)[0], base.pages.npcs),
+            identityLabel(Npcs.query().nearestPreferLocal(2), base.pages.npcs),
         ],
         all: [
             Npcs.all().map((npc) => [npc.id, npc.name]),
@@ -254,7 +256,7 @@ function nativeSummary() {
             base.all.npcs[1].targetsAnotherPlayer(),
             base.all.players[0].targetsMe(),
         ],
-        where: [predicateOrder, predicateResult.map((npc) => npc.id)],
+        where: [predicateOrder, predicateResult.map((npc) => identityLabel(npc, base.pages.npcs))],
         shortCircuit: [shortCircuitOrder, visits],
         callerRows: [
             callerResults.length,
@@ -376,14 +378,16 @@ fn production_entity_queries_follow_only_the_successful_native_generation() {
         -1,
     );
 
-    let iso = LoadIsolate::spawn(ENTITY_PAGE_API.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso =
+        LoadIsolate::spawn(ENTITY_PAGE_API.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     assert_eq!(iso.probe("1").unwrap(), serde_json::json!(1));
     let mut encoder = IsolateBuf::new();
     let (base_bytes, base_fingerprint) = encoder.encode_snapshot_delta(None, &base, false);
     post(&iso, base.tick, base_bytes);
 
     assert_eq!(
-        iso.probe("globalThis.__entityPageTest.rememberBase()").unwrap(),
+        iso.probe("globalThis.__entityPageTest.rememberBase()")
+            .unwrap(),
         serde_json::json!({
             "queryIdentity": [true, true, true, true],
             "allIdentity": [true, true],
@@ -391,46 +395,63 @@ fn production_entity_queries_follow_only_the_successful_native_generation() {
     );
 
     assert_eq!(
-        iso.probe("globalThis.__entityPageTest.reverseAndMutatePublicRows()").unwrap(),
+        iso.probe("globalThis.__entityPageTest.reverseAndMutatePublicRows()")
+            .unwrap(),
         serde_json::json!(true)
     );
     assert_eq!(
-        iso.probe("globalThis.__entityPageTest.nativeSummary()").unwrap(),
+        iso.probe("globalThis.__entityPageTest.nativeSummary()")
+            .unwrap(),
         serde_json::json!({
-            "ids": [[101, 102], [201, 202], [4, 8], [401, 402]],
+            "ids": [[-900, -900], [-900, -900], [-900, -900], [-900, -900]],
             "names": [
-                ["Goblin", "Goblin"], ["Door", "Door"], ["Alice", "Bob"], ["Bones", "Bones"]
+                ["edited", "edited"], ["edited", "edited"], ["edited", "edited"], ["edited", "edited"]
             ],
             "identity": [true, true, true, true],
-            "filteredIds": [[101, 102], [202], [4, 8], [401, 402]],
-            "nearest": [102, 202, 8, 402, 102],
+            "filteredOrder": [["first", "second"], ["second"], ["first"], ["first", "second"]],
+            "nearest": ["second", "second", "second", "second", "second", "second"],
             "all": [
-                [[101, "Goblin"], [102, "Goblin"]],
-                [[4, "Alice"], [8, "Bob"]],
+                [[-900, "edited"], [-900, "edited"]],
+                [[-900, "edited"], [-900, "edited"]],
                 true,
                 true,
             ],
             "validityAndTargets": [true, true, true, true],
-            "where": [["first", "second"], [102]],
+            "where": [["first", "second"], ["second"]],
             "shortCircuit": [["first"], 1],
             "callerRows": [1, true, 88, 0],
         })
     );
 
     assert_eq!(
-        iso.probe("globalThis.__entityPageTest.replacePublicPages()").unwrap(),
+        iso.probe("globalThis.__entityPageTest.replacePublicPages()")
+            .unwrap(),
         serde_json::json!(true)
     );
-    let replaced = iso.probe("globalThis.__entityPageTest.nativeSummary()").unwrap();
-    assert_eq!(replaced["ids"], serde_json::json!([[101, 102], [201, 202], [4, 8], [401, 402]]));
-    assert_eq!(replaced["identity"], serde_json::json!([true, true, true, true]));
-    assert_eq!(replaced["all"], serde_json::json!([
-        [[101, "Goblin"], [102, "Goblin"]],
-        [[4, "Alice"], [8, "Bob"]],
-        true,
-        true,
-    ]));
-    assert_eq!(replaced["validityAndTargets"], serde_json::json!([true, true, true, true]));
+    let replaced = iso
+        .probe("globalThis.__entityPageTest.nativeSummary()")
+        .unwrap();
+    assert_eq!(
+        replaced["ids"],
+        serde_json::json!([[-900, -900], [-900, -900], [-900, -900], [-900, -900]])
+    );
+    assert_eq!(
+        replaced["identity"],
+        serde_json::json!([true, true, true, true])
+    );
+    assert_eq!(
+        replaced["all"],
+        serde_json::json!([
+            [[-900, "edited"], [-900, "edited"]],
+            [[-900, "edited"], [-900, "edited"]],
+            true,
+            true,
+        ])
+    );
+    assert_eq!(
+        replaced["validityAndTargets"],
+        serde_json::json!([true, true, true, true])
+    );
 
     let failed_npcs = [entity(
         20,
@@ -479,7 +500,8 @@ fn production_entity_queries_follow_only_the_successful_native_generation() {
         77,
     );
     assert_eq!(
-        iso.probe("globalThis.__entityPageTest.installFailure()").unwrap(),
+        iso.probe("globalThis.__entityPageTest.installFailure()")
+            .unwrap(),
         serde_json::json!(-1)
     );
     let (failed_bytes, failed_fingerprint) =
@@ -491,14 +513,16 @@ fn production_entity_queries_follow_only_the_successful_native_generation() {
     }
     post(&iso, failed.tick, failed_bytes);
 
-    let after_failure = iso.probe("globalThis.__entityPageTest.failureSummary()").unwrap();
+    let after_failure = iso
+        .probe("globalThis.__entityPageTest.failureSummary()")
+        .unwrap();
     assert_eq!(after_failure["setterCalls"], serde_json::json!(1));
     assert_eq!(after_failure["publishedNpcId"], serde_json::json!(501));
     assert_eq!(after_failure["publicSelfSlot"], serde_json::json!(9));
     assert_eq!(after_failure["publicMainModal"], serde_json::json!(-1));
     assert_eq!(
         after_failure["summary"]["ids"],
-        serde_json::json!([[101, 102], [201, 202], [4, 8], [401, 402]])
+        serde_json::json!([[-900, -900], [-900, -900], [-900, -900], [-900, -900]])
     );
     assert_eq!(
         after_failure["summary"]["identity"],
@@ -510,7 +534,8 @@ fn production_entity_queries_follow_only_the_successful_native_generation() {
     );
 
     assert_eq!(
-        iso.probe("globalThis.__entityPageTest.restoreFailure()").unwrap(),
+        iso.probe("globalThis.__entityPageTest.restoreFailure()")
+            .unwrap(),
         serde_json::json!(true)
     );
     let omitted = snapshot(
@@ -527,15 +552,28 @@ fn production_entity_queries_follow_only_the_successful_native_generation() {
         encoder.encode_snapshot_delta(Some(&failed_fingerprint), &omitted, false);
     {
         let delta = Snapshot::from_bytes(&omitted_bytes).unwrap();
-        assert!(!delta.has_npcs() && !delta.has_locs() && !delta.has_players() && !delta.has_ground());
+        assert!(
+            !delta.has_npcs() && !delta.has_locs() && !delta.has_players() && !delta.has_ground()
+        );
         assert!(!delta.has_self_slot() && !delta.has_main_modal_id());
         assert!(delta.has_run_energy());
     }
     post(&iso, omitted.tick, omitted_bytes);
-    let after_omission = iso.probe("globalThis.__entityPageTest.nativeSummary()").unwrap();
-    assert_eq!(after_omission["ids"], serde_json::json!([[101, 102], [201, 202], [4, 8], [401, 402]]));
-    assert_eq!(after_omission["identity"], serde_json::json!([true, true, true, true]));
-    assert_eq!(after_omission["validityAndTargets"], serde_json::json!([true, true, true, true]));
+    let after_omission = iso
+        .probe("globalThis.__entityPageTest.nativeSummary()")
+        .unwrap();
+    assert_eq!(
+        after_omission["ids"],
+        serde_json::json!([[-900, -900], [-900, -900], [-900, -900], [-900, -900]])
+    );
+    assert_eq!(
+        after_omission["identity"],
+        serde_json::json!([true, true, true, true])
+    );
+    assert_eq!(
+        after_omission["validityAndTargets"],
+        serde_json::json!([true, true, true, true])
+    );
 
     let fresh_npcs = [entity(
         30,
@@ -565,13 +603,14 @@ fn production_entity_queries_follow_only_the_successful_native_generation() {
     }
     post(&iso, advanced.tick, advanced_bytes);
     assert_eq!(
-        iso.probe("globalThis.__entityPageTest.advancedSummary()").unwrap(),
+        iso.probe("globalThis.__entityPageTest.advancedSummary()")
+            .unwrap(),
         serde_json::json!({
             "npcFacts": [[901, "FreshGoblin"]],
             "npcIdentity": true,
             "npcTargetsMe": true,
             "npcValid": true,
-            "oldFacts": [[201, 202], [4, 8], [401, 402]],
+            "oldFacts": [[-900, -900], [-900, -900], [-900, -900]],
             "oldIdentity": [true, true, true],
         })
     );
