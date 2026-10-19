@@ -3465,6 +3465,30 @@ fn nature_two_tick_gap_then_confirm_counts_one_transfer_for_both_actors() {
     assert_air_transfer(&master, &runner, 1, TRADE_CAP);
 }
 
+#[test]
+fn nature_confirm_two_ticks_after_the_gap_drops_without_transfer() {
+    // The opposite boundary of the one-tick window above: a confirm two
+    // ticks after the first gap is outside every live trace's interface
+    // swap, so the conserved close after it is not a transfer.
+    let mut master = air_slot(AirRole::Master);
+    let mut runner = air_slot(AirRole::Runner);
+    master.observe(air_offer(AirRole::Master, 10, 0, 0));
+    runner.observe(air_offer(AirRole::Runner, 10, TRADE_CAP, 0));
+    master.observe(air_inactive(AirRole::Master, 11, 0));
+    runner.observe(air_inactive(AirRole::Runner, 11, 0));
+    master.observe(air_confirm(AirRole::Master, 13, 0));
+    runner.observe(air_confirm(AirRole::Runner, 13, 0));
+    master.observe(air_close(AirRole::Master, 15, TRADE_CAP));
+    runner.observe(air_close(AirRole::Runner, 15, 0));
+    for slot in [&master, &runner] {
+        assert!(!slot.saw_confirm_with_partner);
+        assert_eq!(slot.partner_transfer_events, 0);
+        assert_eq!(slot.exchange_stage, AirExchangeStage::Offer);
+    }
+    assert_eq!(master.transferred_in, 0);
+    assert_eq!(runner.transferred_out, 0);
+}
+
 fn nature_first_craft(master: &mut AirSlotRecord) {
     master.observe(air_temple(AirRole::Master, 20, 0, 0, 0));
     master.observe(air_temple(AirRole::Master, 21, 0, 0, AIR_CRAFT_XP));
