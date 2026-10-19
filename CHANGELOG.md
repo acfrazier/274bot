@@ -179,6 +179,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   Busy search capacity or result storage delays a valid inspection instead
   of refusing it. Reset cancels the current inspection and prevents stale
   output. Recent results remain available until acknowledged or replaced.
+- Walks can now go through content-gated doors and entrances the game locks
+  behind an item: carry the needed key (or wear the needed gear) and the
+  route goes through; without it the walk stops and names what is missing.
+  Some entrances instead need you to travel light — carrying or wearing a
+  listed item stops the route until it is left behind. The bot never moves,
+  equips or bank-deposits your gear to pass such a gate; the refusal says
+  what to change. Quest-locked crossings still need their quest progress as
+  before. Only the entrances the game content proves are covered so far.
 
 ### Random-event guardian
 
