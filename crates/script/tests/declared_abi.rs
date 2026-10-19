@@ -642,6 +642,7 @@ fn t2_1_abi_contract_covers_exports_families_and_visible_debt() {
             "cooking",
             "cow",
             "gathering",
+            "inventory",
             "runecrafting",
             "skills",
             "world-primitives"

@@ -2614,6 +2614,14 @@ fn preserved_native_frame_member(label: &str, owner: &str, member: &str) -> bool
         && paint_frame_runtime_members().contains(member)
 }
 
+fn preserved_native_inventory_member(label: &str, owner: &str, member: &str) -> bool {
+    label == "*api/inventory/Inventory.js"
+        && owner == "InvItem"
+        && crate::shim::INV_ITEM_FIELDS
+            .iter()
+            .any(|(name, _)| *name == member)
+}
+
 fn inherited_export(exp: &CompatExport, available: &[&CompatExport]) -> CompatExport {
     let mut resolved = exp.clone();
     let mut base = match exp {
@@ -2870,7 +2878,8 @@ fn compare_members(
         }
         let allowed_preserved_member = preserved_owner
             && (preserved_overlay_has_not_impl_member(label, owner, &d.name)
-                || preserved_native_frame_member(label, owner, &d.name));
+                || preserved_native_frame_member(label, owner, &d.name)
+                || preserved_native_inventory_member(label, owner, &d.name));
         if !allowed_preserved_member {
             drifts.push(format!("{label} {owner} extra authored member {}", d.name));
         }
