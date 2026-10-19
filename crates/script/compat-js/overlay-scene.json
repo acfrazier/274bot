@@ -133,8 +133,8 @@
     "module": "api/players/Players.js",
     "selector": "Players.all",
     "add": true,
-    "reason": "Players.all wraps each posted flat player row with the exported Player class through the native entity adapter; it is runtime-only in the frozen query facade (crates/script/src/shim/players.js:58-60).",
-    "runtime": "crates/script/src/shim/players.js:58",
+    "reason": "Players.all wraps the original rows paired with the decoded native player page using the exported Player class; it is runtime-only in the frozen query facade (crates/script/src/shim/players.js:55-57).",
+    "runtime": "crates/script/src/shim/players.js:55",
     "declaration": "all(): Player[];"
   }
 ]
