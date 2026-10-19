@@ -697,6 +697,78 @@ fn cancelled_or_expired_phase_never_emits_an_accept() {
 }
 
 #[test]
+fn gang_read_waits_for_foreign_main_and_keeps_identity_failures_terminal() {
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let facts =
+        Arc::new(api::quest_facts::QuestCatalog::from_identity(data.quest_identity()).unwrap());
+    static PORT: Port = Port {
+        offer: AtomicBool::new(false),
+        confirm: AtomicBool::new(false),
+        cancelled: AtomicBool::new(false),
+        not_ready: AtomicBool::new(false),
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_main_modal(777, vec![]);
+    snapshot.seed_main_modal_texts(vec!["Trade confirmation".into()]);
+    let mut reader = crate::quester::gang::GangRead::default();
+    let mut ledger = None;
+
+    for (index, active_ms) in [0, 7_999, 8_000, 15_999, 16_000].into_iter().enumerate() {
+        let result = with_tick(&snapshot, &mut ledger, index as u64 + 1, |tick| {
+            tick.cx.active_now = Duration::from_millis(active_ms);
+            tick.pairs = Some(&PORT);
+            reader.poll(tick, &facts)
+        });
+        if active_ms < 16_000 {
+            assert!(result.is_pending(), "a foreign MAIN must wait before begin");
+        } else {
+            assert!(matches!(
+                result,
+                Poll::Ready(Err(ActionError::Blocked(reason)))
+                    if reason.as_ref() == "owned Arrav admission journal could not be read"
+            ));
+        }
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+        assert_eq!(snapshot.modals().main, 777, "never close an unowned window");
+    }
+
+    let mut no_modal = GameSnapshot::new();
+    no_modal.seed_ingame(2);
+    let mut unknown_reader = crate::quester::gang::GangRead::default();
+    let empty_facts = Arc::new(api::quest_facts::QuestCatalog::empty());
+    let unknown = with_tick(&no_modal, &mut ledger, 6, |tick| {
+        tick.pairs = Some(&PORT);
+        unknown_reader.poll(tick, &empty_facts)
+    });
+    assert!(matches!(
+        unknown,
+        Poll::Ready(Err(ActionError::Failed(reason))) if reason.as_ref() == "unknown journal quest"
+    ));
+
+    let mut wrong_title = GameSnapshot::new();
+    wrong_title.seed_ingame(2);
+    wrong_title.seed_main_modal(
+        crate::quest_journal::ROOT_289,
+        vec![crate::quest_journal::test_widget(
+            8144,
+            "@dre@Romeo & Juliet",
+        )],
+    );
+    let mut wrong_title_reader = crate::quester::gang::GangRead::default();
+    let wrong_title_result = with_tick(&wrong_title, &mut ledger, 7, |tick| {
+        tick.pairs = Some(&PORT);
+        wrong_title_reader.poll(tick, &facts)
+    });
+    assert!(matches!(
+        wrong_title_result,
+        Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref() == "journal blocked by quest journal 'Romeo & Juliet'"
+    ));
+}
+#[test]
 fn recovery_item_fact_compiles_only_bounded_arrav_items_and_an_authored_pair_role() {
     use crate::quester::compile::{CompiledProgress, PairCompileContext};
     use crate::quester::loadouts::LoadoutOverlay;

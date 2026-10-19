@@ -1573,7 +1573,25 @@ impl Quester {
     fn wait_for_journal_read(&mut self, tick: &NativeTick<'_>, reason: &'static str) -> bool {
         let waiting = self.wait_for_read(tick, reason);
         if self.parked {
-            if let Some(chat) = tick.cx.snapshot().chat_modal() {
+            if let Some(modal) = tick.cx.snapshot().main_modal().filter(|modal| {
+                modal.value.root != ROOT_289
+                    && (modal.value.root != -1 || !modal.value.texts.is_empty())
+            }) {
+                self.set_last_error(
+                    QuesterFailureKind::Other,
+                    Arc::from(format!(
+                        "journal blocked by modal root {}{}",
+                        modal.value.root,
+                        modal
+                            .value
+                            .texts
+                            .iter()
+                            .find(|text| !text.is_empty())
+                            .map(|text| format!(" ({text})"))
+                            .unwrap_or_default()
+                    )),
+                );
+            } else if let Some(chat) = tick.cx.snapshot().chat_modal() {
                 if chat.value.root != -1 || !chat.value.texts.is_empty() {
                     self.set_last_error(
                         QuesterFailureKind::Other,

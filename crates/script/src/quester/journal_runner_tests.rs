@@ -1229,6 +1229,12 @@ fn a_persistent_foreign_main_modal_uses_the_existing_read_cap_without_clicks() {
             active_ms == 16_000,
             "the inherited read cap must remain 16 s, active_ms={active_ms}"
         );
+        if active_ms == 16_000 {
+            assert_eq!(
+                script.blocked_failure().message.as_ref(),
+                "journal blocked by modal root 777 (Trade confirmation)"
+            );
+        }
         assert!(script.journal.is_none());
         assert!(ledger
             .as_ref()
