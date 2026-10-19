@@ -119,9 +119,9 @@ test('typed module classification rejects duplicate and incorrect family rows', 
     assert.throws(() => validateArtifacts(incorrect, predecessors, navFamilies), /Typed module family classification disagrees/);
 });
 
-test('only complete bank, cooking, cow, gathering, runecrafting, skills and world-primitives families are activated', () => {
+test('only complete bank, chatbox, cooking, cow, gathering, runecrafting, skills and world-primitives families are activated', () => {
     assert.equal(contract.activation_state, 'partially-activated');
-    assert.deepEqual(contract.active_families, ['bank', 'cooking', 'cow', 'gathering', 'runecrafting', 'skills', 'world-primitives']);
+    assert.deepEqual(contract.active_families, ['bank', 'chatbox', 'cooking', 'cow', 'gathering', 'runecrafting', 'skills', 'world-primitives']);
     for (const family of predecessors.families) {
         assert.equal(
             family.activation_state,

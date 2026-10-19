@@ -14350,54 +14350,6 @@
       "nav_consuming": false
     },
     {
-      "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.record",
-      "module": "api/chatbox/gameMessages.js",
-      "selector": "GameMessages.record",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: mutable game-message recording remains unavailable.",
-      "runtime": "crates/script/src/shim/game_messages.js:17",
-      "preserveParameters": true,
-      "async": false,
-      "family_id": "chatbox",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.firstSince",
-      "module": "api/chatbox/gameMessages.js",
-      "selector": "GameMessages.firstSince",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: message matching after a mark remains unavailable.",
-      "runtime": "crates/script/src/shim/game_messages.js:37",
-      "preserveParameters": true,
-      "async": false,
-      "family_id": "chatbox",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.recent",
-      "module": "api/chatbox/gameMessages.js",
-      "selector": "GameMessages.recent",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: a mutable recent-message ring remains unavailable.",
-      "runtime": "crates/script/src/shim/game_messages.js:41",
-      "preserveParameters": true,
-      "async": false,
-      "family_id": "chatbox",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.reset",
-      "module": "api/chatbox/gameMessages.js",
-      "selector": "GameMessages.reset",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: mutable game-message reset remains unavailable.",
-      "runtime": "crates/script/src/shim/game_messages.js:45",
-      "preserveParameters": true,
-      "async": false,
-      "family_id": "chatbox",
-      "nav_consuming": false
-    },
-    {
       "id": "not-impl:paint/paintLogic.js:PaintState.publishRegions",
       "module": "paint/paintLogic.js",
       "selector": "PaintState.publishRegions",
@@ -24258,46 +24210,6 @@
       "overlay_id": "not-impl:paint/paintLogic.js:statColumns"
     },
     {
-      "family_id": "chatbox",
-      "member": "record",
-      "selector": "GameMessages.record",
-      "module": "api/chatbox/gameMessages.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/game_messages.js:17",
-      "reason": "Unconditional not-impl: mutable game-message recording remains unavailable.",
-      "overlay_id": "not-impl:api/chatbox/gameMessages.js:GameMessages.record"
-    },
-    {
-      "family_id": "chatbox",
-      "member": "firstSince",
-      "selector": "GameMessages.firstSince",
-      "module": "api/chatbox/gameMessages.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/game_messages.js:37",
-      "reason": "Unconditional not-impl: message matching after a mark remains unavailable.",
-      "overlay_id": "not-impl:api/chatbox/gameMessages.js:GameMessages.firstSince"
-    },
-    {
-      "family_id": "chatbox",
-      "member": "recent",
-      "selector": "GameMessages.recent",
-      "module": "api/chatbox/gameMessages.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/game_messages.js:41",
-      "reason": "Unconditional not-impl: a mutable recent-message ring remains unavailable.",
-      "overlay_id": "not-impl:api/chatbox/gameMessages.js:GameMessages.recent"
-    },
-    {
-      "family_id": "chatbox",
-      "member": "reset",
-      "selector": "GameMessages.reset",
-      "module": "api/chatbox/gameMessages.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/game_messages.js:45",
-      "reason": "Unconditional not-impl: mutable game-message reset remains unavailable.",
-      "overlay_id": "not-impl:api/chatbox/gameMessages.js:GameMessages.reset"
-    },
-    {
       "family_id": "paint",
       "member": "publishRegions",
       "selector": "PaintState.publishRegions",
@@ -25423,6 +25335,7 @@
   ],
   "active_families": [
     "bank",
+    "chatbox",
     "cooking",
     "cow",
     "gathering",
@@ -25489,7 +25402,7 @@
       "type_aliases": 0,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 4
+      "not_impl_debt": 0
     },
     {
       "family_id": "client-adapter",

@@ -12,6 +12,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- Game-message recording, history search and recent-message reads now run in
+  Rust over a per-context 64-record ring. Existing page readers keep their
+  posted-page behavior; session resets clear history without replaying omitted pages.
 - Gathering scripts can use the declared location options, booth defaults,
   map-square checks and location resolver. A shared Rust preset core serves
   compiled callers and compatibility adapters without a second resource catalog.
