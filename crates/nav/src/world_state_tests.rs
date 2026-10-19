@@ -485,13 +485,43 @@ fn exclusions_require_observed_absence_and_name_the_actual_item_and_entrance() {
 }
 
 #[test]
-fn empty_observed_inventory_and_equipment_are_not_unknown() {
+fn item_packet_readiness_requires_received_packets() {
     let mut snapshot = GameSnapshot::default();
+    let mut edge = gated_edge();
+    edge.forbidden_held.push(4242);
+    edge.forbidden_worn.push(4343);
     let unknown = WorldState::from_snapshot(&snapshot);
     assert!(!unknown.inventory_ready);
     assert!(!unknown.equipment_ready);
+    assert_eq!(
+        WorldState::snapshot_exclusion_failure(&edge, &snapshot),
+        Some(EntranceRequirement::InventoryNotObserved { at: edge.at })
+    );
+
+    // Loaded tab geometry and allocated empty rows are not evidence that the
+    // server has sent either item packet.
     snapshot.seed_inventory(Vec::new(), 28);
     snapshot.seed_equipment(Vec::new());
+    let loaded_without_packets = WorldState::from_snapshot(&snapshot);
+    assert!(!loaded_without_packets.inventory_ready);
+    assert_eq!(
+        WorldState::snapshot_exclusion_failure(&edge, &snapshot),
+        Some(EntranceRequirement::InventoryNotObserved { at: edge.at })
+    );
+    assert!(!loaded_without_packets.equipment_ready);
+    snapshot.seed_inventory_packet_generations(Some(1), None);
+    assert_eq!(
+        WorldState::snapshot_exclusion_failure(&edge, &snapshot),
+        Some(EntranceRequirement::EquipmentNotObserved { at: edge.at })
+    );
+
+    // Empty packet generations prove the observed absence of held and worn items.
+    snapshot.seed_equipment_packet_generation(Some(1));
+    assert_eq!(
+        WorldState::snapshot_exclusion_failure(&edge, &snapshot),
+        None,
+        "received empty packets prove forbidden-item absence"
+    );
     let observed = WorldState::from_snapshot(&snapshot);
     assert!(observed.inventory_ready);
     assert!(observed.equipment_ready);

@@ -35,6 +35,30 @@ pub(super) use script_nav::{
     ScriptRouteExclusions, ScriptWalkArm,
 };
 use script_nav::{log_walk_arm_bot, take_carried_walk};
+
+/// Resolve live-fixture crossing grants through the script walk product path.
+#[cfg(feature = "test-support")]
+pub fn resolve_script_cross_zones_for_live_test(
+    opts: nav::router::FindOptions,
+    world: &nav::world::NavWorld,
+    from: api::WorldTile,
+    to: api::WorldTile,
+    state: &nav::WorldState,
+    cross: &[&str],
+) -> Result<nav::router::FindOptions, String> {
+    script_nav::resolve_route_exclusions(
+        opts,
+        world,
+        from,
+        to,
+        state,
+        ScriptRouteExclusions {
+            cross: cross.iter().map(|name| Arc::from(*name)).collect(),
+            ..Default::default()
+        },
+    )
+    .map(|(opts, _)| opts)
+}
 #[path = "script_walk.rs"]
 mod script_walk;
 #[cfg(not(test))]

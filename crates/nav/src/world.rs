@@ -228,20 +228,24 @@ impl NavWorld {
         profile_dir.join("nav/289/274bot.navpack")
     }
 
-    /// Whole-world pack proofs. GitHub has no pack and no Server tree —
-    /// skip instead of panicking. Local with a rebake still runs them.
+    /// Optional whole-world tests skip only when no pack exists by default.
+    /// An explicitly selected or unreadable pack is a failed test, not a skip.
     #[cfg(test)]
     pub(crate) fn load_default_pack_or_skip() -> Option<Self> {
         let path = Self::default_pack_path();
         match Self::load_pack(&path) {
             Ok(w) => Some(w),
-            Err(e) => {
+            Err(PackError::Io(e))
+                if e.kind() == std::io::ErrorKind::NotFound
+                    && std::env::var_os("NAV_PACK").is_none() =>
+            {
                 eprintln!(
                     "SKIP: could not load nav pack at {} ({e:?}); set NAV_PACK or build host-play's revision-289 pack",
                     path.display()
                 );
                 None
             }
+            Err(e) => panic!("could not load selected nav pack at {}: {e}", path.display()),
         }
     }
 

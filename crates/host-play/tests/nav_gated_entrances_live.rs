@@ -703,29 +703,26 @@ fn edge_value(edge: &TransportEdge) -> Value {
     })
 }
 
-fn route_options(world: &NavWorld, case: EntranceCase) -> FindOptions {
-    // The product's crossZones option resolves the same names into this
-    // request-local field. Keep every other zone and all defaults unchanged.
-    let keys: Vec<_> = case
-        .cross_zones()
-        .iter()
-        .map(|name| {
-            world
-                .graph
-                .zones
-                .as_ref()
-                .expect("named crossing requires the pack's zone table")
-                .resolve(name)
-                .unwrap_or_else(|| panic!("approved crossing is absent from the pack: {name}"))
-        })
-        .collect();
-    FindOptions {
-        allow_teleports: false,
-        allow_wilderness: false,
-        allow_bank_fetch: false,
-        zones: ZoneExempt::named(&keys).expect("at most eight named crossing grants"),
-        ..FindOptions::default()
-    }
+fn route_options(
+    world: &NavWorld,
+    case: EntranceCase,
+    state: &WorldState,
+    from: WorldTile,
+) -> FindOptions {
+    host_play::resolve_script_cross_zones_for_live_test(
+        FindOptions {
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            ..FindOptions::default()
+        },
+        world,
+        from,
+        from,
+        state,
+        case.cross_zones(),
+    )
+    .expect("the product accepts the approved request-local crossing grants")
 }
 
 fn find_route(
@@ -1344,7 +1341,7 @@ fn run_case(case: EntranceCase) {
         "map_members": state.map_members,
         "entrance_allowed": edges.iter().map(|(_, edge)| state.allows(edge)).collect::<Vec<_>>(),
     });
-    let options = route_options(&world, case);
+    let options = route_options(&world, case, &state, snapshot.tile());
     receipt["route_options"] = json!({
         "crossZones": case.cross_zones(),
         "allow_teleports": options.allow_teleports,

@@ -1246,10 +1246,12 @@ mod bank_pick_capture {
     #[test]
     #[ignore = "requires the immutable real 289 navpack and BOT_BANK_PICK_CAPTURE_OUT"]
     fn captures_real_content_bank_pick_outcomes() {
-        let pack = std::path::Path::new(
-            "/srv/dev/scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
-        );
-        let loaded = NavWorld::load_pack(pack).unwrap();
+        let pack = std::env::var_os("NAV_PACK")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(
+                "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
+            ));
+        let loaded = NavWorld::load_pack(&pack).unwrap();
         loaded
             .bind_named_bank_facts(
                 &api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
@@ -1386,10 +1388,12 @@ mod bank_pick_capture {
         use api::work::{MonotonicClock, SharedCancellation, SliceBudget, SystemClock};
         use std::num::NonZeroU32;
 
-        let pack = std::path::Path::new(
-            "/srv/dev/scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
-        );
-        let loaded = NavWorld::load_pack(pack).unwrap();
+        let pack = std::env::var_os("NAV_PACK")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(
+                "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
+            ));
+        let loaded = NavWorld::load_pack(&pack).unwrap();
         loaded
             .bind_named_bank_facts(
                 &api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),

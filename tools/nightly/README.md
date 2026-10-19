@@ -281,8 +281,8 @@ administrator, once.
    `node_modules`, account database or player saves: the clients read its pack, config
    and content; it is never started), `rs2b0t\` (the catalog, as on the Linux VM),
    `nav-snapshot\<16-hex>\` (a decoded client-cache snapshot; the runner makes it again
-   when it is missing or stale), `fixtures\bake-r2-a.navpack` (the script lanes'
-   `NAV_PACK`, sha256 `4270f027…`) and
+   when it is missing or stale), `fixtures\274bot-289-v17.navpack` (the script lanes'
+   `NAV_PACK`, the v17 reference pack named in `docs/api/nav.md`) and
    `fixtures\rusty_v8_release_x86_64-pc-windows-msvc.lib.gz` (the platform gate's
    prebuilt V8, for `v8` 137.2.1; replace it when `Cargo.lock` moves `v8`).
 4. Runner: a clone of this repository in `C:\274bot-nightly\runner` on the branch that

@@ -325,9 +325,9 @@ impl WorldState {
             .collect();
         WorldState {
             inv,
-            inventory_ready: s.inventory_size() > 0,
+            inventory_ready: s.inventory_packet_generation().is_some(),
             worn,
-            equipment_ready: s.equipment_posted(),
+            equipment_ready: s.equipment_packet_generation().is_some(),
             stats,
             combat_level,
             varps,
@@ -450,8 +450,8 @@ impl WorldState {
     ) -> Option<EntranceRequirement> {
         Self::exclusion_failure_with(
             e,
-            snapshot.inventory_size() > 0,
-            snapshot.equipment_posted(),
+            snapshot.inventory_packet_generation().is_some(),
+            snapshot.equipment_packet_generation().is_some(),
             |id| {
                 snapshot
                     .inv()
