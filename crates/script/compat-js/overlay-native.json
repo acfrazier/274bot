@@ -242,7 +242,7 @@
     "operation": "optional",
     "parameters": ["banks"],
     "reason": "Host returns its prebuilt table and ignores the legacy banks argument.",
-    "runtime": "crates/script/src/shim/cook_locations_data.js:29"
+    "runtime": "crates/script/src/shim/cook_locations_data.js:28"
   },
   {
     "id": "navigator-native-default-export",

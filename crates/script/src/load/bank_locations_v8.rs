@@ -53,6 +53,12 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     callback_v8::install(runtime, "__rs2b0t_cook_locations", cook_catalog)?;
     callback_v8::install(
         runtime,
+        "__rs2b0t_cook_location_options",
+        cook_location_options,
+    )?;
+    callback_v8::install(runtime, "__rs2b0t_find_cook_location", find_cook_location)?;
+    callback_v8::install(
+        runtime,
         "__rs2b0t_nearest_cook_surface",
         nearest_cook_surface,
     )?;
@@ -424,6 +430,134 @@ fn cook_catalog<'s>(
     callback_v8::finish(scope, rv, result);
 }
 
+/// Native projection of `['Auto', ...locations.map(l => l.name), custom]`.
+fn cook_location_options<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let locations = v8::Local::<v8::Array>::try_from(args.get(0))
+            .map_err(|_| callback_v8::type_error(scope, "cook locations are not an array"))?;
+        let options = v8::Array::new(scope, 0);
+        let auto = callback_v8::string(scope, "Auto");
+        set_array_data(scope, options, 0, auto)?;
+        for index in 0..locations.length() {
+            let location = callback_v8::get_index(scope, locations.into(), index)?;
+            let name = callback_v8::get(scope, location, "name")?;
+            set_array_data(scope, options, index + 1, name)?;
+        }
+        let custom = args.get(1);
+        set_array_data(scope, options, locations.length() + 1, custom)?;
+        Ok(options.into())
+    })();
+    callback_v8::finish(scope, rv, result);
+}
+
+fn set_array_data<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    array: v8::Local<'s, v8::Array>,
+    index: u32,
+    value: v8::Local<'s, v8::Value>,
+) -> callback_v8::JsResult<'s, ()> {
+    let key = v8::Integer::new_from_unsigned(scope, index)
+        .to_string(scope)
+        .ok_or_else(|| callback_v8::type_error(scope, "cook location option index"))?;
+    let created = callback_v8::catching(scope, |scope| {
+        array.create_data_property(scope, key.cast(), value)
+    })?;
+    if created {
+        Ok(())
+    } else {
+        Err(callback_v8::type_error(
+            scope,
+            "could not create cook location option",
+        ))
+    }
+}
+
+fn string_constructor<'s>(
+    scope: &mut v8::HandleScope<'s>,
+) -> callback_v8::JsResult<'s, v8::Local<'s, v8::Value>> {
+    let global = scope.get_current_context().global(scope);
+    callback_v8::get(scope, global.into(), "String")
+}
+
+fn call_string<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    constructor: v8::Local<'s, v8::Value>,
+    value: v8::Local<'s, v8::Value>,
+) -> callback_v8::JsResult<'s, v8::Local<'s, v8::Value>> {
+    let undefined = v8::undefined(scope).into();
+    callback_v8::call(scope, constructor, undefined, &[value], "String")
+}
+
+/// Preserve the frozen `String` conversions and caller-owned `find` method;
+/// the row-matching predicate itself runs in this native callback.
+fn find_cook_location<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let constructor = string_constructor(scope)?;
+        let wanted = call_string(scope, constructor, args.get(1))?;
+        let wanted = callback_v8::call_method(scope, wanted, "trim", &[], "String(name).trim")?;
+        let wanted = callback_v8::call_method(
+            scope,
+            wanted,
+            "toLowerCase",
+            &[],
+            "String(name).trim().toLowerCase",
+        )?;
+        let locations = args.get(0);
+        let locations = if callback_v8::truthy(scope, locations) {
+            locations
+        } else {
+            v8::Array::new(scope, 0).into()
+        };
+        let predicate = v8::Function::builder(cook_location_matches)
+            .data(wanted)
+            .build(scope)
+            .ok_or_else(|| {
+                callback_v8::type_error(scope, "could not create cook location matcher")
+            })?;
+        let found =
+            callback_v8::call_method(scope, locations, "find", &[predicate.into()], "locs.find")?;
+        Ok(if callback_v8::truthy(scope, found) {
+            found
+        } else {
+            v8::null(scope).into()
+        })
+    })();
+    callback_v8::finish(scope, rv, result);
+}
+
+fn cook_location_matches<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let location = args.get(0);
+        if !callback_v8::truthy(scope, location) {
+            return Ok(location);
+        }
+        let constructor = string_constructor(scope)?;
+        let name = callback_v8::get(scope, location, "name")?;
+        let name = call_string(scope, constructor, name)?;
+        let name = callback_v8::call_method(
+            scope,
+            name,
+            "toLowerCase",
+            &[],
+            "String(l.name).toLowerCase",
+        )?;
+        Ok(v8::Boolean::new(scope, name.strict_equals(args.data())).into())
+    })();
+    callback_v8::finish(scope, rv, result);
+}
+
 fn nearest_cook_surface<'s>(
     scope: &mut v8::HandleScope<'s>,
     args: v8::FunctionCallbackArguments<'s>,
@@ -506,4 +640,157 @@ fn resolve_cook<'s>(
         None => v8::null(scope).into(),
     });
     callback_v8::finish(scope, rv, result);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustyscript::RuntimeOptions;
+
+    const COOKING_SETUP: &str = r#"
+const cookingRows = [
+    { name: 'Alpha' },
+    { name: 'alpha' },
+    { name: 'Beta' },
+];
+globalThis.checkCookingHelpers = () => {
+    const options = __rs2b0t_cook_location_options(cookingRows, 'Custom');
+    return options.length === 5 &&
+        options[0] === 'Auto' && options[1] === 'Alpha' &&
+        options[2] === 'alpha' && options[3] === 'Beta' &&
+        options[4] === 'Custom' &&
+        __rs2b0t_find_cook_location(cookingRows, ' ALPHA ') === cookingRows[0] &&
+        __rs2b0t_find_cook_location(cookingRows, 'beta') === cookingRows[2] &&
+        __rs2b0t_find_cook_location(cookingRows, 'missing') === null &&
+        __rs2b0t_find_cook_location(null, 'Alpha') === null;
+};
+"#;
+
+    fn setup() -> Runtime {
+        crate::load::platform::bootstrap_test_v8_platform();
+        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+        callback_v8::install_ops(&mut runtime).unwrap();
+        install(&mut runtime).unwrap();
+        runtime.eval::<()>(COOKING_SETUP).unwrap();
+        runtime
+    }
+
+    #[test]
+    fn cooking_local_helpers_bound_cold_cache_and_keep_zero_warm_rust_heap() {
+        let mut runtime = setup();
+        let context = runtime.deno_runtime().main_context();
+        let mut scope = runtime.deno_runtime().handle_scope();
+        let global = context.open(&mut scope).global(&mut scope);
+        let key = callback_v8::string(&mut scope, "checkCookingHelpers");
+        let function =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let receiver = v8::undefined(&mut scope).into();
+        let cold = allocation_counter::measure(|| {
+            assert!(function.call(&mut scope, receiver, &[]).unwrap().is_true());
+        });
+        let warm = allocation_counter::measure(|| {
+            for _ in 0..1_000 {
+                assert!(function.call(&mut scope, receiver, &[]).unwrap().is_true());
+            }
+        });
+        println!("Cooking option/lookup callbacks cold={cold:?}; warm1000={warm:?}");
+        assert!(cold.count_total <= 1);
+        assert!(cold.count_current <= 1);
+        assert!(cold.count_max <= 1);
+        assert!(cold.bytes_total <= 112);
+        assert!(cold.bytes_current <= 112);
+        assert!(cold.bytes_max <= 112);
+        assert_eq!(warm, allocation_counter::AllocationInfo::default());
+    }
+
+    fn scope_cache_control<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        args: v8::FunctionCallbackArguments<'s>,
+        mut rv: v8::ReturnValue,
+    ) {
+        let first = &mut v8::TryCatch::new(scope);
+        let second = &mut v8::TryCatch::new(first);
+        let third = &mut v8::TryCatch::new(second);
+        if args.get(0).is_true() {
+            let fourth = &mut v8::TryCatch::new(third);
+            rv.set(v8::Boolean::new(fourth, true).into());
+        } else {
+            rv.set(v8::Boolean::new(third, true).into());
+        }
+    }
+
+    #[test]
+    fn cooking_cold_charge_reuses_an_independent_scope_cache_cell() {
+        let mut runtime = setup();
+        callback_v8::install(&mut runtime, "__scope_cache_control", scope_cache_control).unwrap();
+        runtime
+            .eval::<()>(
+                r#"
+globalThis.checkPureJs = () => true;
+globalThis.checkThreeScopes = () => __scope_cache_control(false);
+globalThis.checkFourScopes = () => __scope_cache_control(true);
+"#,
+            )
+            .unwrap();
+        let context = runtime.deno_runtime().main_context();
+        let mut scope = runtime.deno_runtime().handle_scope();
+        let global = context.open(&mut scope).global(&mut scope);
+        let key = callback_v8::string(&mut scope, "checkPureJs");
+        let pure_js =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let key = callback_v8::string(&mut scope, "checkThreeScopes");
+        let three_scopes =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let key = callback_v8::string(&mut scope, "checkFourScopes");
+        let four_scopes =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let key = callback_v8::string(&mut scope, "checkCookingHelpers");
+        let cooking =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let receiver = v8::undefined(&mut scope).into();
+        let pure = allocation_counter::measure(|| {
+            assert!(pure_js.call(&mut scope, receiver, &[]).unwrap().is_true());
+        });
+        let cold = allocation_counter::measure(|| {
+            assert!(three_scopes
+                .call(&mut scope, receiver, &[])
+                .unwrap()
+                .is_true());
+        });
+        let cooking_after_control = allocation_counter::measure(|| {
+            assert!(cooking.call(&mut scope, receiver, &[]).unwrap().is_true());
+        });
+        let extra_depth = allocation_counter::measure(|| {
+            assert!(four_scopes
+                .call(&mut scope, receiver, &[])
+                .unwrap()
+                .is_true());
+        });
+        let warm = allocation_counter::measure(|| {
+            for _ in 0..1_000 {
+                assert!(four_scopes
+                    .call(&mut scope, receiver, &[])
+                    .unwrap()
+                    .is_true());
+                assert!(cooking.call(&mut scope, receiver, &[]).unwrap().is_true());
+            }
+        });
+        println!(
+            "Cooking scope-cache control pure={pure:?}; three scopes={cold:?}; \
+             cooking after control={cooking_after_control:?}; \
+             extra scope={extra_depth:?}; warm1000={warm:?}"
+        );
+        assert_eq!(pure, allocation_counter::AllocationInfo::default());
+        assert_eq!(cold.count_total, 1);
+        assert_eq!(cold.count_current, 1);
+        assert_eq!(cold.bytes_total, 112);
+        assert_eq!(cold.bytes_total, extra_depth.bytes_total);
+        assert_eq!(
+            cooking_after_control,
+            allocation_counter::AllocationInfo::default()
+        );
+        assert_eq!(extra_depth.count_total, 1);
+        assert_eq!(extra_depth.count_current, 1);
+        assert_eq!(warm, allocation_counter::AllocationInfo::default());
+    }
 }
