@@ -36,25 +36,31 @@ fn edge(
     loc_id: i32,
     consumed_req: Vec<(i32, i32)>,
 ) -> TransportEdge {
-    TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind,
-    player_delta: None,
-    at,
-    to,
-    loc_id,
-    option: 1,
-    ticks: 2,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req,
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind,
+        player_delta: None,
+        at,
+        to,
+        loc_id,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req,
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 fn world_with(graph: TransportGraph, banks: Vec<BankStand>) -> Arc<NavWorld> {
@@ -2993,8 +2999,6 @@ fn native_observation_without_compat_harvests_completed_inspection() {
 }
 
 fn real_content_inspection_world() -> (Arc<NavWorld>, Arc<Cache>, Arc<ObjNames>) {
-    const PACK: &str =
-        "/srv/dev/scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack";
     const CACHE: &str = "/srv/dev/scratch/274bot-evidence/NAV-SHANTAY-EDGE/cache-snapshots/revision-289/90f072568dab9327ad49aaecb804f8335d3803504ed56f72626b4b83fab84f47/37214163f1e6ceca4c349c15c867331510b9ccbb7e11f7ecbf434dfb331c9afb/37214163f1e6ceca";
     const CACHE_VERSION_HASH: &str = "37214163f1e6ceca";
     const CONFIG_SHA256: &str = "3eeb1085547fb3af66db55ec4368357dbbad5178b7747f8b7cb0339fdd04a4ce";
@@ -3002,7 +3006,9 @@ fn real_content_inspection_world() -> (Arc<NavWorld>, Arc<Cache>, Arc<ObjNames>)
     const PACK_CACHE_ID: &str = "c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09";
     use sha2::Digest as _;
 
-    let pack = std::path::PathBuf::from(PACK);
+    let pack = std::env::var_os("NAV_PACK")
+        .map(std::path::PathBuf::from)
+        .expect("NAV_PACK must name a current-format revision-289 pack");
     let pack_manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(pack.with_extension("navpack.json")).expect("revision-289 pack manifest"),
     )

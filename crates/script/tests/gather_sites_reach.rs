@@ -1,16 +1,13 @@
 //! Reachability guard for the gather sites. Every published site must have a
 //! tile beside its resource spots that nav's real search reaches from
-//! Lumbridge for a maxed account: every skill at 99, members, every quest the
-//! pack's edges name complete, the varps and items those edges read, a large
-//! coin stack, and only the worn items the site itself declares. A site no
-//! such account reaches is not offered and must be hidden (a `drop` row in
-//! `SITE_OVERRIDES`, tools/game-data/extractors/gathering.ts) or carry the
-//! requirement that explains it.
-//!
-//! The account is built from the pack's own edges, so each edge's gate is met
-//! by construction: quest-complete gates read `WorldState::quests`, varp gates
-//! the largest value any edge reads, item gates the largest count, skill gates
-//! 99. The pack carries no quest-stage gates, so no progress evidence is needed.
+//! Lumbridge for a maxed account: every skill at 99, members, the real selected
+//! quest-list provider reporting complete journals, the varps and non-excluded
+//! items those edges read, a large coin stack, and only the worn items the site
+//! itself declares. A site no such account reaches is not offered and must be
+//! hidden (a `drop` row in `SITE_OVERRIDES`,
+//! tools/game-data/extractors/gathering.ts) or carry the requirement that
+//! explains it. Inventory and equipment observations are explicitly ready;
+//! absent evidence must not bypass a negative entrance requirement.
 //!
 //! The gatherer stands beside a resource (tree, rock, spot), so the target set
 //! is the standable tiles of the region grown by one tile. One flood per
@@ -36,12 +33,17 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 
 use api::game_data::{self, GatherSiteOption, GatherSiteRequirement};
 use api::gather_methods::SceneRegionInput;
-use api::selected::ClientRevision;
+use api::quest_facts::QuestCatalog;
+use api::quest_progress::{EvidenceStamp, QuestListEvidenceProvider};
+use api::selected::{ClientRevision, RunKey};
+use api::snapshot::{GameSnapshot, QuestStatusView, SnapshotView};
 use api::WorldTile;
+use nav::quest_gates::{QuestEvidence, QuestFamilyId};
 use nav::router::{find_many_with, FindOptions, TargetError};
 use nav::world::NavWorld;
 use nav::WorldState;
@@ -81,10 +83,57 @@ fn worn_for(site: &GatherSiteOption) -> Vec<i32> {
     worn
 }
 
-/// The maxed account, from the pack's own edges and teleports. Worn items are
-/// left to the caller.
-fn maxed_state(world: &NavWorld) -> WorldState {
-    let mut state = WorldState::empty().with_map_members(true);
+/// Complete journals from the selected revision through the production provider.
+fn completed_quests(world: &NavWorld) -> QuestEvidence {
+    let selected = game_data::for_revision(ClientRevision::R289).expect("289 selected data");
+    let (facts, identity) = selected
+        .quest_identity_for_bake()
+        .expect("verified quest family");
+    let catalog = QuestCatalog::from_identity(Some(&facts)).expect("selected quest catalog");
+    let family = QuestFamilyId::new(identity.sha256, identity.schema);
+    world
+        .graph
+        .admit_quest_family(&family)
+        .expect("selected nav quest family");
+    let stamp = EvidenceStamp {
+        run: RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: 1,
+        sequence: 1,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_quest_statuses(
+        catalog
+            .iter()
+            .enumerate()
+            .map(|(index, quest)| QuestStatusView {
+                component_id: index as i32,
+                name: quest.display.to_string(),
+                colour: nav::world_state::QUEST_COMPLETE_COLOUR,
+            })
+            .collect(),
+        true,
+    );
+    let provider = QuestListEvidenceProvider::from_snapshot(
+        &catalog,
+        Some(identity),
+        Some(identity),
+        SnapshotView::new(Some(&snapshot), stamp),
+    );
+    QuestEvidence::new(Arc::new(provider), family, stamp)
+}
+
+/// The maxed account, with only the site's declared worn items left to the caller.
+fn maxed_state(world: &NavWorld, quests: QuestEvidence) -> WorldState {
+    let mut state = WorldState::empty()
+        .with_map_members(true)
+        .with_quest_evidence(quests);
+    state.inventory_ready = true;
+    state.equipment_ready = true;
     state.stats = SKILL_IDS.map(|skill| (skill, 99)).collect();
     state.combat_level = Some(126);
     let mut varps: HashMap<i32, i32> = HashMap::new();
@@ -103,6 +152,11 @@ fn maxed_state(world: &NavWorld) -> WorldState {
     state.varps = varps;
     state.inv = items;
     state.inv.insert(COINS, COIN_STACK);
+    for edge in world.graph.edges.iter().chain(&world.graph.teleports) {
+        for item in &edge.forbidden_held {
+            state.inv.remove(item);
+        }
+    }
     state
 }
 
@@ -152,6 +206,8 @@ fn open_world(pack: &std::path::Path) -> NavWorld {
         edge.varp_req.clear();
         edge.worn_req.clear();
         edge.worn_all_req.clear();
+        edge.forbidden_held.clear();
+        edge.forbidden_worn.clear();
         edge.members_req = false;
         edge.wildy_cap = None;
         edge.quest_gates = None;
@@ -264,6 +320,7 @@ fn every_published_gather_site_is_reachable_and_every_hidden_one_is_not() {
     let pack = real_nav_pack();
     let world = load_world(&pack);
     let started = Instant::now();
+    let quests = completed_quests(&world);
 
     let published = selected.gather_sites();
     let hidden = hidden_sites();
@@ -302,7 +359,7 @@ fn every_published_gather_site_is_reachable_and_every_hidden_one_is_not() {
     }
     let mut maxed: HashSet<&str> = HashSet::new();
     for (worn, targets) in &groups {
-        let mut state = maxed_state(&world);
+        let mut state = maxed_state(&world, quests.clone());
         state.worn = worn.iter().copied().collect();
         maxed.extend(reached(&world, &state, targets));
     }

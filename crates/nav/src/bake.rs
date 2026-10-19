@@ -1345,22 +1345,25 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     // all live under the maps dir's parent); door edge from/to snap to the
     // nearest walkable tile on the collision just baked.
     let content_root = request.maps_dir.parent().unwrap_or(Path::new("."));
-    let selected = request.revision.map(|revision| {
-        let revision = match revision {
-            274 => api::selected::ClientRevision::R274,
-            289 => api::selected::ClientRevision::R289,
-            other => return Err(format!("unsupported quest-family revision {other}")),
-        };
-        let data = api::game_data::for_revision(revision)?;
-        data.quest_identity_for_bake()
-            .map_err(|error| format!("quest family: {error:?}"))
-    }).transpose()?;
-    let quest_source = selected.as_ref().map(|(facts, identity)| {
-        crate::transport::QuestSource {
+    let selected = request
+        .revision
+        .map(|revision| {
+            let revision = match revision {
+                274 => api::selected::ClientRevision::R274,
+                289 => api::selected::ClientRevision::R289,
+                other => return Err(format!("unsupported quest-family revision {other}")),
+            };
+            let data = api::game_data::for_revision(revision)?;
+            data.quest_identity_for_bake()
+                .map_err(|error| format!("quest family: {error:?}"))
+        })
+        .transpose()?;
+    let quest_source = selected
+        .as_ref()
+        .map(|(facts, identity)| crate::transport::QuestSource {
             family: crate::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
             facts,
-        }
-    });
+        });
     let (mut graph, audit) = derive_transports_for_bake(
         content_root,
         &loc_defs,

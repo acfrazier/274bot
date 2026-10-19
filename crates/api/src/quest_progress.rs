@@ -171,11 +171,7 @@ impl EvidenceProvider for QuestListEvidenceProvider {
         let QuestGate::Complete(quest) = gate else {
             return Truth::Unknown;
         };
-        if !self.family_matches
-            || !self
-                .stamp
-                .is_some_and(|stamp| stamp.meets(required_after))
-        {
+        if !self.family_matches || !self.stamp.is_some_and(|stamp| stamp.meets(required_after)) {
             return Truth::Unknown;
         }
         match self
@@ -265,7 +261,10 @@ mod quest_list_tests {
     }
 
     fn quest(quests: &QuestCatalog) -> (FactKey, String) {
-        let facts = quests.iter().next().expect("selected quest catalog has rows");
+        let facts = quests
+            .iter()
+            .next()
+            .expect("selected quest catalog has rows");
         (facts.id.clone(), facts.display.to_string())
     }
 
@@ -339,13 +338,7 @@ mod quest_list_tests {
             (0x123456, Truth::Unknown),
         ] {
             let snapshot = snapshot(vec![row(display.clone(), colour)], true);
-            let provider = evidence(
-                &quests,
-                &snapshot,
-                observed,
-                Some(family),
-                Some(family),
-            );
+            let provider = evidence(&quests, &snapshot, observed, Some(family), Some(family));
             assert_eq!(
                 provider.test_gate(&complete_gate(quest.clone()), observed),
                 expected
@@ -353,26 +346,14 @@ mod quest_list_tests {
         }
 
         let absent_row = snapshot(Vec::new(), true);
-        let provider = evidence(
-            &quests,
-            &absent_row,
-            observed,
-            Some(family),
-            Some(family),
-        );
+        let provider = evidence(&quests, &absent_row, observed, Some(family), Some(family));
         assert_eq!(
             provider.test_gate(&complete_gate(quest.clone()), observed),
             Truth::Unknown
         );
 
         let unavailable = snapshot(vec![row(display, 0x00F800)], false);
-        let provider = evidence(
-            &quests,
-            &unavailable,
-            observed,
-            Some(family),
-            Some(family),
-        );
+        let provider = evidence(&quests, &unavailable, observed, Some(family), Some(family));
         assert_eq!(
             provider.test_gate(&complete_gate(quest.clone()), observed),
             Truth::Unknown
@@ -398,31 +379,18 @@ mod quest_list_tests {
         let family = family(1, 1);
         let observed = stamp(run(), 10, 7);
         let snapshot = snapshot(vec![row(display, 0x00F800)], true);
-        let provider = evidence(
-            &quests,
-            &snapshot,
-            observed,
-            Some(family),
-            Some(family),
-        );
+        let provider = evidence(&quests, &snapshot, observed, Some(family), Some(family));
         let gate = complete_gate(quest);
 
-        assert_eq!(
-            provider.test_gate(&gate, stamp(run(), 10, 6)),
-            Truth::True
-        );
-        assert_eq!(
-            provider.test_gate(&gate, stamp(run(), 10, 7)),
-            Truth::True
-        );
+        assert_eq!(provider.test_gate(&gate, stamp(run(), 10, 6)), Truth::True);
+        assert_eq!(provider.test_gate(&gate, stamp(run(), 10, 7)), Truth::True);
         assert_eq!(
             provider.test_gate(&gate, stamp(run(), 10, 8)),
             Truth::Unknown
         );
-        assert_eq!(
-            provider.test_gate(&gate, stamp(run(), 9, 99)),
-            Truth::Unknown
-        );
+        // Sequence orders observations within a tick; a later tick satisfies
+        // the floor even when the earlier tick had a larger sequence.
+        assert_eq!(provider.test_gate(&gate, stamp(run(), 9, 99)), Truth::True);
         assert_eq!(
             provider.test_gate(&gate, stamp(run(), 11, 1)),
             Truth::Unknown
@@ -430,7 +398,10 @@ mod quest_list_tests {
         for other_run in [
             RunKey { slot: 8, ..run() },
             RunKey { run: 2, ..run() },
-            RunKey { session: 2, ..run() },
+            RunKey {
+                session: 2,
+                ..run()
+            },
         ] {
             assert_eq!(
                 provider.test_gate(&gate, stamp(other_run, 10, 7)),
@@ -455,13 +426,7 @@ mod quest_list_tests {
             (None, Some(selected_family), Truth::Unknown),
             (Some(selected_family), None, Truth::Unknown),
         ] {
-            let provider = evidence(
-                &quests,
-                &snapshot,
-                observed,
-                catalog_family,
-                current_family,
-            );
+            let provider = evidence(&quests, &snapshot, observed, catalog_family, current_family);
             assert_eq!(provider.test_gate(&gate, observed), expected);
         }
     }
@@ -473,13 +438,7 @@ mod quest_list_tests {
         let family = family(1, 1);
         let observed = stamp(run(), 10, 4);
         let snapshot = snapshot(vec![row(display, 0x00F800)], true);
-        let provider = evidence(
-            &quests,
-            &snapshot,
-            observed,
-            Some(family),
-            Some(family),
-        );
+        let provider = evidence(&quests, &snapshot, observed, Some(family), Some(family));
         let gate = QuestGate::Window(StageWindow {
             quest,
             signal: FactKey::new("signal"),

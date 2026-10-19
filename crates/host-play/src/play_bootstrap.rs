@@ -221,19 +221,19 @@ impl SharedClientTemplate {
         let game_data = profile.game_data();
         if let Some(data) = game_data.as_ref() {
             let data = Arc::clone(data);
-            let input = script::preparation::PreparationInput::new(
-                1, 0, 8 * 1024 * 1024, 2 * 1024 * 1024,
-            ).map_err(|error| format!("quest family charge: {error:?}"))?;
+            let input =
+                script::preparation::PreparationInput::new(1, 0, 8 * 1024 * 1024, 2 * 1024 * 1024)
+                    .map_err(|error| format!("quest family charge: {error:?}"))?;
             script::preparation::submit(
                 script::preparation::PreparationKind::Profile,
                 api::identity::Scope::Process,
                 input,
                 move |worker| data.prepare_quests(worker),
             )
-                .map_err(|error| format!("quest family preparation: {error:?}"))?
-                .join()
-                .map_err(|error| format!("quest family preparation: {error:?}"))?
-                .map_err(|error| format!("quest family preparation: {error:?}"))?;
+            .map_err(|error| format!("quest family preparation: {error:?}"))?
+            .join()
+            .map_err(|error| format!("quest family preparation: {error:?}"))?
+            .map_err(|error| format!("quest family preparation: {error:?}"))?;
         }
         observer.report(progress::ProfileProgress::steps(
             progress::ProfileProgressStage::LoadingGameData,

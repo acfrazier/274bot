@@ -1142,7 +1142,10 @@ mod tests {
     fn quest_colour_matches_shared_snapshot_lookup_and_stage_colours() {
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
-        let facts = quests.iter().next().expect("selected quest catalog has rows");
+        let facts = quests
+            .iter()
+            .next()
+            .expect("selected quest catalog has rows");
         let mut path = path(Vec::new(), Vec::new(), false);
         path.id = facts.id.clone();
         let display = facts.display.to_string();

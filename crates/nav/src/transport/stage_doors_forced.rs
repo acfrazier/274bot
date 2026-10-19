@@ -336,9 +336,13 @@ struct Motion<'a> {
 impl Motion<'_> {
     fn run(&mut self, body: &[Stmt], env: &mut Env) -> End {
         for (index, stmt) in body.iter().enumerate() {
-            if self.entrance.is_some() && self.moved && !self.value_query
+            if self.entrance.is_some()
+                && self.moved
+                && !self.value_query
                 && matches!(stmt, Stmt::If(..) | Stmt::Assign(..))
-                && body[index..].iter().all(|stmt| self.base.src.certified(stmt))
+                && body[index..]
+                    .iter()
+                    .all(|stmt| self.base.src.certified(stmt))
             {
                 return End::Continue;
             }
@@ -404,7 +408,9 @@ impl Motion<'_> {
                         Some(true) => return self.run(body, env),
                         Some(false) => {}
                         None if self.timer.is_some()
-                            && body.iter().all(|stmt| matches!(stmt, Stmt::Return(calls) if calls.is_empty()))
+                            && body.iter().all(
+                                |stmt| matches!(stmt, Stmt::Return(calls) if calls.is_empty()),
+                            )
                             && self.base.src.certified(stmt) => {}
                         None => return End::Refused,
                     }
@@ -911,13 +917,35 @@ pub(super) struct MotionFacts {
 }
 
 impl MotionFacts {
-    #[expect(clippy::too_many_arguments, reason = "shares the stage-door bake inputs")]
-    pub(super) fn entrances(&self, src: &Sources, positions: &HashMap<i32, Vec<Placement>>,
-        defs: &LocDefs, graph: &mut TransportGraph, collision: &WorldCollision,
-        skipped: &mut HashMap<&'static str, usize>, observable: &ObservableGates, audit: &mut VarpGateAudit,
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "shares the stage-door bake inputs"
+    )]
+    pub(super) fn entrances(
+        &self,
+        src: &Sources,
+        positions: &HashMap<i32, Vec<Placement>>,
+        defs: &LocDefs,
+        graph: &mut TransportGraph,
+        collision: &WorldCollision,
+        skipped: &mut HashMap<&'static str, usize>,
+        observable: &ObservableGates,
+        audit: &mut VarpGateAudit,
     ) {
-        entrances::edges(src, positions, defs, graph, collision, skipped, observable, audit,
-            &self.facts, &self.proofs, &self.supported, &self.selectors);
+        entrances::edges(
+            src,
+            positions,
+            defs,
+            graph,
+            collision,
+            skipped,
+            observable,
+            audit,
+            &self.facts,
+            &self.proofs,
+            &self.supported,
+            &self.selectors,
+        );
     }
 }
 
@@ -1125,5 +1153,10 @@ pub(super) fn forced_move_edges(
             }
         }
     }
-    MotionFacts { facts, proofs, supported, selectors }
+    MotionFacts {
+        facts,
+        proofs,
+        supported,
+        selectors,
+    }
 }

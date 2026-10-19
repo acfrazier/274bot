@@ -548,6 +548,8 @@ mod rasterize_rules {
                     varp_req: vec![],
                     worn_req: vec![],
                     worn_all_req: vec![],
+                    forbidden_held: vec![],
+                    forbidden_worn: vec![],
                     members_req: false,
                     wildy_cap: None,
                     quest_gates: None,

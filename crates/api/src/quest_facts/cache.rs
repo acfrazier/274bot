@@ -7,9 +7,7 @@ use super::catalog::QuestCatalog;
 use super::wire;
 use crate::family_asset;
 use crate::game_data::{QuestFamilyIdentity, SelectedGameData, MANIFEST};
-use crate::selected::{
-    ClientRevision, FactError, FamilyPreparation, SelectedPin, QUESTS_FAMILY,
-};
+use crate::selected::{ClientRevision, FactError, FamilyPreparation, SelectedPin, QUESTS_FAMILY};
 use parking_lot::Mutex;
 use std::num::NonZeroU16;
 use std::sync::Arc;
@@ -116,7 +114,9 @@ pub(crate) fn prepare(
     _worker: &mut FamilyPreparation,
 ) -> Result<Arc<QuestCatalog>, FactError> {
     let pin = data.selected_pin()?;
-    CACHE.prepare(Key::of(&pin), || load(&pin, MANIFEST, embedded(pin.revision)))
+    CACHE.prepare(Key::of(&pin), || {
+        load(&pin, MANIFEST, embedded(pin.revision))
+    })
 }
 
 /// Return a prepared catalog without decoding or waiting for a preparation.
@@ -174,8 +174,8 @@ fn verified_identity(
 
 #[cfg(test)]
 mod tests {
+    use super::super::catalog::QuestKind;
     use super::*;
-    use super::catalog::QuestKind;
     use crate::selected::Knowledge;
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};

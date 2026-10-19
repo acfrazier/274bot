@@ -164,7 +164,10 @@ fn prior_search_modes_remain_strict_about_exclusions() {
     let SearchOutcome::First { search } = outcome else {
         panic!("strict first-goal search returned the wrong result shape")
     };
-    assert!(search.route().is_err(), "the old mode must refuse the exclusion");
+    assert!(
+        search.route().is_err(),
+        "the old mode must refuse the exclusion"
+    );
 }
 
 #[derive(Clone, Copy)]
@@ -251,7 +254,11 @@ fn diagnosis_does_not_relax_positive_or_unknown_gates() {
         ("completed quest", PositiveGate::CompletedQuest, None),
         ("varp", PositiveGate::Varp, None),
         ("unknown stage gate", PositiveGate::UnknownQuest, None),
-        ("false stage gate", PositiveGate::FalseQuest, Some(Truth::False)),
+        (
+            "false stage gate",
+            PositiveGate::FalseQuest,
+            Some(Truth::False),
+        ),
     ] {
         let lease = fixture(|world| install_positive_gate(world, gate));
         let mut state = observed_state();
@@ -343,12 +350,16 @@ fn missing_worn_diagnosis_never_authorizes_an_ordinary_or_item_route() {
         },
         lease,
         Arc::new(complete),
-    ).expect("bounded complete-kit route");
+    )
+    .expect("bounded complete-kit route");
     let (outcome, _) = drive_cursor(cursor).into_parts();
     let SearchOutcome::First { search } = outcome else {
         panic!("complete-kit route returned the wrong result shape")
     };
-    assert!(search.route().is_ok(), "all kit pieces worn authorize the ordinary route");
+    assert!(
+        search.route().is_ok(),
+        "all kit pieces worn authorize the ordinary route"
+    );
 }
 
 #[test]

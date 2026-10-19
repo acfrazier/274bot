@@ -207,8 +207,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   Some entrances instead need you to travel light — carrying or wearing a
   listed item stops the route until it is left behind. The bot never moves,
   equips or bank-deposits your gear to pass such a gate; the refusal says
-  what to change. Quest-locked crossings still need their quest progress as
-  before. Only the entrances the game content proves are covered so far.
+  what to change. Quest-locked crossings use verified quest-list completion;
+  a missing or stale journal observation does not grant access.
+- The Gatherer now offers both Grand Tree mine sites, the Desert Mining
+  Camp's surface and lower mine, and Taverley Dungeon's lava eels. Their
+  routes check the quest, keys and worn slave kit that the content requires.
+  The northern Desert Mining Camp mine stays hidden: its intervening
+  minecart needs a dialogue and a chance-gated crossing that is not modelled
+  yet. The remaining hidden-site counts are 85 on 289 and 66 on 274.
 
 ### Random-event guardian
 

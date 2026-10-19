@@ -75,25 +75,31 @@ fn lease_from(collision: WorldCollision) -> NavLease {
 }
 
 fn door_edge(at: WorldTile, to: WorldTile) -> TransportEdge {
-    TransportEdge { kind: TransportKind::Door,
-    at,
-    to,
-    takeoff: None,
-    player_delta: None,
-    loc_id: 1,
-    option: 1,
-    ticks: 2,
-    dir: Some(DoorDir::N),
-    open_loc_id: None,
-    skill_req: vec![(16, 10)],
-    item_req: vec![(995, 10)],
-    consumed_req: vec![(995, 5)],
-    item_returns: vec![(995, 1)],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![772], worn_all_req: vec![1, 2], forbidden_held: Vec::new(), forbidden_worn: Vec::new(), members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        kind: TransportKind::Door,
+        at,
+        to,
+        takeoff: None,
+        player_delta: None,
+        loc_id: 1,
+        option: 1,
+        ticks: 2,
+        dir: Some(DoorDir::N),
+        open_loc_id: None,
+        skill_req: vec![(16, 10)],
+        item_req: vec![(995, 10)],
+        consumed_req: vec![(995, 5)],
+        item_returns: vec![(995, 1)],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![772],
+        worn_all_req: vec![1, 2],
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 /// The host's packed collision surface for arrival probes, written from

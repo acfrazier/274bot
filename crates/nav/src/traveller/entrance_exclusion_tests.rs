@@ -39,7 +39,10 @@ fn expected_tile(scene: (i32, i32)) -> WorldTile {
 }
 
 fn assert_no_transport_send(rec: &FollowRec, expected_walks: &[(i32, i32)]) {
-    assert_eq!(rec.walked, expected_walks, "no new approach or reapproach walk");
+    assert_eq!(
+        rec.walked, expected_walks,
+        "no new approach or reapproach walk"
+    );
     assert_eq!(rec.loc_ops, 0, "no loc operation");
     assert_eq!(rec.loc_uses, 0, "no held-item-on-loc operation");
     assert_eq!(rec.npc_ops, 0, "no NPC operation");
@@ -50,11 +53,7 @@ fn assert_no_transport_send(rec: &FollowRec, expected_walks: &[(i32, i32)]) {
     assert!(rec.sink.strings.is_empty(), "no cheat or text operation");
 }
 
-fn assert_refused(
-    outcome: Option<TravelOutcome>,
-    at: WorldTile,
-    requirement: EntranceRequirement,
-) {
+fn assert_refused(outcome: Option<TravelOutcome>, at: WorldTile, requirement: EntranceRequirement) {
     assert_eq!(
         outcome,
         Some(TravelOutcome::EntranceRefused {
@@ -130,7 +129,10 @@ fn follow_refuses_newly_worn_exclusion_before_transport_send() {
     };
     let entrance = edge.at;
     let mut snap = snap_at(&mut c, 2, 1);
-    assert_eq!(WorldState::from_snapshot(&snap).exclusion_failure(edge), None);
+    assert_eq!(
+        WorldState::from_snapshot(&snap).exclusion_failure(edge),
+        None
+    );
     let mut rec = FollowRec {
         route: Some((2, 1)),
         ..FollowRec::default()
@@ -238,7 +240,10 @@ fn follow_allows_observed_empty_exclusions_to_send_transport() {
         Leg::Walk { .. } => unreachable!(),
     };
     let snap = snap_at(&mut c, 2, 3);
-    assert_eq!(WorldState::from_snapshot(&snap).exclusion_failure(edge), None);
+    assert_eq!(
+        WorldState::from_snapshot(&snap).exclusion_failure(edge),
+        None
+    );
     let mut rec = FollowRec {
         route: Some((2, 3)),
         ..FollowRec::default()
@@ -249,6 +254,9 @@ fn follow_allows_observed_empty_exclusions_to_send_transport() {
     assert!(traveller
         .follow(&mut rec, &snap, route, &mut options)
         .is_none());
-    assert_eq!(rec.loc_ops, 1, "observed empty state permits the loc operation");
+    assert_eq!(
+        rec.loc_ops, 1,
+        "observed empty state permits the loc operation"
+    );
     assert!(rec.walked.is_empty());
 }

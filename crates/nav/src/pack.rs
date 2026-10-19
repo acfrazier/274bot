@@ -878,64 +878,66 @@ fn decode_pack_body<R: PackRead>(
                 "player-relative landing is only valid for ladders and stairs".into(),
             ));
         }
-        let mut edge = TransportEdge { kind,
-        player_delta: None,
-        at: WorldTile {
-            x: read_i32(&mut r)?,
-            z: read_i32(&mut r)?,
-            level: read_i32(&mut r)?,
-        },
-        to: WorldTile {
-            x: read_i32(&mut r)?,
-            z: read_i32(&mut r)?,
-            level: read_i32(&mut r)?,
-        },
-        loc_id: read_i32(&mut r)?,
-        option: read_i32(&mut r)?,
-        ticks: read_i32(&mut r)?,
-        dir: dir_from_u8(read_u8(&mut r)?)?,
-        open_loc_id: {
-            let id = read_i32(&mut r)?;
-            if id == -1 {
-                None
-            } else {
-                Some(id)
-            }
-        },
-        skill_req: read_req_pairs(&mut r)?,
-        item_req: read_req_pairs(&mut r)?,
-        consumed_req: read_req_pairs(&mut r)?,
-        item_returns: read_req_pairs(&mut r)?,
-        quest_req: read_req_strings(&mut r)?,
-        varp_req: read_req_pairs(&mut r)?,
-        worn_req: read_req_ids(&mut r)?,
-        worn_all_req: read_req_ids(&mut r)?,
-        forbidden_held: read_req_ids(&mut r)?,
-        forbidden_worn: read_req_ids(&mut r)?,
-        members_req: match read_u8(&mut r)? {
-            0 => false,
-            1 => true,
-            other => {
-                return Err(PackError::BadLength(format!(
-                    "members_req flag {other} is not 0 or 1"
-                )));
-            }
-        },
-        wildy_cap: {
-            let cap = read_i32(&mut r)?;
-            if cap < 0 {
-                if cap != -1 {
+        let mut edge = TransportEdge {
+            kind,
+            player_delta: None,
+            at: WorldTile {
+                x: read_i32(&mut r)?,
+                z: read_i32(&mut r)?,
+                level: read_i32(&mut r)?,
+            },
+            to: WorldTile {
+                x: read_i32(&mut r)?,
+                z: read_i32(&mut r)?,
+                level: read_i32(&mut r)?,
+            },
+            loc_id: read_i32(&mut r)?,
+            option: read_i32(&mut r)?,
+            ticks: read_i32(&mut r)?,
+            dir: dir_from_u8(read_u8(&mut r)?)?,
+            open_loc_id: {
+                let id = read_i32(&mut r)?;
+                if id == -1 {
+                    None
+                } else {
+                    Some(id)
+                }
+            },
+            skill_req: read_req_pairs(&mut r)?,
+            item_req: read_req_pairs(&mut r)?,
+            consumed_req: read_req_pairs(&mut r)?,
+            item_returns: read_req_pairs(&mut r)?,
+            quest_req: read_req_strings(&mut r)?,
+            varp_req: read_req_pairs(&mut r)?,
+            worn_req: read_req_ids(&mut r)?,
+            worn_all_req: read_req_ids(&mut r)?,
+            forbidden_held: read_req_ids(&mut r)?,
+            forbidden_worn: read_req_ids(&mut r)?,
+            members_req: match read_u8(&mut r)? {
+                0 => false,
+                1 => true,
+                other => {
                     return Err(PackError::BadLength(format!(
-                        "wildy_cap {cap} is not -1 or a non-negative level"
+                        "members_req flag {other} is not 0 or 1"
                     )));
                 }
-                None
-            } else {
-                Some(cap)
-            }
-        },
-        quest_gates: read_quest_gates(&mut r, quest_family.as_ref(), &mut keys)?,
-        takeoff: None, };
+            },
+            wildy_cap: {
+                let cap = read_i32(&mut r)?;
+                if cap < 0 {
+                    if cap != -1 {
+                        return Err(PackError::BadLength(format!(
+                            "wildy_cap {cap} is not -1 or a non-negative level"
+                        )));
+                    }
+                    None
+                } else {
+                    Some(cap)
+                }
+            },
+            quest_gates: read_quest_gates(&mut r, quest_family.as_ref(), &mut keys)?,
+            takeoff: None,
+        };
         edge.takeoff = read_takeoff(&mut r, edge.at)?;
         validate_resource_requirements(&edge)?;
         if player_relative {

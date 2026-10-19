@@ -210,6 +210,8 @@ pub fn measures_captured_native_bank_pick_cpu() {
     let state = WorldState {
         inv: serde_json::from_value(captured["inv"].clone()).unwrap(),
         worn: serde_json::from_value(captured["worn"].clone()).unwrap(),
+        inventory_ready: captured["inventory_ready"].as_bool().unwrap(),
+        equipment_ready: captured["equipment_ready"].as_bool().unwrap(),
         allow_fetchable_worn: captured["allow_fetchable_worn"].as_bool().unwrap(),
         stats: serde_json::from_value(captured["stats"].clone()).unwrap(),
         combat_level: serde_json::from_value(captured["combat_level"].clone()).unwrap(),

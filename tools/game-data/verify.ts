@@ -751,10 +751,10 @@ async function verifyRevision(revision: number) {
     assertEqual(JSON.stringify(payload.gather_sites), JSON.stringify(siteResult.rows), `${revision} core gather_sites is the family's named site slice`);
     assertEqual(JSON.stringify(manifestRow.gather_sites), JSON.stringify(siteResult.report), `${revision} manifest gather_sites summary`);
     const expectedSiteReport = revision === 289
-        ? { woodcutting: { sites: 231, direct: 0, dropped: 1205, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 61 }, mining: { sites: 33, direct: 0, dropped: 13, outside_box: 0, extra: 8, renamed: 2, required: 1, override_dropped: 16 }, fishing: { sites: 25, direct: 20, dropped: 5, outside_box: 0, extra: 2, renamed: 0, required: 0, override_dropped: 13 } }
-        : { woodcutting: { sites: 231, direct: 0, dropped: 1198, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 45 }, mining: { sites: 33, direct: 0, dropped: 13, outside_box: 0, extra: 8, renamed: 2, required: 1, override_dropped: 15 }, fishing: { sites: 25, direct: 20, dropped: 5, outside_box: 0, extra: 2, renamed: 0, required: 0, override_dropped: 11 } };
+        ? { woodcutting: { sites: 231, direct: 0, dropped: 1205, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 61 }, mining: { sites: 37, direct: 0, dropped: 13, outside_box: 0, extra: 11, renamed: 6, required: 4, override_dropped: 12 }, fishing: { sites: 26, direct: 20, dropped: 5, outside_box: 0, extra: 3, renamed: 1, required: 0, override_dropped: 12 } }
+        : { woodcutting: { sites: 231, direct: 0, dropped: 1198, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 45 }, mining: { sites: 37, direct: 0, dropped: 13, outside_box: 0, extra: 11, renamed: 6, required: 4, override_dropped: 11 }, fishing: { sites: 26, direct: 20, dropped: 5, outside_box: 0, extra: 3, renamed: 1, required: 0, override_dropped: 10 } };
     assertEqual(JSON.stringify(siteResult.report), JSON.stringify(expectedSiteReport), `${revision} gather_sites report`);
-    assertEqual((payload.gather_sites as GatherSiteWire[]).length, 289, `${revision} gather_sites row count`);
+    assertEqual((payload.gather_sites as GatherSiteWire[]).length, 294, `${revision} gather_sites row count`);
     const siteRows = payload.gather_sites as GatherSiteWire[];
     const siteRow = (id: string) => {
         const found = siteRows.find((row) => row.id === id);
@@ -836,7 +836,7 @@ const crossPin = pinnedGivers274 && pinnedGivers289 ? 'verified' : 'not checked:
 if (pinnedGivers274 && pinnedGivers289 && JSON.stringify(pinnedGivers289) !== JSON.stringify(pinnedGivers274)) throw new Error('trio_givers: the two pins disagree on the selected identity, display name, or unique spawn');
 const pinnedSites274 = publishedSiteIds.get(274); const pinnedSites289 = publishedSiteIds.get(289);
 if (pinnedSites274 && pinnedSites289) {
-    assertEqual(pinnedSites274.filter((id) => pinnedSites289.includes(id)).length, 289, 'gather_sites shared ids across revisions');
+    assertEqual(pinnedSites274.filter((id) => pinnedSites289.includes(id)).length, 294, 'gather_sites shared ids across revisions');
     assertEqual(JSON.stringify(pinnedSites289.filter((id) => !pinnedSites274.includes(id)).sort()), '[]', 'gather_sites 289-only rows');
     assertEqual(pinnedSites274.filter((id) => !pinnedSites289.includes(id)).length, 0, 'gather_sites 274-only rows');
 }

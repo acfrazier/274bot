@@ -59,25 +59,31 @@ fn walled_5x5() -> WorldCollision {
 
 /// One door crossing the wall, gated on a worn knife.
 fn knife_graph() -> TransportGraph {
-    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at: tile(1, 2, 0),
-    to: tile(2, 2, 0),
-    loc_id: 1530,
-    option: 1,
-    ticks: 2,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![KNIFE],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: tile(1, 2, 0),
+        to: tile(2, 2, 0),
+        loc_id: 1530,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![KNIFE],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);
     graph.edges.push(edge);
