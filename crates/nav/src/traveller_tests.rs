@@ -7332,7 +7332,62 @@ fn follow_recovers_cancelled_walk_with_same_aim() {
 }
 
 #[test]
-fn follow_does_not_recover_walk_while_moving() {
+fn follow_does_not_recover_walk_while_the_server_tile_advances() {
+    let mut c = scene_client();
+    let mut snap = snap_at(&mut c, 0, 0);
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut t = Traveller::new();
+    let route = Route {
+        legs: vec![walk_leg(&[
+            (3200, 3200),
+            (3200, 3201),
+            (3200, 3202),
+            (3200, 3203),
+            (3200, 3204),
+            (3200, 3205),
+            (3200, 3206),
+            (3200, 3207),
+            (3200, 3208),
+            (3200, 3209),
+        ])],
+        dest: WorldTile {
+            x: 3200,
+            z: 3209,
+            level: 0,
+        },
+        ticks: 4.5,
+    };
+    let mut options = TravelOptions {
+        budget_ticks_per_hop: 20,
+        ..TravelOptions::default()
+    };
+    assert!(t
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.walked.len(), 1);
+    // The server moves the player one tile per tick toward the aim: every
+    // tick is progress, so no idle window accumulates.
+    for z in 1..=6 {
+        plant_player(&mut c, 0, z);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+    }
+    assert_eq!(rec.walked.len(), 1, "a live walk must not spuriously retry");
+}
+
+/// Live `nav_shantay` after the Al Kharid toll gate: the walk went out while
+/// `border_gate.rs2` still delayed the player, the engine dropped it
+/// (`MoveClickHandler.ts` `if (player.delayed)` → `UnsetMapFlag`), and the
+/// server tile stayed at (3267,3227) for 60 ticks. The client route queue
+/// still lagged the server by several tiles, so the actor read `moving`
+/// throughout and the old recovery never re-sent: the hop ended `Dropped`.
+#[test]
+fn follow_recovers_a_dropped_walk_while_the_client_route_still_lags() {
     let mut c = scene_client();
     let mut snap = snap_at(&mut c, 0, 0);
     let mut rec = FollowRec {
@@ -7363,27 +7418,25 @@ fn follow_does_not_recover_walk_while_moving() {
         .follow(&mut rec, &snap, route.clone(), &mut options)
         .is_none());
     assert_eq!(rec.walked.len(), 1);
-    // Movement must not accumulate idle ticks, with or without a map flag.
-    c.minimap_flag_x = 12;
-    c.minimap_flag_z = 34;
-    c.local_player.as_mut().unwrap().entity.route_length = 3;
-    for _ in 0..8 {
-        bump_rebuild(&mut c, &mut snap);
-        assert!(t
-            .follow(&mut rec, &snap, route.clone(), &mut options)
-            .is_none());
-    }
-    assert_eq!(rec.walked.len(), 1, "a live walk must not spuriously retry");
-    // Flag clears but actor is moving: still no recovery.
     c.minimap_flag_x = 0;
     c.minimap_flag_z = 0;
-    for _ in 0..8 {
+    c.local_player.as_mut().unwrap().entity.route_length = 3;
+    for _ in 0..4 {
         bump_rebuild(&mut c, &mut snap);
         assert!(t
             .follow(&mut rec, &snap, route.clone(), &mut options)
             .is_none());
     }
-    assert_eq!(rec.walked.len(), 1, "moving must not spuriously retry");
+    assert_eq!(rec.walked.len(), 1, "recovery waits the idle window");
+    bump_rebuild(&mut c, &mut snap);
+    assert!(t
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(
+        rec.walked.len(),
+        2,
+        "an unchanged server tile re-sends even while the client route lags"
+    );
 }
 
 #[test]
