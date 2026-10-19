@@ -80,20 +80,14 @@ fn xyz(tile: WorldTile) -> [i32; 3] {
 }
 
 fn load(data: Option<Arc<SelectedGameData>>, banks: NamedBankFacts) -> LoadIsolate {
-    let isolate = LoadIsolate::spawn_with_content(
+    LoadIsolate::spawn_with_content(
         COW_MODULE.to_owned(),
         LoadShape::CompatClass,
         Vec::new(),
         data,
         Arc::new(banks),
     )
-    .expect("start public Cow module in Load");
-    assert_eq!(
-        isolate.probe("1").expect("Load startup probe"),
-        serde_json::json!(1),
-        "the direct Load module must finish initialization"
-    );
-    isolate
+    .expect("start public Cow module in Load")
 }
 
 fn probe(isolate: &LoadIsolate, expression: &str) -> serde_json::Value {

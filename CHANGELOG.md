@@ -12,6 +12,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- Cow location, toll, bootstrap and loot-leash helpers are admitted as a complete
+  Rust-backed compatibility family. Catalog order, selected-bank bindings,
+  object identities and existing behavior are unchanged.
 - Bank opening, selection, deposits, withdrawals, note mode and close operations
   now run in the native request seat. Compatibility callbacks keep their
   existing call order, return handling and thrown values. Bank snapshot reads
