@@ -2511,6 +2511,10 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
     );
     assert_eq!(ardy.get("bankEveryItems"), Some(&Value::from(1.0)));
     assert_eq!(ardy.get("target"), Some(&Value::String("Guard".into())));
+    // Guard death always drops Bones (content `guard.rs2` adds
+    // `npc_param(death_drop)` before the random table); the default loot list
+    // holds only random-table drops, which a cell must not wait for.
+    assert_eq!(ardy.get("loot"), Some(&serde_json::json!(["Bones"])));
     let ardy_scenario = get("ardy_fighter_bank").unwrap();
     let ardy_start = ardy_scenario
         .steps
@@ -2519,11 +2523,11 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
         .unwrap();
     for step in &ardy_scenario.steps[..ardy_start] {
         assert!(
-            !matches!(step.wait.arm, Proof::ItemId { id, .. } if GUARD_DROP_IDS.contains(&id)),
+            !matches!(step.wait.arm, Proof::ItemId { id, .. } if id == BONES_ID || id == NOTED_BONES_ID),
             "ardy_fighter_bank must not prepare a deposit-class item before Start"
         );
     }
-    for &id in &GUARD_DROP_IDS {
+    for id in [BONES_ID, NOTED_BONES_ID] {
         assert!(
             ardy_scenario.steps[..ardy_start].iter().any(|step| {
                 matches!(step.wait.arm, Proof::ItemIdAtMost { id: got, count: 0 } if got == id)
@@ -2535,12 +2539,28 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
         .iter()
         .map(|step| step.wait.arm)
         .collect::<Vec<_>>();
-    assert!(
-        ardy_watch.contains(&Proof::BankItemIdAny {
-            ids: &GUARD_DROP_IDS,
-            count: 1,
-        }),
-        "ardy_fighter_bank watches a Guard drop enter a fresh bank"
+    let ardy_looted = ardy_watch
+        .iter()
+        .position(|arm| {
+            *arm == Proof::ItemId {
+                id: BONES_ID,
+                count: 1,
+            }
+        })
+        .expect("ardy_fighter_bank watches the looted Bones in the pack");
+    let ardy_banked = ardy_watch
+        .iter()
+        .position(|arm| {
+            *arm == Proof::BankItemId {
+                id: BONES_ID,
+                count: 1,
+            }
+        })
+        .expect("ardy_fighter_bank watches the Bones enter a fresh bank");
+    assert_eq!(
+        ardy_looted + 1,
+        ardy_banked,
+        "the deposit watch arms at the looted Bones, not at the first hit"
     );
     let seeded = get("ardy_fighter_bank_seeded").expect("ardy_fighter_bank_seeded registered");
     let seeded_start = seeded
@@ -2777,14 +2797,51 @@ fn hazard_camp_cells_register_their_cards_injects_and_watch_chain() {
         == Proof::EquipmentId {
             id: DRAGONFIRE_SHIELD_ID
         }));
-    let watch = dragon.steps[start + 1..]
-        .iter()
-        .map(|step| step.wait.arm)
-        .collect::<Vec<_>>();
-    assert!(watch.contains(&Proof::BankItemIdAny {
+    let watch = &dragon.steps[start + 1..];
+    let arms = watch.iter().map(|step| step.wait.arm).collect::<Vec<_>>();
+    // The 40-stat profile runs out of food before any kill, so the trip it
+    // always makes is the food-gone restock; a bones/hide deposit on that
+    // trip would be a chance outcome and is not gated.
+    assert!(!arms.contains(&Proof::BankItemIdAny {
         ids: &GREEN_DRAGON_BANK_DEPOSIT,
         count: 1,
     }));
+    let food_out = arms
+        .iter()
+        .position(|arm| {
+            *arm == Proof::ItemIdAtMost {
+                id: LOBSTER_ID,
+                count: 0,
+            }
+        })
+        .expect("green_dragon_bank watches the carried Lobsters run out");
+    let restock = arms
+        .iter()
+        .position(|arm| {
+            *arm == Proof::ItemId {
+                id: LOBSTER_ID,
+                count: 20,
+            }
+        })
+        .expect("green_dragon_bank watches the Lobster restock");
+    let returned = arms
+        .iter()
+        .position(|arm| {
+            matches!(
+                arm,
+                Proof::ArrivedNear {
+                    x: 3096,
+                    z: 3814,
+                    ..
+                }
+            )
+        })
+        .expect("green_dragon_bank watches the return to the field");
+    assert!(food_out < restock && restock < returned);
+    assert_eq!(watch[food_out].wait.budget_ticks, 400);
+    assert_eq!(watch[restock].wait.budget_ticks, 420);
+    assert_eq!(watch[returned].wait.budget_ticks, 420);
+    assert_eq!(dragon.settings.deadline, Duration::from_secs(540));
 
     let tele = get("green_dragon_tele").expect("green_dragon_tele registered");
     let inject = settings_inject_map(tele.settings.script_settings_inject).unwrap();
@@ -3694,14 +3751,35 @@ fn hill_giant_loot_deposit_arms_deposit_only_after_combat_loot() {
             }
         })
         .unwrap();
-    assert_eq!(
-        full_watch[full_xp + 1],
-        Proof::BankItemId {
-            id: BIG_BONES_ID,
-            count: 1,
-        },
-        "frozen full-cycle cell still arms bank deposit at first XP"
+    // The full cycle watches the first looted drop of HillGiant's default loot
+    // list (Big bones or Limpwurt root) before the deposit, so the kill and
+    // the Varrock West trip each get the ordinary watch instead of one watch
+    // from the first hit to the deposit, and neither waits for one drop.
+    let trip_loot = [BIG_BONES_ID, LIMPWURT_ROOT_ID];
+    assert!(
+        matches!(
+            full_watch[full_xp + 1],
+            Proof::ItemIdAny { ids, count: 1 } if ids == trip_loot
+        ),
+        "full-cycle cell watches the first looted drop after first XP"
     );
+    assert!(
+        matches!(
+            full_watch[full_xp + 2],
+            Proof::BankItemIdAny { ids, count: 1 } if ids == trip_loot
+        ),
+        "full-cycle cell arms the bank deposit at the looted drop"
+    );
+    for offset in [1, 2] {
+        assert_eq!(
+            full.steps[full_start + 1 + full_xp + offset]
+                .wait
+                .budget_ticks,
+            SCRIPT_GOLD_WATCH_TICKS,
+            "kill and trip legs keep the ordinary watch"
+        );
+    }
+    assert_eq!(full.settings.deadline, SCRIPT_GOLD_DEADLINE);
 }
 
 #[test]
@@ -13031,6 +13109,7 @@ fn jive_cells_are_registered_with_cards_and_loadouts() {
         ("jive_dragons", "JiveDragons", true),
         ("jive_dragons_black_range", "JiveDragons", true),
         ("jive_dragons_potion_restock", "JiveDragons", true),
+        ("jive_dragons_mixed_food_restock", "JiveDragons", true),
         ("jive_demons", "JiveDemons", true),
         ("jive_kbd", "JiveKBD", true),
     ];
@@ -13347,4 +13426,110 @@ fn e2e_port_conversions_register_converted_gates() {
             count: 1,
         }
     );
+}
+
+#[test]
+fn quester_queue_seeds_each_chance_drop_before_start() {
+    let scenario = get("quester_queue").expect("registered queue fixture");
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("compiled Quester Start");
+    let mut client = native_seed_client();
+    let snapshot = GameSnapshot::new();
+    for step in scenario.steps[..start]
+        .iter()
+        .filter(|step| step.name.starts_with("seed "))
+    {
+        if let StepKind::Perform { send } = &step.kind {
+            assert!(send(&mut client, &snapshot), "{}", step.name);
+        }
+    }
+    let written = String::from_utf8_lossy(&client.out.data()[..client.out.pos]);
+    for bead in ["red_bead", "yellow_bead", "black_bead", "white_bead"] {
+        assert!(
+            written.contains(&format!("give {bead} 1")),
+            "the queue must seed {bead}, not wait for an Imp drop: {written}"
+        );
+    }
+    assert!(
+        !written.contains("addnpc") && !written.contains("addobj"),
+        "the queue must not spawn gameplay targets"
+    );
+}
+
+#[test]
+fn quester_queue_watches_every_selected_quest() {
+    let scenario = get("quester_queue").expect("registered queue fixture");
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("compiled Quester Start");
+    let watches: Vec<_> = scenario.steps[start + 1..]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect();
+    assert_eq!(
+        watches,
+        [
+            Proof::QuestDone {
+                name: "Cook's Assistant"
+            },
+            Proof::QuestDone {
+                name: "Sheep Shearer"
+            },
+            Proof::QuestDone {
+                name: "Romeo & Juliet"
+            },
+            Proof::QuestDone {
+                name: "Imp Catcher"
+            },
+        ],
+        "Imp completion alone must not hide a parked earlier quest"
+    );
+    let names = [
+        "Cook's Assistant",
+        "Sheep Shearer",
+        "Romeo & Juliet",
+        "Imp Catcher",
+    ];
+    let mut snapshot = GameSnapshot::new();
+    for incomplete in 0..names.len() {
+        snapshot.seed_quest_statuses(
+            names
+                .iter()
+                .enumerate()
+                .map(|(index, name)| api::snapshot::QuestStatusView {
+                    name: (*name).into(),
+                    component_id: index as i32,
+                    colour: if index == incomplete {
+                        0xf80000
+                    } else {
+                        0xf800
+                    },
+                })
+                .collect(),
+            true,
+        );
+        assert!(
+            !watches.iter().all(|proof| proof.check(&snapshot, None)),
+            "{} must not be hidden by the other completed quests",
+            names[incomplete]
+        );
+    }
+    snapshot.seed_quest_statuses(
+        names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| api::snapshot::QuestStatusView {
+                name: (*name).into(),
+                component_id: index as i32,
+                colour: 0xf800,
+            })
+            .collect(),
+        true,
+    );
+    assert!(watches.iter().all(|proof| proof.check(&snapshot, None)));
 }

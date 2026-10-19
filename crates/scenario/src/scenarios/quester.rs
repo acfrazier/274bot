@@ -365,28 +365,11 @@ pub(crate) fn quester_romeo_and_juliet_scenario() -> Scenario {
 }
 
 /// Fresh account through Cook, Sheep Shearer, Romeo & Juliet, then Imp Catcher.
-/// Only stats, coins, and a melee weapon are staged; every quest varp starts at 0.
+/// Stats, coins, and the four chance-drop beads are staged; every quest starts at 0.
 pub(crate) fn quester_queue_scenario() -> Scenario {
-    const RUNE_SCIMITAR_ID: i32 = 1333;
     let mut steps = script_live_seed_steps();
     steps.push(s2_reset_step());
     steps.extend(s2_combat_profile_steps());
-    steps.push(Step {
-        name: "stage Imp Catcher hitpoints for the queued melee leg",
-        kind: StepKind::Perform {
-            send: Box::new(|c, _| {
-                cheat(c, "setstat hitpoints 40");
-                true
-            }),
-        },
-        wait: Wait {
-            arm: Proof::Stat {
-                id: S2_HITPOINTS_STAT_ID,
-                min: 40,
-            },
-            budget_ticks: 80,
-        },
-    });
     steps.extend([
         queue_start_stage_step("reset Cook stage to 0", "cookquest", "get cookquest: 0"),
         queue_start_stage_step("reset Sheep stage to 0", "sheep", "get sheep: 0"),
@@ -398,24 +381,42 @@ pub(crate) fn quester_queue_scenario() -> Scenario {
         queue_start_stage_step("reset Imp Catcher stage to 0", "imp", "get imp: 0"),
     ]);
     steps.push(Step {
-        name: "seed only coins and the Imp melee weapon",
+        name: "seed travel coins",
         kind: StepKind::Perform {
             send: Box::new(|c, _| {
                 cheat(c, "~clearinv");
                 cheat(c, "give coins 100");
-                cheat(c, "give rune_scimitar 1");
                 cheat(c, "givebank coins 500");
                 true
             }),
         },
         wait: Wait {
             arm: Proof::ItemId {
-                id: RUNE_SCIMITAR_ID,
-                count: 1,
+                id: 995,
+                count: 100,
             },
             budget_ticks: 80,
         },
     });
+    // Each bead drops on only 5/128 Imp kills (content drop tables/scripts/imp.rs2).
+    // This queue cell proves quest scheduling, not a random combat-loot outcome.
+    for (alias, id) in [
+        ("black_bead", 1474),
+        ("red_bead", 1470),
+        ("white_bead", 1476),
+        ("yellow_bead", 1472),
+    ] {
+        steps.push(Step {
+            name: "seed a deterministic Imp Catcher bead",
+            kind: StepKind::Perform {
+                send: Box::new(move |c, _| cheat(c, &format!("give {alias} 1")).is_sent()),
+            },
+            wait: Wait {
+                arm: Proof::ItemId { id, count: 1 },
+                budget_ticks: 80,
+            },
+        });
+    }
     steps.push(Step {
         name: "stand at Cook's Assistant start",
         kind: StepKind::Perform {
@@ -444,23 +445,27 @@ pub(crate) fn quester_queue_scenario() -> Scenario {
             budget_ticks: 600,
         },
     });
-    steps.push(super::combat::wear_combat_item_step(
-        "wield Rune scimitar before the queued Imp fight",
-        RUNE_SCIMITAR_ID,
-    ));
     steps.push(start_compiled_step());
-    steps.push(Step {
-        name: "watch the queued Imp Catcher completion",
-        kind: StepKind::Perform {
-            send: Box::new(|_, _| true),
-        },
-        wait: Wait {
-            arm: Proof::QuestDone {
-                name: "Imp Catcher",
+    for (name, quest) in [
+        ("watch the queued Cook completion", "Cook's Assistant"),
+        ("watch the queued Sheep completion", "Sheep Shearer"),
+        (
+            "watch the queued Romeo and Juliet completion",
+            "Romeo & Juliet",
+        ),
+        ("watch the queued Imp Catcher completion", "Imp Catcher"),
+    ] {
+        steps.push(Step {
+            name,
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
             },
-            budget_ticks: QUEUE_WATCH_TICKS,
-        },
-    });
+            wait: Wait {
+                arm: Proof::QuestDone { name: quest },
+                budget_ticks: QUEUE_WATCH_TICKS,
+            },
+        });
+    }
     Scenario {
         name: "quester_queue",
         seed: Seed {
@@ -607,7 +612,6 @@ mod tests {
             "stand teleport must follow the relog"
         );
     }
-
     #[test]
     fn quester_stage_completion_watch_defaults_to_cook_watch() {
         let scenario = quester_stage(

@@ -12,6 +12,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- Fixed Quester rejecting quests whose game-journal title differs from the
+  script's label, including Rune Mysteries.
+- Quester now waits for a random-event window to close before it reads the
+  quest journal or the Shield of Arrav gang, instead of stopping the quest.
 - Compat v1 game-message recording and all readers now use one per-context
   Rust history, bounded to 64 records. Only posted type 0 chat lines enter it.
   `mark`, `since`, `sawSince` and `firstSince` read it. `since` returns original
@@ -172,6 +176,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - A Quester folder accepts at most 4,096 entries, 1 MiB per Path document and
   16 MiB of retained documents. Larger folders or documents report a typed
   validation error and leave the last successful registry available.
+- Fixed: on a bank trip, the JiveDragons, JiveDemons and JiveKBD hunting
+  scripts now deposit noted loot, such as noted Lobsters, instead of keeping
+  it as food. When the pack also holds edible food or a kept potion of the
+  same name, only the noted stack is deposited and the edible food and the
+  potion stay in the pack. The scripts also deposit part-used potions that
+  the script keeps only as full doses, and then withdraw fresh full doses.
 
 ### Navigation
 
