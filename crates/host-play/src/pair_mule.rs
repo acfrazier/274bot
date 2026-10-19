@@ -398,21 +398,28 @@ impl MuleSlotRecord {
                     if Self::partnerless_confirm(&observation) {
                         self.drop_episode();
                     } else if observation.trade_confirm_open && named_partner {
-                        match self.confirm_gap_tick {
-                            None => {
-                                self.saw_confirm_with_partner = true;
-                                self.exchange_stage = MuleExchangeStage::Transfer;
-                            }
-                            Some(tick) if tick == observation.tick => {
-                                self.saw_confirm_with_partner = true;
-                                self.exchange_stage = MuleExchangeStage::Transfer;
-                            }
-                            Some(_) => self.drop_episode(),
+                        // The offer-to-confirm interface swap can post
+                        // inactive snapshots for a tick before the confirm
+                        // screen (the flax witness's gap rule,
+                        // `pair_flax.rs` `confirm_belongs_to_episode`):
+                        // a confirm on the gap tick or the one after it
+                        // still belongs to this episode.
+                        let after_gap = self.confirm_gap_tick.is_none_or(|gap_tick| {
+                            observation.tick >= gap_tick
+                                && observation.tick.saturating_sub(gap_tick) <= 1
+                        });
+                        if after_gap {
+                            self.saw_confirm_with_partner = true;
+                            self.exchange_stage = MuleExchangeStage::Transfer;
+                        } else {
+                            self.drop_episode();
                         }
                     } else if !observation.trade_active() {
                         match self.confirm_gap_tick {
                             None => self.confirm_gap_tick = Some(observation.tick),
-                            Some(tick) if tick == observation.tick => {}
+                            Some(gap_tick)
+                                if observation.tick >= gap_tick
+                                    && observation.tick.saturating_sub(gap_tick) <= 1 => {}
                             Some(_) => self.drop_episode(),
                         }
                     }

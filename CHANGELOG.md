@@ -176,6 +176,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - A Quester folder accepts at most 4,096 entries, 1 MiB per Path document and
   16 MiB of retained documents. Larger folders or documents report a typed
   validation error and leave the last successful registry available.
+- Fixed: FlourCollector and other scripts that call `Reach.locOp` no longer
+  stop with "not impl: Reach.locOp" on every loop. The call now walks to the
+  object, opens doors on the way and uses the object, as the script expects.
+  A refusal the script names, such as "You need something to put the flour
+  in", ends the call at once instead of clicking again, also when older game
+  messages are in the chat. An `expectMs` of 0 or less waits without a time
+  limit, and a fractional value is accepted.
 - Fixed: on a bank trip, the JiveDragons, JiveDemons and JiveKBD hunting
   scripts now deposit noted loot, such as noted Lobsters, instead of keeping
   it as food. When the pack also holds edible food or a kept potion of the
@@ -211,6 +218,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   Busy search capacity or result storage delays a valid inspection instead
   of refusing it. Reset cancels the current inspection and prevents stale
   output. Recent results remain available until acknowledged or replaced.
+- Fixed: Compat v1 scripts that open a bank by walking to its stand, such as
+  FlourCollector on its way back from Sinclair Mansion, no longer refuse that
+  walk because of danger zones. Their other walks already crossed the same
+  zones, so the script now walks out and back the same way.
 
 ### Random-event guardian
 

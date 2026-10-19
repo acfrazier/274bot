@@ -4374,6 +4374,45 @@ mod s2b_admission_contract {
         }
     }
 
+    /// FlourCollector (v1) walked out of Sinclair Mansion past the
+    /// Highwayman and Wolf zones on its compiled Reach.locOp walk, then its
+    /// Banking.open stand walk, a machine-owned native walk, was refused by
+    /// the same zones. A v1 card's native walks keep the frozen zone-exempt
+    /// routing of its compiled walks.
+    #[test]
+    fn real_v1_banking_stand_walk_routes_across_zones_like_its_compiled_walks() {
+        let source = once_src(
+            "import { Banking } from '../../api/bank/Banking.js';",
+            "Banking.open({ stand: { x: 255, z: 0, level: 0 } })",
+        );
+        let mut rig = ReconnectRig::t23_bank_wake_with_source(source, ice_world(), (0, 0, 0));
+        // Closed bank and no scene booth: Banking.open walks to its stand.
+        rig.client.world.del_wall(0, 5, 6);
+        rig.client.main_modal_id = -1;
+        rig.client.gens.iface = rig.client.gens.iface.wrapping_add(1);
+        nav_snapshot_at(&mut rig.client, &mut rig.snap, 0, 0);
+        observed_loadout(&mut rig.snap);
+        assert_eq!(
+            rig.slot().lock().unwrap().api_family(),
+            Some(script::ApiFamily::V1)
+        );
+        rig.t23_bank_frame(1, true);
+        assert!(rig.wait_for_route_work(5_000, || rig
+            .navs
+            .lock()
+            .unwrap()
+            .get("alice")
+            .is_some_and(|bot| bot.admission.is_some() && !bot.route_work_pending())));
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        let admission = bot.admission.as_ref().unwrap();
+        assert!(admission.compat_v1, "the stand walk keeps the v1 rule");
+        assert!(bot.has_route(), "the stand walk crosses the ice zone");
+        assert!(bot.native_walk_failure.is_none());
+        drop(navs);
+        rig.slot().lock().unwrap().stop();
+    }
+
     #[derive(Default)]
     struct Advice {
         requests: Vec<u64>,
