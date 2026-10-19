@@ -58,6 +58,9 @@ export const Reach = proxy('Reach', {
     // the caller's own pattern, so the RegExp never leaves JS.
     async locOp(opts) {
         const near = opts && opts.near ? opts.near : {};
+        // Frozen `delayUntil` arms a bound only for `expectMs > 0`; Rust
+        // reads 0 as no bound, so a non-finite window becomes 0.
+        const expectMs = Number(opts && opts.expectMs != null ? opts.expectMs : 12_000);
         const out = await runMachine(
             'reach-loc-op',
             {
@@ -66,7 +69,7 @@ export const Reach = proxy('Reach', {
                 near: { x: near.x, z: near.z, level: near.level ?? 0 },
                 ...(opts && typeof opts.within === 'number' ? { within: opts.within } : {}),
                 ...(opts && typeof opts.id === 'number' ? { id: Math.floor(opts.id) } : {}),
-                expectMs: opts && opts.expectMs != null ? opts.expectMs : 12_000,
+                expectMs: Number.isFinite(expectMs) ? expectMs : 0,
             },
             {
                 expect: () => opts.expect(),

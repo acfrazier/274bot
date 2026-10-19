@@ -175,6 +175,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - Fixed: FlourCollector and other scripts that call `Reach.locOp` no longer
   stop with "not impl: Reach.locOp" on every loop. The call now walks to the
   object, opens doors on the way and uses the object, as the script expects.
+  A refusal the script names, such as "You need something to put the flour
+  in", ends the call at once instead of clicking again, also when older game
+  messages are in the chat. An `expectMs` of 0 or less waits without a time
+  limit, and a fractional value is accepted.
 
 ### Navigation
 
