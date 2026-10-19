@@ -116,7 +116,7 @@ fn probe_gated_default_is_never_for_every_preference_source() {
         let root = dir.join(name);
         std::fs::create_dir_all(&root).unwrap();
         if let Some(body) = body {
-            std::fs::write(root.join("panel-ui.json"), body).unwrap();
+            vault::write_private_file(&root.join("panel-ui.json"), body.as_bytes()).unwrap();
         }
         let service = host_play::local_state::LocalStateService::open_process(
             host_play::local_state::StateRoot::new(root),

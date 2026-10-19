@@ -205,8 +205,7 @@ mod tests {
         let scratch = script::IsolatedEnv::enter("ack-json");
         let preferences = preferences(&scratch);
         let path = preferences.path();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, r#"{"last_focus":"alice"}"#).unwrap();
+        vault::write_private_file(&path, br#"{"last_focus":"alice"}"#).unwrap();
         assert!(!background_bots_acked(&preferences));
         persist_background_bots_ack(&preferences).unwrap();
         assert!(background_bots_acked(&preferences));
@@ -225,9 +224,8 @@ mod tests {
         let scratch = script::IsolatedEnv::enter("ack-corrupt");
         let preferences = preferences(&scratch);
         let path = preferences.path();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let corrupt = b"{not valid json";
-        std::fs::write(&path, corrupt).unwrap();
+        vault::write_private_file(&path, corrupt).unwrap();
 
         persist_background_bots_ack(&preferences).unwrap();
 

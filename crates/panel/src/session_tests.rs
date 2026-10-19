@@ -3053,8 +3053,7 @@ fn restored_enabled_folder_loads_when_game_data_becomes_ready() {
         .unwrap();
     }
     let root = thread_state_root();
-    std::fs::create_dir_all(root.path()).unwrap();
-    std::fs::write(
+    crate::test_support::write_private_fixture(
         root.preferences_file(),
         serde_json::to_vec(&serde_json::json!({
             "quester_paths": {
@@ -3109,8 +3108,7 @@ fn quest_paths_checkbox_keeps_saved_folder_after_failed_folder_save() {
     let uncommitted = iso.dir().join("uncommitted-paths");
     std::fs::create_dir_all(&saved).unwrap();
     let root = thread_state_root();
-    std::fs::create_dir_all(root.path()).unwrap();
-    std::fs::write(
+    crate::test_support::write_private_fixture(
         root.preferences_file(),
         serde_json::to_vec(&serde_json::json!({
             "quester_paths": {
@@ -3181,8 +3179,7 @@ fn quest_paths_checkbox_does_not_persist_lossy_non_utf8_folder() {
 
     let iso = IsolatedStores::enter("panel-quester-paths-non-utf8");
     let root = thread_state_root();
-    std::fs::create_dir_all(root.path()).unwrap();
-    std::fs::write(root.preferences_file(), b"{}").unwrap();
+    crate::test_support::write_private_fixture(root.preferences_file(), b"{}").unwrap();
 
     let mut bytes = iso.dir().to_path_buf().into_os_string().into_vec();
     bytes.extend_from_slice(b"/paths-\xff");
